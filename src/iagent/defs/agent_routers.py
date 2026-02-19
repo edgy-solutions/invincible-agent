@@ -9,7 +9,7 @@ import requests
 from dagster import asset
 
 
-@asset
+@asset(kinds={"restate", "smolagents"}, group_name="agent_fleet")
 def trigger_restate_analyst() -> dict:
     """Trigger Engine A (Restate + Smolagents) analyst agent pod."""
     response = requests.post(
@@ -20,7 +20,7 @@ def trigger_restate_analyst() -> dict:
     return response.json()
 
 
-@asset
+@asset(kinds={"langgraph", "postgres"}, group_name="agent_fleet")
 def trigger_langgraph_support() -> dict:
     """Trigger Engine B (LangGraph) support agent pod."""
     response = requests.post(
@@ -31,7 +31,7 @@ def trigger_langgraph_support() -> dict:
     return response.json()
 
 
-@asset
+@asset(kinds={"swarms", "python"}, group_name="agent_fleet")
 def trigger_swarms_scraper() -> dict:
     """Trigger Engine C (Swarms.ai) scraper/extraction agent pod."""
     response = requests.post(

@@ -190,7 +190,7 @@ def _write_mapping_ttl(mappings: dict[str, list[str]], path: Path) -> int:
 # ---------------------------------------------------------------------------
 
 
-@asset
+@asset(kinds={"dbt", "datahub"}, group_name="data_layer")
 def sync_dbt_to_ontology() -> dict:
     """Sync dbt model ontology bindings to DataHub and the ontology service.
 
