@@ -1,0 +1,78 @@
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix iof:   <https://spec.industrialontologies.org/ontology/core/Core/> .
+@prefix mro:   <https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/> .
+
+# =============================================================================
+# Dummy IOF / MIMOSA Maintenance Reference Ontology (MRO) extract
+# =============================================================================
+# This file provides a minimal set of sustainment-domain classes for the
+# ontology reasoner microservice to load and query at runtime.
+# In production, replace with the full IOF MRO ontology.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Top-level BFO / IOF anchors
+# ---------------------------------------------------------------------------
+
+iof:Process a owl:Class ;
+    rdfs:label "Process" ;
+    skos:definition "A processual entity that unfolds over time and has temporal parts." .
+
+iof:MaterialEntity a owl:Class ;
+    rdfs:label "Material Entity" ;
+    skos:definition "An independent continuant that has some portion of matter as part." .
+
+# ---------------------------------------------------------------------------
+# Sustainment domain classes (subclasses of Process or MaterialEntity)
+# ---------------------------------------------------------------------------
+
+mro:MaintenanceWorkOrder a owl:Class ;
+    rdfs:subClassOf iof:Process ;
+    rdfs:label "Maintenance Work Order" ;
+    skos:definition "A scheduled or reactive directive authorizing maintenance activity on an asset." ;
+    rdfs:comment "Maps to dbt models: stg_work_orders, fct_work_order_completion" .
+
+mro:CorrectiveMaintenance a owl:Class ;
+    rdfs:subClassOf mro:MaintenanceWorkOrder ;
+    rdfs:label "Corrective Maintenance" ;
+    skos:definition "Maintenance carried out after fault recognition to restore an item to a condition in which it can perform its required function." ;
+    rdfs:comment "Maps to dbt models: stg_work_orders, fct_corrective_actions" .
+
+mro:PreventiveMaintenance a owl:Class ;
+    rdfs:subClassOf mro:MaintenanceWorkOrder ;
+    rdfs:label "Preventive Maintenance" ;
+    skos:definition "Maintenance carried out at predetermined intervals or according to prescribed criteria to reduce the probability of failure." ;
+    rdfs:comment "Maps to dbt models: stg_work_orders, fct_pm_schedule" .
+
+mro:AssetConditionAssessment a owl:Class ;
+    rdfs:subClassOf iof:Process ;
+    rdfs:label "Asset Condition Assessment" ;
+    skos:definition "A process of evaluating the current physical state and operational capability of an asset." ;
+    rdfs:comment "Maps to dbt models: stg_condition_readings, fct_asset_health" .
+
+mro:FailureMode a owl:Class ;
+    rdfs:subClassOf iof:Process ;
+    rdfs:label "Failure Mode" ;
+    skos:definition "A catalogued manner in which a component, subsystem, or system could potentially fail to meet design intent." ;
+    rdfs:comment "Maps to dbt models: dim_failure_modes, fct_failure_analysis" .
+
+mro:InspectionReport a owl:Class ;
+    rdfs:subClassOf iof:Process ;
+    rdfs:label "Inspection Report" ;
+    skos:definition "A documented record of a periodic or event-driven inspection of an asset or facility." ;
+    rdfs:comment "Maps to dbt models: stg_inspections, fct_inspection_findings" .
+
+mro:SparePartInventory a owl:Class ;
+    rdfs:subClassOf iof:MaterialEntity ;
+    rdfs:label "Spare Part Inventory" ;
+    skos:definition "A tracked collection of replacement parts and consumables maintained to support sustainment operations." ;
+    rdfs:comment "Maps to dbt models: dim_spare_parts, fct_inventory_snapshots" .
+
+mro:ReliabilityCenteredMaintenance a owl:Class ;
+    rdfs:subClassOf iof:Process ;
+    rdfs:label "Reliability Centered Maintenance" ;
+    skos:definition "A systematic process to determine what must be done to ensure a physical asset continues to fulfill its intended function in its present operating context." ;
+    rdfs:comment "Maps to dbt models: fct_rcm_analysis, dim_asset_criticality" .

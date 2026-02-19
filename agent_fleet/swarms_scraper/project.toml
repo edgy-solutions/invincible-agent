@@ -1,0 +1,14 @@
+[_]
+schema-version = "0.2"
+
+[io.buildpacks]
+builder = "paketobuildpacks/builder-jammy-base"
+
+[[io.buildpacks.group]]
+id = "paketo-buildpacks/python"
+
+[io.buildpacks.build.env]
+BP_CPYTHON_VERSION = "3.12"
+
+[io.buildpacks.launch.env]
+PORT = "8083"

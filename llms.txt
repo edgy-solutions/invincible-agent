@@ -1,0 +1,164 @@
+# Invincible Agent (iagent)
+
+> Polyglot Agentic Data Mesh — built to the **Master Architect Recipe V3
+> (Polyglot Mesh Edition)** spec. A Dagster-orchestrated control plane
+> dispatches lightweight HTTP calls to ephemeral agent pods on Kubernetes.
+> Agent engines are strictly decoupled microservices, each with its own
+> isolated codebase, OCI image, and K8s Service. All inter-service
+> contracts are defined in BAML.
+
+## Project structure
+
+- src/iagent/definitions.py        — Dagster entry point; auto-loads defs/ folder
+- src/iagent/defs/agent_routers.py — Dagster assets that POST to agent pods
+- src/iagent/defs/data_layer.py    — Dagster asset: dbt ↔ ontology ↔ DataHub sync
+- baml_shared/baml_src/contracts.baml — Shared data contracts (enums, classes)
+- baml_shared/baml_src/generators.baml — BAML codegen config (Python/Pydantic)
+- baml_shared/baml_client/           — Auto-generated Python client from BAML
+- agent_fleet/ontology_service/main.py — Engine O: FastAPI ontology reasoner (port 8084)
+- agent_fleet/ontology_service/iof_mro.ttl — Dummy IOF/MIMOSA MRO ontology
+- agent_fleet/restate_analyst/main.py  — Engine A: Restate + Smolagents analyst (port 8081)
+- agent_fleet/langgraph_support/main.py — Engine B: LangGraph support agent (port 8082)
+- agent_fleet/swarms_scraper/main.py   — Engine C: Swarms.ai scraper/extraction (port 8083)
+- pyproject.toml                      — Project metadata & Dagster config
+
+## Architecture
+
+The system follows a strictly decoupled, Polyglot Microservice architecture
+(Master Architect Recipe V3):
+
+**Dagster Control Plane** — Ephemeral, lightweight pods. Uses only the
+`requests` library to trigger agents. Does NOT use `PipesK8sClient`. Dagster
+acts as the central router, determining which framework’s K8s URL to call.
+
+**Agent Fleet** — Multiple independent, permanent pods (or Knative-scaled)
+running FastAPI web servers. Each framework gets its own isolated codebase,
+OCI image, and K8s Service.
+
+1. **Dagster (this repo)** — Orchestrator / control plane.
+2. **Engine O** (rdflib + BAML) — Ontology reasoner. Translates NL → IOF/MIMOSA
+   URIs. Port 8084, `/resolve`.
+3. **Engine A** (Restate + Smolagents) — Durable analyst. Calls Engine O for
+   semantic context, then runs a smolagents CodeAgent. Port 8081, `/analyze`.
+4. **Engine B** (LangGraph) — Stateful support. PostgreSQL-backed conversational
+   memory via AsyncPostgresSaver. Port 8082, `/support`.
+5. **Engine C** (Swarms.ai) — Stateless, high-concurrency compute for data
+   extraction/scraping. Port 8083, `/scrape`.
+6. Agent pods are K8s services:
+   - `restate-agent-svc.default.svc.cluster.local:8081/analyze`
+   - `langgraph-agent-svc.default.svc.cluster.local:8082/support`
+   - `swarms-agent-svc.default.svc.cluster.local:8083/scrape`
+   - `ontology-svc.default.svc.cluster.local:8084/resolve`
+7. Dagster assets call agents via plain HTTP POST (no SDK imports).
+8. BAML contracts in `baml_shared/` define the canonical schemas
+   (`AgentTask`, `AgentResponse`, `SemanticResolution`, etc.) shared by all services.
+
+## Key data contracts (from contracts.baml)
+
+- `AgentTask`          — Universal input payload sent to any agent pod.
+- `AgentResponse`      — Universal output payload returned by every agent pod.
+- `SemanticResolution` — Maps free-text to a dynamic ontology URI (resolved_uri).
+- `AgentStatus`        — Enum: SUCCESS | FAILED | HUMAN_REQUIRED.
+- `ClassifySustainmentIntent` — BAML function that classifies a query against
+  dynamically-injected RDF ontology URIs (not hardcoded enums).
+
+## Tech stack (V3 strict constraints)
+
+**Orchestration:** Dagster 1.12.x (Triggers, Routing, & Asset Catalog)
+**API Layer:** FastAPI + uvicorn (universal wrapper for ALL agent frameworks)
+**Interface:** BAML 0.219.x (type-safe LLM parsing & prompting, shared across agents)
+**Engine A:** Restate SDK + HuggingFace smolagents (durable, serverless, code-centric)
+**Engine B:** LangGraph + AsyncPostgresSaver (stateful DAGs, async checkpointers)
+**Engine C:** Swarms.ai SequentialWorkflow (high-concurrency topologies)
+**Data Layer (implemented):** dbt (transformation), DataHub (catalog/glossary)
+**Data Layer (planned):** dlthub (ingestion), Neo4j (graph), Weaviate (vector)
+**Infra:** Python >=3.10, Hatchling, uv/pip, CNB `pack` CLI (no Dockerfiles), Kubernetes
+
+## Development log
+
+### Phase 1 — Shared contracts
+Created BAML contracts (`contracts.baml`) defining `AgentTask`, `AgentResponse`,
+`SemanticResolution`, and `AgentStatus`. Ontology classes are NOT hardcoded as
+an enum — they are dynamically injected at runtime from the RDF graph.
+Added `ClassifySustainmentIntent` BAML function that maps a user query to one
+of the active ontology URIs provided at call time. Generated Python/Pydantic
+client via BAML codegen.
+
+### Phase 2 — Orchestrator control plane
+Created `src/iagent/defs/agent_routers.py` with two Dagster `@asset` functions:
+- `trigger_restate_analyst` — POST to Restate agent pod (:8081/analyze)
+- `trigger_langgraph_support` — POST to LangGraph agent pod (:8082/support)
+Both are lightweight HTTP dispatchers using only `requests`. No ML/SDK imports.
+
+### Phase 2.5 — Engine O: Ontology Reasoner
+Created `agent_fleet/ontology_service/main.py` — a FastAPI service on port 8084
+that does NO compute or orchestration. It strictly translates natural language
+into IOF/MIMOSA terms:
+1. Loads `iof_mro.ttl` into an rdflib graph on startup.
+2. SPARQL queries the graph for all sustainment-domain classes (subclasses of
+   `iof:Process` or `iof:MaterialEntity`) with labels and definitions.
+3. Formats the RDF results into a string and passes it + the user query to
+   BAML `ClassifySustainmentIntent`.
+4. Returns `SemanticResolution` (resolved_uri, confidence_score, suggested_dbt_models).
+Also created `iof_mro.ttl` — a dummy IOF/MIMOSA MRO ontology with 8 sustainment
+classes (MaintenanceWorkOrder, CorrectiveMaintenance, PreventiveMaintenance,
+AssetConditionAssessment, FailureMode, InspectionReport, SparePartInventory,
+ReliabilityCenteredMaintenance).
+
+### Phase 3 — Engine A: Restate + Smolagents Analyst
+Created `agent_fleet/restate_analyst/main.py` — a FastAPI server on port 8081
+backed by the Restate SDK for durable execution:
+1. Restate `AnalystService` with an `analyze` handler.
+2. Handler first calls Engine O (`/resolve`) via `ctx.run()` to get
+   `SemanticResolution` (resolved_uri + suggested_dbt_models).
+3. Then runs a smolagents `CodeAgent` (also via `ctx.run()`) with the semantic
+   context injected so the agent knows which dbt tables to query.
+4. Returns `AgentResponse` (validated against BAML schema).
+5. Proxy route `POST /analyze` forwards to `/restate/AnalystService/analyze`
+   so Dagster can trigger it with a simple HTTP call.
+
+### Phase 4 — Engine B: LangGraph Support Agent
+Created `agent_fleet/langgraph_support/main.py` — a FastAPI server on port 8082
+with a LangGraph StateGraph and PostgreSQL-backed conversational memory:
+1. Two-node graph: `triage` (classifies task) → `respond` (generates response).
+2. `AsyncPostgresSaver` checkpointer connected on startup via `LANGGRAPH_POSTGRES_URI`.
+3. `POST /support` accepts `task_description`, `dataset_id`, and `thread_id`.
+   The `thread_id` keys the checkpointer so the graph remembers prior interactions.
+4. Returns `AgentResponse` (validated against BAML schema).
+5. Entirely isolated from Engine A — no Restate, Dagster, or smolagents imports.
+
+### Phase 5 — Engine C: Swarms.ai Scraper
+Created `agent_fleet/swarms_scraper/main.py` — a stateless FastAPI server on
+port 8083 for heavy concurrent data extraction:
+1. Swarms.ai `SequentialWorkflow` with a single `DataExtractor` agent.
+2. `POST /scrape` accepts `task_description`, `dataset_id`, optional `semantic_context`.
+3. Formats a prompt and runs it through the workflow.
+4. Returns `AgentResponse` (validated against BAML schema).
+5. Completely isolated — no Restate, LangGraph, Dagster, or checkpointers.
+6. Model configurable via `SWARMS_MODEL` env var (default: gpt-4o-mini).
+
+### Phase 6 — Cloud Native Buildpacks (CNB) Containerization
+No Dockerfiles. All agent images are built with `pack` CLI (Buildpacks.io)
+using `paketobuildpacks/builder-jammy-base`.
+
+Each service in `agent_fleet/` now has:
+- `Procfile` — declares the `web:` process (uvicorn on the correct port).
+- `project.toml` — sets `BP_CPYTHON_VERSION=3.12` and the `PORT` env var.
+
+CI/CD `pack build` commands:
+```
+pack build myregistry/ontology-service   --path ./agent_fleet/ontology_service   --builder paketobuildpacks/builder-jammy-base
+pack build myregistry/restate-analyst    --path ./agent_fleet/restate_analyst    --builder paketobuildpacks/builder-jammy-base
+pack build myregistry/langgraph-support  --path ./agent_fleet/langgraph_support  --builder paketobuildpacks/builder-jammy-base
+pack build myregistry/swarms-scraper     --path ./agent_fleet/swarms_scraper     --builder paketobuildpacks/builder-jammy-base
+```
+
+### Phase 7 — Data Mesh Bindings (dbt + DataHub)
+Created `src/iagent/defs/data_layer.py` with a `sync_dbt_to_ontology` asset:
+1. Reads `dbt_project/target/manifest.json` (falls back to a realistic dummy).
+2. Extracts `ontology_uri` meta tags from dbt models → builds URI-to-model map.
+3. POSTs glossary term updates to DataHub GMS (`/entities?action=ingest`).
+4. Writes `agent_fleet/ontology_service/mapping.ttl` linking dbt models to
+   IOF/MIMOSA ontology URIs via `rdfs:isDefinedBy` triples.
+This proves Dagster keeps the physical data layer (dbt) and the semantic brain
+(ontology_service) in sync.
