@@ -74,6 +74,18 @@ OCI image, and K8s Service.
 **Data Layer (planned):** dlthub (ingestion), Neo4j (graph), Weaviate (vector)
 **Infra:** Python >=3.10, Hatchling, uv/pip, CNB `pack` CLI (no Dockerfiles), Kubernetes
 
+## Dagster UI Notes
+
+- Assets use the `kinds` argument (not deprecated `compute_kind`) for multi-tech badges.
+- Dagster has ~200 built-in icons. Our assets use: `dbt`, `datahub`, `postgres`, `python` (all have icons).
+- `restate`, `smolagents`, `langgraph`, `swarms` show as text-only badges (no custom icon support yet).
+- Dagster groups: `agent_fleet` (router assets), `data_layer` (dbt sync asset).
+- Custom icons are NOT supported by Dagster natively — icons are baked into the JS bundle.
+- **Workaround:** SVG icons in `assets/icons/` are base64-encoded and embedded in asset
+  definition metadata via `MetadataValue.md()`. When you click an asset in the Dagster UI,
+  the detail panel shows a rich card with the framework icon, name, and description.
+- Helper function `_icon_card()` in `agent_routers.py` reads SVGs and builds markdown cards.
+
 ## Development log
 
 ### Phase 1 — Shared contracts
@@ -162,3 +174,13 @@ Created `src/iagent/defs/data_layer.py` with a `sync_dbt_to_ontology` asset:
    IOF/MIMOSA ontology URIs via `rdfs:isDefinedBy` triples.
 This proves Dagster keeps the physical data layer (dbt) and the semantic brain
 (ontology_service) in sync.
+
+### UI Polish — Asset badges and grouping
+Added `kinds` and `group_name` to all Dagster assets:
+- `trigger_restate_analyst`: kinds={"restate", "smolagents"}, group="agent_fleet"
+- `trigger_langgraph_support`: kinds={"langgraph", "postgres"}, group="agent_fleet"
+- `trigger_swarms_scraper`: kinds={"swarms", "python"}, group="agent_fleet"
+- `sync_dbt_to_ontology`: kinds={"dbt", "datahub"}, group="data_layer"
+Dagster shows icons for dbt, datahub, postgres, python; others show as text.
+Custom SVG icons in `assets/icons/` are embedded as base64 markdown in asset
+definition metadata — visible in the asset detail panel (click "Show Markdown").

@@ -113,6 +113,23 @@ These are the Kubernetes services the orchestrator communicates with:
   Accepts `{task_description, dataset_id, semantic_context?}` JSON. Stateless
   heavy compute node. Returns `AgentResponse` JSON.
 
+## Dagster UI Configuration
+
+Assets are configured with `kinds` and `group_name` for UI badges:
+- `trigger_restate_analyst`: kinds={"restate", "smolagents"}, group="agent_fleet"
+- `trigger_langgraph_support`: kinds={"langgraph", "postgres"}, group="agent_fleet"
+- `trigger_swarms_scraper`: kinds={"swarms", "python"}, group="agent_fleet"
+- `sync_dbt_to_ontology`: kinds={"dbt", "datahub"}, group="data_layer"
+
+**Icon support:** Dagster has ~200 built-in icons (dbt, datahub, postgres, python all have icons).
+Custom icons for restate/smolagents/langgraph/swarms are NOT supported as kind badges.
+Do NOT attempt to monkey-patch the Dagster webserver JS bundle; it's fragile and breaks on upgrades.
+
+**Workaround — Metadata icon cards:** Custom SVG icons in `assets/icons/` are base64-encoded
+and embedded in asset definition metadata via `MetadataValue.md()`. When clicking an asset
+in the Dagster UI, the detail panel shows a rich card with the framework icon, name, and
+description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
+
 ## Development Progress
 
 ### Phase 1 — Shared Contracts (complete)

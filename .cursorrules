@@ -108,6 +108,18 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - LangGraph support: port 8082, endpoint `/support`
 - Swarms scraper (Engine C): port 8083, endpoint `/scrape`
 
+## Dagster UI Conventions
+- Use `kinds={"tech1", "tech2"}` (not deprecated `compute_kind`) for multi-tech badges.
+- Use `group_name` to cluster related assets in the UI.
+- Built-in icons exist for: dbt, datahub, postgres, python, snowflake, spark, etc.
+- Custom icons (restate, smolagents, langgraph, swarms) are NOT supported as kind badges.
+  These show as text-only badges. Do NOT attempt to monkey-patch the JS bundle.
+- **Workaround:** Use `MetadataValue.md()` with base64-encoded SVGs from `assets/icons/`
+  to show rich icon cards in the asset detail panel.
+- Use the `_icon_card()` helper in `agent_routers.py` for consistent formatting.
+- When adding new agent assets, create a matching SVG in `assets/icons/` and add
+  a metadata card via `_icon_card(icon_name, title, description)`.
+
 ## Git
 - Commit messages: imperative mood, ≤72 chars subject line.
 - Include `Co-Authored-By: Warp <agent@warp.dev>` when AI-assisted.

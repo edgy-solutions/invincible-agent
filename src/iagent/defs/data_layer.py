@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 import requests
-from dagster import asset, get_dagster_logger
+from dagster import MetadataValue, asset, get_dagster_logger
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -190,7 +190,21 @@ def _write_mapping_ttl(mappings: dict[str, list[str]], path: Path) -> int:
 # ---------------------------------------------------------------------------
 
 
-@asset(kinds={"dbt", "datahub"}, group_name="data_layer")
+@asset(
+    kinds={"dbt", "datahub"},
+    group_name="data_layer",
+    metadata={
+        "Data Layer": MetadataValue.md(
+            "**dbt + DataHub Sync**\n\n"
+            "Reads `ontology_uri` meta tags from dbt models, syncs glossary "
+            "terms to DataHub GMS, and writes `mapping.ttl` linking dbt models "
+            "to IOF/MIMOSA ontology URIs.\n\n"
+            "**Inputs:** `dbt_project/target/manifest.json`\n"
+            "**Outputs:** `agent_fleet/ontology_service/mapping.ttl`, "
+            "DataHub glossary terms"
+        ),
+    },
+)
 def sync_dbt_to_ontology() -> dict:
     """Sync dbt model ontology bindings to DataHub and the ontology service.
 
