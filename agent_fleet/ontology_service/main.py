@@ -43,12 +43,11 @@ from baml_client.types import SemanticResolution as BamlSemanticResolution  # no
 OWL = rdflib.Namespace("http://www.w3.org/2002/07/owl#")
 RDFS = rdflib.Namespace("http://www.w3.org/2000/01/rdf-schema#")
 SKOS = rdflib.Namespace("http://www.w3.org/2004/02/skos/core#")
-IOF = rdflib.Namespace(
-    "https://spec.industrialontologies.org/ontology/core/Core/"
+IOF_ANN = rdflib.Namespace(
+    "https://spec.industrialontologies.org/ontology/annotation/"
 )
-MRO = rdflib.Namespace(
-    "https://spec.industrialontologies.org/ontology/maintenance/"
-    "MaintenanceReferenceOntology/"
+IOF_CONSTRUCT = rdflib.Namespace(
+    "https://spec.industrialontologies.org/ontology/construct/"
 )
 
 # ---------------------------------------------------------------------------
@@ -56,48 +55,64 @@ MRO = rdflib.Namespace(
 # ---------------------------------------------------------------------------
 _graph: rdflib.Graph | None = None
 
-# SPARQL: find all named OWL classes that are a subclass of iof:Process or
-# iof:MaterialEntity (i.e. the sustainment-domain classes, not the top anchors
-# themselves) along with their human-readable labels and definitions.
-_SPARQL_TOP_LEVEL_CLASSES = """
+# SPARQL: find all named OWL classes defined in the IOF maintenance namespace
+# along with their labels and natural-language definitions.
+_SPARQL_MAINTENANCE_CLASSES = """
 PREFIX owl:  <http://www.w3.org/2002/07/owl#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
-PREFIX iof:  <https://spec.industrialontologies.org/ontology/core/Core/>
+PREFIX iof-ann: <https://spec.industrialontologies.org/ontology/annotation/>
 
-SELECT ?cls ?label ?definition
+SELECT ?cls ?label ?definition ?example
 WHERE {
     ?cls a owl:Class ;
-         rdfs:subClassOf+ ?parent ;
          rdfs:label ?label .
-    OPTIONAL { ?cls skos:definition ?definition . }
-    FILTER (?parent IN (iof:Process, iof:MaterialEntity))
+    FILTER (isURI(?cls))
+    OPTIONAL { ?cls iof-ann:naturalLanguageDefinition ?definition . }
+    OPTIONAL { ?cls skos:example ?example . }
 }
 ORDER BY ?label
 """
 
 
 def _load_graph() -> rdflib.Graph:
-    """Parse the IOF MRO .ttl file into an rdflib Graph."""
-    ttl_path = Path(__file__).with_name("iof_mro.ttl")
-    if not ttl_path.exists():
-        raise FileNotFoundError(f"Ontology file not found: {ttl_path}")
+    """Parse IOF MRO ontology files into an rdflib Graph.
+
+    Loads the real IOF Maintenance.rdf first, then falls back to the
+    dummy iof_mro.ttl if not present.
+    """
+    service_dir = Path(__file__).parent
     g = rdflib.Graph()
+
+    # Prefer the real IOF MRO (RDF/XML format)
+    real_rdf = service_dir / "Maintenance.rdf"
+    if real_rdf.exists():
+        g.parse(str(real_rdf), format="xml")
+        return g
+
+    # Fall back to dummy Turtle file
+    ttl_path = service_dir / "iof_mro.ttl"
+    if not ttl_path.exists():
+        raise FileNotFoundError(
+            f"No ontology file found in {service_dir}. "
+            "Expected Maintenance.rdf or iof_mro.ttl."
+        )
     g.parse(str(ttl_path), format="turtle")
     return g
 
 
 def _get_active_ontology_classes(g: rdflib.Graph) -> str:
-    """Query the graph for sustainment-domain classes and format them as a
+    """Query the graph for maintenance-domain classes and format them as a
     newline-delimited string of ``URI — Label: Definition`` entries suitable
     for injection into the BAML prompt."""
-    rows = g.query(_SPARQL_TOP_LEVEL_CLASSES)
+    rows = g.query(_SPARQL_MAINTENANCE_CLASSES)
     lines: list[str] = []
     for row in rows:
         uri = str(row.cls)
         label = str(row.label)
         definition = str(row.definition) if row.definition else "No definition available."
-        lines.append(f"{uri} — {label}: {definition}")
+        example = f" Examples: {row.example}" if row.example else ""
+        lines.append(f"{uri} — {label}: {definition}{example}")
     return "\n".join(lines)
 
 
@@ -109,7 +124,9 @@ async def lifespan(app: FastAPI):
     global _graph
     _graph = _load_graph()
     triple_count = len(_graph)
-    print(f"[ontology-service] Loaded {triple_count} triples from iof_mro.ttl")
+    classes = _get_active_ontology_classes(_graph)
+    class_count = len(classes.strip().splitlines()) if classes.strip() else 0
+    print(f"[ontology-service] Loaded {triple_count} triples, {class_count} maintenance classes")
     yield
     _graph = None
 
@@ -182,6 +199,30 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         confidence_score=result.confidence_score,
         suggested_dbt_models=result.suggested_dbt_models,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /classes — list active ontology classes
+# ---------------------------------------------------------------------------
+@app.get("/classes")
+async def classes() -> dict:
+    """Return all active sustainment-domain ontology classes.
+
+    Useful for discovery and for populating UI dropdowns or LLM context.
+    """
+    if _graph is None:
+        raise HTTPException(status_code=503, detail="Ontology graph not loaded.")
+
+    rows = _graph.query(_SPARQL_MAINTENANCE_CLASSES)
+    results = []
+    for row in rows:
+        results.append({
+            "uri": str(row.cls),
+            "label": str(row.label),
+            "definition": str(row.definition) if row.definition else None,
+            "example": str(row.example) if row.example else None,
+        })
+    return {"classes": results, "count": len(results)}
 
 
 # ---------------------------------------------------------------------------

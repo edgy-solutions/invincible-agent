@@ -38,6 +38,7 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 | **A** | Restate + Smolagents | 8081 | `/analyze` | Durable analyst — semantic pre-resolution → CodeAgent |
 | **B** | LangGraph + PostgreSQL | 8082 | `/support` | Stateful support — conversational memory via checkpointer |
 | **C** | Swarms.ai | 8083 | `/scrape` | Stateless heavy compute — high-concurrency extraction |
+| **D** | httpx + DataHub GMS | 8085 | `/tables` | Metadata wrapper — queries DataHub for dbt dataset list |
 
 ### Data Flow
 
@@ -82,7 +83,7 @@ User Query
 src/iagent/
   definitions.py              # Dagster entry point (auto-loads defs/)
   defs/
-    agent_routers.py          # @asset: HTTP dispatchers for Engines A, B, C
+    agent_routers.py          # @asset: HTTP dispatchers for Engines A, B, C, D
     data_layer.py             # @asset: dbt ↔ ontology ↔ DataHub sync
 
 agent_fleet/
@@ -98,6 +99,9 @@ agent_fleet/
     Procfile / project.toml
   swarms_scraper/
     main.py                   # Engine C: Swarms.ai (port 8083)
+    Procfile / project.toml
+  datahub_wrapper/
+    main.py                   # Engine D: DataHub metadata wrapper (port 8085)
     Procfile / project.toml
 
 baml_shared/
@@ -178,6 +182,9 @@ uvicorn agent_fleet.langgraph_support.main:app --port 8082
 
 # Engine C — Swarms Scraper
 uvicorn agent_fleet.swarms_scraper.main:app --port 8083
+
+# Engine D — DataHub Wrapper
+uvicorn agent_fleet.datahub_wrapper.main:app --port 8085
 ```
 
 ---
@@ -191,6 +198,7 @@ pack build myregistry/ontology-service  --path ./agent_fleet/ontology_service  -
 pack build myregistry/restate-analyst   --path ./agent_fleet/restate_analyst   --builder paketobuildpacks/builder-jammy-base
 pack build myregistry/langgraph-support --path ./agent_fleet/langgraph_support --builder paketobuildpacks/builder-jammy-base
 pack build myregistry/swarms-scraper    --path ./agent_fleet/swarms_scraper    --builder paketobuildpacks/builder-jammy-base
+pack build myregistry/datahub-wrapper   --path ./agent_fleet/datahub_wrapper   --builder paketobuildpacks/builder-jammy-base
 ```
 
 ---
@@ -203,6 +211,7 @@ pack build myregistry/swarms-scraper    --path ./agent_fleet/swarms_scraper    -
 | Engine A | `http://restate-agent-svc.default.svc.cluster.local:8081/analyze` |
 | Engine B | `http://langgraph-agent-svc.default.svc.cluster.local:8082/support` |
 | Engine C | `http://swarms-agent-svc.default.svc.cluster.local:8083/scrape` |
+| Engine D | `http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables` |
 
 All services expose `GET /health` for liveness probes.
 
@@ -216,6 +225,8 @@ All services expose `GET /health` for liveness probes.
 | `SWARMS_MODEL` | Engine C | `gpt-4o-mini` | LLM model for Swarms agents |
 | `OPENAI_API_KEY` | Engine O, C | — | Required for LLM calls |
 | `HF_TOKEN` | Engine A | — | HuggingFace API token for smolagents |
+| `DATAHUB_GMS_URL` | Engine D | `http://localhost:8080/api/graphql` | DataHub GraphQL endpoint |
+| `DATAHUB_TOKEN` | Engine D | — | Optional DataHub personal access token |
 
 ---
 
@@ -251,3 +262,4 @@ All services expose `GET /health` for liveness probes.
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
 - [Swarms.ai Documentation](https://docs.swarms.world/)
 - [Cloud Native Buildpacks](https://buildpacks.io/)
+- [DataHub Documentation](https://datahubproject.io/docs/)

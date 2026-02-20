@@ -102,3 +102,27 @@ def trigger_swarms_scraper() -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+@asset(
+    kinds={"datahub"},
+    group_name="data_layer",
+    metadata={
+        "Engine D": _icon_card(
+            "datahub",
+            "DataHub Metadata Wrapper",
+            "Queries DataHub GMS GraphQL API for dbt platform datasets. "
+            "Returns a comma-separated list of table names for LLM context. "
+            "Falls back to 503 if DataHub is unreachable.\n\n"
+            "**Endpoint:** `GET :8085/tables`",
+        ),
+    },
+)
+def trigger_datahub_tables() -> dict:
+    """Fetch available dbt tables from Engine D (DataHub wrapper)."""
+    response = requests.get(
+        "http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables",
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()

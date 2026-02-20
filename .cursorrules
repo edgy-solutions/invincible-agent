@@ -100,6 +100,14 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - `project.toml` sets `BP_CPYTHON_VERSION` and `PORT` env var.
 - Build command: `pack build <image> --path ./agent_fleet/<service> --builder paketobuildpacks/builder-jammy-base`.
 
+## DataHub Wrapper (agent_fleet/datahub_wrapper/)
+- Engine D is a lightweight metadata service — no ML, no orchestration.
+- Uses `httpx.AsyncClient` to query DataHub GMS GraphQL API.
+- Do NOT import Restate, LangGraph, Dagster, or agent SDKs here.
+- `GET /tables` returns `{"available_tables": "..."}` for LLM context.
+- Returns HTTP 503 if DataHub is unreachable — callers must handle fallback.
+- Env vars: `DATAHUB_GMS_URL`, `DATAHUB_TOKEN`.
+
 ## Kubernetes / Infra Conventions
 - Agent service URLs follow the pattern:
   `http://<service-name>.default.svc.cluster.local:<port>/<endpoint>`
@@ -107,6 +115,7 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - Restate analyst: port 8081, endpoint `/analyze`
 - LangGraph support: port 8082, endpoint `/support`
 - Swarms scraper (Engine C): port 8083, endpoint `/scrape`
+- DataHub wrapper (Engine D): port 8085, endpoint `/tables`
 
 ## Dagster UI Conventions
 - Use `kinds={"tech1", "tech2"}` (not deprecated `compute_kind`) for multi-tech badges.

@@ -1,0 +1,10 @@
+[_]
+schema-version = "0.2"
+
+[[io.buildpacks.build.env]]
+name = "BP_CPYTHON_VERSION"
+value = "3.12"
+
+[[io.buildpacks.build.env]]
+name = "PORT"
+value = "8085"

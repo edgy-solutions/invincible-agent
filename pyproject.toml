@@ -6,6 +6,20 @@ dependencies = [
     "dagster==1.12.14",
 ]
 
+[project.optional-dependencies]
+agent-fleet = [
+    "fastapi",
+    "uvicorn",
+    "rdflib",
+    "baml-py",
+    "restate-sdk",
+    "smolagents",
+    "langgraph",
+    "psycopg[binary]",
+    "swarms",
+    "httpx",
+]
+
 [dependency-groups]
 dev = [
     "dagster-webserver",

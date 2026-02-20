@@ -20,6 +20,7 @@
 - agent_fleet/restate_analyst/main.py  — Engine A: Restate + Smolagents analyst (port 8081)
 - agent_fleet/langgraph_support/main.py — Engine B: LangGraph support agent (port 8082)
 - agent_fleet/swarms_scraper/main.py   — Engine C: Swarms.ai scraper/extraction (port 8083)
+- agent_fleet/datahub_wrapper/main.py  — Engine D: DataHub metadata wrapper (port 8085)
 - pyproject.toml                      — Project metadata & Dagster config
 
 ## Architecture
@@ -44,6 +45,8 @@ OCI image, and K8s Service.
    memory via AsyncPostgresSaver. Port 8082, `/support`.
 5. **Engine C** (Swarms.ai) — Stateless, high-concurrency compute for data
    extraction/scraping. Port 8083, `/scrape`.
+6. **Engine D** (httpx + DataHub GMS) — Metadata wrapper. Queries DataHub
+   GraphQL for dbt datasets, returns table list for LLM context. Port 8085, `/tables`.
 6. Agent pods are K8s services:
    - `restate-agent-svc.default.svc.cluster.local:8081/analyze`
    - `langgraph-agent-svc.default.svc.cluster.local:8082/support`
@@ -184,3 +187,16 @@ Added `kinds` and `group_name` to all Dagster assets:
 Dagster shows icons for dbt, datahub, postgres, python; others show as text.
 Custom SVG icons in `assets/icons/` are embedded as base64 markdown in asset
 definition metadata — visible in the asset detail panel (click "Show Markdown").
+
+### Phase 8 — Engine D: DataHub Metadata Wrapper
+Created `agent_fleet/datahub_wrapper/main.py` — a FastAPI service on port 8085
+that queries DataHub’s GMS GraphQL API to discover dbt platform datasets:
+1. `GET /tables` executes a GraphQL `search` query filtered to `urn:li:dataPlatform:dbt`.
+2. Parses dataset URNs to extract clean table names (e.g. `stg_flight_logs`).
+3. Returns `{"available_tables": "table1, table2, ..."}` for LLM context.
+4. Returns HTTP 503 if DataHub is unreachable (caller falls back to mock data).
+5. Uses `httpx.AsyncClient` for async HTTP to DataHub GMS.
+Env vars: `DATAHUB_GMS_URL` (default: `http://localhost:8080/api/graphql`),
+`DATAHUB_TOKEN` (optional auth token).
+Added Dagster asset `trigger_datahub_tables` (GET to :8085/tables, group: data_layer).
+CNB buildpack configs: Procfile + project.toml for port 8085.

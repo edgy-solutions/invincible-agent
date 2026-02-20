@@ -112,6 +112,9 @@ These are the Kubernetes services the orchestrator communicates with:
 - **Swarms scraper (Engine C)**: `POST http://swarms-agent-svc.default.svc.cluster.local:8083/scrape`
   Accepts `{task_description, dataset_id, semantic_context?}` JSON. Stateless
   heavy compute node. Returns `AgentResponse` JSON.
+- **DataHub wrapper (Engine D)**: `GET http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables`
+  Queries DataHub GMS GraphQL for dbt datasets. Returns
+  `{"available_tables": "table1, table2, ..."}`. 503 if DataHub unreachable.
 
 ## Dagster UI Configuration
 
@@ -119,6 +122,7 @@ Assets are configured with `kinds` and `group_name` for UI badges:
 - `trigger_restate_analyst`: kinds={"restate", "smolagents"}, group="agent_fleet"
 - `trigger_langgraph_support`: kinds={"langgraph", "postgres"}, group="agent_fleet"
 - `trigger_swarms_scraper`: kinds={"swarms", "python"}, group="agent_fleet"
+- `trigger_datahub_tables`: kinds={"datahub"}, group="data_layer"
 - `sync_dbt_to_ontology`: kinds={"dbt", "datahub"}, group="data_layer"
 
 **Icon support:** Dagster has ~200 built-in icons (dbt, datahub, postgres, python all have icons).
@@ -131,6 +135,18 @@ in the Dagster UI, the detail panel shows a rich card with the framework icon, n
 description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 
 ## Development Progress
+
+### Phase 8 — Engine D: DataHub Metadata Wrapper (complete)
+- Created `agent_fleet/datahub_wrapper/main.py` — FastAPI on port 8085.
+- `GET /tables` queries DataHub GMS GraphQL for dbt platform datasets.
+- Parses URNs to extract clean table names, returns comma-separated list.
+- Returns 503 if DataHub unreachable (callers should fall back to mock data).
+- Uses `httpx.AsyncClient` — no ML frameworks, no agent SDKs.
+- Env vars: `DATAHUB_GMS_URL` (default: `http://localhost:8080/api/graphql`),
+  `DATAHUB_TOKEN` (optional).
+- Dagster asset: `trigger_datahub_tables` (GET to :8085/tables, group: data_layer).
+- CNB configs: Procfile + project.toml for port 8085.
+- GET `/health` for liveness probes.
 
 ### Phase 1 — Shared Contracts (complete)
 - Defined BAML contracts: `AgentTask`, `AgentResponse`, `SemanticResolution`,
