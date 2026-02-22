@@ -7,8 +7,10 @@ builder = "paketobuildpacks/builder-jammy-base"
 [[io.buildpacks.group]]
 id = "paketo-buildpacks/python"
 
-[io.buildpacks.build.env]
-BP_CPYTHON_VERSION = "3.12"
+[[io.buildpacks.build.env]]
+name = "BP_CPYTHON_VERSION"
+value = "3.12"
 
-[io.buildpacks.launch.env]
-PORT = "8084"
+[[io.buildpacks.launch.env]]
+name = "PORT"
+value = "8084"

@@ -7,10 +7,18 @@ builder = "paketobuildpacks/builder-jammy-base"
 [[io.buildpacks.group]]
 id = "paketo-buildpacks/python"
 
-[io.buildpacks.build.env]
-BP_CPYTHON_VERSION = "3.12"
+[[io.buildpacks.build.env]]
+name = "BP_CPYTHON_VERSION"
+value = "3.12"
 
-[io.buildpacks.launch.env]
-PORT = "3000"
-DAGSTER_HOME = "/workspace"
-PYTHONPATH = "/workspace/src"
+[[io.buildpacks.launch.env]]
+name = "PORT"
+value = "3000"
+
+[[io.buildpacks.launch.env]]
+name = "DAGSTER_HOME"
+value = "/workspace"
+
+[[io.buildpacks.launch.env]]
+name = "PYTHONPATH"
+value = "/workspace/src"
