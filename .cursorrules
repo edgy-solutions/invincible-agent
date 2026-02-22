@@ -129,6 +129,40 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - When adding new agent assets, create a matching SVG in `assets/icons/` and add
   a metadata card via `_icon_card(icon_name, title, description)`.
 
+## BPMN Dynamic Factory (src/iagent/defs/dynamic_factory.py)
+- Implements the Imperative-Declarative Hybrid Pattern: ops control flow
+  (imperative), AssetMaterialization tracks lineage (declarative).
+- `create_agent_op(task_node, input_names, gateway_branches)` generates `@op`.
+  - MUST `yield AssetMaterialization` (asset_key = task name).
+  - MUST `yield Output` so downstream ops receive data.
+  - MUST use `requests.post()` only — same isolation rules as orchestrator.
+  - Op name comes from `task_node["id"]` — must be a valid Python identifier.
+- **Exclusive gateway routing:** When `gateway_branches` is provided, the op
+  uses `Out(is_required=False)` per branch. At runtime, `_evaluate_condition()`
+  evaluates each branch's `condition_expression` against the HTTP response dict.
+  Only the FIRST matching branch gets `yield Output` — this implements XOR semantics.
+  Order branches so the "default" (no condition) branch is LAST.
+- `build_gateway_routing()` identifies tasks preceding exclusive gateways and
+  maps their outgoing branches. Only `type: "exclusive"` gateways trigger
+  multi-output routing; other gateway types are ignored.
+- `_resolve_direct_flows()` returns only non-gateway task→task edges.
+- `build_dynamic_jobs()` wires two types of DependencyDefinition:
+  - Direct edges: `DependencyDefinition(src_id, "result")`
+  - Gateway edges: `DependencyDefinition(src_id, "branch_{target_id}")`
+- `build_dynamic_jobs()` runs at **module-load time** — errors block
+  Dagster from starting. Wrap job construction in try/except and log errors.
+- Environment variables for Postgres: `BPMN_POSTGRES_HOST`, `BPMN_POSTGRES_PORT`,
+  `BPMN_POSTGRES_DB`, `BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`.
+- `AGENT_HTTP_TIMEOUT` controls the requests timeout (default 120s).
+
+## SQLAlchemy Model (agent_fleet/models.py)
+- `BPMNCatalog` maps to the `bpmn_catalog` Postgres table.
+- Uses `JSONB` for `bpmn_payload` — do NOT store as plain `Text`.
+- `updated_at` uses `onupdate=func.now()` in SQLAlchemy; the raw SQL script
+  uses a `BEFORE UPDATE` trigger for the same effect.
+- Schema changes must be reflected in BOTH `models.py` AND
+  `sql/create_bpmn_catalog.sql`.
+
 ## Git
 - Commit messages: imperative mood, ≤72 chars subject line.
 - Include `Co-Authored-By: Warp <agent@warp.dev>` when AI-assisted.

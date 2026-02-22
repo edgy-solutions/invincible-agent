@@ -85,6 +85,7 @@ src/iagent/
   defs/
     agent_routers.py          # @asset: HTTP dispatchers for Engines A, B, C, D
     data_layer.py             # @asset: dbt ↔ ontology ↔ DataHub sync
+    dynamic_factory.py        # Dynamic BPMN Factory: reads bpmn_catalog, generates jobs/ops
 
 agent_fleet/
   ontology_service/
@@ -103,6 +104,10 @@ agent_fleet/
   datahub_wrapper/
     main.py                   # Engine D: DataHub metadata wrapper (port 8085)
     Procfile / project.toml
+  models.py                   # SQLAlchemy ORM model for bpmn_catalog table
+
+sql/
+  create_bpmn_catalog.sql     # Raw SQL: CREATE TABLE + auto-update trigger
 
 baml_shared/
   baml_src/
@@ -221,6 +226,12 @@ All services expose `GET /health` for liveness probes.
 
 | Variable | Service | Default | Description |
 |----------|---------|---------|-------------|
+| `BPMN_POSTGRES_HOST` | Dagster | `localhost` | PostgreSQL host for bpmn_catalog |
+| `BPMN_POSTGRES_PORT` | Dagster | `5432` | PostgreSQL port for bpmn_catalog |
+| `BPMN_POSTGRES_DB` | Dagster | `iagent` | PostgreSQL database name |
+| `BPMN_POSTGRES_USER` | Dagster | `iagent` | PostgreSQL user |
+| `BPMN_POSTGRES_PASSWORD` | Dagster | `iagent` | PostgreSQL password |
+| `AGENT_HTTP_TIMEOUT` | Dagster | `120` | HTTP timeout (seconds) for agent calls from dynamic ops |
 | `LANGGRAPH_POSTGRES_URI` | Engine B | `postgresql://langgraph:langgraph@localhost:5432/langgraph` | PostgreSQL for checkpointer |
 | `SWARMS_MODEL` | Engine C | `gpt-4o-mini` | LLM model for Swarms agents |
 | `OPENAI_API_KEY` | Engine O, C | — | Required for LLM calls |
@@ -240,6 +251,47 @@ All services expose `GET /health` for liveness probes.
 6. **Stateful When Needed** — Engine B uses PostgreSQL-backed checkpointers for conversational memory.
 7. **No Dockerfiles** — Cloud Native Buildpacks produce OCI-compliant images.
 8. **Dagster as Router** — Pure HTTP dispatch via `requests`. No `PipesK8sClient`.
+9. **Imperative-Declarative Hybrid** — BPMN workflows use ops for control flow and `AssetMaterialization` for data lineage.
+
+---
+
+## Dynamic BPMN Interpreter
+
+The project includes a **Dynamic BPMN Factory** (`src/iagent/defs/dynamic_factory.py`) that reads simplified BPMN JSON definitions from a PostgreSQL `bpmn_catalog` table and generates Dagster jobs at module-load time.
+
+### How It Works
+
+```
+bpmn_catalog (Postgres)
+    │
+    ▼
+fetch_active_bpmn_models()   ← Phase 9.1
+    │
+    ▼
+create_agent_op() × N        ← Phase 9.2 (one @op per BPMN task)
+    │
+    ▼
+_resolve_task_to_task_flows() ← Collapses gateways into task→task edges
+    │
+    ▼
+GraphDefinition + DependencyDefinition
+    │
+    ▼
+.to_job(name=workflow_id)    ← Phase 9.3
+    │
+    ▼
+Definitions(jobs=[...])      ← Exposed to Dagster UI
+```
+
+### Database Setup
+
+Run the SQL script to create the `bpmn_catalog` table:
+
+```bash
+psql -h localhost -U iagent -d iagent -f sql/create_bpmn_catalog.sql
+```
+
+The table stores BPMN payloads as JSONB with tasks, gateways, and sequence flows. Each generated op POSTs to the agent endpoint defined in the BPMN task, yields an `AssetMaterialization` for lineage, and passes the result downstream via `Output`.
 
 ---
 

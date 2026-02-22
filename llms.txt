@@ -9,19 +9,22 @@
 
 ## Project structure
 
-- src/iagent/definitions.py        — Dagster entry point; auto-loads defs/ folder
-- src/iagent/defs/agent_routers.py — Dagster assets that POST to agent pods
-- src/iagent/defs/data_layer.py    — Dagster asset: dbt ↔ ontology ↔ DataHub sync
-- baml_shared/baml_src/contracts.baml — Shared data contracts (enums, classes)
+- src/iagent/definitions.py            — Dagster entry point; auto-loads defs/ folder
+- src/iagent/defs/agent_routers.py     — Dagster assets that POST to agent pods
+- src/iagent/defs/data_layer.py        — Dagster asset: dbt ↔ ontology ↔ DataHub sync
+- src/iagent/defs/dynamic_factory.py   — Dynamic BPMN Factory: reads bpmn_catalog, generates Dagster jobs/ops
+- baml_shared/baml_src/contracts.baml  — Shared data contracts (enums, classes)
 - baml_shared/baml_src/generators.baml — BAML codegen config (Python/Pydantic)
-- baml_shared/baml_client/           — Auto-generated Python client from BAML
+- baml_shared/baml_client/             — Auto-generated Python client from BAML
 - agent_fleet/ontology_service/main.py — Engine O: FastAPI ontology reasoner (port 8084)
 - agent_fleet/ontology_service/iof_mro.ttl — Dummy IOF/MIMOSA MRO ontology
 - agent_fleet/restate_analyst/main.py  — Engine A: Restate + Smolagents analyst (port 8081)
 - agent_fleet/langgraph_support/main.py — Engine B: LangGraph support agent (port 8082)
 - agent_fleet/swarms_scraper/main.py   — Engine C: Swarms.ai scraper/extraction (port 8083)
 - agent_fleet/datahub_wrapper/main.py  — Engine D: DataHub metadata wrapper (port 8085)
-- pyproject.toml                      — Project metadata & Dagster config
+- agent_fleet/models.py                — SQLAlchemy ORM model for bpmn_catalog table
+- sql/create_bpmn_catalog.sql          — Raw SQL to create bpmn_catalog table + trigger
+- pyproject.toml                       — Project metadata & Dagster config
 
 ## Architecture
 
@@ -30,7 +33,10 @@ The system follows a strictly decoupled, Polyglot Microservice architecture
 
 **Dagster Control Plane** — Ephemeral, lightweight pods. Uses only the
 `requests` library to trigger agents. Does NOT use `PipesK8sClient`. Dagster
-acts as the central router, determining which framework’s K8s URL to call.
+acts as the central router, determining which framework's K8s URL to call.
+Additionally, the Dynamic BPMN Factory reads workflow definitions from the
+`bpmn_catalog` Postgres table and generates Dagster @jobs/@ops at startup,
+implementing the Imperative-Declarative Hybrid Pattern.
 
 **Agent Fleet** — Multiple independent, permanent pods (or Knative-scaled)
 running FastAPI web servers. Each framework gets its own isolated codebase,
@@ -65,6 +71,33 @@ OCI image, and K8s Service.
 - `ClassifySustainmentIntent` — BAML function that classifies a query against
   dynamically-injected RDF ontology URIs (not hardcoded enums).
 
+## BPMN Dynamic Factory (Imperative-Declarative Hybrid)
+
+The Dynamic BPMN Factory (`src/iagent/defs/dynamic_factory.py`) reads BPMN
+workflow definitions from a Postgres `bpmn_catalog` table and generates Dagster
+@jobs and @ops at module-load time.
+
+**bpmn_catalog schema:**
+- workflow_id (TEXT, PK) — unique workflow identifier
+- name (TEXT) — human-readable workflow name
+- bpmn_payload (JSONB) — simplified BPMN JSON: tasks, gateways, sequence_flows
+- is_active (BOOLEAN) — only active workflows are loaded
+- created_at / updated_at (TIMESTAMPTZ) — timestamps with auto-update trigger
+
+**BPMN payload structure (JSON):**
+- tasks[]: id, name, type (service_task|user_task), agent_endpoint
+- gateways[]: id, name, type (exclusive)
+- sequence_flows[]: id, source_ref, target_ref, condition_expression
+
+**How it works:**
+1. `fetch_active_bpmn_models()` — queries Postgres for active workflows
+2. `create_agent_op(task_node, input_names)` — generates a @op that POSTs to
+   an agent endpoint, yields AssetMaterialization, yields Output
+3. `_resolve_task_to_task_flows()` — collapses gateways into direct task→task
+   edges via DFS (handles multi-hop gateway chains)
+4. `build_dynamic_jobs()` — wires ops via GraphDefinition + DependencyDefinition,
+   converts to JobDefinition, exposes via Definitions(jobs=...)
+
 ## Tech stack (V3 strict constraints)
 
 **Orchestration:** Dagster 1.12.x (Triggers, Routing, & Asset Catalog)
@@ -75,6 +108,7 @@ OCI image, and K8s Service.
 **Engine C:** Swarms.ai SequentialWorkflow (high-concurrency topologies)
 **Data Layer (implemented):** dbt (transformation), DataHub (catalog/glossary)
 **Data Layer (planned):** dlthub (ingestion), Neo4j (graph), Weaviate (vector)
+**Database:** PostgreSQL (bpmn_catalog table, LangGraph checkpointer)
 **Infra:** Python >=3.10, Hatchling, uv/pip, CNB `pack` CLI (no Dockerfiles), Kubernetes
 
 ## Dagster UI Notes
@@ -88,6 +122,7 @@ OCI image, and K8s Service.
   definition metadata via `MetadataValue.md()`. When you click an asset in the Dagster UI,
   the detail panel shows a rich card with the framework icon, name, and description.
 - Helper function `_icon_card()` in `agent_routers.py` reads SVGs and builds markdown cards.
+- Dynamic BPMN jobs appear in the Dagster UI Jobs section, named after their workflow_id.
 
 ## Development log
 
@@ -190,7 +225,7 @@ definition metadata — visible in the asset detail panel (click "Show Markdown"
 
 ### Phase 8 — Engine D: DataHub Metadata Wrapper
 Created `agent_fleet/datahub_wrapper/main.py` — a FastAPI service on port 8085
-that queries DataHub’s GMS GraphQL API to discover dbt platform datasets:
+that queries DataHub's GMS GraphQL API to discover dbt platform datasets:
 1. `GET /tables` executes a GraphQL `search` query filtered to `urn:li:dataPlatform:dbt`.
 2. Parses dataset URNs to extract clean table names (e.g. `stg_flight_logs`).
 3. Returns `{"available_tables": "table1, table2, ..."}` for LLM context.
@@ -200,3 +235,43 @@ Env vars: `DATAHUB_GMS_URL` (default: `http://localhost:8080/api/graphql`),
 `DATAHUB_TOKEN` (optional auth token).
 Added Dagster asset `trigger_datahub_tables` (GET to :8085/tables, group: data_layer).
 CNB buildpack configs: Procfile + project.toml for port 8085.
+
+### Phase 9 — Dynamic BPMN Interpreter (Recipe 2)
+Pivoted workflow builder to a simplified BPMN JSON model stored in Postgres.
+Created the dynamic BPMN factory in `src/iagent/defs/dynamic_factory.py`:
+
+**Phase 9.1 — Database Fetcher:**
+- `_get_connection()` connects to Postgres via env vars (BPMN_POSTGRES_HOST/PORT/DB/USER/PASSWORD).
+- `fetch_active_bpmn_models()` queries `bpmn_catalog WHERE is_active = TRUE`.
+- Returns list of {workflow_id, name, bpmn_payload} dicts. Gracefully returns []
+  if Postgres is unreachable.
+
+**Phase 9.2 — Dynamic Op Factory:**
+- `create_agent_op(task_node, input_names, gateway_branches)` generates a Dagster
+  `@op` at runtime.
+- Each op: `requests.post()` → agent endpoint, `yield AssetMaterialization` for
+  lineage, `yield Output` for downstream chaining.
+- Accepts `input_names` list so downstream ops declare In() slots for wiring.
+- Op name comes from `task_node["id"]`.
+- CRITICAL: When `gateway_branches` is provided (task precedes an exclusive
+  gateway), the op uses `Out(is_required=False)` for each branch. At runtime,
+  `_evaluate_condition()` evaluates each branch's `condition_expression` against
+  the HTTP response dict and yields Output to the FIRST matching branch only.
+  This implements BPMN exclusive (XOR) gateway semantics.
+
+**Phase 9.3 — Graph Builder:**
+- `build_gateway_routing()` analyzes BPMN topology to identify tasks preceding
+  exclusive gateways and maps their outgoing branches (target task + condition).
+- `_resolve_direct_flows()` returns only non-gateway task-to-task edges.
+- `build_dynamic_jobs()` separates direct edges (wired to `"result"` output)
+  from gateway edges (wired to `"branch_{target_id}"` output). Uses
+  GraphDefinition + DependencyDefinition, converts to JobDefinition.
+- Exposes all dynamic jobs via `Definitions(jobs=dynamic_jobs)` at module level.
+
+Supporting files:
+- `agent_fleet/models.py` — SQLAlchemy ORM model for `bpmn_catalog` table.
+- `sql/create_bpmn_catalog.sql` — raw CREATE TABLE + auto-update trigger + partial index.
+
+Env vars: `BPMN_POSTGRES_HOST`, `BPMN_POSTGRES_PORT`, `BPMN_POSTGRES_DB`,
+`BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`, `AGENT_HTTP_TIMEOUT` (default 120s).
+

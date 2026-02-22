@@ -25,6 +25,7 @@ src/iagent/
   defs/
     agent_routers.py      # @asset functions that POST to agent pods
     data_layer.py         # @asset: dbt ↔ ontology ↔ DataHub sync
+    dynamic_factory.py    # Dynamic BPMN Factory: reads bpmn_catalog, generates jobs/ops
 agent_fleet/
   ontology_service/
     main.py               # Engine O: FastAPI ontology reasoner (port 8084)
@@ -43,6 +44,13 @@ agent_fleet/
     main.py               # Engine C: Swarms.ai scraper/extraction (port 8083)
     Procfile              # CNB: uvicorn on port 8083
     project.toml          # CNB: Python 3.12, PORT=8083
+  datahub_wrapper/
+    main.py               # Engine D: DataHub metadata wrapper (port 8085)
+    Procfile              # CNB: uvicorn on port 8085
+    project.toml          # CNB: Python 3.12, PORT=8085
+  models.py               # SQLAlchemy ORM model for bpmn_catalog table
+sql/
+  create_bpmn_catalog.sql # Raw SQL: CREATE TABLE + trigger + index
 baml_shared/
   baml_src/
     contracts.baml        # Shared data contracts (source of truth)
@@ -67,6 +75,23 @@ pyproject.toml            # Project config
 2. Run `baml generate` to regenerate the Python client.
 3. Never hand-edit anything in `baml_shared/baml_client/`.
 4. Verify downstream agents still conform to the updated schema.
+
+### When adding a BPMN workflow to bpmn_catalog
+1. Insert a row into the `bpmn_catalog` table with a valid BPMN JSON payload.
+   The payload must have `tasks`, `gateways`, and `sequence_flows` arrays.
+2. Each task must have: `id`, `name`, `type` (service_task|user_task), `agent_endpoint`.
+3. Set `is_active = TRUE` so `dynamic_factory.py` picks it up on next load.
+4. Restart Dagster (or reload definitions) — `build_dynamic_jobs()` runs at
+   module-load time and generates jobs/ops from the catalog.
+5. The generated job appears in the Dagster UI Jobs tab, named by `workflow_id`.
+
+### When modifying dynamic_factory.py
+1. Dynamic ops use `requests.post()` only — same rules as orchestrator assets.
+2. Every op must `yield AssetMaterialization` for data lineage.
+3. Every op must `yield Output` so downstream ops can receive the result.
+4. Gateways are collapsed transparently — `_resolve_task_to_task_flows()` traces
+   through gateway nodes to find task-to-task edges.
+5. Test changes by inserting a sample BPMN payload and verifying the job graph.
 
 ### When adding dependencies
 1. Add to `[project.dependencies]` in `pyproject.toml`.
@@ -136,18 +161,6 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 
 ## Development Progress
 
-### Phase 8 — Engine D: DataHub Metadata Wrapper (complete)
-- Created `agent_fleet/datahub_wrapper/main.py` — FastAPI on port 8085.
-- `GET /tables` queries DataHub GMS GraphQL for dbt platform datasets.
-- Parses URNs to extract clean table names, returns comma-separated list.
-- Returns 503 if DataHub unreachable (callers should fall back to mock data).
-- Uses `httpx.AsyncClient` — no ML frameworks, no agent SDKs.
-- Env vars: `DATAHUB_GMS_URL` (default: `http://localhost:8080/api/graphql`),
-  `DATAHUB_TOKEN` (optional).
-- Dagster asset: `trigger_datahub_tables` (GET to :8085/tables, group: data_layer).
-- CNB configs: Procfile + project.toml for port 8085.
-- GET `/health` for liveness probes.
-
 ### Phase 1 — Shared Contracts (complete)
 - Defined BAML contracts: `AgentTask`, `AgentResponse`, `SemanticResolution`,
   `AgentStatus`.
@@ -212,3 +225,36 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - POSTs glossary term updates to DataHub GMS (gracefully handles offline).
 - Writes `mapping.ttl` linking dbt models to ontology URIs.
 - Proves Dagster keeps physical data (dbt) and semantic brain (ontology) in sync.
+
+### Phase 8 — Engine D: DataHub Metadata Wrapper (complete)
+- Created `agent_fleet/datahub_wrapper/main.py` — FastAPI on port 8085.
+- `GET /tables` queries DataHub GMS GraphQL for dbt platform datasets.
+- Parses URNs to extract clean table names, returns comma-separated list.
+- Returns 503 if DataHub unreachable (callers should fall back to mock data).
+- Uses `httpx.AsyncClient` — no ML frameworks, no agent SDKs.
+- Env vars: `DATAHUB_GMS_URL` (default: `http://localhost:8080/api/graphql`),
+  `DATAHUB_TOKEN` (optional).
+- Dagster asset: `trigger_datahub_tables` (GET to :8085/tables, group: data_layer).
+- CNB configs: Procfile + project.toml for port 8085.
+- GET `/health` for liveness probes.
+
+### Phase 9 — Dynamic BPMN Interpreter (in progress)
+- Implementing the Imperative-Declarative Hybrid Pattern in Dagster.
+- Created `src/iagent/defs/dynamic_factory.py` with three sub-phases:
+  - **9.1 Database Fetcher**: `fetch_active_bpmn_models()` queries `bpmn_catalog`
+    table via psycopg2. Gracefully returns `[]` on connection failure.
+  - **9.2 Dynamic Op Factory**: `create_agent_op(task_node, input_names, gateway_branches)`
+    generates `@op` at runtime — POSTs to agent endpoint, yields `AssetMaterialization`,
+    yields `Output` for downstream chaining. Tasks preceding exclusive gateways get
+    `Out(is_required=False)` per branch; `_evaluate_condition()` evaluates the
+    `condition_expression` against the HTTP response and yields only the first match.
+  - **9.3 Graph Builder**: `build_gateway_routing()` maps tasks to their gateway
+    branches. `_resolve_direct_flows()` handles non-gateway edges. `build_dynamic_jobs()`
+    wires both direct (`"result"`) and gateway (`"branch_{target_id}"`) outputs via
+    `GraphDefinition` + `DependencyDefinition`, converts to `JobDefinition`.
+- Supporting files:
+  - `agent_fleet/models.py` — SQLAlchemy ORM for `bpmn_catalog` table.
+  - `sql/create_bpmn_catalog.sql` — Raw SQL with auto-update trigger + partial index.
+- Env vars: `BPMN_POSTGRES_HOST`, `BPMN_POSTGRES_PORT`, `BPMN_POSTGRES_DB`,
+  `BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`, `AGENT_HTTP_TIMEOUT`.
+
