@@ -68,6 +68,15 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - Use `smolagents.CodeAgent` with `HfApiModel` for analysis tasks.
 - The proxy `/analyze` route forwards to `/restate/AnalystService/analyze`.
 - Return `AgentResponse` (validated via BAML types) from all handlers.
+- **BPMNWorkflowRunner** (`restate.Workflow`):
+  - `ServiceTask` → `ctx.run()` (durable HTTP POST to agent endpoint).
+  - `UserTask` → `ctx.promise("approval_{task_id}", type_hint=dict).value()`
+    suspends at zero cost. NEVER use polling loops.
+  - The `approve` handler resolves the promise:
+    `ctx.promise(name, type_hint=dict).resolve(payload)`.
+  - Approval endpoint: `POST /workflow/{wf}/task/{tid}/approve` calls
+    the `approve` handler via `RESTATE_INGRESS_URL`.
+  - `RESTATE_INGRESS_URL` env var (default: `http://localhost:8081/restate`).
 
 ## LangGraph Support (agent_fleet/langgraph_support/)
 - Engine B is entirely isolated — do NOT import Restate, Dagster, or smolagents.

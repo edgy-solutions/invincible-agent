@@ -35,7 +35,7 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 | Engine | Framework | Port | Endpoint | Role |
 |--------|-----------|------|----------|------|
 | **O** | rdflib + BAML | 8084 | `/resolve` | Ontology reasoner — translates NL → IOF/MIMOSA URIs |
-| **A** | Restate + Smolagents | 8081 | `/analyze` | Durable analyst — semantic pre-resolution → CodeAgent |
+| **A** | Restate + Smolagents | 8081 | `/analyze`, `/workflow/start`, `/workflow/{wf}/task/{tid}/approve` | Durable analyst + BPMN workflow runner |
 | **B** | LangGraph + PostgreSQL | 8082 | `/support` | Stateful support — conversational memory via checkpointer |
 | **C** | Swarms.ai | 8083 | `/scrape` | Stateless heavy compute — high-concurrency extraction |
 | **D** | httpx + DataHub GMS | 8085 | `/tables` | Metadata wrapper — queries DataHub for dbt dataset list |

@@ -191,6 +191,12 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Ontology pre-resolution injects `resolved_uri` + `suggested_dbt_models`
   into the CodeAgent prompt so it knows which tables to query.
 - Proxy route `POST /analyze` forwards to `/restate/AnalystService/analyze`.
+- Restate `Workflow("BPMNWorkflowRunner")` for durable BPMN task execution:
+  - `ServiceTask` → `ctx.run()` (durable HTTP POST).
+  - `UserTask` → `ctx.promise("approval_{task_id}").value()` (zero-cost waiting).
+  - `approve` handler resolves the promise, waking up the workflow.
+- `POST /workflow/start` — kicks off a workflow via Restate ingress.
+- `POST /workflow/{wf}/task/{tid}/approve` — resolves a paused UserTask.
 - GET `/health` for liveness probes.
 
 ### Phase 4 — Engine B: LangGraph Support Agent (complete)

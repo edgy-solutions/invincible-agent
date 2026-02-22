@@ -7,6 +7,12 @@ Before running the smolagents CodeAgent, the handler calls Engine O
 IOF/MIMOSA URI and suggested dbt models. This semantic context is then
 passed into the agent so it knows which database tables to query.
 
+Also contains the BPMNWorkflowRunner — a Restate Workflow that processes
+BPMN tasks sequentially.  ServiceTasks execute via ``ctx.run()``;
+UserTasks pause durably via ``ctx.promise().value()`` until a human
+resolves them through the ``POST /workflow/{wf}/task/{tid}/approve``
+endpoint.  Zero-cost waiting, crash-proof, no polling loops.
+
 Run: uvicorn agent_fleet.restate_analyst.main:app --host 0.0.0.0 --port 8081
 """
 
@@ -17,12 +23,14 @@ import sys
 import traceback
 from pathlib import Path
 
+import os
+
 import requests
 import restate
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from restate import Context, Service
+from restate import Context, Service, Workflow, WorkflowContext, WorkflowSharedContext
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to the Python path for the generated BAML types.
@@ -46,9 +54,14 @@ ONTOLOGY_RESOLVE_URL = (
     "http://ontology-agent-svc.default.svc.cluster.local:8084/resolve"
 )
 ONTOLOGY_TIMEOUT = 30  # seconds — ontology resolution is fast
+AGENT_HTTP_TIMEOUT = int(os.getenv("AGENT_HTTP_TIMEOUT", "120"))
+RESTATE_INGRESS_URL = os.getenv(
+    "RESTATE_INGRESS_URL",
+    "http://localhost:8081/restate",
+)
 
 # ---------------------------------------------------------------------------
-# Restate Service
+# Restate Service — AnalystService
 # ---------------------------------------------------------------------------
 analyst_service = Service("AnalystService")
 
@@ -137,6 +150,146 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Restate Workflow — BPMNWorkflowRunner
+# ---------------------------------------------------------------------------
+bpmn_workflow = Workflow("BPMNWorkflowRunner")
+
+
+def _execute_service_task(task: dict) -> dict:
+    """Execute a BPMN ServiceTask by POSTing to the agent endpoint.
+
+    This function runs inside ``ctx.run()`` for durable execution — if the
+    pod crashes mid-flight, Restate replays and skips this step if it
+    already completed.
+    """
+    agent_endpoint = task["agent_endpoint"]
+    payload = {
+        "task_description": task.get("name", task["id"]),
+        "task_id": task["id"],
+        "task_type": "service_task",
+    }
+    resp = requests.post(agent_endpoint, json=payload, timeout=AGENT_HTTP_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
+@bpmn_workflow.main()
+async def run(ctx: WorkflowContext, request: dict) -> dict:
+    """Process a list of BPMN tasks sequentially with durable execution.
+
+    For each task in the workflow:
+
+    - **ServiceTask**: Executes immediately via ``ctx.run()`` — the HTTP
+      POST to the agent endpoint is replay-safe.
+    - **UserTask**: Pauses durably via ``ctx.promise().value()``.  The
+      workflow suspends at zero infrastructure cost until a human calls
+      the ``approve`` handler to resolve the promise.  Crash-proof:
+      if the cluster loses power, Restate reads the journal on restart
+      and goes right back to waiting.
+
+    Args:
+        ctx: Restate workflow context (provides run, promise, etc.).
+        request: Dict with keys:
+            - ``workflow_id`` (str)
+            - ``tasks`` (list[dict]): Each dict has id, name, type,
+              agent_endpoint.
+
+    Returns:
+        A dict with the workflow_id, overall status, and per-task results.
+    """
+    workflow_id = request["workflow_id"]
+    tasks = request.get("tasks", [])
+    results: list[dict] = []
+
+    for task in tasks:
+        task_id = task["id"]
+        task_type = task.get("type", "service_task")
+        task_name = task.get("name", task_id)
+
+        if task_type == "service_task":
+            # ---- Durable HTTP call — replay-safe ----
+            result = await ctx.run(
+                f"exec_{task_id}",
+                lambda t=task: _execute_service_task(t),
+            )
+            results.append({
+                "task_id": task_id,
+                "task_name": task_name,
+                "task_type": task_type,
+                "status": result.get("status", "SUCCESS"),
+                "result": result,
+            })
+
+        elif task_type == "user_task":
+            # ---- Durable promise — zero-cost waiting ----
+            # The workflow suspends here indefinitely.  No polling, no
+            # CPU, no memory.  Restate holds a few bytes of journal
+            # state until a human resolves the promise.
+            promise_name = f"approval_{task_id}"
+            approval = await ctx.promise(promise_name, type_hint=dict).value()
+            results.append({
+                "task_id": task_id,
+                "task_name": task_name,
+                "task_type": task_type,
+                "status": approval.get("status", "APPROVED"),
+                "approval": approval,
+            })
+
+        else:
+            # Unknown task type — skip with warning
+            results.append({
+                "task_id": task_id,
+                "task_name": task_name,
+                "task_type": task_type,
+                "status": "SKIPPED",
+                "reason": f"Unknown task type: {task_type}",
+            })
+
+    return {
+        "workflow_id": workflow_id,
+        "status": "COMPLETED",
+        "task_results": results,
+    }
+
+
+@bpmn_workflow.handler()
+async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
+    """Resolve a durable promise to wake up a paused UserTask.
+
+    Called by the FastAPI ``/workflow/{wf}/task/{tid}/approve`` endpoint.
+    This resolves the promise that the ``run`` handler is awaiting,
+    causing the workflow to resume execution from exactly where it
+    left off.
+
+    Args:
+        ctx: Restate shared workflow context.
+        request: Dict with keys:
+            - ``task_id`` (str): The BPMN task to approve.
+            - ``status`` (str): e.g. "APPROVED" or "REJECTED".
+            - ``comments`` (str): Optional human comments.
+
+    Returns:
+        Confirmation dict.
+    """
+    task_id = request["task_id"]
+    promise_name = f"approval_{task_id}"
+
+    approval_payload = {
+        "status": request.get("status", "APPROVED"),
+        "comments": request.get("comments", ""),
+        "task_id": task_id,
+    }
+
+    await ctx.promise(promise_name, type_hint=dict).resolve(approval_payload)
+
+    return {
+        "message": f"Promise '{promise_name}' resolved — workflow will resume",
+        "task_id": task_id,
+        "status": approval_payload["status"],
+    }
+
+
+# ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
 app = FastAPI(
@@ -149,7 +302,7 @@ app = FastAPI(
 )
 
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow]))
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +345,97 @@ async def analyze_proxy(request: Request) -> JSONResponse:
                 "summary": f"Restate proxy call failed: {exc}",
                 "extracted_metrics": {},
             },
+            status_code=502,
+        )
+
+
+# ---------------------------------------------------------------------------
+# BPMN Workflow request models
+# ---------------------------------------------------------------------------
+class WorkflowStartRequest(BaseModel):
+    """Request to start a BPMN workflow run."""
+    workflow_id: str
+    tasks: list[dict]
+
+
+class ApprovalRequest(BaseModel):
+    """Request to approve (or reject) a paused UserTask."""
+    status: str = "APPROVED"
+    comments: str = ""
+
+
+# ---------------------------------------------------------------------------
+# POST /workflow/start — kick off a BPMN workflow
+# ---------------------------------------------------------------------------
+@app.post("/workflow/start")
+async def start_workflow(req: WorkflowStartRequest) -> JSONResponse:
+    """Start a new BPMN workflow execution via Restate.
+
+    Sends the task list to the BPMNWorkflowRunner's ``run`` handler.
+    The workflow_id is used as the Restate workflow key.
+    """
+    try:
+        resp = requests.post(
+            f"{RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{req.workflow_id}/run",
+            json={"workflow_id": req.workflow_id, "tasks": req.tasks},
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return JSONResponse(
+            content={"message": f"Workflow '{req.workflow_id}' started", "workflow_id": req.workflow_id},
+            status_code=202,
+        )
+    except requests.RequestException as exc:
+        return JSONResponse(
+            content={"error": f"Failed to start workflow: {exc}"},
+            status_code=502,
+        )
+
+
+# ---------------------------------------------------------------------------
+# POST /workflow/{workflow_id}/task/{task_id}/approve — resolve a UserTask
+# ---------------------------------------------------------------------------
+@app.post("/workflow/{workflow_id}/task/{task_id}/approve")
+async def approve_task(
+    workflow_id: str,
+    task_id: str,
+    req: ApprovalRequest,
+) -> JSONResponse:
+    """Approve (or reject) a paused BPMN UserTask.
+
+    This endpoint calls the BPMNWorkflowRunner's ``approve`` handler
+    via the Restate HTTP ingress.  The handler resolves the durable
+    promise that the ``run`` handler is awaiting, causing the workflow
+    to resume execution from exactly where it left off.
+
+    Zero-cost waiting: the workflow consumes no compute while paused.
+    Crash-proof: Restate replays from its journal on restart.
+    """
+    try:
+        resp = requests.post(
+            f"{RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{workflow_id}/approve",
+            json={
+                "task_id": task_id,
+                "status": req.status,
+                "comments": req.comments,
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return JSONResponse(
+            content={
+                "message": f"Task '{task_id}' in workflow '{workflow_id}' approved",
+                "workflow_id": workflow_id,
+                "task_id": task_id,
+                "status": req.status,
+            },
+            status_code=200,
+        )
+    except requests.RequestException as exc:
+        return JSONResponse(
+            content={"error": f"Failed to approve task: {exc}"},
             status_code=502,
         )
 

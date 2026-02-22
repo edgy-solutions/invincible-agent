@@ -163,6 +163,15 @@ backed by the Restate SDK for durable execution:
    `SemanticResolution` (resolved_uri + suggested_dbt_models).
 3. Then runs a smolagents `CodeAgent` (also via `ctx.run()`) with the semantic
    context injected so the agent knows which dbt tables to query.
+4. Restate `Workflow("BPMNWorkflowRunner")` for BPMN task execution:
+   - `run` handler processes tasks sequentially. `ServiceTask` → `ctx.run()`
+     (durable HTTP POST). `UserTask` → `ctx.promise("approval_{task_id}").value()`
+     (suspends at zero cost until a human resolves it).
+   - `approve` handler resolves the durable promise, waking up the workflow.
+5. FastAPI endpoints:
+   - `POST /workflow/start` — kicks off a BPMN workflow via Restate ingress.
+   - `POST /workflow/{workflow_id}/task/{task_id}/approve` — resolves a paused
+     UserTask by calling the `approve` handler through Restate.
 4. Returns `AgentResponse` (validated against BAML schema).
 5. Proxy route `POST /analyze` forwards to `/restate/AnalystService/analyze`
    so Dagster can trigger it with a simple HTTP call.
