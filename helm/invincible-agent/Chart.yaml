@@ -1,0 +1,15 @@
+apiVersion: v2
+name: invincible-agent
+description: >-
+  Invincible Agent — Multi-engine AI agent mesh orchestrated by Dagster.
+  Includes Restate durable execution, LangGraph support, Swarms.ai scraper,
+  DataHub wrapper, Ontology reasoner, and a dynamic BPMN workflow interpreter.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: postgresql
+    version: "16.4.1"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled

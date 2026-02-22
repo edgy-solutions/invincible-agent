@@ -1,0 +1,9 @@
+# Helm chart ignore patterns
+.git
+.gitignore
+.venv/
+__pycache__
+*.pyc
+tests/
+*.md
+!Chart.yaml

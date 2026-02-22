@@ -1,0 +1,88 @@
+{{/*
+  Agent Fleet — all 5 engines as Deployment + Service pairs.
+  Each engine is conditionally deployed via .enabled.
+*/}}
+
+{{- $engines := list
+  (dict "key" "engineO" "component" "engine-o" "values" .Values.engineO)
+  (dict "key" "engineA" "component" "engine-a" "values" .Values.engineA)
+  (dict "key" "engineB" "component" "engine-b" "values" .Values.engineB)
+  (dict "key" "engineC" "component" "engine-c" "values" .Values.engineC)
+  (dict "key" "engineD" "component" "engine-d" "values" .Values.engineD)
+}}
+
+{{- range $engines }}
+{{- $eng := .values }}
+{{- if $eng.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ .component }}
+  labels:
+    {{- include "invincible-agent.labels" $ | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 4 }}
+spec:
+  replicas: {{ $eng.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" $ | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 8 }}
+    spec:
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .component }}
+          image: {{ include "invincible-agent.image" (dict "name" $eng.image.name "tag" $eng.image.tag "root" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $eng.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ $.Release.Name }}-config
+            - secretRef:
+                name: {{ $.Release.Name }}-secrets
+          {{- if $eng.env }}
+          env:
+            {{- range $k, $v := $eng.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml $eng.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ .component }}
+  labels:
+    {{- include "invincible-agent.labels" $ | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" .component "root" $) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $eng.port }}
+      targetPort: http
+{{- end }}
+{{- end }}

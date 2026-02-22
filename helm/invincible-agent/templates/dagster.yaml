@@ -1,0 +1,143 @@
+# Dagster Webserver
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-dagster-webserver
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-webserver" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.dagster.webserver.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-webserver" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-webserver" "root" .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: webserver
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "tag" .Values.dagster.webserver.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "{{ .Values.dagster.webserver.port }}", "-w", "/dagster-workspace/workspace.yaml"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.dagster.webserver.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            - name: DAGSTER_POSTGRES_HOST
+              value: {{ include "invincible-agent.pgHost" . | quote }}
+            - name: DAGSTER_POSTGRES_PORT
+              value: "5432"
+            - name: DAGSTER_POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: DAGSTER_POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: DAGSTER_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: BPMN_POSTGRES_PASSWORD
+          volumeMounts:
+            - name: dagster-workspace
+              mountPath: /dagster-workspace
+          resources:
+            {{- toYaml .Values.dagster.webserver.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /server_info
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /server_info
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: dagster-workspace
+          configMap:
+            name: {{ .Release.Name }}-dagster-workspace
+---
+# Dagster Daemon
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-dagster-daemon
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-daemon" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.dagster.daemon.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-daemon" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-daemon" "root" .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: daemon
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "tag" .Values.dagster.webserver.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["dagster-daemon", "run", "-w", "/dagster-workspace/workspace.yaml"]
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            - name: DAGSTER_POSTGRES_HOST
+              value: {{ include "invincible-agent.pgHost" . | quote }}
+            - name: DAGSTER_POSTGRES_PORT
+              value: "5432"
+            - name: DAGSTER_POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: DAGSTER_POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: DAGSTER_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: BPMN_POSTGRES_PASSWORD
+          volumeMounts:
+            - name: dagster-workspace
+              mountPath: /dagster-workspace
+          resources:
+            {{- toYaml .Values.dagster.daemon.resources | nindent 12 }}
+      volumes:
+        - name: dagster-workspace
+          configMap:
+            name: {{ .Release.Name }}-dagster-workspace
+---
+# Dagster Webserver Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-dagster
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-webserver" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.dagster.webserver.port }}
+      targetPort: http

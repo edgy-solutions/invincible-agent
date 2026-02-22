@@ -1,0 +1,102 @@
+# Dagster User Code Deployment (Code Location Server)
+# Hosts the user's definitions and serves them to the webserver/daemon via gRPC.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-dagster-user-code
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-user-code" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.dagster.userCode.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-user-code" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-user-code" "root" .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: user-code
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "tag" .Values.dagster.userCode.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - dagster
+            - api
+            - grpc
+            - "-h"
+            - "0.0.0.0"
+            - "-p"
+            - "{{ .Values.dagster.userCode.port }}"
+            - "-m"
+            - "iagent.definitions"
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.dagster.userCode.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            - name: DAGSTER_POSTGRES_HOST
+              value: {{ include "invincible-agent.pgHost" . | quote }}
+            - name: DAGSTER_POSTGRES_PORT
+              value: "5432"
+            - name: DAGSTER_POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: DAGSTER_POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: DAGSTER_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: BPMN_POSTGRES_PASSWORD
+          resources:
+            {{- toYaml .Values.dagster.userCode.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["dagster", "api", "grpc-health-check", "-p", "{{ .Values.dagster.userCode.port }}"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["dagster", "api", "grpc-health-check", "-p", "{{ .Values.dagster.userCode.port }}"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+# User Code Service (gRPC)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-dagster-user-code
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "dagster-user-code" "root" .) | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.dagster.userCode.port }}
+      targetPort: grpc
+---
+# Dagster workspace.yaml — tells webserver + daemon where to find user code
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dagster-workspace
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  workspace.yaml: |
+    load_from:
+      - grpc_server:
+          host: {{ .Release.Name }}-dagster-user-code
+          port: {{ .Values.dagster.userCode.port }}
+          location_name: iagent

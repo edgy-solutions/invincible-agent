@@ -1,0 +1,79 @@
+{{- if .Values.restate.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-restate
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "restate" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.restate.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "restate" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "restate" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: restate
+          image: "{{ .Values.restate.image.repository }}:{{ .Values.restate.image.tag }}"
+          imagePullPolicy: {{ .Values.restate.image.pullPolicy }}
+          ports:
+            - name: ingress
+              containerPort: {{ .Values.restate.ingressPort }}
+            - name: admin
+              containerPort: {{ .Values.restate.adminPort }}
+          resources:
+            {{- toYaml .Values.restate.resources | nindent 12 }}
+          volumeMounts:
+            - name: restate-data
+              mountPath: /restate-data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: admin
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: restate-data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-restate-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-restate-data
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.restate.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-restate
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "restate" "root" .) | nindent 4 }}
+  ports:
+    - name: ingress
+      port: {{ .Values.restate.ingressPort }}
+      targetPort: ingress
+    - name: admin
+      port: {{ .Values.restate.adminPort }}
+      targetPort: admin
+{{- end }}

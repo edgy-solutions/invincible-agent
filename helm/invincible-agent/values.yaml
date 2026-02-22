@@ -1,0 +1,208 @@
+# ==========================================================================
+# Invincible Agent — Helm Values
+# ==========================================================================
+
+# -- Global image settings -------------------------------------------------
+global:
+  imageRegistry: ghcr.io
+  imagePrefix: edgy-solutions/invincible-agent
+  imagePullPolicy: IfNotPresent
+  # imagePullSecrets:
+  #   - name: ghcr-pull-secret
+
+# ==========================================================================
+# PostgreSQL
+# Set postgresql.enabled=false + externalPostgresql if you BYO Postgres.
+# ==========================================================================
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "changeme-postgres"
+    username: "iagent"
+    password: "changeme-iagent"
+    database: "iagent"
+  primary:
+    persistence:
+      size: 10Gi
+    initdb:
+      scriptsConfigMap: "{{ .Release.Name }}-initdb"
+
+# Use this when postgresql.enabled=false (bring your own Postgres)
+externalPostgresql:
+  host: ""
+  port: 5432
+  database: "iagent"
+  username: "iagent"
+  password: "changeme-iagent"
+
+# ==========================================================================
+# Restate Server
+# Set restate.enabled=false + externalRestate if you BYO Restate.
+# ==========================================================================
+restate:
+  enabled: true
+  image:
+    repository: docker.io/restatedev/restate
+    tag: "1.1"
+    pullPolicy: IfNotPresent
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  storage:
+    size: 5Gi
+  ingressPort: 8080
+  adminPort: 9070
+
+# Use this when restate.enabled=false (bring your own Restate)
+externalRestate:
+  ingressUrl: ""    # e.g. "http://my-restate.infra.svc:8080"
+  adminUrl: ""      # e.g. "http://my-restate.infra.svc:9070"
+
+# ==========================================================================
+# Dagster Control Plane
+# Set dagster.webserver.enabled / dagster.daemon.enabled = false if you
+# already run Dagster and only want the user code deployment.
+# ==========================================================================
+dagster:
+  webserver:
+    enabled: true
+    replicas: 1
+    image:
+      tag: ""  # defaults to .Chart.AppVersion
+    port: 3000
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  daemon:
+    enabled: true
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  userCode:
+    enabled: true
+    replicas: 1
+    image:
+      tag: ""  # defaults to .Chart.AppVersion
+    port: 4000
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  # When webserver/daemon are disabled, point to external Dagster's gRPC
+  externalWorkspace:
+    # Set to true if an external Dagster should discover this user code
+    registerWithExternal: false
+    # External Dagster admin URL for auto-registration (future use)
+    adminUrl: ""
+
+# ==========================================================================
+# Agent Fleet — Engine Configs
+# ==========================================================================
+
+engineO:
+  enabled: true
+  replicas: 1
+  image:
+    name: ontology-service
+    tag: ""
+  port: 8084
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env: {}
+
+engineA:
+  enabled: true
+  replicas: 1
+  image:
+    name: restate-analyst
+    tag: ""
+  port: 8081
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  env:
+    AGENT_HTTP_TIMEOUT: "120"
+
+engineB:
+  enabled: true
+  replicas: 1
+  image:
+    name: langgraph-support
+    tag: ""
+  port: 8082
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  env: {}
+
+engineC:
+  enabled: true
+  replicas: 1
+  image:
+    name: swarms-scraper
+    tag: ""
+  port: 8083
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  env:
+    SWARMS_MODEL: "gpt-4o-mini"
+
+engineD:
+  enabled: true
+  replicas: 1
+  image:
+    name: datahub-wrapper
+    tag: ""
+  port: 8085
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
+
+# ==========================================================================
+# Secrets — override these in your values-production.yaml
+# ==========================================================================
+secrets:
+  openaiApiKey: ""
+  hfToken: ""
+  datahubToken: ""

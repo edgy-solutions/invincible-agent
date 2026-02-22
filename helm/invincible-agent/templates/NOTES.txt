@@ -1,0 +1,45 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Your release "{{ .Release.Name }}" has been deployed.
+
+== Services ==
+
+  Dagster Webserver:
+    kubectl port-forward svc/{{ .Release.Name }}-dagster {{ .Values.dagster.webserver.port }}:{{ .Values.dagster.webserver.port }}
+    Then open: http://localhost:{{ .Values.dagster.webserver.port }}
+
+{{- if .Values.restate.enabled }}
+  Restate Server:
+    Ingress:  {{ .Release.Name }}-restate:{{ .Values.restate.ingressPort }}
+    Admin:    {{ .Release.Name }}-restate:{{ .Values.restate.adminPort }}
+{{- end }}
+
+  Agent Fleet:
+{{- if .Values.engineO.enabled }}
+    Engine O (Ontology):   {{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}
+{{- end }}
+{{- if .Values.engineA.enabled }}
+    Engine A (Restate):    {{ .Release.Name }}-engine-a:{{ .Values.engineA.port }}
+{{- end }}
+{{- if .Values.engineB.enabled }}
+    Engine B (LangGraph):  {{ .Release.Name }}-engine-b:{{ .Values.engineB.port }}
+{{- end }}
+{{- if .Values.engineC.enabled }}
+    Engine C (Swarms):     {{ .Release.Name }}-engine-c:{{ .Values.engineC.port }}
+{{- end }}
+{{- if .Values.engineD.enabled }}
+    Engine D (DataHub):    {{ .Release.Name }}-engine-d:{{ .Values.engineD.port }}
+{{- end }}
+
+== Quick Start ==
+
+  # Register Engine A with Restate
+  kubectl exec -it deploy/{{ .Release.Name }}-restate -- \
+    curl -X POST http://localhost:{{ .Values.restate.adminPort }}/deployments \
+      -H 'content-type: application/json' \
+      -d '{"uri": "http://{{ .Release.Name }}-engine-a:{{ .Values.engineA.port }}/restate"}'
+
+  # Verify BPMN catalog table
+  kubectl exec -it {{ .Release.Name }}-postgresql-0 -- \
+    psql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} \
+    -c "SELECT * FROM bpmn_catalog;"
