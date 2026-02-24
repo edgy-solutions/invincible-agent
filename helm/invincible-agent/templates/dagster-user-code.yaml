@@ -1,3 +1,4 @@
+{{- if .Values.dagster.userCode.enabled }}
 # Dagster User Code Deployment (Code Location Server)
 # Hosts the user's definitions and serves them to the webserver/daemon via gRPC.
 apiVersion: apps/v1
@@ -48,11 +49,11 @@ spec:
             - name: DAGSTER_POSTGRES_HOST
               value: {{ include "invincible-agent.pgHost" . | quote }}
             - name: DAGSTER_POSTGRES_PORT
-              value: "5432"
+              value: {{ include "invincible-agent.pgPort" . | quote }}
             - name: DAGSTER_POSTGRES_DB
-              value: {{ .Values.postgresql.auth.database | quote }}
+              value: {{ include "invincible-agent.pgDatabase" . | quote }}
             - name: DAGSTER_POSTGRES_USER
-              value: {{ .Values.postgresql.auth.username | quote }}
+              value: {{ include "invincible-agent.pgUser" . | quote }}
             - name: DAGSTER_POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -100,3 +101,4 @@ data:
           host: {{ .Release.Name }}-dagster-user-code
           port: {{ .Values.dagster.userCode.port }}
           location_name: iagent
+{{- end }}

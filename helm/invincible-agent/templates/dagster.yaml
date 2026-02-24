@@ -1,3 +1,4 @@
+{{- if .Values.dagster.webserver.enabled }}
 # Dagster Webserver
 apiVersion: apps/v1
 kind: Deployment
@@ -38,11 +39,11 @@ spec:
             - name: DAGSTER_POSTGRES_HOST
               value: {{ include "invincible-agent.pgHost" . | quote }}
             - name: DAGSTER_POSTGRES_PORT
-              value: "5432"
+              value: {{ include "invincible-agent.pgPort" . | quote }}
             - name: DAGSTER_POSTGRES_DB
-              value: {{ .Values.postgresql.auth.database | quote }}
+              value: {{ include "invincible-agent.pgDatabase" . | quote }}
             - name: DAGSTER_POSTGRES_USER
-              value: {{ .Values.postgresql.auth.username | quote }}
+              value: {{ include "invincible-agent.pgUser" . | quote }}
             - name: DAGSTER_POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -69,7 +70,9 @@ spec:
         - name: dagster-workspace
           configMap:
             name: {{ .Release.Name }}-dagster-workspace
+{{- end }}
 ---
+{{- if .Values.dagster.daemon.enabled }}
 # Dagster Daemon
 apiVersion: apps/v1
 kind: Deployment
@@ -126,7 +129,9 @@ spec:
         - name: dagster-workspace
           configMap:
             name: {{ .Release.Name }}-dagster-workspace
+{{- end }}
 ---
+{{- if .Values.dagster.webserver.enabled }}
 # Dagster Webserver Service
 apiVersion: v1
 kind: Service
@@ -141,3 +146,4 @@ spec:
     - name: http
       port: {{ .Values.dagster.webserver.port }}
       targetPort: http
+{{- end }}

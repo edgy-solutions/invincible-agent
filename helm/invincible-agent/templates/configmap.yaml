@@ -7,9 +7,9 @@ metadata:
 data:
   # PostgreSQL — shared by Dagster, LangGraph, BPMN factory
   BPMN_POSTGRES_HOST: {{ include "invincible-agent.pgHost" . | quote }}
-  BPMN_POSTGRES_PORT: "5432"
-  BPMN_POSTGRES_DB: {{ .Values.postgresql.auth.database | quote }}
-  BPMN_POSTGRES_USER: {{ .Values.postgresql.auth.username | quote }}
+  BPMN_POSTGRES_PORT: {{ include "invincible-agent.pgPort" . | quote }}
+  BPMN_POSTGRES_DB: {{ include "invincible-agent.pgDatabase" . | quote }}
+  BPMN_POSTGRES_USER: {{ include "invincible-agent.pgUser" . | quote }}
 
   # Agent HTTP timeout
   AGENT_HTTP_TIMEOUT: "120"
@@ -17,13 +17,14 @@ data:
   # LangGraph checkpointer
   LANGGRAPH_POSTGRES_URI: {{ include "invincible-agent.pgUri" . | quote }}
 
-  # Restate ingress URL (internal cluster DNS)
-  RESTATE_INGRESS_URL: "http://{{ .Release.Name }}-restate:{{ .Values.restate.ingressPort }}"
+  # Restate ingress URL
+  RESTATE_INGRESS_URL: {{ include "invincible-agent.restateIngressUrl" . | quote }}
 
   # Engine service URLs (Kubernetes DNS)
   ONTOLOGY_RESOLVE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}/resolve"
   DATAHUB_GMS_URL: {{ .Values.engineD.env.DATAHUB_GMS_URL | quote }}
   SWARMS_MODEL: {{ .Values.engineC.env.SWARMS_MODEL | quote }}
+{{- if .Values.postgresql.enabled }}
 ---
 # InitDB ConfigMap — runs sql/create_bpmn_catalog.sql on first boot
 apiVersion: v1
@@ -62,3 +63,4 @@ data:
         BEFORE UPDATE ON bpmn_catalog
         FOR EACH ROW
         EXECUTE FUNCTION update_bpmn_catalog_updated_at();
+{{- end }}

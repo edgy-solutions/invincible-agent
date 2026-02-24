@@ -98,3 +98,13 @@ http://{{ .Release.Name }}-restate:{{ .Values.restate.ingressPort }}
 {{ .Values.externalRestate.ingressUrl }}
 {{- end -}}
 {{- end }}
+{{/*
+Restate admin URL — uses in-chart deployment or external
+*/}}
+{{- define "invincible-agent.restateAdminUrl" -}}
+{{- if .Values.restate.enabled -}}
+http://{{ .Release.Name }}-restate:{{ .Values.restate.adminPort }}
+{{- else -}}
+{{ .Values.externalRestate.adminUrl }}
+{{- end -}}
+{{- end }}

@@ -4,9 +4,11 @@ Your release "{{ .Release.Name }}" has been deployed.
 
 == Services ==
 
+{{- if .Values.dagster.webserver.enabled }}
   Dagster Webserver:
     kubectl port-forward svc/{{ .Release.Name }}-dagster {{ .Values.dagster.webserver.port }}:{{ .Values.dagster.webserver.port }}
     Then open: http://localhost:{{ .Values.dagster.webserver.port }}
+{{- end }}
 
 {{- if .Values.restate.enabled }}
   Restate Server:
@@ -33,13 +35,13 @@ Your release "{{ .Release.Name }}" has been deployed.
 
 == Quick Start ==
 
-  # Register Engine A with Restate
-  kubectl exec -it deploy/{{ .Release.Name }}-restate -- \
-    curl -X POST http://localhost:{{ .Values.restate.adminPort }}/deployments \
+  # Register Engine A with Restate (must run curl against Restate admin port externally if Restate is not local)
+  kubectl exec -it deploy/{{ .Release.Name }}-engine-a -- \
+    curl -X POST {{ include "invincible-agent.restateAdminUrl" . }}/deployments \
       -H 'content-type: application/json' \
       -d '{"uri": "http://{{ .Release.Name }}-engine-a:{{ .Values.engineA.port }}/restate"}'
 
-  # Verify BPMN catalog table
-  kubectl exec -it {{ .Release.Name }}-postgresql-0 -- \
-    psql -U {{ .Values.postgresql.auth.username }} -d {{ .Values.postgresql.auth.database }} \
+  # Verify BPMN catalog table is accessible (can use external client if BYO Postgres)
+  kubectl exec -it {{ .Release.Name }}-engine-a -- \
+    psql -h {{ include "invincible-agent.pgHost" . }} -p {{ include "invincible-agent.pgPort" . }} -U {{ include "invincible-agent.pgUser" . }} -d {{ include "invincible-agent.pgDatabase" . }} \
     -c "SELECT * FROM bpmn_catalog;"
