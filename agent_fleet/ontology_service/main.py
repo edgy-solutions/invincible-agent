@@ -150,6 +150,11 @@ class ResolveRequest(BaseModel):
     query: str
 
 
+class PlanRequest(BaseModel):
+    """Incoming request to the /plan endpoint."""
+    query: str
+
+
 class SemanticResolutionResponse(BaseModel):
     """Mirrors the BAML SemanticResolution schema for the HTTP response."""
     resolved_uri: str
@@ -199,6 +204,25 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         confidence_score=result.confidence_score,
         suggested_dbt_models=result.suggested_dbt_models,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /plan
+# ---------------------------------------------------------------------------
+@app.post("/plan")
+async def plan_query(request: PlanRequest) -> dict:
+    """
+    Decompose a complex user query into a list of specific sub-tasks
+    assigned to different personas using the LLM.
+    """
+    try:
+        plan = await b.DecomposeQuery(raw_query=request.query)
+        return plan.model_dump()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"BAML decomposition failed: {exc}",
+        ) from exc
 
 
 # ---------------------------------------------------------------------------

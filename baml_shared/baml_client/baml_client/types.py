@@ -56,7 +56,7 @@ class PersonaTarget(str, Enum):
     AUDITOR = "AUDITOR"
 
 # #########################################################################
-# Generated classes (8)
+# Generated classes (10)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -73,6 +73,10 @@ class AgentTask(BaseModel):
     task_description: str = Field(description='Human-readable description of the work the agent should perform.')
     dataset_id: str = Field(description='Identifier for the target dataset or data asset in the mesh.')
     semantic_context: typing.Optional["SemanticResolution"] = Field(default=None, description='Optional pre-resolved semantic context. When present, agents can skip their own classification step.')
+
+class AgentTaskDefinition(BaseModel):
+    target_persona: PersonaTarget
+    sub_query: str
 
 class AuditResponse(BaseModel):
     non_compliant_nodes: typing.List[str]
@@ -105,6 +109,10 @@ class SemanticResolution(BaseModel):
     resolved_uri: str = Field(description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
     confidence_score: float = Field(description='Model confidence in the match, between 0.0 and 1.0.')
     suggested_dbt_models: typing.List[str] = Field(description='Ordered list of dbt model names relevant to the resolved concept.')
+
+class SupervisorTaskPlan(BaseModel):
+    tasks: typing.List["AgentTaskDefinition"]
+    reasoning: str
 
 # #########################################################################
 # Generated type aliases (0)

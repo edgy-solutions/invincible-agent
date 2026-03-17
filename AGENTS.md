@@ -140,7 +140,7 @@ These are the Kubernetes services the orchestrator communicates with:
 - **DataHub wrapper (Engine D)**: `GET http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables`
   Queries DataHub GMS GraphQL for dbt datasets. Returns
   `{"available_tables": "table1, table2, ..."}`. 503 if DataHub unreachable.
-- **Neo4j Graph Expert (Engine E)**: `POST http://engine-e.default.svc.cluster.local:8086/query_graph`
+- **Neo4j Graph Expert (Engine E)**: `POST http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph`
   Queries a Neo4j military graph database. Uses Restate for durable execution and
   smolagents `CodeAgent`. Returns rigidly typed BAML `GraphExpertResponse`.
 

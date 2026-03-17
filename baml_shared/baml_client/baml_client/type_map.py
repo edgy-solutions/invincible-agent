@@ -22,6 +22,9 @@ type_map = {
     "types.AgentTask": types.AgentTask,
     "stream_types.AgentTask": stream_types.AgentTask,
 
+    "types.AgentTaskDefinition": types.AgentTaskDefinition,
+    "stream_types.AgentTaskDefinition": stream_types.AgentTaskDefinition,
+
     "types.AuditResponse": types.AuditResponse,
     "stream_types.AuditResponse": stream_types.AuditResponse,
 
@@ -39,6 +42,9 @@ type_map = {
 
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
+
+    "types.SupervisorTaskPlan": types.SupervisorTaskPlan,
+    "stream_types.SupervisorTaskPlan": stream_types.SupervisorTaskPlan,
 
 
     "types.AgentStatus": types.AgentStatus,

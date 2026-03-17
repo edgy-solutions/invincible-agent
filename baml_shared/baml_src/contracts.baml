@@ -162,3 +162,34 @@ function FormatGraphResponse(raw_text: string, persona: PersonaTarget) -> GraphE
     {{ ctx.output_format }}
   "#
 }
+
+// =============================================================================
+// Phase 2: Dynamic Supervisor Planning Contracts
+// =============================================================================
+
+class AgentTaskDefinition {
+  target_persona PersonaTarget
+  sub_query string
+}
+
+class SupervisorTaskPlan {
+  tasks AgentTaskDefinition[]
+  reasoning string
+}
+
+function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
+  client "openai/gpt-4o"
+  prompt #"
+    Break this complex user query into discrete tasks.
+
+    User Query:
+    {{ raw_query }}
+
+    Instructions:
+    1. Assign each task to the correct specialized persona (MECHANIC, TECH_WRITER, LOGISTICS, AUDITOR).
+    2. If the query only needs one persona, return a list with just one task.
+    3. Provide your reasoning for why the query was split this way.
+
+    {{ ctx.output_format }}
+  "#
+}

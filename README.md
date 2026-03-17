@@ -225,7 +225,7 @@ pack build myregistry/neo4j-expert      --path ./agent_fleet/neo4j_expert      -
 | Engine B | `http://langgraph-agent-svc.default.svc.cluster.local:8082/support` |
 | Engine C | `http://swarms-agent-svc.default.svc.cluster.local:8083/scrape` |
 | Engine D | `http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables` |
-| Engine E | `http://engine-e.default.svc.cluster.local:8086/query_graph` |
+| Engine E | `http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph` |
 
 All services expose `GET /health` for liveness probes.
 

@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (8)
+# Generated classes (10)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -40,6 +40,10 @@ class AgentTask(BaseModel):
     task_description: typing.Optional[str] = Field(default=None, description='Human-readable description of the work the agent should perform.')
     dataset_id: typing.Optional[str] = Field(default=None, description='Identifier for the target dataset or data asset in the mesh.')
     semantic_context: typing.Optional["SemanticResolution"] = Field(default=None, description='Optional pre-resolved semantic context. When present, agents can skip their own classification step.')
+
+class AgentTaskDefinition(BaseModel):
+    target_persona: typing.Optional[types.PersonaTarget] = None
+    sub_query: typing.Optional[str] = None
 
 class AuditResponse(BaseModel):
     non_compliant_nodes: typing.List[str]
@@ -72,6 +76,10 @@ class SemanticResolution(BaseModel):
     resolved_uri: typing.Optional[str] = Field(default=None, description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
     confidence_score: typing.Optional[float] = Field(default=None, description='Model confidence in the match, between 0.0 and 1.0.')
     suggested_dbt_models: typing.List[str] = Field(description='Ordered list of dbt model names relevant to the resolved concept.')
+
+class SupervisorTaskPlan(BaseModel):
+    tasks: typing.List["AgentTaskDefinition"]
+    reasoning: typing.Optional[str] = None
 
 # #########################################################################
 # Generated type aliases (0)

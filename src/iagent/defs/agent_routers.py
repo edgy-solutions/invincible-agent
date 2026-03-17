@@ -145,7 +145,7 @@ def trigger_datahub_tables() -> dict:
 def trigger_neo4j_expert() -> dict:
     """Trigger Engine E (Neo4j Graph Expert) agent pod."""
     response = requests.post(
-        "http://engine-e.default.svc.cluster.local:8086/query_graph",
+        "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
         json={"user_query": "What are the common tools?", "persona": "MECHANIC"}, # Dummy payload for now as it wasn't specified
         timeout=120,
     )

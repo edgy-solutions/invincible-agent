@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AuditResponse","AuthoringResponse","GraphExpertResponse","LogisticsResponse","MechanicResponse","SemanticResolution",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","GraphExpertResponse","LogisticsResponse","MechanicResponse","SemanticResolution","SupervisorTaskPlan",]
         ), enums=set(
           ["AgentStatus","PersonaTarget",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -39,7 +39,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 8
+    # Generated classes 10
     # #########################################################################
 
     @property
@@ -49,6 +49,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def AgentTask(self) -> "AgentTaskViewer":
         return AgentTaskViewer(self)
+
+    @property
+    def AgentTaskDefinition(self) -> "AgentTaskDefinitionViewer":
+        return AgentTaskDefinitionViewer(self)
 
     @property
     def AuditResponse(self) -> "AuditResponseViewer":
@@ -73,6 +77,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def SemanticResolution(self) -> "SemanticResolutionViewer":
         return SemanticResolutionViewer(self)
+
+    @property
+    def SupervisorTaskPlan(self) -> "SupervisorTaskPlanViewer":
+        return SupervisorTaskPlanViewer(self)
 
 
 
@@ -178,7 +186,7 @@ class PersonaTargetValues:
 
 
 # #########################################################################
-# Generated classes 8
+# Generated classes 10
 # #########################################################################
 
 class AgentResponseAst:
@@ -271,6 +279,49 @@ class AgentTaskProperties:
     @property
     def semantic_context(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("semantic_context"))
+    
+    
+
+
+class AgentTaskDefinitionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("AgentTaskDefinition")
+        self._properties: typing.Set[str] = set([  "target_persona",  "sub_query",  ])
+        self._props = AgentTaskDefinitionProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "AgentTaskDefinitionProperties":
+        return self._props
+
+
+class AgentTaskDefinitionViewer(AgentTaskDefinitionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class AgentTaskDefinitionProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def target_persona(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("target_persona"))
+    
+    @property
+    def sub_query(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("sub_query"))
     
     
 
@@ -549,6 +600,49 @@ class SemanticResolutionProperties:
     @property
     def suggested_dbt_models(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("suggested_dbt_models"))
+    
+    
+
+
+class SupervisorTaskPlanAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SupervisorTaskPlan")
+        self._properties: typing.Set[str] = set([  "tasks",  "reasoning",  ])
+        self._props = SupervisorTaskPlanProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SupervisorTaskPlanProperties":
+        return self._props
+
+
+class SupervisorTaskPlanViewer(SupervisorTaskPlanAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SupervisorTaskPlanProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def tasks(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("tasks"))
+    
+    @property
+    def reasoning(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
     
     
 
