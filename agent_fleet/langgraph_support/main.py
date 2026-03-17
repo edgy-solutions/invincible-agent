@@ -18,13 +18,16 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Annotated
 
 from fastapi import FastAPI, HTTPException
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
+from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -59,6 +62,7 @@ class SupportState(TypedDict):
     triage_category: str
     response_summary: str
     extracted_metrics: dict[str, float]
+    messages: Annotated[list[Any], add_messages]
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +177,11 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 class SupportRequest(BaseModel):
     """Incoming request to the /support endpoint."""
-    task_description: str
-    dataset_id: str
     thread_id: str
+    user_query: str = ""
+    dagster_context: list | None = None
+    task_description: str = ""
+    dataset_id: str = ""
     semantic_context: dict | None = None
 
 
@@ -194,12 +200,22 @@ async def support(request: SupportRequest) -> dict:
 
     # Build initial state from the AgentTask fields
     initial_state: SupportState = {
-        "task_description": request.task_description,
-        "dataset_id": request.dataset_id,
+        "task_description": request.task_description or request.user_query,
+        "dataset_id": request.dataset_id or "default",
         "triage_category": "",
         "response_summary": "",
         "extracted_metrics": {},
+        "messages": [],
     }
+
+    if request.dagster_context:
+        initial_state["messages"].append(
+            SystemMessage(content=f"Dagster Context:\n{json.dumps(request.dagster_context)}")
+        )
+    if request.user_query:
+        initial_state["messages"].append(
+            HumanMessage(content=request.user_query)
+        )
 
     # Invoke with thread config for checkpointer memory
     config = {"configurable": {"thread_id": request.thread_id}}

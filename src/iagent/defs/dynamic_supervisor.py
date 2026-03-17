@@ -36,6 +36,7 @@ from dagster import (
 class SupervisorQueryConfig(Config):
     """Configuration for the supervisor job."""
     user_query: str
+    thread_id: str
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -92,20 +93,23 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(str))
-async def synthesize_stateless(config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> str:
+@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
+def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Fans-in the results from all parallel sub-tasks and synthesizes them
-    using the LLM (via BAML) to generate a cohesive Markdown report directly
-    inside Dagster.
+    Fans-in the results from all parallel sub-tasks and forwards them to
+    Engine B (LangGraph Support) to maintain conversational memory.
     """
-    # Dump the results list to a JSON string for the LLM
-    json_string = json.dumps(results)
-    
-    # Call the async BAML client
-    synthesis = await b.SynthesizeReports(config.user_query, json_string)
-    
-    return synthesis.markdown_report
+    response = requests.post(
+        "http://langgraph-agent-svc.default.svc.cluster.local:8082/support",
+        json={
+            "thread_id": config.thread_id,
+            "user_query": config.user_query,
+            "dagster_context": results,
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 @job
@@ -124,4 +128,4 @@ def supervisor_query_job():
     executed_results = dynamic_tasks.map(execute_subtask)
     
     # Collect the results and synthesize
-    synthesize_stateless(executed_results.collect())
+    synthesize_stateful(executed_results.collect())
