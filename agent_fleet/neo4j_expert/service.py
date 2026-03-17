@@ -2,8 +2,13 @@ import os
 import asyncio
 from typing import Dict, Any
 
+import os
+import asyncio
+from typing import Dict, Any
+
 from restate import Context, Service
 from smolagents import CodeAgent, HfApiModel
+from mem0 import Memory
 
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
@@ -22,11 +27,13 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     Expected Request Dict:
     {
       "user_query": "What tools are needed to remove the main rotor?",
-      "persona": "MECHANIC"
+      "persona": "MECHANIC",
+      "user_id": "mechanic_bob123"
     }
     """
     user_query = request.get("user_query")
     persona_str = request.get("persona", "MECHANIC").upper()
+    user_id = request.get("user_id")
     
     # Map raw string to BAML enum
     try:
@@ -37,9 +44,37 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     system_prompt = PERSONA_PROMPTS.get(persona_target, PERSONA_PROMPTS[PersonaTarget.MECHANIC])
 
     # --------------------------------------------------------------------------
+    # Initialize long-term memory via mem0 using Weaviate vector DB 
+    # (Survives K8s ephemeral pod restarts)
+    # --------------------------------------------------------------------------
+    weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate-svc:8080")
+    memory_config = {
+        "vector_store": {
+            "provider": "weaviate",
+            "config": {
+                "url": weaviate_url,
+                "api_key": os.getenv("WEAVIATE_API_KEY", "")
+            }
+        }
+    }
+    m = Memory.from_config(memory_config)
+
+    # --------------------------------------------------------------------------
     # Run 1: The Smolagents Graph Query Loop
     # --------------------------------------------------------------------------
     async def run_smolagent() -> str:
+        # Retrieve past successful memories to inject into the system prompt
+        if user_id:
+            past_memories = m.search(query=user_query, user_id=user_id)
+            if past_memories:
+                memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
+                prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
+                system_prompt_with_memory = system_prompt + prompt_extension
+            else:
+                system_prompt_with_memory = system_prompt
+        else:
+            system_prompt_with_memory = system_prompt
+
         # Initialize the LLM (configurable via env var, defaults to lightweight model)
         model_id = os.getenv("SMOLAGENTS_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
         model = HfApiModel(model_id=model_id)
@@ -48,7 +83,7 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
         agent = CodeAgent(
             tools=[execute_cypher, get_graph_schema],
             model=model,
-            system_prompt=system_prompt,
+            system_prompt=system_prompt_with_memory,
             add_base_tools=False
         )
         
@@ -70,5 +105,21 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
         return baml_response.model_dump()
         
     final_structured_dict = await ctx.run("format-baml", format_baml)
+    
+    # --------------------------------------------------------------------------
+    # Run 3: Save Successful Event to Memory
+    # --------------------------------------------------------------------------
+    async def save_memory() -> str:
+        if user_id:
+            m.add(
+                messages=[
+                    {"role": "user", "content": user_query},
+                    {"role": "assistant", "content": raw_agent_response}
+                ],
+                user_id=user_id
+            )
+        return "saved"
+    
+    await ctx.run("save-memory", save_memory)
     
     return final_structured_dict
