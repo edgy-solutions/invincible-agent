@@ -34,12 +34,12 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 
 | Engine | Framework | Port | Endpoint | Role |
 |--------|-----------|------|----------|------|
-| **O** | rdflib + BAML | 8084 | `/resolve` | Ontology reasoner — translates NL → IOF/MIMOSA URIs |
+| **O** | rdflib + BAML | 8084 | `/resolve`, `/plan` | Ontology reasoner — translates NL → IOF/MIMOSA URIs, dynamic decomposer |
 | **A** | Restate + Smolagents | 8081 | `/analyze`, `/workflow/start`, `/workflow/{wf}/task/{tid}/approve` | Durable analyst + BPMN workflow runner |
 | **B** | LangGraph + PostgreSQL | 8082 | `/support` | Stateful support — conversational memory via checkpointer |
 | **C** | Swarms.ai | 8083 | `/scrape` | Stateless heavy compute — high-concurrency extraction |
 | **D** | httpx + DataHub GMS | 8085 | `/tables` | Metadata wrapper — queries DataHub for dbt dataset list |
-| **E** | Restate + smolagents | 8086 | `/query_graph` | Neo4j Graph Expert — queries military technical manual DB |
+| **E** | Restate + smolagents + mem0 | 8086 | `/query_graph` | Neo4j Graph Expert — queries military technical manual DB w/ memory |
 
 ### Data Flow
 
@@ -87,6 +87,7 @@ src/iagent/
     agent_routers.py          # @asset: HTTP dispatchers for Engines A, B, C, D
     data_layer.py             # @asset: dbt ↔ ontology ↔ DataHub sync
     dynamic_factory.py        # Dynamic BPMN Factory: reads bpmn_catalog, generates jobs/ops
+    dynamic_supervisor.py     # Phase 2 Dynamic Fan-Out/Fan-In job for multi-domain queries
 
 agent_fleet/
   ontology_service/

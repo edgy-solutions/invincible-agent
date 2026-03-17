@@ -13,6 +13,7 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - **Data Layer (planned):** dlthub (ingestion), Neo4j (graph), Weaviate (vector).
 - Each engine gets its own isolated codebase, OCI image, and K8s Service.
   Do NOT mix framework imports across engines.
+- **Data Mesh Orchestration:** Uses dynamic fan-out/fan-in via Dagster and `baml` to orchestrate multi-domain queries.
 
 ## Language & Runtime
 - Python >=3.10, <3.15.
@@ -98,8 +99,14 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - Loads `.ttl` ontology files via `rdflib` on startup.
 - Uses SPARQL to extract active classes, then calls BAML
   `ClassifySustainmentIntent` to classify intent.
+- Exposes `/plan` endpoint using BAML `DecomposeQuery` for multi-domain routing.
 - Do NOT import ML frameworks, Dagster, or agent SDKs here.
 - The `.ttl` file lives alongside `main.py` in the service directory.
+
+## Neo4j Graph Expert (agent_fleet/neo4j_expert/)
+- Engine E uses the Restate SDK for durable execution and `smolagents` for cypher generation.
+- Uses `mem0` back by Weaviate vector DB to inject long-term episodic memory into the LLM system prompt for improved retrieval over time.
+- Returns `GraphExpertResponse` (validated via BAML types) from all handlers.
 
 ## Containerization (Cloud Native Buildpacks)
 - We do NOT use Dockerfiles. All OCI images are built with `pack` CLI.
@@ -120,7 +127,7 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 ## Kubernetes / Infra Conventions
 - Agent service URLs follow the pattern:
   `http://<service-name>.default.svc.cluster.local:<port>/<endpoint>`
-- Ontology reasoner (Engine O): port 8084, endpoint `/resolve`
+- Ontology reasoner (Engine O): port 8084, endpoint `/resolve` & `/plan`
 - Restate analyst: port 8081, endpoint `/analyze`
 - LangGraph support: port 8082, endpoint `/support`
 - Swarms scraper (Engine C): port 8083, endpoint `/scrape`

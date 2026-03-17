@@ -13,6 +13,7 @@
 - src/iagent/defs/agent_routers.py     — Dagster assets that POST to agent pods
 - src/iagent/defs/data_layer.py        — Dagster asset: dbt ↔ ontology ↔ DataHub sync
 - src/iagent/defs/dynamic_factory.py   — Dynamic BPMN Factory: reads bpmn_catalog, generates Dagster jobs/ops
+- src/iagent/defs/dynamic_supervisor.py — Phase 2 Dynamic Fan-Out/Fan-In job for multi-domain queries
 - baml_shared/baml_src/contracts.baml  — Shared data contracts (enums, classes)
 - baml_shared/baml_src/generators.baml — BAML codegen config (Python/Pydantic)
 - baml_shared/baml_client/             — Auto-generated Python client from BAML
@@ -22,6 +23,7 @@
 - agent_fleet/langgraph_support/main.py — Engine B: LangGraph support agent (port 8082)
 - agent_fleet/swarms_scraper/main.py   — Engine C: Swarms.ai scraper/extraction (port 8083)
 - agent_fleet/datahub_wrapper/main.py  — Engine D: DataHub metadata wrapper (port 8085)
+- agent_fleet/neo4j_expert/main.py     — Engine E: Neo4j Graph Expert (port 8086)
 - agent_fleet/models.py                — SQLAlchemy ORM model for bpmn_catalog table
 - sql/create_bpmn_catalog.sql          — Raw SQL to create bpmn_catalog table + trigger
 - pyproject.toml                       — Project metadata & Dagster config
@@ -44,7 +46,7 @@ OCI image, and K8s Service.
 
 1. **Dagster (this repo)** — Orchestrator / control plane.
 2. **Engine O** (rdflib + BAML) — Ontology reasoner. Translates NL → IOF/MIMOSA
-   URIs. Port 8084, `/resolve`.
+   URIs. Port 8084, `/resolve`, `/plan`.
 3. **Engine A** (Restate + Smolagents) — Durable analyst. Calls Engine O for
    semantic context, then runs a smolagents CodeAgent. Port 8081, `/analyze`.
 4. **Engine B** (LangGraph) — Stateful support. PostgreSQL-backed conversational
@@ -53,11 +55,14 @@ OCI image, and K8s Service.
    extraction/scraping. Port 8083, `/scrape`.
 6. **Engine D** (httpx + DataHub GMS) — Metadata wrapper. Queries DataHub
    GraphQL for dbt datasets, returns table list for LLM context. Port 8085, `/tables`.
-6. Agent pods are K8s services:
+7. **Engine E** (Restate + smolagents) — Neo4j Graph Expert. Queries graph DB 
+   and saves successful outcomes to `mem0` memory. Port 8086, `/query_graph`.
+8. Agent pods are K8s services:
    - `restate-agent-svc.default.svc.cluster.local:8081/analyze`
    - `langgraph-agent-svc.default.svc.cluster.local:8082/support`
    - `swarms-agent-svc.default.svc.cluster.local:8083/scrape`
    - `ontology-svc.default.svc.cluster.local:8084/resolve`
+   - `neo4j-expert-svc.default.svc.cluster.local:8086/query_graph`
 7. Dagster assets call agents via plain HTTP POST (no SDK imports).
 8. BAML contracts in `baml_shared/` define the canonical schemas
    (`AgentTask`, `AgentResponse`, `SemanticResolution`, etc.) shared by all services.
@@ -283,4 +288,16 @@ Supporting files:
 
 Env vars: `BPMN_POSTGRES_HOST`, `BPMN_POSTGRES_PORT`, `BPMN_POSTGRES_DB`,
 `BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`, `AGENT_HTTP_TIMEOUT` (default 120s).
+
+### Phase 10 — Engine E: Neo4j Graph Expert
+Created `agent_fleet/neo4j_expert/main.py` — FastAPI on port 8086.
+- Integrates Restate SDK with smolagents `CodeAgent` and BAML typing.
+- Evaluates queries against a military technical manual graph database (S1000D, IADS).
+- Added `trigger_neo4j_expert` remote asset to Dagster control plane.
+
+### Phase 11 — Dynamic Supervisor & Synthesis Recipes
+- **Phase 2 (Dynamic Fan-Out):** Upgraded Engine O with a `/plan` endpoint that scales multi-domain queries into lists using BAML `DecomposeQuery`. Written `dynamic_supervisor.py` for Dagster to asynchronously fan-out HTTP requests to Engine E for each persona-specific sub-task.
+- **Recipe 1 (Path A - Stateless Dagster Synthesis):** Configured Dagster to synthesize Engine E's JSON array into a cohesive Markdown report using `b.SynthesizeReports` entirely within the Dagster op (`synthesize_stateless`).
+- **Recipe 2 (Path B - Stateful LangGraph Synthesis):** Updated Dagster fan-in to pipe `dagster_context` json into Engine B (LangGraph Support) via `/support` payload, retaining `thread_id` to allow follow-up questions using memory.
+- **Recipe 3 (Phase 3 - Long-Term Episodic Memory):** Augmented Neo4j Graph Expert with long-term episodic memory via `mem0` paired with `weaviate-client`. Retrieves and saves past successful Cypher queries across ephemeral K8s pods into persistent Vector Storage.
 

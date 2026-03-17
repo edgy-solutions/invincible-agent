@@ -126,14 +126,14 @@ pyproject.toml            # Project config
 ## Agent Pod Endpoints
 These are the Kubernetes services the orchestrator communicates with:
 
-- **Ontology reasoner (Engine O)**: `POST http://ontology-svc.default.svc.cluster.local:8084/resolve`
-  Accepts `{"query": "..."}`, returns `SemanticResolution` JSON.
+- **Ontology reasoner (Engine O)**: `POST http://ontology-svc.default.svc.cluster.local:8084/resolve` and `POST /plan`
+  Accepts `{"query": "..."}`, returns `SemanticResolution` JSON (`/resolve`) or `SupervisorTaskPlan` (`/plan`).
 - **Restate analyst (Engine A)**: `POST http://restate-agent-svc.default.svc.cluster.local:8081/analyze`
   Accepts `AgentTask` JSON. Internally calls Engine O `/resolve` for semantic
   context, then runs smolagents CodeAgent. Returns `AgentResponse` JSON.
 - **LangGraph support (Engine B)**: `POST http://langgraph-agent-svc.default.svc.cluster.local:8082/support`
-  Accepts `{task_description, dataset_id, thread_id}` JSON. Uses `thread_id`
-  for PostgreSQL-backed conversational memory. Returns `AgentResponse` JSON.
+  Accepts `{thread_id, user_query, dagster_context?, task_description?, dataset_id?}` JSON. Uses `thread_id`
+  for PostgreSQL-backed conversational memory and injects `dagster_context` as a SystemMessage. Returns `AgentResponse` JSON.
 - **Swarms scraper (Engine C)**: `POST http://swarms-agent-svc.default.svc.cluster.local:8083/scrape`
   Accepts `{task_description, dataset_id, semantic_context?}` JSON. Stateless
   heavy compute node. Returns `AgentResponse` JSON.
@@ -141,8 +141,8 @@ These are the Kubernetes services the orchestrator communicates with:
   Queries DataHub GMS GraphQL for dbt datasets. Returns
   `{"available_tables": "table1, table2, ..."}`. 503 if DataHub unreachable.
 - **Neo4j Graph Expert (Engine E)**: `POST http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph`
-  Queries a Neo4j military graph database. Uses Restate for durable execution and
-  smolagents `CodeAgent`. Returns rigidly typed BAML `GraphExpertResponse`.
+  Queries a Neo4j military graph database. Uses Restate for durable execution,
+  smolagents `CodeAgent`, and `mem0` backed by Weaviate for long-term memory. Returns rigidly typed BAML `GraphExpertResponse`.
 
 ## Dagster UI Configuration
 
@@ -275,4 +275,11 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Defines explicit `@tool` for `execute_cypher` and `get_graph_schema` to allow the agent to self-correct.
 - Wraps execution in `ctx.run("run-smolagent")` and `ctx.run("format-baml")` for durable reliability.
 - Added `trigger_neo4j_expert` remote asset to Dagster control plane.
+
+### Phase 11 — Dynamic Supervisor & Synthesis Recipes (complete)
+- **Phase 2 (Dynamic Fan-Out):** Upgraded Engine O with a `/plan` endpoint that scales multi-domain queries into lists using BAML `DecomposeQuery`. Written `dynamic_supervisor.py` for Dagster to asynchronously fan-out HTTP requests to Engine E for each persona-specific sub-task.
+- **Recipe 1 (Path A - Stateless Dagster Synthesis):** Configured Dagster to synthesize Engine E's JSON array into a cohesive Markdown report using `b.SynthesizeReports` entirely within the Dagster op (`synthesize_stateless`).
+- **Recipe 2 (Path B - Stateful LangGraph Synthesis):** Updated Dagster fan-in to pipe `dagster_context` json into Engine B (LangGraph Support) via `/support` payload, retaining `thread_id` to allow follow-up questions using memory.
+- **Recipe 3 (Phase 3 - Long-Term Episodic Memory):** Augmented Neo4j Graph Expert with long-term episodic memory via `mem0` paired with `weaviate-client`. Retrieves and saves past successful Cypher queries across ephemeral K8s pods into persistent Vector Storage.
+
 
