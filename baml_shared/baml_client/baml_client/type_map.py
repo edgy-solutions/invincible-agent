@@ -31,6 +31,9 @@ type_map = {
     "types.AuthoringResponse": types.AuthoringResponse,
     "stream_types.AuthoringResponse": stream_types.AuthoringResponse,
 
+    "types.FinalSynthesis": types.FinalSynthesis,
+    "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
+
     "types.GraphExpertResponse": types.GraphExpertResponse,
     "stream_types.GraphExpertResponse": stream_types.GraphExpertResponse,
 

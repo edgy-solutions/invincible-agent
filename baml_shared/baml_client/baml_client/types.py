@@ -56,7 +56,7 @@ class PersonaTarget(str, Enum):
     AUDITOR = "AUDITOR"
 
 # #########################################################################
-# Generated classes (10)
+# Generated classes (11)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -86,6 +86,9 @@ class AuditResponse(BaseModel):
 class AuthoringResponse(BaseModel):
     generated_xml: str
     missing_info_flags: typing.List[str]
+
+class FinalSynthesis(BaseModel):
+    markdown_report: str
 
 class GraphExpertResponse(BaseModel):
     confidence_score: float

@@ -6,8 +6,21 @@ it into Persona-specific sub-tasks, fans those out concurrently to Engine E
 (Neo4j Graph Expert), and synthesizes the results.
 """
 
+import json
 import requests
+import sys
+from pathlib import Path
 from typing import List, Dict, Any
+
+# ---------------------------------------------------------------------------
+# Add baml_shared to Python path so we can import the generated client
+# ---------------------------------------------------------------------------
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
+if str(_BAML_CLIENT_PATH) not in sys.path:
+    sys.path.insert(0, str(_BAML_CLIENT_PATH))
+
+from baml_client import b
 
 from dagster import (
     DynamicOut,
@@ -79,17 +92,20 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
-def synthesize_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(str))
+async def synthesize_stateless(config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> str:
     """
-    Fans-in the results from all parallel sub-tasks.
-    Currently returns the combined results dictionary (LLM synthesis to be added later).
+    Fans-in the results from all parallel sub-tasks and synthesizes them
+    using the LLM (via BAML) to generate a cohesive Markdown report directly
+    inside Dagster.
     """
-    return {
-        "status": "success",
-        "total_subtasks": len(results),
-        "results": results,
-    }
+    # Dump the results list to a JSON string for the LLM
+    json_string = json.dumps(results)
+    
+    # Call the async BAML client
+    synthesis = await b.SynthesizeReports(config.user_query, json_string)
+    
+    return synthesis.markdown_report
 
 
 @job
@@ -108,4 +124,4 @@ def supervisor_query_job():
     executed_results = dynamic_tasks.map(execute_subtask)
     
     # Collect the results and synthesize
-    synthesize_results(executed_results.collect())
+    synthesize_stateless(executed_results.collect())

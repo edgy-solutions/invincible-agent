@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (10)
+# Generated classes (11)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -53,6 +53,9 @@ class AuditResponse(BaseModel):
 class AuthoringResponse(BaseModel):
     generated_xml: typing.Optional[str] = None
     missing_info_flags: typing.List[str]
+
+class FinalSynthesis(BaseModel):
+    markdown_report: typing.Optional[str] = None
 
 class GraphExpertResponse(BaseModel):
     confidence_score: typing.Optional[float] = None

@@ -127,6 +127,21 @@ class BamlAsyncClient:
                 "raw_text": raw_text,"persona": persona,
             })
             return typing.cast(types.GraphExpertResponse, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def SynthesizeReports(self, original_query: str,raw_json_results: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.FinalSynthesis:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.SynthesizeReports(original_query=original_query,raw_json_results=raw_json_results,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="SynthesizeReports", args={
+                "original_query": original_query,"raw_json_results": raw_json_results,
+            })
+            return typing.cast(types.FinalSynthesis, __result__.cast_to(types, types, stream_types, False, __runtime__))
     
 
 
@@ -172,6 +187,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.GraphExpertResponse, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def SynthesizeReports(self, original_query: str,raw_json_results: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.FinalSynthesis, types.FinalSynthesis]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="SynthesizeReports", args={
+            "original_query": original_query,"raw_json_results": raw_json_results,
+        })
+        return baml_py.BamlStream[stream_types.FinalSynthesis, types.FinalSynthesis](
+          __result__,
+          lambda x: typing.cast(stream_types.FinalSynthesis, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.FinalSynthesis, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     
 
 class BamlHttpRequestClient:
@@ -201,6 +228,13 @@ class BamlHttpRequestClient:
             "raw_text": raw_text,"persona": persona,
         }, mode="request")
         return __result__
+    async def SynthesizeReports(self, original_query: str,raw_json_results: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeReports", args={
+            "original_query": original_query,"raw_json_results": raw_json_results,
+        }, mode="request")
+        return __result__
     
 
 class BamlHttpStreamRequestClient:
@@ -228,6 +262,13 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="FormatGraphResponse", args={
             "raw_text": raw_text,"persona": persona,
+        }, mode="stream")
+        return __result__
+    async def SynthesizeReports(self, original_query: str,raw_json_results: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeReports", args={
+            "original_query": original_query,"raw_json_results": raw_json_results,
         }, mode="stream")
         return __result__
     

@@ -193,3 +193,32 @@ function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
     {{ ctx.output_format }}
   "#
 }
+
+// =============================================================================
+// Recipe 1 (Path A): Stateless Dagster Synthesis
+// =============================================================================
+
+class FinalSynthesis {
+  markdown_report string
+}
+
+function SynthesizeReports(original_query: string, raw_json_results: string) -> FinalSynthesis {
+  client "openai/gpt-4o"
+  prompt #"
+    You are a Principal Technical Writer. Your job is to synthesize an array of JSON results 
+    from our specialized Graph Expert agents into a single, cohesive, highly readable Markdown report.
+
+    Original User Query:
+    {{ original_query }}
+
+    Raw JSON Results from Agents:
+    {{ raw_json_results }}
+
+    Instructions:
+    1. Organize the findings logically based on the user's original query.
+    2. Format the output with clear headers, bullet points, and emphasis where needed.
+    3. Ensure the final report is beautiful, highly readable, and professional.
+
+    {{ ctx.output_format }}
+  "#
+}
