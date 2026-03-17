@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (1)
+# Generated enums (2)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -47,8 +47,16 @@ class AgentStatus(str, Enum):
     FAILED = "FAILED"
     HUMAN_REQUIRED = "HUMAN_REQUIRED"
 
+class PersonaTarget(str, Enum):
+    # Target persona for the graph expert response
+    
+    MECHANIC = "MECHANIC"
+    TECH_WRITER = "TECH_WRITER"
+    LOGISTICS = "LOGISTICS"
+    AUDITOR = "AUDITOR"
+
 # #########################################################################
-# Generated classes (3)
+# Generated classes (8)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -65,6 +73,30 @@ class AgentTask(BaseModel):
     task_description: str = Field(description='Human-readable description of the work the agent should perform.')
     dataset_id: str = Field(description='Identifier for the target dataset or data asset in the mesh.')
     semantic_context: typing.Optional["SemanticResolution"] = Field(default=None, description='Optional pre-resolved semantic context. When present, agents can skip their own classification step.')
+
+class AuditResponse(BaseModel):
+    non_compliant_nodes: typing.List[str]
+    rule_violated: str
+    recommended_fix: str
+
+class AuthoringResponse(BaseModel):
+    generated_xml: str
+    missing_info_flags: typing.List[str]
+
+class GraphExpertResponse(BaseModel):
+    confidence_score: float
+    referenced_uris: typing.List[str]
+    data: typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse"]
+
+class LogisticsResponse(BaseModel):
+    impacted_platforms: typing.List[str]
+    blocked_procedures: typing.List[str]
+    risk_severity: str
+
+class MechanicResponse(BaseModel):
+    tool_list: typing.List[str]
+    safety_warnings: typing.List[str]
+    short_answer: str
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

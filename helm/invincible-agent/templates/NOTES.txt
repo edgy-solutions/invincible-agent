@@ -32,6 +32,9 @@ Your release "{{ .Release.Name }}" has been deployed.
 {{- if .Values.engineD.enabled }}
     Engine D (DataHub):    {{ .Release.Name }}-engine-d:{{ .Values.engineD.port }}
 {{- end }}
+{{- if .Values.engineE.enabled }}
+    Engine E (Neo4j):      {{ .Release.Name }}-engine-e:{{ .Values.engineE.port }}
+{{- end }}
 
 == Quick Start ==
 

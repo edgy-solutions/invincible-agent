@@ -9,6 +9,7 @@
   (dict "key" "engineB" "component" "engine-b" "values" .Values.engineB)
   (dict "key" "engineC" "component" "engine-c" "values" .Values.engineC)
   (dict "key" "engineD" "component" "engine-d" "values" .Values.engineD)
+  (dict "key" "engineE" "component" "engine-e" "values" .Values.engineE)
 }}
 
 {{- range $engines }}

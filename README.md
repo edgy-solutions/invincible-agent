@@ -39,6 +39,7 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 | **B** | LangGraph + PostgreSQL | 8082 | `/support` | Stateful support — conversational memory via checkpointer |
 | **C** | Swarms.ai | 8083 | `/scrape` | Stateless heavy compute — high-concurrency extraction |
 | **D** | httpx + DataHub GMS | 8085 | `/tables` | Metadata wrapper — queries DataHub for dbt dataset list |
+| **E** | Restate + smolagents | 8086 | `/query_graph` | Neo4j Graph Expert — queries military technical manual DB |
 
 ### Data Flow
 
@@ -103,6 +104,9 @@ agent_fleet/
     Procfile / project.toml
   datahub_wrapper/
     main.py                   # Engine D: DataHub metadata wrapper (port 8085)
+    Procfile / project.toml
+  neo4j_expert/
+    main.py                   # Engine E: Neo4j Graph Expert (port 8086)
     Procfile / project.toml
   models.py                   # SQLAlchemy ORM model for bpmn_catalog table
 
@@ -190,6 +194,9 @@ uvicorn agent_fleet.swarms_scraper.main:app --port 8083
 
 # Engine D — DataHub Wrapper
 uvicorn agent_fleet.datahub_wrapper.main:app --port 8085
+
+# Engine E — Neo4j Graph Expert
+uvicorn agent_fleet.neo4j_expert.main:app --port 8086
 ```
 
 ---
@@ -204,6 +211,7 @@ pack build myregistry/restate-analyst   --path ./agent_fleet/restate_analyst   -
 pack build myregistry/langgraph-support --path ./agent_fleet/langgraph_support --builder paketobuildpacks/builder-jammy-base
 pack build myregistry/swarms-scraper    --path ./agent_fleet/swarms_scraper    --builder paketobuildpacks/builder-jammy-base
 pack build myregistry/datahub-wrapper   --path ./agent_fleet/datahub_wrapper   --builder paketobuildpacks/builder-jammy-base
+pack build myregistry/neo4j-expert      --path ./agent_fleet/neo4j_expert      --builder paketobuildpacks/builder-jammy-base
 ```
 
 ---
@@ -217,6 +225,7 @@ pack build myregistry/datahub-wrapper   --path ./agent_fleet/datahub_wrapper   -
 | Engine B | `http://langgraph-agent-svc.default.svc.cluster.local:8082/support` |
 | Engine C | `http://swarms-agent-svc.default.svc.cluster.local:8083/scrape` |
 | Engine D | `http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables` |
+| Engine E | `http://engine-e.default.svc.cluster.local:8086/query_graph` |
 
 All services expose `GET /health` for liveness probes.
 

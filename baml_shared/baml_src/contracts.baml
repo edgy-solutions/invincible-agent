@@ -102,3 +102,63 @@ function ClassifySustainmentIntent(query: string, active_ontology_classes: strin
     {{ ctx.output_format }}
   "#
 }
+
+// =============================================================================
+// Engine E (Neo4j Graph Expert) Data Contracts
+// =============================================================================
+
+/// Target persona for the graph expert response
+enum PersonaTarget {
+  MECHANIC
+  TECH_WRITER
+  LOGISTICS
+  AUDITOR
+}
+
+class MechanicResponse {
+  tool_list string[]
+  safety_warnings string[]
+  short_answer string
+}
+
+class AuthoringResponse {
+  generated_xml string
+  missing_info_flags string[]
+}
+
+class LogisticsResponse {
+  impacted_platforms string[]
+  blocked_procedures string[]
+  risk_severity string
+}
+
+class AuditResponse {
+  non_compliant_nodes string[]
+  rule_violated string
+  recommended_fix string
+}
+
+class GraphExpertResponse {
+  confidence_score float
+  referenced_uris string[]
+  data MechanicResponse | AuthoringResponse | LogisticsResponse | AuditResponse
+}
+
+function FormatGraphResponse(raw_text: string, persona: PersonaTarget) -> GraphExpertResponse {
+  client "openai/gpt-4o"
+  prompt #"
+    You are a technical data formatting expert.
+    Turn the following raw data extracted from a Neo4j military graph database
+    into a structured response tailored for a {{ persona }}.
+
+    Raw Grapy Query Results:
+    {{ raw_text }}
+
+    Instructions:
+    1. Parse the raw text carefully.
+    2. Format it into the specific response structure required for a {{ persona }}.
+    3. Include a confidence score and a list of any referenced URIs.
+
+    {{ ctx.output_format }}
+  "#
+}

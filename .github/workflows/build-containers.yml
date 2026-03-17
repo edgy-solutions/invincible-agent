@@ -44,6 +44,9 @@ jobs:
           - service: datahub-wrapper
             path: agent_fleet/datahub_wrapper
             port: "8085"
+          - service: neo4j-expert
+            path: agent_fleet/neo4j_expert
+            port: "8086"
 
     steps:
       - name: Checkout

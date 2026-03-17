@@ -20,22 +20,26 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","SemanticResolution",]
+          ["AgentResponse","AgentTask","AuditResponse","AuthoringResponse","GraphExpertResponse","LogisticsResponse","MechanicResponse","SemanticResolution",]
         ), enums=set(
-          ["AgentStatus",]
+          ["AgentStatus","PersonaTarget",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 1
+    # Generated enums 2
     # #########################################################################
 
     @property
     def AgentStatus(self) -> "AgentStatusViewer":
         return AgentStatusViewer(self)
 
+    @property
+    def PersonaTarget(self) -> "PersonaTargetViewer":
+        return PersonaTargetViewer(self)
+
 
     # #########################################################################
-    # Generated classes 3
+    # Generated classes 8
     # #########################################################################
 
     @property
@@ -47,13 +51,33 @@ class TypeBuilder(type_builder.TypeBuilder):
         return AgentTaskViewer(self)
 
     @property
+    def AuditResponse(self) -> "AuditResponseViewer":
+        return AuditResponseViewer(self)
+
+    @property
+    def AuthoringResponse(self) -> "AuthoringResponseViewer":
+        return AuthoringResponseViewer(self)
+
+    @property
+    def GraphExpertResponse(self) -> "GraphExpertResponseViewer":
+        return GraphExpertResponseViewer(self)
+
+    @property
+    def LogisticsResponse(self) -> "LogisticsResponseViewer":
+        return LogisticsResponseViewer(self)
+
+    @property
+    def MechanicResponse(self) -> "MechanicResponseViewer":
+        return MechanicResponseViewer(self)
+
+    @property
     def SemanticResolution(self) -> "SemanticResolutionViewer":
         return SemanticResolutionViewer(self)
 
 
 
 # #########################################################################
-# Generated enums 1
+# Generated enums 2
 # #########################################################################
 
 class AgentStatusAst:
@@ -102,9 +126,59 @@ class AgentStatusValues:
     
 
 
+class PersonaTargetAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("PersonaTarget")
+        self._values: typing.Set[str] = set([  "MECHANIC",  "TECH_WRITER",  "LOGISTICS",  "AUDITOR",  ])
+        self._vals = PersonaTargetValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "PersonaTargetValues":
+        return self._vals
+
+
+class PersonaTargetViewer(PersonaTargetAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class PersonaTargetValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def MECHANIC(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("MECHANIC"))
+    
+    @property
+    def TECH_WRITER(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("TECH_WRITER"))
+    
+    @property
+    def LOGISTICS(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("LOGISTICS"))
+    
+    @property
+    def AUDITOR(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("AUDITOR"))
+    
+    
+
+
 
 # #########################################################################
-# Generated classes 3
+# Generated classes 8
 # #########################################################################
 
 class AgentResponseAst:
@@ -197,6 +271,237 @@ class AgentTaskProperties:
     @property
     def semantic_context(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("semantic_context"))
+    
+    
+
+
+class AuditResponseAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("AuditResponse")
+        self._properties: typing.Set[str] = set([  "non_compliant_nodes",  "rule_violated",  "recommended_fix",  ])
+        self._props = AuditResponseProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "AuditResponseProperties":
+        return self._props
+
+
+class AuditResponseViewer(AuditResponseAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class AuditResponseProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def non_compliant_nodes(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("non_compliant_nodes"))
+    
+    @property
+    def rule_violated(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("rule_violated"))
+    
+    @property
+    def recommended_fix(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("recommended_fix"))
+    
+    
+
+
+class AuthoringResponseAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("AuthoringResponse")
+        self._properties: typing.Set[str] = set([  "generated_xml",  "missing_info_flags",  ])
+        self._props = AuthoringResponseProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "AuthoringResponseProperties":
+        return self._props
+
+
+class AuthoringResponseViewer(AuthoringResponseAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class AuthoringResponseProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def generated_xml(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("generated_xml"))
+    
+    @property
+    def missing_info_flags(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("missing_info_flags"))
+    
+    
+
+
+class GraphExpertResponseAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("GraphExpertResponse")
+        self._properties: typing.Set[str] = set([  "confidence_score",  "referenced_uris",  "data",  ])
+        self._props = GraphExpertResponseProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "GraphExpertResponseProperties":
+        return self._props
+
+
+class GraphExpertResponseViewer(GraphExpertResponseAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class GraphExpertResponseProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def confidence_score(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("confidence_score"))
+    
+    @property
+    def referenced_uris(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("referenced_uris"))
+    
+    @property
+    def data(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("data"))
+    
+    
+
+
+class LogisticsResponseAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("LogisticsResponse")
+        self._properties: typing.Set[str] = set([  "impacted_platforms",  "blocked_procedures",  "risk_severity",  ])
+        self._props = LogisticsResponseProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "LogisticsResponseProperties":
+        return self._props
+
+
+class LogisticsResponseViewer(LogisticsResponseAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class LogisticsResponseProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def impacted_platforms(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("impacted_platforms"))
+    
+    @property
+    def blocked_procedures(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("blocked_procedures"))
+    
+    @property
+    def risk_severity(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("risk_severity"))
+    
+    
+
+
+class MechanicResponseAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MechanicResponse")
+        self._properties: typing.Set[str] = set([  "tool_list",  "safety_warnings",  "short_answer",  ])
+        self._props = MechanicResponseProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MechanicResponseProperties":
+        return self._props
+
+
+class MechanicResponseViewer(MechanicResponseAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MechanicResponseProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def tool_list(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("tool_list"))
+    
+    @property
+    def safety_warnings(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("safety_warnings"))
+    
+    @property
+    def short_answer(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("short_answer"))
     
     
 

@@ -140,6 +140,9 @@ These are the Kubernetes services the orchestrator communicates with:
 - **DataHub wrapper (Engine D)**: `GET http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables`
   Queries DataHub GMS GraphQL for dbt datasets. Returns
   `{"available_tables": "table1, table2, ..."}`. 503 if DataHub unreachable.
+- **Neo4j Graph Expert (Engine E)**: `POST http://engine-e.default.svc.cluster.local:8086/query_graph`
+  Queries a Neo4j military graph database. Uses Restate for durable execution and
+  smolagents `CodeAgent`. Returns rigidly typed BAML `GraphExpertResponse`.
 
 ## Dagster UI Configuration
 
@@ -148,6 +151,7 @@ Assets are configured with `kinds` and `group_name` for UI badges:
 - `trigger_langgraph_support`: kinds={"langgraph", "postgres"}, group="agent_fleet"
 - `trigger_swarms_scraper`: kinds={"swarms", "python"}, group="agent_fleet"
 - `trigger_datahub_tables`: kinds={"datahub"}, group="data_layer"
+- `trigger_neo4j_expert`: kinds={"restate", "python", "smolagents", "neo4j"}, group="agent_fleet"
 - `sync_dbt_to_ontology`: kinds={"dbt", "datahub"}, group="data_layer"
 
 **Icon support:** Dagster has ~200 built-in icons (dbt, datahub, postgres, python all have icons).
@@ -263,4 +267,12 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
   - `sql/create_bpmn_catalog.sql` — Raw SQL with auto-update trigger + partial index.
 - Env vars: `BPMN_POSTGRES_HOST`, `BPMN_POSTGRES_PORT`, `BPMN_POSTGRES_DB`,
   `BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`, `AGENT_HTTP_TIMEOUT`.
+
+### Phase 10 — Engine E: Neo4j Graph Expert (complete)
+- Created `agent_fleet/neo4j_expert/main.py` — FastAPI on port 8086.
+- Integrates Restate SDK with smolagents `CodeAgent` and BAML typing.
+- Evaluates queries against a military technical manual graph database (S1000D, IADS).
+- Defines explicit `@tool` for `execute_cypher` and `get_graph_schema` to allow the agent to self-correct.
+- Wraps execution in `ctx.run("run-smolagent")` and `ctx.run("format-baml")` for durable reliability.
+- Added `trigger_neo4j_expert` remote asset to Dagster control plane.
 

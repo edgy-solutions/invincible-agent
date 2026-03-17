@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (3)
+# Generated classes (8)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -40,6 +40,30 @@ class AgentTask(BaseModel):
     task_description: typing.Optional[str] = Field(default=None, description='Human-readable description of the work the agent should perform.')
     dataset_id: typing.Optional[str] = Field(default=None, description='Identifier for the target dataset or data asset in the mesh.')
     semantic_context: typing.Optional["SemanticResolution"] = Field(default=None, description='Optional pre-resolved semantic context. When present, agents can skip their own classification step.')
+
+class AuditResponse(BaseModel):
+    non_compliant_nodes: typing.List[str]
+    rule_violated: typing.Optional[str] = None
+    recommended_fix: typing.Optional[str] = None
+
+class AuthoringResponse(BaseModel):
+    generated_xml: typing.Optional[str] = None
+    missing_info_flags: typing.List[str]
+
+class GraphExpertResponse(BaseModel):
+    confidence_score: typing.Optional[float] = None
+    referenced_uris: typing.List[str]
+    data: typing.Optional[typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse"]] = None
+
+class LogisticsResponse(BaseModel):
+    impacted_platforms: typing.List[str]
+    blocked_procedures: typing.List[str]
+    risk_severity: typing.Optional[str] = None
+
+class MechanicResponse(BaseModel):
+    tool_list: typing.List[str]
+    safety_warnings: typing.List[str]
+    short_answer: typing.Optional[str] = None
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

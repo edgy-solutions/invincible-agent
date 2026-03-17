@@ -126,3 +126,28 @@ def trigger_datahub_tables() -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+@asset(
+    kinds={"restate", "python", "smolagents", "neo4j"},
+    group_name="agent_fleet",
+    metadata={
+        "Engine E": _icon_card(
+            "restate",  # Neo4j uses Restate for durable execution
+            "Engine E: Neo4j Graph Expert",
+            "Queries the military technical manual Neo4j graph using a smolagents "
+            "CodeAgent with standard Cypher and Schema tools. Execution is made "
+            "durable via Restate SDK.\n\n"
+            "**Endpoint:** `POST :8086/query_graph`",
+        ),
+    },
+)
+def trigger_neo4j_expert() -> dict:
+    """Trigger Engine E (Neo4j Graph Expert) agent pod."""
+    response = requests.post(
+        "http://engine-e.default.svc.cluster.local:8086/query_graph",
+        json={"user_query": "What are the common tools?", "persona": "MECHANIC"}, # Dummy payload for now as it wasn't specified
+        timeout=120,
+    )
+    response.raise_for_status()
+    return response.json()

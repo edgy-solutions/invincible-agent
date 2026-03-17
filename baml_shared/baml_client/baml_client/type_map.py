@@ -22,10 +22,27 @@ type_map = {
     "types.AgentTask": types.AgentTask,
     "stream_types.AgentTask": stream_types.AgentTask,
 
+    "types.AuditResponse": types.AuditResponse,
+    "stream_types.AuditResponse": stream_types.AuditResponse,
+
+    "types.AuthoringResponse": types.AuthoringResponse,
+    "stream_types.AuthoringResponse": stream_types.AuthoringResponse,
+
+    "types.GraphExpertResponse": types.GraphExpertResponse,
+    "stream_types.GraphExpertResponse": stream_types.GraphExpertResponse,
+
+    "types.LogisticsResponse": types.LogisticsResponse,
+    "stream_types.LogisticsResponse": stream_types.LogisticsResponse,
+
+    "types.MechanicResponse": types.MechanicResponse,
+    "stream_types.MechanicResponse": stream_types.MechanicResponse,
+
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
 
 
     "types.AgentStatus": types.AgentStatus,
+
+    "types.PersonaTarget": types.PersonaTarget,
 
 }
