@@ -151,3 +151,27 @@ def trigger_neo4j_expert() -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+@asset(
+    kinds={"fastapi", "python"},
+    group_name="agent_fleet",
+    metadata={
+        "Engine F": _icon_card(
+            "python",  # DAGSTER BUG: we can't easily add completely custom icons outside of their 200, but python works well
+            "Engine F: Presentation Agent",
+            "Stateless UI Router. Converts raw domain JSON into Server-Driven UI instructions "
+            "(Component + Props) based on the user Persona.\n\n"
+            "**Endpoint:** `POST :8087/render_ui`",
+        ),
+    },
+)
+def trigger_presentation_agent() -> dict:
+    """Trigger Engine F (Presentation Agent) UI Router pod."""
+    response = requests.post(
+        "http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui",
+        json={"raw_data": {"demo": True}, "persona": "MECHANIC"}, # Dummy payload for UI UI
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()

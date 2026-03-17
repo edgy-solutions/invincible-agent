@@ -24,6 +24,7 @@
 - agent_fleet/swarms_scraper/main.py   — Engine C: Swarms.ai scraper/extraction (port 8083)
 - agent_fleet/datahub_wrapper/main.py  — Engine D: DataHub metadata wrapper (port 8085)
 - agent_fleet/neo4j_expert/main.py     — Engine E: Neo4j Graph Expert (port 8086)
+- agent_fleet/presentation_agent/main.py — Engine F: Presentation Agent & UI Router (port 8087)
 - agent_fleet/models.py                — SQLAlchemy ORM model for bpmn_catalog table
 - sql/create_bpmn_catalog.sql          — Raw SQL to create bpmn_catalog table + trigger
 - pyproject.toml                       — Project metadata & Dagster config
@@ -57,12 +58,15 @@ OCI image, and K8s Service.
    GraphQL for dbt datasets, returns table list for LLM context. Port 8085, `/tables`.
 7. **Engine E** (Restate + smolagents) — Neo4j Graph Expert. Queries graph DB 
    and saves successful outcomes to `mem0` memory. Port 8086, `/query_graph`.
-8. Agent pods are K8s services:
+8. **Engine F** (FastAPI + BAML) — Presentation Agent & UI Router. Separates view logic
+   dynamically selecting rendering targets based on persona constraints. Port 8087, `/render_ui`.
+9. Agent pods are K8s services:
    - `restate-agent-svc.default.svc.cluster.local:8081/analyze`
    - `langgraph-agent-svc.default.svc.cluster.local:8082/support`
    - `swarms-agent-svc.default.svc.cluster.local:8083/scrape`
    - `ontology-svc.default.svc.cluster.local:8084/resolve`
    - `neo4j-expert-svc.default.svc.cluster.local:8086/query_graph`
+   - `presentation-agent-svc.default.svc.cluster.local:8087/render_ui`
 7. Dagster assets call agents via plain HTTP POST (no SDK imports).
 8. BAML contracts in `baml_shared/` define the canonical schemas
    (`AgentTask`, `AgentResponse`, `SemanticResolution`, etc.) shared by all services.
@@ -300,4 +304,10 @@ Created `agent_fleet/neo4j_expert/main.py` — FastAPI on port 8086.
 - **Recipe 1 (Path A - Stateless Dagster Synthesis):** Configured Dagster to synthesize Engine E's JSON array into a cohesive Markdown report using `b.SynthesizeReports` entirely within the Dagster op (`synthesize_stateless`).
 - **Recipe 2 (Path B - Stateful LangGraph Synthesis):** Updated Dagster fan-in to pipe `dagster_context` json into Engine B (LangGraph Support) via `/support` payload, retaining `thread_id` to allow follow-up questions using memory.
 - **Recipe 3 (Phase 3 - Long-Term Episodic Memory):** Augmented Neo4j Graph Expert with long-term episodic memory via `mem0` paired with `weaviate-client`. Retrieves and saves past successful Cypher queries across ephemeral K8s pods into persistent Vector Storage.
+
+### Phase 12 — Engine F: Presentation Agent
+Created `agent_fleet/presentation_agent/main.py` — FastAPI on port 8087.
+- Defined `ui_contracts.baml` introducing `MoodType`, `UIComponentType`, and the `DesignUI` routing function map.
+- Added `PROCESS_ENGINEER` to `PersonaTarget` in main contracts.
+- Integrated Engine F directly into the Dynamic Supervisor to map output aggregates into Server-Driven UI instructions.
 

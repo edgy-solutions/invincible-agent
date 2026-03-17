@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (11)
+# Generated classes (12)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -71,6 +71,13 @@ class MechanicResponse(BaseModel):
     tool_list: typing.List[str]
     safety_warnings: typing.List[str]
     short_answer: typing.Optional[str] = None
+
+class PresentationInstruction(BaseModel):
+    # Server-driven UI instruction payload
+    mood: typing.Optional[types.MoodType] = Field(default=None, description='The visual mood or tone for the UI.')
+    selected_component: typing.Optional[types.UIComponentType] = Field(default=None, description='The exact target React component.')
+    header_text: typing.Optional[str] = Field(default=None, description='Title or header text for the rendered view.')
+    ui_props: typing.Optional[str] = Field(default=None, description='This must be a stringified JSON object containing the exact data the frontend component needs (e.g., nodes/edges for BPMN, hazard arrays for Warning Cards).')
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

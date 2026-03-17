@@ -43,6 +43,9 @@ type_map = {
     "types.MechanicResponse": types.MechanicResponse,
     "stream_types.MechanicResponse": stream_types.MechanicResponse,
 
+    "types.PresentationInstruction": types.PresentationInstruction,
+    "stream_types.PresentationInstruction": stream_types.PresentationInstruction,
+
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
 
@@ -52,6 +55,10 @@ type_map = {
 
     "types.AgentStatus": types.AgentStatus,
 
+    "types.MoodType": types.MoodType,
+
     "types.PersonaTarget": types.PersonaTarget,
+
+    "types.UIComponentType": types.UIComponentType,
 
 }

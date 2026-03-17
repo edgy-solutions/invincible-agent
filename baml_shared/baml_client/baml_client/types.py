@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (2)
+# Generated enums (4)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -47,6 +47,15 @@ class AgentStatus(str, Enum):
     FAILED = "FAILED"
     HUMAN_REQUIRED = "HUMAN_REQUIRED"
 
+class MoodType(str, Enum):
+    # The visual tone or mood to pass to the frontend
+    
+    ROUTINE = "ROUTINE"
+    URGENT = "URGENT"
+    SUCCESS = "SUCCESS"
+    STRATEGIC = "STRATEGIC"
+    EDUCATIONAL = "EDUCATIONAL"
+
 class PersonaTarget(str, Enum):
     # Target persona for the graph expert response
     
@@ -54,9 +63,20 @@ class PersonaTarget(str, Enum):
     TECH_WRITER = "TECH_WRITER"
     LOGISTICS = "LOGISTICS"
     AUDITOR = "AUDITOR"
+    PROCESS_ENGINEER = "PROCESS_ENGINEER"
+
+class UIComponentType(str, Enum):
+    # The exact React UI Component the frontend should render
+    
+    WARNING_CARD = "WARNING_CARD"
+    INTERACTIVE_CHECKLIST = "INTERACTIVE_CHECKLIST"
+    SUPPLY_TABLE = "SUPPLY_TABLE"
+    XML_EDITOR = "XML_EDITOR"
+    BPMN_VIEWER = "BPMN_VIEWER"
+    MARKDOWN_CHAT = "MARKDOWN_CHAT"
 
 # #########################################################################
-# Generated classes (11)
+# Generated classes (12)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -104,6 +124,13 @@ class MechanicResponse(BaseModel):
     tool_list: typing.List[str]
     safety_warnings: typing.List[str]
     short_answer: str
+
+class PresentationInstruction(BaseModel):
+    # Server-driven UI instruction payload
+    mood: MoodType = Field(description='The visual mood or tone for the UI.')
+    selected_component: UIComponentType = Field(description='The exact target React component.')
+    header_text: str = Field(description='Title or header text for the rendered view.')
+    ui_props: str = Field(description='This must be a stringified JSON object containing the exact data the frontend component needs (e.g., nodes/edges for BPMN, hazard arrays for Warning Cards).')
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

@@ -143,6 +143,8 @@ These are the Kubernetes services the orchestrator communicates with:
 - **Neo4j Graph Expert (Engine E)**: `POST http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph`
   Queries a Neo4j military graph database. Uses Restate for durable execution,
   smolagents `CodeAgent`, and `mem0` backed by Weaviate for long-term memory. Returns rigidly typed BAML `GraphExpertResponse`.
+- **Presentation Agent (Engine F)**: `POST http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui`
+  Stateless UI router separating Model from View. Translates raw JSON arrays into `PresentationInstruction` component layout objects tailored to the active persona via UX LLM routing.
 
 ## Dagster UI Configuration
 
@@ -152,6 +154,7 @@ Assets are configured with `kinds` and `group_name` for UI badges:
 - `trigger_swarms_scraper`: kinds={"swarms", "python"}, group="agent_fleet"
 - `trigger_datahub_tables`: kinds={"datahub"}, group="data_layer"
 - `trigger_neo4j_expert`: kinds={"restate", "python", "smolagents", "neo4j"}, group="agent_fleet"
+- `trigger_presentation_agent`: kinds={"fastapi", "python"}, group="agent_fleet"
 - `sync_dbt_to_ontology`: kinds={"dbt", "datahub"}, group="data_layer"
 
 **Icon support:** Dagster has ~200 built-in icons (dbt, datahub, postgres, python all have icons).
@@ -281,5 +284,11 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - **Recipe 1 (Path A - Stateless Dagster Synthesis):** Configured Dagster to synthesize Engine E's JSON array into a cohesive Markdown report using `b.SynthesizeReports` entirely within the Dagster op (`synthesize_stateless`).
 - **Recipe 2 (Path B - Stateful LangGraph Synthesis):** Updated Dagster fan-in to pipe `dagster_context` json into Engine B (LangGraph Support) via `/support` payload, retaining `thread_id` to allow follow-up questions using memory.
 - **Recipe 3 (Phase 3 - Long-Term Episodic Memory):** Augmented Neo4j Graph Expert with long-term episodic memory via `mem0` paired with `weaviate-client`. Retrieves and saves past successful Cypher queries across ephemeral K8s pods into persistent Vector Storage.
+
+### Phase 12 — Engine F: Presentation Agent (complete)
+- Created `agent_fleet/presentation_agent/main.py` — FastAPI on port 8087.
+- Defined `ui_contracts.baml` introducing `MoodType`, `UIComponentType`, and the `DesignUI` routing function map.
+- Added `PROCESS_ENGINEER` to `PersonaTarget` in main contracts.
+- Integrated Engine F directly into the Dynamic Supervisor to map output aggregates into Server-Driven UI instructions.
 
 

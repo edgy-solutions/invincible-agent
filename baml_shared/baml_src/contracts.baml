@@ -113,6 +113,7 @@ enum PersonaTarget {
   TECH_WRITER
   LOGISTICS
   AUDITOR
+  PROCESS_ENGINEER
 }
 
 class MechanicResponse {
@@ -186,7 +187,7 @@ function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
     {{ raw_query }}
 
     Instructions:
-    1. Assign each task to the correct specialized persona (MECHANIC, TECH_WRITER, LOGISTICS, AUDITOR).
+    1. Assign each task to the correct specialized persona (MECHANIC, TECH_WRITER, LOGISTICS, AUDITOR, PROCESS_ENGINEER).
     2. If the query only needs one persona, return a list with just one task.
     3. Provide your reasoning for why the query was split this way.
 

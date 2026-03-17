@@ -9,6 +9,7 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - **Engine A:** Restate + Smolagents (durable, serverless, code-centric).
 - **Engine B:** LangGraph (stateful DAGs, async checkpointers).
 - **Engine C:** Swarms.ai (high-concurrency topologies).
+- **Engine F:** FastAPI + BAML (Stateless presentation and UI router).
 - **Data Layer (implemented):** dbt (transformation), DataHub (catalog).
 - **Data Layer (planned):** dlthub (ingestion), Neo4j (graph), Weaviate (vector).
 - Each engine gets its own isolated codebase, OCI image, and K8s Service.
@@ -108,6 +109,10 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - Uses `mem0` back by Weaviate vector DB to inject long-term episodic memory into the LLM system prompt for improved retrieval over time.
 - Returns `GraphExpertResponse` (validated via BAML types) from all handlers.
 
+## Presentation Agent (agent_fleet/presentation_agent/)
+- Engine F is highly stateless. Fast UI mapping and presentation routing to decouple model/view based on persona targets.
+- Do NOT import agent loops or workflows here. Maps standard Python models against `b.DesignUI()`.
+
 ## Containerization (Cloud Native Buildpacks)
 - We do NOT use Dockerfiles. All OCI images are built with `pack` CLI.
 - Builder: `paketobuildpacks/builder-jammy-base`.
@@ -132,6 +137,7 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 - LangGraph support: port 8082, endpoint `/support`
 - Swarms scraper (Engine C): port 8083, endpoint `/scrape`
 - DataHub wrapper (Engine D): port 8085, endpoint `/tables`
+- Presentation Agent (Engine F): port 8087, endpoint `/render_ui`
 
 ## Dagster UI Conventions
 - Use `kinds={"tech1", "tech2"}` (not deprecated `compute_kind`) for multi-tech badges.

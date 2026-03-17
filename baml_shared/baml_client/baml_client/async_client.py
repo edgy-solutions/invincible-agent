@@ -112,6 +112,21 @@ class BamlAsyncClient:
                 "raw_query": raw_query,
             })
             return typing.cast(types.SupervisorTaskPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+        baml_options: BamlCallOptions = {},
+    ) -> types.PresentationInstruction:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.DesignUI(raw_data=raw_data,persona=persona,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="DesignUI", args={
+                "raw_data": raw_data,"persona": persona,
+            })
+            return typing.cast(types.PresentationInstruction, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
@@ -175,6 +190,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.SupervisorTaskPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.PresentationInstruction, types.PresentationInstruction]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="DesignUI", args={
+            "raw_data": raw_data,"persona": persona,
+        })
+        return baml_py.BamlStream[stream_types.PresentationInstruction, types.PresentationInstruction](
+          __result__,
+          lambda x: typing.cast(stream_types.PresentationInstruction, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.PresentationInstruction, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[stream_types.GraphExpertResponse, types.GraphExpertResponse]:
@@ -221,6 +248,13 @@ class BamlHttpRequestClient:
             "raw_query": raw_query,
         }, mode="request")
         return __result__
+    async def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="DesignUI", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="request")
+        return __result__
     async def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -255,6 +289,13 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="DecomposeQuery", args={
             "raw_query": raw_query,
+        }, mode="stream")
+        return __result__
+    async def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="DesignUI", args={
+            "raw_data": raw_data,"persona": persona,
         }, mode="stream")
         return __result__
     async def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,

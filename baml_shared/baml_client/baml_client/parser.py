@@ -35,6 +35,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DecomposeQuery", llm_response=llm_response, mode="request")
         return typing.cast(types.SupervisorTaskPlan, __result__)
 
+    def DesignUI(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.PresentationInstruction:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DesignUI", llm_response=llm_response, mode="request")
+        return typing.cast(types.PresentationInstruction, __result__)
+
     def FormatGraphResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
@@ -66,6 +72,12 @@ class LlmStreamParser:
     ) -> stream_types.SupervisorTaskPlan:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DecomposeQuery", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.SupervisorTaskPlan, __result__)
+
+    def DesignUI(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.PresentationInstruction:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DesignUI", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.PresentationInstruction, __result__)
 
     def FormatGraphResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},

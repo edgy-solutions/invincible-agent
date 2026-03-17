@@ -112,6 +112,30 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
     return response.json()
 
 
+@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
+def generate_ui_payload(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Takes the aggregated results array from the Domain Agents and calls
+    Engine F (Presentation Agent) to map the structured data to a Server-Driven UI
+    Component layout.
+    """
+    # Identify the primary persona from the first task, default to MECHANIC
+    primary_persona = "MECHANIC"
+    if results:
+        primary_persona = results[0].get("persona", "MECHANIC")
+
+    response = requests.post(
+        "http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui",
+        json={
+            "raw_data": results,
+            "persona": primary_persona,
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 @job
 def supervisor_query_job():
     """
@@ -127,5 +151,11 @@ def supervisor_query_job():
     # .map() will spawn N concurrent execute_subtask ops
     executed_results = dynamic_tasks.map(execute_subtask)
     
-    # Collect the results and synthesize
-    synthesize_stateful(executed_results.collect())
+    # Collect the results
+    collected_results = executed_results.collect()
+    
+    # 1. Statefully save the results into the thread history using Engine B
+    synthesize_stateful(collected_results)
+    
+    # 2. Map the domain results to the React UI Component using Engine F
+    generate_ui_payload(collected_results)
