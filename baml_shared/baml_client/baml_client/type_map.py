@@ -31,8 +31,17 @@ type_map = {
     "types.AuthoringResponse": types.AuthoringResponse,
     "stream_types.AuthoringResponse": stream_types.AuthoringResponse,
 
+    "types.BpmnViewerProps": types.BpmnViewerProps,
+    "stream_types.BpmnViewerProps": stream_types.BpmnViewerProps,
+
     "types.FinalSynthesis": types.FinalSynthesis,
     "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
+
+    "types.FlowEdge": types.FlowEdge,
+    "stream_types.FlowEdge": stream_types.FlowEdge,
+
+    "types.FlowNode": types.FlowNode,
+    "stream_types.FlowNode": stream_types.FlowNode,
 
     "types.GraphExpertResponse": types.GraphExpertResponse,
     "stream_types.GraphExpertResponse": stream_types.GraphExpertResponse,

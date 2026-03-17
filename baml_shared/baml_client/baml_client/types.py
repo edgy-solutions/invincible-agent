@@ -76,7 +76,7 @@ class UIComponentType(str, Enum):
     MARKDOWN_CHAT = "MARKDOWN_CHAT"
 
 # #########################################################################
-# Generated classes (12)
+# Generated classes (15)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -107,8 +107,27 @@ class AuthoringResponse(BaseModel):
     generated_xml: str
     missing_info_flags: typing.List[str]
 
+class BpmnViewerProps(BaseModel):
+    title: str
+    nodes: typing.List["FlowNode"]
+    edges: typing.List["FlowEdge"]
+    ontology_tags: typing.List[str] = Field(description='For the Live Context HUD')
+
 class FinalSynthesis(BaseModel):
     markdown_report: str
+
+class FlowEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    animated: bool
+
+class FlowNode(BaseModel):
+    id: str
+    type: str = Field(description='e.g., \'default\', \'input\', \'output\'')
+    label: str
+    position_x: int
+    position_y: int
 
 class GraphExpertResponse(BaseModel):
     confidence_score: float
@@ -130,7 +149,8 @@ class PresentationInstruction(BaseModel):
     mood: MoodType = Field(description='The visual mood or tone for the UI.')
     selected_component: UIComponentType = Field(description='The exact target React component.')
     header_text: str = Field(description='Title or header text for the rendered view.')
-    ui_props: str = Field(description='This must be a stringified JSON object containing the exact data the frontend component needs (e.g., nodes/edges for BPMN, hazard arrays for Warning Cards).')
+    ui_props: str = Field(description='This must be a stringified JSON object containing the exact data the frontend component needs (e.g., node mapping references or hazard arrays for Warning Cards).')
+    bpmn_data: typing.Optional["BpmnViewerProps"] = Field(default=None, description='Structured React Flow data, specifically populated when selected_component is BPMN_VIEWER.')
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
