@@ -30,6 +30,8 @@ from dagster import (
     job,
     op,
     Config,
+    Output,
+    MetadataValue,
 )
 
 
@@ -37,6 +39,7 @@ class SupervisorQueryConfig(Config):
     """Configuration for the supervisor job."""
     user_query: str
     thread_id: str
+    persona: str
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -113,27 +116,28 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
 
 
 @op(in_={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
-def generate_ui_payload(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Dict[str, Any]:
     """
     Takes the aggregated results array from the Domain Agents and calls
     Engine F (Presentation Agent) to map the structured data to a Server-Driven UI
     Component layout.
     """
-    # Identify the primary persona from the first task, default to MECHANIC
-    primary_persona = "MECHANIC"
-    if results:
-        primary_persona = results[0].get("persona", "MECHANIC")
-
     response = requests.post(
         "http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui",
         json={
             "raw_data": results,
-            "persona": primary_persona,
+            "persona": config.persona,
         },
         timeout=60,
     )
     response.raise_for_status()
-    return response.json()
+    ui_payload = response.json()
+    
+    context.log.info(f"Generated UI Payload for persona {config.persona}")
+    yield Output(
+        ui_payload,
+        metadata={"ui_json_payload": MetadataValue.json(ui_payload)}
+    )
 
 
 @job
@@ -158,4 +162,4 @@ def supervisor_query_job():
     synthesize_stateful(collected_results)
     
     # 2. Map the domain results to the React UI Component using Engine F
-    generate_ui_payload(collected_results)
+    return generate_ui_payload(collected_results)

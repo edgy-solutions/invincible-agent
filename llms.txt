@@ -14,6 +14,7 @@
 - src/iagent/defs/data_layer.py        — Dagster asset: dbt ↔ ontology ↔ DataHub sync
 - src/iagent/defs/dynamic_factory.py   — Dynamic BPMN Factory: reads bpmn_catalog, generates Dagster jobs/ops
 - src/iagent/defs/dynamic_supervisor.py — Phase 2 Dynamic Fan-Out/Fan-In job for multi-domain queries
+- src/iagent/gateway.py            — Orchestration Gateway service (port 8888)
 - baml_shared/baml_src/contracts.baml  — Shared data contracts (enums, classes)
 - baml_shared/baml_src/generators.baml — BAML codegen config (Python/Pydantic)
 - baml_shared/baml_client/             — Auto-generated Python client from BAML
@@ -61,6 +62,8 @@ OCI image, and K8s Service.
 8. **Engine F** (FastAPI + BAML) — Presentation Agent & UI Router. Separates view logic
    dynamically selecting rendering targets based on persona constraints. Port 8087, `/render_ui`.
    Outputs structured React Flow (@xyflow/react) data for process engineers.
+9. **Orchestration Gateway** (FastAPI + Dagster) — Synchronous entry point for the mesh. 
+   Triggers the Dagster `supervisor_query_job` and returns the final UI instruction. Port 8888, `/orchestrate`.
 9. Agent pods are K8s services:
    - `restate-agent-svc.default.svc.cluster.local:8081/analyze`
    - `langgraph-agent-svc.default.svc.cluster.local:8082/support`

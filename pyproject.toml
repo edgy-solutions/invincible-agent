@@ -5,6 +5,7 @@ version = "0.1.0"
 dependencies = [
     "dagster==1.12.14",
     "psycopg2-binary",
+    "httpx",
 ]
 
 [project.optional-dependencies]

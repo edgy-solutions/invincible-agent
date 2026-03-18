@@ -1318,6 +1318,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dagster" },
+    { name = "httpx" },
     { name = "psycopg2-binary" },
 ]
 
@@ -1346,6 +1347,7 @@ requires-dist = [
     { name = "baml-py", marker = "extra == 'agent-fleet'" },
     { name = "dagster", specifier = "==1.12.14" },
     { name = "fastapi", marker = "extra == 'agent-fleet'" },
+    { name = "httpx" },
     { name = "httpx", marker = "extra == 'agent-fleet'" },
     { name = "langgraph", marker = "extra == 'agent-fleet'" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'agent-fleet'" },

@@ -145,6 +145,10 @@ These are the Kubernetes services the orchestrator communicates with:
   smolagents `CodeAgent`, and `mem0` backed by Weaviate for long-term memory. Returns rigidly typed BAML `GraphExpertResponse`.
 - **Presentation Agent (Engine F)**: `POST http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui`
   Stateless UI router separating Model from View. Translates raw JSON arrays into `PresentationInstruction` component layout objects tailored to the active persona via UX LLM routing. Natively supports React Flow (@xyflow/react) topological payloads for the `PROCESS_ENGINEER` persona.
+- **Orchestration Gateway**: `POST /orchestrate`
+  Top-level FastAPI gateway (Engine G). Acts as a decoupled GraphQL client to the Dagster 
+  Webserver. Submits `supervisor_query_job`, polls for completion, and fetches the final 
+  UI instruction from step metadata. Provides full observability and run history.
 
 ## Dagster UI Configuration
 
@@ -290,5 +294,6 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Defined `ui_contracts.baml` introducing `MoodType`, `UIComponentType`, and the `DesignUI` routing function map.
 - Added `PROCESS_ENGINEER` to `PersonaTarget` in main contracts.
 - Integrated Engine F directly into the Dynamic Supervisor to map output aggregates into Server-Driven UI instructions.
+- **Backend Capstone:** Finalized the Dagster loop in `dynamic_supervisor.py` and implemented `src/iagent/gateway.py` to expose the entire multi-agent workflow via a single synchronous HTTP endpoint.
 
 

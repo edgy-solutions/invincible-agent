@@ -41,6 +41,7 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 | **D** | httpx + DataHub GMS | 8085 | `/tables` | Metadata wrapper — queries DataHub for dbt dataset list |
 | **E** | Restate + smolagents + mem0 | 8086 | `/query_graph` | Neo4j Graph Expert — queries military technical manual DB w/ memory |
 | **F** | FastAPI + BAML | 8087 | `/render_ui` | Presentation Agent — Router separating model/view by persona |
+| **G** | FastAPI + Dagster | 8888 | `/orchestrate` | Orchestration Gateway — Synchronous entry point for the mesh |
 
 ### Data Flow
 
@@ -89,6 +90,7 @@ src/iagent/
     data_layer.py             # @asset: dbt ↔ ontology ↔ DataHub sync
     dynamic_factory.py        # Dynamic BPMN Factory: reads bpmn_catalog, generates jobs/ops
     dynamic_supervisor.py     # Phase 2 Dynamic Fan-Out/Fan-In job for multi-domain queries
+    gateway.py                # Orchestration Gateway service (port 8888)
 
 agent_fleet/
   ontology_service/
