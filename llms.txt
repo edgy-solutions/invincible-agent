@@ -60,6 +60,7 @@ OCI image, and K8s Service.
    and saves successful outcomes to `mem0` memory. Port 8086, `/query_graph`.
 8. **Engine F** (FastAPI + BAML) — Presentation Agent & UI Router. Separates view logic
    dynamically selecting rendering targets based on persona constraints. Port 8087, `/render_ui`.
+   Outputs structured React Flow (@xyflow/react) data for process engineers.
 9. Agent pods are K8s services:
    - `restate-agent-svc.default.svc.cluster.local:8081/analyze`
    - `langgraph-agent-svc.default.svc.cluster.local:8082/support`
