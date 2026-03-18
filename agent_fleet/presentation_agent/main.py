@@ -32,8 +32,27 @@ async def render_ui(request: RenderRequest) -> Dict[str, Any]:
     # 3. Call BAML router
     baml_response = await b.DesignUI(str_raw_data, persona_target)
     
-    # 4. Return component instruction
-    return baml_response.model_dump()
+    # 4. Extract and stringify the payload safely using Python
+    payload = baml_response.model_dump()
+    
+    # Safely stringify the entities and relationships so the React frontend 
+    # can JSON.parse() them without escaping errors. 
+    # Since BAML 0.219 uses strings, we try to load them first to avoid double-escaping.
+    def safe_json_dump(val):
+        if not val: return "[]"
+        if isinstance(val, str):
+            try:
+                # If it's already valid JSON, don't double dump
+                parsed = json.loads(val)
+                return json.dumps(parsed)
+            except:
+                return json.dumps(val)
+        return json.dumps(val)
+
+    payload["entities"] = safe_json_dump(payload.get("entities"))
+    payload["relationships"] = safe_json_dump(payload.get("relationships"))
+    
+    return payload
 
 @app.get("/health")
 def health() -> Dict[str, str]:

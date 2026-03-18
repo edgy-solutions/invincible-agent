@@ -115,12 +115,12 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
     return response.json()
 
 
-@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
-def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Dict[str, Any]:
+@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(str))
+def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> str:
     """
     Takes the aggregated results array from the Domain Agents and calls
     Engine F (Presentation Agent) to map the structured data to a Server-Driven UI
-    Component layout.
+    Component layout. Returns the result as a raw JSON string to avoid truncation.
     """
     response = requests.post(
         "http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui",
@@ -131,12 +131,15 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Dict
         timeout=60,
     )
     response.raise_for_status()
-    ui_payload = response.json()
+    ui_payload_dict = response.json()
     
-    context.log.info(f"Generated UI Payload for persona {config.persona}")
+    # Force stringification to bypass Dagster's valueRepr length limit for dicts
+    ui_payload_str = json.dumps(ui_payload_dict)
+    
+    context.log.info(f"Generated UI Payload string for persona {config.persona}")
     yield Output(
-        ui_payload,
-        metadata={"ui_json_payload": MetadataValue.json(ui_payload)}
+        ui_payload_str,
+        metadata={"ui_json_payload": MetadataValue.json(ui_payload_dict)}
     )
 
 

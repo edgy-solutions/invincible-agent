@@ -29,8 +29,8 @@ class SemanticUIContainer {
   archetype SemanticArchetype
   subject_concept string      // e.g., 'iof-mro:AuxiliaryFuelPump'
   severity SeverityLevel?
-  entities string             // A JSON string of the raw data (e.g., nodes, rows, hazard lists)
-  relationships string?       // A JSON string of spatial edges (used for PROCESS_TOPOLOGY)
+  entities string             
+  relationships string?       
 }
 
 /// Router function mapping raw data and persona to a semantic UI intent
@@ -43,7 +43,7 @@ function DesignUI(raw_data: string, persona: PersonaTarget) -> SemanticUIContain
     
     For example:
     - If the Persona is PROCESS_ENGINEER and the data contains steps, use PROCESS_TOPOLOGY. 
-      Dump the exact step data as a JSON string into entities, and the topological connections into relationships.
+      Dump the exact step data into entities, and the topological connections into relationships as native JSON arrays.
     - If it is a safety warning, use HAZARD_DECLARATION and set the severity.
     - If it's a manual or code, use KNOWLEDGE_DOCUMENT.
     - If it's telemetry or inventory, use ASSET_STATE_METRIC.
