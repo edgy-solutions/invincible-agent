@@ -45,21 +45,36 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 
 ### Data Flow
 
-```
-User Query
-    │
-    ▼
-┌──────────┐     ┌────────────┐     ┌─────────────────────┐
-│  Dagster  │────▶│  Engine O  │────▶│  Engine A / B / C   │
-│  Control  │     │  Ontology  │     │  (Agent Fleet)      │
-│  Plane    │     │  Reasoner  │     │                     │
-└──────────┘     └────────────┘     └─────────────────────┘
-    │                                         │
-    ▼                                         ▼
-┌──────────┐                          ┌──────────────┐
-│   dbt    │◀─── mapping.ttl ────────▶│   DataHub    │
-│ manifest │                          │   Glossary   │
-└──────────┘                          └──────────────┘
+```mermaid
+graph TD
+    User([User / Frontend]) --> G["Engine G: Gateway (8888)"]
+    G -- GraphQL Submit --> D["Dagster: Control Plane (3000)"]
+    
+    subgraph Mesh["Agent Fleet (Kubernetes)"]
+        D --> O["Engine O: Ontology (8084)"]
+        O --> E["Engine E: Neo4j Expert (8086)"]
+        O --> A["Engine A: Restate Analyst (8081)"]
+        O --> C["Engine C: Swarms Scraper (8083)"]
+        
+        E --> F["Engine F: Presentation Agent (8087)"]
+        A --> F
+        C --> F
+        F --> B["Engine B: LangGraph Support (8082)"]
+    end
+    
+    subgraph DataLayer["Data Mesh Services"]
+        D --> dbt["dbt Manifest"]
+        dbt -.->|mapping.ttl| O
+        D --> DH["DataHub Glossary"]
+        DH --> DR["Engine D: DataHub Wrapper (8085)"]
+    end
+
+    B -- Status/Output --> G
+    G --> UI([Semantic UI Instruction])
+
+    style D fill:#4F43DD,color:#fff
+    style G fill:#009688,color:#fff
+    style B fill:#326CE5,color:#fff
 ```
 
 ---
@@ -282,26 +297,17 @@ The project includes a **Dynamic BPMN Factory** (`src/iagent/defs/dynamic_factor
 
 ### How It Works
 
-```
-bpmn_catalog (Postgres)
-    │
-    ▼
-fetch_active_bpmn_models()   ← Phase 9.1
-    │
-    ▼
-create_agent_op() × N        ← Phase 9.2 (one @op per BPMN task)
-    │
-    ▼
-_resolve_task_to_task_flows() ← Collapses gateways into task→task edges
-    │
-    ▼
-GraphDefinition + DependencyDefinition
-    │
-    ▼
-.to_job(name=workflow_id)    ← Phase 9.3
-    │
-    ▼
-Definitions(jobs=[...])      ← Exposed to Dagster UI
+```mermaid
+graph LR
+    DB[(bpmn_catalog)] -- psycopg2 --> Fetch["Phase 9.1: Fetch Models"]
+    Fetch --> Factory["Phase 9.2: Dynamic Op Factory"]
+    Factory -- @op per Task --> Op["Agent Ops"]
+    Op -- trace through gateways --> Graph["Phase 9.3: GraphBuilder"]
+    Graph --> Job["Dagster JobDefinition"]
+    Job -- Definitions --> UI_D["Dagster UI / Engine G"]
+
+    style Job fill:#4F43DD,color:#fff
+    style DB fill:#326CE5,color:#fff
 ```
 
 ### Database Setup
