@@ -51,7 +51,7 @@ BPMN_POSTGRES_USER = os.getenv("BPMN_POSTGRES_USER", "iagent")
 BPMN_POSTGRES_PASSWORD = os.getenv("BPMN_POSTGRES_PASSWORD", "iagent")
 
 # Default HTTP timeout for agent calls (seconds)
-AGENT_HTTP_TIMEOUT = int(os.getenv("AGENT_HTTP_TIMEOUT", "120"))
+AGENT_HTTP_TIMEOUT = int(os.getenv("AGENT_HTTP_TIMEOUT", "300"))
 
 
 def _get_connection() -> psycopg2.extensions.connection:

@@ -273,7 +273,7 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
   - `agent_fleet/models.py` — SQLAlchemy ORM for `bpmn_catalog` table.
   - `sql/create_bpmn_catalog.sql` — Raw SQL with auto-update trigger + partial index.
 - Env vars: `BPMN_POSTGRES_HOST`, `BPMN_POSTGRES_PORT`, `BPMN_POSTGRES_DB`,
-  `BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`, `AGENT_HTTP_TIMEOUT`.
+  `BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`, `AGENT_HTTP_TIMEOUT` (default: 300).
 
 ### Phase 10 — Engine E: Neo4j Graph Expert (complete)
 - Created `agent_fleet/neo4j_expert/main.py` — FastAPI on port 8086.

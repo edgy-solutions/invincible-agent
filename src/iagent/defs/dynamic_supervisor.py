@@ -84,7 +84,7 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
             "user_query": sub_query,
             "persona": persona,
         },
-        timeout=120, # 2 minutes to allow agent looping
+        timeout=300, # 5 minutes to allow complex agent reasoning/looping
     )
     response.raise_for_status()
     
@@ -109,7 +109,7 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
             "user_query": config.user_query,
             "dagster_context": results,
         },
-        timeout=120,
+        timeout=300,
     )
     response.raise_for_status()
     return response.json()
@@ -128,7 +128,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> str:
             "raw_data": results,
             "persona": config.persona,
         },
-        timeout=60,
+        timeout=300,
     )
     response.raise_for_status()
     ui_payload_dict = response.json()

@@ -334,7 +334,7 @@ async def analyze_proxy(request: Request) -> JSONResponse:
             "http://localhost:8081/restate/AnalystService/analyze",
             data=body,
             headers={"Content-Type": "application/json"},
-            timeout=120,
+            timeout=300,
         )
         resp.raise_for_status()
         return JSONResponse(content=resp.json(), status_code=resp.status_code)

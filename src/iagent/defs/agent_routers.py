@@ -51,7 +51,7 @@ def trigger_restate_analyst() -> dict:
     """Trigger Engine A (Restate + Smolagents) analyst agent pod."""
     response = requests.post(
         "http://restate-agent-svc.default.svc.cluster.local:8081/analyze",
-        timeout=120,
+        timeout=300,
     )
     response.raise_for_status()
     return response.json()
@@ -75,7 +75,7 @@ def trigger_langgraph_support() -> dict:
     """Trigger Engine B (LangGraph) support agent pod."""
     response = requests.post(
         "http://langgraph-agent-svc.default.svc.cluster.local:8082/support",
-        timeout=120,
+        timeout=300,
     )
     response.raise_for_status()
     return response.json()
@@ -98,7 +98,7 @@ def trigger_swarms_scraper() -> dict:
     """Trigger Engine C (Swarms.ai) scraper/extraction agent pod."""
     response = requests.post(
         "http://swarms-agent-svc.default.svc.cluster.local:8083/scrape",
-        timeout=120,
+        timeout=300,
     )
     response.raise_for_status()
     return response.json()
@@ -147,7 +147,7 @@ def trigger_neo4j_expert() -> dict:
     response = requests.post(
         "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
         json={"user_query": "What are the common tools?", "persona": "MECHANIC"}, # Dummy payload for now as it wasn't specified
-        timeout=120,
+        timeout=300,
     )
     response.raise_for_status()
     return response.json()
