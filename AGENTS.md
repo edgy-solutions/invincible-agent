@@ -144,7 +144,7 @@ These are the Kubernetes services the orchestrator communicates with:
   Queries a Neo4j military graph database. Uses Restate for durable execution,
   smolagents `CodeAgent`, and `mem0` backed by Weaviate for long-term memory. Returns rigidly typed BAML `GraphExpertResponse`.
 - **Presentation Agent (Engine F)**: `POST http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui`
-  Stateless UI router separating Model from View. Translates raw JSON arrays into `PresentationInstruction` component layout objects tailored to the active persona via UX LLM routing. Natively supports React Flow (@xyflow/react) topological payloads for the `PROCESS_ENGINEER` persona.
+  Stateless UI router separating Model from View. Translates raw JSON arrays into abstract `SemanticUIContainer` objects (Intent-Based UI) tailored to the active persona via UX LLM routing. Natively supports the `PROCESS_TOPOLOGY` archetype for the `PROCESS_ENGINEER` persona.
 - **Orchestration Gateway**: `POST /orchestrate`
   Top-level FastAPI gateway (Engine G). Acts as a decoupled GraphQL client to the Dagster 
   Webserver. Submits `supervisor_query_job`, polls for completion, and fetches the final 

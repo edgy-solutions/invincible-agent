@@ -20,13 +20,13 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BpmnViewerProps","FinalSynthesis","FlowEdge","FlowNode","GraphExpertResponse","LogisticsResponse","MechanicResponse","PresentationInstruction","SemanticResolution","SupervisorTaskPlan",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","FinalSynthesis","GraphExpertResponse","LogisticsResponse","MechanicResponse","SemanticResolution","SemanticUIContainer","SupervisorTaskPlan",]
         ), enums=set(
-          ["AgentStatus","MoodType","PersonaTarget","UIComponentType",]
+          ["AgentStatus","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 4
+    # Generated enums 5
     # #########################################################################
 
     @property
@@ -42,12 +42,16 @@ class TypeBuilder(type_builder.TypeBuilder):
         return PersonaTargetViewer(self)
 
     @property
-    def UIComponentType(self) -> "UIComponentTypeViewer":
-        return UIComponentTypeViewer(self)
+    def SemanticArchetype(self) -> "SemanticArchetypeViewer":
+        return SemanticArchetypeViewer(self)
+
+    @property
+    def SeverityLevel(self) -> "SeverityLevelViewer":
+        return SeverityLevelViewer(self)
 
 
     # #########################################################################
-    # Generated classes 15
+    # Generated classes 12
     # #########################################################################
 
     @property
@@ -71,20 +75,8 @@ class TypeBuilder(type_builder.TypeBuilder):
         return AuthoringResponseViewer(self)
 
     @property
-    def BpmnViewerProps(self) -> "BpmnViewerPropsViewer":
-        return BpmnViewerPropsViewer(self)
-
-    @property
     def FinalSynthesis(self) -> "FinalSynthesisViewer":
         return FinalSynthesisViewer(self)
-
-    @property
-    def FlowEdge(self) -> "FlowEdgeViewer":
-        return FlowEdgeViewer(self)
-
-    @property
-    def FlowNode(self) -> "FlowNodeViewer":
-        return FlowNodeViewer(self)
 
     @property
     def GraphExpertResponse(self) -> "GraphExpertResponseViewer":
@@ -99,12 +91,12 @@ class TypeBuilder(type_builder.TypeBuilder):
         return MechanicResponseViewer(self)
 
     @property
-    def PresentationInstruction(self) -> "PresentationInstructionViewer":
-        return PresentationInstructionViewer(self)
-
-    @property
     def SemanticResolution(self) -> "SemanticResolutionViewer":
         return SemanticResolutionViewer(self)
+
+    @property
+    def SemanticUIContainer(self) -> "SemanticUIContainerViewer":
+        return SemanticUIContainerViewer(self)
 
     @property
     def SupervisorTaskPlan(self) -> "SupervisorTaskPlanViewer":
@@ -113,7 +105,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 4
+# Generated enums 5
 # #########################################################################
 
 class AgentStatusAst:
@@ -270,22 +262,22 @@ class PersonaTargetValues:
     
 
 
-class UIComponentTypeAst:
+class SemanticArchetypeAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.enum("UIComponentType")
-        self._values: typing.Set[str] = set([  "WARNING_CARD",  "INTERACTIVE_CHECKLIST",  "SUPPLY_TABLE",  "XML_EDITOR",  "BPMN_VIEWER",  "MARKDOWN_CHAT",  ])
-        self._vals = UIComponentTypeValues(self._bldr, self._values)
+        self._bldr = _tb.enum("SemanticArchetype")
+        self._values: typing.Set[str] = set([  "PROCESS_TOPOLOGY",  "HAZARD_DECLARATION",  "ASSET_STATE_METRIC",  "KNOWLEDGE_DOCUMENT",  ])
+        self._vals = SemanticArchetypeValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
         return self._bldr.field()
 
     @property
-    def values(self) -> "UIComponentTypeValues":
+    def values(self) -> "SemanticArchetypeValues":
         return self._vals
 
 
-class UIComponentTypeViewer(UIComponentTypeAst):
+class SemanticArchetypeViewer(SemanticArchetypeAst):
     def __init__(self, tb: type_builder.TypeBuilder):
         super().__init__(tb)
 
@@ -294,7 +286,7 @@ class UIComponentTypeViewer(UIComponentTypeAst):
         return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
     
 
-class UIComponentTypeValues:
+class SemanticArchetypeValues:
     def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
         self.__bldr = enum_bldr
         self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
@@ -302,35 +294,73 @@ class UIComponentTypeValues:
     
     
     @property
-    def WARNING_CARD(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("WARNING_CARD"))
+    def PROCESS_TOPOLOGY(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("PROCESS_TOPOLOGY"))
     
     @property
-    def INTERACTIVE_CHECKLIST(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("INTERACTIVE_CHECKLIST"))
+    def HAZARD_DECLARATION(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("HAZARD_DECLARATION"))
     
     @property
-    def SUPPLY_TABLE(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("SUPPLY_TABLE"))
+    def ASSET_STATE_METRIC(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("ASSET_STATE_METRIC"))
     
     @property
-    def XML_EDITOR(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("XML_EDITOR"))
+    def KNOWLEDGE_DOCUMENT(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("KNOWLEDGE_DOCUMENT"))
+    
+    
+
+
+class SeverityLevelAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("SeverityLevel")
+        self._values: typing.Set[str] = set([  "INFO",  "WARNING",  "CRITICAL",  ])
+        self._vals = SeverityLevelValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "SeverityLevelValues":
+        return self._vals
+
+
+class SeverityLevelViewer(SeverityLevelAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class SeverityLevelValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
     
     @property
-    def BPMN_VIEWER(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("BPMN_VIEWER"))
+    def INFO(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("INFO"))
     
     @property
-    def MARKDOWN_CHAT(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("MARKDOWN_CHAT"))
+    def WARNING(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("WARNING"))
+    
+    @property
+    def CRITICAL(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("CRITICAL"))
     
     
 
 
 
 # #########################################################################
-# Generated classes 15
+# Generated classes 12
 # #########################################################################
 
 class AgentResponseAst:
@@ -560,57 +590,6 @@ class AuthoringResponseProperties:
     
 
 
-class BpmnViewerPropsAst:
-    def __init__(self, tb: type_builder.TypeBuilder):
-        _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.class_("BpmnViewerProps")
-        self._properties: typing.Set[str] = set([  "title",  "nodes",  "edges",  "ontology_tags",  ])
-        self._props = BpmnViewerPropsProperties(self._bldr, self._properties)
-
-    def type(self) -> baml_py.FieldType:
-        return self._bldr.field()
-
-    @property
-    def props(self) -> "BpmnViewerPropsProperties":
-        return self._props
-
-
-class BpmnViewerPropsViewer(BpmnViewerPropsAst):
-    def __init__(self, tb: type_builder.TypeBuilder):
-        super().__init__(tb)
-
-    
-    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
-        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
-    
-
-
-class BpmnViewerPropsProperties:
-    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
-        self.__bldr = bldr
-        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
-
-    
-    
-    @property
-    def title(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("title"))
-    
-    @property
-    def nodes(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("nodes"))
-    
-    @property
-    def edges(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("edges"))
-    
-    @property
-    def ontology_tags(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("ontology_tags"))
-    
-    
-
-
 class FinalSynthesisAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -646,112 +625,6 @@ class FinalSynthesisProperties:
     @property
     def markdown_report(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("markdown_report"))
-    
-    
-
-
-class FlowEdgeAst:
-    def __init__(self, tb: type_builder.TypeBuilder):
-        _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.class_("FlowEdge")
-        self._properties: typing.Set[str] = set([  "id",  "source",  "target",  "animated",  ])
-        self._props = FlowEdgeProperties(self._bldr, self._properties)
-
-    def type(self) -> baml_py.FieldType:
-        return self._bldr.field()
-
-    @property
-    def props(self) -> "FlowEdgeProperties":
-        return self._props
-
-
-class FlowEdgeViewer(FlowEdgeAst):
-    def __init__(self, tb: type_builder.TypeBuilder):
-        super().__init__(tb)
-
-    
-    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
-        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
-    
-
-
-class FlowEdgeProperties:
-    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
-        self.__bldr = bldr
-        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
-
-    
-    
-    @property
-    def id(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("id"))
-    
-    @property
-    def source(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("source"))
-    
-    @property
-    def target(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("target"))
-    
-    @property
-    def animated(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("animated"))
-    
-    
-
-
-class FlowNodeAst:
-    def __init__(self, tb: type_builder.TypeBuilder):
-        _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.class_("FlowNode")
-        self._properties: typing.Set[str] = set([  "id",  "type",  "label",  "position_x",  "position_y",  ])
-        self._props = FlowNodeProperties(self._bldr, self._properties)
-
-    def type(self) -> baml_py.FieldType:
-        return self._bldr.field()
-
-    @property
-    def props(self) -> "FlowNodeProperties":
-        return self._props
-
-
-class FlowNodeViewer(FlowNodeAst):
-    def __init__(self, tb: type_builder.TypeBuilder):
-        super().__init__(tb)
-
-    
-    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
-        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
-    
-
-
-class FlowNodeProperties:
-    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
-        self.__bldr = bldr
-        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
-
-    
-    
-    @property
-    def id(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("id"))
-    
-    @property
-    def type(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("type"))
-    
-    @property
-    def label(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("label"))
-    
-    @property
-    def position_x(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("position_x"))
-    
-    @property
-    def position_y(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("position_y"))
     
     
 
@@ -897,61 +770,6 @@ class MechanicResponseProperties:
     
 
 
-class PresentationInstructionAst:
-    def __init__(self, tb: type_builder.TypeBuilder):
-        _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.class_("PresentationInstruction")
-        self._properties: typing.Set[str] = set([  "mood",  "selected_component",  "header_text",  "ui_props",  "bpmn_data",  ])
-        self._props = PresentationInstructionProperties(self._bldr, self._properties)
-
-    def type(self) -> baml_py.FieldType:
-        return self._bldr.field()
-
-    @property
-    def props(self) -> "PresentationInstructionProperties":
-        return self._props
-
-
-class PresentationInstructionViewer(PresentationInstructionAst):
-    def __init__(self, tb: type_builder.TypeBuilder):
-        super().__init__(tb)
-
-    
-    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
-        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
-    
-
-
-class PresentationInstructionProperties:
-    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
-        self.__bldr = bldr
-        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
-
-    
-    
-    @property
-    def mood(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("mood"))
-    
-    @property
-    def selected_component(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("selected_component"))
-    
-    @property
-    def header_text(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("header_text"))
-    
-    @property
-    def ui_props(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("ui_props"))
-    
-    @property
-    def bpmn_data(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("bpmn_data"))
-    
-    
-
-
 class SemanticResolutionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -995,6 +813,61 @@ class SemanticResolutionProperties:
     @property
     def suggested_dbt_models(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("suggested_dbt_models"))
+    
+    
+
+
+class SemanticUIContainerAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SemanticUIContainer")
+        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "severity",  "entities",  "relationships",  ])
+        self._props = SemanticUIContainerProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SemanticUIContainerProperties":
+        return self._props
+
+
+class SemanticUIContainerViewer(SemanticUIContainerAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SemanticUIContainerProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def archetype(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def subject_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
+    
+    @property
+    def severity(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("severity"))
+    
+    @property
+    def entities(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("entities"))
+    
+    @property
+    def relationships(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("relationships"))
     
     
 

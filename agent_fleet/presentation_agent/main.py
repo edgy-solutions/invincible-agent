@@ -6,7 +6,7 @@ from pydantic import BaseModel
 import uvicorn
 
 from baml_client import b
-from baml_client.types import PersonaTarget, PresentationInstruction
+from baml_client.types import PersonaTarget, SemanticUIContainer
 
 app = FastAPI(title="Engine F - Presentation Agent")
 

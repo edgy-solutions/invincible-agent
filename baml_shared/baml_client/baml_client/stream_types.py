@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (15)
+# Generated classes (12)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -54,27 +54,8 @@ class AuthoringResponse(BaseModel):
     generated_xml: typing.Optional[str] = None
     missing_info_flags: typing.List[str]
 
-class BpmnViewerProps(BaseModel):
-    title: typing.Optional[str] = None
-    nodes: typing.List["FlowNode"]
-    edges: typing.List["FlowEdge"]
-    ontology_tags: typing.List[str] = Field(description='For the Live Context HUD')
-
 class FinalSynthesis(BaseModel):
     markdown_report: typing.Optional[str] = None
-
-class FlowEdge(BaseModel):
-    id: typing.Optional[str] = None
-    source: typing.Optional[str] = None
-    target: typing.Optional[str] = None
-    animated: typing.Optional[bool] = None
-
-class FlowNode(BaseModel):
-    id: typing.Optional[str] = None
-    type: typing.Optional[str] = Field(default=None, description='e.g., \'default\', \'input\', \'output\'')
-    label: typing.Optional[str] = None
-    position_x: typing.Optional[int] = None
-    position_y: typing.Optional[int] = None
 
 class GraphExpertResponse(BaseModel):
     confidence_score: typing.Optional[float] = None
@@ -91,14 +72,6 @@ class MechanicResponse(BaseModel):
     safety_warnings: typing.List[str]
     short_answer: typing.Optional[str] = None
 
-class PresentationInstruction(BaseModel):
-    # Server-driven UI instruction payload
-    mood: typing.Optional[types.MoodType] = Field(default=None, description='The visual mood or tone for the UI.')
-    selected_component: typing.Optional[types.UIComponentType] = Field(default=None, description='The exact target React component.')
-    header_text: typing.Optional[str] = Field(default=None, description='Title or header text for the rendered view.')
-    ui_props: typing.Optional[str] = Field(default=None, description='This must be a stringified JSON object containing the exact data the frontend component needs (e.g., node mapping references or hazard arrays for Warning Cards).')
-    bpmn_data: typing.Optional["BpmnViewerProps"] = Field(default=None, description='Structured React Flow data, specifically populated when selected_component is BPMN_VIEWER.')
-
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
 # The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
@@ -106,6 +79,13 @@ class SemanticResolution(BaseModel):
     resolved_uri: typing.Optional[str] = Field(default=None, description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
     confidence_score: typing.Optional[float] = Field(default=None, description='Model confidence in the match, between 0.0 and 1.0.')
     suggested_dbt_models: typing.List[str] = Field(description='Ordered list of dbt model names relevant to the resolved concept.')
+
+class SemanticUIContainer(BaseModel):
+    archetype: typing.Optional[types.SemanticArchetype] = None
+    subject_concept: typing.Optional[str] = None
+    severity: typing.Optional[types.SeverityLevel] = None
+    entities: typing.Optional[str] = None
+    relationships: typing.Optional[str] = None
 
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]

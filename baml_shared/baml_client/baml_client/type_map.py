@@ -31,17 +31,8 @@ type_map = {
     "types.AuthoringResponse": types.AuthoringResponse,
     "stream_types.AuthoringResponse": stream_types.AuthoringResponse,
 
-    "types.BpmnViewerProps": types.BpmnViewerProps,
-    "stream_types.BpmnViewerProps": stream_types.BpmnViewerProps,
-
     "types.FinalSynthesis": types.FinalSynthesis,
     "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
-
-    "types.FlowEdge": types.FlowEdge,
-    "stream_types.FlowEdge": stream_types.FlowEdge,
-
-    "types.FlowNode": types.FlowNode,
-    "stream_types.FlowNode": stream_types.FlowNode,
 
     "types.GraphExpertResponse": types.GraphExpertResponse,
     "stream_types.GraphExpertResponse": stream_types.GraphExpertResponse,
@@ -52,11 +43,11 @@ type_map = {
     "types.MechanicResponse": types.MechanicResponse,
     "stream_types.MechanicResponse": stream_types.MechanicResponse,
 
-    "types.PresentationInstruction": types.PresentationInstruction,
-    "stream_types.PresentationInstruction": stream_types.PresentationInstruction,
-
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
+
+    "types.SemanticUIContainer": types.SemanticUIContainer,
+    "stream_types.SemanticUIContainer": stream_types.SemanticUIContainer,
 
     "types.SupervisorTaskPlan": types.SupervisorTaskPlan,
     "stream_types.SupervisorTaskPlan": stream_types.SupervisorTaskPlan,
@@ -68,6 +59,8 @@ type_map = {
 
     "types.PersonaTarget": types.PersonaTarget,
 
-    "types.UIComponentType": types.UIComponentType,
+    "types.SemanticArchetype": types.SemanticArchetype,
+
+    "types.SeverityLevel": types.SeverityLevel,
 
 }

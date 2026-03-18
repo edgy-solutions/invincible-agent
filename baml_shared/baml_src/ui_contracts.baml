@@ -11,64 +11,44 @@ enum MoodType {
   EDUCATIONAL
 }
 
-/// The exact React UI Component the frontend should render
-enum UIComponentType {
-  WARNING_CARD
-  INTERACTIVE_CHECKLIST
-  SUPPLY_TABLE
-  XML_EDITOR
-  BPMN_VIEWER
-  MARKDOWN_CHAT
+enum SemanticArchetype {
+
+  PROCESS_TOPOLOGY     // Maps to workflows, steps, BPMN
+  HAZARD_DECLARATION   // Maps to safety, risk, warnings
+  ASSET_STATE_METRIC   // Maps to inventory, telemetry, tables
+  KNOWLEDGE_DOCUMENT   // Maps to manuals, standard text, code
 }
 
-class FlowNode {
-  id string
-  type string @description("e.g., 'default', 'input', 'output'")
-  label string
-  position_x int
-  position_y int
+enum SeverityLevel {
+  INFO
+  WARNING
+  CRITICAL
 }
 
-class FlowEdge {
-  id string
-  source string
-  target string
-  animated bool
+class SemanticUIContainer {
+  archetype SemanticArchetype
+  subject_concept string      // e.g., 'iof-mro:AuxiliaryFuelPump'
+  severity SeverityLevel?
+  entities string             // A JSON string of the raw data (e.g., nodes, rows, hazard lists)
+  relationships string?       // A JSON string of spatial edges (used for PROCESS_TOPOLOGY)
 }
 
-class BpmnViewerProps {
-  title string
-  nodes FlowNode[]
-  edges FlowEdge[]
-  ontology_tags string[] @description("For the Live Context HUD")
-}
-
-/// Server-driven UI instruction payload
-class PresentationInstruction {
-  mood MoodType
-    @description("The visual mood or tone for the UI.")
-  selected_component UIComponentType
-    @description("The exact target React component.")
-  header_text string
-    @description("Title or header text for the rendered view.")
-  ui_props string
-    @description("This must be a stringified JSON object containing the exact data the frontend component needs (e.g., node mapping references or hazard arrays for Warning Cards).")
-  bpmn_data BpmnViewerProps?
-    @description("Structured React Flow data, specifically populated when selected_component is BPMN_VIEWER.")
-}
-
-/// Router function mapping raw data and persona to a UI layout
-function DesignUI(raw_data: string, persona: PersonaTarget) -> PresentationInstruction {
+/// Router function mapping raw data and persona to a semantic UI intent
+function DesignUI(raw_data: string, persona: PersonaTarget) -> SemanticUIContainer {
   client "openai/gpt-4o"
   prompt #"
-    Act as an expert UX Designer. Analyze the raw data and the persona.
+    Act as a Semantic UI Translator. Do NOT output frontend code. 
+    Analyze the raw data and the Persona. 
+    Output the correct SemanticArchetype. 
+    
+    For example:
+    - If the Persona is PROCESS_ENGINEER and the data contains steps, use PROCESS_TOPOLOGY. 
+      Dump the exact step data as a JSON string into entities, and the topological connections into relationships.
+    - If it is a safety warning, use HAZARD_DECLARATION and set the severity.
+    - If it's a manual or code, use KNOWLEDGE_DOCUMENT.
+    - If it's telemetry or inventory, use ASSET_STATE_METRIC.
 
-    If the persona is MECHANIC and there are hazards, choose WARNING_CARD.
-    If the persona is MECHANIC and there are no critical hazards, choose INTERACTIVE_CHECKLIST.
-    If the persona is PROCESS_ENGINEER, you MUST select the BPMN_VIEWER component. Parse the raw steps into FlowNode objects (calculating basic x/y coordinates to lay them out top-to-bottom) and link them with FlowEdge objects.
-    For LOGISTICS, choose SUPPLY_TABLE.
-    For TECH_WRITER, choose XML_EDITOR.
-    Otherwise, fall back to MARKDOWN_CHAT.
+    Identify the core subject concept (e.g., an IOF URI if available).
 
     --- RAW DATA ---
     {{ raw_data }}
@@ -76,13 +56,7 @@ function DesignUI(raw_data: string, persona: PersonaTarget) -> PresentationInstr
     --- TARGET PERSONA ---
     {{ persona }}
 
-    Instructions:
-    1. Determine the appropriate mood.
-    2. Select the correct UIComponentType.
-    3. Generate a concise header text.
-    4. Output the exact JSON props required for that component as a stringified JSON object in ui_props.
-    5. If the persona is PROCESS_ENGINEER, ensure bpmn_data is fully populated with nodes and edges.
-
     {{ ctx.output_format }}
   "#
 }
+
