@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 1. THE FRONTEND (React UI)
+  # ==========================================
+  process-spawner-ui:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount the sibling UI repo (two levels up from examples/)
+      - ../../process-spawner:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+
+  # ==========================================
+  # 2. THE FRONTEND BFF (Interviewer Agent)
+  # ==========================================
+  cortex-bff:
+    image: python:3.12-slim
+    working_dir: /app
+    # Install dependencies and run with hot-reloading
+    command: sh -c "pip install uv && uv sync && uv run uvicorn interviewer_agent:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the backend folder inside the sibling UI repo
+      - ../../process-spawner/backend:/app
+      - /app/.venv
+    environment:
+      # The BFF needs to talk to Dagster and the DB
+      - DAGSTER_WEBSERVER_URL=http://dagster-webserver:3000
+      - DATABASE_URL=postgresql+asyncpg://iagent:iagent@postgres:5432/iagent
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ==========================================
+  # 3. DAGSTER CONTROL PLANE (Core Mesh)
+  # ==========================================
+  dagster-webserver:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run dagster-webserver -h 0.0.0.0 -p 3000
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount the invincible-agent repo (one level up from examples/)
+      - ..:/app
+      # Anonymous volume to isolate container .venv from host .venv
+      - /app/.venv
+    environment:
+      - DAGSTER_POSTGRES_USER=iagent
+      - DAGSTER_POSTGRES_PASSWORD=iagent
+      - DAGSTER_POSTGRES_DB=iagent
+      - DAGSTER_HOME=/opt/dagster
+      # Tell Dagster where to find the local Engine F (if running locally)
+      - PRESENTATION_AGENT_URL=http://host.docker.internal:8087 
+      - BPMN_POSTGRES_HOST=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dagster-daemon:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run dagster-daemon run
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - DAGSTER_POSTGRES_USER=iagent
+      - DAGSTER_POSTGRES_PASSWORD=iagent
+      - DAGSTER_POSTGRES_DB=iagent
+      - DAGSTER_HOME=/opt/dagster
+      - BPMN_POSTGRES_HOST=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ==========================================
+  # 4. DATA INFRASTRUCTURE
+  # ==========================================
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: iagent
+      POSTGRES_PASSWORD: iagent
+      POSTGRES_DB: iagent
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Automated schema injection (Phase 2 Pro-tip)
+      - ../sql/create_bpmn_catalog.sql:/docker-entrypoint-initdb.d/create_bpmn_catalog.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iagent"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

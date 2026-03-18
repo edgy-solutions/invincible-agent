@@ -68,7 +68,7 @@ def create_task_plan(config: SupervisorQueryConfig):
         )
 
 
-@op(in_={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
+@op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes a single decomposed sub-task by calling Engine E (Neo4j Graph Expert).
@@ -96,7 +96,7 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
+@op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
 def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Fans-in the results from all parallel sub-tasks and forwards them to
@@ -115,8 +115,8 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
     return response.json()
 
 
-@op(in_={"results": In(List[Dict[str, Any]])}, out=Out(str))
-def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> str:
+@op(ins={"results": In(List[Dict[str, Any]])}, out=Out(str))
+def generate_ui_payload(results, config: SupervisorQueryConfig) -> str:
     """
     Takes the aggregated results array from the Domain Agents and calls
     Engine F (Presentation Agent) to map the structured data to a Server-Driven UI
@@ -136,7 +136,8 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> str:
     # Force stringification to bypass Dagster's valueRepr length limit for dicts
     ui_payload_str = json.dumps(ui_payload_dict)
     
-    context.log.info(f"Generated UI Payload string for persona {config.persona}")
+    from dagster import get_dagster_logger
+    get_dagster_logger().info(f"Generated UI Payload string for persona {config.persona}")
     yield Output(
         ui_payload_str,
         metadata={"ui_json_payload": MetadataValue.json(ui_payload_dict)}
@@ -162,7 +163,7 @@ def supervisor_query_job():
     collected_results = executed_results.collect()
     
     # 1. Statefully save the results into the thread history using Engine B
-    synthesize_stateful(collected_results)
+    synthesize_stateful(results=collected_results)
     
     # 2. Map the domain results to the React UI Component using Engine F
-    return generate_ui_payload(collected_results)
+    generate_ui_payload(results=collected_results)

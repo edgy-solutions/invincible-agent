@@ -1,0 +1,41 @@
+FROM python:3.12-slim
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install system dependencies (psycopg2-binary needs libpq)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Install dependencies using uv
+RUN uv sync --frozen
+
+# Set Dagster Home to a location NOT in /app to avoid volume masking
+ENV DAGSTER_HOME=/opt/dagster
+RUN mkdir -p /opt/dagster
+
+# Create a basic dagster.yaml to use Postgres storage
+RUN echo 'storage:\n\
+  postgres:\n\
+    postgres_db:\n\
+      hostname: postgres\n\
+      username: { env: DAGSTER_POSTGRES_USER }\n\
+      password: { env: DAGSTER_POSTGRES_PASSWORD }\n\
+      db_name: { env: DAGSTER_POSTGRES_DB }\n\
+      port: 5432' > /opt/dagster/dagster.yaml
+
+# Copy the rest of the code
+COPY . .
+
+# Expose ports
+EXPOSE 3000
+
+# Default command is webserver
+CMD ["uv", "run", "dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
