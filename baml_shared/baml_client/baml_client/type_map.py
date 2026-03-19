@@ -52,6 +52,12 @@ type_map = {
     "types.SupervisorTaskPlan": types.SupervisorTaskPlan,
     "stream_types.SupervisorTaskPlan": stream_types.SupervisorTaskPlan,
 
+    "types.UIEntity": types.UIEntity,
+    "stream_types.UIEntity": stream_types.UIEntity,
+
+    "types.UIRelation": types.UIRelation,
+    "stream_types.UIRelation": stream_types.UIRelation,
+
 
     "types.AgentStatus": types.AgentStatus,
 

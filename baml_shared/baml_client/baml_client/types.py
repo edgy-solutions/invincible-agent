@@ -77,7 +77,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (12)
+# Generated classes (14)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -138,12 +138,24 @@ class SemanticUIContainer(BaseModel):
     archetype: SemanticArchetype
     subject_concept: str
     severity: typing.Optional[SeverityLevel] = None
-    entities: str
-    relationships: typing.Optional[str] = None
+    entities: typing.Union[str, typing.List["UIEntity"]]
+    relationships: typing.Optional[typing.List["UIRelation"]] = None
 
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
     reasoning: str
+
+class UIEntity(BaseModel):
+    id: str
+    name: typing.Optional[str] = None
+    type: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+
+class UIRelation(BaseModel):
+    source: str
+    target: str
+    relation: typing.Optional[str] = None
+    predicate: typing.Optional[str] = None
 
 # #########################################################################
 # Generated type aliases (0)

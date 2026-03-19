@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (12)
+# Generated classes (14)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -84,12 +84,24 @@ class SemanticUIContainer(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = None
     subject_concept: typing.Optional[str] = None
     severity: typing.Optional[types.SeverityLevel] = None
-    entities: typing.Optional[str] = None
-    relationships: typing.Optional[str] = None
+    entities: typing.Optional[typing.Union[str, typing.List["UIEntity"]]] = None
+    relationships: typing.Optional[typing.List["UIRelation"]] = None
 
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
     reasoning: typing.Optional[str] = None
+
+class UIEntity(BaseModel):
+    id: typing.Optional[str] = None
+    name: typing.Optional[str] = None
+    type: typing.Optional[str] = None
+    description: typing.Optional[str] = None
+
+class UIRelation(BaseModel):
+    source: typing.Optional[str] = None
+    target: typing.Optional[str] = None
+    relation: typing.Optional[str] = None
+    predicate: typing.Optional[str] = None
 
 # #########################################################################
 # Generated type aliases (0)

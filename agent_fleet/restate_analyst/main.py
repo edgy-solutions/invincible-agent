@@ -45,7 +45,8 @@ from baml_client.types import AgentResponse, AgentStatus, AgentTask  # noqa: E40
 # ---------------------------------------------------------------------------
 # Smolagents imports — only used inside the Restate handler.
 # ---------------------------------------------------------------------------
-from smolagents import CodeAgent, InferenceClientModel  # noqa: E402
+from smolagents import CodeAgent
+from ..llm_utils import get_smolagent_model
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -105,7 +106,7 @@ def _run_smolagent(task_description: str, dataset_id: str, semantic_ctx: dict) -
         f"analysis and any key metrics you extract."
     )
 
-    model = InferenceClientModel()
+    model = get_smolagent_model()
     agent = CodeAgent(tools=[], model=model)
     result = agent.run(agent_prompt)
 

@@ -28,6 +28,7 @@ agent-fleet = [
     "h2",
     "httptools",
     "hypercorn",
+    "python-dotenv",
 ]
 
 [dependency-groups]

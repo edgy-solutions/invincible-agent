@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","FinalSynthesis","GraphExpertResponse","LogisticsResponse","MechanicResponse","SemanticResolution","SemanticUIContainer","SupervisorTaskPlan",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","FinalSynthesis","GraphExpertResponse","LogisticsResponse","MechanicResponse","SemanticResolution","SemanticUIContainer","SupervisorTaskPlan","UIEntity","UIRelation",]
         ), enums=set(
           ["AgentStatus","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -51,7 +51,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 12
+    # Generated classes 14
     # #########################################################################
 
     @property
@@ -101,6 +101,14 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def SupervisorTaskPlan(self) -> "SupervisorTaskPlanViewer":
         return SupervisorTaskPlanViewer(self)
+
+    @property
+    def UIEntity(self) -> "UIEntityViewer":
+        return UIEntityViewer(self)
+
+    @property
+    def UIRelation(self) -> "UIRelationViewer":
+        return UIRelationViewer(self)
 
 
 
@@ -360,7 +368,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 12
+# Generated classes 14
 # #########################################################################
 
 class AgentResponseAst:
@@ -911,6 +919,108 @@ class SupervisorTaskPlanProperties:
     @property
     def reasoning(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
+    
+    
+
+
+class UIEntityAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("UIEntity")
+        self._properties: typing.Set[str] = set([  "id",  "name",  "type",  "description",  ])
+        self._props = UIEntityProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "UIEntityProperties":
+        return self._props
+
+
+class UIEntityViewer(UIEntityAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class UIEntityProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("id"))
+    
+    @property
+    def name(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("name"))
+    
+    @property
+    def type(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("type"))
+    
+    @property
+    def description(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("description"))
+    
+    
+
+
+class UIRelationAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("UIRelation")
+        self._properties: typing.Set[str] = set([  "source",  "target",  "relation",  "predicate",  ])
+        self._props = UIRelationProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "UIRelationProperties":
+        return self._props
+
+
+class UIRelationViewer(UIRelationAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class UIRelationProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def source(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source"))
+    
+    @property
+    def target(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("target"))
+    
+    @property
+    def relation(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("relation"))
+    
+    @property
+    def predicate(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("predicate"))
     
     
 

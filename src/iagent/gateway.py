@@ -12,7 +12,7 @@ from pydantic import BaseModel
 # Configuration from environment
 DAGSTER_URL = os.environ.get("DAGSTER_URL", "http://localhost:3000/graphql")
 POLL_INTERVAL_SECONDS = 2
-MAX_POLLS = 120  # 4 minutes max
+MAX_POLLS = 150  # 5 minutes max (300 seconds)
 
 app = FastAPI(title="Invincible Agent Gateway (Decoupled)")
 logging.basicConfig(level=logging.INFO)
@@ -63,23 +63,27 @@ GET_STEP_OUTPUT_QUERY = """
 query GetStepOutput($runId: String!) {
   pipelineRunOrError(runId: $runId) {
     ... on Run {
-      events(after: -1) {
-        __typename
-        ... on HandledOutputEvent {
-          stepKey
-          metadataEntries {
-            label
-            value {
-              ... on TextMetadataValue { text }
-              ... on JsonMetadataValue { data }
+      eventConnection {
+        events {
+          __typename
+          ... on HandledOutputEvent {
+            stepKey
+            metadataEntries {
+              label
+              ... on JsonMetadataEntry {
+                jsonString
+              }
+              ... on TextMetadataEntry {
+                text
+              }
             }
           }
-        }
-        ... on EngineEvent {
-          message
-          error {
+          ... on EngineEvent {
             message
-            stack
+            error {
+              message
+              stack
+            }
           }
         }
       }
@@ -134,7 +138,7 @@ async def orchestrate(request: OrchestrationRequest) -> Dict[str, Any]:
     logger.info(f"Submitting run for user_query='{request.user_query}'")
     submit_result = await call_dagster_graphql(
         SUBMIT_RUN_MUTATION,
-        {"runConfigData": run_config}
+        {"runConfigData": json.dumps(run_config)}
     )
 
     data = submit_result.get("data", {}).get("submitRun", {})
@@ -164,7 +168,7 @@ async def orchestrate(request: OrchestrationRequest) -> Dict[str, Any]:
     if status != "SUCCESS":
         # Attempt to find error message in logs
         events_result = await call_dagster_graphql(GET_STEP_OUTPUT_QUERY, {"runId": run_id})
-        events = events_result.get("data", {}).get("pipelineRunOrError", {}).get("events", [])
+        events = events_result.get("data", {}).get("pipelineRunOrError", {}).get("eventConnection", {}).get("events", [])
         error_msg = "Run failed or timed out"
         for event in events:
             if event.get("__typename") == "EngineEvent" and event.get("error"):
@@ -177,7 +181,7 @@ async def orchestrate(request: OrchestrationRequest) -> Dict[str, Any]:
     # 4. Fetch Output
     logger.info(f"Run {run_id} successful. Fetching output...")
     output_result = await call_dagster_graphql(GET_STEP_OUTPUT_QUERY, {"runId": run_id})
-    events = output_result.get("data", {}).get("pipelineRunOrError", {}).get("events", [])
+    events = output_result.get("data", {}).get("pipelineRunOrError", {}).get("eventConnection", {}).get("events", [])
     
     # Search for the HandledOutputEvent of the final step 'generate_ui_payload'
     final_output_str = None
@@ -186,25 +190,17 @@ async def orchestrate(request: OrchestrationRequest) -> Dict[str, Any]:
             # Extract UI payload from metadata (redundant safety) or search for the result string
             metadata = event.get("metadataEntries", [])
             for entry in metadata:
-                if entry.get("label") == "ui_json_payload" and entry.get("value", {}).get("data"):
-                    # This is the full JSON dict from MetadataValue.json
-                    return {
-                        "status": "success",
-                        "run_id": run_id,
-                        "ui_instruction": entry["value"]["data"]
-                    }
-            
-            # Fallback: Find the TextMetadataValue if we logged it as a string
-            for entry in metadata:
-                if entry.get("value", {}).get("text"):
-                    try:
-                        return {
-                            "status": "success",
-                            "run_id": run_id,
-                            "ui_instruction": json.loads(entry["value"]["text"])
-                        }
-                    except:
-                        pass
+                if entry.get("label") == "ui_json_payload":
+                    json_str = entry.get("jsonString") or entry.get("text")
+                    if json_str:
+                        try:
+                            return {
+                                "status": "success",
+                                "run_id": run_id,
+                                "ui_instruction": json.loads(json_str)
+                            }
+                        except json.JSONDecodeError:
+                            logger.error("Failed to parse metadata jsonString: %s", json_str)
 
     # If we didn't find specific metadata, we fallback to a generic message
     # In a real environment, the above MetadataValue.json check is extremely reliable.

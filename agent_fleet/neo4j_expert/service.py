@@ -3,8 +3,10 @@ import asyncio
 from typing import Dict, Any
 
 from restate import Context, Service
-from smolagents import CodeAgent, InferenceClientModel
+from smolagents import CodeAgent
 from mem0 import Memory
+
+from ..llm_utils import get_smolagent_model
 
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
@@ -72,8 +74,7 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             system_prompt_with_memory = system_prompt
 
         # Initialize the LLM (configurable via env var, defaults to lightweight model)
-        model_id = os.getenv("SMOLAGENTS_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
-        model = InferenceClientModel(model_id=model_id)
+        model = get_smolagent_model()
         
         # Instantiate the agent giving it ONLY the Neo4j tools and persona
         agent = CodeAgent(

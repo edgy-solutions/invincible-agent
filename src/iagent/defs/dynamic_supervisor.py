@@ -124,13 +124,35 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
     return response.json()
 
 
-@op(ins={"results": In(List[Dict[str, Any]])}, out=Out(str))
-def generate_ui_payload(results, config: SupervisorQueryConfig) -> str:
+@op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Any))
+def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     """
     Takes the aggregated results array from the Domain Agents and calls
     Engine F (Presentation Agent) to map the structured data to a Server-Driven UI
     Component layout. Returns the result as a raw JSON string to avoid truncation.
     """
+    # 1. Check if the graph experts failed to find any data
+    data_str = json.dumps(results)
+    if "EMPTY_RESULT_SET" in data_str or "No hazards related to" in data_str:
+        context.log.warning("Empty graph results detected. Short-circuiting UI generation.")
+        
+        # Immediately return the grounded Null State payload to the UI
+        # This matches the KNOWLEDGE_DOCUMENT archetype used for Markdown alerts
+        ui_payload_dict = {
+            "archetype": "KNOWLEDGE_DOCUMENT",
+            "subject_concept": "system://mesh/alert",
+            "severity": "WARNING",
+            "entities": "# ⚠️ SYSTEM ALERT\nNo relevant records or hazards found in the Graph Database for this query. Do not proceed without manual verification.",
+            "relationships": "[]"
+        }
+        ui_payload_str = json.dumps(ui_payload_dict)
+        yield Output(
+            value=ui_payload_dict,
+            metadata={"ui_json_payload": ui_payload_str}
+        )
+        return
+
+    # 2. If data exists, proceed with calling Engine F (Presentation Agent)
     response = requests.post(
         f"{PRESENTATION_AGENT_SVC_URL}/render_ui",
         json={
@@ -145,11 +167,10 @@ def generate_ui_payload(results, config: SupervisorQueryConfig) -> str:
     # Force stringification to bypass Dagster's valueRepr length limit for dicts
     ui_payload_str = json.dumps(ui_payload_dict)
     
-    from dagster import get_dagster_logger
-    get_dagster_logger().info(f"Generated UI Payload string for persona {config.persona}")
+    context.log.info(f"Generated UI Payload for persona {config.persona}")
     yield Output(
-        ui_payload_str,
-        metadata={"ui_json_payload": MetadataValue.json(ui_payload_dict)}
+        value=ui_payload_dict,
+        metadata={"ui_json_payload": ui_payload_str}
     )
 
 

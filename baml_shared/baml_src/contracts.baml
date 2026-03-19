@@ -1,5 +1,5 @@
 // =============================================================================
-// Polyglot Agentic Data Mesh — Shared Data Contracts
+// Polyglot Agentic Data Mesh - Shared Data Contracts
 // =============================================================================
 // These BAML definitions serve as the single source of truth for ALL agent
 // communication across the mesh. Every microservice (Engine A: Restate+Smolagents,
@@ -82,7 +82,7 @@ function ClassifySustainmentIntent(query: string, active_ontology_classes: strin
   client MainAgent
   prompt #"
     You are a sustainment-domain semantic classifier.
-
+    
     Your job is to map the user's query to exactly ONE ontology URI from the
     list below. Do NOT invent URIs — you must select strictly from this list.
 
@@ -155,6 +155,12 @@ function FormatGraphResponse(raw_text: string, persona: PersonaTarget) -> GraphE
     Raw Grapy Query Results:
     {{ raw_text }}
 
+    CRITICAL GROUNDING RULES:
+    1. STRICT ADHERENCE: You are in a strict military context. DO NOT invent or hallucinate data, procedures, or hazards.
+    2. NO GENERIC ADVICE: Do not invent generic safety advice unless those exact words are in the raw data.
+    3. NULL STATE TRIGGER: If the input raw data is empty or missing, you MUST return NULL_GRAPH_RESPONSE as the primary content of your response (e.g. in short_answer or equivalent).
+    4. NO PANIC: Do not invent "red-flagged" areas or "unscheduled maintenance" if the query results are simply empty.
+
     Instructions:
     1. Parse the raw text carefully.
     2. Format it into the specific response structure required for a {{ persona }}.
@@ -220,6 +226,88 @@ function SynthesizeReports(original_query: string, raw_json_results: string) -> 
     2. Format the output with clear headers, bullet points, and emphasis where needed.
     3. Ensure the final report is beautiful, highly readable, and professional.
 
+    {{ ctx.output_format }}
+  "#
+}
+
+// =============================================================================
+// Engine F (Presentation Agent) UI Routing Contracts
+// =============================================================================
+
+/// The visual tone or mood to pass to the frontend
+enum MoodType {
+  ROUTINE
+  URGENT
+  SUCCESS
+  STRATEGIC
+  EDUCATIONAL
+}
+
+enum SemanticArchetype {
+  PROCESS_TOPOLOGY     // Maps to workflows, steps, BPMN
+  HAZARD_DECLARATION   // Maps to safety, risk, warnings
+  ASSET_STATE_METRIC   // Maps to inventory, telemetry, tables
+  KNOWLEDGE_DOCUMENT   // Maps to manuals, standard text, code
+}
+
+enum SeverityLevel {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// Add these new structured classes
+class UIEntity {
+  id string
+  name string?
+  type string?
+  description string?
+}
+
+class UIRelation {
+  source string
+  target string
+  relation string?
+  predicate string?
+}
+
+// Update the SemanticUIContainer to use BAML Unions
+class SemanticUIContainer {
+  archetype SemanticArchetype
+  subject_concept string      
+  severity SeverityLevel?
+  
+  // Forces the LLM to output a markdown string OR a strict JSON array
+  entities string | UIEntity[]              
+  relationships UIRelation[]?        
+}
+
+/// Router function mapping raw data and persona to a semantic UI intent
+function DesignUI(raw_data: string, persona: PersonaTarget) -> SemanticUIContainer {
+  client MainAgent
+  prompt #"
+    Act as a Semantic UI Translator. Do NOT output frontend code. 
+    Analyze the raw data and the Persona. Output the correct SemanticArchetype.
+    
+    CRITICAL GROUNDING RULES:
+    1. STRICT ADHERENCE: You are in a strict military context. DO NOT invent or hallucinate data, procedures, or hazards.
+    2. NO GENERIC ADVICE: Do not invent generic safety advice unless those exact words are in the raw data.
+    3. NULL STATE TRIGGER: If the data is empty or missing, trigger the Null State.
+    4. NULL STATE FORMAT: Set archetype to KNOWLEDGE_DOCUMENT and entities to exactly: # SYSTEM ALERT: No relevant records found. Do not proceed without manual verification.
+
+    EXAMPLES:
+    - PROCESS_ENGINEER: use PROCESS_TOPOLOGY. Dump steps into entities.
+    - Safety warning: use HAZARD_DECLARATION.
+    - Manual/Text: use KNOWLEDGE_DOCUMENT.
+    
+    Core subject concept: e.g., an IOF URI if available.
+    
+    --- RAW DATA ---
+    {{ raw_data }}
+    
+    --- TARGET PERSONA ---
+    {{ persona }}
+    
     {{ ctx.output_format }}
   "#
 }

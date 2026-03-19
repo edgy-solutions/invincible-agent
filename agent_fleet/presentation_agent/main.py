@@ -37,16 +37,26 @@ async def render_ui(request: RenderRequest) -> Dict[str, Any]:
     
     # Safely stringify the entities and relationships so the React frontend 
     # can JSON.parse() them without escaping errors. 
-    # Since BAML 0.219 uses strings, we try to load them first to avoid double-escaping.
     def safe_json_dump(val):
+        import ast
         if not val: return "[]"
         if isinstance(val, str):
+            # Clean up common markdown fences if the LLM leaked them
+            val = val.strip().replace("```json", "").replace("```", "").strip()
             try:
-                # If it's already valid JSON, don't double dump
+                # 1. Try strict JSON
                 parsed = json.loads(val)
                 return json.dumps(parsed)
             except:
-                return json.dumps(val)
+                try:
+                    # 2. Try Python literal eval (to fix unquoted keys/single quotes)
+                    parsed = ast.literal_eval(val)
+                    return json.dumps(parsed)
+                except:
+                    # 3. Fallback: at least don't double-string if it looks like an array/object
+                    if (val.startswith("[") and val.endswith("]")) or (val.startswith("{") and val.endswith("}")):
+                        return val
+                    return json.dumps(val)
         return json.dumps(val)
 
     payload["entities"] = safe_json_dump(payload.get("entities"))
