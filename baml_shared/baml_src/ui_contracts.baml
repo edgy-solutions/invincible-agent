@@ -35,7 +35,7 @@ class SemanticUIContainer {
 
 /// Router function mapping raw data and persona to a semantic UI intent
 function DesignUI(raw_data: string, persona: PersonaTarget) -> SemanticUIContainer {
-  client "openai/gpt-4o"
+  client MainAgent
   prompt #"
     Act as a Semantic UI Translator. Do NOT output frontend code. 
     Analyze the raw data and the Persona. 

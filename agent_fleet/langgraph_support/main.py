@@ -142,19 +142,16 @@ async def lifespan(app: FastAPI):
     """Startup: connect the AsyncPostgresSaver and compile the graph."""
     global _compiled_graph, _checkpointer
 
-    _checkpointer = AsyncPostgresSaver.from_conn_string(POSTGRES_URI)
-    await _checkpointer.setup()
+    async with AsyncPostgresSaver.from_conn_string(POSTGRES_URI) as saver:
+        _checkpointer = saver
+        builder = _build_graph()
+        _compiled_graph = builder.compile(checkpointer=_checkpointer)
 
-    builder = _build_graph()
-    _compiled_graph = builder.compile(checkpointer=_checkpointer)
+        print("[langgraph-support] Graph compiled with AsyncPostgresSaver checkpointer")
+        yield
 
-    print("[langgraph-support] Graph compiled with AsyncPostgresSaver checkpointer")
-    yield
-
-    # Cleanup
-    _compiled_graph = None
-    if _checkpointer is not None:
-        await _checkpointer.conn.close()
+        # Cleanup happens automatically via context manager
+        _compiled_graph = None
         _checkpointer = None
 
 

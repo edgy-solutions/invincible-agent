@@ -79,7 +79,7 @@ class AgentResponse {
 /// The active_ontology_classes string is injected at runtime from the RDF
 /// graph — it contains a newline-delimited list of valid ontology URIs.
 function ClassifySustainmentIntent(query: string, active_ontology_classes: string) -> SemanticResolution {
-  client "openai/gpt-4o"
+  client MainAgent
   prompt #"
     You are a sustainment-domain semantic classifier.
 
@@ -146,7 +146,7 @@ class GraphExpertResponse {
 }
 
 function FormatGraphResponse(raw_text: string, persona: PersonaTarget) -> GraphExpertResponse {
-  client "openai/gpt-4o"
+  client MainAgent
   prompt #"
     You are a technical data formatting expert.
     Turn the following raw data extracted from a Neo4j military graph database
@@ -179,7 +179,7 @@ class SupervisorTaskPlan {
 }
 
 function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
-  client "openai/gpt-4o"
+  client MainAgent
   prompt #"
     Break this complex user query into discrete tasks.
 
@@ -204,7 +204,7 @@ class FinalSynthesis {
 }
 
 function SynthesizeReports(original_query: string, raw_json_results: string) -> FinalSynthesis {
-  client "openai/gpt-4o"
+  client MainAgent
   prompt #"
     You are a Principal Technical Writer. Your job is to synthesize an array of JSON results 
     from our specialized Graph Expert agents into a single, cohesive, highly readable Markdown report.

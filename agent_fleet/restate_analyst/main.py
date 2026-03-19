@@ -45,7 +45,7 @@ from baml_client.types import AgentResponse, AgentStatus, AgentTask  # noqa: E40
 # ---------------------------------------------------------------------------
 # Smolagents imports — only used inside the Restate handler.
 # ---------------------------------------------------------------------------
-from smolagents import CodeAgent, HfApiModel  # noqa: E402
+from smolagents import CodeAgent, InferenceClientModel  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -105,7 +105,7 @@ def _run_smolagent(task_description: str, dataset_id: str, semantic_ctx: dict) -
         f"analysis and any key metrics you extract."
     )
 
-    model = HfApiModel()
+    model = InferenceClientModel()
     agent = CodeAgent(tools=[], model=model)
     result = agent.run(agent_prompt)
 
@@ -318,27 +318,32 @@ class AnalyzeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # POST /analyze — proxy route for Dagster
 # ---------------------------------------------------------------------------
+import httpx
 @app.post("/analyze")
 async def analyze_proxy(request: Request) -> JSONResponse:
     """Proxy that forwards incoming requests to the Restate AnalystService.
 
     Dagster (and other external callers) POST to ``/analyze`` with an
-    ``AgentTask`` JSON body. This route forwards the payload to the mounted
-    Restate service at ``/restate/AnalystService/analyze`` so the call
-    benefits from Restate's durable execution guarantees.
+    ``AgentTask`` JSON body. This route forwards the payload to the Restate Ingress
+    at /{ServiceName}/{MethodName} for durable execution.
     """
-    body = await request.body()
-
     try:
-        resp = requests.post(
-            "http://localhost:8081/restate/AnalystService/analyze",
-            data=body,
-            headers={"Content-Type": "application/json"},
-            timeout=300,
-        )
-        resp.raise_for_status()
-        return JSONResponse(content=resp.json(), status_code=resp.status_code)
-    except requests.RequestException as exc:
+        payload = await request.json()
+        target_url = f"{RESTATE_INGRESS_URL}/AnalystService/analyze"
+        
+        # Use httpx for consistency and better error handling
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(
+                target_url,
+                json=payload,
+            )
+            # Bubble up the exact response and status code from Restate
+            return JSONResponse(
+                status_code=resp.status_code,
+                content=resp.json() if resp.text else {}
+            )
+    except Exception as exc:
+        print(f"DEBUG: Restate proxy call failed for AnalystService: {exc}")
         return JSONResponse(
             content={
                 "status": AgentStatus.FAILED.value,

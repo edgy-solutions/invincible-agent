@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ==========================================
   # 1. THE FRONTEND (React UI)
@@ -33,9 +31,136 @@ services:
       - ../../process-spawner/backend:/app
       - /app/.venv
     environment:
-      # The BFF needs to talk to Dagster and the DB
       - DAGSTER_WEBSERVER_URL=http://dagster-webserver:3000
       - DATABASE_URL=postgresql+asyncpg://iagent:iagent@postgres:5432/iagent
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+
+  # ==========================================
+  # 3. THE AGENT FLEET (Polyglot Service Mesh)
+  # ==========================================
+  ontology-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run uvicorn agent_fleet.ontology_service.main:app --host 0.0.0.0 --port 8084
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+
+  restate-analyst:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run hypercorn agent_fleet.restate_analyst.main:app --bind 0.0.0.0:8081
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  langgraph-support:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run uvicorn agent_fleet.langgraph_support.main:app --host 0.0.0.0 --port 8082
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - LANGGRAPH_POSTGRES_URI=postgresql://iagent:iagent@postgres:5432/iagent
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  swarms-scraper:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run uvicorn agent_fleet.swarms_scraper.main:app --host 0.0.0.0 --port 8083
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  neo4j-expert:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run hypercorn agent_fleet.neo4j_expert.main:app --bind 0.0.0.0:8086
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USERNAME=neo4j
+      - NEO4J_PASSWORD=changeme
+      - WEAVIATE_URL=http://weaviate:8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  presentation-agent:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run uvicorn agent_fleet.presentation_agent.main:app --host 0.0.0.0 --port 8087
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8087/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,11 +185,24 @@ services:
       - DAGSTER_POSTGRES_PASSWORD=iagent
       - DAGSTER_POSTGRES_DB=iagent
       - DAGSTER_HOME=/opt/dagster
-      # Tell Dagster where to find the local Engine F (if running locally)
-      - PRESENTATION_AGENT_URL=http://host.docker.internal:8087 
       - BPMN_POSTGRES_HOST=postgres
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+      # Service Discovery Overrides (Docker Internal)
+      - ONTOLOGY_SVC_URL=http://ontology-service:8084
+      - NEO4J_EXPERT_SVC_URL=http://neo4j-expert:8086
+      - LANGGRAPH_SUPPORT_SVC_URL=http://langgraph-support:8082
+      - PRESENTATION_AGENT_SVC_URL=http://presentation-agent:8087
+      - RESTATE_ANALYST_URL=http://restate-analyst:8081
+      - SWARMS_SCRAPER_URL=http://swarms-scraper:8083
+      - DATAHUB_WRAPPER_URL=http://datahub-wrapper:8085
+      - ONTOLOGY_SERVICE_URL=http://ontology-service:8084
     depends_on:
       postgres:
+        condition: service_healthy
+      restate:
         condition: service_healthy
 
   dagster-daemon:
@@ -81,12 +219,63 @@ services:
       - DAGSTER_POSTGRES_DB=iagent
       - DAGSTER_HOME=/opt/dagster
       - BPMN_POSTGRES_HOST=postgres
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BAML_LOG_LEVEL=info
+      # Service Discovery Overrides (Docker Internal)
+      - ONTOLOGY_SVC_URL=http://ontology-service:8084
+      - NEO4J_EXPERT_SVC_URL=http://neo4j-expert:8086
+      - LANGGRAPH_SUPPORT_SVC_URL=http://langgraph-support:8082
+      - PRESENTATION_AGENT_SVC_URL=http://presentation-agent:8087
+      - RESTATE_ANALYST_URL=http://restate-analyst:8081
+      - SWARMS_SCRAPER_URL=http://swarms-scraper:8083
+      - DATAHUB_WRAPPER_URL=http://datahub-wrapper:8085
+      - ONTOLOGY_SERVICE_URL=http://ontology-service:8084
     depends_on:
       postgres:
         condition: service_healthy
+      restate:
+        condition: service_healthy
 
   # ==========================================
-  # 4. DATA INFRASTRUCTURE
+  # 4. DURABLE EXECUTION (Restate Server)
+  # ==========================================
+  restate:
+    image: docker.io/restatedev/restate:latest
+    ports:
+      - "8083:8080" # Ingress
+      - "9070:9070" # Admin
+    environment:
+      - RESTATE_ADMIN__BIND_ADDRESS=0.0.0.0:9070
+      - RESTATE_INGRESS__HTTP_SERVER__BIND_ADDRESS=0.0.0.0:8080
+    volumes:
+      - restate_data:/restate-data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9070/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  restate-init:
+    image: curlimages/curl:latest
+    depends_on:
+      restate:
+        condition: service_healthy
+      restate-analyst:
+        condition: service_healthy
+      neo4j-expert:
+        condition: service_healthy
+    command: >
+      sh -c "
+      echo 'Registering Analyst Service...';
+      curl -X POST http://restate:9070/deployments -H 'Content-Type: application/json' -d '{\"uri\": \"http://restate-analyst:8081/restate\", \"force\": true}';
+      echo 'Registering Neo4j Expert Service...';
+      curl -X POST http://restate:9070/deployments -H 'Content-Type: application/json' -d '{\"uri\": \"http://neo4j-expert:8086/restate\", \"force\": true}';
+      "
+
+  # ==========================================
+  # 5. DATA INFRASTRUCTURE
   # ==========================================
   postgres:
     image: postgres:15
@@ -106,5 +295,44 @@ services:
       timeout: 5s
       retries: 5
 
+  # ==========================================
+  # 6. KNOWLEDGE GRAPH INFRASTRUCTURE
+  # ==========================================
+  neo4j:
+    image: neo4j:5.26.0
+    ports:
+      - "7474:7474" # HTTP
+      - "7687:7687" # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/changeme
+      - NEO4J_PLUGINS=["apoc", "n10s"]
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "changeme", "RETURN 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  weaviate:
+    image: semitechnologies/weaviate:1.27.0
+    ports:
+      - "8085:8080" # Map to avoid conflict with other services
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - DEFAULT_VECTORIZER_MODULE=none
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
 volumes:
   pgdata:
+  restate_data:
+  neo4j_data:
+  weaviate_data:

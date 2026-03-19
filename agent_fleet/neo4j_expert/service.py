@@ -2,12 +2,8 @@ import os
 import asyncio
 from typing import Dict, Any
 
-import os
-import asyncio
-from typing import Dict, Any
-
 from restate import Context, Service
-from smolagents import CodeAgent, HfApiModel
+from smolagents import CodeAgent, InferenceClientModel
 from mem0 import Memory
 
 # Import from standard shared schemas & the ones just generated in Step 1
@@ -47,13 +43,13 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     # Initialize long-term memory via mem0 using Weaviate vector DB 
     # (Survives K8s ephemeral pod restarts)
     # --------------------------------------------------------------------------
-    weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate-svc:8080")
+    weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
     memory_config = {
         "vector_store": {
             "provider": "weaviate",
             "config": {
-                "url": weaviate_url,
-                "api_key": os.getenv("WEAVIATE_API_KEY", "")
+                "cluster_url": weaviate_url,
+                "auth_client_secret": os.getenv("WEAVIATE_API_KEY", "")
             }
         }
     }
@@ -77,18 +73,20 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
 
         # Initialize the LLM (configurable via env var, defaults to lightweight model)
         model_id = os.getenv("SMOLAGENTS_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
-        model = HfApiModel(model_id=model_id)
+        model = InferenceClientModel(model_id=model_id)
         
         # Instantiate the agent giving it ONLY the Neo4j tools and persona
         agent = CodeAgent(
             tools=[execute_cypher, get_graph_schema],
             model=model,
-            system_prompt=system_prompt_with_memory,
             add_base_tools=False
         )
         
+        # Combine the system prompt and user query into a single instruction
+        full_query = f"{system_prompt_with_memory}\n\nUser Query: {user_query}"
+        
         # Offload the blocking agent run to a background thread!
-        return str(await asyncio.to_thread(agent.run, user_query))
+        return str(await asyncio.to_thread(agent.run, full_query))
         
     # Standard 120s timeout from the orchestrator allows for extended searching
     raw_agent_response = await ctx.run("run-smolagent", run_smolagent)

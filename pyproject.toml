@@ -15,12 +15,19 @@ agent-fleet = [
     "uvicorn",
     "rdflib",
     "baml-py",
-    "restate-sdk",
+    "restate-sdk==0.14.0",
     "smolagents",
     "langgraph",
+    "langgraph-checkpoint-postgres",
     "psycopg[binary]",
     "swarms",
+    "mem0ai",
+    "weaviate-client",
+    "neo4j",
     "httpx",
+    "h2",
+    "httptools",
+    "hypercorn",
 ]
 
 [dependency-groups]

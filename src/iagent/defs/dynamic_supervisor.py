@@ -9,8 +9,17 @@ it into Persona-specific sub-tasks, fans those out concurrently to Engine E
 import json
 import requests
 import sys
+import os
 from pathlib import Path
 from typing import List, Dict, Any
+
+# ---------------------------------------------------------------------------
+# Service Discovery — defaults to K8s internal DNS, overridden via env
+# ---------------------------------------------------------------------------
+ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-svc.default.svc.cluster.local:8084")
+NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
+LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
+PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to Python path so we can import the generated client
@@ -51,7 +60,7 @@ def create_task_plan(config: SupervisorQueryConfig):
     """
     # 1. Ask Engine O for the plan
     response = requests.post(
-        "http://ontology-svc.default.svc.cluster.local:8084/plan",
+        f"{ONTOLOGY_SVC_URL}/plan",
         json={"query": config.user_query},
         timeout=30,
     )
@@ -79,7 +88,7 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
 
     # Call Engine E (durable execution via Restate + smolagents)
     response = requests.post(
-        "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+        f"{NEO4J_EXPERT_SVC_URL}/query_graph",
         json={
             "user_query": sub_query,
             "persona": persona,
@@ -103,7 +112,7 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
     Engine B (LangGraph Support) to maintain conversational memory.
     """
     response = requests.post(
-        "http://langgraph-agent-svc.default.svc.cluster.local:8082/support",
+        f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
         json={
             "thread_id": config.thread_id,
             "user_query": config.user_query,
@@ -123,7 +132,7 @@ def generate_ui_payload(results, config: SupervisorQueryConfig) -> str:
     Component layout. Returns the result as a raw JSON string to avoid truncation.
     """
     response = requests.post(
-        "http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui",
+        f"{PRESENTATION_AGENT_SVC_URL}/render_ui",
         json={
             "raw_data": results,
             "persona": config.persona,

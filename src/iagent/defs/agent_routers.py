@@ -9,6 +9,7 @@ import base64
 from pathlib import Path
 
 import requests
+import os
 from dagster import MetadataValue, asset
 
 # ---------------------------------------------------------------------------
@@ -27,6 +28,17 @@ def _icon_card(icon_name: str, title: str, description: str) -> MetadataValue:
         img = ""
     return MetadataValue.md(f"{img}\n\n**{title}**\n\n{description}")
 
+
+# ---------------------------------------------------------------------------
+# Service Discovery — defaults to K8s internal DNS, overridden via env
+# ---------------------------------------------------------------------------
+RESTATE_ANALYST_URL = os.getenv("RESTATE_ANALYST_URL", "http://restate-agent-svc.default.svc.cluster.local:8081")
+LANGGRAPH_SUPPORT_URL = os.getenv("LANGGRAPH_SUPPORT_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
+SWARMS_SCRAPER_URL = os.getenv("SWARMS_SCRAPER_URL", "http://swarms-agent-svc.default.svc.cluster.local:8083")
+DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
+NEO4J_EXPERT_URL = os.getenv("NEO4J_EXPERT_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
+PRESENTATION_AGENT_URL = os.getenv("PRESENTATION_AGENT_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
+ONTOLOGY_SERVICE_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-svc.default.svc.cluster.local:8084")
 
 # ---------------------------------------------------------------------------
 # Assets
@@ -50,7 +62,7 @@ def _icon_card(icon_name: str, title: str, description: str) -> MetadataValue:
 def trigger_restate_analyst() -> dict:
     """Trigger Engine A (Restate + Smolagents) analyst agent pod."""
     response = requests.post(
-        "http://restate-agent-svc.default.svc.cluster.local:8081/analyze",
+        f"{RESTATE_ANALYST_URL}/analyze",
         timeout=300,
     )
     response.raise_for_status()
@@ -74,7 +86,7 @@ def trigger_restate_analyst() -> dict:
 def trigger_langgraph_support() -> dict:
     """Trigger Engine B (LangGraph) support agent pod."""
     response = requests.post(
-        "http://langgraph-agent-svc.default.svc.cluster.local:8082/support",
+        f"{LANGGRAPH_SUPPORT_URL}/support",
         timeout=300,
     )
     response.raise_for_status()
@@ -97,7 +109,7 @@ def trigger_langgraph_support() -> dict:
 def trigger_swarms_scraper() -> dict:
     """Trigger Engine C (Swarms.ai) scraper/extraction agent pod."""
     response = requests.post(
-        "http://swarms-agent-svc.default.svc.cluster.local:8083/scrape",
+        f"{SWARMS_SCRAPER_URL}/scrape",
         timeout=300,
     )
     response.raise_for_status()

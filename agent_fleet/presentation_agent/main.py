@@ -1,6 +1,6 @@
 import json
 from enum import Enum
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 import uvicorn
@@ -11,7 +11,7 @@ from baml_client.types import PersonaTarget, SemanticUIContainer
 app = FastAPI(title="Engine F - Presentation Agent")
 
 class RenderRequest(BaseModel):
-    raw_data: Union[Dict[str, Any], str]
+    raw_data: Union[Dict[str, Any], List[Dict[str, Any]], str]
     persona: str
 
 @app.post("/render_ui")
@@ -24,7 +24,7 @@ async def render_ui(request: RenderRequest) -> Dict[str, Any]:
         persona_target = PersonaTarget.MECHANIC
 
     # 2. Stringify raw data safely
-    if isinstance(request.raw_data, dict):
+    if isinstance(request.raw_data, (dict, list)):
         str_raw_data = json.dumps(request.raw_data)
     else:
         str_raw_data = str(request.raw_data)

@@ -7,6 +7,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -15,7 +16,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies using uv
-RUN uv sync --frozen
+RUN uv sync --frozen --all-extras
 
 # Set Dagster Home to a location NOT in /app to avoid volume masking
 ENV DAGSTER_HOME=/opt/dagster
