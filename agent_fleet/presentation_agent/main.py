@@ -6,7 +6,6 @@ from pydantic import BaseModel
 import uvicorn
 
 from baml_client import b
-from baml_client.types import PersonaTarget
 
 app = FastAPI(title="Engine F - Presentation Agent")
 
@@ -16,24 +15,16 @@ class RenderRequest(BaseModel):
 
 @app.post("/render_ui")
 async def render_ui(request: RenderRequest) -> Any:
-    # 1. Parse string to enum
-    persona_str = request.persona.upper()
-    try:
-        persona_target = PersonaTarget(persona_str)
-    except ValueError:
-        persona_target = PersonaTarget.MECHANIC
-
-    # 2. Stringify raw data safely
+    # 1. Stringify raw data safely
     if isinstance(request.raw_data, (dict, list)):
         str_raw_data = json.dumps(request.raw_data)
     else:
         str_raw_data = str(request.raw_data)
         
-    # 3. Call BAML router
-    baml_response = await b.DesignUI(str_raw_data, persona_target)
+    # 2. Call BAML router (now returns DashboardUI with components array)
+    baml_response = await b.DesignUI(str_raw_data, request.persona.upper())
     
-    # 4. Return the model dump directly
-    # BAML Discriminated Union ensures the structure is natively validated JSON
+    # 3. Return the model dump directly
     return baml_response.model_dump()
 
 @app.get("/health")

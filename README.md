@@ -40,7 +40,7 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 | **C** | Swarms.ai | 8083 | `/scrape` | Stateless heavy compute — high-concurrency extraction |
 | **D** | httpx + DataHub GMS | 8085 | `/tables` | Metadata wrapper — queries DataHub for dbt dataset list |
 | **E** | Restate + smolagents + mem0 | 8086 | `/query_graph` | Neo4j Graph Expert — queries military technical manual DB w/ memory |
-| **F** | FastAPI + BAML | 8087 | `/render_ui` | Presentation Agent — Router separating model/view by persona |
+|| **F** | FastAPI + BAML | 8087 | `/render_ui` | Presentation Agent — Returns `DashboardUI` (composite multi-panel) by persona |
 | **G** | FastAPI + Dagster | 8888 | `/orchestrate` | Orchestration Gateway — Synchronous entry point for the mesh |
 
 ### Data Flow
@@ -154,9 +154,34 @@ All inter-service communication uses schemas defined in `contracts.baml`:
 | `AgentResponse` | Universal output (status, summary, extracted_metrics) |
 | `SemanticResolution` | Ontology resolution result (resolved_uri, confidence_score, suggested_dbt_models) |
 | `AgentStatus` | Enum: `SUCCESS` · `FAILED` · `HUMAN_REQUIRED` |
-| `ClassifySustainmentIntent` | BAML function — maps queries to dynamic ontology URIs from the RDF graph |
+|| `ClassifySustainmentIntent` | BAML function — maps queries to dynamic ontology URIs from the RDF graph |
+|| `PersonaTarget` | Enum: `MECHANIC` · `TECH_WRITER` · `LOGISTICS` · `AUDITOR` · `PROCESS_ENGINEER` |
+|| `GraphExpertResponse` | Union response from Engine E keyed by persona |
+|| `DashboardUI` | Composite dashboard: `{ components: (TopologyUI \| HazardUI \| MetricUI \| DocumentUI)[] }` |
+|| `DesignUI` | BAML function: `(raw_data, persona) -> DashboardUI` |
 
 Ontology classes are **never hardcoded** — they are dynamically injected at runtime from the RDF graph via the `active_ontology_classes` parameter.
+
+---
+
+## Personas & UI Archetypes
+
+Engine O decomposes queries into persona-specific sub-tasks. Engine E executes each against Neo4j. Engine F maps the results into a `DashboardUI` with multiple UI components.
+
+| Persona | Icon | Domain | Response Type | UI Archetype |
+|---------|------|--------|--------------|-------------|
+| **MECHANIC** | Wrench (amber) | Safety, tools, procedures | `MechanicResponse` | `HAZARD_DECLARATION`, `ASSET_STATE_METRIC` |
+| **TECH_WRITER** | BookOpen (blue) | Documentation, manuals | `AuthoringResponse` | `KNOWLEDGE_DOCUMENT` |
+| **LOGISTICS** | Truck (emerald) | Supply chain, platforms | `LogisticsResponse` | `ASSET_STATE_METRIC`, `HAZARD_DECLARATION` |
+| **AUDITOR** | ShieldCheck (red) | Compliance, regulations | `AuditResponse` | `HAZARD_DECLARATION`, `KNOWLEDGE_DOCUMENT` |
+| **PROCESS_ENGINEER** | Network (purple) | Workflow, process steps | Any | `PROCESS_TOPOLOGY` |
+
+| Archetype | Layout | Frontend Renderer |
+|-----------|--------|------------------|
+| `PROCESS_TOPOLOGY` | Full-width | React Flow graph (nodes + edges) |
+| `HAZARD_DECLARATION` | Inline (2-col grid) | WarningCard with severity badges |
+| `ASSET_STATE_METRIC` | Inline (2-col grid) | SupplyTable (Entity/Type/Detail) |
+| `KNOWLEDGE_DOCUMENT` | Full-width | Markdown via `react-markdown` |
 
 ---
 

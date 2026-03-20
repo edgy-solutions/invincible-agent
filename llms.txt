@@ -81,6 +81,10 @@ OCI image, and K8s Service.
 - `AgentResponse`      — Universal output payload returned by every agent pod.
 - `SemanticResolution` — Maps free-text to a dynamic ontology URI (resolved_uri).
 - `AgentStatus`        — Enum: SUCCESS | FAILED | HUMAN_REQUIRED.
+- `PersonaTarget`      — Enum: MECHANIC | TECH_WRITER | LOGISTICS | AUDITOR | PROCESS_ENGINEER.
+- `GraphExpertResponse` — Union response from Engine E keyed by persona (MechanicResponse | AuthoringResponse | LogisticsResponse | AuditResponse).
+- `DashboardUI`        — Composite dashboard wrapper: `{ components: (TopologyUI | HazardUI | MetricUI | DocumentUI)[] }`.
+- `DesignUI`           — BAML function: `(raw_data, persona) -> DashboardUI`. Maps raw agent results to multi-panel UI.
 - `ClassifySustainmentIntent` — BAML function that classifies a query against
   dynamically-injected RDF ontology URIs (not hardcoded enums).
 
@@ -314,4 +318,30 @@ Created `agent_fleet/presentation_agent/main.py` — FastAPI on port 8087.
 - Defined `ui_contracts.baml` introducing `MoodType`, `UIComponentType`, and the `DesignUI` routing function map.
 - Added `PROCESS_ENGINEER` to `PersonaTarget` in main contracts.
 - Integrated Engine F directly into the Dynamic Supervisor to map output aggregates into Server-Driven UI instructions.
+
+### Phase 13 — Composite Dashboard & Persona Loading State
+- Added `DashboardUI` class to `contracts.baml`: `{ components: (TopologyUI | HazardUI | MetricUI | DocumentUI)[] }`.
+- `DesignUI` now returns `DashboardUI` (array of components) instead of a single union. Enables multi-panel dashboards.
+- `create_task_plan` op broadcasts active personas via `AssetMaterialization(asset_key=["active_agent_roster"])`. BFF polls via GraphQL and emits SSE `action: "plan"` with persona list for the "Agents Assembling" loading state.
+- Fixed `_get_run_events()` GraphQL query: added missing `__typename` to `runOrError` so materializations are actually captured.
+- Frontend: `RadarReveal` component animates each dashboard section (neon scan line → expand → fade-in). `SemanticInterpreter` iterates `DashboardUI.components` with CSS Grid layout. `react-markdown` for `KNOWLEDGE_DOCUMENT`. `SupplyTable` maps `UIEntity` fields correctly.
+
+## Persona Reference
+
+5 personas defined in `PersonaTarget` (BAML enum). Engine O assigns sub-tasks. Engine E executes. Engine F maps to UI.
+
+- **MECHANIC** — Icon: Wrench (amber). Response: `MechanicResponse` (tool_list, safety_warnings, short_answer). UI: `HAZARD_DECLARATION` or `ASSET_STATE_METRIC`.
+- **TECH_WRITER** — Icon: BookOpen (blue). Response: `AuthoringResponse` (draft_content, missing_info_flags). UI: `KNOWLEDGE_DOCUMENT`.
+- **LOGISTICS** — Icon: Truck (emerald). Response: `LogisticsResponse` (impacted_platforms, blocked_procedures, risk_severity). UI: `ASSET_STATE_METRIC` or `HAZARD_DECLARATION`.
+- **AUDITOR** — Icon: ShieldCheck (red). Response: `AuditResponse` (non_compliant_nodes, rule_violated, recommended_fix). UI: `HAZARD_DECLARATION` or `KNOWLEDGE_DOCUMENT`.
+- **PROCESS_ENGINEER** — Icon: Network (purple). Response: Any. UI: `PROCESS_TOPOLOGY` (React Flow graph).
+
+## Semantic UI Archetypes (DashboardUI.components)
+
+- `PROCESS_TOPOLOGY` — Full-width React Flow graph (nodes + edges). Triggers blueprint phase.
+- `HAZARD_DECLARATION` — Inline card. Risk alerts with severity badges.
+- `ASSET_STATE_METRIC` — Inline card. Entity/Type/Detail table.
+- `KNOWLEDGE_DOCUMENT` — Full-width Markdown (rendered via react-markdown).
+
+Layout: Graphs + Documents = full-width (`col-span-full`). Cards = inline 2-col grid.
 

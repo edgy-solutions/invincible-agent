@@ -112,6 +112,22 @@ This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
 ## Presentation Agent (agent_fleet/presentation_agent/)
 - Engine F is highly stateless. Fast UI mapping and presentation routing to decouple model/view based on persona targets.
 - Do NOT import agent loops or workflows here. Maps standard Python models against `b.DesignUI()`.
+- `DesignUI` returns `DashboardUI` containing a `components` array of UI unions. NOT a single component.
+- Each component has an `archetype` field: `PROCESS_TOPOLOGY`, `HAZARD_DECLARATION`, `ASSET_STATE_METRIC`, or `KNOWLEDGE_DOCUMENT`.
+- The persona parameter is now a plain `string`, not the `PersonaTarget` enum.
+
+## Personas (BAML `PersonaTarget` enum)
+- **MECHANIC** — Safety warnings, tool lists. Response: `MechanicResponse`. UI: `HAZARD_DECLARATION` / `ASSET_STATE_METRIC`.
+- **TECH_WRITER** — Procedure docs. Response: `AuthoringResponse`. UI: `KNOWLEDGE_DOCUMENT`.
+- **LOGISTICS** — Supply chain analysis. Response: `LogisticsResponse`. UI: `ASSET_STATE_METRIC` / `HAZARD_DECLARATION`.
+- **AUDITOR** — Compliance checks. Response: `AuditResponse`. UI: `HAZARD_DECLARATION` / `KNOWLEDGE_DOCUMENT`.
+- **PROCESS_ENGINEER** — Workflow graphs. UI: `PROCESS_TOPOLOGY`.
+
+## Composite Dashboard (`DashboardUI`)
+- Engine F returns `{ components: [...] }` — an array of semantic UI objects.
+- The frontend iterates over `components` and renders each with `RadarReveal` animation.
+- Layout: `PROCESS_TOPOLOGY` and `KNOWLEDGE_DOCUMENT` are `col-span-full`. Cards are inline in a 2-col grid.
+- The `active_agent_roster` AssetMaterialization broadcasts personas during fan-out for the "Agents Assembling" loading state.
 
 ## Containerization (Cloud Native Buildpacks)
 - We do NOT use Dockerfiles. All OCI images are built with `pack` CLI.

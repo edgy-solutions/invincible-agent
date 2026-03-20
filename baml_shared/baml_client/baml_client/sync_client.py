@@ -122,9 +122,9 @@ class BamlSyncClient:
                 "raw_query": raw_query,
             })
             return typing.cast(types.SupervisorTaskPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+    def DesignUI(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
-    ) -> typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"]:
+    ) -> types.DashboardUI:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             __stream__ = self.stream.DesignUI(raw_data=raw_data,persona=persona,
@@ -135,7 +135,7 @@ class BamlSyncClient:
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="DesignUI", args={
                 "raw_data": raw_data,"persona": persona,
             })
-            return typing.cast(typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"], __result__.cast_to(types, types, stream_types, False, __runtime__))
+            return typing.cast(types.DashboardUI, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
@@ -197,16 +197,16 @@ class BamlStreamClient:
           lambda x: typing.cast(types.SupervisorTaskPlan, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+    def DesignUI(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlSyncStream[typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"], typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"]]:
+    ) -> baml_py.BamlSyncStream[stream_types.DashboardUI, types.DashboardUI]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="DesignUI", args={
             "raw_data": raw_data,"persona": persona,
         })
-        return baml_py.BamlSyncStream[typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"], typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"]](
+        return baml_py.BamlSyncStream[stream_types.DashboardUI, types.DashboardUI](
           __result__,
-          lambda x: typing.cast(typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"], x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"], x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(stream_types.DashboardUI, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.DashboardUI, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
@@ -255,7 +255,7 @@ class BamlHttpRequestClient:
             "raw_query": raw_query,
         }, mode="request")
         return __result__
-    def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+    def DesignUI(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="DesignUI", args={
@@ -298,7 +298,7 @@ class BamlHttpStreamRequestClient:
             "raw_query": raw_query,
         }, mode="stream")
         return __result__
-    def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
+    def DesignUI(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="DesignUI", args={
@@ -321,4 +321,4 @@ class BamlHttpStreamRequestClient:
         return __result__
     
 
-b = BamlSyncClient(DoNotUseDirectlyCallManager({}))
+b = BamlSyncClient(DoNotUseDirectlyCallManager({}))

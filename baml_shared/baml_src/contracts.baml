@@ -299,25 +299,35 @@ class DocumentUI {
   markdown_content string
 }
 
-// 3. Update the router function to return the Union
-function DesignUI(raw_data: string, persona: PersonaTarget) -> TopologyUI | HazardUI | MetricUI | DocumentUI {
+// 3. Composite Dashboard Container
+class DashboardUI {
+  components (TopologyUI | HazardUI | MetricUI | DocumentUI)[]
+}
+
+// 4. Update the router function to return the Composite Dashboard
+function DesignUI(raw_data: string, persona: string) -> DashboardUI {
   client MainAgent
   prompt #"
     Act as a Semantic UI Translator. Do NOT output frontend code. 
-    Analyze the raw data and the Persona. Output the correct SemanticArchetype container.
+    Analyze the raw data array (which contains outputs from multiple expert agents) and the Target Persona.
+    
+    CRITICAL INSTRUCTION:
+    You are building a Composite Dashboard. You must output a `DashboardUI` object containing an array of components.
+    Create a separate UI component in the `components` array for EACH distinct expert response in the raw data.
     
     CRITICAL GROUNDING RULES:
     1. STRICT ADHERENCE: You are in a strict military context. DO NOT invent or hallucinate data, procedures, or hazards.
     2. NO GENERIC ADVICE: Do not invent generic safety advice unless those exact words are in the raw data.
     3. NULL STATE TRIGGER: If the data is empty or missing, trigger the Null State.
-    4. NULL STATE FORMAT: To trigger Null State, you MUST output the DocumentUI schema. Set archetype to KNOWLEDGE_DOCUMENT and markdown_content to exactly: # SYSTEM ALERT\nNo relevant records found. Do not proceed without manual verification.
-
+    4. NULL STATE FORMAT: To trigger Null State, output a single DocumentUI in the components array. Set archetype to KNOWLEDGE_DOCUMENT and markdown_content to exactly: # SYSTEM ALERT\nNo relevant records found. Do not proceed without manual verification.
+    
     EXAMPLES:
+    - If the raw data has a Process Engineer's steps AND a Mechanic's safety warnings: 
+      Output an array with 1 TopologyUI object AND 1 HazardUI object.
+    - If the raw data has a Tech Writer's text: Output a single DocumentUI object.
     - PROCESS_ENGINEER: use TopologyUI. Map steps to nodes and connections to edges.
     - Safety warning: use HazardUI. Map hazards to the hazards array.
     - Manual/Text: use DocumentUI. Map text to markdown_content.
-    
-    Core subject concept: e.g., an IOF URI if available.
     
     --- RAW DATA ---
     {{ raw_data }}

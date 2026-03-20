@@ -148,13 +148,13 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
         context.log.warning("Empty graph results detected. Short-circuiting UI generation.")
         
         # Immediately return the grounded Null State payload to the UI
-        # This matches the KNOWLEDGE_DOCUMENT archetype used for Markdown alerts
+        # Wrapped in DashboardUI format: { components: [...] }
         ui_payload_dict = {
-            "archetype": "KNOWLEDGE_DOCUMENT",
-            "subject_concept": "system://mesh/alert",
-            "severity": "WARNING",
-            "entities": "# ⚠️ SYSTEM ALERT\nNo relevant records or hazards found in the Graph Database for this query. Do not proceed without manual verification.",
-            "relationships": "[]"
+            "components": [{
+                "archetype": "KNOWLEDGE_DOCUMENT",
+                "subject_concept": "system://mesh/alert",
+                "markdown_content": "# ⚠️ SYSTEM ALERT\nNo relevant records or hazards found in the Graph Database for this query. Do not proceed without manual verification."
+            }]
         }
         ui_payload_str = json.dumps(ui_payload_dict)
         yield Output(

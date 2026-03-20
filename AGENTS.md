@@ -296,4 +296,59 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Integrated Engine F directly into the Dynamic Supervisor to map output aggregates into Server-Driven UI instructions.
 - **Backend Capstone:** Finalized the Dagster loop in `dynamic_supervisor.py` and implemented `src/iagent/gateway.py` to expose the entire multi-agent workflow via a single synchronous HTTP endpoint.
 
+### Phase 13 — Composite Dashboard & Persona Loading State (complete)
+- **DashboardUI Contract:** Added `DashboardUI` class to `contracts.baml` wrapping a `components` array of UI unions (`TopologyUI | HazardUI | MetricUI | DocumentUI`). `DesignUI` now returns `DashboardUI` instead of a single component, enabling multi-panel composite dashboards from a single query.
+- **Persona Icon Broadcasting:** `create_task_plan` in `dynamic_supervisor.py` now yields an `AssetMaterialization(asset_key=["active_agent_roster"])` with a `personas` metadata entry. The BFF polls for this via GraphQL `eventConnection` and emits an SSE `action: "plan"` event carrying the persona list. The frontend renders animated persona icons ("Agents Assembling") during the fan-out phase.
+- **GraphQL `__typename` Fix:** Fixed `_get_run_events()` in the BFF to include `__typename` on the `runOrError` query so the guard `run_data.get("__typename") != "Run"` no longer silently drops all materializations.
+- **RadarReveal Animation:** New frontend component renders each dashboard section with a 3-phase reveal: horizontal neon scan line → vertical expand → content fade-in, staggered per component.
+- **Markdown Rendering:** Replaced raw text dump with `react-markdown` for `KNOWLEDGE_DOCUMENT` archetype.
+- **Metrics Table Fix:** Updated `SupplyTable` to map BAML `UIEntity` fields (`name`, `type`, `description`) instead of nonexistent `value`/`metric` fields.
+
+## Persona Reference
+
+The system supports 5 domain-expert personas defined in `PersonaTarget` (BAML enum).
+Engine O decomposes user queries and assigns sub-tasks to the appropriate persona.
+Engine E executes each sub-task against the Neo4j graph DB.
+Engine F maps the aggregated results into UI archetypes per persona.
+
+### MECHANIC
+- **Icon:** Wrench (amber)
+- **Graph Expert Response:** `MechanicResponse` — `tool_list`, `safety_warnings`, `short_answer`
+- **Typical UI Archetype:** `HAZARD_DECLARATION` (safety warnings, risk alerts) or `ASSET_STATE_METRIC` (tool/part tables)
+- **Use Case:** Safety hazards, tool requirements, hands-on maintenance procedures
+
+### TECH_WRITER
+- **Icon:** BookOpen (blue)
+- **Graph Expert Response:** `AuthoringResponse` — `draft_content` (Markdown), `missing_info_flags`
+- **Typical UI Archetype:** `KNOWLEDGE_DOCUMENT` (rendered Markdown documentation)
+- **Use Case:** Technical procedure overviews, manual drafts, documentation gaps
+
+### LOGISTICS
+- **Icon:** Truck (emerald)
+- **Graph Expert Response:** `LogisticsResponse` — `impacted_platforms`, `blocked_procedures`, `risk_severity`
+- **Typical UI Archetype:** `ASSET_STATE_METRIC` (supply tables) or `HAZARD_DECLARATION` (blocked procedure alerts)
+- **Use Case:** Platform impact analysis, supply chain risks, blocked procedures
+
+### AUDITOR
+- **Icon:** ShieldCheck (red)
+- **Graph Expert Response:** `AuditResponse` — `non_compliant_nodes`, `rule_violated`, `recommended_fix`
+- **Typical UI Archetype:** `HAZARD_DECLARATION` (compliance violations) or `KNOWLEDGE_DOCUMENT` (audit reports)
+- **Use Case:** Compliance auditing, regulatory violations, corrective action recommendations
+
+### PROCESS_ENGINEER
+- **Icon:** Network (purple)
+- **Graph Expert Response:** Any (depends on sub-query)
+- **Typical UI Archetype:** `PROCESS_TOPOLOGY` (workflow graphs with nodes/edges for React Flow)
+- **Use Case:** Process step mapping, workflow visualization, procedure sequencing
+
+## Semantic UI Archetypes
+
+Engine F outputs a `DashboardUI` containing an array of components. Each component uses one of these archetypes:
+
+- **`PROCESS_TOPOLOGY`** — Full-width workflow graph. Nodes and edges rendered via React Flow. Triggers blueprint phase.
+- **`HAZARD_DECLARATION`** — Inline card. Red/amber risk alerts with severity badges and hazard lists.
+- **`ASSET_STATE_METRIC`** — Inline card. Entity/Type/Detail table for telemetry, inventory, or tool lists.
+- **`KNOWLEDGE_DOCUMENT`** — Full-width Markdown document rendered via `react-markdown`.
+
+Layout rule: `PROCESS_TOPOLOGY` and `KNOWLEDGE_DOCUMENT` span full width. `HAZARD_DECLARATION` and `ASSET_STATE_METRIC` flow inline in a 2-column grid.
 

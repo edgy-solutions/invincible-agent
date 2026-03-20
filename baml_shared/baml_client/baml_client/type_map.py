@@ -31,6 +31,9 @@ type_map = {
     "types.AuthoringResponse": types.AuthoringResponse,
     "stream_types.AuthoringResponse": stream_types.AuthoringResponse,
 
+    "types.DashboardUI": types.DashboardUI,
+    "stream_types.DashboardUI": stream_types.DashboardUI,
+
     "types.DocumentUI": types.DocumentUI,
     "stream_types.DocumentUI": stream_types.DocumentUI,
 

@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (17)
+# Generated classes (18)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -53,6 +53,9 @@ class AuditResponse(BaseModel):
 class AuthoringResponse(BaseModel):
     draft_content: typing.Optional[str] = Field(default=None, description='A clear, formatted Markdown summary of the requested technical data. Do NOT use XML.')
     missing_info_flags: typing.List[str] = Field(description='List of any required technical data that was missing from the graph.')
+
+class DashboardUI(BaseModel):
+    components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI"]]
 
 class DocumentUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be KNOWLEDGE_DOCUMENT')
