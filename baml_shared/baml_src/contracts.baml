@@ -123,8 +123,8 @@ class MechanicResponse {
 }
 
 class AuthoringResponse {
-  generated_xml string
-  missing_info_flags string[]
+  draft_content string @description("A clear, formatted Markdown summary of the requested technical data. Do NOT use XML.")
+  missing_info_flags string[] @description("List of any required technical data that was missing from the graph.")
 }
 
 class LogisticsResponse {
@@ -194,8 +194,9 @@ function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
 
     Instructions:
     1. Assign each task to the correct specialized persona (MECHANIC, TECH_WRITER, LOGISTICS, AUDITOR, PROCESS_ENGINEER).
-    2. If the query only needs one persona, return a list with just one task.
-    3. Provide your reasoning for why the query was split this way.
+    2. TECH_WRITER GUARDRAIL: If assigning a task to the TECH_WRITER, explicitly instruct them in the `sub_query` to return their findings as standard Markdown text. Explicitly FORBID the use of string concatenation, f-strings, or Python code to generate XML.
+    3. If the query only needs one persona, return a list with just one task.
+    4. Provide your reasoning for why the query was split this way.
 
     {{ ctx.output_format }}
   "#
@@ -256,7 +257,7 @@ enum SeverityLevel {
   CRITICAL
 }
 
-// Add these new structured classes
+// 1. Base building blocks
 class UIEntity {
   id string
   name string?
@@ -271,34 +272,50 @@ class UIRelation {
   predicate string?
 }
 
-// Update the SemanticUIContainer to use BAML Unions
-class SemanticUIContainer {
-  archetype SemanticArchetype
-  subject_concept string      
-  severity SeverityLevel?
-  
-  // Forces the LLM to output a markdown string OR a strict JSON array
-  entities string | UIEntity[]              
-  relationships UIRelation[]?        
+// 2. Strict UI Component Schemas
+class TopologyUI {
+  archetype SemanticArchetype @description("MUST be PROCESS_TOPOLOGY")
+  subject_concept string
+  nodes UIEntity[]
+  edges UIRelation[]
 }
 
-/// Router function mapping raw data and persona to a semantic UI intent
-function DesignUI(raw_data: string, persona: PersonaTarget) -> SemanticUIContainer {
+class HazardUI {
+  archetype SemanticArchetype @description("MUST be HAZARD_DECLARATION")
+  subject_concept string
+  severity SeverityLevel
+  hazards UIEntity[]
+}
+
+class MetricUI {
+  archetype SemanticArchetype @description("MUST be ASSET_STATE_METRIC")
+  subject_concept string
+  metrics UIEntity[]
+}
+
+class DocumentUI {
+  archetype SemanticArchetype @description("MUST be KNOWLEDGE_DOCUMENT")
+  subject_concept string
+  markdown_content string
+}
+
+// 3. Update the router function to return the Union
+function DesignUI(raw_data: string, persona: PersonaTarget) -> TopologyUI | HazardUI | MetricUI | DocumentUI {
   client MainAgent
   prompt #"
     Act as a Semantic UI Translator. Do NOT output frontend code. 
-    Analyze the raw data and the Persona. Output the correct SemanticArchetype.
+    Analyze the raw data and the Persona. Output the correct SemanticArchetype container.
     
     CRITICAL GROUNDING RULES:
     1. STRICT ADHERENCE: You are in a strict military context. DO NOT invent or hallucinate data, procedures, or hazards.
     2. NO GENERIC ADVICE: Do not invent generic safety advice unless those exact words are in the raw data.
     3. NULL STATE TRIGGER: If the data is empty or missing, trigger the Null State.
-    4. NULL STATE FORMAT: Set archetype to KNOWLEDGE_DOCUMENT and entities to exactly: # SYSTEM ALERT: No relevant records found. Do not proceed without manual verification.
+    4. NULL STATE FORMAT: To trigger Null State, you MUST output the DocumentUI schema. Set archetype to KNOWLEDGE_DOCUMENT and markdown_content to exactly: # SYSTEM ALERT\nNo relevant records found. Do not proceed without manual verification.
 
     EXAMPLES:
-    - PROCESS_ENGINEER: use PROCESS_TOPOLOGY. Dump steps into entities.
-    - Safety warning: use HAZARD_DECLARATION.
-    - Manual/Text: use KNOWLEDGE_DOCUMENT.
+    - PROCESS_ENGINEER: use TopologyUI. Map steps to nodes and connections to edges.
+    - Safety warning: use HazardUI. Map hazards to the hazards array.
+    - Manual/Text: use DocumentUI. Map text to markdown_content.
     
     Core subject concept: e.g., an IOF URI if available.
     

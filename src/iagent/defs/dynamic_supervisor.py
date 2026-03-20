@@ -41,6 +41,7 @@ from dagster import (
     Config,
     Output,
     MetadataValue,
+    AssetMaterialization,
 )
 
 
@@ -67,8 +68,18 @@ def create_task_plan(config: SupervisorQueryConfig):
     response.raise_for_status()
     plan = response.json()
 
-    # 2. Fan-out: yield each task dynamically
+    # 2. Extract personas and broadcast intermediate roster
     tasks = plan.get("tasks", [])
+    personas = [task.get("target_persona") for task in tasks if task.get("target_persona")]
+    
+    yield AssetMaterialization(
+        asset_key=["active_agent_roster"],
+        metadata={
+            "personas": MetadataValue.text(json.dumps(personas))
+        }
+    )
+
+    # 3. Fan-out: yield each task dynamically
     for idx, task in enumerate(tasks):
         # We must provide a valid mapping_key for each dynamic output
         yield DynamicOutput(

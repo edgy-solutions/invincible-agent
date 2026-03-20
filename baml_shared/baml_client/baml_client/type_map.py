@@ -31,11 +31,17 @@ type_map = {
     "types.AuthoringResponse": types.AuthoringResponse,
     "stream_types.AuthoringResponse": stream_types.AuthoringResponse,
 
+    "types.DocumentUI": types.DocumentUI,
+    "stream_types.DocumentUI": stream_types.DocumentUI,
+
     "types.FinalSynthesis": types.FinalSynthesis,
     "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
 
     "types.GraphExpertResponse": types.GraphExpertResponse,
     "stream_types.GraphExpertResponse": stream_types.GraphExpertResponse,
+
+    "types.HazardUI": types.HazardUI,
+    "stream_types.HazardUI": stream_types.HazardUI,
 
     "types.LogisticsResponse": types.LogisticsResponse,
     "stream_types.LogisticsResponse": stream_types.LogisticsResponse,
@@ -43,14 +49,17 @@ type_map = {
     "types.MechanicResponse": types.MechanicResponse,
     "stream_types.MechanicResponse": stream_types.MechanicResponse,
 
+    "types.MetricUI": types.MetricUI,
+    "stream_types.MetricUI": stream_types.MetricUI,
+
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
 
-    "types.SemanticUIContainer": types.SemanticUIContainer,
-    "stream_types.SemanticUIContainer": stream_types.SemanticUIContainer,
-
     "types.SupervisorTaskPlan": types.SupervisorTaskPlan,
     "stream_types.SupervisorTaskPlan": stream_types.SupervisorTaskPlan,
+
+    "types.TopologyUI": types.TopologyUI,
+    "stream_types.TopologyUI": stream_types.TopologyUI,
 
     "types.UIEntity": types.UIEntity,
     "stream_types.UIEntity": stream_types.UIEntity,

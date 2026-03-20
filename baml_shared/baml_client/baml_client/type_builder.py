@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","FinalSynthesis","GraphExpertResponse","LogisticsResponse","MechanicResponse","SemanticResolution","SemanticUIContainer","SupervisorTaskPlan","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
           ["AgentStatus","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -51,7 +51,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 14
+    # Generated classes 17
     # #########################################################################
 
     @property
@@ -75,12 +75,20 @@ class TypeBuilder(type_builder.TypeBuilder):
         return AuthoringResponseViewer(self)
 
     @property
+    def DocumentUI(self) -> "DocumentUIViewer":
+        return DocumentUIViewer(self)
+
+    @property
     def FinalSynthesis(self) -> "FinalSynthesisViewer":
         return FinalSynthesisViewer(self)
 
     @property
     def GraphExpertResponse(self) -> "GraphExpertResponseViewer":
         return GraphExpertResponseViewer(self)
+
+    @property
+    def HazardUI(self) -> "HazardUIViewer":
+        return HazardUIViewer(self)
 
     @property
     def LogisticsResponse(self) -> "LogisticsResponseViewer":
@@ -91,16 +99,20 @@ class TypeBuilder(type_builder.TypeBuilder):
         return MechanicResponseViewer(self)
 
     @property
+    def MetricUI(self) -> "MetricUIViewer":
+        return MetricUIViewer(self)
+
+    @property
     def SemanticResolution(self) -> "SemanticResolutionViewer":
         return SemanticResolutionViewer(self)
 
     @property
-    def SemanticUIContainer(self) -> "SemanticUIContainerViewer":
-        return SemanticUIContainerViewer(self)
-
-    @property
     def SupervisorTaskPlan(self) -> "SupervisorTaskPlanViewer":
         return SupervisorTaskPlanViewer(self)
+
+    @property
+    def TopologyUI(self) -> "TopologyUIViewer":
+        return TopologyUIViewer(self)
 
     @property
     def UIEntity(self) -> "UIEntityViewer":
@@ -368,7 +380,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 14
+# Generated classes 17
 # #########################################################################
 
 class AgentResponseAst:
@@ -559,7 +571,7 @@ class AuthoringResponseAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("AuthoringResponse")
-        self._properties: typing.Set[str] = set([  "generated_xml",  "missing_info_flags",  ])
+        self._properties: typing.Set[str] = set([  "draft_content",  "missing_info_flags",  ])
         self._props = AuthoringResponseProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -588,12 +600,59 @@ class AuthoringResponseProperties:
     
     
     @property
-    def generated_xml(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("generated_xml"))
+    def draft_content(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("draft_content"))
     
     @property
     def missing_info_flags(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("missing_info_flags"))
+    
+    
+
+
+class DocumentUIAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("DocumentUI")
+        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "markdown_content",  ])
+        self._props = DocumentUIProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "DocumentUIProperties":
+        return self._props
+
+
+class DocumentUIViewer(DocumentUIAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class DocumentUIProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def archetype(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def subject_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
+    
+    @property
+    def markdown_content(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("markdown_content"))
     
     
 
@@ -680,6 +739,57 @@ class GraphExpertResponseProperties:
     @property
     def data(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("data"))
+    
+    
+
+
+class HazardUIAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("HazardUI")
+        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "severity",  "hazards",  ])
+        self._props = HazardUIProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "HazardUIProperties":
+        return self._props
+
+
+class HazardUIViewer(HazardUIAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class HazardUIProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def archetype(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def subject_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
+    
+    @property
+    def severity(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("severity"))
+    
+    @property
+    def hazards(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("hazards"))
     
     
 
@@ -778,6 +888,53 @@ class MechanicResponseProperties:
     
 
 
+class MetricUIAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MetricUI")
+        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "metrics",  ])
+        self._props = MetricUIProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MetricUIProperties":
+        return self._props
+
+
+class MetricUIViewer(MetricUIAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MetricUIProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def archetype(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def subject_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
+    
+    @property
+    def metrics(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("metrics"))
+    
+    
+
+
 class SemanticResolutionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -825,61 +982,6 @@ class SemanticResolutionProperties:
     
 
 
-class SemanticUIContainerAst:
-    def __init__(self, tb: type_builder.TypeBuilder):
-        _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.class_("SemanticUIContainer")
-        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "severity",  "entities",  "relationships",  ])
-        self._props = SemanticUIContainerProperties(self._bldr, self._properties)
-
-    def type(self) -> baml_py.FieldType:
-        return self._bldr.field()
-
-    @property
-    def props(self) -> "SemanticUIContainerProperties":
-        return self._props
-
-
-class SemanticUIContainerViewer(SemanticUIContainerAst):
-    def __init__(self, tb: type_builder.TypeBuilder):
-        super().__init__(tb)
-
-    
-    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
-        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
-    
-
-
-class SemanticUIContainerProperties:
-    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
-        self.__bldr = bldr
-        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
-
-    
-    
-    @property
-    def archetype(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
-    
-    @property
-    def subject_concept(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
-    
-    @property
-    def severity(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("severity"))
-    
-    @property
-    def entities(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("entities"))
-    
-    @property
-    def relationships(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("relationships"))
-    
-    
-
-
 class SupervisorTaskPlanAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -919,6 +1021,57 @@ class SupervisorTaskPlanProperties:
     @property
     def reasoning(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
+    
+    
+
+
+class TopologyUIAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("TopologyUI")
+        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "nodes",  "edges",  ])
+        self._props = TopologyUIProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "TopologyUIProperties":
+        return self._props
+
+
+class TopologyUIViewer(TopologyUIAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class TopologyUIProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def archetype(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def subject_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
+    
+    @property
+    def nodes(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("nodes"))
+    
+    @property
+    def edges(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("edges"))
     
     
 

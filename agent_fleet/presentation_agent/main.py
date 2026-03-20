@@ -6,7 +6,7 @@ from pydantic import BaseModel
 import uvicorn
 
 from baml_client import b
-from baml_client.types import PersonaTarget, SemanticUIContainer
+from baml_client.types import PersonaTarget
 
 app = FastAPI(title="Engine F - Presentation Agent")
 
@@ -15,7 +15,7 @@ class RenderRequest(BaseModel):
     persona: str
 
 @app.post("/render_ui")
-async def render_ui(request: RenderRequest) -> Dict[str, Any]:
+async def render_ui(request: RenderRequest) -> Any:
     # 1. Parse string to enum
     persona_str = request.persona.upper()
     try:
@@ -32,37 +32,9 @@ async def render_ui(request: RenderRequest) -> Dict[str, Any]:
     # 3. Call BAML router
     baml_response = await b.DesignUI(str_raw_data, persona_target)
     
-    # 4. Extract and stringify the payload safely using Python
-    payload = baml_response.model_dump()
-    
-    # Safely stringify the entities and relationships so the React frontend 
-    # can JSON.parse() them without escaping errors. 
-    def safe_json_dump(val):
-        import ast
-        if not val: return "[]"
-        if isinstance(val, str):
-            # Clean up common markdown fences if the LLM leaked them
-            val = val.strip().replace("```json", "").replace("```", "").strip()
-            try:
-                # 1. Try strict JSON
-                parsed = json.loads(val)
-                return json.dumps(parsed)
-            except:
-                try:
-                    # 2. Try Python literal eval (to fix unquoted keys/single quotes)
-                    parsed = ast.literal_eval(val)
-                    return json.dumps(parsed)
-                except:
-                    # 3. Fallback: at least don't double-string if it looks like an array/object
-                    if (val.startswith("[") and val.endswith("]")) or (val.startswith("{") and val.endswith("}")):
-                        return val
-                    return json.dumps(val)
-        return json.dumps(val)
-
-    payload["entities"] = safe_json_dump(payload.get("entities"))
-    payload["relationships"] = safe_json_dump(payload.get("relationships"))
-    
-    return payload
+    # 4. Return the model dump directly
+    # BAML Discriminated Union ensures the structure is natively validated JSON
+    return baml_response.model_dump()
 
 @app.get("/health")
 def health() -> Dict[str, str]:

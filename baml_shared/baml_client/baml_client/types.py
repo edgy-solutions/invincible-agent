@@ -77,7 +77,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (14)
+# Generated classes (17)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -105,8 +105,13 @@ class AuditResponse(BaseModel):
     recommended_fix: str
 
 class AuthoringResponse(BaseModel):
-    generated_xml: str
-    missing_info_flags: typing.List[str]
+    draft_content: str = Field(description='A clear, formatted Markdown summary of the requested technical data. Do NOT use XML.')
+    missing_info_flags: typing.List[str] = Field(description='List of any required technical data that was missing from the graph.')
+
+class DocumentUI(BaseModel):
+    archetype: SemanticArchetype = Field(description='MUST be KNOWLEDGE_DOCUMENT')
+    subject_concept: str
+    markdown_content: str
 
 class FinalSynthesis(BaseModel):
     markdown_report: str
@@ -115,6 +120,12 @@ class GraphExpertResponse(BaseModel):
     confidence_score: float
     referenced_uris: typing.List[str]
     data: typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse"]
+
+class HazardUI(BaseModel):
+    archetype: SemanticArchetype = Field(description='MUST be HAZARD_DECLARATION')
+    subject_concept: str
+    severity: SeverityLevel
+    hazards: typing.List["UIEntity"]
 
 class LogisticsResponse(BaseModel):
     impacted_platforms: typing.List[str]
@@ -126,6 +137,11 @@ class MechanicResponse(BaseModel):
     safety_warnings: typing.List[str]
     short_answer: str
 
+class MetricUI(BaseModel):
+    archetype: SemanticArchetype = Field(description='MUST be ASSET_STATE_METRIC')
+    subject_concept: str
+    metrics: typing.List["UIEntity"]
+
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
 # The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
@@ -134,16 +150,15 @@ class SemanticResolution(BaseModel):
     confidence_score: float = Field(description='Model confidence in the match, between 0.0 and 1.0.')
     suggested_dbt_models: typing.List[str] = Field(description='Ordered list of dbt model names relevant to the resolved concept.')
 
-class SemanticUIContainer(BaseModel):
-    archetype: SemanticArchetype
-    subject_concept: str
-    severity: typing.Optional[SeverityLevel] = None
-    entities: typing.Union[str, typing.List["UIEntity"]]
-    relationships: typing.Optional[typing.List["UIRelation"]] = None
-
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
     reasoning: str
+
+class TopologyUI(BaseModel):
+    archetype: SemanticArchetype = Field(description='MUST be PROCESS_TOPOLOGY')
+    subject_concept: str
+    nodes: typing.List["UIEntity"]
+    edges: typing.List["UIRelation"]
 
 class UIEntity(BaseModel):
     id: str

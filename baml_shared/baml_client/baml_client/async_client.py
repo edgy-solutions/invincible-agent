@@ -114,7 +114,7 @@ class BamlAsyncClient:
             return typing.cast(types.SupervisorTaskPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
         baml_options: BamlCallOptions = {},
-    ) -> types.SemanticUIContainer:
+    ) -> typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"]:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
@@ -126,7 +126,7 @@ class BamlAsyncClient:
             __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="DesignUI", args={
                 "raw_data": raw_data,"persona": persona,
             })
-            return typing.cast(types.SemanticUIContainer, __result__.cast_to(types, types, stream_types, False, __runtime__))
+            return typing.cast(typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"], __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
@@ -192,14 +192,14 @@ class BamlStreamClient:
         )
     def DesignUI(self, raw_data: str,persona: types.PersonaTarget,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlStream[stream_types.SemanticUIContainer, types.SemanticUIContainer]:
+    ) -> baml_py.BamlStream[typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"], typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"]]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="DesignUI", args={
             "raw_data": raw_data,"persona": persona,
         })
-        return baml_py.BamlStream[stream_types.SemanticUIContainer, types.SemanticUIContainer](
+        return baml_py.BamlStream[typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"], typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"]](
           __result__,
-          lambda x: typing.cast(stream_types.SemanticUIContainer, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(types.SemanticUIContainer, x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"], x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"], x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,

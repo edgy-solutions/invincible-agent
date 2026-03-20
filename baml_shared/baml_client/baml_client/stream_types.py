@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (14)
+# Generated classes (17)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -51,8 +51,13 @@ class AuditResponse(BaseModel):
     recommended_fix: typing.Optional[str] = None
 
 class AuthoringResponse(BaseModel):
-    generated_xml: typing.Optional[str] = None
-    missing_info_flags: typing.List[str]
+    draft_content: typing.Optional[str] = Field(default=None, description='A clear, formatted Markdown summary of the requested technical data. Do NOT use XML.')
+    missing_info_flags: typing.List[str] = Field(description='List of any required technical data that was missing from the graph.')
+
+class DocumentUI(BaseModel):
+    archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be KNOWLEDGE_DOCUMENT')
+    subject_concept: typing.Optional[str] = None
+    markdown_content: typing.Optional[str] = None
 
 class FinalSynthesis(BaseModel):
     markdown_report: typing.Optional[str] = None
@@ -61,6 +66,12 @@ class GraphExpertResponse(BaseModel):
     confidence_score: typing.Optional[float] = None
     referenced_uris: typing.List[str]
     data: typing.Optional[typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse"]] = None
+
+class HazardUI(BaseModel):
+    archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be HAZARD_DECLARATION')
+    subject_concept: typing.Optional[str] = None
+    severity: typing.Optional[types.SeverityLevel] = None
+    hazards: typing.List["UIEntity"]
 
 class LogisticsResponse(BaseModel):
     impacted_platforms: typing.List[str]
@@ -72,6 +83,11 @@ class MechanicResponse(BaseModel):
     safety_warnings: typing.List[str]
     short_answer: typing.Optional[str] = None
 
+class MetricUI(BaseModel):
+    archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be ASSET_STATE_METRIC')
+    subject_concept: typing.Optional[str] = None
+    metrics: typing.List["UIEntity"]
+
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
 # The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
@@ -80,16 +96,15 @@ class SemanticResolution(BaseModel):
     confidence_score: typing.Optional[float] = Field(default=None, description='Model confidence in the match, between 0.0 and 1.0.')
     suggested_dbt_models: typing.List[str] = Field(description='Ordered list of dbt model names relevant to the resolved concept.')
 
-class SemanticUIContainer(BaseModel):
-    archetype: typing.Optional[types.SemanticArchetype] = None
-    subject_concept: typing.Optional[str] = None
-    severity: typing.Optional[types.SeverityLevel] = None
-    entities: typing.Optional[typing.Union[str, typing.List["UIEntity"]]] = None
-    relationships: typing.Optional[typing.List["UIRelation"]] = None
-
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
     reasoning: typing.Optional[str] = None
+
+class TopologyUI(BaseModel):
+    archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be PROCESS_TOPOLOGY')
+    subject_concept: typing.Optional[str] = None
+    nodes: typing.List["UIEntity"]
+    edges: typing.List["UIRelation"]
 
 class UIEntity(BaseModel):
     id: typing.Optional[str] = None

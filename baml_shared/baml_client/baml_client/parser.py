@@ -37,9 +37,9 @@ class LlmResponseParser:
 
     def DesignUI(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> types.SemanticUIContainer:
+    ) -> typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"]:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DesignUI", llm_response=llm_response, mode="request")
-        return typing.cast(types.SemanticUIContainer, __result__)
+        return typing.cast(typing.Union["types.TopologyUI", "types.HazardUI", "types.MetricUI", "types.DocumentUI"], __result__)
 
     def FormatGraphResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},
@@ -75,9 +75,9 @@ class LlmStreamParser:
 
     def DesignUI(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> stream_types.SemanticUIContainer:
+    ) -> typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"]:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DesignUI", llm_response=llm_response, mode="stream")
-        return typing.cast(stream_types.SemanticUIContainer, __result__)
+        return typing.cast(typing.Union["stream_types.TopologyUI", "stream_types.HazardUI", "stream_types.MetricUI", "stream_types.DocumentUI"], __result__)
 
     def FormatGraphResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},
