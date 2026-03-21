@@ -63,7 +63,7 @@ def create_task_plan(config: SupervisorQueryConfig):
     response = requests.post(
         f"{ONTOLOGY_SVC_URL}/plan",
         json={"query": config.user_query},
-        timeout=30,
+        timeout=300,
     )
     response.raise_for_status()
     plan = response.json()
@@ -167,12 +167,11 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
                 "markdown_content": "# ⚠️ SYSTEM ALERT\nNo relevant records or hazards found in the Graph Database for this query. Do not proceed without manual verification."
             }]
         }
-        ui_payload_str = json.dumps(ui_payload_dict)
         yield Output(
             value=ui_payload_dict,
             metadata={
-                "ui_json_payload": ui_payload_str,
-                "referenced_uris": MetadataValue.text(json.dumps(unique_uris))
+                "ui_json_payload": MetadataValue.json(ui_payload_dict),
+                "referenced_uris": MetadataValue.json(unique_uris)
             }
         )
         return
@@ -189,15 +188,12 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     response.raise_for_status()
     ui_payload_dict = response.json()
     
-    # Force stringification to bypass Dagster's valueRepr length limit for dicts
-    ui_payload_str = json.dumps(ui_payload_dict)
-    
     context.log.info(f"Generated UI Payload for persona {config.persona}")
     yield Output(
         value=ui_payload_dict,
         metadata={
-            "ui_json_payload": ui_payload_str,
-            "referenced_uris": MetadataValue.text(json.dumps(unique_uris))
+            "ui_json_payload": MetadataValue.json(ui_payload_dict),
+            "referenced_uris": MetadataValue.json(unique_uris)
         }
     )
 
