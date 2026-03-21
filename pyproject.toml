@@ -7,6 +7,12 @@ dependencies = [
     "psycopg2-binary",
     "httpx",
     "baml-py",
+    "fastapi",
+    "uvicorn[standard]",
+    "neo4j",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "python-dotenv",
 ]
 
 [project.optional-dependencies]

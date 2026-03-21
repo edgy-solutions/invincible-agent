@@ -40,7 +40,7 @@ _BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
 if str(_BAML_CLIENT_PATH) not in sys.path:
     sys.path.insert(0, str(_BAML_CLIENT_PATH))
 
-from baml_client.types import AgentResponse, AgentStatus, AgentTask, FollowUpQuestion, TopologyUI  # noqa: E402
+from baml_client.types import AgentResponse, AgentStatus, AgentTask, BPMNInterviewState, TopologyUI  # noqa: E402
 from baml_client import b  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -298,54 +298,82 @@ process_interviewer_service = VirtualObject("ProcessInterviewer")
 
 @process_interviewer_service.handler()
 async def process_message(ctx: ObjectContext, request: dict) -> dict:
-    thread_id = ctx.key()
+    thread_id = ctx.key()  # Use the key as the thread_id since it is a VirtualObject
     user_msg = request.get("user_query", "")
+    bootstrap_context = request.get("bootstrap_context", "")
     
-    # 1. Durably fetch the chat history for this specific thread
     history_key = f"history_{thread_id}"
-    chat_history = await ctx.get(history_key) or []
+    graph_key = f"graph_{thread_id}"
     
-    # We pass the history exactly as a list of strings to match the BAML contract
-    async def call_baml_interviewer():
-        # Call the BAML LLM (Async)
-        res = await b.RunProcessInterview(chat_history=chat_history, latest_user_msg=user_msg)
-        
-        # Serialize to a dictionary so Restate can durably store it as JSON
-        # (Handling the polymorphic BAML return type manually)
-        if isinstance(res, FollowUpQuestion):
-            return {"type": "FollowUpQuestion", "data": res.model_dump()}
-        else:
-            return {"type": "TopologyUI", "data": res.model_dump()}
+    chat_history = await ctx.get(history_key) or ""
+    current_graph_dict = await ctx.get(graph_key) or {"nodes": [], "edges": []}
+    current_graph_json = json.dumps(current_graph_dict) if isinstance(current_graph_dict, dict) else current_graph_dict
 
-    # 2. Run the async BAML call inside a durable block
-    response_dict = await ctx.run("baml_interview", call_baml_interviewer)
-    
-    # 3. Save the updated history durably
-    chat_history.append(f"USER: {user_msg}")
-    
-    if response_dict["type"] == "FollowUpQuestion":
-        question_text = response_dict["data"].get("question", "")
-        chat_history.append(f"ASSISTANT: {question_text}")
-        ctx.set(history_key, chat_history)
-        
-        # Return standard chat payload mapped to the frontend schema
+    # 1. Initialize Bootstrap Context on the first turn
+    if not chat_history and bootstrap_context:
+        chat_history = f"SYSTEM: Use the following baseline data extracted from the Graph Database to help draft the initial process:\n{bootstrap_context}\n\n"
+    # 2. Fetch Live Ontologies (Must return a dict, NOT a tuple)
+    def fetch_catalogs():
         return {
-            "action": "chat_message",
-            "payload": {"role": "assistant", "content": question_text}
+            "ontologies": "- iof-mro:AuxiliaryFuelPump\n- iof-mro:ElectricalSystem", 
+            "data_sources": "- dbt_model:fct_pump_telemetry\n- dbt_model:dim_maintenance_logs"
         }
         
-    else:
-        # Interview complete! Final BPMN Process Graph generated.
-        chat_history.append("[Process Graph Generated]")
-        ctx.set(history_key, chat_history)
+    catalog_data = await ctx.run("fetch_catalogs", fetch_catalogs)
+    ontologies = catalog_data["ontologies"]
+    data_sources = catalog_data["data_sources"]
+    
+    # 3. Call the Socratic BAML Compiler (Must return model_dump)
+    async def call_baml_interview():
+        state = await b.IterateBPMNGraph(
+            chat_history=chat_history,
+            user_message=user_msg,
+            current_graph_json=current_graph_json,
+            available_ontology_classes=ontologies,
+            available_data_sources=data_sources
+        )
+        return state.model_dump() # 🟢 CRITICAL: Serialize Pydantic to Dict for Restate
+
+    state_dict = await ctx.run("baml_interview", call_baml_interview)
+    
+    # 4. Extract variables from the dictionary safely
+    is_complete = state_dict.get("is_ready_to_compile", False)
+    agent_reply = state_dict.get("agent_reply", "")
+    
+    new_history = chat_history + f"\nUser: {user_msg}\nAgent: {agent_reply}"
+    ctx.set(history_key, new_history)
+    
+    # 5. Format the UI Payload securely
+    ui_nodes = []
+    for n in state_dict.get("nodes", []):
+        n_type = n["node_type"] if isinstance(n["node_type"], str) else str(n["node_type"])
+        ui_nodes.append({
+            "id": n["id"], 
+            "name": n["name"], 
+            "type": n_type, 
+            "description": f"Ontology: {n.get('ontology_class')} | Data: {n.get('data_source')}"
+        })
         
-        # Wrap the TopologyUI in the components array to match the Composite Dashboard schema
-        return {
-            "action": "ui_payload",
-            "payload": {
-                "components": [response_dict["data"]]
-            }
+    ui_edges = [{"source": e["source_id"], "target": e["target_id"], "label": e.get("condition_expression", "")} for e in state_dict.get("edges", [])]
+    
+    new_graph_dict = {"nodes": ui_nodes, "edges": ui_edges}
+    ctx.set(graph_key, new_graph_dict)
+    
+    return {
+        "is_complete": is_complete,
+        "chat_reply": agent_reply,
+        "raw_bpmn_payload": {"tasks": ui_nodes, "gateways": [], "sequence_flows": ui_edges}, # Passed back for the compiler
+        "ui_payload": {
+            "components": [
+                {
+                    "archetype": "PROCESS_TOPOLOGY",
+                    "subject_concept": "Live BPMN Draft",
+                    "nodes": ui_nodes,
+                    "edges": ui_edges
+                }
+            ]
         }
+    }
 
 @process_interviewer_service.handler()
 async def get_status(ctx: ObjectContext, request: dict) -> dict:

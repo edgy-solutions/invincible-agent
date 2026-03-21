@@ -216,7 +216,7 @@ enum ExecutionIntent {
 class MeshRoutingDecision {
   intent ExecutionIntent
   reasoning string @description("Why you routed it this way.")
-  task_plan SupervisorTaskPlan? @description("Populate ONLY if intent is ONE_SHOT_QUERY.")
+  task_plan SupervisorTaskPlan? @description("Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.")
 }
 
 function RouteAndPlan(user_query: string) -> MeshRoutingDecision {
@@ -226,7 +226,7 @@ function RouteAndPlan(user_query: string) -> MeshRoutingDecision {
     Analyze the user's query and determine the execution intent.
     
     1. If they are asking for existing knowledge (e.g., "What are the hazards of..."), set intent to ONE_SHOT_QUERY and populate the `task_plan` with the required expert personas.
-    2. If they are asking to build, create, or publish a NEW process (e.g., "Help me design a new pump removal process"), set intent to PROCESS_CREATION. DO NOT populate the task plan.
+    2. If they are asking to build, create, or publish a NEW process (e.g., "Help me design a new pump removal process"), set intent to PROCESS_CREATION. STILL populate the `task_plan` with the required expert personas (e.g., MECHANIC for physical steps/hazards, PROCESS_ENGINEER for flow) to build an initial draft.
     
     User Query:
     {{ user_query }}

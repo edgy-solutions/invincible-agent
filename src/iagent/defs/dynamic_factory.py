@@ -336,7 +336,7 @@ def create_agent_op(
         ins=ins_config,
         out=out_config,
     )
-    def _dynamic_agent_op(context: OpExecutionContext, **kwargs) -> Any:
+    def _dynamic_agent_op(context, **kwargs) -> Any:
         """Execute an HTTP POST to the agent endpoint and yield lineage."""
         context.log.info(
             f"[BPMN] Executing task '{task_name}' ({task_id}) "

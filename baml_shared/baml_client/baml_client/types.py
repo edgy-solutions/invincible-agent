@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (6)
+# Generated enums (7)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -46,6 +46,12 @@ class AgentStatus(str, Enum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     HUMAN_REQUIRED = "HUMAN_REQUIRED"
+
+class BPMNNodeType(str, Enum):
+    ServiceTask = "ServiceTask"
+    UserTask = "UserTask"
+    ExclusiveGateway = "ExclusiveGateway"
+    TimerEvent = "TimerEvent"
 
 class ExecutionIntent(str, Enum):
     ONE_SHOT_QUERY = "ONE_SHOT_QUERY"
@@ -81,7 +87,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (20)
+# Generated classes (22)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -112,6 +118,25 @@ class AuthoringResponse(BaseModel):
     draft_content: str = Field(description='A clear, formatted Markdown summary of the requested technical data. Do NOT use XML.')
     missing_info_flags: typing.List[str] = Field(description='List of any required technical data that was missing from the graph.')
 
+class BPMNEdge(BaseModel):
+    source_id: str = Field(description='The id of the source BPMNNode.')
+    target_id: str = Field(description='The id of the target BPMNNode.')
+    condition_expression: typing.Optional[str] = Field(default=None, description='For edges leaving an ExclusiveGateway, the boolean condition that activates this path. Null for unconditional flows.')
+
+class BPMNInterviewState(BaseModel):
+    nodes: typing.List["BPMNNode"] = Field(description='The full list of BPMN nodes in the current graph. Updated cumulatively on each turn.')
+    edges: typing.List["BPMNEdge"] = Field(description='The full list of edges connecting nodes. Updated cumulatively on each turn.')
+    unresolved_paths: typing.List[str] = Field(description='Human-readable descriptions of dead-end paths, missing connections, or ambiguities that need user input to resolve. E.g. \'Gateway gw_1 has no outgoing edge for the FALSE branch.\'')
+    is_ready_to_compile: bool = Field(description='True ONLY when: (1) there are zero unresolved_paths, (2) every ServiceTask has ontology_class and data_source filled, (3) the user has explicitly confirmed the workflow is complete. Default to false.')
+    agent_reply: str = Field(description='Natural language response to the user. This is the conversational text shown in the Neural Stream.')
+
+class BPMNNode(BaseModel):
+    id: str = Field(description='Unique identifier for this node, e.g. \'task_1\', \'gw_1\', \'timer_1\'.')
+    name: str = Field(description='Human-readable label for this node, e.g. \'Ingest Engine Telemetry\'.')
+    node_type: BPMNNodeType = Field(description='The BPMN element type.')
+    ontology_class: typing.Optional[str] = Field(default=None, description='IOF-MRO / MIMOSA ontology URI grounding this node. REQUIRED for ServiceTask, null for others. Must come from the available_ontology_classes list.')
+    data_source: typing.Optional[str] = Field(default=None, description='DataHub / dbt model name grounding this node. REQUIRED for ServiceTask, null for others. Must come from the available_data_sources list.')
+
 class DashboardUI(BaseModel):
     components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI"]]
 
@@ -123,10 +148,6 @@ class DocumentUI(BaseModel):
 
 class FinalSynthesis(BaseModel):
     markdown_report: str
-
-class FollowUpQuestion(BaseModel):
-    question: str = Field(description='The next conversational question to ask the user to clarify the process.')
-    missing_data: typing.List[str] = Field(description='What specifically are you still trying to figure out? (e.g., \'Need exact tool names\')')
 
 class GraphExpertResponse(BaseModel):
     confidence_score: float
@@ -153,7 +174,7 @@ class MechanicResponse(BaseModel):
 class MeshRoutingDecision(BaseModel):
     intent: ExecutionIntent
     reasoning: str = Field(description='Why you routed it this way.')
-    task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate ONLY if intent is ONE_SHOT_QUERY.')
+    task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.')
 
 class MetricUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be ASSET_STATE_METRIC')

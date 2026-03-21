@@ -20,18 +20,22 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","DashboardUI","DocumentUI","FinalSynthesis","FollowUpQuestion","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","ExecutionIntent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","ExecutionIntent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 6
+    # Generated enums 7
     # #########################################################################
 
     @property
     def AgentStatus(self) -> "AgentStatusViewer":
         return AgentStatusViewer(self)
+
+    @property
+    def BPMNNodeType(self) -> "BPMNNodeTypeViewer":
+        return BPMNNodeTypeViewer(self)
 
     @property
     def ExecutionIntent(self) -> "ExecutionIntentViewer":
@@ -55,7 +59,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 20
+    # Generated classes 22
     # #########################################################################
 
     @property
@@ -79,6 +83,18 @@ class TypeBuilder(type_builder.TypeBuilder):
         return AuthoringResponseViewer(self)
 
     @property
+    def BPMNEdge(self) -> "BPMNEdgeViewer":
+        return BPMNEdgeViewer(self)
+
+    @property
+    def BPMNInterviewState(self) -> "BPMNInterviewStateViewer":
+        return BPMNInterviewStateViewer(self)
+
+    @property
+    def BPMNNode(self) -> "BPMNNodeViewer":
+        return BPMNNodeViewer(self)
+
+    @property
     def DashboardUI(self) -> "DashboardUIViewer":
         return DashboardUIViewer(self)
 
@@ -89,10 +105,6 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def FinalSynthesis(self) -> "FinalSynthesisViewer":
         return FinalSynthesisViewer(self)
-
-    @property
-    def FollowUpQuestion(self) -> "FollowUpQuestionViewer":
-        return FollowUpQuestionViewer(self)
 
     @property
     def GraphExpertResponse(self) -> "GraphExpertResponseViewer":
@@ -141,7 +153,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 6
+# Generated enums 7
 # #########################################################################
 
 class AgentStatusAst:
@@ -186,6 +198,56 @@ class AgentStatusValues:
     @property
     def HUMAN_REQUIRED(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("HUMAN_REQUIRED"))
+    
+    
+
+
+class BPMNNodeTypeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("BPMNNodeType")
+        self._values: typing.Set[str] = set([  "ServiceTask",  "UserTask",  "ExclusiveGateway",  "TimerEvent",  ])
+        self._vals = BPMNNodeTypeValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "BPMNNodeTypeValues":
+        return self._vals
+
+
+class BPMNNodeTypeViewer(BPMNNodeTypeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class BPMNNodeTypeValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def ServiceTask(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("ServiceTask"))
+    
+    @property
+    def UserTask(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("UserTask"))
+    
+    @property
+    def ExclusiveGateway(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("ExclusiveGateway"))
+    
+    @property
+    def TimerEvent(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("TimerEvent"))
     
     
 
@@ -438,7 +500,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 20
+# Generated classes 22
 # #########################################################################
 
 class AgentResponseAst:
@@ -668,6 +730,163 @@ class AuthoringResponseProperties:
     
 
 
+class BPMNEdgeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("BPMNEdge")
+        self._properties: typing.Set[str] = set([  "source_id",  "target_id",  "condition_expression",  ])
+        self._props = BPMNEdgeProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "BPMNEdgeProperties":
+        return self._props
+
+
+class BPMNEdgeViewer(BPMNEdgeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class BPMNEdgeProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def source_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_id"))
+    
+    @property
+    def target_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("target_id"))
+    
+    @property
+    def condition_expression(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("condition_expression"))
+    
+    
+
+
+class BPMNInterviewStateAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("BPMNInterviewState")
+        self._properties: typing.Set[str] = set([  "nodes",  "edges",  "unresolved_paths",  "is_ready_to_compile",  "agent_reply",  ])
+        self._props = BPMNInterviewStateProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "BPMNInterviewStateProperties":
+        return self._props
+
+
+class BPMNInterviewStateViewer(BPMNInterviewStateAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class BPMNInterviewStateProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def nodes(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("nodes"))
+    
+    @property
+    def edges(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("edges"))
+    
+    @property
+    def unresolved_paths(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("unresolved_paths"))
+    
+    @property
+    def is_ready_to_compile(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("is_ready_to_compile"))
+    
+    @property
+    def agent_reply(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("agent_reply"))
+    
+    
+
+
+class BPMNNodeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("BPMNNode")
+        self._properties: typing.Set[str] = set([  "id",  "name",  "node_type",  "ontology_class",  "data_source",  ])
+        self._props = BPMNNodeProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "BPMNNodeProperties":
+        return self._props
+
+
+class BPMNNodeViewer(BPMNNodeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class BPMNNodeProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("id"))
+    
+    @property
+    def name(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("name"))
+    
+    @property
+    def node_type(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("node_type"))
+    
+    @property
+    def ontology_class(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("ontology_class"))
+    
+    @property
+    def data_source(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("data_source"))
+    
+    
+
+
 class DashboardUIAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -793,49 +1012,6 @@ class FinalSynthesisProperties:
     @property
     def markdown_report(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("markdown_report"))
-    
-    
-
-
-class FollowUpQuestionAst:
-    def __init__(self, tb: type_builder.TypeBuilder):
-        _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.class_("FollowUpQuestion")
-        self._properties: typing.Set[str] = set([  "question",  "missing_data",  ])
-        self._props = FollowUpQuestionProperties(self._bldr, self._properties)
-
-    def type(self) -> baml_py.FieldType:
-        return self._bldr.field()
-
-    @property
-    def props(self) -> "FollowUpQuestionProperties":
-        return self._props
-
-
-class FollowUpQuestionViewer(FollowUpQuestionAst):
-    def __init__(self, tb: type_builder.TypeBuilder):
-        super().__init__(tb)
-
-    
-    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
-        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
-    
-
-
-class FollowUpQuestionProperties:
-    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
-        self.__bldr = bldr
-        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
-
-    
-    
-    @property
-    def question(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("question"))
-    
-    @property
-    def missing_data(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("missing_data"))
     
     
 

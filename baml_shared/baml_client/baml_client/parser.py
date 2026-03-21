@@ -47,17 +47,17 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatGraphResponse", llm_response=llm_response, mode="request")
         return typing.cast(types.GraphExpertResponse, __result__)
 
+    def IterateBPMNGraph(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.BPMNInterviewState:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="IterateBPMNGraph", llm_response=llm_response, mode="request")
+        return typing.cast(types.BPMNInterviewState, __result__)
+
     def RouteAndPlan(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.MeshRoutingDecision:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RouteAndPlan", llm_response=llm_response, mode="request")
         return typing.cast(types.MeshRoutingDecision, __result__)
-
-    def RunProcessInterview(
-        self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> typing.Union["types.FollowUpQuestion", "types.TopologyUI"]:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RunProcessInterview", llm_response=llm_response, mode="request")
-        return typing.cast(typing.Union["types.FollowUpQuestion", "types.TopologyUI"], __result__)
 
     def SynthesizeReports(
         self, llm_response: str, baml_options: BamlCallOptions = {},
@@ -97,17 +97,17 @@ class LlmStreamParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatGraphResponse", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.GraphExpertResponse, __result__)
 
+    def IterateBPMNGraph(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.BPMNInterviewState:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="IterateBPMNGraph", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.BPMNInterviewState, __result__)
+
     def RouteAndPlan(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> stream_types.MeshRoutingDecision:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RouteAndPlan", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.MeshRoutingDecision, __result__)
-
-    def RunProcessInterview(
-        self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> typing.Union["stream_types.FollowUpQuestion", "stream_types.TopologyUI"]:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RunProcessInterview", llm_response=llm_response, mode="stream")
-        return typing.cast(typing.Union["stream_types.FollowUpQuestion", "stream_types.TopologyUI"], __result__)
 
     def SynthesizeReports(
         self, llm_response: str, baml_options: BamlCallOptions = {},

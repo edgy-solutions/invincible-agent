@@ -17,18 +17,19 @@ services:
       - CHOKIDAR_USEPOLLING=true
 
   # ==========================================
-  # 2. THE FRONTEND BFF (Interviewer Agent)
+  # 2. THE FRONTEND BFF (API Gateway)
   # ==========================================
   cortex-bff:
     image: python:3.12-slim
     working_dir: /app
-    # Install dependencies and run with hot-reloading
-    command: sh -c "pip install uv && uv sync && uv run uvicorn interviewer_agent:app --host 0.0.0.0 --port 8000 --reload"
+    # Updated command to point to the new gateway module
+    command: sh -c "pip install uv && uv sync && uv run uvicorn src.iagent.gateway:app --host 0.0.0.0 --port 8000 --reload"
     ports:
       - "8000:8000"
     volumes:
-      # Mount the backend folder inside the sibling UI repo
-      - ../../process-spawner/backend:/app
+      # Mount the invincible-agent repo root (one level up from examples/)
+      - ..:/app
+      # Anonymous volume for venv isolation
       - /app/.venv
     environment:
       - DAGSTER_WEBSERVER_URL=http://dagster-webserver:3000

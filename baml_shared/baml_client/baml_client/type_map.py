@@ -31,6 +31,15 @@ type_map = {
     "types.AuthoringResponse": types.AuthoringResponse,
     "stream_types.AuthoringResponse": stream_types.AuthoringResponse,
 
+    "types.BPMNEdge": types.BPMNEdge,
+    "stream_types.BPMNEdge": stream_types.BPMNEdge,
+
+    "types.BPMNInterviewState": types.BPMNInterviewState,
+    "stream_types.BPMNInterviewState": stream_types.BPMNInterviewState,
+
+    "types.BPMNNode": types.BPMNNode,
+    "stream_types.BPMNNode": stream_types.BPMNNode,
+
     "types.DashboardUI": types.DashboardUI,
     "stream_types.DashboardUI": stream_types.DashboardUI,
 
@@ -39,9 +48,6 @@ type_map = {
 
     "types.FinalSynthesis": types.FinalSynthesis,
     "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
-
-    "types.FollowUpQuestion": types.FollowUpQuestion,
-    "stream_types.FollowUpQuestion": stream_types.FollowUpQuestion,
 
     "types.GraphExpertResponse": types.GraphExpertResponse,
     "stream_types.GraphExpertResponse": stream_types.GraphExpertResponse,
@@ -78,6 +84,8 @@ type_map = {
 
 
     "types.AgentStatus": types.AgentStatus,
+
+    "types.BPMNNodeType": types.BPMNNodeType,
 
     "types.ExecutionIntent": types.ExecutionIntent,
 
