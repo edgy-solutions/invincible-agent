@@ -46,6 +46,25 @@ def execute_cypher(query: str) -> str:
     (Tool|Part)-[:USABLE_SLANG]->(SlangTerm)
     (Procedure)-[:REQUIRES_CERT]->(Certification)
 
+    COMMON PROPERTIES:
+    Procedure: id, name, title, description, platform, estimatedTime, personnelRequired, category
+    ManufacturingStep: id, name, sequence, description, action
+    Part: id, name, partNumber, part_number, nsn, manufacturer, unitCost, description
+    Tool: id, name, partNumber, part_number, description
+    Hazard: id, name, severity, category, description
+    Standard: id, name, title, description
+    Certification: id, name, description
+
+    CASE SENSITIVITY:
+    Neo4j CONTAINS is CASE-SENSITIVE. Always use toLower() for text matching:
+    CORRECT:   WHERE toLower(p.name) CONTAINS 'fuel pump'
+    INCORRECT: WHERE p.name CONTAINS 'fuel pump'
+
+    STARTING STRATEGY:
+    Start broad. First discover what exists with a simple query like:
+    MATCH (p:Procedure) RETURN p.name LIMIT 20
+    Then refine based on actual data.
+
     Args:
         query: The raw Cypher string to execute. Limit queries via `LIMIT 50` to prevent payload overflow.
     

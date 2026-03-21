@@ -59,6 +59,7 @@ class DashboardUI(BaseModel):
 
 class DocumentUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be KNOWLEDGE_DOCUMENT')
+    source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
     subject_concept: typing.Optional[str] = None
     markdown_content: typing.Optional[str] = None
 
@@ -72,6 +73,7 @@ class GraphExpertResponse(BaseModel):
 
 class HazardUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be HAZARD_DECLARATION')
+    source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
     subject_concept: typing.Optional[str] = None
     severity: typing.Optional[types.SeverityLevel] = None
     hazards: typing.List["UIEntity"]
@@ -88,6 +90,7 @@ class MechanicResponse(BaseModel):
 
 class MetricUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be ASSET_STATE_METRIC')
+    source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
     subject_concept: typing.Optional[str] = None
     metrics: typing.List["UIEntity"]
 
@@ -105,6 +108,7 @@ class SupervisorTaskPlan(BaseModel):
 
 class TopologyUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be PROCESS_TOPOLOGY')
+    source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data (e.g. MECHANIC, PROCESS_ENGINEER). Copy from the raw data \'persona\' field.')
     subject_concept: typing.Optional[str] = None
     nodes: typing.List["UIEntity"]
     edges: typing.List["UIRelation"]

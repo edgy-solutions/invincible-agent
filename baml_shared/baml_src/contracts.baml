@@ -275,6 +275,7 @@ class UIRelation {
 // 2. Strict UI Component Schemas
 class TopologyUI {
   archetype SemanticArchetype @description("MUST be PROCESS_TOPOLOGY")
+  source_persona string? @description("The persona that produced this data (e.g. MECHANIC, PROCESS_ENGINEER). Copy from the raw data 'persona' field.")
   subject_concept string
   nodes UIEntity[]
   edges UIRelation[]
@@ -282,6 +283,7 @@ class TopologyUI {
 
 class HazardUI {
   archetype SemanticArchetype @description("MUST be HAZARD_DECLARATION")
+  source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
   subject_concept string
   severity SeverityLevel
   hazards UIEntity[]
@@ -289,12 +291,14 @@ class HazardUI {
 
 class MetricUI {
   archetype SemanticArchetype @description("MUST be ASSET_STATE_METRIC")
+  source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
   subject_concept string
   metrics UIEntity[]
 }
 
 class DocumentUI {
   archetype SemanticArchetype @description("MUST be KNOWLEDGE_DOCUMENT")
+  source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
   subject_concept string
   markdown_content string
 }
@@ -314,6 +318,7 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
     CRITICAL INSTRUCTION:
     You are building a Composite Dashboard. You must output a `DashboardUI` object containing an array of components.
     Create a separate UI component in the `components` array for EACH distinct expert response in the raw data.
+    ALWAYS copy the `persona` field from each raw data entry into the `source_persona` field of the corresponding component.
     
     CRITICAL GROUNDING RULES:
     1. STRICT ADHERENCE: You are in a strict military context. DO NOT invent or hallucinate data, procedures, or hazards.

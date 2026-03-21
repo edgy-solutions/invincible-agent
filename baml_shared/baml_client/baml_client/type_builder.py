@@ -657,7 +657,7 @@ class DocumentUIAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("DocumentUI")
-        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "markdown_content",  ])
+        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "markdown_content",  ])
         self._props = DocumentUIProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -688,6 +688,10 @@ class DocumentUIProperties:
     @property
     def archetype(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def source_persona(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_persona"))
     
     @property
     def subject_concept(self) -> type_builder.ClassPropertyViewer:
@@ -790,7 +794,7 @@ class HazardUIAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("HazardUI")
-        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "severity",  "hazards",  ])
+        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "severity",  "hazards",  ])
         self._props = HazardUIProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -821,6 +825,10 @@ class HazardUIProperties:
     @property
     def archetype(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def source_persona(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_persona"))
     
     @property
     def subject_concept(self) -> type_builder.ClassPropertyViewer:
@@ -935,7 +943,7 @@ class MetricUIAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("MetricUI")
-        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "metrics",  ])
+        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "metrics",  ])
         self._props = MetricUIProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -966,6 +974,10 @@ class MetricUIProperties:
     @property
     def archetype(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def source_persona(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_persona"))
     
     @property
     def subject_concept(self) -> type_builder.ClassPropertyViewer:
@@ -1072,7 +1084,7 @@ class TopologyUIAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("TopologyUI")
-        self._properties: typing.Set[str] = set([  "archetype",  "subject_concept",  "nodes",  "edges",  ])
+        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "nodes",  "edges",  ])
         self._props = TopologyUIProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1103,6 +1115,10 @@ class TopologyUIProperties:
     @property
     def archetype(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def source_persona(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_persona"))
     
     @property
     def subject_concept(self) -> type_builder.ClassPropertyViewer:
