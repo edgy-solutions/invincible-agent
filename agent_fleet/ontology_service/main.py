@@ -155,6 +155,11 @@ class PlanRequest(BaseModel):
     query: str
 
 
+class RouteAndPlanRequest(BaseModel):
+    """Incoming request to the /route_and_plan endpoint."""
+    query: str
+
+
 class SemanticResolutionResponse(BaseModel):
     """Mirrors the BAML SemanticResolution schema for the HTTP response."""
     resolved_uri: str
@@ -222,6 +227,25 @@ async def plan_query(request: PlanRequest) -> dict:
         raise HTTPException(
             status_code=502,
             detail=f"BAML decomposition failed: {exc}",
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# POST /route_and_plan
+# ---------------------------------------------------------------------------
+@app.post("/route_and_plan")
+async def route_and_plan(request: RouteAndPlanRequest) -> dict:
+    """
+    Act as the Kernel Scheduler. Decide whether the query is a ONE_SHOT_QUERY
+    (requiring Graph DB) or a PROCESS_CREATION (requiring the Restate Interviewer).
+    """
+    try:
+        decision = await b.RouteAndPlan(user_query=request.query)
+        return decision.model_dump()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"BAML routing failed: {exc}",
         ) from exc
 
 

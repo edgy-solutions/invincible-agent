@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (18)
+# Generated classes (20)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -66,6 +66,10 @@ class DocumentUI(BaseModel):
 class FinalSynthesis(BaseModel):
     markdown_report: typing.Optional[str] = None
 
+class FollowUpQuestion(BaseModel):
+    question: typing.Optional[str] = Field(default=None, description='The next conversational question to ask the user to clarify the process.')
+    missing_data: typing.List[str] = Field(description='What specifically are you still trying to figure out? (e.g., \'Need exact tool names\')')
+
 class GraphExpertResponse(BaseModel):
     confidence_score: typing.Optional[float] = None
     referenced_uris: typing.List[str]
@@ -87,6 +91,11 @@ class MechanicResponse(BaseModel):
     tool_list: typing.List[str]
     safety_warnings: typing.List[str]
     short_answer: typing.Optional[str] = None
+
+class MeshRoutingDecision(BaseModel):
+    intent: typing.Optional[types.ExecutionIntent] = None
+    reasoning: typing.Optional[str] = Field(default=None, description='Why you routed it this way.')
+    task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate ONLY if intent is ONE_SHOT_QUERY.')
 
 class MetricUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be ASSET_STATE_METRIC')

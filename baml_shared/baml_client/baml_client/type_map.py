@@ -40,6 +40,9 @@ type_map = {
     "types.FinalSynthesis": types.FinalSynthesis,
     "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
 
+    "types.FollowUpQuestion": types.FollowUpQuestion,
+    "stream_types.FollowUpQuestion": stream_types.FollowUpQuestion,
+
     "types.GraphExpertResponse": types.GraphExpertResponse,
     "stream_types.GraphExpertResponse": stream_types.GraphExpertResponse,
 
@@ -51,6 +54,9 @@ type_map = {
 
     "types.MechanicResponse": types.MechanicResponse,
     "stream_types.MechanicResponse": stream_types.MechanicResponse,
+
+    "types.MeshRoutingDecision": types.MeshRoutingDecision,
+    "stream_types.MeshRoutingDecision": stream_types.MeshRoutingDecision,
 
     "types.MetricUI": types.MetricUI,
     "stream_types.MetricUI": stream_types.MetricUI,
@@ -72,6 +78,8 @@ type_map = {
 
 
     "types.AgentStatus": types.AgentStatus,
+
+    "types.ExecutionIntent": types.ExecutionIntent,
 
     "types.MoodType": types.MoodType,
 

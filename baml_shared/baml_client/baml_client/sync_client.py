@@ -150,6 +150,34 @@ class BamlSyncClient:
                 "raw_text": raw_text,"persona": persona,
             })
             return typing.cast(types.GraphExpertResponse, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def RouteAndPlan(self, user_query: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.MeshRoutingDecision:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.RouteAndPlan(user_query=user_query,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="RouteAndPlan", args={
+                "user_query": user_query,
+            })
+            return typing.cast(types.MeshRoutingDecision, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def RunProcessInterview(self, chat_history: typing.List[str],latest_user_msg: str,
+        baml_options: BamlCallOptions = {},
+    ) -> typing.Union["types.FollowUpQuestion", "types.TopologyUI"]:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.RunProcessInterview(chat_history=chat_history,latest_user_msg=latest_user_msg,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="RunProcessInterview", args={
+                "chat_history": chat_history,"latest_user_msg": latest_user_msg,
+            })
+            return typing.cast(typing.Union["types.FollowUpQuestion", "types.TopologyUI"], __result__.cast_to(types, types, stream_types, False, __runtime__))
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
         baml_options: BamlCallOptions = {},
     ) -> types.FinalSynthesis:
@@ -221,6 +249,30 @@ class BamlStreamClient:
           lambda x: typing.cast(types.GraphExpertResponse, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def RouteAndPlan(self, user_query: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.MeshRoutingDecision, types.MeshRoutingDecision]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="RouteAndPlan", args={
+            "user_query": user_query,
+        })
+        return baml_py.BamlSyncStream[stream_types.MeshRoutingDecision, types.MeshRoutingDecision](
+          __result__,
+          lambda x: typing.cast(stream_types.MeshRoutingDecision, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.MeshRoutingDecision, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def RunProcessInterview(self, chat_history: typing.List[str],latest_user_msg: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[typing.Union["stream_types.FollowUpQuestion", "stream_types.TopologyUI"], typing.Union["types.FollowUpQuestion", "types.TopologyUI"]]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="RunProcessInterview", args={
+            "chat_history": chat_history,"latest_user_msg": latest_user_msg,
+        })
+        return baml_py.BamlSyncStream[typing.Union["stream_types.FollowUpQuestion", "stream_types.TopologyUI"], typing.Union["types.FollowUpQuestion", "types.TopologyUI"]](
+          __result__,
+          lambda x: typing.cast(typing.Union["stream_types.FollowUpQuestion", "stream_types.TopologyUI"], x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(typing.Union["types.FollowUpQuestion", "types.TopologyUI"], x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.FinalSynthesis, types.FinalSynthesis]:
@@ -269,6 +321,20 @@ class BamlHttpRequestClient:
             "raw_text": raw_text,"persona": persona,
         }, mode="request")
         return __result__
+    def RouteAndPlan(self, user_query: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
+            "user_query": user_query,
+        }, mode="request")
+        return __result__
+    def RunProcessInterview(self, chat_history: typing.List[str],latest_user_msg: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RunProcessInterview", args={
+            "chat_history": chat_history,"latest_user_msg": latest_user_msg,
+        }, mode="request")
+        return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -312,6 +378,20 @@ class BamlHttpStreamRequestClient:
             "raw_text": raw_text,"persona": persona,
         }, mode="stream")
         return __result__
+    def RouteAndPlan(self, user_query: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
+            "user_query": user_query,
+        }, mode="stream")
+        return __result__
+    def RunProcessInterview(self, chat_history: typing.List[str],latest_user_msg: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RunProcessInterview", args={
+            "chat_history": chat_history,"latest_user_msg": latest_user_msg,
+        }, mode="stream")
+        return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -321,4 +401,4 @@ class BamlHttpStreamRequestClient:
         return __result__
     
 
-b = BamlSyncClient(DoNotUseDirectlyCallManager({}))
+b = BamlSyncClient(DoNotUseDirectlyCallManager({}))

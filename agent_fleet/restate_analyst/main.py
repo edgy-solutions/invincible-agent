@@ -30,7 +30,7 @@ import restate
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from restate import Context, Service, Workflow, WorkflowContext, WorkflowSharedContext
+from restate import Context, ObjectContext, Service, VirtualObject, Workflow, WorkflowContext, WorkflowSharedContext
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to the Python path for the generated BAML types.
@@ -40,7 +40,8 @@ _BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
 if str(_BAML_CLIENT_PATH) not in sys.path:
     sys.path.insert(0, str(_BAML_CLIENT_PATH))
 
-from baml_client.types import AgentResponse, AgentStatus, AgentTask  # noqa: E402
+from baml_client.types import AgentResponse, AgentStatus, AgentTask, FollowUpQuestion, TopologyUI  # noqa: E402
+from baml_client import b  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Smolagents imports — only used inside the Restate handler.
@@ -291,6 +292,72 @@ async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Restate Service — ProcessInterviewer (VirtualObject for durable local state)
+# ---------------------------------------------------------------------------
+process_interviewer_service = VirtualObject("ProcessInterviewer")
+
+@process_interviewer_service.handler()
+async def process_message(ctx: ObjectContext, request: dict) -> dict:
+    thread_id = ctx.key()
+    user_msg = request.get("user_query", "")
+    
+    # 1. Durably fetch the chat history for this specific thread
+    history_key = f"history_{thread_id}"
+    chat_history = await ctx.get(history_key) or []
+    
+    # We pass the history exactly as a list of strings to match the BAML contract
+    async def call_baml_interviewer():
+        # Call the BAML LLM (Async)
+        res = await b.RunProcessInterview(chat_history=chat_history, latest_user_msg=user_msg)
+        
+        # Serialize to a dictionary so Restate can durably store it as JSON
+        # (Handling the polymorphic BAML return type manually)
+        if isinstance(res, FollowUpQuestion):
+            return {"type": "FollowUpQuestion", "data": res.model_dump()}
+        else:
+            return {"type": "TopologyUI", "data": res.model_dump()}
+
+    # 2. Run the async BAML call inside a durable block
+    response_dict = await ctx.run("baml_interview", call_baml_interviewer)
+    
+    # 3. Save the updated history durably
+    chat_history.append(f"USER: {user_msg}")
+    
+    if response_dict["type"] == "FollowUpQuestion":
+        question_text = response_dict["data"].get("question", "")
+        chat_history.append(f"ASSISTANT: {question_text}")
+        ctx.set(history_key, chat_history)
+        
+        # Return standard chat payload mapped to the frontend schema
+        return {
+            "action": "chat_message",
+            "payload": {"role": "assistant", "content": question_text}
+        }
+        
+    else:
+        # Interview complete! Final BPMN Process Graph generated.
+        chat_history.append("[Process Graph Generated]")
+        ctx.set(history_key, chat_history)
+        
+        # Wrap the TopologyUI in the components array to match the Composite Dashboard schema
+        return {
+            "action": "ui_payload",
+            "payload": {
+                "components": [response_dict["data"]]
+            }
+        }
+
+@process_interviewer_service.handler()
+async def get_status(ctx: ObjectContext, request: dict) -> dict:
+    thread_id = ctx.key()
+    history_key = f"history_{thread_id}"
+    chat_history = await ctx.get(history_key) or []
+    # An interview is active if there are messages and it hasn't concluded with the Graph payload
+    is_active = len(chat_history) > 0 and chat_history[-1] != "[Process Graph Generated]"
+    return {"is_active": is_active}
+
+
+# ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
 app = FastAPI(
@@ -303,7 +370,7 @@ app = FastAPI(
 )
 
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service]))
 
 
 # ---------------------------------------------------------------------------

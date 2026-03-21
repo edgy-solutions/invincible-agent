@@ -20,18 +20,22 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","DashboardUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","DashboardUI","DocumentUI","FinalSynthesis","FollowUpQuestion","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","ExecutionIntent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 5
+    # Generated enums 6
     # #########################################################################
 
     @property
     def AgentStatus(self) -> "AgentStatusViewer":
         return AgentStatusViewer(self)
+
+    @property
+    def ExecutionIntent(self) -> "ExecutionIntentViewer":
+        return ExecutionIntentViewer(self)
 
     @property
     def MoodType(self) -> "MoodTypeViewer":
@@ -51,7 +55,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 18
+    # Generated classes 20
     # #########################################################################
 
     @property
@@ -87,6 +91,10 @@ class TypeBuilder(type_builder.TypeBuilder):
         return FinalSynthesisViewer(self)
 
     @property
+    def FollowUpQuestion(self) -> "FollowUpQuestionViewer":
+        return FollowUpQuestionViewer(self)
+
+    @property
     def GraphExpertResponse(self) -> "GraphExpertResponseViewer":
         return GraphExpertResponseViewer(self)
 
@@ -101,6 +109,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def MechanicResponse(self) -> "MechanicResponseViewer":
         return MechanicResponseViewer(self)
+
+    @property
+    def MeshRoutingDecision(self) -> "MeshRoutingDecisionViewer":
+        return MeshRoutingDecisionViewer(self)
 
     @property
     def MetricUI(self) -> "MetricUIViewer":
@@ -129,7 +141,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 5
+# Generated enums 6
 # #########################################################################
 
 class AgentStatusAst:
@@ -174,6 +186,48 @@ class AgentStatusValues:
     @property
     def HUMAN_REQUIRED(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("HUMAN_REQUIRED"))
+    
+    
+
+
+class ExecutionIntentAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("ExecutionIntent")
+        self._values: typing.Set[str] = set([  "ONE_SHOT_QUERY",  "PROCESS_CREATION",  ])
+        self._vals = ExecutionIntentValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "ExecutionIntentValues":
+        return self._vals
+
+
+class ExecutionIntentViewer(ExecutionIntentAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class ExecutionIntentValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def ONE_SHOT_QUERY(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("ONE_SHOT_QUERY"))
+    
+    @property
+    def PROCESS_CREATION(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("PROCESS_CREATION"))
     
     
 
@@ -384,7 +438,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 18
+# Generated classes 20
 # #########################################################################
 
 class AgentResponseAst:
@@ -743,6 +797,49 @@ class FinalSynthesisProperties:
     
 
 
+class FollowUpQuestionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("FollowUpQuestion")
+        self._properties: typing.Set[str] = set([  "question",  "missing_data",  ])
+        self._props = FollowUpQuestionProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "FollowUpQuestionProperties":
+        return self._props
+
+
+class FollowUpQuestionViewer(FollowUpQuestionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class FollowUpQuestionProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def question(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("question"))
+    
+    @property
+    def missing_data(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("missing_data"))
+    
+    
+
+
 class GraphExpertResponseAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -935,6 +1032,53 @@ class MechanicResponseProperties:
     @property
     def short_answer(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("short_answer"))
+    
+    
+
+
+class MeshRoutingDecisionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MeshRoutingDecision")
+        self._properties: typing.Set[str] = set([  "intent",  "reasoning",  "task_plan",  ])
+        self._props = MeshRoutingDecisionProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MeshRoutingDecisionProperties":
+        return self._props
+
+
+class MeshRoutingDecisionViewer(MeshRoutingDecisionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MeshRoutingDecisionProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def intent(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("intent"))
+    
+    @property
+    def reasoning(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
+    
+    @property
+    def task_plan(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("task_plan"))
     
     
 
@@ -1240,3 +1384,4 @@ class UIRelationProperties:
     
     
 
+

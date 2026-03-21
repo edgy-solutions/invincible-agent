@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (5)
+# Generated enums (6)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -46,6 +46,10 @@ class AgentStatus(str, Enum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     HUMAN_REQUIRED = "HUMAN_REQUIRED"
+
+class ExecutionIntent(str, Enum):
+    ONE_SHOT_QUERY = "ONE_SHOT_QUERY"
+    PROCESS_CREATION = "PROCESS_CREATION"
 
 class MoodType(str, Enum):
     # The visual tone or mood to pass to the frontend
@@ -77,7 +81,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (18)
+# Generated classes (20)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -120,6 +124,10 @@ class DocumentUI(BaseModel):
 class FinalSynthesis(BaseModel):
     markdown_report: str
 
+class FollowUpQuestion(BaseModel):
+    question: str = Field(description='The next conversational question to ask the user to clarify the process.')
+    missing_data: typing.List[str] = Field(description='What specifically are you still trying to figure out? (e.g., \'Need exact tool names\')')
+
 class GraphExpertResponse(BaseModel):
     confidence_score: float
     referenced_uris: typing.List[str]
@@ -141,6 +149,11 @@ class MechanicResponse(BaseModel):
     tool_list: typing.List[str]
     safety_warnings: typing.List[str]
     short_answer: str
+
+class MeshRoutingDecision(BaseModel):
+    intent: ExecutionIntent
+    reasoning: str = Field(description='Why you routed it this way.')
+    task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate ONLY if intent is ONE_SHOT_QUERY.')
 
 class MetricUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be ASSET_STATE_METRIC')
