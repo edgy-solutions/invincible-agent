@@ -181,6 +181,7 @@ class AgentTaskDefinition {
 
 class SupervisorTaskPlan {
   tasks AgentTaskDefinition[]
+  extracted_concepts string[] @description("List of main entities/components the user is asking about (e.g., 'Auxiliary Fuel Pump', 'C-130'). This populates the Ontology Map.")
   reasoning string
 }
 
@@ -193,10 +194,11 @@ function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
     {{ raw_query }}
 
     Instructions:
-    1. Assign each task to the correct specialized persona (MECHANIC, TECH_WRITER, LOGISTICS, AUDITOR, PROCESS_ENGINEER).
-    2. TECH_WRITER GUARDRAIL: If assigning a task to the TECH_WRITER, explicitly instruct them in the `sub_query` to return their findings as standard Markdown text. Explicitly FORBID the use of string concatenation, f-strings, or Python code to generate XML.
-    3. If the query only needs one persona, return a list with just one task.
-    4. Provide your reasoning for why the query was split this way.
+    1. Extract the core entities, components, or systems the user is asking about and list them in `extracted_concepts`.
+    2. Assign each task to the correct specialized persona (MECHANIC, TECH_WRITER, LOGISTICS, AUDITOR, PROCESS_ENGINEER).
+    3. TECH_WRITER GUARDRAIL: If assigning a task to the TECH_WRITER, explicitly instruct them in the `sub_query` to return their findings as standard Markdown text. Explicitly FORBID the use of string concatenation, f-strings, or Python code to generate XML.
+    4. If the query only needs one persona, return a list with just one task.
+    5. Provide your reasoning for why the query was split this way.
 
     {{ ctx.output_format }}
   "#

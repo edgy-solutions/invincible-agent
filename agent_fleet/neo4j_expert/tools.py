@@ -39,8 +39,8 @@ def execute_cypher(query: str) -> str:
     COMMON RELATIONSHIPS:
     (DataModule|WorkPackage)-[:REQUIRES_PROCEDURE]->(Procedure)
     (Procedure)-[:CONTAINS_STEP]->(ManufacturingStep)
-    (Procedure|ManufacturingStep)-[:REQUIRES_TOOL]->(Tool)
-    (Procedure|ManufacturingStep)-[:REQUIRES_PART]->(Part)
+    (ManufacturingStep)-[:REQUIRES_TOOL]->(Tool)  // Note: Tools connect to Steps, not directly to Procedures
+    (ManufacturingStep)-[:REQUIRES_PART]->(Part)  // Note: Parts connect to Steps, not directly to Procedures
     (Procedure|ManufacturingStep)-[:HAS_HAZARD]->(Hazard)
     (Procedure|Part)-[:GOVERNED_BY]->(Standard)
     (Tool|Part)-[:USABLE_SLANG]->(SlangTerm)
@@ -48,10 +48,10 @@ def execute_cypher(query: str) -> str:
 
     COMMON PROPERTIES:
     Procedure: id, name, title, description, platform, estimatedTime, personnelRequired, category
-    ManufacturingStep: id, name, sequence, description, action
-    Part: id, name, partNumber, part_number, nsn, manufacturer, unitCost, description
+    ManufacturingStep: id, name, sequence, description, action, platform
+    Part: id, name, partNumber, part_number, nsn, nsn_number, manufacturer, unitCost, description
     Tool: id, name, partNumber, part_number, description
-    Hazard: id, name, severity, category, description
+    Hazard: id, name, severity, category, hazard_type, description
     Standard: id, name, title, description
     Certification: id, name, description
 

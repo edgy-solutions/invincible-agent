@@ -1041,7 +1041,7 @@ class SupervisorTaskPlanAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("SupervisorTaskPlan")
-        self._properties: typing.Set[str] = set([  "tasks",  "reasoning",  ])
+        self._properties: typing.Set[str] = set([  "tasks",  "extracted_concepts",  "reasoning",  ])
         self._props = SupervisorTaskPlanProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1072,6 +1072,10 @@ class SupervisorTaskPlanProperties:
     @property
     def tasks(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("tasks"))
+    
+    @property
+    def extracted_concepts(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("extracted_concepts"))
     
     @property
     def reasoning(self) -> type_builder.ClassPropertyViewer:

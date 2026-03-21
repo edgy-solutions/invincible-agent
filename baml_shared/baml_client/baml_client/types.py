@@ -158,6 +158,7 @@ class SemanticResolution(BaseModel):
 
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
+    extracted_concepts: typing.List[str] = Field(description='List of main entities/components the user is asking about (e.g., \'Auxiliary Fuel Pump\', \'C-130\'). This populates the Ontology Map.')
     reasoning: str
 
 class TopologyUI(BaseModel):

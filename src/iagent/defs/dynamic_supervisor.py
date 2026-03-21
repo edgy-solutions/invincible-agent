@@ -68,14 +68,16 @@ def create_task_plan(config: SupervisorQueryConfig):
     response.raise_for_status()
     plan = response.json()
 
-    # 2. Extract personas and broadcast intermediate roster
+    # 2. Extract personas and broadcast intermediate roster + concepts
     tasks = plan.get("tasks", [])
     personas = [task.get("target_persona") for task in tasks if task.get("target_persona")]
+    concepts = plan.get("extracted_concepts", [])
     
     yield AssetMaterialization(
         asset_key=["active_agent_roster"],
         metadata={
-            "personas": MetadataValue.text(json.dumps(personas))
+            "personas": MetadataValue.text(json.dumps(personas)),
+            "extracted_concepts": MetadataValue.text(json.dumps(concepts))
         }
     )
 
@@ -142,6 +144,15 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     Engine F (Presentation Agent) to map the structured data to a Server-Driven UI
     Component layout. Returns the result as a raw JSON string to avoid truncation.
     """
+    # Extract referenced URIs from all experts to send back for the Data Bindings HUD
+    all_uris = []
+    for res in results:
+        expert_res = res.get("expert_response", {})
+        all_uris.extend(expert_res.get("referenced_uris", []))
+    
+    # Deduplicate URIs
+    unique_uris = list(set(all_uris))
+    
     # 1. Check if the graph experts failed to find any data
     data_str = json.dumps(results)
     if "EMPTY_RESULT_SET" in data_str or "No hazards related to" in data_str:
@@ -159,7 +170,10 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
         ui_payload_str = json.dumps(ui_payload_dict)
         yield Output(
             value=ui_payload_dict,
-            metadata={"ui_json_payload": ui_payload_str}
+            metadata={
+                "ui_json_payload": ui_payload_str,
+                "referenced_uris": MetadataValue.text(json.dumps(unique_uris))
+            }
         )
         return
 
@@ -181,7 +195,10 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     context.log.info(f"Generated UI Payload for persona {config.persona}")
     yield Output(
         value=ui_payload_dict,
-        metadata={"ui_json_payload": ui_payload_str}
+        metadata={
+            "ui_json_payload": ui_payload_str,
+            "referenced_uris": MetadataValue.text(json.dumps(unique_uris))
+        }
     )
 
 
