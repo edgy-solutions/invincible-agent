@@ -153,11 +153,55 @@ async def _get_active_ontology_classes() -> str:
     return "\n".join(lines)
 
 
+async def _seed_jena_if_empty():
+    """Check if Apache Jena is empty, and seed it with the RDF if needed."""
+    if not _JENA_ENDPOINT:
+        return
+        
+    try:
+        # Check if empty (attempt to select 1 triple)
+        rows = await execute_sparql("SELECT * WHERE { ?s ?p ?o } LIMIT 1")
+        if rows:
+            print("[ontology-service] Jena dataset is already populated.")
+            return
+            
+        print("[ontology-service] Jena dataset is empty. Seeding...")
+        service_dir = Path(__file__).parent
+        real_rdf = service_dir / "Maintenance.rdf"
+        ttl_path = service_dir / "iof_mro.ttl"
+        
+        file_path = real_rdf if real_rdf.exists() else ttl_path
+        content_type = "application/rdf+xml" if real_rdf.exists() else "text/turtle"
+        
+        if not file_path.exists():
+            print("[ontology-service] No ontology file found to seed.")
+            return
+            
+        update_ep = _JENA_ENDPOINT.replace("/query", "/data")
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+            
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                update_ep,
+                content=file_data,
+                headers={"Content-Type": content_type}
+            )
+            if resp.status_code in (200, 201, 204):
+                print(f"[ontology-service] Successfully seeded Jena with {file_path.name}")
+            else:
+                print(f"[ontology-service] Failed to seed Jena: {resp.status_code} {resp.text}")
+                
+    except Exception as e:
+        print(f"[ontology-service] Error during Jena seeding: {e}")
+
+
 # ---------------------------------------------------------------------------
 # FastAPI lifespan — verify connectivity on startup
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await _seed_jena_if_empty()
     classes = await _get_active_ontology_classes()
     class_count = len(classes.strip().splitlines()) if classes.strip() else 0
     backend = "Jena Fuseki" if _JENA_ENDPOINT else "Local rdflib"
