@@ -63,6 +63,7 @@ services:
       - SMOLAGENTS_MODEL=${SMOLAGENTS_MODEL}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
       - BAML_LOG_LEVEL=info
+      - JENA_SPARQL_ENDPOINT=http://fuseki:3030/ds/query
 
   restate-analyst:
     build:
@@ -305,6 +306,15 @@ services:
   # ==========================================
   # 5. DATA INFRASTRUCTURE
   # ==========================================
+  fuseki:
+    image: secoresearch/fuseki
+    ports:
+      - "3030:3030"
+    environment:
+      - ADMIN_PASSWORD=changeme
+    volumes:
+      - fuseki_data:/fuseki
+
   postgres:
     image: postgres:15
     environment:
@@ -364,3 +374,4 @@ volumes:
   restate_data:
   neo4j_data:
   weaviate_data:
+  fuseki_data:

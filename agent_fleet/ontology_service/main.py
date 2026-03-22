@@ -51,9 +51,13 @@ IOF_CONSTRUCT = rdflib.Namespace(
 )
 
 # ---------------------------------------------------------------------------
-# Global graph — populated on startup
+# Global graph and Hybrid Setup
 # ---------------------------------------------------------------------------
-_graph: rdflib.Graph | None = None
+import os
+import httpx
+
+_JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
+_LOCAL_GRAPH = None
 
 # SPARQL: find all named OWL classes defined in the IOF maintenance namespace
 # along with their labels and natural-language definitions.
@@ -75,60 +79,90 @@ ORDER BY ?label
 """
 
 
-def _load_graph() -> rdflib.Graph:
-    """Parse IOF MRO ontology files into an rdflib Graph.
+def _get_local_graph() -> rdflib.Graph:
+    """Lazy-load the local rdflib fallback only when needed."""
+    global _LOCAL_GRAPH
+    if _LOCAL_GRAPH is None:
+        print("Initializing local rdflib fallback graph...")
+        _LOCAL_GRAPH = rdflib.Graph()
+        service_dir = Path(__file__).parent
+        real_rdf = service_dir / "Maintenance.rdf"
+        ttl_path = service_dir / "iof_mro.ttl"
+        
+        if real_rdf.exists():
+            _LOCAL_GRAPH.parse(str(real_rdf), format="xml")
+        elif ttl_path.exists():
+            _LOCAL_GRAPH.parse(str(ttl_path), format="turtle")
+    return _LOCAL_GRAPH
 
-    Loads the real IOF Maintenance.rdf first, then falls back to the
-    dummy iof_mro.ttl if not present.
+
+async def execute_sparql(query: str) -> list[dict]:
     """
-    service_dir = Path(__file__).parent
-    g = rdflib.Graph()
+    Execute SPARQL query using the Hybrid Strategy:
+    1. Try Apache Jena Fuseki (Fast/Enterprise)
+    2. Fallback to local rdflib (Safe/Development)
+    """
+    # 🚀 PATH A: Apache Jena Fuseki via HTTP
+    if _JENA_ENDPOINT:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    _JENA_ENDPOINT,
+                    data={"query": query},
+                    headers={"Accept": "application/sparql-results+json"}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    bindings = data.get("results", {}).get("bindings", [])
+                    results = []
+                    for b in bindings:
+                        row_dict = {k: v["value"] for k, v in b.items()}
+                        results.append(row_dict)
+                    return results
+        except Exception as e:
+            print(f"Jena cluster unreachable or failed ({e}), triggering fallback...")
 
-    # Prefer the real IOF MRO (RDF/XML format)
-    real_rdf = service_dir / "Maintenance.rdf"
-    if real_rdf.exists():
-        g.parse(str(real_rdf), format="xml")
-        return g
-
-    # Fall back to dummy Turtle file
-    ttl_path = service_dir / "iof_mro.ttl"
-    if not ttl_path.exists():
-        raise FileNotFoundError(
-            f"No ontology file found in {service_dir}. "
-            "Expected Maintenance.rdf or iof_mro.ttl."
-        )
-    g.parse(str(ttl_path), format="turtle")
-    return g
+    # 🐢 PATH B: Local rdflib Fallback
+    try:
+        g = _get_local_graph()
+        rows = g.query(query)
+        results = []
+        for row in rows:
+            # Safely convert rdflib result row to dictionary of strings
+            row_dict = {str(k): str(v) for k, v in row.asdict().items()}
+            results.append(row_dict)
+        return results
+    except Exception as e:
+        print(f"Local rdflib fallback failed: {e}")
+        return []
 
 
-def _get_active_ontology_classes(g: rdflib.Graph) -> str:
+async def _get_active_ontology_classes() -> str:
     """Query the graph for maintenance-domain classes and format them as a
     newline-delimited string of ``URI — Label: Definition`` entries suitable
     for injection into the BAML prompt."""
-    rows = g.query(_SPARQL_MAINTENANCE_CLASSES)
+    rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES)
     lines: list[str] = []
     for row in rows:
-        uri = str(row.cls)
-        label = str(row.label)
-        definition = str(row.definition) if row.definition else "No definition available."
-        example = f" Examples: {row.example}" if row.example else ""
+        uri = row.get("cls")
+        label = row.get("label")
+        definition = row.get("definition") or "No definition available."
+        example_text = row.get("example")
+        example = f" Examples: {example_text}" if example_text else ""
         lines.append(f"{uri} — {label}: {definition}{example}")
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# FastAPI lifespan — load graph once on startup
+# FastAPI lifespan — verify connectivity on startup
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _graph
-    _graph = _load_graph()
-    triple_count = len(_graph)
-    classes = _get_active_ontology_classes(_graph)
+    classes = await _get_active_ontology_classes()
     class_count = len(classes.strip().splitlines()) if classes.strip() else 0
-    print(f"[ontology-service] Loaded {triple_count} triples, {class_count} maintenance classes")
+    backend = "Jena Fuseki" if _JENA_ENDPOINT else "Local rdflib"
+    print(f"[ontology-service] Loaded {class_count} maintenance classes (Backend: {backend})")
     yield
-    _graph = None
 
 
 app = FastAPI(
@@ -180,15 +214,12 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     3. Call BAML ``ClassifySustainmentIntent`` with the query + ontology context.
     4. Return the ``SemanticResolution`` response.
     """
-    if _graph is None:
-        raise HTTPException(status_code=503, detail="Ontology graph not loaded.")
-
     # Step 1-2: Extract and format ontology classes from the RDF graph
-    active_classes = _get_active_ontology_classes(_graph)
+    active_classes = await _get_active_ontology_classes()
     if not active_classes:
         raise HTTPException(
             status_code=500,
-            detail="No ontology classes found in the loaded graph.",
+            detail="No ontology classes found in the graph database.",
         )
 
     # Step 3: Call BAML function — LLM classifies intent against live ontology
@@ -258,17 +289,14 @@ async def classes() -> dict:
 
     Useful for discovery and for populating UI dropdowns or LLM context.
     """
-    if _graph is None:
-        raise HTTPException(status_code=503, detail="Ontology graph not loaded.")
-
-    rows = _graph.query(_SPARQL_MAINTENANCE_CLASSES)
+    rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES)
     results = []
     for row in rows:
         results.append({
-            "uri": str(row.cls),
-            "label": str(row.label),
-            "definition": str(row.definition) if row.definition else None,
-            "example": str(row.example) if row.example else None,
+            "uri": row.get("cls"),
+            "label": row.get("label"),
+            "definition": row.get("definition"),
+            "example": row.get("example"),
         })
     return {"classes": results, "count": len(results)}
 
@@ -281,8 +309,7 @@ async def health() -> dict:
     """Simple liveness probe."""
     return {
         "status": "ok",
-        "graph_loaded": _graph is not None,
-        "triple_count": len(_graph) if _graph else 0,
+        "backend": "Jena Fuseki" if _JENA_ENDPOINT else "Local rdflib",
     }
 
 
