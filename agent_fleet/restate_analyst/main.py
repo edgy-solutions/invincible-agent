@@ -312,11 +312,39 @@ async def process_message(ctx: ObjectContext, request: dict) -> dict:
     # 1. Initialize Bootstrap Context on the first turn
     if not chat_history and bootstrap_context:
         chat_history = f"SYSTEM: Use the following baseline data extracted from the Graph Database to help draft the initial process:\n{bootstrap_context}\n\n"
-    # 2. Fetch Live Ontologies (Must return a dict, NOT a tuple)
-    def fetch_catalogs():
+    # 2. Fetch Live Ontologies and Data Catalogs
+    async def fetch_catalogs():
+        import httpx
+        ontologies = "- (No live ontology data available)"
+        data_sources = "- (No live data sources available)"
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Engine O: Ontology Service
+            try:
+                _ONTOLOGY_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-service:8084")
+                resp = await client.get(f"{_ONTOLOGY_URL}/classes")
+                if resp.status_code == 200:
+                    classes = resp.json().get("classes", [])
+                    ont_lines = [f"- {c.get('uri')}  ({c.get('label')})" for c in classes]
+                    if ont_lines:
+                        ontologies = "\n".join(ont_lines)
+            except Exception:
+                pass # Fallback to default
+                
+            # Engine D: DataHub Wrapper
+            try:
+                _DATAHUB_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper:8085")
+                resp = await client.get(f"{_DATAHUB_URL}/tables")
+                if resp.status_code == 200:
+                    tables_str = resp.json().get("available_tables", "")
+                    if tables_str:
+                        data_sources = "\n".join([f"- dbt_model:{t.strip()}" for t in tables_str.split(",") if t.strip()])
+            except Exception:
+                pass # Fallback to default
+                
         return {
-            "ontologies": "- iof-mro:AuxiliaryFuelPump\n- iof-mro:ElectricalSystem", 
-            "data_sources": "- dbt_model:fct_pump_telemetry\n- dbt_model:dim_maintenance_logs"
+            "ontologies": ontologies, 
+            "data_sources": data_sources
         }
         
     catalog_data = await ctx.run("fetch_catalogs", fetch_catalogs)
