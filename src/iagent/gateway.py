@@ -901,8 +901,9 @@ async def compile_workflow(
     4. Return the CompileResponse with boot_log.
     """
     run_id = str(uuid.uuid4())
-    workflow_id = f"wf_{request.session_id}"
-    job_name = f"cortex_pipeline_{request.session_id}"
+    safe_session = request.session_id.replace("-", "_")
+    workflow_id = f"wf_{safe_session}"
+    job_name = f"cortex_pipeline_{safe_session}"
     bp = request.bpmn_payload
 
     # ── 1. Upsert into bpmn_catalog ──
