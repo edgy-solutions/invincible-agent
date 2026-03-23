@@ -267,6 +267,29 @@ pack build myregistry/presentation-agent --path ./agent_fleet/presentation_agent
 
 ---
 
+## Kubernetes Deployment (Helm)
+
+A comprehensive Helm chart is provided in `helm/invincible-agent` to deploy the entire stack, including all engines, frontend services, and infrastructure (Postgres, Restate, Neo4j, Weaviate, Fuseki).
+
+### Deploy via Helm
+
+```bash
+helm install iagent ./helm/invincible-agent
+```
+
+### Key Features
+
+- **External Config**: All infrastructure (DBs, Vector DBs, SPARQL endpoints) can be toggled via `enabled` flags or pointed to external instances via `externalX` values.
+- **Lifecycle Management**: Helm Hooks ensure initialization jobs (schema priming, Restate service registration) run only after the main services are ready.
+- **Connectivity**: Ingress resource provided for `cortex-ui` and `cortex-bff`.
+- **Storage**: Configurable storage classes and PVC sizes for all stateful components.
+
+### Configuration
+
+See `helm/invincible-agent/values.yaml` for a full list of overridable parameters.
+
+---
+
 ## Kubernetes Services
 
 | Service | Internal URL |

@@ -304,6 +304,14 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - **Markdown Rendering:** Replaced raw text dump with `react-markdown` for `KNOWLEDGE_DOCUMENT` archetype.
 - **Metrics Table Fix:** Updated `SupplyTable` to map BAML `UIEntity` fields (`name`, `type`, `description`) instead of nonexistent `value`/`metric` fields.
 
+### Phase 14 — Comprehensive Helm Charting (complete)
+- Expanded Helm chart in `helm/invincible-agent` to cover the full service stack.
+- Added `engineF`, `cortexUi`, and `cortexBff` definitions.
+- Integrated infrastructure templates for Neo4j, Weaviate, and Fuseki with optional `enabled` flags.
+- Implemented `post-install` and `post-upgrade` Helm hooks for `restate-init` and `db-init` jobs.
+- Added `InitContainers` to all jobs for robust dependency polling (waiting for agents and DBs to be healthy).
+- Unified fleet-wide service discovery via a central ConfigMap and helper templates.
+
 ## Persona Reference
 
 The system supports 5 domain-expert personas defined in `PersonaTarget` (BAML enum).
