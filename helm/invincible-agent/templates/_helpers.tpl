@@ -108,3 +108,58 @@ http://{{ .Release.Name }}-restate:{{ .Values.restate.adminPort }}
 {{ .Values.externalRestate.adminUrl }}
 {{- end -}}
 {{- end }}
+
+{{/*
+Neo4j URI
+*/}}
+{{- define "invincible-agent.neo4jUri" -}}
+{{- if .Values.neo4j.enabled -}}
+bolt://{{ .Release.Name }}-neo4j:7687
+{{- else -}}
+{{ .Values.externalNeo4j.uri }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Neo4j Username
+*/}}
+{{- define "invincible-agent.neo4jUsername" -}}
+{{- if .Values.neo4j.enabled -}}
+{{ .Values.neo4j.auth.username }}
+{{- else -}}
+{{ .Values.externalNeo4j.username }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Neo4j Password
+*/}}
+{{- define "invincible-agent.neo4jPassword" -}}
+{{- if .Values.neo4j.enabled -}}
+{{ .Values.neo4j.auth.password }}
+{{- else -}}
+{{ .Values.externalNeo4j.password }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Weaviate URL
+*/}}
+{{- define "invincible-agent.weaviateUrl" -}}
+{{- if .Values.weaviate.enabled -}}
+http://{{ .Release.Name }}-weaviate:8080
+{{- else -}}
+{{ .Values.externalWeaviate.url }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Fuseki URL
+*/}}
+{{- define "invincible-agent.fusekiUrl" -}}
+{{- if .Values.fuseki.enabled -}}
+http://{{ .Release.Name }}-fuseki:3030
+{{- else -}}
+{{ .Values.externalFuseki.url }}
+{{- end -}}
+{{- end }}

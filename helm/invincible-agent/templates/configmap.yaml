@@ -12,15 +12,29 @@ data:
   BPMN_POSTGRES_USER: {{ include "invincible-agent.pgUser" . | quote }}
 
   # Agent HTTP timeout
-  AGENT_HTTP_TIMEOUT: "120"
+  AGENT_HTTP_TIMEOUT: "300"
 
   # LangGraph checkpointer
   LANGGRAPH_POSTGRES_URI: {{ include "invincible-agent.pgUri" . | quote }}
 
-  # Restate ingress URL
+  # Infrastructure URLs
   RESTATE_INGRESS_URL: {{ include "invincible-agent.restateIngressUrl" . | quote }}
+  NEO4J_URI: {{ include "invincible-agent.neo4jUri" . | quote }}
+  NEO4J_USERNAME: {{ include "invincible-agent.neo4jUsername" . | quote }}
+  WEAVIATE_URL: {{ include "invincible-agent.weaviateUrl" . | quote }}
+  JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/query"
+  DATABASE_URL: {{ include "invincible-agent.pgUri" | replace "postgresql://" "postgresql+asyncpg://" | quote }}
 
-  # Engine service URLs (Kubernetes DNS)
+  # Engine service URLs (Internal K8s DNS)
+  ONTOLOGY_SERVICE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}"
+  RESTATE_ANALYST_URL: "http://{{ .Release.Name }}-engine-a:{{ .Values.engineA.port }}"
+  LANGGRAPH_SUPPORT_SVC_URL: "http://{{ .Release.Name }}-engine-b:{{ .Values.engineB.port }}"
+  SWARMS_SCRAPER_URL: "http://{{ .Release.Name }}-engine-c:{{ .Values.engineC.port }}"
+  DATAHUB_WRAPPER_URL: "http://{{ .Release.Name }}-engine-d:{{ .Values.engineD.port }}"
+  NEO4J_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-e:{{ .Values.engineE.port }}"
+  PRESENTATION_AGENT_SVC_URL: "http://{{ .Release.Name }}-engine-f:{{ .Values.engineF.port }}"
+  
+  # legacy/compat
   ONTOLOGY_RESOLVE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}/resolve"
   DATAHUB_GMS_URL: {{ .Values.engineD.env.DATAHUB_GMS_URL | quote }}
   SWARMS_MODEL: {{ .Values.engineC.env.SWARMS_MODEL | quote }}

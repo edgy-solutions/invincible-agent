@@ -1,0 +1,106 @@
+{{- if .Values.cortexUi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-cortex-ui
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-ui" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.cortexUi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-ui" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-ui" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: cortex-ui
+          image: {{ include "invincible-agent.image" (dict "name" .Values.cortexUi.image.name "tag" .Values.cortexUi.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.cortexUi.port }}
+          env:
+            - name: VITE_API_URL
+              value: {{ .Values.cortexUi.env.VITE_API_URL | default "http://localhost:8000" | quote }}
+          resources:
+            {{- toYaml .Values.cortexUi.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-cortex-ui
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-ui" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- end }}
+
+---
+{{- if .Values.cortexBff.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-cortex-bff
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.cortexBff.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: cortex-bff
+          image: {{ include "invincible-agent.image" (dict "name" .Values.cortexBff.image.name "tag" .Values.cortexBff.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.cortexBff.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          resources:
+            {{- toYaml .Values.cortexBff.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-cortex-bff
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "cortex-bff" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.cortexBff.port }}
+      targetPort: http
+{{- end }}

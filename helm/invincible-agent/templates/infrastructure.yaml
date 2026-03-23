@@ -1,0 +1,191 @@
+{{- if .Values.neo4j.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-neo4j
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "neo4j" "root" .) | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-neo4j
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "neo4j" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "neo4j" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: neo4j
+          image: "{{ .Values.neo4j.image.repository }}:{{ .Values.neo4j.image.tag }}"
+          ports:
+            - name: http
+              containerPort: 7474
+            - name: bolt
+              containerPort: 7687
+          env:
+            - name: NEO4J_AUTH
+              value: "{{ .Values.neo4j.auth.username }}/{{ .Values.neo4j.auth.password }}"
+            - name: NEO4J_PLUGINS
+              value: '["apoc", "n10s"]'
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.neo4j.persistence.storageClass }}
+        storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.neo4j.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-neo4j
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "neo4j" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 7474
+      targetPort: http
+    - name: bolt
+      port: 7687
+      targetPort: bolt
+{{- end }}
+
+---
+{{- if .Values.weaviate.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-weaviate
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "weaviate" "root" .) | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-weaviate
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "weaviate" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "weaviate" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: weaviate
+          image: "{{ .Values.weaviate.image.repository }}:{{ .Values.weaviate.image.tag }}"
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PERSISTENCE_DATA_PATH
+              value: /var/lib/weaviate
+            - name: QUERY_DEFAULTS_LIMIT
+              value: "25"
+            - name: AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED
+              value: "true"
+            - name: DEFAULT_VECTORIZER_MODULE
+              value: none
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/weaviate
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.weaviate.persistence.storageClass }}
+        storageClassName: {{ .Values.weaviate.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.weaviate.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-weaviate
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "weaviate" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}
+
+---
+{{- if .Values.fuseki.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-fuseki
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "fuseki" "root" .) | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-fuseki
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "fuseki" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "fuseki" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: fuseki
+          image: "{{ .Values.fuseki.image.repository }}:{{ .Values.fuseki.image.tag }}"
+          ports:
+            - name: http
+              containerPort: 3030
+          env:
+            - name: ADMIN_PASSWORD
+              value: "{{ .Values.fuseki.auth.adminPassword }}"
+          volumeMounts:
+            - name: data
+              mountPath: /fuseki
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.fuseki.persistence.storageClass }}
+        storageClassName: {{ .Values.fuseki.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.fuseki.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-fuseki
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "fuseki" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 3030
+      targetPort: http
+{{- end }}

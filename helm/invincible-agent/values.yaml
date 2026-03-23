@@ -21,8 +21,9 @@ postgresql:
     username: "iagent"
     password: "changeme-iagent"
     database: "iagent"
-  primary:
     persistence:
+      enabled: true
+      storageClass: ""
       size: 10Gi
     initdb:
       scriptsConfigMap: "{{ .Release.Name }}-initdb"
@@ -54,6 +55,8 @@ restate:
       cpu: "1"
       memory: 512Mi
   storage:
+    enabled: true
+    storageClass: ""
     size: 5Gi
   ingressPort: 8080
   adminPort: 9070
@@ -216,6 +219,126 @@ engineE:
   env:
     NEO4J_URI: "bolt://neo4j-service:7687"
     NEO4J_USERNAME: "neo4j"
+
+engineF:
+  enabled: true
+  replicas: 1
+  image:
+    name: presentation-agent
+    tag: ""
+  port: 8087
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env: {}
+
+# ==========================================================================
+# Frontend Services
+# ==========================================================================
+
+cortexUi:
+  enabled: true
+  replicas: 1
+  image:
+    name: cortex-ui
+    tag: ""
+  port: 5173
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: iagent.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    tls: []
+
+cortexBff:
+  enabled: true
+  replicas: 1
+  image:
+    name: cortex-bff
+    tag: ""
+  port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: api.iagent.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    tls: []
+
+# ==========================================================================
+# Additional Infrastructure
+# ==========================================================================
+
+neo4j:
+  enabled: true
+  image:
+    repository: neo4j
+    tag: "5.26.0"
+  auth:
+    username: "neo4j"
+    password: "changeme"
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+
+externalNeo4j:
+  uri: ""     # e.g. "bolt://my-neo4j.infra.svc:7687"
+  username: "neo4j"
+  password: "changeme"
+
+weaviate:
+  enabled: true
+  image:
+    repository: semitechnologies/weaviate
+    tag: "1.27.0"
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 5Gi
+
+externalWeaviate:
+  url: ""     # e.g. "http://my-weaviate.infra.svc:8080"
+
+fuseki:
+  enabled: true
+  image:
+    repository: secoresearch/fuseki
+    tag: "latest"
+  auth:
+    adminPassword: "changeme-fuseki"
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 5Gi
+
+externalFuseki:
+  url: ""     # e.g. "http://my-fuseki.infra.svc:3030"
 
 # ==========================================================================
 # Secrets — override these in your values-production.yaml

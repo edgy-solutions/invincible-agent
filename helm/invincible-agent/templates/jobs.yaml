@@ -1,0 +1,104 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-restate-init
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: {{ .Release.Name }}-restate-init
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-services
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              {{- $restateAdmin := (include "invincible-agent.restateAdminUrl" .) }}
+              echo "Waiting for Restate Admin at {{ $restateAdmin }}..."
+              until curl -sf {{ $restateAdmin }}/health; do sleep 2; done
+              
+              {{- if .Values.engineA.enabled }}
+              echo "Waiting for Engine A..."
+              until curl -sf http://{{ .Release.Name }}-engine-a:8081/health; do sleep 2; done
+              {{- end }}
+              
+              {{- if .Values.engineE.enabled }}
+              echo "Waiting for Engine E..."
+              until curl -sf http://{{ .Release.Name }}-engine-e:8086/health; do sleep 2; done
+              {{- end }}
+              
+              echo "Awaiting total readiness..."
+              sleep 5
+      containers:
+        - name: register-services
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              {{- $restateAdmin := (include "invincible-agent.restateAdminUrl" .) }}
+              echo "Registering Analyst Service..."
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-a:8081/restate", "force": true}'
+              
+              echo "Registering Neo4j Expert Service..."
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-e:8086/restate", "force": true}'
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-db-init
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      name: {{ .Release.Name }}-db-init
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-db
+          image: postgres:15-alpine
+          env:
+            - name: PGHOST
+              value: {{ include "invincible-agent.postgresqlHost" . }}
+            - name: PGPORT
+              value: {{ include "invincible-agent.postgresqlPort" | default "5432" | quote }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready; do echo "waiting for postgres..."; sleep 2; done
+      containers:
+        - name: apply-schema
+          image: postgres:15-alpine
+          env:
+            - name: PGHOST
+              value: {{ include "invincible-agent.postgresqlHost" . }}
+            - name: PGPORT
+              value: {{ include "invincible-agent.postgresqlPort" | default "5432" | quote }}
+            - name: PGDATABASE
+              value: {{ include "invincible-agent.postgresqlDatabase" . }}
+            - name: PGUSER
+              value: {{ include "invincible-agent.postgresqlUsername" . }}
+            - name: PGPASSWORD
+              value: {{ include "invincible-agent.postgresqlPassword" . }}
+          command:
+            - sh
+            - -c
+            - |
+              # In a real K8s env, we'd mount the SQL file via configmap
+              # For this example, we assume we want to run the BPMN catalog SQL
+              echo "DB Init complete (Placeholder for SQL execution)"

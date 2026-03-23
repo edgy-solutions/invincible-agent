@@ -1,0 +1,84 @@
+{{- if .Values.cortexUi.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-cortex-ui
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  {{- with .Values.cortexUi.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.cortexUi.ingress.className }}
+  ingressClassName: {{ .Values.cortexUi.ingress.className }}
+  {{- end }}
+  {{- if .Values.cortexUi.ingress.tls }}
+  tls:
+    {{- range .Values.cortexUi.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.cortexUi.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $.Release.Name }}-cortex-ui
+                port:
+                  number: 80
+          {{- end }}
+    {{- end }}
+{{- end }}
+
+---
+{{- if .Values.cortexBff.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-cortex-bff
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  {{- with .Values.cortexBff.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.cortexBff.ingress.className }}
+  ingressClassName: {{ .Values.cortexBff.ingress.className }}
+  {{- end }}
+  {{- if .Values.cortexBff.ingress.tls }}
+  tls:
+    {{- range .Values.cortexBff.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.cortexBff.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $.Release.Name }}-cortex-bff
+                port:
+                  number: {{ $.Values.cortexBff.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
