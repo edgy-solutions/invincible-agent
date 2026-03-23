@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (7)
+# Generated enums (8)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -53,7 +53,13 @@ class BPMNNodeType(str, Enum):
     ExclusiveGateway = "ExclusiveGateway"
     TimerEvent = "TimerEvent"
 
-class ExecutionIntent(str, Enum):
+class Domain(str, Enum):
+    MAINTENANCE = "MAINTENANCE"
+    SUSTAINMENT = "SUSTAINMENT"
+    DATA_ENGINEERING = "DATA_ENGINEERING"
+    UNKNOWN = "UNKNOWN"
+
+class Intent(str, Enum):
     ONE_SHOT_QUERY = "ONE_SHOT_QUERY"
     PROCESS_CREATION = "PROCESS_CREATION"
 
@@ -172,7 +178,9 @@ class MechanicResponse(BaseModel):
     short_answer: str
 
 class MeshRoutingDecision(BaseModel):
-    intent: ExecutionIntent
+    intent: Intent
+    domain: Domain
+    confidence: float = Field(description='Confidence in both intent and domain classification.')
     reasoning: str = Field(description='Why you routed it this way.')
     task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.')
 

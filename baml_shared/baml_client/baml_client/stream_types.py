@@ -108,7 +108,9 @@ class MechanicResponse(BaseModel):
     short_answer: typing.Optional[str] = None
 
 class MeshRoutingDecision(BaseModel):
-    intent: typing.Optional[types.ExecutionIntent] = None
+    intent: typing.Optional[types.Intent] = None
+    domain: typing.Optional[types.Domain] = None
+    confidence: typing.Optional[float] = Field(default=None, description='Confidence in both intent and domain classification.')
     reasoning: typing.Optional[str] = Field(default=None, description='Why you routed it this way.')
     task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.')
 

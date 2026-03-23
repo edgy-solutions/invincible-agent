@@ -18,6 +18,7 @@ from typing import List, Dict, Any
 # ---------------------------------------------------------------------------
 ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-svc.default.svc.cluster.local:8084")
 NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
+DATAHUB_WRAPPER_SVC_URL = os.getenv("DATAHUB_WRAPPER_SVC_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
 LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
 PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
 
@@ -50,6 +51,7 @@ class SupervisorQueryConfig(Config):
     user_query: str
     thread_id: str
     persona: str
+    domain: str = "MAINTENANCE"
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -59,10 +61,13 @@ def create_task_plan(config: SupervisorQueryConfig):
     SupervisorTaskPlan containing persona-specific sub-tasks.
     Yields each sub-task as a DynamicOutput for downstream fan-out.
     """
-    # 1. Ask Engine O for the plan
+    # 1. Ask Engine O for the plan, passing the domain context
     response = requests.post(
         f"{ONTOLOGY_SVC_URL}/plan",
-        json={"query": config.user_query},
+        json={
+            "query": config.user_query,
+            "domain": config.domain
+        },
         timeout=300,
     )
     response.raise_for_status()
@@ -98,21 +103,38 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
     persona = task_def.get("target_persona", "MECHANIC")
     sub_query = task_def.get("sub_query", "")
+    domain = task_def.get("domain", "MAINTENANCE") # Expected to be passed from create_task_plan if plan is domain-aware
 
-    # Call Engine E (durable execution via Restate + smolagents)
+    # 🔗 ROUTING LOGIC: Fan-out to the correct domain-specific engine
+    if domain == "DATA_ENGINEERING":
+        # Call Engine D (DataHub Metadata Wrapper)
+        # Note: Engine D currently has a GET /tables endpoint. 
+        # For a specialized "Data Steward" persona, we might need a POST /query_metadata.
+        # Here we follow the requested pattern.
+        # engine_url = f"{DATAHUB_WRAPPER_SVC_URL}/query_metadata" 
+        engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph" # Fallback to graph if Engine D is just a wrapper
+        
+        # If the persona is explicitly DATAHUB related, we use Engine D
+        if "DATAHUB" in persona or "DATA_STEWARD" in persona:
+             engine_url = f"{DATAHUB_WRAPPER_SVC_URL}/query_metadata"
+    else:
+        # Default to Engine E (Neo4j Graph Expert) for MAINTENANCE and SUSTAINMENT
+        engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph"
+
     response = requests.post(
-        f"{NEO4J_EXPERT_SVC_URL}/query_graph",
+        engine_url,
         json={
             "user_query": sub_query,
             "persona": persona,
+            "domain": domain, # Pass domain for strict node labeling in Cypher
         },
-        timeout=300, # 5 minutes to allow complex agent reasoning/looping
+        timeout=300,
     )
     response.raise_for_status()
     
-    # Return the BAML-formatted GraphExpertResponse JSON
     return {
         "persona": persona,
+        "domain": domain,
         "sub_query": sub_query,
         "expert_response": response.json(),
     }

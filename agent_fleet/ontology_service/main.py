@@ -96,19 +96,42 @@ def _get_local_graph() -> rdflib.Graph:
     return _LOCAL_GRAPH
 
 
-async def execute_sparql(query: str) -> list[dict]:
+async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     """
     Execute SPARQL query using the Hybrid Strategy:
     1. Try Apache Jena Fuseki (Fast/Enterprise)
     2. Fallback to local rdflib (Safe/Development)
     """
+    # Determine the correct Named Graph based on the routed domain
+    named_graph = "<http://internal/mro>"
+    if domain == "SUSTAINMENT":
+        named_graph = "<http://internal/sustainment>"
+    elif domain == "DATA_ENGINEERING":
+        named_graph = "<http://internal/idp>"
+
+    # 🛑 Strictly enforce data segregation by wrapping the query in the graph context.
+    # This assumes the input query uses standard triple patterns that we want to scope.
+    # For complex queries, we might need a more robust parser, but for our Agentic Mesh
+    # standard patterns, this wrapping is effective.
+    scoped_query = query
+    if "GRAPH" not in query.upper() and "SELECT" in query.upper():
+        # Simple injection: replace WHERE { with WHERE { GRAPH <named_graph> {
+        if "WHERE {" in query:
+            scoped_query = query.replace("WHERE {", f"WHERE {{ GRAPH {named_graph} {{", 1)
+            scoped_query += " } }"
+        elif "WHERE {" in query.upper():
+            # Handle case-insensitive WHERE
+            import re
+            scoped_query = re.sub(r"WHERE\s*\{", f"WHERE {{ GRAPH {named_graph} {{", query, flags=re.IGNORECASE, count=1)
+            scoped_query += " } }"
+
     # 🚀 PATH A: Apache Jena Fuseki via HTTP
     if _JENA_ENDPOINT:
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
                     _JENA_ENDPOINT,
-                    data={"query": query},
+                    data={"query": scoped_query},
                     headers={"Accept": "application/sparql-results+json"}
                 )
                 if resp.status_code == 200:
@@ -125,7 +148,7 @@ async def execute_sparql(query: str) -> list[dict]:
     # 🐢 PATH B: Local rdflib Fallback
     try:
         g = _get_local_graph()
-        rows = g.query(query)
+        rows = g.query(scoped_query)
         results = []
         for row in rows:
             # Safely convert rdflib result row to dictionary of strings
@@ -137,11 +160,11 @@ async def execute_sparql(query: str) -> list[dict]:
         return []
 
 
-async def _get_active_ontology_classes() -> str:
-    """Query the graph for maintenance-domain classes and format them as a
+async def _get_active_ontology_classes(domain: str = "MAINTENANCE") -> str:
+    """Query the graph for domain-specific classes and format them as a
     newline-delimited string of ``URI — Label: Definition`` entries suitable
     for injection into the BAML prompt."""
-    rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES)
+    rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=domain)
     lines: list[str] = []
     for row in rows:
         uri = row.get("cls")
@@ -223,19 +246,22 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
-class ResolveRequest(BaseModel):
-    """Incoming request to the /resolve endpoint."""
+class RouteAndPlanRequest(BaseModel):
+    """Incoming request to the /route_and_plan endpoint."""
     query: str
+    domain: str | None = None
 
 
 class PlanRequest(BaseModel):
     """Incoming request to the /plan endpoint."""
     query: str
+    domain: str = "MAINTENANCE"
 
 
-class RouteAndPlanRequest(BaseModel):
-    """Incoming request to the /route_and_plan endpoint."""
+class ResolveRequest(BaseModel):
+    """Incoming request to the /resolve endpoint."""
     query: str
+    domain: str = "MAINTENANCE"
 
 
 class SemanticResolutionResponse(BaseModel):
@@ -253,17 +279,17 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     """Resolve a natural-language query to a canonical ontology URI.
 
     Steps:
-    1. Query the loaded RDF graph for all active sustainment-domain classes.
+    1. Query the loaded RDF graph for all active domain classes.
     2. Format the results into a string for the LLM prompt.
     3. Call BAML ``ClassifySustainmentIntent`` with the query + ontology context.
     4. Return the ``SemanticResolution`` response.
     """
     # Step 1-2: Extract and format ontology classes from the RDF graph
-    active_classes = await _get_active_ontology_classes()
+    active_classes = await _get_active_ontology_classes(domain=request.domain)
     if not active_classes:
         raise HTTPException(
-            status_code=500,
-            detail="No ontology classes found in the graph database.",
+            status_code=404,  # Changed from 500 to 404 for missing domain data
+            detail=f"No ontology classes found for domain {request.domain} in the graph database.",
         )
 
     # Step 3: Call BAML function — LLM classifies intent against live ontology
@@ -296,6 +322,8 @@ async def plan_query(request: PlanRequest) -> dict:
     assigned to different personas using the LLM.
     """
     try:
+        # We pass the domain to the decomposition logic if needed, 
+        # but BAML DecomposeQuery is currently domain-agnostic in its persona assignment.
         plan = await b.DecomposeQuery(raw_query=request.query)
         return plan.model_dump()
     except Exception as exc:
@@ -312,9 +340,12 @@ async def plan_query(request: PlanRequest) -> dict:
 async def route_and_plan(request: RouteAndPlanRequest) -> dict:
     """
     Act as the Kernel Scheduler. Decide whether the query is a ONE_SHOT_QUERY
-    (requiring Graph DB) or a PROCESS_CREATION (requiring the Restate Interviewer).
+    (requiring Graph DB) or a PROCESS_CREATION (requiring the Restate Interviewer),
+    and determine the target domain.
     """
     try:
+        # If domain is provided in the request, we can use it to ground the LLM's classification
+        # but for now, we let the LLM decide the domain from the query.
         decision = await b.RouteAndPlan(user_query=request.query)
         return decision.model_dump()
     except Exception as exc:
@@ -325,15 +356,15 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# GET /classes — list active ontology classes
+# POST /classes — list active ontology classes for a domain
 # ---------------------------------------------------------------------------
-@app.get("/classes")
-async def classes() -> dict:
-    """Return all active sustainment-domain ontology classes.
+@app.post("/classes")
+async def classes(request: ResolveRequest) -> dict:
+    """Return all active ontology classes for the requested domain.
 
     Useful for discovery and for populating UI dropdowns or LLM context.
     """
-    rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES)
+    rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
     results = []
     for row in rows:
         results.append({
@@ -342,7 +373,7 @@ async def classes() -> dict:
             "definition": row.get("definition"),
             "example": row.get("example"),
         })
-    return {"classes": results, "count": len(results)}
+    return {"classes": results, "count": len(results), "domain": request.domain}
 
 
 # ---------------------------------------------------------------------------

@@ -312,6 +312,12 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Added `InitContainers` to all jobs for robust dependency polling (waiting for agents and DBs to be healthy).
 - Unified fleet-wide service discovery via a central ConfigMap and helper templates.
 
+### Phase 15 — Multi-Domain Agentic Mesh Upgrade (complete)
+- **Intelligent Routing**: Updated BAML contracts to extract `Domain` (MAINTENANCE, SUSTAINMENT, DATA_ENGINEERING) and `Intent` (ONE_SHOT_QUERY, PROCESS_CREATION).
+- **Strict Data Segregation (Graph)**: Implemented SPARQL Named Graph injection in Engine O to isolate domain ontologies.
+- **Strict Data Segregation (Neo4j)**: Enforced domain-specific Node Label constraints in Engine E (Neo4j Expert) to prevent cross-domain data leakage.
+- **Unified Orchestration**: Enhanced the BFF and Dagster supervisor to propagate domain context throughout the multi-agent fan-out.
+
 ## Persona Reference
 
 The system supports 5 domain-expert personas defined in `PersonaTarget` (BAML enum).

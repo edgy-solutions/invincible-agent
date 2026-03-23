@@ -205,16 +205,25 @@ function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
 }
 
 // =============================================================================
-// Phase 3: Mesh Intent Routing
+// Phase 3: Mesh Intent Routing (Multi-Domain)
 // =============================================================================
 
-enum ExecutionIntent {
+enum Intent {
   ONE_SHOT_QUERY @description("User is asking for existing data, hazards, or procedures. Requires querying the Graph.")
   PROCESS_CREATION @description("User wants to build, design, write, or publish a NEW workflow, process, or data product.")
 }
 
+enum Domain {
+  MAINTENANCE      @description("Wrench-turning, physical repairs, safety hazards, component failures.")
+  SUSTAINMENT      @description("Supply chain, logistics, procurement, lifecycle management, inventory.")
+  DATA_ENGINEERING @description("dbt models, Postgres, React, Kafka, data pipelines, software architecture.")
+  UNKNOWN          @description("If it doesn't fit the above.")
+}
+
 class MeshRoutingDecision {
-  intent ExecutionIntent
+  intent Intent
+  domain Domain
+  confidence float @description("Confidence in both intent and domain classification.")
   reasoning string @description("Why you routed it this way.")
   task_plan SupervisorTaskPlan? @description("Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.")
 }
@@ -222,11 +231,21 @@ class MeshRoutingDecision {
 function RouteAndPlan(user_query: string) -> MeshRoutingDecision {
   client MainAgent
   prompt #"
-    Act as the Kernel Scheduler for an Agentic Mesh.
-    Analyze the user's query and determine the execution intent.
+    Act as the Kernel Scheduler for a Multi-Domain Agentic Mesh.
+    Analyze the user's query and determine the execution intent and domain.
     
-    1. If they are asking for existing knowledge (e.g., "What are the hazards of..."), set intent to ONE_SHOT_QUERY and populate the `task_plan` with the required expert personas.
-    2. If they are asking to build, create, or publish a NEW process (e.g., "Help me design a new pump removal process"), set intent to PROCESS_CREATION. STILL populate the `task_plan` with the required expert personas (e.g., MECHANIC for physical steps/hazards, PROCESS_ENGINEER for flow) to build an initial draft.
+    1. Determine the INTENT:
+       - ONE_SHOT_QUERY: Asking for existing knowledge (e.g., "What are the hazards of...").
+       - PROCESS_CREATION: Asking to build, create, or publish a NEW process (e.g., "Help me design a new pump removal process").
+    
+    2. Determine the DOMAIN:
+       - MAINTENANCE: Wrench-turning, physical repairs, safety hazards, component failures.
+       - SUSTAINMENT: Supply chain, logistics, procurement, lifecycle management, inventory.
+       - DATA_ENGINEERING: dbt models, Postgres, React, Kafka, data pipelines, software architecture.
+       - UNKNOWN: Use if the query is unrelated to the above domains.
+
+    3. Population of Task Plan:
+       - Populate `task_plan` with expert personas (e.g., MECHANIC for physical, LOGISTICS for supply, PROCESS_ENGINEER for workflows).
     
     User Query:
     {{ user_query }}

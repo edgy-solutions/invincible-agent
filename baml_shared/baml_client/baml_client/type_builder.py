@@ -22,11 +22,11 @@ class TypeBuilder(type_builder.TypeBuilder):
         super().__init__(classes=set(
           ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","BPMNNodeType","ExecutionIntent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 7
+    # Generated enums 8
     # #########################################################################
 
     @property
@@ -38,8 +38,12 @@ class TypeBuilder(type_builder.TypeBuilder):
         return BPMNNodeTypeViewer(self)
 
     @property
-    def ExecutionIntent(self) -> "ExecutionIntentViewer":
-        return ExecutionIntentViewer(self)
+    def Domain(self) -> "DomainViewer":
+        return DomainViewer(self)
+
+    @property
+    def Intent(self) -> "IntentViewer":
+        return IntentViewer(self)
 
     @property
     def MoodType(self) -> "MoodTypeViewer":
@@ -153,7 +157,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 7
+# Generated enums 8
 # #########################################################################
 
 class AgentStatusAst:
@@ -252,22 +256,22 @@ class BPMNNodeTypeValues:
     
 
 
-class ExecutionIntentAst:
+class DomainAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.enum("ExecutionIntent")
-        self._values: typing.Set[str] = set([  "ONE_SHOT_QUERY",  "PROCESS_CREATION",  ])
-        self._vals = ExecutionIntentValues(self._bldr, self._values)
+        self._bldr = _tb.enum("Domain")
+        self._values: typing.Set[str] = set([  "MAINTENANCE",  "SUSTAINMENT",  "DATA_ENGINEERING",  "UNKNOWN",  ])
+        self._vals = DomainValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
         return self._bldr.field()
 
     @property
-    def values(self) -> "ExecutionIntentValues":
+    def values(self) -> "DomainValues":
         return self._vals
 
 
-class ExecutionIntentViewer(ExecutionIntentAst):
+class DomainViewer(DomainAst):
     def __init__(self, tb: type_builder.TypeBuilder):
         super().__init__(tb)
 
@@ -276,7 +280,57 @@ class ExecutionIntentViewer(ExecutionIntentAst):
         return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
     
 
-class ExecutionIntentValues:
+class DomainValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def MAINTENANCE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("MAINTENANCE"))
+    
+    @property
+    def SUSTAINMENT(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("SUSTAINMENT"))
+    
+    @property
+    def DATA_ENGINEERING(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("DATA_ENGINEERING"))
+    
+    @property
+    def UNKNOWN(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("UNKNOWN"))
+    
+    
+
+
+class IntentAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("Intent")
+        self._values: typing.Set[str] = set([  "ONE_SHOT_QUERY",  "PROCESS_CREATION",  ])
+        self._vals = IntentValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "IntentValues":
+        return self._vals
+
+
+class IntentViewer(IntentAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class IntentValues:
     def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
         self.__bldr = enum_bldr
         self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
@@ -1216,7 +1270,7 @@ class MeshRoutingDecisionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("MeshRoutingDecision")
-        self._properties: typing.Set[str] = set([  "intent",  "reasoning",  "task_plan",  ])
+        self._properties: typing.Set[str] = set([  "intent",  "domain",  "confidence",  "reasoning",  "task_plan",  ])
         self._props = MeshRoutingDecisionProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1247,6 +1301,14 @@ class MeshRoutingDecisionProperties:
     @property
     def intent(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("intent"))
+    
+    @property
+    def domain(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("domain"))
+    
+    @property
+    def confidence(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("confidence"))
     
     @property
     def reasoning(self) -> type_builder.ClassPropertyViewer:
@@ -1560,4 +1622,3 @@ class UIRelationProperties:
     
     
 
-

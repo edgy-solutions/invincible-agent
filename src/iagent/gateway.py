@@ -138,7 +138,7 @@ def _sse(event: str, data: str) -> str:
 # Dagster GraphQL Orchestration
 # ══════════════════════════════════════════════════════════
 
-async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PROCESS_ENGINEER") -> str | None:
+async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PROCESS_ENGINEER", domain: str = "MAINTENANCE") -> str | None:
     """Launch the supervisor_query_job on Dagster."""
     mutation = """
     mutation LaunchSupervisor($repo: String!, $loc: String!, $runConfig: RunConfigData!) {
@@ -177,21 +177,24 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
                 "config": {
                     "user_query": query,
                     "thread_id": thread_id,
-                    "persona": persona
+                    "persona": persona,
+                    "domain": domain
                 }
             },
             "synthesize_stateful": {
                 "config": {
                     "user_query": query,
                     "thread_id": thread_id,
-                    "persona": persona
+                    "persona": persona,
+                    "domain": domain
                 }
             },
             "generate_ui_payload": {
                 "config": {
                     "user_query": query,
                     "thread_id": thread_id,
-                    "persona": persona
+                    "persona": persona,
+                    "domain": domain
                 }
             }
         }
@@ -536,6 +539,7 @@ async def generate_dagster_stream(
             return
 
         intent = decision.get("intent")
+        domain = decision.get("domain", "MAINTENANCE")
     
     if intent == "PROCESS_CREATION":
         # 🔵 THE INTERVIEW PATH (RESTATE)
@@ -619,7 +623,7 @@ async def generate_dagster_stream(
         "category": "Concept", 
         "label": f"Triggering Supervisor Job for thread {session_id[:8]}..."
     }))
-    run_id = await _launch_supervisor_job(request.message, session_id)
+    run_id = await _launch_supervisor_job(user_query, session_id, domain=domain)
     if not run_id:
         yield _sse("status", json.dumps({"action": "error", "label": "Failed to trigger Dagster job."}))
         yield _sse("stream_end", "{}")

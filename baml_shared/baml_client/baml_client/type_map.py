@@ -87,7 +87,9 @@ type_map = {
 
     "types.BPMNNodeType": types.BPMNNodeType,
 
-    "types.ExecutionIntent": types.ExecutionIntent,
+    "types.Domain": types.Domain,
+
+    "types.Intent": types.Intent,
 
     "types.MoodType": types.MoodType,
 

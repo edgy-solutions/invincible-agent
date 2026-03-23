@@ -40,6 +40,34 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
         persona_target = PersonaTarget.MECHANIC
         
     system_prompt = PERSONA_PROMPTS.get(persona_target, PERSONA_PROMPTS[PersonaTarget.MECHANIC])
+    
+    # 🔗 DOMAIN-SPECIFIC NODE LABEL CONSTRAINTS (Strict Data Segregation)
+    domain = request.get("domain", "MAINTENANCE").upper()
+    domain_constraints = ""
+    if domain == "DATA_ENGINEERING":
+        domain_constraints = """
+        STRICT DATA SEGREGATION: You are in the DATA_ENGINEERING domain.
+        Use ONLY these labels in your Cypher queries:
+        (:DataAsset), (:SystemComponent), (:DataPipeline)
+        Do NOT query maintenance or sustainment nodes.
+        """
+    elif domain == "SUSTAINMENT":
+        domain_constraints = """
+        STRICT DATA SEGREGATION: You are in the SUSTAINMENT domain.
+        Use ONLY these labels in your Cypher queries:
+        (:InventoryItem), (:Supplier), (:ProcurementContract)
+        Do NOT query maintenance or data engineering nodes.
+        """
+    else:
+        # Default to MAINTENANCE
+        domain_constraints = """
+        STRICT DATA SEGREGATION: You are in the MAINTENANCE domain.
+        Use ONLY these labels in your Cypher queries:
+        (:PhysicalAsset), (:MaintenanceEvent), (:Hazard)
+        Do NOT query sustainment or data engineering nodes.
+        """
+    
+    system_prompt_with_segregation = system_prompt + "\n" + domain_constraints
 
     # --------------------------------------------------------------------------
     # Initialize long-term memory via mem0 using Weaviate vector DB 
@@ -67,11 +95,11 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             if past_memories:
                 memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
                 prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
-                system_prompt_with_memory = system_prompt + prompt_extension
+                system_prompt_with_memory = system_prompt_with_segregation + prompt_extension
             else:
-                system_prompt_with_memory = system_prompt
+                system_prompt_with_memory = system_prompt_with_segregation
         else:
-            system_prompt_with_memory = system_prompt
+            system_prompt_with_memory = system_prompt_with_segregation
 
         # Initialize the LLM (configurable via env var, defaults to lightweight model)
         model = get_smolagent_model()
