@@ -2,7 +2,7 @@ services:
   # ==========================================
   # 1. THE FRONTEND (React UI)
   # ==========================================
-  process-spawner-ui:
+  cortex-ui:
     image: node:20-alpine
     working_dir: /app
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
@@ -10,7 +10,7 @@ services:
       - "5173:5173"
     volumes:
       # Mount the sibling UI repo (two levels up from examples/)
-      - ../../process-spawner:/app
+      - ../../cortex-ui:/app
       - /app/node_modules
     environment:
       - VITE_API_URL=http://localhost:8000
@@ -311,7 +311,7 @@ services:
     ports:
       - "3030:3030"
     environment:
-      - ADMIN_PASSWORD=changeme
+      - ADMIN_PASSWORD=${FUSEKI_ADMIN_PASSWORD:-Admin123!}
     volumes:
       - fuseki_data:/fuseki
 
