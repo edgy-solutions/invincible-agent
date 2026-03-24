@@ -43,6 +43,9 @@ type_map = {
     "types.DashboardUI": types.DashboardUI,
     "stream_types.DashboardUI": stream_types.DashboardUI,
 
+    "types.DataStewardResponse": types.DataStewardResponse,
+    "stream_types.DataStewardResponse": stream_types.DataStewardResponse,
+
     "types.DocumentUI": types.DocumentUI,
     "stream_types.DocumentUI": stream_types.DocumentUI,
 

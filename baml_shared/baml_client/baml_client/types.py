@@ -80,6 +80,7 @@ class PersonaTarget(str, Enum):
     LOGISTICS = "LOGISTICS"
     AUDITOR = "AUDITOR"
     PROCESS_ENGINEER = "PROCESS_ENGINEER"
+    DATA_STEWARD = "DATA_STEWARD"
 
 class SemanticArchetype(str, Enum):
     PROCESS_TOPOLOGY = "PROCESS_TOPOLOGY"
@@ -93,7 +94,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (22)
+# Generated classes (23)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -146,6 +147,11 @@ class BPMNNode(BaseModel):
 class DashboardUI(BaseModel):
     components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI"]]
 
+class DataStewardResponse(BaseModel):
+    tool_list: typing.List[str]
+    safety_warnings: typing.List[str]
+    short_answer: str
+
 class DocumentUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be KNOWLEDGE_DOCUMENT')
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
@@ -158,7 +164,7 @@ class FinalSynthesis(BaseModel):
 class GraphExpertResponse(BaseModel):
     confidence_score: float
     referenced_uris: typing.List[str]
-    data: typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse"]
+    data: typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse", "DataStewardResponse"]
 
 class HazardUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be HAZARD_DECLARATION')

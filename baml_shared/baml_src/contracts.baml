@@ -114,6 +114,7 @@ enum PersonaTarget {
   LOGISTICS
   AUDITOR
   PROCESS_ENGINEER
+  DATA_STEWARD
 }
 
 class MechanicResponse {
@@ -139,10 +140,16 @@ class AuditResponse {
   recommended_fix string
 }
 
+class DataStewardResponse {
+  tool_list string[]
+  safety_warnings string[]
+  short_answer string
+}
+
 class GraphExpertResponse {
   confidence_score float
   referenced_uris string[]
-  data MechanicResponse | AuthoringResponse | LogisticsResponse | AuditResponse
+  data MechanicResponse | AuthoringResponse | LogisticsResponse | AuditResponse | DataStewardResponse
 }
 
 function FormatGraphResponse(raw_text: string, persona: PersonaTarget) -> GraphExpertResponse {

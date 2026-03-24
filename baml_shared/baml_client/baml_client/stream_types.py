@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (22)
+# Generated classes (23)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -76,6 +76,11 @@ class BPMNNode(BaseModel):
 class DashboardUI(BaseModel):
     components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI"]]
 
+class DataStewardResponse(BaseModel):
+    tool_list: typing.List[str]
+    safety_warnings: typing.List[str]
+    short_answer: typing.Optional[str] = None
+
 class DocumentUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be KNOWLEDGE_DOCUMENT')
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
@@ -88,7 +93,7 @@ class FinalSynthesis(BaseModel):
 class GraphExpertResponse(BaseModel):
     confidence_score: typing.Optional[float] = None
     referenced_uris: typing.List[str]
-    data: typing.Optional[typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse"]] = None
+    data: typing.Optional[typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse", "DataStewardResponse"]] = None
 
 class HazardUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be HAZARD_DECLARATION')

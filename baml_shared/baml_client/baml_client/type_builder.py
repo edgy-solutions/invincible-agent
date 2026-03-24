@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -63,7 +63,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 22
+    # Generated classes 23
     # #########################################################################
 
     @property
@@ -101,6 +101,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def DashboardUI(self) -> "DashboardUIViewer":
         return DashboardUIViewer(self)
+
+    @property
+    def DataStewardResponse(self) -> "DataStewardResponseViewer":
+        return DataStewardResponseViewer(self)
 
     @property
     def DocumentUI(self) -> "DocumentUIViewer":
@@ -406,7 +410,7 @@ class PersonaTargetAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.enum("PersonaTarget")
-        self._values: typing.Set[str] = set([  "MECHANIC",  "TECH_WRITER",  "LOGISTICS",  "AUDITOR",  "PROCESS_ENGINEER",  ])
+        self._values: typing.Set[str] = set([  "MECHANIC",  "TECH_WRITER",  "LOGISTICS",  "AUDITOR",  "PROCESS_ENGINEER",  "DATA_STEWARD",  ])
         self._vals = PersonaTargetValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
@@ -452,6 +456,10 @@ class PersonaTargetValues:
     @property
     def PROCESS_ENGINEER(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("PROCESS_ENGINEER"))
+    
+    @property
+    def DATA_STEWARD(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("DATA_STEWARD"))
     
     
 
@@ -554,7 +562,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 22
+# Generated classes 23
 # #########################################################################
 
 class AgentResponseAst:
@@ -976,6 +984,53 @@ class DashboardUIProperties:
     @property
     def components(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("components"))
+    
+    
+
+
+class DataStewardResponseAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("DataStewardResponse")
+        self._properties: typing.Set[str] = set([  "tool_list",  "safety_warnings",  "short_answer",  ])
+        self._props = DataStewardResponseProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "DataStewardResponseProperties":
+        return self._props
+
+
+class DataStewardResponseViewer(DataStewardResponseAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class DataStewardResponseProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def tool_list(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("tool_list"))
+    
+    @property
+    def safety_warnings(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("safety_warnings"))
+    
+    @property
+    def short_answer(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("short_answer"))
     
     
 
