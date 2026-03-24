@@ -188,6 +188,26 @@ services:
       postgres:
         condition: service_healthy
 
+  datahub-wrapper:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run uvicorn agent_fleet.datahub_wrapper.main:app --host 0.0.0.0 --port 8085
+    ports:
+      - "8085:8085"
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - DATAHUB_GMS_URL=http://localhost:8080/api/graphql # Internal to container but reachable if GMS is on host; or use container name if GMS is in compose
+      - DATAHUB_MOCK_MODE=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # ==========================================
   # 3. DAGSTER CONTROL PLANE (Core Mesh)
   # ==========================================
@@ -355,7 +375,7 @@ services:
   weaviate:
     image: semitechnologies/weaviate:1.27.0
     ports:
-      - "8085:8080" # Map to avoid conflict with other services
+      - "8088:8080" # Moved from 8085 to avoid conflict with Engine D
     environment:
       - QUERY_DEFAULTS_LIMIT=25
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
