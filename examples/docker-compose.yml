@@ -292,6 +292,7 @@ services:
   # ==========================================
   restate:
     image: docker.io/restatedev/restate:latest
+    command: --node-name restate-node
     ports:
       - "8083:8080" # Ingress
       - "9070:9070" # Admin
@@ -327,13 +328,17 @@ services:
   # 5. DATA INFRASTRUCTURE
   # ==========================================
   fuseki:
-    image: secoresearch/fuseki
+    image: secoresearch/fuseki:latest # The reliable community-standard image
     ports:
       - "3030:3030"
     environment:
+      # Sets the admin password for the web UI
       - ADMIN_PASSWORD=${FUSEKI_ADMIN_PASSWORD:-Admin123!}
+      # Automatically opens the POST / update endpoints for the /ds dataset
+      - ENABLE_DATA_WRITE=true
+      - ENABLE_UPDATE=true
     volumes:
-      - fuseki_data:/fuseki
+      - fuseki_data:/fuseki-base/databases
 
   postgres:
     image: postgres:15
@@ -381,6 +386,8 @@ services:
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
       - DEFAULT_VECTORIZER_MODULE=none
       - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      # ADD THIS LINE to fix the Raft IP crash loop:
+      - CLUSTER_HOSTNAME=node1 
     volumes:
       - weaviate_data:/var/lib/weaviate
     healthcheck:

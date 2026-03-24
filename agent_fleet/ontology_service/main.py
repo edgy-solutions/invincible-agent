@@ -325,7 +325,7 @@ async def plan_query(request: PlanRequest) -> dict:
         # We pass the domain to the decomposition logic if needed, 
         # but BAML DecomposeQuery is currently domain-agnostic in its persona assignment.
         plan = await b.DecomposeQuery(raw_query=request.query)
-        return plan.model_dump()
+        return {**plan.model_dump(), "domain": request.domain}
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -347,7 +347,15 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
         # If domain is provided in the request, we can use it to ground the LLM's classification
         # but for now, we let the LLM decide the domain from the query.
         decision = await b.RouteAndPlan(user_query=request.query)
-        return decision.model_dump()
+        res = decision.model_dump()
+        
+        # Inject domain into tasks so downstream consumers (Dagster/etc.) always see it
+        # This fixes the "Invisible Bug" where domain was lost in the decomposition.
+        if res.get("task_plan") and res["task_plan"].get("tasks"):
+            for task in res["task_plan"]["tasks"]:
+                task["domain"] = res.get("domain")
+        
+        return res
     except Exception as exc:
         raise HTTPException(
             status_code=502,

@@ -6,19 +6,22 @@ it into Persona-specific sub-tasks, fans those out concurrently to Engine E
 (Neo4j Graph Expert), and synthesizes the results.
 """
 
+import os
 import json
 import requests
 import sys
-import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Any
+
+logger = logging.getLogger("iagent.supervisor")
 
 # ---------------------------------------------------------------------------
 # Service Discovery — defaults to K8s internal DNS, overridden via env
 # ---------------------------------------------------------------------------
-ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-svc.default.svc.cluster.local:8084")
+ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL", os.getenv("ONTOLOGY_SVC_URL", "http://ontology-svc.default.svc.cluster.local:8084"))
 NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
-DATAHUB_WRAPPER_SVC_URL = os.getenv("DATAHUB_WRAPPER_SVC_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
+DATAHUB_WRAPPER_SVC_URL = os.getenv("DATAHUB_WRAPPER_URL", os.getenv("DATAHUB_WRAPPER_SVC_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085"))
 LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
 PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
 
@@ -87,7 +90,14 @@ def create_task_plan(config: SupervisorQueryConfig):
     )
 
     # 3. Fan-out: yield each task dynamically
+    detected_domain = plan.get("domain") or config.domain
+    logger.info(f"Fanning out tasks for domain: {detected_domain}")
+
     for idx, task in enumerate(tasks):
+        # Inject the domain context so execute_subtask routes correctly
+        task["domain"] = detected_domain
+        logger.info(f"Yielding task {idx} ({task.get('target_persona')}) for domain {detected_domain}")
+        
         # We must provide a valid mapping_key for each dynamic output
         yield DynamicOutput(
             value=task,
@@ -107,16 +117,9 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
 
     # 🔗 ROUTING LOGIC: Fan-out to the correct domain-specific engine
     if domain == "DATA_ENGINEERING":
-        # Call Engine D (DataHub Metadata Wrapper)
-        # Note: Engine D currently has a GET /tables endpoint. 
-        # For a specialized "Data Steward" persona, we might need a POST /query_metadata.
-        # Here we follow the requested pattern.
-        # engine_url = f"{DATAHUB_WRAPPER_SVC_URL}/query_metadata" 
-        engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph" # Fallback to graph if Engine D is just a wrapper
-        
-        # If the persona is explicitly DATAHUB related, we use Engine D
-        if "DATAHUB" in persona or "DATA_STEWARD" in persona:
-             engine_url = f"{DATAHUB_WRAPPER_SVC_URL}/query_metadata"
+        # All DATA_ENGINEERING tasks are routed to DataHub Wrapper (Engine D)
+        # It handles metadata discovery for dbt/Postgres via its active agent endpoint
+        engine_url = f"{DATAHUB_WRAPPER_SVC_URL}/query_metadata"
     else:
         # Default to Engine E (Neo4j Graph Expert) for MAINTENANCE and SUSTAINMENT
         engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph"
