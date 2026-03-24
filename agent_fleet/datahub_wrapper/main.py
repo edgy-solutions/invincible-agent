@@ -27,6 +27,7 @@ DATAHUB_GMS_URL = os.getenv(
     "DATAHUB_GMS_URL", "http://localhost:8080/api/graphql"
 )
 DATAHUB_TOKEN = os.getenv("DATAHUB_TOKEN", "")
+DATAHUB_MOCK_MODE = os.getenv("DATAHUB_MOCK_MODE", "true").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # GraphQL query — search for dbt platform datasets
@@ -128,6 +129,20 @@ app = FastAPI(
 
 async def _fetch_all_table_names() -> list[str]:
     """Internal helper to fetch all dbt table names from DataHub GMS."""
+
+    # --- MOCK MODE INTERCEPT ---
+    if DATAHUB_MOCK_MODE:
+        print("DEBUG: DataHub Wrapper is in MOCK MODE. Returning dummy dbt tables.")
+        return [
+            "stg_pump_telemetry",
+            "fct_engine_failures",
+            "dim_maintenance_assets",
+            "stg_raw_sensor_data",
+            "fct_supply_chain_orders",
+            "dim_personnel",
+            "stg_flight_logs"
+        ]
+    # ---------------------------
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if DATAHUB_TOKEN:
         headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
