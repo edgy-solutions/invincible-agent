@@ -60,23 +60,47 @@ _JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
 _LOCAL_GRAPH = None
 
 # ---------------------------------------------------------------------------
-# Active Agent Roster
+# Master Agent & Domain Registry (Single Source of Truth)
 # ---------------------------------------------------------------------------
-MESH_ROSTER = """
-- MECHANIC: Wrench-turning, physical repairs, safety hazards, hardware component failures.
-- TECH_WRITER: Formatting manuals, procedures, standard Markdown text. DO NOT use XML.
-- LOGISTICS: Supply chain, procurement, lifecycle management, inventory.
-- AUDITOR: Safety compliance, rules, identifying non-compliant nodes.
-- PROCESS_ENGINEER: Workflows, sequential steps, BPMN routing.
-- DATA_STEWARD: Databases, dbt models, Postgres schemas, telemetry data pipelines, and metadata. Any data engineering query MUST go to the DATA_STEWARD.
-"""
+MASTER_PERSONAS = {
+    "MECHANIC": {
+        "ui": {"label": "Line Mechanic", "icon": "Wrench", "color": "text-amber-500", "bg": "bg-amber-500/10 border-amber-500/30"},
+        "llm_prompt": "Wrench-turning, physical repairs, safety hazards, hardware component failures."
+    },
+    "TECH_WRITER": {
+        "ui": {"label": "Tech Writer", "icon": "BookOpen", "color": "text-blue-400", "bg": "bg-blue-400/10 border-blue-400/30"},
+        "llm_prompt": "Formatting manuals, procedures, standard Markdown text. DO NOT use XML."
+    },
+    "LOGISTICS": {
+        "ui": {"label": "Logistics", "icon": "Truck", "color": "text-emerald-500", "bg": "bg-emerald-500/10 border-emerald-500/30"},
+        "llm_prompt": "Supply chain, procurement, lifecycle management, inventory."
+    },
+    "AUDITOR": {
+        "ui": {"label": "Auditor", "icon": "ShieldCheck", "color": "text-red-400", "bg": "bg-red-400/10 border-red-400/30"},
+        "llm_prompt": "Safety compliance, rules, identifying non-compliant nodes."
+    },
+    "PROCESS_ENGINEER": {
+        "ui": {"label": "Process Eng", "icon": "Network", "color": "text-purple-500", "bg": "bg-purple-500/10 border-purple-500/30"},
+        "llm_prompt": "Workflows, sequential steps, BPMN routing."
+    },
+    "DATA_STEWARD": {
+        "ui": {"label": "Data Steward", "icon": "Database", "color": "text-cyan-400", "bg": "bg-cyan-400/10 border-cyan-400/30"},
+        "llm_prompt": "Databases, dbt models, Postgres schemas, telemetry data pipelines, and metadata. Any data engineering query MUST go to the DATA_STEWARD."
+    }
+}
 
-MESH_DOMAINS = """
-- MAINTENANCE: Wrench-turning, physical repairs, safety hazards, component failures.
-- SUSTAINMENT: Supply chain, logistics, procurement, lifecycle management, inventory.
-- DATA_ENGINEERING: dbt models, Postgres, React, Kafka, data pipelines, software architecture.
-- UNKNOWN: Use if the query is unrelated to the above domains.
-"""
+MASTER_DOMAINS = {
+    "MAINTENANCE": "Wrench-turning, physical repairs, safety hazards, component failures.",
+    "SUSTAINMENT": "Supply chain, logistics, procurement, lifecycle management, inventory.",
+    "DATA_ENGINEERING": "dbt models, Postgres, React, Kafka, data pipelines, software architecture.",
+    "UNKNOWN": "Use if the query is unrelated to the above domains."
+}
+
+def get_baml_persona_string() -> str:
+    return "\n".join([f"- {k}: {v['llm_prompt']}" for k, v in MASTER_PERSONAS.items()])
+
+def get_baml_domain_string() -> str:
+    return "\n".join([f"- {k}: {v}" for k, v in MASTER_DOMAINS.items()])
 
 # SPARQL: find all named OWL classes defined in the IOF maintenance namespace
 # along with their labels and natural-language definitions.
@@ -344,7 +368,7 @@ async def plan_query(request: PlanRequest) -> dict:
         # INJECT active_personas HERE
         plan = await b.DecomposeQuery(
             raw_query=request.query,
-            active_personas=MESH_ROSTER
+            active_personas=get_baml_persona_string()
         )
         return {**plan.model_dump(), "domain": request.domain}
     except Exception as exc:
@@ -368,8 +392,8 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
         # INJECT BOTH active_personas AND active_domains HERE
         decision = await b.RouteAndPlan(
             user_query=request.query,
-            active_personas=MESH_ROSTER,
-            active_domains=MESH_DOMAINS
+            active_personas=get_baml_persona_string(),
+            active_domains=get_baml_domain_string()
         )
         res = decision.model_dump()
         
@@ -412,12 +436,15 @@ async def classes(request: ResolveRequest) -> dict:
 # Health check
 # ---------------------------------------------------------------------------
 @app.get("/health")
-async def health() -> dict:
+async def health():
     """Simple liveness probe."""
-    return {
-        "status": "ok",
-        "backend": "Jena Fuseki" if _JENA_ENDPOINT else "Local rdflib",
-    }
+    return {"status": "ok", "jena_reachable": _JENA_ENDPOINT != ""}
+
+@app.get("/mesh/config")
+async def get_mesh_config():
+    """Serves the UI configuration derived from the Master Registry."""
+    ui_personas = {k: v["ui"] for k, v in MASTER_PERSONAS.items()}
+    return {"personas": ui_personas, "status": "ONLINE"}
 
 
 # ---------------------------------------------------------------------------

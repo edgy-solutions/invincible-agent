@@ -48,6 +48,19 @@ logger = logging.getLogger("cortex")
 # ── Env ───────────────────────────────────────────────────
 load_dotenv()
 
+_DAGSONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-service:8084")
+
+@app.get("/mesh/config")
+async def get_mesh_config():
+    """Proxy the dynamic UI configuration from the Ontology Service."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{_DAGSONTOLOGY_SVC_URL}/mesh/config")
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as exc:
+        logger.error("Failed to fetch mesh config: %s", exc)
+        return {"personas": {}, "status": "OFFLINE"}
 _DAGSTER_WEBSERVER_URL = os.getenv("DAGSTER_WEBSERVER_URL", "http://localhost:3000")
 _DAGSTER_REPOSITORY = os.getenv("DAGSTER_REPOSITORY", "__repository__")
 _DAGSTER_LOCATION = os.getenv("DAGSTER_LOCATION", "iagent.definitions")

@@ -46,6 +46,8 @@ from dagster import (
     Output,
     MetadataValue,
     AssetMaterialization,
+    in_process_executor,
+    multiprocess_executor,
 )
 
 
@@ -233,7 +235,15 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     )
 
 
-@job
+# Check Dagster's built-in dev flag. 
+# Defaults to False in production (where dagster dev is not used).
+IS_DEV = os.getenv("DAGSTER_IS_DEV_CLI") == "1"
+
+# Use in_process locally to save RAM. Use multiprocess in Prod for parallel speed.
+# We limit max_concurrent to 5 to protect cloud resources from fork-bombing.
+mesh_executor = in_process_executor if IS_DEV else multiprocess_executor.configured({"max_concurrent": 5})
+
+@job(executor_def=mesh_executor)
 def supervisor_query_job():
     """
     Dynamic Fan-Out/Fan-In Workflow:
