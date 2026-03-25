@@ -71,6 +71,13 @@ MESH_ROSTER = """
 - DATA_STEWARD: Databases, dbt models, Postgres schemas, telemetry data pipelines, and metadata. Any data engineering query MUST go to the DATA_STEWARD.
 """
 
+MESH_DOMAINS = """
+- MAINTENANCE: Wrench-turning, physical repairs, safety hazards, component failures.
+- SUSTAINMENT: Supply chain, logistics, procurement, lifecycle management, inventory.
+- DATA_ENGINEERING: dbt models, Postgres, React, Kafka, data pipelines, software architecture.
+- UNKNOWN: Use if the query is unrelated to the above domains.
+"""
+
 # SPARQL: find all named OWL classes defined in the IOF maintenance namespace
 # along with their labels and natural-language definitions.
 _SPARQL_MAINTENANCE_CLASSES = """
@@ -358,10 +365,11 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
     and determine the target domain.
     """
     try:
-        # INJECT active_personas HERE
+        # INJECT BOTH active_personas AND active_domains HERE
         decision = await b.RouteAndPlan(
             user_query=request.query,
-            active_personas=MESH_ROSTER
+            active_personas=MESH_ROSTER,
+            active_domains=MESH_DOMAINS
         )
         res = decision.model_dump()
         

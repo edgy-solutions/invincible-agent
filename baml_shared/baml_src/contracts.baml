@@ -239,7 +239,7 @@ class MeshRoutingDecision {
   task_plan SupervisorTaskPlan? @description("Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.")
 }
 
-function RouteAndPlan(user_query: string, active_personas: string) -> MeshRoutingDecision {
+function RouteAndPlan(user_query: string, active_personas: string, active_domains: string) -> MeshRoutingDecision {
   client MainAgent
   prompt #"
     Act as the Kernel Scheduler for a Multi-Domain Agentic Mesh.
@@ -249,11 +249,11 @@ function RouteAndPlan(user_query: string, active_personas: string) -> MeshRoutin
        - ONE_SHOT_QUERY: Asking for existing knowledge (e.g., "What are the hazards of...").
        - PROCESS_CREATION: Asking to build, create, or publish a NEW process (e.g., "Help me design a new pump removal process").
     
-    2. Determine the DOMAIN:
-       - MAINTENANCE: Wrench-turning, physical repairs, safety hazards, component failures.
-       - SUSTAINMENT: Supply chain, logistics, procurement, lifecycle management, inventory.
-       - DATA_ENGINEERING: dbt models, Postgres, React, Kafka, data pipelines, software architecture.
-       - UNKNOWN: Use if the query is unrelated to the above domains.
+    2. Determine the DOMAIN chosen STRICTLY from the Active Domains list below:
+
+    --- ACTIVE DOMAINS ---
+    {{ active_domains }}
+    --- END DOMAINS ---
 
     3. Population of Task Plan:
        - Populate `task_plan` with expert personas chosen STRICTLY from the Active Agent Roster below.
