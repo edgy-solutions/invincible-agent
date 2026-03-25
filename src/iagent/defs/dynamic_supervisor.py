@@ -55,6 +55,7 @@ class SupervisorQueryConfig(Config):
     thread_id: str
     persona: str
     domain: str = "MAINTENANCE"
+    task_plan_json: str = ""  # Optional pre-computed plan from BFF
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -64,17 +65,26 @@ def create_task_plan(config: SupervisorQueryConfig):
     SupervisorTaskPlan containing persona-specific sub-tasks.
     Yields each sub-task as a DynamicOutput for downstream fan-out.
     """
-    # 1. Ask Engine O for the plan, passing the domain context
-    response = requests.post(
-        f"{ONTOLOGY_SVC_URL}/plan",
-        json={
-            "query": config.user_query,
-            "domain": config.domain
-        },
-        timeout=300,
-    )
-    response.raise_for_status()
-    plan = response.json()
+    # 1. Ask Engine O for the plan, or use the provided one
+    if config.task_plan_json:
+        logger.info("Using pre-computed task plan from BFF")
+        try:
+            plan = json.loads(config.task_plan_json)
+        except Exception as e:
+            logger.error(f"Failed to parse task_plan_json: {e}")
+            raise e
+    else:
+        logger.info("Calling Engine O for task planning")
+        response = requests.post(
+            f"{ONTOLOGY_SVC_URL}/plan",
+            json={
+                "query": config.user_query,
+                "domain": config.domain
+            },
+            timeout=300,
+        )
+        response.raise_for_status()
+        plan = response.json()
 
     # 2. Extract personas and broadcast intermediate roster + concepts
     tasks = plan.get("tasks", [])

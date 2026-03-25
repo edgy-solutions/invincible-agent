@@ -192,7 +192,7 @@ class SupervisorTaskPlan {
   reasoning string
 }
 
-function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
+function DecomposeQuery(raw_query: string, active_personas: string) -> SupervisorTaskPlan {
   client MainAgent
   prompt #"
     Break this complex user query into discrete tasks.
@@ -202,10 +202,14 @@ function DecomposeQuery(raw_query: string) -> SupervisorTaskPlan {
 
     Instructions:
     1. Extract the core entities, components, or systems the user is asking about and list them in `extracted_concepts`.
-    2. Assign each task to the correct specialized persona (MECHANIC, TECH_WRITER, LOGISTICS, AUDITOR, PROCESS_ENGINEER).
-    3. TECH_WRITER GUARDRAIL: If assigning a task to the TECH_WRITER, explicitly instruct them in the `sub_query` to return their findings as standard Markdown text. Explicitly FORBID the use of string concatenation, f-strings, or Python code to generate XML.
+    2. Assign each task to the correct specialized persona chosen STRICTLY from the Active Agent Roster below.
+    3. Read the specific rules and domain constraints for each persona in the roster. Do not misassign tasks.
     4. If the query only needs one persona, return a list with just one task.
     5. Provide your reasoning for why the query was split this way.
+
+    --- ACTIVE AGENT ROSTER ---
+    {{ active_personas }}
+    --- END ROSTER ---
 
     {{ ctx.output_format }}
   "#
@@ -235,7 +239,7 @@ class MeshRoutingDecision {
   task_plan SupervisorTaskPlan? @description("Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.")
 }
 
-function RouteAndPlan(user_query: string) -> MeshRoutingDecision {
+function RouteAndPlan(user_query: string, active_personas: string) -> MeshRoutingDecision {
   client MainAgent
   prompt #"
     Act as the Kernel Scheduler for a Multi-Domain Agentic Mesh.
@@ -252,7 +256,12 @@ function RouteAndPlan(user_query: string) -> MeshRoutingDecision {
        - UNKNOWN: Use if the query is unrelated to the above domains.
 
     3. Population of Task Plan:
-       - Populate `task_plan` with expert personas (e.g., MECHANIC for physical, LOGISTICS for supply, PROCESS_ENGINEER for workflows).
+       - Populate `task_plan` with expert personas chosen STRICTLY from the Active Agent Roster below.
+       - Apply the specific rules listed for each persona.
+
+    --- ACTIVE AGENT ROSTER ---
+    {{ active_personas }}
+    --- END ROSTER ---
     
     User Query:
     {{ user_query }}
@@ -398,6 +407,11 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
     
     --- TARGET PERSONA ---
     {{ persona }}
+    
+    INSTRUCTIONS FOR DATA STEWARD / TABLES:
+    - If the raw data contains a list of database tables, dbt models, or sensor schemas: 
+      USE MetricUI (ASSET_STATE_METRIC). Map each table name to a UIEntity in the `metrics` array.
+    - If the raw data is from a DATA_STEWARD: prioritize MetricUI for schema/table lists.
     
     {{ ctx.output_format }}
   "#

@@ -138,7 +138,7 @@ def _sse(event: str, data: str) -> str:
 # Dagster GraphQL Orchestration
 # ══════════════════════════════════════════════════════════
 
-async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PROCESS_ENGINEER", domain: str = "MAINTENANCE") -> str | None:
+async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PROCESS_ENGINEER", domain: str = "MAINTENANCE", task_plan_json: str = "") -> str | None:
     """Launch the supervisor_query_job on Dagster."""
     mutation = """
     mutation LaunchSupervisor($repo: String!, $loc: String!, $runConfig: RunConfigData!) {
@@ -178,7 +178,8 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
                     "user_query": query,
                     "thread_id": thread_id,
                     "persona": persona,
-                    "domain": domain
+                    "domain": domain,
+                    "task_plan_json": task_plan_json
                 }
             },
             "synthesize_stateful": {
@@ -186,7 +187,8 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
                     "user_query": query,
                     "thread_id": thread_id,
                     "persona": persona,
-                    "domain": domain
+                    "domain": domain,
+                    "task_plan_json": task_plan_json
                 }
             },
             "generate_ui_payload": {
@@ -194,7 +196,8 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
                     "user_query": query,
                     "thread_id": thread_id,
                     "persona": persona,
-                    "domain": domain
+                    "domain": domain,
+                    "task_plan_json": task_plan_json
                 }
             }
         }
@@ -618,12 +621,16 @@ async def generate_dagster_stream(
         "label": "Engine O Planning Complete..."
     }))
 
+    # 2. Extract Task Plan if it exists to pass to Dagster (avoids "Two Brains" discrepancy)
+    task_plan = decision.get("task_plan")
+    task_plan_json = json.dumps(task_plan) if task_plan else ""
+    
     yield _sse("status", json.dumps({
         "action": "think",
         "category": "Concept", 
         "label": f"Triggering Supervisor Job for thread {session_id[:8]}..."
     }))
-    run_id = await _launch_supervisor_job(user_query, session_id, domain=domain)
+    run_id = await _launch_supervisor_job(user_query, session_id, domain=domain, task_plan_json=task_plan_json)
     if not run_id:
         yield _sse("status", json.dumps({"action": "error", "label": "Failed to trigger Dagster job."}))
         yield _sse("stream_end", "{}")

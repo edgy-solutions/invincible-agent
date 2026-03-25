@@ -59,6 +59,18 @@ import httpx
 _JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
 _LOCAL_GRAPH = None
 
+# ---------------------------------------------------------------------------
+# Active Agent Roster
+# ---------------------------------------------------------------------------
+MESH_ROSTER = """
+- MECHANIC: Wrench-turning, physical repairs, safety hazards, hardware component failures.
+- TECH_WRITER: Formatting manuals, procedures, standard Markdown text. DO NOT use XML.
+- LOGISTICS: Supply chain, procurement, lifecycle management, inventory.
+- AUDITOR: Safety compliance, rules, identifying non-compliant nodes.
+- PROCESS_ENGINEER: Workflows, sequential steps, BPMN routing.
+- DATA_STEWARD: Databases, dbt models, Postgres schemas, telemetry data pipelines, and metadata. Any data engineering query MUST go to the DATA_STEWARD.
+"""
+
 # SPARQL: find all named OWL classes defined in the IOF maintenance namespace
 # along with their labels and natural-language definitions.
 _SPARQL_MAINTENANCE_CLASSES = """
@@ -322,9 +334,11 @@ async def plan_query(request: PlanRequest) -> dict:
     assigned to different personas using the LLM.
     """
     try:
-        # We pass the domain to the decomposition logic if needed, 
-        # but BAML DecomposeQuery is currently domain-agnostic in its persona assignment.
-        plan = await b.DecomposeQuery(raw_query=request.query)
+        # INJECT active_personas HERE
+        plan = await b.DecomposeQuery(
+            raw_query=request.query,
+            active_personas=MESH_ROSTER
+        )
         return {**plan.model_dump(), "domain": request.domain}
     except Exception as exc:
         raise HTTPException(
@@ -344,9 +358,11 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
     and determine the target domain.
     """
     try:
-        # If domain is provided in the request, we can use it to ground the LLM's classification
-        # but for now, we let the LLM decide the domain from the query.
-        decision = await b.RouteAndPlan(user_query=request.query)
+        # INJECT active_personas HERE
+        decision = await b.RouteAndPlan(
+            user_query=request.query,
+            active_personas=MESH_ROSTER
+        )
         res = decision.model_dump()
         
         # Inject domain into tasks so downstream consumers (Dagster/etc.) always see it

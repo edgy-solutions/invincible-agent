@@ -108,18 +108,18 @@ class BamlSyncClient:
                 "query": query,"active_ontology_classes": active_ontology_classes,
             })
             return typing.cast(types.SemanticResolution, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def DecomposeQuery(self, raw_query: str,
+    def DecomposeQuery(self, raw_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> types.SupervisorTaskPlan:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
-            __stream__ = self.stream.DecomposeQuery(raw_query=raw_query,
+            __stream__ = self.stream.DecomposeQuery(raw_query=raw_query,active_personas=active_personas,
                 baml_options=baml_options)
             return __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="DecomposeQuery", args={
-                "raw_query": raw_query,
+                "raw_query": raw_query,"active_personas": active_personas,
             })
             return typing.cast(types.SupervisorTaskPlan, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def DesignUI(self, raw_data: str,persona: str,
@@ -164,18 +164,18 @@ class BamlSyncClient:
                 "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
             })
             return typing.cast(types.BPMNInterviewState, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def RouteAndPlan(self, user_query: str,
+    def RouteAndPlan(self, user_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> types.MeshRoutingDecision:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
-            __stream__ = self.stream.RouteAndPlan(user_query=user_query,
+            __stream__ = self.stream.RouteAndPlan(user_query=user_query,active_personas=active_personas,
                 baml_options=baml_options)
             return __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="RouteAndPlan", args={
-                "user_query": user_query,
+                "user_query": user_query,"active_personas": active_personas,
             })
             return typing.cast(types.MeshRoutingDecision, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
@@ -213,11 +213,11 @@ class BamlStreamClient:
           lambda x: typing.cast(types.SemanticResolution, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def DecomposeQuery(self, raw_query: str,
+    def DecomposeQuery(self, raw_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.SupervisorTaskPlan, types.SupervisorTaskPlan]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="DecomposeQuery", args={
-            "raw_query": raw_query,
+            "raw_query": raw_query,"active_personas": active_personas,
         })
         return baml_py.BamlSyncStream[stream_types.SupervisorTaskPlan, types.SupervisorTaskPlan](
           __result__,
@@ -261,11 +261,11 @@ class BamlStreamClient:
           lambda x: typing.cast(types.BPMNInterviewState, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def RouteAndPlan(self, user_query: str,
+    def RouteAndPlan(self, user_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.MeshRoutingDecision, types.MeshRoutingDecision]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="RouteAndPlan", args={
-            "user_query": user_query,
+            "user_query": user_query,"active_personas": active_personas,
         })
         return baml_py.BamlSyncStream[stream_types.MeshRoutingDecision, types.MeshRoutingDecision](
           __result__,
@@ -300,11 +300,11 @@ class BamlHttpRequestClient:
             "query": query,"active_ontology_classes": active_ontology_classes,
         }, mode="request")
         return __result__
-    def DecomposeQuery(self, raw_query: str,
+    def DecomposeQuery(self, raw_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="DecomposeQuery", args={
-            "raw_query": raw_query,
+            "raw_query": raw_query,"active_personas": active_personas,
         }, mode="request")
         return __result__
     def DesignUI(self, raw_data: str,persona: str,
@@ -328,11 +328,11 @@ class BamlHttpRequestClient:
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
         }, mode="request")
         return __result__
-    def RouteAndPlan(self, user_query: str,
+    def RouteAndPlan(self, user_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
-            "user_query": user_query,
+            "user_query": user_query,"active_personas": active_personas,
         }, mode="request")
         return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
@@ -357,11 +357,11 @@ class BamlHttpStreamRequestClient:
             "query": query,"active_ontology_classes": active_ontology_classes,
         }, mode="stream")
         return __result__
-    def DecomposeQuery(self, raw_query: str,
+    def DecomposeQuery(self, raw_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="DecomposeQuery", args={
-            "raw_query": raw_query,
+            "raw_query": raw_query,"active_personas": active_personas,
         }, mode="stream")
         return __result__
     def DesignUI(self, raw_data: str,persona: str,
@@ -385,11 +385,11 @@ class BamlHttpStreamRequestClient:
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
         }, mode="stream")
         return __result__
-    def RouteAndPlan(self, user_query: str,
+    def RouteAndPlan(self, user_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
-            "user_query": user_query,
+            "user_query": user_query,"active_personas": active_personas,
         }, mode="stream")
         return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
