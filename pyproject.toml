@@ -14,6 +14,8 @@ dependencies = [
     "asyncpg",
     "python-dotenv",
     "requests",
+    "pyjwt[crypto]",
+    "cryptography",
 ]
 
 [project.optional-dependencies]

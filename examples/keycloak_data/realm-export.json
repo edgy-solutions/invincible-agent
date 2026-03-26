@@ -1,0 +1,55 @@
+{
+    "realm": "invincible-agent",
+    "enabled": true,
+    "users": [
+        {
+            "username": "agent-user",
+            "enabled": true,
+            "email": "agent@example.com",
+            "firstName": "Invincible",
+            "lastName": "User",
+            "credentials": [
+                {
+                    "type": "password",
+                    "value": "password",
+                    "temporary": false
+                }
+            ],
+            "realmRoles": [
+                "user"
+            ],
+            "clientRoles": {
+                "cortex-ui": [
+                    "user"
+                ]
+            }
+        }
+    ],
+    "clients": [
+        {
+            "clientId": "cortex-ui",
+            "enabled": true,
+            "publicClient": true,
+            "directAccessGrantsEnabled": true,
+            "redirectUris": [
+                "http://localhost:5173/*",
+                "http://localhost:8000/*"
+            ],
+            "webOrigins": [
+                "*"
+            ]
+        }
+    ],
+    "roles": {
+        "realm": [
+            {
+                "name": "user",
+                "description": "General user role"
+            },
+            {
+                "name": "admin",
+                "description": "Administrator role"
+            }
+        ]
+    }
+}

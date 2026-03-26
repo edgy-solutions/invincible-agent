@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db, init_db
 from .models import BpmnCatalog
+from .auth import get_current_user, User
 
 
 logger = logging.getLogger("cortex")
@@ -71,7 +72,7 @@ app = FastAPI(
 _DAGSONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-service:8084")
 
 @app.get("/mesh/config")
-async def get_mesh_config():
+async def get_mesh_config(current_user: User = Depends(get_current_user)):
     """Proxy the dynamic UI configuration from the Ontology Service."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -773,10 +774,11 @@ async def generate_dagster_stream(
 # ══════════════════════════════════════════════════════════
 
 
+@app.post("/orchestrate")
 @app.post("/interview/stream")
-async def interview_stream(request: InterviewRequest):
+async def orchestrate(request: InterviewRequest, current_user: User = Depends(get_current_user)):
     """
-    Streaming orchestration endpoint.
+    Entry point for the Agentic Mesh.
     Delegates to Dagster GraphQL and streams step stats as SSE events
     to power Holographic Thinking Cards. Emits final payload when done.
     """
@@ -912,13 +914,15 @@ async def _reload_dagster_workspace() -> bool:
         return False
 
 
-@app.post("/workflow/compile", response_model=CompileResponse)
-async def compile_workflow(
+@app.post("/compile")
+@app.post("/workflow/compile")
+async def compile_bpmn(
     request: CompileRequest,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Compile the BPMN payload into a Dagster job.
+    Experimental: Compile raw BPMN payload into a Dagster job.
 
     1. Upsert the bpmn_payload into the bpmn_catalog table.
     2. Synthesize a Terminal Boot Sequence log.
@@ -995,8 +999,9 @@ async def health():
 # Deep Inspection (Neo4j Proxy)
 # ══════════════════════════════════════════════════════════
 
+@app.get("/node_details/{node_id}")
 @app.get("/graph/node/{node_id}")
-async def get_graph_node(node_id: str):
+async def get_node_details(node_id: str, current_user: User = Depends(get_current_user)):
     """
     Directly query the Neo4j Graph Database for a specific node ID.
     Used by the frontend NodeInspector to prove data provenance.

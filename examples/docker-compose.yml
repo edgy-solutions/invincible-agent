@@ -14,6 +14,8 @@ services:
       - /app/node_modules
     environment:
       - VITE_API_URL=http://localhost:8000
+      - VITE_KEYCLOAK_REALM_URL=http://localhost:8080/realms/invincible-agent
+      - VITE_KEYCLOAK_CLIENT_ID=cortex-ui
       - CHOKIDAR_USEPOLLING=true
 
   # ==========================================
@@ -42,6 +44,7 @@ services:
       - SMOLAGENTS_MODEL=${SMOLAGENTS_MODEL}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
       - BAML_LOG_LEVEL=info
+      - KEYCLOAK_REALM_URL=http://keycloak:8080/realms/invincible-agent
 
   # ==========================================
   # 3. THE AGENT FLEET (Polyglot Service Mesh)
@@ -395,6 +398,20 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+
+  # ==========================================
+  # 7. IDENTITY MANAGEMENT (Keycloak)
+  # ==========================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak_data:/opt/keycloak/data/import
 
 volumes:
   pgdata:
