@@ -1,0 +1,64 @@
+{{- if .Values.keycloak.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-keycloak-realm
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  realm-export.json: |
+    {
+      "realm": "{{ .Values.keycloak.realm }}",
+      "enabled": true,
+      "users": [
+          {
+              "username": "agent-user",
+              "enabled": true,
+              "email": "agent@example.com",
+              "firstName": "Invincible",
+              "lastName": "User",
+              "credentials": [
+                  {
+                      "type": "password",
+                      "value": "password",
+                      "temporary": false
+                  }
+              ],
+              "realmRoles": [
+                  "user"
+              ],
+              "clientRoles": {
+                  "cortex-ui": [
+                      "user"
+                  ]
+              }
+          }
+      ],
+      "clients": [
+          {
+              "clientId": "cortex-ui",
+              "enabled": true,
+              "publicClient": true,
+              "directAccessGrantsEnabled": true,
+              "redirectUris": [
+                  "*"
+              ],
+              "webOrigins": [
+                  "*"
+              ]
+          }
+      ],
+      "roles": {
+          "realm": [
+              {
+                  "name": "user",
+                  "description": "General user role"
+              },
+              {
+                  "name": "admin",
+                  "description": "Administrator role"
+              }
+          ]
+      }
+    }
+{{- end }}

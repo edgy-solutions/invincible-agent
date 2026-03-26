@@ -254,6 +254,11 @@ cortexUi:
     limits:
       cpu: 500m
       memory: 256Mi
+  # -- Environment variables passed as NAME: VALUE
+  env:
+    VITE_API_URL: "http://localhost:8000"
+    VITE_KEYCLOAK_REALM_URL: "http://localhost:8080/realms/invincible-agent"
+    VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
   ingress:
     enabled: false
     className: ""
@@ -339,6 +344,29 @@ fuseki:
 
 externalFuseki:
   url: ""     # e.g. "http://my-fuseki.infra.svc:3030"
+
+# ==========================================================================
+# Identity Management (Keycloak)
+# ==========================================================================
+keycloak:
+  enabled: true
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "latest"
+  auth:
+    adminUser: "admin"
+    adminPassword: "changeme-keycloak"
+  realm: "invincible-agent"
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
 
 # ==========================================================================
 # Secrets — override these in your values-production.yaml

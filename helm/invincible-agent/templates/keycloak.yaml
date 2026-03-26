@@ -1,0 +1,67 @@
+{{- if .Values.keycloak.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-keycloak
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: keycloak
+          image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+          args: ["start-dev", "--import-realm"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: KEYCLOAK_ADMIN
+              value: "{{ .Values.keycloak.auth.adminUser }}"
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: "{{ .Values.keycloak.auth.adminPassword }}"
+            - name: KC_DB
+              value: dev-file
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+            - name: data
+              mountPath: /opt/keycloak/data
+      volumes:
+        - name: realm-config
+          configMap:
+            name: {{ .Release.Name }}-keycloak-realm
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-keycloak
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.keycloak.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.keycloak.service.port }}
+      targetPort: http
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "keycloak" "root" .) | nindent 4 }}
+{{- end }}

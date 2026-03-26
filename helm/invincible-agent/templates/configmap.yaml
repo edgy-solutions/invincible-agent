@@ -38,6 +38,7 @@ data:
   ONTOLOGY_RESOLVE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}/resolve"
   DATAHUB_GMS_URL: {{ .Values.engineD.env.DATAHUB_GMS_URL | quote }}
   SWARMS_MODEL: {{ .Values.engineC.env.SWARMS_MODEL | quote }}
+  KEYCLOAK_REALM_URL: "http://{{ .Release.Name }}-keycloak:8080/realms/{{ .Values.keycloak.realm }}"
 {{- if .Values.postgresql.enabled }}
 ---
 # InitDB ConfigMap — runs sql/create_bpmn_catalog.sql on first boot

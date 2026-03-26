@@ -27,6 +27,10 @@ spec:
           env:
             - name: VITE_API_URL
               value: {{ .Values.cortexUi.env.VITE_API_URL | default "http://localhost:8000" | quote }}
+            - name: VITE_KEYCLOAK_REALM_URL
+              value: {{ .Values.cortexUi.env.VITE_KEYCLOAK_REALM_URL | quote }}
+            - name: VITE_KEYCLOAK_CLIENT_ID
+              value: {{ .Values.cortexUi.env.VITE_KEYCLOAK_CLIENT_ID | quote }}
           resources:
             {{- toYaml .Values.cortexUi.resources | nindent 12 }}
 ---
