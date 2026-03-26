@@ -1,6 +1,0 @@
-dependencies:
-- name: postgresql
-  repository: oci://registry-1.docker.io/bitnamicharts
-  version: 16.4.16
-digest: sha256:a65a1f296d541fe64c29ed4295ef9c8481e3a1c7919a0a3d04e9fb1226b740dc
-generated: "2026-03-26T12:25:48.4842301-05:00"
