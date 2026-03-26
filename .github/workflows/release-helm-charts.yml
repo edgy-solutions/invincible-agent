@@ -30,10 +30,6 @@ jobs:
         with:
           version: v3.14.0
 
-      - name: Add bitnami repository (req for postgresql subchart dependencies)
-        run: |
-          helm repo add bitnami https://charts.bitnami.com/bitnami
-          
       - name: Fetch dependencies
         run: |
           helm dependency build helm/invincible-agent
