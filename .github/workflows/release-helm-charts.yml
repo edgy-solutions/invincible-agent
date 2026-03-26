@@ -32,10 +32,8 @@ jobs:
 
       - name: Build and package chart
         run: |
-          helm dependency update helm/invincible-agent
-          ls -la helm/invincible-agent/charts/
           mkdir -p .cr-release-packages
-          helm package helm/invincible-agent -d .cr-release-packages
+          helm package helm/invincible-agent --dependency-update -d .cr-release-packages
           ls -la .cr-release-packages/
 
       - name: Run chart-releaser
