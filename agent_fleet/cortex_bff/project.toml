@@ -1,0 +1,17 @@
+[project]
+name = "cortex-bff"
+version = "0.1.0"
+description = "Agentic Mesh API Gateway (BFF)"
+authors = [{ name = "cnogradi" }]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "python-jose",
+    "cryptography",
+    "pydantic-settings",
+]
+
+[tool.setuptools]
+packages = ["agent_fleet.cortex_bff"]

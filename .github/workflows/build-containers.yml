@@ -50,6 +50,9 @@ jobs:
           - service: presentation-agent
             path: agent_fleet/presentation_agent
             port: "8087"
+          - service: cortex-bff
+            path: agent_fleet/cortex_bff
+            port: "8000"
 
     steps:
       - name: Checkout
