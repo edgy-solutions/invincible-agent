@@ -1,17 +1,16 @@
-[project]
-name = "cortex-bff"
-version = "0.1.0"
-description = "Agentic Mesh API Gateway (BFF)"
-authors = [{ name = "cnogradi" }]
-requires-python = ">=3.12"
-dependencies = [
-    "fastapi",
-    "uvicorn",
-    "httpx",
-    "python-jose",
-    "cryptography",
-    "pydantic-settings",
-]
+[_]
+schema-version = "0.2"
 
-[tool.setuptools]
-packages = ["agent_fleet.cortex_bff"]
+[io.buildpacks]
+builder = "paketobuildpacks/builder-jammy-base"
+
+[[io.buildpacks.group]]
+id = "paketo-buildpacks/python"
+
+[[io.buildpacks.build.env]]
+name = "BP_CPYTHON_VERSION"
+value = "3.12"
+
+[[io.buildpacks.launch.env]]
+name = "PORT"
+value = "8000"
