@@ -20,7 +20,7 @@ spec:
       {{- end }}
       initContainers:
         - name: wait-for-services
-          image: curlimages/curl:latest
+          image: {{ .Values.global.images.curl | quote }}
           command:
             - sh
             - -c
@@ -43,7 +43,7 @@ spec:
               sleep 5
       containers:
         - name: register-services
-          image: curlimages/curl:latest
+          image: {{ .Values.global.images.curl | quote }}
           command:
             - sh
             - -c
@@ -78,7 +78,7 @@ spec:
       {{- end }}
       initContainers:
         - name: wait-for-db
-          image: postgres:15-alpine
+          image: {{ .Values.global.images.postgresClient | quote }}
           env:
             - name: PGHOST
               value: {{ include "invincible-agent.pgHost" . }}
@@ -91,7 +91,7 @@ spec:
               until pg_isready; do echo "waiting for postgres..."; sleep 2; done
       containers:
         - name: apply-schema
-          image: postgres:15-alpine
+          image: {{ .Values.global.images.postgresClient | quote }}
           env:
             - name: PGHOST
               value: {{ include "invincible-agent.pgHost" . }}

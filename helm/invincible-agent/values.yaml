@@ -7,8 +7,12 @@ global:
   imageRegistry: ghcr.io
   imagePrefix: edgy-solutions/invincible-agent
   imagePullPolicy: IfNotPresent
-  # imagePullSecrets:
-  #   - name: ghcr-pull-secret
+  #imagePullSecrets:
+  #  - name: ghcr-pull-secret
+  # -- Utility images for hooks/init-containers
+  images:
+    curl: "curlimages/curl:latest"
+    postgresClient: "postgres:15-alpine"
 
 # ==========================================================================
 # PostgreSQL
@@ -16,6 +20,9 @@ global:
 # ==========================================================================
 postgresql:
   enabled: true
+  image:
+    repository: "postgres"
+    tag: "16"
   auth:
     postgresPassword: "changeme-postgres"
     username: "iagent"
