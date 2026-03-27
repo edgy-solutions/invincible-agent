@@ -12,6 +12,7 @@ dependencies = [
     "neo4j",
     "sqlalchemy[asyncio]",
     "asyncpg",
+    "aiosqlite",
     "python-dotenv",
     "requests",
     "pyjwt[crypto]",

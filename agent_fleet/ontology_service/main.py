@@ -26,13 +26,15 @@ from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to the Python path so we can import the generated client.
-# In a containerised deployment this would be handled by the Docker build or
-# a proper package install; here we do it explicitly for local dev.
+# In CNB containers, baml_client is copied locally — this is only for dev.
 # ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
-if str(_BAML_CLIENT_PATH) not in sys.path:
-    sys.path.insert(0, str(_BAML_CLIENT_PATH))
+try:
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+    _BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
+    if str(_BAML_CLIENT_PATH) not in sys.path:
+        sys.path.insert(0, str(_BAML_CLIENT_PATH))
+except IndexError:
+    pass  # Running in CNB container — baml_client is already in /workspace/
 
 from baml_client import b  # noqa: E402  — BAML async client
 from baml_client.types import SemanticResolution as BamlSemanticResolution  # noqa: E402

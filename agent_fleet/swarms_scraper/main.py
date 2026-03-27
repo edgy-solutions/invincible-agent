@@ -22,11 +22,15 @@ from swarms import Agent, SequentialWorkflow
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to the Python path for the generated BAML types.
+# In CNB containers, baml_client is copied locally — this is only for dev.
 # ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
-if str(_BAML_CLIENT_PATH) not in sys.path:
-    sys.path.insert(0, str(_BAML_CLIENT_PATH))
+try:
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+    _BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
+    if str(_BAML_CLIENT_PATH) not in sys.path:
+        sys.path.insert(0, str(_BAML_CLIENT_PATH))
+except IndexError:
+    pass  # Running in CNB container — baml_client is already in /workspace/
 
 from baml_client.types import AgentResponse, AgentStatus, AgentTask  # noqa: E402
 

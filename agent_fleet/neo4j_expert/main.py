@@ -16,8 +16,10 @@ import restate
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-# Import from the local service definition
-from .service import service as expert_service
+try:
+    from .service import service as expert_service
+except ImportError:
+    from service import service as expert_service
 
 # Initialize FastAPI
 app = FastAPI(title="Engine E: Neo4j Graph Expert")

@@ -14,8 +14,12 @@ except ImportError:
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
 from baml_client.types import PersonaTarget
-from .tools import execute_cypher, get_graph_schema
-from .prompts import PERSONA_PROMPTS
+try:
+    from .tools import execute_cypher, get_graph_schema
+    from .prompts import PERSONA_PROMPTS
+except ImportError:
+    from tools import execute_cypher, get_graph_schema
+    from prompts import PERSONA_PROMPTS
 
 service = Service("Neo4jExpertService")
 
