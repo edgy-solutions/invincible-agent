@@ -23,7 +23,7 @@ data:
   NEO4J_USERNAME: {{ include "invincible-agent.neo4jUsername" . | quote }}
   WEAVIATE_URL: {{ include "invincible-agent.weaviateUrl" . | quote }}
   JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/query"
-  DATABASE_URL: {{ include "invincible-agent.pgUri" | replace "postgresql://" "postgresql+asyncpg://" | quote }}
+  DATABASE_URL: {{ include "invincible-agent.pgUri" . | replace "postgresql://" "postgresql+asyncpg://" | quote }}
 
   # Engine service URLs (Internal K8s DNS)
   ONTOLOGY_SERVICE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}"

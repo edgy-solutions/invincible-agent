@@ -73,9 +73,9 @@ spec:
           image: postgres:15-alpine
           env:
             - name: PGHOST
-              value: {{ include "invincible-agent.postgresqlHost" . }}
+              value: {{ include "invincible-agent.pgHost" . }}
             - name: PGPORT
-              value: {{ include "invincible-agent.postgresqlPort" | default "5432" | quote }}
+              value: {{ include "invincible-agent.pgPort" . | default "5432" | quote }}
           command:
             - sh
             - -c
@@ -86,15 +86,15 @@ spec:
           image: postgres:15-alpine
           env:
             - name: PGHOST
-              value: {{ include "invincible-agent.postgresqlHost" . }}
+              value: {{ include "invincible-agent.pgHost" . }}
             - name: PGPORT
-              value: {{ include "invincible-agent.postgresqlPort" | default "5432" | quote }}
+              value: {{ include "invincible-agent.pgPort" . | default "5432" | quote }}
             - name: PGDATABASE
-              value: {{ include "invincible-agent.postgresqlDatabase" . }}
+              value: {{ include "invincible-agent.pgDatabase" . }}
             - name: PGUSER
-              value: {{ include "invincible-agent.postgresqlUsername" . }}
+              value: {{ include "invincible-agent.pgUser" . }}
             - name: PGPASSWORD
-              value: {{ include "invincible-agent.postgresqlPassword" . }}
+              value: {{ include "invincible-agent.pgPassword" . }}
           command:
             - sh
             - -c
