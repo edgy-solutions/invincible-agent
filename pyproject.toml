@@ -13,6 +13,7 @@ dependencies = [
     "sqlalchemy[asyncio]",
     "asyncpg",
     "aiosqlite",
+    "pysqlite3-binary",
     "python-dotenv",
     "requests",
     "pyjwt[crypto]",
