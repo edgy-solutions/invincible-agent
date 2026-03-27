@@ -51,8 +51,9 @@ jobs:
             path: agent_fleet/presentation_agent
             port: "8087"
           - service: cortex-bff
-            path: agent_fleet/cortex_bff
+            path: .
             port: "8000"
+            default_process: bff
 
     steps:
       - name: Checkout
@@ -88,11 +89,16 @@ jobs:
 
       - name: Build image with Cloud Native Buildpacks
         run: |
+          EXTRA_ARGS=""
+          if [ "${{ matrix.default_process }}" != "" ]; then
+            EXTRA_ARGS="--default-process ${{ matrix.default_process }}"
+          fi
           pack build ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} \
             --path ./${{ matrix.path }} \
             --builder paketobuildpacks/builder-jammy-base \
             --env BP_CPYTHON_VERSION=3.12 \
-            --trust-builder
+            --trust-builder \
+            $EXTRA_ARGS
 
       - name: Tag latest
         if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
