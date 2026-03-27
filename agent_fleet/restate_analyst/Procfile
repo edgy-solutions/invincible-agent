@@ -1,1 +1,1 @@
-web: hypercorn agent_fleet.restate_analyst.main:app --bind 0.0.0.0:8081
+web: python -m hypercorn agent_fleet.restate_analyst.main:app --bind 0.0.0.0:8081

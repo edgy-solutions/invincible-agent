@@ -28,6 +28,8 @@ spec:
           image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "tag" .Values.dagster.userCode.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command:
+            - python
+            - "-m"
             - dagster
             - api
             - grpc

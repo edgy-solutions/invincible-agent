@@ -1,1 +1,1 @@
-web: uvicorn agent_fleet.datahub_wrapper.main:app --host 0.0.0.0 --port 8085
+web: python -m uvicorn agent_fleet.datahub_wrapper.main:app --host 0.0.0.0 --port 8085
