@@ -23,7 +23,7 @@ spec:
       {{- end }}
       containers:
         - name: cortex-ui
-          image: {{ include "invincible-agent.image" (dict "name" .Values.cortexUi.image.name "tag" .Values.cortexUi.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "repository" .Values.cortexUi.image.repository "tag" .Values.cortexUi.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - name: http
@@ -79,7 +79,7 @@ spec:
       {{- end }}
       containers:
         - name: cortex-bff
-          image: {{ include "invincible-agent.image" (dict "name" .Values.cortexBff.image.name "tag" .Values.cortexBff.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" .Values.cortexBff.image.name "repository" .Values.cortexBff.image.repository "tag" .Values.cortexBff.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - name: http

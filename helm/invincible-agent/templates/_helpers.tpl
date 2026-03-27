@@ -23,7 +23,11 @@ Usage: include "invincible-agent.image" (dict "name" "restate-analyst" "tag" .Va
 */}}
 {{- define "invincible-agent.image" -}}
 {{- $tag := .tag | default .root.Chart.AppVersion -}}
+{{- if .repository -}}
+{{ .root.Values.global.imageRegistry }}/{{ .repository }}:{{ $tag }}
+{{- else -}}
 {{ .root.Values.global.imageRegistry }}/{{ .root.Values.global.imagePrefix }}/{{ .name }}:{{ $tag }}
+{{- end -}}
 {{- end }}
 
 {{/*

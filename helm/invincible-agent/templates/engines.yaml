@@ -41,7 +41,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .component }}
-          image: {{ include "invincible-agent.image" (dict "name" $eng.image.name "tag" $eng.image.tag "root" $) }}
+          image: {{ include "invincible-agent.image" (dict "name" $eng.image.name "repository" $eng.image.repository "tag" $eng.image.tag "root" $) }}
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           ports:
             - name: http

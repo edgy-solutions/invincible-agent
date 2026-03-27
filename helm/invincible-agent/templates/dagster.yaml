@@ -24,7 +24,7 @@ spec:
       {{- end }}
       containers:
         - name: webserver
-          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "tag" .Values.dagster.webserver.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "repository" .Values.dagster.webserver.image.repository "tag" .Values.dagster.webserver.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command: ["python", "-m", "dagster", "webserver", "-h", "0.0.0.0", "-p", "{{ .Values.dagster.webserver.port }}", "-w", "/dagster-workspace/workspace.yaml"]
           ports:
@@ -98,7 +98,7 @@ spec:
       {{- end }}
       containers:
         - name: daemon
-          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "tag" .Values.dagster.webserver.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "repository" .Values.dagster.webserver.image.repository "tag" .Values.dagster.webserver.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command: ["python", "-m", "dagster-daemon", "run", "-w", "/dagster-workspace/workspace.yaml"]
           envFrom:

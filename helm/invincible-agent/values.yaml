@@ -251,7 +251,7 @@ cortexUi:
   enabled: true
   replicas: 1
   image:
-    name: cortex-ui
+    repository: edgy-solutions/cortex-ui/frontend
     tag: ""
   port: 5173
   resources:

@@ -25,7 +25,7 @@ spec:
       {{- end }}
       containers:
         - name: user-code
-          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "tag" .Values.dagster.userCode.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-user-code" "repository" .Values.dagster.userCode.image.repository "tag" .Values.dagster.userCode.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           command:
             - python
