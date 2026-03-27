@@ -17,6 +17,7 @@ dependencies = [
     "mem0ai",
     "weaviate-client",
     "python-dotenv",
+    "pysqlite3-binary",
 ]
 
 [build-system]

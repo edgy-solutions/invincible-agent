@@ -15,6 +15,7 @@ dependencies = [
     "httpx",
     "requests",
     "python-dotenv",
+    "pysqlite3-binary",
 ]
 
 [build-system]
