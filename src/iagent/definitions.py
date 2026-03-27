@@ -1,3 +1,10 @@
+import sys
+try:
+    import pysqlite3
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    pass
+
 from dagster import Definitions, load_assets_from_modules
 from .defs import agent_routers, dynamic_supervisor, data_layer, dynamic_factory
 
