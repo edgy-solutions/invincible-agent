@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-db-schema
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  create_bpmn_catalog.sql: |
+{{ .Files.Get "sql/create_bpmn_catalog.sql" | indent 4 }}

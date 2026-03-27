@@ -107,6 +107,14 @@ spec:
             - sh
             - -c
             - |
-              # In a real K8s env, we'd mount the SQL file via configmap
-              # For this example, we assume we want to run the BPMN catalog SQL
-              echo "DB Init complete (Placeholder for SQL execution)"
+              echo "Applying BPMN Catalog schema..."
+              psql -f /sql-schema/create_bpmn_catalog.sql
+              echo "DB Init complete."
+          volumeMounts:
+            - name: sql-schema
+              mountPath: /sql-schema
+              readOnly: true
+      volumes:
+        - name: sql-schema
+          configMap:
+            name: {{ .Release.Name }}-db-schema
