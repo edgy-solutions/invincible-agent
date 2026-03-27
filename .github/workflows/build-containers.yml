@@ -47,6 +47,9 @@ jobs:
           - service: neo4j-expert
             path: agent_fleet/neo4j_expert
             port: "8086"
+          - service: presentation-agent
+            path: agent_fleet/presentation_agent
+            port: "8087"
 
     steps:
       - name: Checkout
