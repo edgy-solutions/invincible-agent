@@ -14,6 +14,10 @@ spec:
       name: {{ .Release.Name }}-restate-init
     spec:
       restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: wait-for-services
           image: curlimages/curl:latest
@@ -68,6 +72,10 @@ spec:
       name: {{ .Release.Name }}-db-init
     spec:
       restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: wait-for-db
           image: postgres:15-alpine

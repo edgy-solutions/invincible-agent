@@ -17,6 +17,10 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "restate" "root" .) | nindent 8 }}
     spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: restate
           image: "{{ .Values.restate.image.repository }}:{{ .Values.restate.image.tag }}"
