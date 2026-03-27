@@ -1,0 +1,21 @@
+[project]
+name = "neo4j-expert"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "hypercorn",
+    "pydantic",
+    "restate-sdk==0.14.0",
+    "smolagents",
+    "baml-py==0.219.0",
+    "httpx",
+    "neo4j",
+    "mem0ai",
+    "weaviate-client",
+    "python-dotenv",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

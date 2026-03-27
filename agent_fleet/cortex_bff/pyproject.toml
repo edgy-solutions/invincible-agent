@@ -1,0 +1,20 @@
+[project]
+name = "cortex-bff"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "httpx",
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "baml-py==0.219.0",
+    "pyjwt[crypto]",
+    "cryptography",
+    "python-dotenv",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
