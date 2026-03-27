@@ -47,7 +47,10 @@ from baml_client import b  # noqa: E402
 # Smolagents imports — only used inside the Restate handler.
 # ---------------------------------------------------------------------------
 from smolagents import CodeAgent
-from ..llm_utils import get_smolagent_model
+try:
+    from ..llm_utils import get_smolagent_model
+except ImportError:
+    from llm_utils import get_smolagent_model
 
 # ---------------------------------------------------------------------------
 # Constants

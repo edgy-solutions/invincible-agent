@@ -6,7 +6,10 @@ from restate import Context, Service
 from smolagents import CodeAgent
 from mem0 import Memory
 
-from ..llm_utils import get_smolagent_model
+try:
+    from ..llm_utils import get_smolagent_model
+except ImportError:
+    from llm_utils import get_smolagent_model
 
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b

@@ -68,6 +68,23 @@ jobs:
       - name: Install Pack CLI
         uses: buildpacks/github-actions/setup-pack@v5.7.4
 
+      - name: Inject shared modules into build context
+        if: matrix.path != '.'
+        run: |
+          BUILD_DIR="./${{ matrix.path }}"
+
+          # Copy the BAML generated client (used by 6 of 8 engines)
+          if [ -d "baml_shared/baml_client" ]; then
+            cp -r baml_shared/baml_client "$BUILD_DIR/baml_client"
+            echo "✅ Injected baml_client into $BUILD_DIR"
+          fi
+
+          # Copy shared LLM utilities (used by Engines A and E)
+          if [ -f "agent_fleet/llm_utils.py" ]; then
+            cp agent_fleet/llm_utils.py "$BUILD_DIR/llm_utils.py"
+            echo "✅ Injected llm_utils.py into $BUILD_DIR"
+          fi
+
       - name: Build image with Cloud Native Buildpacks
         run: |
           pack build ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} \
