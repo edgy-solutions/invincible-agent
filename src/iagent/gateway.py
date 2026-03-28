@@ -77,6 +77,7 @@ app = FastAPI(
 )
 
 _DAGSONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-service:8084")
+_RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
 
 @app.get("/mesh/config")
 async def get_mesh_config(current_user: User = Depends(get_current_user)):
@@ -536,7 +537,7 @@ async def generate_dagster_stream(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             res = await client.post(
-                f"http://restate:8080/ProcessInterviewer/{session_id}/get_status",
+                f"{_RESTATE_INGRESS_URL}/ProcessInterviewer/{session_id}/get_status",
                 json={}
             )
             if res.status_code == 200:
@@ -552,7 +553,7 @@ async def generate_dagster_stream(
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
-                    "http://ontology-service:8084/route_and_plan",
+                    f"{_DAGSONTOLOGY_SVC_URL}/route_and_plan",
                     json={"query": user_query}
                 )
                 resp.raise_for_status()
@@ -573,7 +574,7 @@ async def generate_dagster_stream(
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 restate_response = await client.post(
-                    f"http://restate:8080/ProcessInterviewer/{session_id}/process_message",
+                    f"{_RESTATE_INGRESS_URL}/ProcessInterviewer/{session_id}/process_message",
                     json={"user_query": user_query}
                 )
                 restate_response.raise_for_status()

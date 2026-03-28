@@ -133,7 +133,7 @@ def trigger_swarms_scraper() -> dict:
 def trigger_datahub_tables() -> dict:
     """Fetch available dbt tables from Engine D (DataHub wrapper)."""
     response = requests.get(
-        "http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables",
+        f"{DATAHUB_WRAPPER_URL}/tables",
         timeout=30,
     )
     response.raise_for_status()
@@ -157,7 +157,7 @@ def trigger_datahub_tables() -> dict:
 def trigger_neo4j_expert() -> dict:
     """Trigger Engine E (Neo4j Graph Expert) agent pod."""
     response = requests.post(
-        "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+        f"{NEO4J_EXPERT_URL}/query_graph",
         json={"user_query": "What are the common tools?", "persona": "MECHANIC"}, # Dummy payload for now as it wasn't specified
         timeout=300,
     )
@@ -181,7 +181,7 @@ def trigger_neo4j_expert() -> dict:
 def trigger_presentation_agent() -> dict:
     """Trigger Engine F (Presentation Agent) UI Router pod."""
     response = requests.post(
-        "http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui",
+        f"{PRESENTATION_AGENT_URL}/render_ui",
         json={"raw_data": {"demo": True}, "persona": "MECHANIC"}, # Dummy payload for UI UI
         timeout=30,
     )

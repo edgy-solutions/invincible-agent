@@ -24,7 +24,9 @@ from dagster import MetadataValue, asset, get_dagster_logger
 # In production these come from env vars or Dagster config.
 DBT_MANIFEST_PATH = Path("dbt_project/target/manifest.json")
 MAPPING_TTL_PATH = Path("agent_fleet/ontology_service/mapping.ttl")
-DATAHUB_GMS_URL = "http://datahub-gms.default.svc.cluster.local:8080"
+import os
+
+DATAHUB_GMS_URL = os.getenv("DATAHUB_GMS_URL", "http://datahub-gms.default.svc.cluster.local:8080")
 
 # ---------------------------------------------------------------------------
 # Helpers

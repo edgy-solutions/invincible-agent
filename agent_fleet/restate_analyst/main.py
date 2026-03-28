@@ -66,8 +66,9 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-ONTOLOGY_RESOLVE_URL = (
-    "http://ontology-agent-svc.default.svc.cluster.local:8084/resolve"
+ONTOLOGY_RESOLVE_URL = os.getenv(
+    "ONTOLOGY_RESOLVE_URL",
+    "http://ontology-agent-svc.default.svc.cluster.local:8084/resolve",
 )
 ONTOLOGY_TIMEOUT = 30  # seconds — ontology resolution is fast
 AGENT_HTTP_TIMEOUT = int(os.getenv("AGENT_HTTP_TIMEOUT", "120"))
