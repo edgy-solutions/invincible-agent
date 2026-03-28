@@ -1,12 +1,13 @@
 {{- if .Values.restate.enabled }}
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: {{ .Release.Name }}-restate
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
     {{- include "invincible-agent.selectorLabels" (dict "component" "restate" "root" .) | nindent 4 }}
 spec:
+  serviceName: {{ .Release.Name }}-restate
   replicas: {{ .Values.restate.replicas }}
   selector:
     matchLabels:
@@ -30,6 +31,11 @@ spec:
               containerPort: {{ .Values.restate.ingressPort }}
             - name: admin
               containerPort: {{ .Values.restate.adminPort }}
+          env:
+            - name: RESTATE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           resources:
             {{- toYaml .Values.restate.resources | nindent 12 }}
           volumeMounts:
@@ -47,22 +53,17 @@ spec:
               port: admin
             initialDelaySeconds: 10
             periodSeconds: 30
-      volumes:
-        - name: restate-data
-          persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-restate-data
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: {{ .Release.Name }}-restate-data
-  labels:
-    {{- include "invincible-agent.labels" . | nindent 4 }}
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: {{ .Values.restate.storage.size }}
+  volumeClaimTemplates:
+    - metadata:
+        name: restate-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.restate.storage.storageClass }}
+        storageClassName: {{ .Values.restate.storage.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.restate.storage.size }}
 ---
 apiVersion: v1
 kind: Service
