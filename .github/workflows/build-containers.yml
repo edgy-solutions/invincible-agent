@@ -87,18 +87,59 @@ jobs:
             echo "✅ Injected llm_utils.py into $BUILD_DIR"
           fi
 
-      - name: Build image with Cloud Native Buildpacks
+      - name: Install uv (for Dagster deployment)
+        if: matrix.service == 'dagster-control-plane'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build image (Dockerfile for Dagster, CNB for Agents)
         run: |
-          EXTRA_ARGS=""
-          if [ "${{ matrix.default_process }}" != "" ]; then
-            EXTRA_ARGS="--default-process ${{ matrix.default_process }}"
+          if [ "${{ matrix.service }}" == "dagster-control-plane" ]; then
+            echo "Building dagster-control-plane with Dockerfile (doc-tools mechanism)..."
+            
+            # Export requirements using uv
+            uv export --format requirements-txt --no-hashes > requirements.txt
+            uv export --only-group dev --format requirements-txt --no-hashes >> requirements.txt
+            
+            cat << 'EOF' > Dockerfile
+          FROM python:3.12-slim
+          ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+          
+          RUN apt-get update && apt-get install -y --no-install-recommends git libpq-dev gcc python3-dev && rm -rf /var/lib/apt/lists/*
+          
+          COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+          WORKDIR /app
+          
+          RUN uv venv /app/venv
+          COPY requirements.txt /app/
+          
+          RUN --mount=type=cache,target=/root/.cache/uv \
+              uv pip install --python /app/venv -r /app/requirements.txt
+              
+          COPY . /app
+          
+          ENV PATH="/app/venv/bin:$PATH"
+          ENV PYTHONPATH="/app"
+          
+          CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "iagent.definitions"]
+          EOF
+            
+            # Fix potential leading spaces from the heredoc formatting in yaml
+            sed -i 's/^[ \t]*//' Dockerfile
+            
+            docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} .
+          else
+            echo "Building ${{ matrix.service }} with Cloud Native Buildpacks..."
+            EXTRA_ARGS=""
+            if [ "${{ matrix.default_process }}" != "" ]; then
+              EXTRA_ARGS="--default-process ${{ matrix.default_process }}"
+            fi
+            pack build ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} \
+              --path ./${{ matrix.path }} \
+              --builder paketobuildpacks/builder-jammy-base \
+              --env BP_CPYTHON_VERSION=3.12 \
+              --trust-builder \
+              $EXTRA_ARGS
           fi
-          pack build ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} \
-            --path ./${{ matrix.path }} \
-            --builder paketobuildpacks/builder-jammy-base \
-            --env BP_CPYTHON_VERSION=3.12 \
-            --trust-builder \
-            $EXTRA_ARGS
 
       - name: Tag latest
         if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
