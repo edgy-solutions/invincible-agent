@@ -84,11 +84,20 @@ spec:
               value: {{ include "invincible-agent.pgHost" . }}
             - name: PGPORT
               value: {{ include "invincible-agent.pgPort" . | default "5432" | quote }}
+            - name: PGDATABASE
+              value: {{ include "invincible-agent.pgDatabase" . }}
+            - name: PGUSER
+              value: {{ include "invincible-agent.pgUser" . }}
           command:
             - sh
             - -c
             - |
-              until pg_isready; do echo "waiting for postgres..."; sleep 2; done
+              echo "Waiting for PostgreSQL at $PGHOST:$PGPORT (db: $PGDATABASE, user: $PGUSER)..."
+              until pg_isready -h $PGHOST -p $PGPORT -d $PGDATABASE -U $PGUSER; do 
+                echo "PostgreSQL not ready yet..."
+                sleep 2
+              done
+              echo "PostgreSQL is reachable."
       containers:
         - name: apply-schema
           image: {{ .Values.global.images.postgresClient | quote }}

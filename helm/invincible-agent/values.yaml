@@ -253,7 +253,7 @@ cortexUi:
   image:
     repository: edgy-solutions/cortex-ui/frontend
     tag: ""
-  port: 5173
+  port: 8080
   resources:
     requests:
       cpu: 100m
