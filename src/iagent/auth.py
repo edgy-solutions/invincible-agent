@@ -19,6 +19,10 @@ class User(BaseModel):
     email: str
     roles: List[str] = []
 
+# Global JWKS Client for caching public keys
+jwks_url = f"{KEYCLOAK_URL}/protocol/openid-connect/certs"
+jwks_client = PyJWKClient(jwks_url)
+
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     FastAPI dependency to validate the incoming OIDC token.
@@ -26,9 +30,6 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     try:
         # 1. Fetch Keycloak Public Keys (JWKS)
-        jwks_url = f"{KEYCLOAK_URL}/protocol/openid-connect/certs"
-        jwks_client = PyJWKClient(jwks_url)
-        
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         
         # 2. Decode and Verify JWT
@@ -63,15 +64,19 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.PyJWTError as e:
+        import logging
+        logging.error(f"JWT Validation Error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Token validation failed: {str(e)}",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except Exception as e:
+        import logging
+        logging.error(f"Authentication System Error (JWKS fetch or parsing): {str(e)}")
         # Catch-all for network errors to JWKS or unexpected parsing issues.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed",
+            detail=f"Authentication failed: {str(e)}",
             headers={"WWW-Authenticate": "Bearer"},
         )
