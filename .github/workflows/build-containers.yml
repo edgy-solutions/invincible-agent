@@ -97,8 +97,8 @@ jobs:
             echo "Building dagster-control-plane with Dockerfile (doc-tools mechanism)..."
             
             # Export requirements using uv
-            uv export --format requirements-txt --no-hashes > requirements.txt
-            uv export --only-group dev --format requirements-txt --no-hashes >> requirements.txt
+            uv export --no-emit-project --format requirements-txt --no-hashes > requirements.txt
+            uv export --no-emit-project --only-group dev --format requirements-txt --no-hashes >> requirements.txt
             
             cat << 'EOF' > Dockerfile
           FROM python:3.12-slim
@@ -117,8 +117,11 @@ jobs:
               
           COPY . /app
           
+          RUN --mount=type=cache,target=/root/.cache/uv \
+              uv pip install --python /app/venv -e .
+          
           ENV PATH="/app/venv/bin:$PATH"
-          ENV PYTHONPATH="/app"
+          ENV PYTHONPATH="/app/src:/app"
           
           CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "iagent.definitions"]
           EOF
