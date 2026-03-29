@@ -62,10 +62,13 @@ def init_baml_client():
     }
     
     active_client = mapping.get(provider, "OpenRouter")
-    logging.info(f"Configuring BAML client to use: {active_client}")
+    logging.info(f"Configuring BAML client MainAgent to use: {active_client}")
     try:
         cr = ClientRegistry()
         cr.set_primary(active_client)
+        # BAML functions explicitly request 'MainAgent', so we must overwrite it
+        # to ensure it strictly respects the SMOLAGENTS_PROVIDER dynamic variable
+        cr.add_llm_client(name="MainAgent", provider="fallback", options={"strategy": [active_client]})
         b.configure(client_registry=cr)
     except Exception as e:
         logging.error(f"Failed to configure BAML client: {e}")
