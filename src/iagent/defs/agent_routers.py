@@ -33,11 +33,11 @@ def _icon_card(icon_name: str, title: str, description: str) -> MetadataValue:
 # Service Discovery — defaults to K8s internal DNS, overridden via env
 # ---------------------------------------------------------------------------
 RESTATE_ANALYST_URL = os.getenv("RESTATE_ANALYST_URL", "http://restate-agent-svc.default.svc.cluster.local:8081")
-LANGGRAPH_SUPPORT_URL = os.getenv("LANGGRAPH_SUPPORT_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
+LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
 SWARMS_SCRAPER_URL = os.getenv("SWARMS_SCRAPER_URL", "http://swarms-agent-svc.default.svc.cluster.local:8083")
 DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
-NEO4J_EXPERT_URL = os.getenv("NEO4J_EXPERT_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
-PRESENTATION_AGENT_URL = os.getenv("PRESENTATION_AGENT_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
+NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
+PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
 ONTOLOGY_SERVICE_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-svc.default.svc.cluster.local:8084")
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ def trigger_restate_analyst() -> dict:
 def trigger_langgraph_support() -> dict:
     """Trigger Engine B (LangGraph) support agent pod."""
     response = requests.post(
-        f"{LANGGRAPH_SUPPORT_URL}/support",
+        f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
         timeout=300,
     )
     response.raise_for_status()
@@ -157,7 +157,7 @@ def trigger_datahub_tables() -> dict:
 def trigger_neo4j_expert() -> dict:
     """Trigger Engine E (Neo4j Graph Expert) agent pod."""
     response = requests.post(
-        f"{NEO4J_EXPERT_URL}/query_graph",
+        f"{NEO4J_EXPERT_SVC_URL}/query_graph",
         json={"user_query": "What are the common tools?", "persona": "MECHANIC"}, # Dummy payload for now as it wasn't specified
         timeout=300,
     )
@@ -181,7 +181,7 @@ def trigger_neo4j_expert() -> dict:
 def trigger_presentation_agent() -> dict:
     """Trigger Engine F (Presentation Agent) UI Router pod."""
     response = requests.post(
-        f"{PRESENTATION_AGENT_URL}/render_ui",
+        f"{PRESENTATION_AGENT_SVC_URL}/render_ui",
         json={"raw_data": {"demo": True}, "persona": "MECHANIC"}, # Dummy payload for UI UI
         timeout=30,
     )

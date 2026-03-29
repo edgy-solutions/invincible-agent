@@ -21,7 +21,7 @@ logger = logging.getLogger("iagent.supervisor")
 # ---------------------------------------------------------------------------
 ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-svc.default.svc.cluster.local:8084")
 NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
-DATAHUB_WRAPPER_SVC_URL = os.getenv("DATAHUB_WRAPPER_URL", os.getenv("DATAHUB_WRAPPER_SVC_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085"))
+DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
 LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
 PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
 
@@ -131,7 +131,7 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
     if domain == "DATA_ENGINEERING":
         # All DATA_ENGINEERING tasks are routed to DataHub Wrapper (Engine D)
         # It handles metadata discovery for dbt/Postgres via its active agent endpoint
-        engine_url = f"{DATAHUB_WRAPPER_SVC_URL}/query_metadata"
+        engine_url = f"{DATAHUB_WRAPPER_URL}/query_metadata"
     else:
         # Default to Engine E (Neo4j Graph Expert) for MAINTENANCE and SUSTAINMENT
         engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph"
