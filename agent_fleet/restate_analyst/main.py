@@ -336,7 +336,7 @@ async def process_message(ctx: ObjectContext, request: dict) -> dict:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Engine O: Ontology Service
             try:
-                _ONTOLOGY_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-service:8084")
+                _ONTOLOGY_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-service:8084")
                 resp = await client.get(f"{_ONTOLOGY_URL}/classes")
                 if resp.status_code == 200:
                     classes = resp.json().get("classes", [])

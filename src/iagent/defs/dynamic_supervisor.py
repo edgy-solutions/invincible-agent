@@ -19,7 +19,7 @@ logger = logging.getLogger("iagent.supervisor")
 # ---------------------------------------------------------------------------
 # Service Discovery — defaults to K8s internal DNS, overridden via env
 # ---------------------------------------------------------------------------
-ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL", os.getenv("ONTOLOGY_SVC_URL", "http://ontology-svc.default.svc.cluster.local:8084"))
+ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-svc.default.svc.cluster.local:8084")
 NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
 DATAHUB_WRAPPER_SVC_URL = os.getenv("DATAHUB_WRAPPER_URL", os.getenv("DATAHUB_WRAPPER_SVC_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085"))
 LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")

@@ -76,7 +76,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-_DAGSONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SVC_URL", "http://ontology-service:8084")
+_DAGSONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-service:8084")
 _RESTATE_INGRESS_URL = os.getenv("RESTATE_INGRESS_URL", "http://restate:8080")
 
 @app.get("/mesh/config")

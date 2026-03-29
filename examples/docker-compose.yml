@@ -240,7 +240,7 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
       - BAML_LOG_LEVEL=info
       # Service Discovery Overrides (Docker Internal)
-      - ONTOLOGY_SVC_URL=http://ontology-service:8084
+      - ONTOLOGY_SERVICE_URL=http://ontology-service:8084
       - NEO4J_EXPERT_SVC_URL=http://neo4j-expert:8086
       - LANGGRAPH_SUPPORT_SVC_URL=http://langgraph-support:8082
       - PRESENTATION_AGENT_SVC_URL=http://presentation-agent:8087
