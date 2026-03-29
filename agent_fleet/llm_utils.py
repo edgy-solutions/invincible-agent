@@ -40,18 +40,18 @@ def get_smolagent_model():
         # Default to Hugging Face
         return InferenceClientModel(model_id=model_id or "Qwen/Qwen2.5-Coder-32B-Instruct")
 
-def init_baml_client():
+def init_baml_client(baml_client_instance):
     """
     Configures the global BAML client dynamically based on SMOLAGENTS_PROVIDER.
-    Called automatically on first import of this module by fleet services.
+    Returns the newly configured BAML client object.
     """
     import logging
+    import os
     try:
-        from baml_client import b
         from baml_py import ClientRegistry
     except ImportError:
-        logging.warning("baml_client not found; skipping BAML configuration.")
-        return
+        logging.warning("baml_py not found; returning unconfigured BAML client.")
+        return baml_client_instance
 
     provider = os.getenv("SMOLAGENTS_PROVIDER", "openrouter").lower()
     
@@ -69,9 +69,7 @@ def init_baml_client():
         # BAML functions explicitly request 'MainAgent', so we must overwrite it
         # to ensure it strictly respects the SMOLAGENTS_PROVIDER dynamic variable
         cr.add_llm_client(name="MainAgent", provider="fallback", options={"strategy": [active_client]})
-        b.configure(client_registry=cr)
+        return baml_client_instance.with_options(client_registry=cr)
     except Exception as e:
         logging.error(f"Failed to configure BAML client: {e}")
-
-# Execute on module load to guarantee BAML applies it globally
-init_baml_client()
+        return baml_client_instance

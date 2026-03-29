@@ -42,9 +42,11 @@ from baml_client.types import SemanticResolution as BamlSemanticResolution  # no
 # Initialize runtime BAML configuration logic
 try:
     from ..llm_utils import init_baml_client
+    b = init_baml_client(b)
 except ImportError:
     try:
         from llm_utils import init_baml_client
+        b = init_baml_client(b)
     except ImportError:
         pass
 

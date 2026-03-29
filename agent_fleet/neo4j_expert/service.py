@@ -13,6 +13,17 @@ except ImportError:
 
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
+
+# Initialize runtime BAML configuration logic
+try:
+    from ..llm_utils import init_baml_client
+    b = init_baml_client(b)
+except ImportError:
+    try:
+        from llm_utils import init_baml_client
+        b = init_baml_client(b)
+    except ImportError:
+        pass
 from baml_client.types import PersonaTarget
 try:
     from .tools import execute_cypher, get_graph_schema

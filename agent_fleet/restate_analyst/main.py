@@ -54,6 +54,17 @@ except IndexError:
 from baml_client.types import AgentResponse, AgentStatus, AgentTask, BPMNInterviewState, TopologyUI  # noqa: E402
 from baml_client import b  # noqa: E402
 
+# Initialize runtime BAML configuration logic
+try:
+    from ..llm_utils import init_baml_client
+    b = init_baml_client(b)
+except ImportError:
+    try:
+        from llm_utils import init_baml_client
+        b = init_baml_client(b)
+    except ImportError:
+        pass
+
 # ---------------------------------------------------------------------------
 # Smolagents imports — only used inside the Restate handler.
 # ---------------------------------------------------------------------------
