@@ -7,6 +7,15 @@ import uvicorn
 
 from baml_client import b
 
+# Initialize runtime BAML configuration logic
+try:
+    from ..llm_utils import init_baml_client
+except ImportError:
+    try:
+        from llm_utils import init_baml_client
+    except ImportError:
+        pass
+
 app = FastAPI(title="Engine F - Presentation Agent")
 
 class RenderRequest(BaseModel):

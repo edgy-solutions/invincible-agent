@@ -39,6 +39,15 @@ except IndexError:
 from baml_client import b  # noqa: E402  — BAML async client
 from baml_client.types import SemanticResolution as BamlSemanticResolution  # noqa: E402
 
+# Initialize runtime BAML configuration logic
+try:
+    from ..llm_utils import init_baml_client
+except ImportError:
+    try:
+        from llm_utils import init_baml_client
+    except ImportError:
+        pass
+
 # ---------------------------------------------------------------------------
 # RDF namespace constants
 # ---------------------------------------------------------------------------
