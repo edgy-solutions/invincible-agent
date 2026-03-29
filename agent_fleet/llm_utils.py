@@ -1,7 +1,5 @@
 import os
 from dotenv import load_dotenv
-from smolagents import InferenceClientModel, OpenAIServerModel
-
 # Load environment variables from .env file if it exists
 load_dotenv()
 
@@ -10,6 +8,8 @@ def get_smolagent_model():
     Factory to create a smolagents model based on environment variables.
     Supports OpenRouter (default if API key present), Ollama, and Hugging Face.
     """
+    from smolagents import InferenceClientModel, OpenAIServerModel
+
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     # Default to openrouter if key is present, otherwise 'hf'
     default_provider = "openrouter" if openrouter_key else "hf"
