@@ -58,7 +58,7 @@ load_dotenv()
 
 _DAGSTER_WEBSERVER_URL = os.getenv("DAGSTER_WEBSERVER_URL", "http://localhost:3000")
 _DAGSTER_REPOSITORY = os.getenv("DAGSTER_REPOSITORY", "__repository__")
-_DAGSTER_LOCATION = os.getenv("DAGSTER_LOCATION", "iagent.definitions")
+_DAGSTER_LOCATION = os.getenv("DAGSTER_LOCATION", "iagent")
 
 # ── Lifespan ──────────────────────────────────────────────
 

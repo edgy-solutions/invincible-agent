@@ -34,6 +34,11 @@ data:
   NEO4J_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-e:{{ .Values.engineE.port }}"
   PRESENTATION_AGENT_SVC_URL: "http://{{ .Release.Name }}-engine-f:{{ .Values.engineF.port }}"
   
+  # Dagster Discovery
+  DAGSTER_WEBSERVER_URL: "http://{{ .Release.Name }}-dagster:{{ .Values.dagster.webserver.port }}"
+  DAGSTER_LOCATION: "iagent"
+  DAGSTER_REPOSITORY: "__repository__"
+
   # legacy/compat
   ONTOLOGY_RESOLVE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}/resolve"
   DATAHUB_GMS_URL: {{ .Values.engineD.env.DATAHUB_GMS_URL | quote }}
