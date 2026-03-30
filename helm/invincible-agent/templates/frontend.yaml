@@ -89,6 +89,13 @@ spec:
                 name: {{ .Release.Name }}-config
             - secretRef:
                 name: {{ .Release.Name }}-secrets
+          {{- if .Values.cortexBff.env }}
+          env:
+            {{- range $k, $v := .Values.cortexBff.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
           resources:
             {{- toYaml .Values.cortexBff.resources | nindent 12 }}
           readinessProbe:

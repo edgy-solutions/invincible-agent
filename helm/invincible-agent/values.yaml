@@ -291,6 +291,7 @@ cortexBff:
     limits:
       cpu: 500m
       memory: 512Mi
+  env: {}
   ingress:
     enabled: false
     className: ""
