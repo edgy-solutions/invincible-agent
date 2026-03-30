@@ -66,6 +66,19 @@ def init_baml_client(baml_client_instance):
     try:
         cr = ClientRegistry()
         cr.set_primary(active_client)
+
+        # Redefine Ollama client with the correct base URL from environment
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
+        cr.add_llm_client(
+            name="Ollama",
+            provider="openai",
+            options={
+                "base_url": ollama_url,
+                "api_key": "ollama",
+                "model": os.getenv("SMOLAGENTS_MODEL", "gpt-oss-120b"),
+            }
+        )
+
         # BAML functions explicitly request 'MainAgent', so we must overwrite it
         # to ensure it strictly respects the SMOLAGENTS_PROVIDER dynamic variable
         cr.add_llm_client(name="MainAgent", provider="fallback", options={"strategy": [active_client]})

@@ -16,7 +16,7 @@ client<llm> OpenRouter {
 client<llm> Ollama {
   provider openai
   options {
-    base_url "http://host.docker.internal:11434/v1" // Works inside Docker to reach host
+    base_url env.OLLAMA_BASE_URL // Configurable via environment variable
     api_key "ollama"
     model "gpt-oss-120b" // Updated to GPT-OSS-120B
   }
