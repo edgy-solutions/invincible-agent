@@ -72,9 +72,60 @@ graph TD
     B -- Status/Output --> G
     G --> UI([Semantic UI Instruction])
 
-    style D fill:#4F43DD,color:#fff
     style G fill:#009688,color:#fff
     style B fill:#326CE5,color:#fff
+```
+
+### Query Execution Flow
+
+The following sequence diagram illustrates the end-to-end flow from a user query to the final intent-based UI presentation.
+
+```mermaid
+sequenceDiagram
+    participant UI as User / React Frontend
+    participant G as Engine G (BFF)
+    participant O as Engine O (Ontology)
+    participant D as Dagster (Orchestrator)
+    participant E as Engine E (Neo4j Expert)
+    participant B as Engine B (LangGraph)
+    participant F as Engine F (Presentation)
+
+    UI->>G: POST /interview/stream {message, session_id}
+    G->>O: POST /route_and_plan {query}
+    O-->>G: {intent, domain, task_plan}
+
+    G->>D: GraphQL: launchRun (supervisor_query_job)
+    D-->>G: {run_id}
+    G-->>UI: SSE: Status (thinking: "Dagster Run Initiated")
+
+    rect rgb(240, 240, 240)
+    Note over G, D: Async Polling Loop (SSE)
+    G->>D: GraphQL: GetRunEvents + GetRunStatus
+    D-->>G: {Materializations, Status}
+    G-->>UI: SSE: Event (plan: "Agents Assembling" personas)
+    G-->>UI: SSE: Status (thinking: "Fanning out to experts...")
+    end
+
+    Note over D, E: Phase 2: Dynamic Fan-out
+    par for each persona in plan
+        D->>E: POST /query_graph (Sub-Task)
+        E-->>D: {GraphExpertResponse}
+    end
+
+    Note over D, B: Phase 3: Synthesis & UI Mapping
+    D->>B: POST /support (Stateful Synthesis)
+    B-->>D: {AgentResponse}
+
+    D->>F: POST /render_ui (Map to Archetypes)
+    F-->>D: {DashboardUI}
+
+    D->>D: Materialize generate_ui_payload
+
+    G->>D: GraphQL: Fetch final metadata
+    G-->>UI: SSE: Status (found: "UI Payload Retrieved")
+    G-->>UI: SSE: final_payload {DashboardUI}
+
+    Note over UI: RadarReveal Animation & Dashboard Render
 ```
 
 ---
