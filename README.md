@@ -89,34 +89,43 @@ sequenceDiagram
     participant E as Engine E (Neo4j Expert)
     participant B as Engine B (LangGraph)
     participant F as Engine F (Presentation)
+    participant LLM as LLM (OpenRouter/Ollama)
 
-    UI->>G: POST /interview/stream {message, session_id}
-    G->>O: POST /route_and_plan {query}
+    UI->>G: POST /interview/stream {message}
+    G->>O: POST /route_and_plan
+    O->>LLM: BAML: route_and_plan (intent/domain)
+    LLM-->>O: {Decomposed Task Plan}
     O-->>G: {intent, domain, task_plan}
 
     G->>D: GraphQL: launchRun (supervisor_query_job)
     D-->>G: {run_id}
     G-->>UI: SSE: Status (thinking: "Dagster Run Initiated")
 
-    rect rgb(240, 240, 240)
+    rect rgb(51, 51, 51)
     Note over G, D: Async Polling Loop (SSE)
     G->>D: GraphQL: GetRunEvents + GetRunStatus
     D-->>G: {Materializations, Status}
-    G-->>UI: SSE: Event (plan: "Agents Assembling" personas)
-    G-->>UI: SSE: Status (thinking: "Fanning out to experts...")
+    G-->>UI: SSE: Event (plan: "Agents Assembling")
+    G-->>UI: SSE: Status (thinking: "Fanning out...")
     end
 
     Note over D, E: Phase 2: Dynamic Fan-out
     par for each persona in plan
-        D->>E: POST /query_graph (Sub-Task)
-        E-->>D: {GraphExpertResponse}
+        D->>E: POST /query_graph
+        E->>LLM: BAML: execute_cypher (Query Knowledge Graph)
+        LLM-->>E: {Persona-Typed Response}
+        E-->>D: {ExpertResponse}
     end
 
     Note over D, B: Phase 3: Synthesis & UI Mapping
-    D->>B: POST /support (Stateful Synthesis)
+    D->>B: POST /support
+    B->>LLM: BAML: synthesize (Cross-Domain Merge)
+    LLM-->>B: {Final Narrative}
     B-->>D: {AgentResponse}
 
-    D->>F: POST /render_ui (Map to Archetypes)
+    D->>F: POST /render_ui
+    F->>LLM: BAML: design_ui (Strategy Mapping)
+    LLM-->>F: {DashboardUI Archetypes}
     F-->>D: {DashboardUI}
 
     D->>D: Materialize generate_ui_payload
