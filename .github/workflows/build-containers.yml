@@ -50,6 +50,9 @@ jobs:
           - service: presentation-agent
             path: agent_fleet/presentation_agent
             port: "8087"
+          - service: weaviate-expert
+            path: agent_fleet/weaviate_expert
+            port: "8088"
           - service: cortex-bff
             path: .
             port: "8000"
