@@ -11,30 +11,43 @@ from langchain_weaviate import WeaviateVectorStore
 from langchain_community.embeddings import FakeEmbeddings
 
 try:
-    from ..llm_utils import get_smolagent_model
-except ImportError:
+    # Workspace root (Container)
     from llm_utils import get_smolagent_model
+except ImportError:
+    try:
+        # Module-relative (Local dev)
+        from .llm_utils import get_smolagent_model
+    except ImportError:
+        # Parent-relative (Local dev)
+        from ..llm_utils import get_smolagent_model
 
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
 
 # Initialize runtime BAML configuration logic
 try:
-    from ..llm_utils import init_baml_client
+    # Workspace root (Container)
+    from llm_utils import init_baml_client
     b = init_baml_client(b)
 except ImportError:
     try:
-        from llm_utils import init_baml_client
+        # Module-relative
+        from .llm_utils import init_baml_client
         b = init_baml_client(b)
     except ImportError:
-        pass
+        try:
+            # Parent-relative
+            from ..llm_utils import init_baml_client
+            b = init_baml_client(b)
+        except ImportError:
+            pass
 from baml_client.types import PersonaTarget
 try:
-    from .tools import execute_cypher, get_graph_schema
-    from .prompts import PERSONA_PROMPTS
-except ImportError:
     from tools import execute_cypher, get_graph_schema
     from prompts import PERSONA_PROMPTS
+except ImportError:
+    from .tools import execute_cypher, get_graph_schema
+    from .prompts import PERSONA_PROMPTS
 
 service = Service("Neo4jExpertService")
 

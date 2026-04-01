@@ -24,9 +24,15 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 try:
-    from .service import service as expert_service
-except ImportError:
+    # Standalone microservice mode (Workspace Root)
     from service import service as expert_service
+except ImportError:
+    # Local dev mode (Imported as submodule)
+    try:
+        from .service import service as expert_service
+    except ImportError:
+        # Fallback for parent-dir execution
+        from agent_fleet.neo4j_expert.service import service as expert_service
 
 # Initialize FastAPI
 app = FastAPI(title="Engine E: Neo4j Graph Expert")

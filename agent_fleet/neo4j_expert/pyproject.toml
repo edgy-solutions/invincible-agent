@@ -16,6 +16,8 @@ dependencies = [
     "neo4j",
     "mem0ai",
     "weaviate-client",
+    "langchain-weaviate",
+    "langchain-community",
     "python-dotenv",
     "pysqlite3-binary",
 ]
