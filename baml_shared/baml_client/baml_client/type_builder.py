@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -38,20 +38,20 @@ class TypeBuilder(type_builder.TypeBuilder):
         return BPMNNodeTypeViewer(self)
 
     @property
-    def Domain(self) -> "DomainViewer":
-        return DomainViewer(self)
+    def Domain(self) -> "DomainBuilder":
+        return DomainBuilder(self)
 
     @property
-    def Intent(self) -> "IntentViewer":
-        return IntentViewer(self)
+    def Intent(self) -> "IntentBuilder":
+        return IntentBuilder(self)
 
     @property
     def MoodType(self) -> "MoodTypeViewer":
         return MoodTypeViewer(self)
 
     @property
-    def PersonaTarget(self) -> "PersonaTargetViewer":
-        return PersonaTargetViewer(self)
+    def PersonaTarget(self) -> "PersonaTargetBuilder":
+        return PersonaTargetBuilder(self)
 
     @property
     def SemanticArchetype(self) -> "SemanticArchetypeViewer":
@@ -63,7 +63,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 23
+    # Generated classes 24
     # #########################################################################
 
     @property
@@ -121,6 +121,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def HazardUI(self) -> "HazardUIViewer":
         return HazardUIViewer(self)
+
+    @property
+    def KnowledgeResponse(self) -> "KnowledgeResponseViewer":
+        return KnowledgeResponseViewer(self)
 
     @property
     def LogisticsResponse(self) -> "LogisticsResponseViewer":
@@ -264,7 +268,7 @@ class DomainAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.enum("Domain")
-        self._values: typing.Set[str] = set([  "MAINTENANCE",  "SUSTAINMENT",  "DATA_ENGINEERING",  "UNKNOWN",  ])
+        self._values: typing.Set[str] = set([  ])
         self._vals = DomainValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
@@ -275,13 +279,18 @@ class DomainAst:
         return self._vals
 
 
-class DomainViewer(DomainAst):
+class DomainBuilder(DomainAst):
     def __init__(self, tb: type_builder.TypeBuilder):
         super().__init__(tb)
 
     
-    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
-        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    def list_values(self) -> typing.List[typing.Tuple[str, baml_py.EnumValueBuilder]]:
+        return [(name, self._bldr.value(name)) for name in self._values]
+
+    def add_value(self, name: str) -> baml_py.EnumValueBuilder:
+        if name in self._values:
+            raise ValueError(f"Value {name} already exists.")
+        return self._bldr.value(name)
     
 
 class DomainValues:
@@ -290,22 +299,11 @@ class DomainValues:
         self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
 
     
-    
-    @property
-    def MAINTENANCE(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("MAINTENANCE"))
-    
-    @property
-    def SUSTAINMENT(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("SUSTAINMENT"))
-    
-    @property
-    def DATA_ENGINEERING(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("DATA_ENGINEERING"))
-    
-    @property
-    def UNKNOWN(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("UNKNOWN"))
+    def __getattr__(self, name: str) -> baml_py.EnumValueBuilder:
+        if name not in self.__values:
+            raise AttributeError(f"Value {name} not found.")
+        return self.__bldr.value(name)
+
     
     
 
@@ -314,7 +312,7 @@ class IntentAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.enum("Intent")
-        self._values: typing.Set[str] = set([  "ONE_SHOT_QUERY",  "PROCESS_CREATION",  ])
+        self._values: typing.Set[str] = set([  ])
         self._vals = IntentValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
@@ -325,13 +323,18 @@ class IntentAst:
         return self._vals
 
 
-class IntentViewer(IntentAst):
+class IntentBuilder(IntentAst):
     def __init__(self, tb: type_builder.TypeBuilder):
         super().__init__(tb)
 
     
-    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
-        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    def list_values(self) -> typing.List[typing.Tuple[str, baml_py.EnumValueBuilder]]:
+        return [(name, self._bldr.value(name)) for name in self._values]
+
+    def add_value(self, name: str) -> baml_py.EnumValueBuilder:
+        if name in self._values:
+            raise ValueError(f"Value {name} already exists.")
+        return self._bldr.value(name)
     
 
 class IntentValues:
@@ -340,14 +343,11 @@ class IntentValues:
         self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
 
     
-    
-    @property
-    def ONE_SHOT_QUERY(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("ONE_SHOT_QUERY"))
-    
-    @property
-    def PROCESS_CREATION(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("PROCESS_CREATION"))
+    def __getattr__(self, name: str) -> baml_py.EnumValueBuilder:
+        if name not in self.__values:
+            raise AttributeError(f"Value {name} not found.")
+        return self.__bldr.value(name)
+
     
     
 
@@ -410,7 +410,7 @@ class PersonaTargetAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.enum("PersonaTarget")
-        self._values: typing.Set[str] = set([  "MECHANIC",  "TECH_WRITER",  "LOGISTICS",  "AUDITOR",  "PROCESS_ENGINEER",  "DATA_STEWARD",  ])
+        self._values: typing.Set[str] = set([  ])
         self._vals = PersonaTargetValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
@@ -421,13 +421,18 @@ class PersonaTargetAst:
         return self._vals
 
 
-class PersonaTargetViewer(PersonaTargetAst):
+class PersonaTargetBuilder(PersonaTargetAst):
     def __init__(self, tb: type_builder.TypeBuilder):
         super().__init__(tb)
 
     
-    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
-        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    def list_values(self) -> typing.List[typing.Tuple[str, baml_py.EnumValueBuilder]]:
+        return [(name, self._bldr.value(name)) for name in self._values]
+
+    def add_value(self, name: str) -> baml_py.EnumValueBuilder:
+        if name in self._values:
+            raise ValueError(f"Value {name} already exists.")
+        return self._bldr.value(name)
     
 
 class PersonaTargetValues:
@@ -436,30 +441,11 @@ class PersonaTargetValues:
         self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
 
     
-    
-    @property
-    def MECHANIC(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("MECHANIC"))
-    
-    @property
-    def TECH_WRITER(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("TECH_WRITER"))
-    
-    @property
-    def LOGISTICS(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("LOGISTICS"))
-    
-    @property
-    def AUDITOR(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("AUDITOR"))
-    
-    @property
-    def PROCESS_ENGINEER(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("PROCESS_ENGINEER"))
-    
-    @property
-    def DATA_STEWARD(self) -> type_builder.EnumValueViewer:
-        return type_builder.EnumValueViewer(self.__bldr.value("DATA_STEWARD"))
+    def __getattr__(self, name: str) -> baml_py.EnumValueBuilder:
+        if name not in self.__values:
+            raise AttributeError(f"Value {name} not found.")
+        return self.__bldr.value(name)
+
     
     
 
@@ -562,7 +548,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 23
+# Generated classes 24
 # #########################################################################
 
 class AgentResponseAst:
@@ -1223,6 +1209,53 @@ class HazardUIProperties:
     @property
     def hazards(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("hazards"))
+    
+    
+
+
+class KnowledgeResponseAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("KnowledgeResponse")
+        self._properties: typing.Set[str] = set([  "summary",  "referenced_documents",  "confidence_score",  ])
+        self._props = KnowledgeResponseProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "KnowledgeResponseProperties":
+        return self._props
+
+
+class KnowledgeResponseViewer(KnowledgeResponseAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class KnowledgeResponseProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def summary(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("summary"))
+    
+    @property
+    def referenced_documents(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("referenced_documents"))
+    
+    @property
+    def confidence_score(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("confidence_score"))
     
     
 

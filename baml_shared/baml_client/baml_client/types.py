@@ -54,14 +54,10 @@ class BPMNNodeType(str, Enum):
     TimerEvent = "TimerEvent"
 
 class Domain(str, Enum):
-    MAINTENANCE = "MAINTENANCE"
-    SUSTAINMENT = "SUSTAINMENT"
-    DATA_ENGINEERING = "DATA_ENGINEERING"
-    UNKNOWN = "UNKNOWN"
+    pass
 
 class Intent(str, Enum):
-    ONE_SHOT_QUERY = "ONE_SHOT_QUERY"
-    PROCESS_CREATION = "PROCESS_CREATION"
+    pass
 
 class MoodType(str, Enum):
     # The visual tone or mood to pass to the frontend
@@ -75,12 +71,7 @@ class MoodType(str, Enum):
 class PersonaTarget(str, Enum):
     # Target persona for the graph expert response
     
-    MECHANIC = "MECHANIC"
-    TECH_WRITER = "TECH_WRITER"
-    LOGISTICS = "LOGISTICS"
-    AUDITOR = "AUDITOR"
-    PROCESS_ENGINEER = "PROCESS_ENGINEER"
-    DATA_STEWARD = "DATA_STEWARD"
+    pass
 
 class SemanticArchetype(str, Enum):
     PROCESS_TOPOLOGY = "PROCESS_TOPOLOGY"
@@ -94,7 +85,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (23)
+# Generated classes (24)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -113,7 +104,7 @@ class AgentTask(BaseModel):
     semantic_context: typing.Optional["SemanticResolution"] = Field(default=None, description='Optional pre-resolved semantic context. When present, agents can skip their own classification step.')
 
 class AgentTaskDefinition(BaseModel):
-    target_persona: PersonaTarget
+    target_persona: typing.Union[PersonaTarget, str]
     sub_query: str
 
 class AuditResponse(BaseModel):
@@ -173,6 +164,11 @@ class HazardUI(BaseModel):
     severity: SeverityLevel
     hazards: typing.List["UIEntity"]
 
+class KnowledgeResponse(BaseModel):
+    summary: str = Field(description='A clear, professional summary answering the user\'s knowledge or policy question. Format in Markdown.')
+    referenced_documents: typing.List[str] = Field(description='List of manual sections, policies, or documents cited in the summary.')
+    confidence_score: float
+
 class LogisticsResponse(BaseModel):
     impacted_platforms: typing.List[str]
     blocked_procedures: typing.List[str]
@@ -184,8 +180,8 @@ class MechanicResponse(BaseModel):
     short_answer: str
 
 class MeshRoutingDecision(BaseModel):
-    intent: Intent
-    domain: Domain
+    intent: typing.Union[Intent, str]
+    domain: typing.Union[Domain, str]
     confidence: float = Field(description='Confidence in both intent and domain classification.')
     reasoning: str = Field(description='Why you routed it this way.')
     task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.')

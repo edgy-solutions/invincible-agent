@@ -131,6 +131,42 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     try:
         weaviate_client.connect()
 
+        from smolagents import tool
+        import weaviate.classes as wvc
+
+        # The collection name where doc-tools ingests manual chunks
+        doc_collection_name = os.getenv("WEAVIATE_DOC_COLLECTION", "DocumentChunks")
+
+        @tool
+        def search_manual_text(semantic_query: str) -> str:
+            """
+            Searches the actual text of the technical manuals for conceptual, symptom, or troubleshooting information.
+            Use this when the user asks a "how-to", "why", or describes a symptom that isn't a simple part lookup.
+            
+            Args:
+                semantic_query: The natural language search phrase (e.g., "troubleshoot whining noise on corroded rotor").
+            """
+            try:
+                collection = weaviate_client.collections.get(doc_collection_name)
+                
+                # 🔗 STRICT DOMAIN SEGREGATION APPLIED TO VECTOR SEARCH
+                response = collection.query.near_text(
+                    query=semantic_query,
+                    limit=3,
+                    filters=wvc.query.Filter.by_property("domain").equal(domain_label)
+                )
+                
+                if not response.objects:
+                    return "No relevant manual text found for this query in the current domain."
+                    
+                results = []
+                for obj in response.objects:
+                    results.append(obj.properties.get("text", ""))
+                    
+                return "\n\n---\n\n".join(results)
+            except Exception as e:
+                return f"Error executing semantic search: {str(e)}"
+
         # 🔗 LangChain Bridge (Bypasses mem0's rigid Weaviate config)
         # WeaviateVectorStore requires an embedding model, so we provide a fake one 
         # since mem0 handles embeddings internally before passing them to the store.
@@ -173,7 +209,7 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             
             # Instantiate the agent giving it ONLY the Neo4j tools and persona
             agent = CodeAgent(
-                tools=[execute_cypher, get_graph_schema],
+                tools=[execute_cypher, get_graph_schema, search_manual_text],
                 model=model,
                 add_base_tools=False
             )
@@ -190,9 +226,17 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             final_answer("- **IID** - AII_2265525-X.pdf")
             </code>
             """
+
+            # 🔗 HYBRID REASONING PROTOCOL
+            hybrid_instructions = """
+            HYBRID REASONING PROTOCOL:
+            You now have access to both Graph (Neo4j) and Text (Weaviate) databases.
+            - If the user describes a symptom or asks a conceptual question, use `search_manual_text` FIRST to read the manual and find the Procedure ID or required actions.
+            - Once you have the Procedure ID or Part Number from the text, use `execute_cypher` to traverse the graph and find related tools, hazards, or components.
+            """
             
-            # Combine the system prompt, syntax reminder, and user query into a single instruction
-            full_query = f"{system_prompt_with_memory}\n{syntax_reminder}\n\nUser Query: {user_query}"
+            # Combine the system prompt, logic, and user query into a single instruction
+            full_query = f"{system_prompt_with_memory}\n{hybrid_instructions}\n{syntax_reminder}\n\nUser Query: {user_query}"
             
             # Offload the blocking agent run to a background thread!
             return str(await asyncio.to_thread(agent.run, full_query))

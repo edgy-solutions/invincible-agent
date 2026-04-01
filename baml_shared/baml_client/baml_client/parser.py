@@ -47,6 +47,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatGraphResponse", llm_response=llm_response, mode="request")
         return typing.cast(types.GraphExpertResponse, __result__)
 
+    def FormatKnowledgeResponse(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.KnowledgeResponse:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatKnowledgeResponse", llm_response=llm_response, mode="request")
+        return typing.cast(types.KnowledgeResponse, __result__)
+
     def IterateBPMNGraph(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.BPMNInterviewState:
@@ -96,6 +102,12 @@ class LlmStreamParser:
     ) -> stream_types.GraphExpertResponse:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatGraphResponse", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.GraphExpertResponse, __result__)
+
+    def FormatKnowledgeResponse(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.KnowledgeResponse:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatKnowledgeResponse", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.KnowledgeResponse, __result__)
 
     def IterateBPMNGraph(
         self, llm_response: str, baml_options: BamlCallOptions = {},

@@ -136,7 +136,7 @@ class BamlSyncClient:
                 "raw_data": raw_data,"persona": persona,
             })
             return typing.cast(types.DashboardUI, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
+    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
         # Check if on_tick is provided
@@ -150,6 +150,20 @@ class BamlSyncClient:
                 "raw_text": raw_text,"persona": persona,
             })
             return typing.cast(types.GraphExpertResponse, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def FormatKnowledgeResponse(self, raw_text: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.KnowledgeResponse:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.FormatKnowledgeResponse(raw_text=raw_text,domain=domain,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="FormatKnowledgeResponse", args={
+                "raw_text": raw_text,"domain": domain,
+            })
+            return typing.cast(types.KnowledgeResponse, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
         baml_options: BamlCallOptions = {},
     ) -> types.BPMNInterviewState:
@@ -164,18 +178,18 @@ class BamlSyncClient:
                 "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
             })
             return typing.cast(types.BPMNInterviewState, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def RouteAndPlan(self, user_query: str,active_personas: str,active_domains: str,
+    def RouteAndPlan(self, user_query: str,
         baml_options: BamlCallOptions = {},
     ) -> types.MeshRoutingDecision:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
-            __stream__ = self.stream.RouteAndPlan(user_query=user_query,active_personas=active_personas,active_domains=active_domains,
+            __stream__ = self.stream.RouteAndPlan(user_query=user_query,
                 baml_options=baml_options)
             return __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="RouteAndPlan", args={
-                "user_query": user_query,"active_personas": active_personas,"active_domains": active_domains,
+                "user_query": user_query,
             })
             return typing.cast(types.MeshRoutingDecision, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
@@ -237,7 +251,7 @@ class BamlStreamClient:
           lambda x: typing.cast(types.DashboardUI, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
+    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.GraphExpertResponse, types.GraphExpertResponse]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="FormatGraphResponse", args={
@@ -247,6 +261,18 @@ class BamlStreamClient:
           __result__,
           lambda x: typing.cast(stream_types.GraphExpertResponse, x.cast_to(types, types, stream_types, True, __runtime__)),
           lambda x: typing.cast(types.GraphExpertResponse, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def FormatKnowledgeResponse(self, raw_text: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.KnowledgeResponse, types.KnowledgeResponse]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="FormatKnowledgeResponse", args={
+            "raw_text": raw_text,"domain": domain,
+        })
+        return baml_py.BamlSyncStream[stream_types.KnowledgeResponse, types.KnowledgeResponse](
+          __result__,
+          lambda x: typing.cast(stream_types.KnowledgeResponse, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.KnowledgeResponse, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
@@ -261,11 +287,11 @@ class BamlStreamClient:
           lambda x: typing.cast(types.BPMNInterviewState, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def RouteAndPlan(self, user_query: str,active_personas: str,active_domains: str,
+    def RouteAndPlan(self, user_query: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.MeshRoutingDecision, types.MeshRoutingDecision]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="RouteAndPlan", args={
-            "user_query": user_query,"active_personas": active_personas,"active_domains": active_domains,
+            "user_query": user_query,
         })
         return baml_py.BamlSyncStream[stream_types.MeshRoutingDecision, types.MeshRoutingDecision](
           __result__,
@@ -314,11 +340,18 @@ class BamlHttpRequestClient:
             "raw_data": raw_data,"persona": persona,
         }, mode="request")
         return __result__
-    def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
+    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FormatGraphResponse", args={
             "raw_text": raw_text,"persona": persona,
+        }, mode="request")
+        return __result__
+    def FormatKnowledgeResponse(self, raw_text: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FormatKnowledgeResponse", args={
+            "raw_text": raw_text,"domain": domain,
         }, mode="request")
         return __result__
     def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
@@ -328,11 +361,11 @@ class BamlHttpRequestClient:
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
         }, mode="request")
         return __result__
-    def RouteAndPlan(self, user_query: str,active_personas: str,active_domains: str,
+    def RouteAndPlan(self, user_query: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
-            "user_query": user_query,"active_personas": active_personas,"active_domains": active_domains,
+            "user_query": user_query,
         }, mode="request")
         return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
@@ -371,11 +404,18 @@ class BamlHttpStreamRequestClient:
             "raw_data": raw_data,"persona": persona,
         }, mode="stream")
         return __result__
-    def FormatGraphResponse(self, raw_text: str,persona: types.PersonaTarget,
+    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FormatGraphResponse", args={
             "raw_text": raw_text,"persona": persona,
+        }, mode="stream")
+        return __result__
+    def FormatKnowledgeResponse(self, raw_text: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FormatKnowledgeResponse", args={
+            "raw_text": raw_text,"domain": domain,
         }, mode="stream")
         return __result__
     def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
@@ -385,11 +425,11 @@ class BamlHttpStreamRequestClient:
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
         }, mode="stream")
         return __result__
-    def RouteAndPlan(self, user_query: str,active_personas: str,active_domains: str,
+    def RouteAndPlan(self, user_query: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
-            "user_query": user_query,"active_personas": active_personas,"active_domains": active_domains,
+            "user_query": user_query,
         }, mode="stream")
         return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,

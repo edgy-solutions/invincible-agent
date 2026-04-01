@@ -38,6 +38,7 @@ except IndexError:
 
 from baml_client import b  # noqa: E402  — BAML async client
 from baml_client.types import SemanticResolution as BamlSemanticResolution  # noqa: E402
+from baml_client.type_builder import TypeBuilder
 
 # Initialize runtime BAML configuration logic
 try:
@@ -100,6 +101,18 @@ MASTER_PERSONAS = {
         "ui": {"label": "Data Steward", "icon": "Database", "color": "text-cyan-400", "bg": "bg-cyan-400/10 border-cyan-400/30"},
         "llm_prompt": "Databases, dbt models, Postgres schemas, telemetry data pipelines, and metadata. Any data engineering query MUST go to the DATA_STEWARD."
     }
+}
+
+MASTER_INTENTS = {
+    "DIAGNOSTIC_AND_REPAIR": "PRIORITY INTENT. User is troubleshooting a breakdown or failure. This applies to physical machine symptoms AND software/data pipeline bugs. Requires reading documentation to find the fix.",
+    
+    "STRUCTURAL_QUERY": "User is asking strictly about how things are linked together. This applies to physical assemblies (parts/inventory) AND data architecture (DataHub lineage, Postgres schemas, model dependencies). NO troubleshooting required.",
+    
+    "KNOWLEDGE_RETRIEVAL": "User wants to read, summarize, or learn about policies, theories, definitions, or standard operating procedures. NO physical parts lists, data schemas, or troubleshooting required.",
+    
+    "PROCESS_CREATION": "User wants to build, design, write, or publish a NEW workflow, process, software code, or data product.",
+    
+    "SYSTEM_META_AND_REJECTION": "User is asking what the system can do, how to use the system, OR asking a question completely outside the scope of technical maintenance and sustainment. The system must ONLY explain its capabilities or cleanly refuse the out-of-scope request. NO open-ended conversation."
 }
 
 MASTER_DOMAINS = {
@@ -397,31 +410,42 @@ async def plan_query(request: PlanRequest) -> dict:
 @app.post("/route_and_plan")
 async def route_and_plan(request: RouteAndPlanRequest) -> dict:
     """
-    Act as the Kernel Scheduler. Decide whether the query is a ONE_SHOT_QUERY
-    (requiring Graph DB) or a PROCESS_CREATION (requiring the Restate Interviewer),
-    and determine the target domain.
+    Act as the Kernel Scheduler using Dynamic BAML Enums.
     """
     try:
-        # INJECT BOTH active_personas AND active_domains HERE
+        # Initialize the TypeBuilder
+        tb = TypeBuilder()
+        
+        # Dynamically build the Enums from our SSOT dictionaries
+        for intent_name, description in MASTER_INTENTS.items():
+            tb.Intent.add_value(intent_name, description=description)
+            
+        for domain_name, description in MASTER_DOMAINS.items():
+            tb.Domain.add_value(domain_name, description=description)
+            
+        for persona_name, data in MASTER_PERSONAS.items():
+            tb.PersonaTarget.add_value(persona_name, description=data["llm_prompt"])
+
+        # Execute BAML, passing the TypeBuilder via baml_options
         decision = await b.RouteAndPlan(
             user_query=request.query,
-            active_personas=get_baml_persona_string(),
-            active_domains=get_baml_domain_string()
+            baml_options={"tb": tb}
         )
         res = decision.model_dump()
         
-        # Inject domain into tasks so downstream consumers (Dagster/etc.) always see it
-        # This fixes the "Invisible Bug" where domain was lost in the decomposition.
+        # 🛡️ THE GUARDHOUSE INTERCEPT: Short-circuit out-of-scope queries natively
+        if res.get("intent") == "SYSTEM_META_AND_REJECTION":
+            res["reasoning"] = "I am the routing interface for a grounded military technical data mesh. I can assist with Graph part lookups, Diagnostic troubleshooting, and Policy retrieval. I cannot engage in general conversation or process out-of-scope requests."
+            res["task_plan"] = None
+        
+        # Inject domain into tasks for downstream consumers
         if res.get("task_plan") and res["task_plan"].get("tasks"):
             for task in res["task_plan"]["tasks"]:
                 task["domain"] = res.get("domain")
         
         return res
     except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"BAML routing failed: {exc}",
-        ) from exc
+        raise HTTPException(status_code=502, detail=f"BAML routing failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

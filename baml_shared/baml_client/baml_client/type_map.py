@@ -58,6 +58,9 @@ type_map = {
     "types.HazardUI": types.HazardUI,
     "stream_types.HazardUI": stream_types.HazardUI,
 
+    "types.KnowledgeResponse": types.KnowledgeResponse,
+    "stream_types.KnowledgeResponse": stream_types.KnowledgeResponse,
+
     "types.LogisticsResponse": types.LogisticsResponse,
     "stream_types.LogisticsResponse": stream_types.LogisticsResponse,
 

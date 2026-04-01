@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (23)
+# Generated classes (24)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -42,7 +42,7 @@ class AgentTask(BaseModel):
     semantic_context: typing.Optional["SemanticResolution"] = Field(default=None, description='Optional pre-resolved semantic context. When present, agents can skip their own classification step.')
 
 class AgentTaskDefinition(BaseModel):
-    target_persona: typing.Optional[types.PersonaTarget] = None
+    target_persona: typing.Optional[typing.Union[types.PersonaTarget, str]] = None
     sub_query: typing.Optional[str] = None
 
 class AuditResponse(BaseModel):
@@ -102,6 +102,11 @@ class HazardUI(BaseModel):
     severity: typing.Optional[types.SeverityLevel] = None
     hazards: typing.List["UIEntity"]
 
+class KnowledgeResponse(BaseModel):
+    summary: typing.Optional[str] = Field(default=None, description='A clear, professional summary answering the user\'s knowledge or policy question. Format in Markdown.')
+    referenced_documents: typing.List[str] = Field(description='List of manual sections, policies, or documents cited in the summary.')
+    confidence_score: typing.Optional[float] = None
+
 class LogisticsResponse(BaseModel):
     impacted_platforms: typing.List[str]
     blocked_procedures: typing.List[str]
@@ -113,8 +118,8 @@ class MechanicResponse(BaseModel):
     short_answer: typing.Optional[str] = None
 
 class MeshRoutingDecision(BaseModel):
-    intent: typing.Optional[types.Intent] = None
-    domain: typing.Optional[types.Domain] = None
+    intent: typing.Optional[typing.Union[types.Intent, str]] = None
+    domain: typing.Optional[typing.Union[types.Domain, str]] = None
     confidence: typing.Optional[float] = Field(default=None, description='Confidence in both intent and domain classification.')
     reasoning: typing.Optional[str] = Field(default=None, description='Why you routed it this way.')
     task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.')

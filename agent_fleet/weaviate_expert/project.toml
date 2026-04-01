@@ -1,0 +1,7 @@
+[project]
+id = "engine-w"
+name = "weaviate-expert"
+
+[[project.env]]
+name = "PORT"
+value = "8088"
