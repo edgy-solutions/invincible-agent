@@ -97,16 +97,31 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
     raw_grpc_env = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
 
-    weaviate_http_host = raw_http_env.replace("http://", "").replace("https://", "").split(":")[0]
-    weaviate_grpc_host = raw_grpc_env.replace("grpc://", "").split(":")[0]
+    # 🔗 Split-Service Configuration for Kubernetes (HTTP vs gRPC)
+    # Defensively strip protocols and parse host/port! 
+    raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
+    raw_grpc_env = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
+
+    def parse_host_port(env_val: str, default_port: int):
+        clean = env_val.replace("http://", "").replace("https://", "").replace("grpc://", "")
+        if ":" in clean:
+            h, p = clean.split(":", 1)
+            try:
+                return h, int(p)
+            except ValueError:
+                return h, default_port
+        return clean, default_port
+
+    weaviate_http_host, weaviate_http_port = parse_host_port(raw_http_env, 8080)
+    weaviate_grpc_host, weaviate_grpc_port = parse_host_port(raw_grpc_env, 50051)
 
     # Connect to Weaviate explicitly using v4 ConnectionParams
     connection_params = ConnectionParams.from_params(
         http_host=weaviate_http_host,
-        http_port=8080,
+        http_port=weaviate_http_port,
         http_secure=False,
         grpc_host=weaviate_grpc_host,
-        grpc_port=50051,
+        grpc_port=weaviate_grpc_port,
         grpc_secure=False,
     )
     
