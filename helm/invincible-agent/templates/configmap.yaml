@@ -35,6 +35,7 @@ data:
   DATAHUB_WRAPPER_URL: "http://{{ .Release.Name }}-engine-d:{{ .Values.engineD.port }}"
   NEO4J_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-e:{{ .Values.engineE.port }}"
   PRESENTATION_AGENT_SVC_URL: "http://{{ .Release.Name }}-engine-f:{{ .Values.engineF.port }}"
+  WEAVIATE_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-w:{{ .Values.engineW.port }}"
   
   # Dagster Discovery
   DAGSTER_WEBSERVER_URL: "http://{{ .Release.Name }}-dagster:{{ .Values.dagster.webserver.port }}"

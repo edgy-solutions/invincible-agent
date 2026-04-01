@@ -149,6 +149,9 @@ These are the Kubernetes services the orchestrator communicates with:
   Top-level FastAPI gateway (Engine G). Acts as a decoupled GraphQL client to the Dagster 
   Webserver. Submits `supervisor_query_job`, polls for completion, and fetches the final 
   UI instruction from step metadata. Provides full observability and run history.
+- **Weaviate Semantic Expert (Engine W)**: `POST http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge`
+  Handles pure knowledge retrieval intents. Searches technical manuals via Weaviate v4
+  with strict domain segregation. Returns structured Markdown summaries and citations.
 
 ## Dagster UI Configuration
 
@@ -235,6 +238,7 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
   - `pack build myregistry/restate-analyst --path ./agent_fleet/restate_analyst --builder paketobuildpacks/builder-jammy-base`
   - `pack build myregistry/langgraph-support --path ./agent_fleet/langgraph_support --builder paketobuildpacks/builder-jammy-base`
   - `pack build myregistry/swarms-scraper --path ./agent_fleet/swarms_scraper --builder paketobuildpacks/builder-jammy-base`
+  - `pack build myregistry/weaviate-expert --path ./agent_fleet/weaviate_expert --builder paketobuildpacks/builder-jammy-base`
 
 ### Phase 7 — Data Mesh Bindings: dbt + DataHub (complete)
 - Created `src/iagent/defs/data_layer.py` with `sync_dbt_to_ontology` asset.
@@ -317,6 +321,12 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - **Strict Data Segregation (Graph)**: Implemented SPARQL Named Graph injection in Engine O to isolate domain ontologies.
 - **Strict Data Segregation (Neo4j)**: Enforced domain-specific Node Label constraints in Engine E (Neo4j Expert) to prevent cross-domain data leakage.
 - **Unified Orchestration**: Enhanced the BFF and Dagster supervisor to propagate domain context throughout the multi-agent fan-out.
+
+### Phase 16 — Engine W: Weaviate Semantic Expert (complete)
+- Created `agent_fleet/weaviate_expert/service.py` — FastAPI on port 8088.
+- Dedicated semantic retriever using Weaviate v4 `near_text` and `Filters`.
+- Optimized for `KNOWLEDGE_RETRIEVAL` intents requiring manual summaries without graph lookups.
+- Integrated into Helm chart as a Deployment/Service pair.
 
 ## Persona Reference
 

@@ -193,6 +193,34 @@ services:
       postgres:
         condition: service_healthy
 
+  weaviate-expert:
+    build:
+      context: ..
+      dockerfile: Dockerfile.dev
+    command: uv run hypercorn agent_fleet.weaviate_expert.main:app --bind 0.0.0.0:8088
+    ports:
+      - "8089:8088"
+    volumes:
+      - ..:/app
+      - /app/.venv
+    environment:
+      - PYTHONPATH=/app/baml_shared/baml_client
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - SMOLAGENTS_PROVIDER=${SMOLAGENTS_PROVIDER}
+      - SMOLAGENTS_MODEL=${SMOLAGENTS_MODEL}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - BAML_LOG_LEVEL=info
+      - WEAVIATE_HTTP_HOST=weaviate
+      - WEAVIATE_GRPC_HOST=weaviate
+      - WEAVIATE_DOC_COLLECTION=DocumentChunks
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   datahub-wrapper:
     build:
       context: ..
@@ -249,6 +277,7 @@ services:
       - SWARMS_SCRAPER_URL=http://swarms-scraper:8083
       - DATAHUB_WRAPPER_URL=http://datahub-wrapper:8085
       - ONTOLOGY_SERVICE_URL=http://ontology-service:8084
+      - WEAVIATE_EXPERT_SVC_URL=http://weaviate-expert:8088
     depends_on:
       postgres:
         condition: service_healthy
@@ -284,6 +313,7 @@ services:
       - SWARMS_SCRAPER_URL=http://swarms-scraper:8083
       - DATAHUB_WRAPPER_URL=http://datahub-wrapper:8085
       - ONTOLOGY_SERVICE_URL=http://ontology-service:8084
+      - WEAVIATE_EXPERT_SVC_URL=http://weaviate-expert:8088
     depends_on:
       postgres:
         condition: service_healthy
@@ -319,12 +349,16 @@ services:
         condition: service_healthy
       neo4j-expert:
         condition: service_healthy
+      weaviate-expert:
+        condition: service_healthy
     command: >
       sh -c "
       echo 'Registering Analyst Service...';
       curl -X POST http://restate:9070/deployments -H 'Content-Type: application/json' -d '{\"uri\": \"http://restate-analyst:8081/restate\", \"force\": true}';
       echo 'Registering Neo4j Expert Service...';
       curl -X POST http://restate:9070/deployments -H 'Content-Type: application/json' -d '{\"uri\": \"http://neo4j-expert:8086/restate\", \"force\": true}';
+      echo 'Registering Weaviate Expert Service...';
+      curl -X POST http://restate:9070/deployments -H 'Content-Type: application/json' -d '{\"uri\": \"http://weaviate-expert:8088/restate\", \"force\": true}';
       "
 
   # ==========================================
