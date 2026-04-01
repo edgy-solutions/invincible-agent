@@ -78,29 +78,19 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     
     # 🔗 DOMAIN-SPECIFIC NODE LABEL CONSTRAINTS (Strict Data Segregation)
     domain = request.get("domain", "MAINTENANCE").upper()
-    domain_constraints = ""
-    if domain == "DATA_ENGINEERING":
-        domain_constraints = """
-        STRICT DATA SEGREGATION: You are in the DATA_ENGINEERING domain.
-        Use ONLY these labels in your Cypher queries:
-        (:DataAsset), (:SystemComponent), (:DataPipeline)
-        Do NOT query maintenance or sustainment nodes.
-        """
-    elif domain == "SUSTAINMENT":
-        domain_constraints = """
-        STRICT DATA SEGREGATION: You are in the SUSTAINMENT domain.
-        Use ONLY these labels in your Cypher queries:
-        (:InventoryItem), (:Supplier), (:ProcurementContract)
-        Do NOT query maintenance or data engineering nodes.
-        """
-    else:
-        # Default to MAINTENANCE
-        domain_constraints = """
-        STRICT DATA SEGREGATION: You are in the MAINTENANCE domain.
-        Use ONLY these labels in your Cypher queries:
-        (:PhysicalAsset), (:MaintenanceEvent), (:Hazard)
-        Do NOT query sustainment or data engineering nodes.
-        """
+    
+    # Sanitize the domain string for safe Neo4j label usage
+    domain_label = domain.replace(" ", "_").replace("-", "_")
+
+    domain_constraints = f"""
+    STRICT DATA SEGREGATION: You are operating strictly within the {domain} domain.
+    
+    CRITICAL RULE: Every single node you query MUST explicitly include the `:{domain_label}` label.
+    Example of a correct query: MATCH (n:Procedure:{domain_label})
+    Example of an INCORRECT query: MATCH (n:Procedure)
+    
+    Do not guess which node types exist. Use your `get_graph_schema` tool to discover available labels, but ALWAYS append `:{domain_label}` to your queries.
+    """
     
     system_prompt_with_segregation = system_prompt + "\n" + domain_constraints
 
@@ -188,8 +178,21 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
                 add_base_tools=False
             )
             
-            # Combine the system prompt and user query into a single instruction
-            full_query = f"{system_prompt_with_memory}\n\nUser Query: {user_query}"
+            # 🚨 FIX: Add the syntax reminder back in!
+            syntax_reminder = """
+            CRITICAL SYNTAX REQUIREMENT:
+            You MUST wrap ALL of your Python code, including the final_answer() function, strictly inside <code> and </code> tags. 
+            Do NOT use Markdown triple backticks. 
+            
+            Example of a correct final answer:
+            Thoughts: I have found the work instructions.
+            <code>
+            final_answer("- **IID** - AII_2265525-X.pdf")
+            </code>
+            """
+            
+            # Combine the system prompt, syntax reminder, and user query into a single instruction
+            full_query = f"{system_prompt_with_memory}\n{syntax_reminder}\n\nUser Query: {user_query}"
             
             # Offload the blocking agent run to a background thread!
             return str(await asyncio.to_thread(agent.run, full_query))
