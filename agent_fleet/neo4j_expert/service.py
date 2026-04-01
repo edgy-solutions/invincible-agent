@@ -138,90 +138,94 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     )
     
     weaviate_client = weaviate.WeaviateClient(connection_params=connection_params)
-    weaviate_client.connect()
+    try:
+        weaviate_client.connect()
 
-    # 🔗 LangChain Bridge (Bypasses mem0's rigid Weaviate config)
-    # WeaviateVectorStore requires an embedding model, so we provide a fake one 
-    # since mem0 handles embeddings internally before passing them to the store.
-    vector_store = WeaviateVectorStore(
-        client=weaviate_client,
-        index_name="Mem0migrations",
-        embedding=FakeEmbeddings(size=1536) # Default size for text-embedding-3-small
-    )
+        # 🔗 LangChain Bridge (Bypasses mem0's rigid Weaviate config)
+        # WeaviateVectorStore requires an embedding model, so we provide a fake one 
+        # since mem0 handles embeddings internally before passing them to the store.
+        vector_store = WeaviateVectorStore(
+            client=weaviate_client,
+            index_name="Mem0migrations",
+            text_key="text",
+            embedding=FakeEmbeddings(size=1536) # Default size for text-embedding-3-small
+        )
 
-    # Initialize mem0 using the 'langchain' provider to inject our custom store
-    m = Memory.from_config({
-        "vector_store": {
-            "provider": "langchain",
-            "config": {
-                "client": vector_store,
-                "collection_name": "Mem0migrations"
+        # Initialize mem0 using the 'langchain' provider to inject our custom store
+        m = Memory.from_config({
+            "vector_store": {
+                "provider": "langchain",
+                "config": {
+                    "client": vector_store,
+                    "collection_name": "Mem0migrations"
+                }
             }
-        }
-    })
+        })
 
-    # --------------------------------------------------------------------------
-    # Run 1: The Smolagents Graph Query Loop
-    # --------------------------------------------------------------------------
-    async def run_smolagent() -> str:
-        # Retrieve past successful memories to inject into the system prompt
-        if user_id:
-            past_memories = m.search(query=user_query, user_id=user_id)
-            if past_memories:
-                memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
-                prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
-                system_prompt_with_memory = system_prompt_with_segregation + prompt_extension
+        # --------------------------------------------------------------------------
+        # Run 1: The Smolagents Graph Query Loop
+        # --------------------------------------------------------------------------
+        async def run_smolagent() -> str:
+            # Retrieve past successful memories to inject into the system prompt
+            if user_id:
+                past_memories = m.search(query=user_query, user_id=user_id)
+                if past_memories:
+                    memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
+                    prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
+                    system_prompt_with_memory = system_prompt_with_segregation + prompt_extension
+                else:
+                    system_prompt_with_memory = system_prompt_with_segregation
             else:
                 system_prompt_with_memory = system_prompt_with_segregation
-        else:
-            system_prompt_with_memory = system_prompt_with_segregation
 
-        # Initialize the LLM (configurable via env var, defaults to lightweight model)
-        model = get_smolagent_model()
-        
-        # Instantiate the agent giving it ONLY the Neo4j tools and persona
-        agent = CodeAgent(
-            tools=[execute_cypher, get_graph_schema],
-            model=model,
-            add_base_tools=False
-        )
-        
-        # Combine the system prompt and user query into a single instruction
-        full_query = f"{system_prompt_with_memory}\n\nUser Query: {user_query}"
-        
-        # Offload the blocking agent run to a background thread!
-        return str(await asyncio.to_thread(agent.run, full_query))
-        
-    # Standard 120s timeout from the orchestrator allows for extended searching
-    raw_agent_response = await ctx.run("run-smolagent", run_smolagent)
-
-    # --------------------------------------------------------------------------
-    # Run 2: BAML Strict Formatting
-    # --------------------------------------------------------------------------
-    async def format_baml() -> Dict[str, Any]:
-        # Uses the Async BAML client to format the raw unstructured string
-        # into the union GraphExpertResponse based on the requested persona
-        baml_response = await b.FormatGraphResponse(raw_agent_response, persona_target)
-        
-        # Returns the Pydantic .model_dump() dict which Restate will serialize to JSON
-        return baml_response.model_dump()
-        
-    final_structured_dict = await ctx.run("format-baml", format_baml)
-    
-    # --------------------------------------------------------------------------
-    # Run 3: Save Successful Event to Memory
-    # --------------------------------------------------------------------------
-    async def save_memory() -> str:
-        if user_id:
-            m.add(
-                messages=[
-                    {"role": "user", "content": user_query},
-                    {"role": "assistant", "content": raw_agent_response}
-                ],
-                user_id=user_id
+            # Initialize the LLM (configurable via env var, defaults to lightweight model)
+            model = get_smolagent_model()
+            
+            # Instantiate the agent giving it ONLY the Neo4j tools and persona
+            agent = CodeAgent(
+                tools=[execute_cypher, get_graph_schema],
+                model=model,
+                add_base_tools=False
             )
-        return "saved"
-    
-    await ctx.run("save-memory", save_memory)
-    
-    return final_structured_dict
+            
+            # Combine the system prompt and user query into a single instruction
+            full_query = f"{system_prompt_with_memory}\n\nUser Query: {user_query}"
+            
+            # Offload the blocking agent run to a background thread!
+            return str(await asyncio.to_thread(agent.run, full_query))
+            
+        # Standard 120s timeout from the orchestrator allows for extended searching
+        raw_agent_response = await ctx.run("run-smolagent", run_smolagent)
+
+        # --------------------------------------------------------------------------
+        # Run 2: BAML Strict Formatting
+        # --------------------------------------------------------------------------
+        async def format_baml() -> Dict[str, Any]:
+            # Uses the Async BAML client to format the raw unstructured string
+            # into the union GraphExpertResponse based on the requested persona
+            baml_response = await b.FormatGraphResponse(raw_agent_response, persona_target)
+            
+            # Returns the Pydantic .model_dump() dict which Restate will serialize to JSON
+            return baml_response.model_dump()
+            
+        final_structured_dict = await ctx.run("format-baml", format_baml)
+        
+        # --------------------------------------------------------------------------
+        # Run 3: Save Successful Event to Memory
+        # --------------------------------------------------------------------------
+        async def save_memory() -> str:
+            if user_id:
+                m.add(
+                    messages=[
+                        {"role": "user", "content": user_query},
+                        {"role": "assistant", "content": raw_agent_response}
+                    ],
+                    user_id=user_id
+                )
+            return "saved"
+        
+        await ctx.run("save-memory", save_memory)
+        
+        return final_structured_dict
+    finally:
+        weaviate_client.close()
