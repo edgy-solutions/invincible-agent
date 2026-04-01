@@ -35,6 +35,8 @@ agent-fleet = [
     "litellm",
     "mem0ai",
     "weaviate-client",
+    "langchain-weaviate",
+    "langchain-community",
     "neo4j",
     "httpx",
     "h2",

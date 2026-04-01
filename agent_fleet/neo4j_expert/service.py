@@ -7,6 +7,8 @@ from smolagents import CodeAgent
 from mem0 import Memory
 import weaviate
 from weaviate.connect import ConnectionParams
+from langchain_weaviate import WeaviateVectorStore
+from langchain_community.embeddings import FakeEmbeddings
 
 try:
     from ..llm_utils import get_smolagent_model
@@ -94,9 +96,6 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     # (Survives K8s ephemeral pod restarts)
     # 🔗 Split-Service Configuration for Kubernetes (HTTP vs gRPC)
     # Defensively strip protocols and ports! 
-    raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
-    raw_grpc_env = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
-
     # 🔗 Split-Service Configuration for Kubernetes (HTTP vs gRPC)
     # Defensively strip protocols and parse host/port! 
     raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
@@ -128,11 +127,21 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     weaviate_client = weaviate.WeaviateClient(connection_params=connection_params)
     weaviate_client.connect()
 
+    # 🔗 LangChain Bridge (Bypasses mem0's rigid Weaviate config)
+    # WeaviateVectorStore requires an embedding model, so we provide a fake one 
+    # since mem0 handles embeddings internally before passing them to the store.
+    vector_store = WeaviateVectorStore(
+        client=weaviate_client,
+        index_name="Mem0migrations",
+        embedding=FakeEmbeddings(size=1536) # Default size for text-embedding-3-small
+    )
+
+    # Initialize mem0 using the 'langchain' provider to inject our custom store
     m = Memory.from_config({
         "vector_store": {
-            "provider": "weaviate",
+            "provider": "langchain",
             "config": {
-                "client": weaviate_client,
+                "client": vector_store,
                 "collection_name": "Mem0migrations"
             }
         }
