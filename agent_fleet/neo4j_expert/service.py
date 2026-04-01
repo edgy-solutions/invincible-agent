@@ -5,6 +5,8 @@ from typing import Dict, Any
 from restate import Context, Service
 from smolagents import CodeAgent
 from mem0 import Memory
+import weaviate
+from weaviate.connect import ConnectionParams
 
 try:
     from ..llm_utils import get_smolagent_model
@@ -91,12 +93,12 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     # Initialize long-term memory via mem0 using Weaviate vector DB 
     # (Survives K8s ephemeral pod restarts)
     # 🔗 Split-Service Configuration for Kubernetes (HTTP vs gRPC)
-    # --------------------------------------------------------------------------
-    import weaviate
-    from weaviate.connect import ConnectionParams
+    # Defensively strip protocols and ports! 
+    raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
+    raw_grpc_env = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
 
-    weaviate_http_host = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
-    weaviate_grpc_host = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
+    weaviate_http_host = raw_http_env.replace("http://", "").replace("https://", "").split(":")[0]
+    weaviate_grpc_host = raw_grpc_env.replace("grpc://", "").split(":")[0]
 
     # Connect to Weaviate explicitly using v4 ConnectionParams
     connection_params = ConnectionParams.from_params(
