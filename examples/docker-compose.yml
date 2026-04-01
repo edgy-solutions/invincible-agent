@@ -159,6 +159,8 @@ services:
       - NEO4J_USERNAME=neo4j
       - NEO4J_PASSWORD=changeme
       - WEAVIATE_URL=http://weaviate:8080
+      - WEAVIATE_HTTP_HOST=weaviate
+      - WEAVIATE_GRPC_HOST=weaviate
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
       interval: 5s
@@ -382,6 +384,7 @@ services:
     image: semitechnologies/weaviate:1.27.0
     ports:
       - "8088:8080" # Moved from 8085 to avoid conflict with Engine D
+      - "50051:50051" # gRPC
     environment:
       - QUERY_DEFAULTS_LIMIT=25
       - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true

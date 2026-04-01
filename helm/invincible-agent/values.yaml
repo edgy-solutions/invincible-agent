@@ -334,6 +334,8 @@ weaviate:
     enabled: true
     storageClass: ""
     size: 5Gi
+  grpcEnabled: true
+  grpcServicePort: 50051
 
 externalWeaviate:
   url: ""     # e.g. "http://my-weaviate.infra.svc:8080"

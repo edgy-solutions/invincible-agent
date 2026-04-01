@@ -90,18 +90,36 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     # --------------------------------------------------------------------------
     # Initialize long-term memory via mem0 using Weaviate vector DB 
     # (Survives K8s ephemeral pod restarts)
+    # 🔗 Split-Service Configuration for Kubernetes (HTTP vs gRPC)
     # --------------------------------------------------------------------------
-    weaviate_url = os.getenv("WEAVIATE_URL", "http://weaviate:8080")
-    memory_config = {
+    import weaviate
+    from weaviate.connect import ConnectionParams
+
+    weaviate_http_host = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
+    weaviate_grpc_host = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
+
+    # Connect to Weaviate explicitly using v4 ConnectionParams
+    connection_params = ConnectionParams.from_params(
+        http_host=weaviate_http_host,
+        http_port=8080,
+        http_secure=False,
+        grpc_host=weaviate_grpc_host,
+        grpc_port=50051,
+        grpc_secure=False,
+    )
+    
+    weaviate_client = weaviate.WeaviateClient(connection_params=connection_params)
+    weaviate_client.connect()
+
+    m = Memory.from_config({
         "vector_store": {
             "provider": "weaviate",
             "config": {
-                "cluster_url": weaviate_url,
-                "auth_client_secret": os.getenv("WEAVIATE_API_KEY", "")
+                "client": weaviate_client,
+                "collection_name": "Mem0migrations"
             }
         }
-    }
-    m = Memory.from_config(memory_config)
+    })
 
     # --------------------------------------------------------------------------
     # Run 1: The Smolagents Graph Query Loop
