@@ -136,7 +136,7 @@ class BamlSyncClient:
                 "raw_data": raw_data,"persona": persona,
             })
             return typing.cast(types.DashboardUI, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
+    def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
         # Check if on_tick is provided
@@ -251,7 +251,7 @@ class BamlStreamClient:
           lambda x: typing.cast(types.DashboardUI, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
+    def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.GraphExpertResponse, types.GraphExpertResponse]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="FormatGraphResponse", args={
@@ -340,7 +340,7 @@ class BamlHttpRequestClient:
             "raw_data": raw_data,"persona": persona,
         }, mode="request")
         return __result__
-    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
+    def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FormatGraphResponse", args={
@@ -404,7 +404,7 @@ class BamlHttpStreamRequestClient:
             "raw_data": raw_data,"persona": persona,
         }, mode="stream")
         return __result__
-    def FormatGraphResponse(self, raw_text: str,persona: typing.Union[types.PersonaTarget, str],
+    def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FormatGraphResponse", args={

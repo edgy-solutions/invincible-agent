@@ -41,7 +41,7 @@ except ImportError:
             b = init_baml_client(b)
         except ImportError:
             pass
-from baml_client.types import PersonaTarget
+
 try:
     from tools import execute_cypher, get_graph_schema
     from prompts import PERSONA_PROMPTS
@@ -65,16 +65,12 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     }
     """
     user_query = request.get("user_query")
+    # 2. Extract the persona directly as an uppercase string
     persona_str = request.get("persona", "MECHANIC").upper()
     user_id = request.get("user_id")
     
-    # Map raw string to BAML enum
-    try:
-        persona_target = PersonaTarget(persona_str)
-    except ValueError:
-        persona_target = PersonaTarget.MECHANIC
-        
-    system_prompt = PERSONA_PROMPTS.get(persona_target, PERSONA_PROMPTS[PersonaTarget.MECHANIC])
+    # 3. Retrieve the prompt using the string key
+    system_prompt = PERSONA_PROMPTS.get(persona_str, PERSONA_PROMPTS["MECHANIC"])
     
     # 🔗 DOMAIN-SPECIFIC NODE LABEL CONSTRAINTS (Strict Data Segregation)
     domain = request.get("domain", "MAINTENANCE").upper()
@@ -250,7 +246,7 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
         async def format_baml() -> Dict[str, Any]:
             # Uses the Async BAML client to format the raw unstructured string
             # into the union GraphExpertResponse based on the requested persona
-            baml_response = await b.FormatGraphResponse(raw_agent_response, persona_target)
+            baml_response = await b.FormatGraphResponse(raw_agent_response, persona_str)
             
             # Returns the Pydantic .model_dump() dict which Restate will serialize to JSON
             return baml_response.model_dump()

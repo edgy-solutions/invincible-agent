@@ -147,7 +147,7 @@ class GraphExpertResponse {
   data MechanicResponse | AuthoringResponse | LogisticsResponse | AuditResponse | DataStewardResponse
 }
 
-function FormatGraphResponse(raw_text: string, persona: PersonaTarget) -> GraphExpertResponse {
+function FormatGraphResponse(raw_text: string, persona: string) -> GraphExpertResponse {
   client MainAgent
   prompt #"
     You are a technical data formatting expert.
