@@ -22,31 +22,36 @@ data:
   NEO4J_URI: {{ include "invincible-agent.neo4jUri" . | quote }}
   NEO4J_USERNAME: {{ include "invincible-agent.neo4jUsername" . | quote }}
   WEAVIATE_URL: {{ include "invincible-agent.weaviateUrl" . | quote }}
-  WEAVIATE_HTTP_HOST: {{ .Release.Name }}-weaviate
-  WEAVIATE_GRPC_HOST: {{ .Release.Name }}-weaviate-grpc
   JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/query"
   DATABASE_URL: {{ include "invincible-agent.pgUri" . | replace "postgresql://" "postgresql+asyncpg://" | quote }}
 
   # Engine service URLs (Internal K8s DNS)
-  ONTOLOGY_SERVICE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}"
-  RESTATE_ANALYST_URL: "http://{{ .Release.Name }}-engine-a:{{ .Values.engineA.port }}"
-  LANGGRAPH_SUPPORT_SVC_URL: "http://{{ .Release.Name }}-engine-b:{{ .Values.engineB.port }}"
-  SWARMS_SCRAPER_URL: "http://{{ .Release.Name }}-engine-c:{{ .Values.engineC.port }}"
-  DATAHUB_WRAPPER_URL: "http://{{ .Release.Name }}-engine-d:{{ .Values.engineD.port }}"
-  NEO4J_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-e:{{ .Values.engineE.port }}"
-  PRESENTATION_AGENT_SVC_URL: "http://{{ .Release.Name }}-engine-f:{{ .Values.engineF.port }}"
-  WEAVIATE_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-w:{{ .Values.engineW.port }}"
+  ONTOLOGY_SERVICE_URL: "http://{{ .Release.Name }}-engine-o{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineO.port }}"
+  RESTATE_ANALYST_URL: "http://{{ .Release.Name }}-engine-a{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineA.port }}"
+  LANGGRAPH_SUPPORT_SVC_URL: "http://{{ .Release.Name }}-engine-b{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineB.port }}"
+  SWARMS_SCRAPER_URL: "http://{{ .Release.Name }}-engine-c{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineC.port }}"
+  DATAHUB_WRAPPER_URL: "http://{{ .Release.Name }}-engine-d{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineD.port }}"
+  NEO4J_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineE.port }}"
+  PRESENTATION_AGENT_SVC_URL: "http://{{ .Release.Name }}-engine-f{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineF.port }}"
+  WEAVIATE_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}"
   
   # Dagster Discovery
-  DAGSTER_WEBSERVER_URL: "http://{{ .Release.Name }}-dagster:{{ .Values.dagster.webserver.port }}"
+  DAGSTER_WEBSERVER_URL: "http://{{ .Release.Name }}-dagster{{ include "invincible-agent.svcDomain" . }}:{{ .Values.dagster.webserver.port }}"
   DAGSTER_LOCATION: "iagent"
   DAGSTER_REPOSITORY: "__repository__"
 
   # legacy/compat
-  ONTOLOGY_RESOLVE_URL: "http://{{ .Release.Name }}-engine-o:{{ .Values.engineO.port }}/resolve"
+  ONTOLOGY_RESOLVE_URL: "http://{{ .Release.Name }}-engine-o{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineO.port }}/resolve"
   DATAHUB_GMS_URL: {{ .Values.engineD.env.DATAHUB_GMS_URL | quote }}
   SWARMS_MODEL: {{ .Values.engineC.env.SWARMS_MODEL | quote }}
-  KEYCLOAK_REALM_URL: "http://{{ .Release.Name }}-keycloak:8080/realms/{{ .Values.keycloak.realm }}"
+  KEYCLOAK_REALM_URL: "http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080/realms/{{ .Values.keycloak.realm }}"
+
+  # Shared Agent Fleet Configs
+  {{- if .Values.agentFleet.env }}
+  {{- range $k, $v := .Values.agentFleet.env }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- end }}
 {{- if .Values.postgresql.enabled }}
 ---
 # InitDB ConfigMap — runs sql/create_bpmn_catalog.sql on first boot

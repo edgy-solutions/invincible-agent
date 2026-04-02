@@ -7,6 +7,8 @@ global:
   imageRegistry: ghcr.io
   imagePrefix: edgy-solutions/invincible-agent
   imagePullPolicy: IfNotPresent
+  # -- Suffix for internal K8s service resolution (e.g., .default.svc.cluster.local)
+  clusterDomain: ""
   #imagePullSecrets:
   #  - name: ghcr-pull-secret
   # -- Utility images for hooks/init-containers
@@ -123,6 +125,40 @@ dagster:
     adminUrl: ""
 
 # ==========================================================================
+# Agent Fleet — Shared Configuration
+# Use this to define common setting (Ollama, Models, Keycloak)
+# that will be injected into ALL agent containers automatically.
+# ==========================================================================
+agentFleet:
+  env:
+    # 🔗 Agent Runtime Essentials
+    SMOLAGENTS_PROVIDER: "ollama"
+    SMOLAGENTS_MODEL: "gpt-oss-128k:120b"
+    OLLAMA_BASE_URL: "http://ollama.d4-sandbox.svc.cluster.local:11434/v1"
+    BAML_LOG_LEVEL: "info"
+    
+    # 🔗 Network & Service Discovery
+    KEYCLOAK_REALM_URL: "https://keycloak-d4-dev.d4.k8s.rmd.ray.com/realms/d4"
+    JENA_SPARQL_ENDPOINT: "http://jena.d4-sandbox.svc.cluster.local:3030/ds/query"
+    DATAHUB_GMS_URL: "http://datahub-datahub-gms.d4-sandbox.svc.cluster.local:8080/api/graphql"
+    DATAHUB_MOCK_MODE: "false"
+    
+    # 🔗 Storage Layer (Neo4j & Weaviate)
+    NEO4J_URI: "bolt://neo4j.d4-sandbox.svc.cluster.local"
+    NEO4J_USER: "neo4j"
+    WEAVIATE_HTTP_HOST: "weaviate.d4-dev.svc.cluster.local:80"
+    WEAVIATE_GRPC_HOST: "weaviate-grpc.d4-dev.svc.cluster.local:50051"
+    WEAVIATE_DOC_COLLECTION: "DocumentChunk"
+
+    # 🔗 Global Timeouts
+    AGENT_HTTP_TIMEOUT: "300"
+    
+  secrets:
+    NEO4J_PASSWORD: "xxxxx"
+    # openaiApiKey: ""
+    # hfToken: ""
+
+# ==========================================================================
 # Agent Fleet — Engine Configs
 # ==========================================================================
 
@@ -145,52 +181,27 @@ engineO:
 engineA:
   enabled: true
   replicas: 1
-  image:
-    name: restate-analyst
-    tag: ""
+  image: { name: "restate-analyst", tag: "latest" }
   port: 8081
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  env:
-    AGENT_HTTP_TIMEOUT: "300"
+  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+  env: {}
 
 engineB:
   enabled: true
   replicas: 1
-  image:
-    name: langgraph-support
-    tag: ""
+  image: { name: "langgraph-support", tag: "latest" }
   port: 8082
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  env: {}
+  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+  env:
+    LANGGRAPH_POSTGRES_URI: "postgresql://iagent:iagent@apps-postgres-postgresql.d4-sandbox.svc.cluster.local:5432/iagent"
 
 engineC:
   enabled: true
   replicas: 1
-  image:
-    name: swarms-scraper
-    tag: ""
+  image: { name: "swarms-scraper", tag: "latest" }
   port: 8083
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  env:
-    SWARMS_MODEL: "gpt-4o-mini"
+  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+  env: { SWARMS_MODEL: "gpt-oss-128k:120b" }
 
 engineD:
   enabled: true
@@ -200,49 +211,25 @@ engineD:
     tag: ""
   port: 8085
   resources:
-    requests:
-      cpu: 100m
-      memory: 128Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
+    ...
   env:
-    DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
+    DATAHUB_GMS_URL: "http://datahub-datahub-gms.d4-sandbox.svc.cluster.local:8080/api/graphql"
 
 engineE:
   enabled: true
   replicas: 1
-  image:
-    name: neo4j-expert
-    tag: ""
+  image: { name: "neo4j-expert", tag: "latest" }
   port: 8086
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      cpu: "1"
-      memory: 1Gi
-  env:
-    NEO4J_URI: "bolt://neo4j-service:7687"
-    NEO4J_USERNAME: "neo4j"
+  resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
+  env: {}
 
 engineW:
   enabled: true
   replicas: 1
-  image:
-    name: weaviate-expert
-    tag: ""
+  image: { name: "weaviate-expert", tag: "latest" }
   port: 8088
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-  env:
-    WEAVIATE_DOC_COLLECTION: "DocumentChunks"
+  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  env: {}
 
 engineF:
   enabled: true

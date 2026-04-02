@@ -18,6 +18,13 @@ app.kubernetes.io/component: {{ .component }}
 {{- end }}
 
 {{/*
+Returns the global.clusterDomain suffix if set.
+*/}}
+{{- define "invincible-agent.svcDomain" -}}
+{{- .Values.global.clusterDomain | default "" -}}
+{{- end }}
+
+{{/*
 Full image path for a service
 Usage: include "invincible-agent.image" (dict "name" "restate-analyst" "tag" .Values.engineA.image.tag "root" .)
 */}}
@@ -35,7 +42,7 @@ PostgreSQL connection host — uses subchart or external
 */}}
 {{- define "invincible-agent.pgHost" -}}
 {{- if .Values.postgresql.enabled -}}
-{{ .Release.Name }}-postgresql
+{{ .Release.Name }}-postgresql{{ include "invincible-agent.svcDomain" . }}
 {{- else -}}
 {{ .Values.externalPostgresql.host }}
 {{- end -}}
@@ -97,7 +104,7 @@ Restate ingress URL — uses in-chart deployment or external
 */}}
 {{- define "invincible-agent.restateIngressUrl" -}}
 {{- if .Values.restate.enabled -}}
-http://{{ .Release.Name }}-restate:{{ .Values.restate.ingressPort }}
+http://{{ .Release.Name }}-restate{{ include "invincible-agent.svcDomain" . }}:{{ .Values.restate.ingressPort }}
 {{- else -}}
 {{ .Values.externalRestate.ingressUrl }}
 {{- end -}}
@@ -107,7 +114,7 @@ Restate admin URL — uses in-chart deployment or external
 */}}
 {{- define "invincible-agent.restateAdminUrl" -}}
 {{- if .Values.restate.enabled -}}
-http://{{ .Release.Name }}-restate:{{ .Values.restate.adminPort }}
+http://{{ .Release.Name }}-restate{{ include "invincible-agent.svcDomain" . }}:{{ .Values.restate.adminPort }}
 {{- else -}}
 {{ .Values.externalRestate.adminUrl }}
 {{- end -}}
@@ -118,7 +125,7 @@ Neo4j URI
 */}}
 {{- define "invincible-agent.neo4jUri" -}}
 {{- if .Values.neo4j.enabled -}}
-bolt://{{ .Release.Name }}-neo4j:7687
+bolt://{{ .Release.Name }}-neo4j{{ include "invincible-agent.svcDomain" . }}:7687
 {{- else -}}
 {{ .Values.externalNeo4j.uri }}
 {{- end -}}
@@ -151,7 +158,7 @@ Weaviate URL
 */}}
 {{- define "invincible-agent.weaviateUrl" -}}
 {{- if .Values.weaviate.enabled -}}
-http://{{ .Release.Name }}-weaviate:8080
+http://{{ .Release.Name }}-weaviate{{ include "invincible-agent.svcDomain" . }}:8080
 {{- else -}}
 {{ .Values.externalWeaviate.url }}
 {{- end -}}
@@ -162,7 +169,7 @@ Fuseki URL
 */}}
 {{- define "invincible-agent.fusekiUrl" -}}
 {{- if .Values.fuseki.enabled -}}
-http://{{ .Release.Name }}-fuseki:3030
+http://{{ .Release.Name }}-fuseki{{ include "invincible-agent.svcDomain" . }}:3030
 {{- else -}}
 {{ .Values.externalFuseki.url }}
 {{- end -}}
