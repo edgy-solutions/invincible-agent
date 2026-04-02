@@ -134,20 +134,20 @@ agentFleet:
     # 🔗 Agent Runtime Essentials
     SMOLAGENTS_PROVIDER: "ollama"
     SMOLAGENTS_MODEL: "gpt-oss-128k:120b"
-    OLLAMA_BASE_URL: "http://ollama.d4-sandbox.svc.cluster.local:11434/v1"
+    OLLAMA_BASE_URL: "http://ollama:11434/v1"
     BAML_LOG_LEVEL: "info"
     
     # 🔗 Network & Service Discovery
-    KEYCLOAK_REALM_URL: "https://keycloak-d4-dev.d4.k8s.rmd.ray.com/realms/d4"
-    JENA_SPARQL_ENDPOINT: "http://jena.d4-sandbox.svc.cluster.local:3030/ds/query"
-    DATAHUB_GMS_URL: "http://datahub-datahub-gms.d4-sandbox.svc.cluster.local:8080/api/graphql"
+    KEYCLOAK_REALM_URL: "https://keycloak/realms/d4"
+    JENA_SPARQL_ENDPOINT: "http://jena:3030/ds/query"
+    DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
     DATAHUB_MOCK_MODE: "false"
     
     # 🔗 Storage Layer (Neo4j & Weaviate)
-    NEO4J_URI: "bolt://neo4j.d4-sandbox.svc.cluster.local"
+    NEO4J_URI: "bolt://neo4j"
     NEO4J_USER: "neo4j"
-    WEAVIATE_HTTP_HOST: "weaviate.d4-dev.svc.cluster.local:80"
-    WEAVIATE_GRPC_HOST: "weaviate-grpc.d4-dev.svc.cluster.local:50051"
+    WEAVIATE_HTTP_HOST: "weaviate:80"
+    WEAVIATE_GRPC_HOST: "weaviate-grpc:50051"
     WEAVIATE_DOC_COLLECTION: "DocumentChunk"
 
     # 🔗 Global Timeouts
@@ -193,7 +193,7 @@ engineB:
   port: 8082
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
   env:
-    LANGGRAPH_POSTGRES_URI: "postgresql://iagent:iagent@apps-postgres-postgresql.d4-sandbox.svc.cluster.local:5432/iagent"
+    LANGGRAPH_POSTGRES_URI: "postgresql://iagent:iagent@postgresql:5432/iagent"
 
 engineC:
   enabled: true
@@ -213,7 +213,7 @@ engineD:
   resources:
     ...
   env:
-    DATAHUB_GMS_URL: "http://datahub-datahub-gms.d4-sandbox.svc.cluster.local:8080/api/graphql"
+    DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
 
 engineE:
   enabled: true
