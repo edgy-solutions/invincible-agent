@@ -418,13 +418,13 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
         
         # Dynamically build the Enums from our SSOT dictionaries
         for intent_name, description in MASTER_INTENTS.items():
-            tb.Intent.add_value(intent_name, description=description)
+            tb.Intent.add_value(intent_name).description(description)
             
         for domain_name, description in MASTER_DOMAINS.items():
-            tb.Domain.add_value(domain_name, description=description)
+            tb.Domain.add_value(domain_name).description(description)
             
         for persona_name, data in MASTER_PERSONAS.items():
-            tb.PersonaTarget.add_value(persona_name, description=data["llm_prompt"])
+            tb.PersonaTarget.add_value(persona_name).description(data["llm_prompt"])
 
         # Execute BAML, passing the TypeBuilder via baml_options
         decision = await b.RouteAndPlan(
