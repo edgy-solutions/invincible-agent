@@ -229,6 +229,12 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             You now have access to both Graph (Neo4j) and Text (Weaviate) databases.
             - If the user describes a symptom or asks a conceptual question, use `search_manual_text` FIRST to read the manual and find the Procedure ID or required actions.
             - Once you have the Procedure ID or Part Number from the text, use `execute_cypher` to traverse the graph and find related tools, hazards, or components.
+
+            FETCHING FIGURES: When querying for Procedures, ManufacturingSteps, MaintenanceSteps, or DataModules, ALWAYS use an OPTIONAL MATCH to check for linked Figures.
+            Because data comes from multiple ingestion pipelines, you MUST check for BOTH relationship types: [:REFERENCES_FIGURE|HAS_FIGURE].
+            Because properties vary by ingestion source, you MUST coalesce the URL: COALESCE(f.url, f.hasURL) AS figure_url.
+            Example Cypher: OPTIONAL MATCH (step)-[:REFERENCES_FIGURE|HAS_FIGURE]->(f:Figure) RETURN step, f.title, COALESCE(f.url, f.hasURL) AS figure_url.
+            You must return the figure URL and title in your Cypher results so the formatting agent can display the diagrams.
             """
             
             # Combine the system prompt, logic, and user query into a single instruction

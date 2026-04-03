@@ -146,7 +146,7 @@ class DataStewardResponse(BaseModel):
 class DocumentUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be KNOWLEDGE_DOCUMENT')
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
-    subject_concept: str
+    subject_concept: typing.Optional[str] = None
     markdown_content: str
 
 class FinalSynthesis(BaseModel):
@@ -160,7 +160,7 @@ class GraphExpertResponse(BaseModel):
 class HazardUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be HAZARD_DECLARATION')
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
-    subject_concept: str
+    subject_concept: typing.Optional[str] = None
     severity: SeverityLevel
     hazards: typing.List["UIEntity"]
 
@@ -189,7 +189,7 @@ class MeshRoutingDecision(BaseModel):
 class MetricUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be ASSET_STATE_METRIC')
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
-    subject_concept: str
+    subject_concept: typing.Optional[str] = None
     metrics: typing.List["UIEntity"]
 
 class SemanticResolution(BaseModel):
@@ -208,7 +208,7 @@ class SupervisorTaskPlan(BaseModel):
 class TopologyUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be PROCESS_TOPOLOGY')
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data (e.g. MECHANIC, PROCESS_ENGINEER). Copy from the raw data \'persona\' field.')
-    subject_concept: str
+    subject_concept: typing.Optional[str] = None
     nodes: typing.List["UIEntity"]
     edges: typing.List["UIRelation"]
 

@@ -162,6 +162,8 @@ function FormatGraphResponse(raw_text: string, persona: string) -> GraphExpertRe
     2. NO GENERIC ADVICE: Do not invent generic safety advice unless those exact words are in the raw data.
     3. NULL STATE TRIGGER: If the input raw data is empty or missing, you MUST return NULL_GRAPH_RESPONSE as the primary content of your response (e.g. in short_answer or equivalent).
     4. NO PANIC: Do not invent "red-flagged" areas or "unscheduled maintenance" if the query results are simply empty.
+    5. STRICT MARKDOWN FORMATTING: You are writing for a React Markdown renderer. You MUST use strict Markdown hierarchy (e.g., ### Section Name). You MUST place a double newline (\n\n) before and after EVERY header, list, and paragraph. If you fail to use double newlines, the text will crush together into an unreadable block.
+    6. EMBEDDING FIGURES: If the raw graph data contains Figure URLs and Titles, you MUST embed them directly into your short_answer or draft_content using standard Markdown image syntax: ![Image Title](Image URL). Place the image on a new line immediately following the step that references it.
 
     Instructions:
     1. Parse the raw text carefully.
@@ -348,7 +350,7 @@ class UIRelation {
 class TopologyUI {
   archetype SemanticArchetype @description("MUST be PROCESS_TOPOLOGY")
   source_persona string? @description("The persona that produced this data (e.g. MECHANIC, PROCESS_ENGINEER). Copy from the raw data 'persona' field.")
-  subject_concept string
+  subject_concept string?
   nodes UIEntity[]
   edges UIRelation[]
 }
@@ -356,7 +358,7 @@ class TopologyUI {
 class HazardUI {
   archetype SemanticArchetype @description("MUST be HAZARD_DECLARATION")
   source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
-  subject_concept string
+  subject_concept string?
   severity SeverityLevel
   hazards UIEntity[]
 }
@@ -364,14 +366,14 @@ class HazardUI {
 class MetricUI {
   archetype SemanticArchetype @description("MUST be ASSET_STATE_METRIC")
   source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
-  subject_concept string
+  subject_concept string?
   metrics UIEntity[]
 }
 
 class DocumentUI {
   archetype SemanticArchetype @description("MUST be KNOWLEDGE_DOCUMENT")
   source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
-  subject_concept string
+  subject_concept string?
   markdown_content string
 }
 
