@@ -132,7 +132,7 @@ def trigger_swarms_scraper() -> dict:
         ),
     },
 )
-def trigger_neo4j_expert() -> dict:
+def trigger_neo4j_expert(context) -> dict:
     """Trigger Engine E (Neo4j Graph Expert) agent pod."""
     response = requests.post(
         f"{NEO4J_EXPERT_SVC_URL}/query_graph",
@@ -140,7 +140,15 @@ def trigger_neo4j_expert() -> dict:
         timeout=300,
     )
     response.raise_for_status()
-    return response.json()
+    
+    data = response.json()
+    
+    # Write the agent's internal monologue to the Dagster UI!
+    trace = data.get("execution_trace")
+    if trace:
+        context.log.info(f"🧠 Agent Reasoning Trajectory:\n{trace}")
+        
+    return data
 
 
 @asset(

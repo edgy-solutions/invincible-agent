@@ -69,6 +69,8 @@ class AgentResponse {
     @description("Brief human-readable summary of what the agent did.")
   extracted_metrics map<string, float>
     @description("Key-value pairs of domain metrics extracted during processing.")
+  execution_trace string?
+    @description("The internal reasoning logs or trajectory of the agent.")
 }
 
 // -----------------------------------------------------------------------------
@@ -145,6 +147,8 @@ class GraphExpertResponse {
   confidence_score float
   referenced_uris string[]
   data MechanicResponse | AuthoringResponse | LogisticsResponse | AuditResponse | DataStewardResponse
+  execution_trace string?
+    @description("The internal reasoning logs or trajectory of the agent.")
 }
 
 function FormatGraphResponse(raw_text: string, persona: string) -> GraphExpertResponse {
@@ -257,6 +261,7 @@ class KnowledgeResponse {
   summary string @description("A clear, professional summary answering the user's knowledge or policy question. Format in Markdown.")
   referenced_documents string[] @description("List of manual sections, policies, or documents cited in the summary.")
   confidence_score float
+  execution_trace string? @description("The internal reasoning logs or trajectory of the agent.")
 }
 
 function FormatKnowledgeResponse(raw_text: string, domain: string) -> KnowledgeResponse {

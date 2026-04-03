@@ -118,7 +118,7 @@ def create_task_plan(config: SupervisorQueryConfig):
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
-def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
+def execute_subtask(context, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes a single decomposed sub-task by calling Engine E (Neo4j Graph Expert).
     This op runs in parallel for each dynamically generated task.
@@ -147,11 +147,18 @@ def execute_subtask(task_def: Dict[str, Any]) -> Dict[str, Any]:
     )
     response.raise_for_status()
     
+    data = response.json()
+    
+    # Write the agent's internal monologue to the Dagster UI!
+    trace = data.get("execution_trace")
+    if trace:
+        context.log.info(f"🧠 Agent Reasoning Trajectory:\n{trace}")
+    
     return {
         "persona": persona,
         "domain": domain,
         "sub_query": sub_query,
-        "expert_response": response.json(),
+        "expert_response": data,
     }
 
 

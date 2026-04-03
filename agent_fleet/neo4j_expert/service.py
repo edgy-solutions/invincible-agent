@@ -187,7 +187,7 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
         # --------------------------------------------------------------------------
         # Run 1: The Smolagents Graph Query Loop
         # --------------------------------------------------------------------------
-        async def run_smolagent() -> str:
+        async def run_smolagent() -> tuple[str, str]:
             # Retrieve past successful memories to inject into the system prompt
             if user_id:
                 past_memories = m.search(query=user_query, user_id=user_id)
@@ -241,10 +241,38 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             full_query = f"{system_prompt_with_memory}\n{hybrid_instructions}\n{syntax_reminder}\n\nUser Query: {user_query}"
             
             # Offload the blocking agent run to a background thread!
-            return str(await asyncio.to_thread(agent.run, full_query))
+            result = str(await asyncio.to_thread(agent.run, full_query))
+            
+            # Extract smolagents internal logs (trajectory)
+            formatted_trace = "--- Agent Execution Trace ---\n"
+            if hasattr(agent, 'logs'):
+                for log_entry in agent.logs:
+                    if isinstance(log_entry, dict):
+                        formatted_trace += f"Step: {log_entry.get('step', 'N/A')}\n"
+                        if 'thought' in log_entry:
+                            formatted_trace += f"Thought: {log_entry['thought']}\n"
+                        if 'tool_call' in log_entry:
+                            formatted_trace += f"Action: {log_entry['tool_call']}\n"
+                        if 'tool_result' in log_entry:
+                            formatted_trace += f"Result: {log_entry['tool_result']}\n"
+                    else:
+                        formatted_trace += f"Step: {getattr(log_entry, 'step', 'N/A')}\n"
+                        if hasattr(log_entry, 'thought') and getattr(log_entry, 'thought'):
+                            formatted_trace += f"Thought: {getattr(log_entry, 'thought')}\n"
+                        if hasattr(log_entry, 'tool_call') and getattr(log_entry, 'tool_call'):
+                            formatted_trace += f"Action: {getattr(log_entry, 'tool_call')}\n"
+                        elif hasattr(log_entry, 'action') and getattr(log_entry, 'action'):
+                            formatted_trace += f"Action: {getattr(log_entry, 'action')}\n"
+                        if hasattr(log_entry, 'tool_result') and getattr(log_entry, 'tool_result'):
+                            formatted_trace += f"Result: {getattr(log_entry, 'tool_result')}\n"
+                        elif hasattr(log_entry, 'observation') and getattr(log_entry, 'observation'):
+                            formatted_trace += f"Result: {getattr(log_entry, 'observation')}\n"
+                    formatted_trace += "-" * 30 + "\n"
+            
+            return result, formatted_trace
             
         # Standard 120s timeout from the orchestrator allows for extended searching
-        raw_agent_response = await ctx.run("run-smolagent", run_smolagent)
+        raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
 
         # --------------------------------------------------------------------------
         # Run 2: BAML Strict Formatting
@@ -253,6 +281,9 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             # Uses the Async BAML client to format the raw unstructured string
             # into the union GraphExpertResponse based on the requested persona
             baml_response = await b.FormatGraphResponse(raw_agent_response, persona_str)
+            
+            # Inject execution trace
+            baml_response.execution_trace = execution_trace
             
             # Returns the Pydantic .model_dump() dict which Restate will serialize to JSON
             return baml_response.model_dump()

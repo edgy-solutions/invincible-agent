@@ -95,6 +95,7 @@ class AgentResponse(BaseModel):
     status: AgentStatus = Field(description='Outcome of the agent\'s execution.')
     summary: str = Field(description='Brief human-readable summary of what the agent did.')
     extracted_metrics: typing.Dict[str, float] = Field(description='Key-value pairs of domain metrics extracted during processing.')
+    execution_trace: typing.Optional[str] = Field(default=None, description='The internal reasoning logs or trajectory of the agent.')
 
 class AgentTask(BaseModel):
     # The universal task payload sent from the Dagster orchestrator to any agent
@@ -156,6 +157,7 @@ class GraphExpertResponse(BaseModel):
     confidence_score: float
     referenced_uris: typing.List[str]
     data: typing.Union["MechanicResponse", "AuthoringResponse", "LogisticsResponse", "AuditResponse", "DataStewardResponse"]
+    execution_trace: typing.Optional[str] = Field(default=None, description='The internal reasoning logs or trajectory of the agent.')
 
 class HazardUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be HAZARD_DECLARATION')
@@ -168,6 +170,7 @@ class KnowledgeResponse(BaseModel):
     summary: str = Field(description='A clear, professional summary answering the user\'s knowledge or policy question. Format in Markdown.')
     referenced_documents: typing.List[str] = Field(description='List of manual sections, policies, or documents cited in the summary.')
     confidence_score: float
+    execution_trace: typing.Optional[str] = Field(default=None, description='The internal reasoning logs or trajectory of the agent.')
 
 class LogisticsResponse(BaseModel):
     impacted_platforms: typing.List[str]

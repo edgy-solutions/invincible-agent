@@ -555,7 +555,7 @@ class AgentResponseAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("AgentResponse")
-        self._properties: typing.Set[str] = set([  "status",  "summary",  "extracted_metrics",  ])
+        self._properties: typing.Set[str] = set([  "status",  "summary",  "extracted_metrics",  "execution_trace",  ])
         self._props = AgentResponseProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -594,6 +594,10 @@ class AgentResponseProperties:
     @property
     def extracted_metrics(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("extracted_metrics"))
+    
+    @property
+    def execution_trace(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("execution_trace"))
     
     
 
@@ -1115,7 +1119,7 @@ class GraphExpertResponseAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("GraphExpertResponse")
-        self._properties: typing.Set[str] = set([  "confidence_score",  "referenced_uris",  "data",  ])
+        self._properties: typing.Set[str] = set([  "confidence_score",  "referenced_uris",  "data",  "execution_trace",  ])
         self._props = GraphExpertResponseProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1154,6 +1158,10 @@ class GraphExpertResponseProperties:
     @property
     def data(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("data"))
+    
+    @property
+    def execution_trace(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("execution_trace"))
     
     
 
@@ -1217,7 +1225,7 @@ class KnowledgeResponseAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("KnowledgeResponse")
-        self._properties: typing.Set[str] = set([  "summary",  "referenced_documents",  "confidence_score",  ])
+        self._properties: typing.Set[str] = set([  "summary",  "referenced_documents",  "confidence_score",  "execution_trace",  ])
         self._props = KnowledgeResponseProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1256,6 +1264,10 @@ class KnowledgeResponseProperties:
     @property
     def confidence_score(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("confidence_score"))
+    
+    @property
+    def execution_trace(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("execution_trace"))
     
     
 
@@ -1710,4 +1722,3 @@ class UIRelationProperties:
     
     
 
-
