@@ -23,6 +23,7 @@ except ImportError:
 
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
+from baml_py import baml_py
 
 # Initialize runtime BAML configuration logic
 try:
@@ -278,12 +279,36 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
         # Run 2: BAML Strict Formatting
         # --------------------------------------------------------------------------
         async def format_baml() -> Dict[str, Any]:
+            # Instantiate the BAML log collector
+            collector = baml_py.Collector()
+            
             # Uses the Async BAML client to format the raw unstructured string
             # into the union GraphExpertResponse based on the requested persona
-            baml_response = await b.FormatGraphResponse(raw_agent_response, persona_str)
+            baml_response = await b.FormatGraphResponse(
+                raw_agent_response, 
+                persona_str,
+                baml_options={"collector": collector}
+            )
+            
+            # Extract the BAML logs
+            baml_trace = "\n\n--- BAML Formatting Trace ---\n"
+            if collector.logs and collector.logs[0].calls:
+                # Get the first LLM call attempt
+                call = collector.logs[0].calls[0]
+                
+                # Extract the rendered prompt and raw response
+                # Depending on BAML version, http_request/http_response might be dicts or strings
+                prompt = getattr(call, 'http_request', 'N/A')
+                raw_llm_response = getattr(call, 'http_response', 'N/A')
+                
+                baml_trace += f"Prompt Sent:\n{prompt}\n\n"
+                baml_trace += f"Raw LLM Response:\n{raw_llm_response}\n"
+            
+            # Combine both the smolagents trace and the BAML trace
+            combined_trace = execution_trace + baml_trace
             
             # Inject execution trace
-            baml_response.execution_trace = execution_trace
+            baml_response.execution_trace = combined_trace
             
             # Returns the Pydantic .model_dump() dict which Restate will serialize to JSON
             return baml_response.model_dump()
