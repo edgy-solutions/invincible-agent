@@ -117,6 +117,7 @@ MASTER_INTENTS = {
 
 MASTER_DOMAINS = {
     "MAINTENANCE": "Wrench-turning, physical repairs, safety hazards, component failures.",
+    "MANUFACTURING": "Use for assembly, building, factory instructions, or production steps.",
     "SUSTAINMENT": "Supply chain, logistics, procurement, lifecycle management, inventory.",
     "DATA_ENGINEERING": "dbt models, Postgres, React, Kafka, data pipelines, software architecture.",
     "UNKNOWN": "Use if the query is unrelated to the above domains."
