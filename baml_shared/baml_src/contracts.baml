@@ -227,7 +227,7 @@ class MeshRoutingDecision {
   domain Domain
   confidence float @description("Confidence in both intent and domain classification.")
   reasoning string @description("Why you routed it this way.")
-  task_plan SupervisorTaskPlan? @description("Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.")
+  task_plan SupervisorTaskPlan? @description("Populate for all operational intents (queries, creation, retrieval, audits) to seed the multi-agent execution.")
 }
 
 function RouteAndPlan(user_query: string) -> MeshRoutingDecision {

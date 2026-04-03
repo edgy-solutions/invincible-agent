@@ -184,7 +184,7 @@ class MeshRoutingDecision(BaseModel):
     domain: typing.Union[Domain, str]
     confidence: float = Field(description='Confidence in both intent and domain classification.')
     reasoning: str = Field(description='Why you routed it this way.')
-    task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate for both ONE_SHOT_QUERY and PROCESS_CREATION to seed the execution.')
+    task_plan: typing.Optional["SupervisorTaskPlan"] = Field(default=None, description='Populate for all operational intents (queries, creation, retrieval, audits) to seed the multi-agent execution.')
 
 class MetricUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be ASSET_STATE_METRIC')
