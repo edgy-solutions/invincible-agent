@@ -95,7 +95,7 @@ MASTER_PERSONAS = {
     },
     "PROCESS_ENGINEER": {
         "ui": {"label": "Process Eng", "icon": "Network", "color": "text-purple-500", "bg": "bg-purple-500/10 border-purple-500/30"},
-        "llm_prompt": "Workflows, sequential steps, BPMN routing."
+        "llm_prompt": "Workflows, sequential steps, and BPMN routing across any discipline."
     },
     "DATA_STEWARD": {
         "ui": {"label": "Data Steward", "icon": "Database", "color": "text-cyan-400", "bg": "bg-cyan-400/10 border-cyan-400/30"},
@@ -174,7 +174,10 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     """
     # Determine the correct Named Graph based on the routed domain
     named_graph = "<http://internal/mro>"
-    if domain == "SUSTAINMENT":
+    # Both Maintenance and Manufacturing use the core MRO/IOF ontology graph
+    if domain in ["MAINTENANCE", "MANUFACTURING"]:
+        named_graph = "<http://internal/mro>"
+    elif domain == "SUSTAINMENT":
         named_graph = "<http://internal/sustainment>"
     elif domain == "DATA_ENGINEERING":
         named_graph = "<http://internal/idp>"
