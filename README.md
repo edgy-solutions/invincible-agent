@@ -38,7 +38,7 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 | **A** | Restate + Smolagents | 8081 | `/analyze`, `/workflow/start`, `/workflow/{wf}/task/{tid}/approve` | Durable analyst + BPMN workflow runner |
 | **B** | LangGraph + PostgreSQL | 8082 | `/support` | Stateful support — conversational memory via checkpointer |
 | **C** | Swarms.ai | 8083 | `/scrape` | Stateless heavy compute — high-concurrency extraction |
-| **D** | httpx + DataHub GMS | 8085 | `/tables` | Metadata wrapper — queries DataHub for dbt dataset list |
+| **D** | httpx + DataHub GMS | 8085 | `/query_metadata` | Dynamic DataHub search proxy for all entities |
 | **E** | Restate + smolagents + mem0 | 8086 | `/query_graph` | Neo4j Graph Expert — queries military technical manual DB w/ memory |
 | **F** | FastAPI + BAML | 8087 | `/render_ui` | Presentation Agent — Returns `DashboardUI` (composite multi-panel) by persona |
 | **G** | FastAPI + Dagster | 8888 | `/orchestrate` | Orchestration Gateway — Synchronous entry point for the mesh |
@@ -364,7 +364,7 @@ See `helm/invincible-agent/values.yaml` for a full list of overridable parameter
 | Engine A | `http://restate-agent-svc.default.svc.cluster.local:8081/analyze` |
 | Engine B | `http://langgraph-agent-svc.default.svc.cluster.local:8082/support` |
 | Engine C | `http://swarms-agent-svc.default.svc.cluster.local:8083/scrape` |
-| Engine D | `http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables` |
+| Engine D | `http://datahub-wrapper-svc.default.svc.cluster.local:8085/query_metadata` |
 | Engine E | `http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph` |
 | Engine F | `http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui` |
 | Engine W | `http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge` |

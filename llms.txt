@@ -55,8 +55,8 @@ OCI image, and K8s Service.
    memory via AsyncPostgresSaver. Port 8082, `/support`.
 5. **Engine C** (Swarms.ai) — Stateless, high-concurrency compute for data
    extraction/scraping. Port 8083, `/scrape`.
-6. **Engine D** (httpx + DataHub GMS) — Metadata wrapper. Queries DataHub
-   GraphQL for dbt datasets, returns table list for LLM context. Port 8085, `/tables`.
+6. **Engine D** (httpx + DataHub GMS) — Metadata wrapper. Dynamic multi-entity 
+   search proxy via /query_metadata. Port 8085, `/query_metadata` (POST).
 7. **Engine E** (Restate + smolagents) — Neo4j Graph Expert. Queries graph DB 
    and saves successful outcomes to `mem0` memory. Port 8086, `/query_graph`.
 8. **Engine F** (FastAPI + BAML) — Presentation Agent & UI Router. Separates view logic
@@ -252,14 +252,8 @@ definition metadata — visible in the asset detail panel (click "Show Markdown"
 ### Phase 8 — Engine D: DataHub Metadata Wrapper
 Created `agent_fleet/datahub_wrapper/main.py` — a FastAPI service on port 8085
 that queries DataHub's GMS GraphQL API to discover dbt platform datasets:
-1. `GET /tables` executes a GraphQL `search` query filtered to `urn:li:dataPlatform:dbt`.
-2. Parses dataset URNs to extract clean table names (e.g. `stg_flight_logs`).
-3. Returns `{"available_tables": "table1, table2, ..."}` for LLM context.
-4. Returns HTTP 503 if DataHub is unreachable (caller falls back to mock data).
-5. Uses `httpx.AsyncClient` for async HTTP to DataHub GMS.
-Env vars: `DATAHUB_GMS_URL` (default: `http://localhost:8080/api/graphql`),
-`DATAHUB_TOKEN` (optional auth token).
-Added Dagster asset `trigger_datahub_tables` (GET to :8085/tables, group: data_layer).
+1. `POST /query_metadata` executes a generic multi-entity GraphQL `search` query.
+2. (Deleted) Dagster asset `trigger_datahub_tables`.
 CNB buildpack configs: Procfile + project.toml for port 8085.
 
 ### Phase 9 — Dynamic BPMN Interpreter (Recipe 2)

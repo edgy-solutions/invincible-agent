@@ -357,16 +357,8 @@ async def process_message(ctx: ObjectContext, request: dict) -> dict:
             except Exception:
                 pass # Fallback to default
                 
-            # Engine D: DataHub Wrapper
-            try:
-                _DATAHUB_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper:8085")
-                resp = await client.get(f"{_DATAHUB_URL}/tables")
-                if resp.status_code == 200:
-                    tables_str = resp.json().get("available_tables", "")
-                    if tables_str:
-                        data_sources = "\n".join([f"- dbt_model:{t.strip()}" for t in tables_str.split(",") if t.strip()])
-            except Exception:
-                pass # Fallback to default
+            # Engine D: DataHub Wrapper (Dynamic search enabled)
+            data_sources = "- dbt_model: (Metadata discovered dynamically during execution via /query_metadata)"
                 
         return {
             "ontologies": ontologies, 

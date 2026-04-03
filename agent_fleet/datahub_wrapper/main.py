@@ -1,9 +1,10 @@
 """DataHub Metadata Wrapper — Engine D.
 
-A lightweight FastAPI microservice that queries DataHub's GMS GraphQL API
-to discover available dbt datasets and returns them as LLM-friendly context.
+A lightweight FastAPI microservice that acts as a dynamic, intelligent proxy 
+for DataHub's GraphQL Search API. Discovers available datasets, dashboards, 
+and charts to provide LLM-friendly context for the DATA_STEWARD persona.
 
-Port 8085 · GET /tables · GET /health
+Port 8085 · POST /query_metadata · GET /health
 
 Environment variables:
     DATAHUB_GMS_URL  — DataHub GraphQL endpoint (default: http://localhost:8080/api/graphql)
@@ -13,12 +14,10 @@ Environment variables:
 from __future__ import annotations
 
 import os
-import re
-
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Union
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -27,25 +26,40 @@ DATAHUB_GMS_URL = os.getenv(
     "DATAHUB_GMS_URL", "http://localhost:8080/api/graphql"
 )
 DATAHUB_TOKEN = os.getenv("DATAHUB_TOKEN", "")
-DATAHUB_MOCK_MODE = os.getenv("DATAHUB_MOCK_MODE", "true").lower() == "true"
+
+# Platform Mapping Dictionary for deterministic URN resolution
+PLATFORM_MAP = {
+    "SUPERSET": "urn:li:dataPlatform:superset",
+    "DBT": "urn:li:dataPlatform:dbt",
+    "POSTGRES": "urn:li:dataPlatform:postgres",
+    "SNOWFLAKE": "urn:li:dataPlatform:snowflake",
+    "KAFKA": "urn:li:dataPlatform:kafka"
+}
 
 # ---------------------------------------------------------------------------
-# GraphQL query — search for dbt platform datasets
+# Generic GraphQL query — search across ALL entities
 # ---------------------------------------------------------------------------
-_SEARCH_QUERY = """
-query SearchDbtDatasets($input: SearchInput!) {
+_GENERIC_SEARCH_QUERY = """
+query SearchDataHub($input: SearchInput!) {
   search(input: $input) {
     searchResults {
       entity {
         urn
+        type
         ... on Dataset {
           name
-          properties {
+          description
+        }
+        ... on Dashboard {
+          info {
             name
-            qualifiedName
+            description
           }
-          platform {
+        }
+        ... on Chart {
+          info {
             name
+            description
           }
         }
       }
@@ -53,48 +67,6 @@ query SearchDbtDatasets($input: SearchInput!) {
   }
 }
 """
-
-_SEARCH_VARIABLES = {
-    "input": {
-        "type": "DATASET",
-        "query": "*",
-        "start": 0,
-        "count": 200,
-        "orFilters": [
-            {
-                "and": [
-                    {
-                        "field": "platform",
-                        "values": ["urn:li:dataPlatform:dbt"],
-                    }
-                ]
-            }
-        ],
-    }
-}
-
-# ---------------------------------------------------------------------------
-# URN parser — extracts the human-readable table name from a DataHub URN
-# ---------------------------------------------------------------------------
-_URN_PATTERN = re.compile(
-    r"urn:li:dataset:\(urn:li:dataPlatform:\w+,([^,]+),\w+\)"
-)
-
-
-def _parse_table_name(urn: str) -> str:
-    """Extract a clean table name from a DataHub dataset URN.
-
-    Example:
-        urn:li:dataset:(urn:li:dataPlatform:dbt,my_project.stg_flight_logs,PROD)
-        → stg_flight_logs
-    """
-    match = _URN_PATTERN.match(urn)
-    if match:
-        qualified = match.group(1)
-        # Return the last segment after any dots (project.model → model)
-        return qualified.rsplit(".", 1)[-1]
-    return urn
-
 
 # ---------------------------------------------------------------------------
 # Request / Response Models
@@ -122,55 +94,9 @@ class ExpertResponse(BaseModel):
 # ---------------------------------------------------------------------------
 app = FastAPI(
     title="DataHub Metadata Wrapper",
-    description="Engine D — queries DataHub GMS for dbt dataset metadata",
-    version="0.1.0",
+    description="Engine D — Dynamic proxy for DataHub GraphQL Search API",
+    version="0.2.0",
 )
-
-
-async def _fetch_all_table_names() -> list[str]:
-    """Internal helper to fetch all dbt table names from DataHub GMS."""
-
-    # --- MOCK MODE INTERCEPT ---
-    if DATAHUB_MOCK_MODE:
-        print("DEBUG: DataHub Wrapper is in MOCK MODE. Returning dummy dbt tables.")
-        return [
-            "stg_pump_telemetry",
-            "fct_engine_failures",
-            "dim_maintenance_assets",
-            "stg_raw_sensor_data",
-            "fct_supply_chain_orders",
-            "dim_personnel",
-            "stg_flight_logs"
-        ]
-    # ---------------------------
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if DATAHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                DATAHUB_GMS_URL,
-                json={"query": _SEARCH_QUERY, "variables": _SEARCH_VARIABLES},
-                headers=headers,
-            )
-            resp.raise_for_status()
-    except httpx.HTTPError as exc:
-        # Re-raise so endpoints can handle or fallback
-        raise exc
-
-    data = resp.json()
-    search_results = data.get("data", {}).get("search", {}).get("searchResults", [])
-
-    table_names: list[str] = []
-    for result in search_results:
-        entity = result.get("entity", {})
-        urn = entity.get("urn", "")
-        props = entity.get("properties") or {}
-        name = props.get("name") or _parse_table_name(urn)
-        table_names.append(name)
-
-    return sorted(set(table_names))
 
 
 @app.get("/health")
@@ -181,66 +107,112 @@ def health() -> dict:
 
 @app.get("/tables")
 async def get_tables() -> dict:
-    """Query DataHub for all dbt datasets and return as LLM context."""
-    try:
-        table_names = await _fetch_all_table_names()
-        return {"available_tables": ", ".join(table_names) if table_names else ""}
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"DataHub unreachable at {DATAHUB_GMS_URL}. Error: {exc}",
-        )
+    """Legacy endpoint — now deprecated in favor of /query_metadata."""
+    return {"available_tables": "Dynamic search enabled via /query_metadata"}
 
 
 @app.post("/query_metadata", response_model=ExpertResponse)
 async def query_metadata(request: MetadataQueryRequest):
     """
     Active agent endpoint for the DATA_STEWARD persona.
-    Takes a natural language query, searches DataHub, and returns bound URIs.
+    Takes a natural language query, dynamically applies platform filters, 
+    searches DataHub, and returns formatted metadata context.
     """
-    try:
-        all_tables = await _fetch_all_table_names()
-    except Exception as exc:
-        # Fallback to empty list so the agent can still respond with "not found"
-        print(f"DEBUG: DataHub fetch failed, falling back to empty list: {exc}")
-        all_tables = []
-
-    # Basic Keyword Matching Logic
-    # We look for table names that appear in the user query (fuzzy match)
     query_upper = request.user_query.upper()
-    matched_tables = [
-        t for t in all_tables 
-        if t.upper() in query_upper or t.replace("_", " ").upper() in query_upper
-    ]
+    or_filters = []
+    
+    # Intelligently apply platform filters if mentioned in the query
+    for term, urn in PLATFORM_MAP.items():
+        if term in query_upper:
+            or_filters.append({
+                "and": [{"field": "platform", "values": [urn]}]
+            })
 
-    # If no exact match, return a subset as a fallback for the demo/concept
-    if not matched_tables and all_tables:
-        matched_tables = all_tables[:3]
+    # Construct the dynamic DataHub SearchInput
+    search_variables = {
+        "input": {
+            "type": "*",  # Broad search across all entities
+            "query": request.user_query,
+            "start": 0,
+            "count": 10,
+        }
+    }
+    
+    if or_filters:
+        search_variables["input"]["orFilters"] = or_filters
 
-    # Construct standard DataHub URNs for the React HUD Data Bindings
-    # Format: urn:li:dataset:(urn:li:dataPlatform:dbt,project.table,PROD)
-    platform = "dbt"
-    env = "PROD"
-    referenced_uris = [
-        f"urn:li:dataset:(urn:li:dataPlatform:{platform},{table},{env})" 
-        for table in matched_tables
-    ]
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if DATAHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
 
-    # Construct the human-readable response
-    if matched_tables:
-        table_list_str = "\n".join([f"- {t}" for t in matched_tables])
-        answer = f"I found the following relevant data assets in the catalog:\n{table_list_str}"
-        confidence = 0.85
+    # Execute GraphQL Request
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                DATAHUB_GMS_URL,
+                json={"query": _GENERIC_SEARCH_QUERY, "variables": search_variables},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        print(f"DEBUG: DataHub search failed: {exc}")
+        return ExpertResponse(
+            confidence_score=0.0,
+            referenced_uris=[],
+            data=DataStewardResponse(
+                short_answer="The DataHub API is currently unreachable.",
+                tool_list=["DataHub"],
+                safety_warnings=["System offline: Cannot verify current data definitions."]
+            )
+        )
+
+    # Parse Results Generically
+    search_results = data.get("data", {}).get("search", {}).get("searchResults", [])
+    matched_assets = []
+    referenced_uris = []
+    
+    for result in search_results:
+        entity = result.get("entity", {})
+        urn = entity.get("urn", "")
+        entity_type = entity.get("type", "UNKNOWN")
+        
+        # Extract name and description based on entity type
+        name = urn
+        desc = "No description provided."
+        
+        if entity_type == "DATASET":
+            name = entity.get("name") or urn
+            desc = entity.get("description") or desc
+        elif entity_type in ["DASHBOARD", "CHART"]:
+            info = entity.get("info") or {}
+            name = info.get("name") or urn
+            desc = info.get("description") or desc
+            
+        matched_assets.append(f"[{entity_type}] {name}: {desc}")
+        referenced_uris.append(urn)
+
+    # Construct the final ExpertResponse
+    if matched_assets:
+        asset_list_str = "\n".join([f"- {a}" for a in matched_assets])
+        answer = f"I searched the data catalog and found the following relevant assets:\n{asset_list_str}"
+        confidence = 0.90
     else:
-        answer = "I could not find any directly matching data models in the catalog."
-        confidence = 0.0
+        answer = f"I could not find any data assets matching your request in the catalog."
+        confidence = 0.10
 
     return ExpertResponse(
         confidence_score=confidence,
         referenced_uris=referenced_uris,
         data=DataStewardResponse(
             short_answer=answer,
-            tool_list=["DataHub", "dbt"],
-            safety_warnings=["Ensure PII masking policies are applied before querying raw layers."]
+            tool_list=["DataHub GraphQL Search"],
+            safety_warnings=["Verify access controls before querying underlying data sources."]
         )
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8085))
+    uvicorn.run(app, host="0.0.0.0", port=port)

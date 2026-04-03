@@ -137,9 +137,9 @@ These are the Kubernetes services the orchestrator communicates with:
 - **Swarms scraper (Engine C)**: `POST http://swarms-agent-svc.default.svc.cluster.local:8083/scrape`
   Accepts `{task_description, dataset_id, semantic_context?}` JSON. Stateless
   heavy compute node. Returns `AgentResponse` JSON.
-- **DataHub wrapper (Engine D)**: `GET http://datahub-wrapper-svc.default.svc.cluster.local:8085/tables`
-  Queries DataHub GMS GraphQL for dbt datasets. Returns
-  `{"available_tables": "table1, table2, ..."}`. 503 if DataHub unreachable.
+- **DataHub wrapper (Engine D)**: `POST http://datahub-wrapper-svc.default.svc.cluster.local:8085/query_metadata`
+  Accepts a natural language query, dynamically applies platform filters, and executes 
+  a multi-entity GraphQL search. Returns `ExpertResponse` with matched asset context. 503 if DataHub unreachable.
 - **Neo4j Graph Expert (Engine E)**: `POST http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph`
   Queries a Neo4j military graph database. Uses Restate for durable execution,
   smolagents `CodeAgent`, and `mem0` backed by Weaviate for long-term memory. Returns rigidly typed BAML `GraphExpertResponse`.
@@ -249,13 +249,8 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 
 ### Phase 8 — Engine D: DataHub Metadata Wrapper (complete)
 - Created `agent_fleet/datahub_wrapper/main.py` — FastAPI on port 8085.
-- `GET /tables` queries DataHub GMS GraphQL for dbt platform datasets.
-- Parses URNs to extract clean table names, returns comma-separated list.
-- Returns 503 if DataHub unreachable (callers should fall back to mock data).
-- Uses `httpx.AsyncClient` — no ML frameworks, no agent SDKs.
-- Env vars: `DATAHUB_GMS_URL` (default: `http://localhost:8080/api/graphql`),
-  `DATAHUB_TOKEN` (optional).
-- Dagster asset: `trigger_datahub_tables` (GET to :8085/tables, group: data_layer).
+- `POST /query_metadata` executes a generic GraphQL search for metadata discovery.
+- (Deleted) Legacy asset `trigger_datahub_tables`.
 - CNB configs: Procfile + project.toml for port 8085.
 - GET `/health` for liveness probes.
 
