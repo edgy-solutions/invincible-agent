@@ -1,6 +1,24 @@
 import os
+import sys
 import asyncio
 from typing import Dict, Any
+from pathlib import Path
+
+# Add baml_shared to Python path so we can import telemetry
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_BAML_SHARED_PATH = _REPO_ROOT / "baml_shared"
+if str(_BAML_SHARED_PATH) not in sys.path:
+    sys.path.insert(0, str(_BAML_SHARED_PATH))
+
+try:
+    from telemetry import safe_observe, safe_update_observation
+except ImportError:
+    def safe_observe(**kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def safe_update_observation(input_data=None, output_data=None):
+        pass
 
 from restate import Context, Service
 from smolagents import CodeAgent
@@ -185,13 +203,21 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             }
         })
 
+        @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
+        def fetch_user_memory(query: str, user_id: str):
+            results = m.search(query=query, user_id=user_id)
+            # Log the exact memories pulled from the vector DB to Langfuse
+            safe_update_observation(input_data=query, output_data=results)
+            return results
+
         # --------------------------------------------------------------------------
         # Run 1: The Smolagents Graph Query Loop
         # --------------------------------------------------------------------------
+        @safe_observe(name="smolagents_neo4j_execution")
         async def run_smolagent() -> tuple[str, str]:
             # Retrieve past successful memories to inject into the system prompt
             if user_id:
-                past_memories = m.search(query=user_query, user_id=user_id)
+                past_memories = fetch_user_memory(query=user_query, user_id=user_id)
                 if past_memories:
                     memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
                     prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"

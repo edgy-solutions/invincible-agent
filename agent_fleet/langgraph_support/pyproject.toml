@@ -16,6 +16,7 @@ dependencies = [
     "psycopg[binary]",
     "baml-py==0.219.0",
     "python-dotenv",
+    "langfuse",
 ]
 
 [build-system]

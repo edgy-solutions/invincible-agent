@@ -8,7 +8,13 @@ def get_smolagent_model():
     Factory to create a smolagents model based on environment variables.
     Supports OpenRouter (default if API key present), Ollama, and Hugging Face.
     """
-    from smolagents import InferenceClientModel, OpenAIServerModel
+    from smolagents import InferenceClientModel
+    try:
+        from smolagents import LiteLLMModel
+        USE_LITELLM = True
+    except ImportError:
+        from smolagents import OpenAIServerModel
+        USE_LITELLM = False
 
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     # Default to openrouter if key is present, otherwise 'hf'
@@ -18,6 +24,12 @@ def get_smolagent_model():
     model_id = os.getenv("SMOLAGENTS_MODEL")
     
     if provider == "openrouter":
+        if USE_LITELLM:
+            return LiteLLMModel(
+                model_id=f"openrouter/{model_id or 'anthropic/claude-3.5-sonnet'}",
+                api_base="https://openrouter.ai/api/v1",
+                api_key=openrouter_key
+            )
         return OpenAIServerModel(
             model_id=model_id or "anthropic/claude-3.5-sonnet", # High performance default
             api_base="https://openrouter.ai/api/v1",
@@ -26,12 +38,23 @@ def get_smolagent_model():
     elif provider == "ollama":
         # Note: In Docker, host.docker.internal reaches the host machine
         base_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
+        if USE_LITELLM:
+            return LiteLLMModel(
+                model_id=f"openai/{model_id or 'gpt-oss-120b'}",
+                api_base=base_url,
+                api_key="ollama" # Generic key for Ollama
+            )
         return OpenAIServerModel(
             model_id=model_id or "gpt-oss-120b",
             api_base=base_url,
             api_key="ollama" # Generic key for Ollama
         )
     elif provider == "openai":
+        if USE_LITELLM:
+            return LiteLLMModel(
+                model_id=model_id or "gpt-4o",
+                api_key=os.getenv("OPENAI_API_KEY")
+            )
         return OpenAIServerModel(
             model_id=model_id or "gpt-4o",
             api_key=os.getenv("OPENAI_API_KEY")

@@ -43,6 +43,7 @@ agent-fleet = [
     "httptools",
     "hypercorn",
     "python-dotenv",
+    "langfuse",
 ]
 
 [dependency-groups]

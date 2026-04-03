@@ -29,8 +29,19 @@ try:
     _BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
     if str(_BAML_CLIENT_PATH) not in sys.path:
         sys.path.insert(0, str(_BAML_CLIENT_PATH))
+    _BAML_SHARED_PATH = _REPO_ROOT / "baml_shared"
+    if str(_BAML_SHARED_PATH) not in sys.path:
+        sys.path.insert(0, str(_BAML_SHARED_PATH))
 except IndexError:
     pass  # Running in CNB container — baml_client is already in /workspace/
+
+try:
+    from telemetry import safe_observe
+except ImportError:
+    def safe_observe(**kwargs):
+        def decorator(func):
+            return func
+        return decorator
 
 from baml_client.types import AgentResponse, AgentStatus, AgentTask  # noqa: E402
 
@@ -83,6 +94,10 @@ class ScrapeRequest(BaseModel):
     semantic_context: dict | None = None
 
 
+@safe_observe(name="swarms_extraction_execution")
+def execute_swarms_workflow(prompt: str):
+    return scrape_workflow.run(prompt)
+
 # ---------------------------------------------------------------------------
 # POST /scrape
 # ---------------------------------------------------------------------------
@@ -112,7 +127,7 @@ async def scrape(request: ScrapeRequest) -> dict:
     prompt += "\nReturn a concise summary and any numeric metrics you extract."
 
     try:
-        result = scrape_workflow.run(prompt)
+        result = execute_swarms_workflow(prompt)
 
         return AgentResponse(
             status=AgentStatus.SUCCESS,

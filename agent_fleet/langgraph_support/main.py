@@ -40,8 +40,17 @@ try:
     _BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
     if str(_BAML_CLIENT_PATH) not in sys.path:
         sys.path.insert(0, str(_BAML_CLIENT_PATH))
+    _BAML_SHARED_PATH = _REPO_ROOT / "baml_shared"
+    if str(_BAML_SHARED_PATH) not in sys.path:
+        sys.path.insert(0, str(_BAML_SHARED_PATH))
 except IndexError:
     pass  # Running in CNB container — baml_client is already in /workspace/
+
+try:
+    from telemetry import get_langgraph_callbacks
+except ImportError:
+    def get_langgraph_callbacks():
+        return []
 
 from baml_client.types import AgentResponse, AgentStatus, AgentTask  # noqa: E402
 
@@ -219,7 +228,10 @@ async def support(request: SupportRequest) -> dict:
         )
 
     # Invoke with thread config for checkpointer memory
-    config = {"configurable": {"thread_id": request.thread_id}}
+    config = {
+        "configurable": {"thread_id": request.thread_id},
+        "callbacks": get_langgraph_callbacks()
+    }
 
     try:
         final_state = await _compiled_graph.ainvoke(initial_state, config=config)

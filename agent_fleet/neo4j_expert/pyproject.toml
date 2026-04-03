@@ -20,6 +20,8 @@ dependencies = [
     "langchain-community",
     "python-dotenv",
     "pysqlite3-binary",
+    "langfuse",
+    "litellm",
 ]
 
 [build-system]
