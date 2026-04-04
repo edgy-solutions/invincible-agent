@@ -146,17 +146,47 @@ async def query_metadata(request: MetadataQueryRequest):
         headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
 
     # Execute GraphQL Request
+    import json
     try:
+        payload = {"query": _GENERIC_SEARCH_QUERY, "variables": search_variables}
+        print(f"DEBUG: Sending request to DataHub GMS ({DATAHUB_GMS_URL})")
+        print(f"DEBUG: Payload: {json.dumps(payload, indent=2)}")
+        
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 DATAHUB_GMS_URL,
-                json={"query": _GENERIC_SEARCH_QUERY, "variables": search_variables},
+                json=payload,
                 headers=headers,
             )
+            print(f"DEBUG: DataHub response status: {resp.status_code}")
+            print(f"DEBUG: DataHub raw response: {resp.text}")
+            
             resp.raise_for_status()
             data = resp.json()
+    except httpx.RequestError as exc:
+        print(f"ERROR: DataHub connection failed (RequestError): {exc}")
+        return ExpertResponse(
+            confidence_score=0.0,
+            referenced_uris=[],
+            data=DataStewardResponse(
+                short_answer="The DataHub API is currently unreachable.",
+                tool_list=["DataHub"],
+                safety_warnings=["System offline: Cannot verify current data definitions."]
+            )
+        )
+    except httpx.HTTPStatusError as exc:
+        print(f"ERROR: DataHub returned HTTP error (HTTPStatusError): {exc.response.status_code} - {exc.response.text}")
+        return ExpertResponse(
+            confidence_score=0.0,
+            referenced_uris=[],
+            data=DataStewardResponse(
+                short_answer="The DataHub API returned an error.",
+                tool_list=["DataHub"],
+                safety_warnings=["System error: Cannot verify current data definitions."]
+            )
+        )
     except Exception as exc:
-        print(f"DEBUG: DataHub search failed: {exc}")
+        print(f"ERROR: Unexpected error during DataHub search: {exc}")
         return ExpertResponse(
             confidence_score=0.0,
             referenced_uris=[],
@@ -168,7 +198,10 @@ async def query_metadata(request: MetadataQueryRequest):
         )
 
     # Parse Results Generically
-    search_results = data.get("data", {}).get("search", {}).get("searchResults", [])
+    data = data or {}
+    data_dict = data.get("data") or {}
+    search_dict = data_dict.get("search") or {}
+    search_results = search_dict.get("searchResults") or []
     matched_assets = []
     referenced_uris = []
     
