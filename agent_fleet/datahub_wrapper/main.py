@@ -89,6 +89,59 @@ class ExpertResponse(BaseModel):
     data: DataStewardResponse
 
 
+from contextlib import asynccontextmanager
+
+# Global cache for our minified schema
+_DYNAMIC_SCHEMA_CACHE = "DataHub Schema Map: Not loaded."
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Boot-time introspection to cache the DataHub schema."""
+    global _DYNAMIC_SCHEMA_CACHE
+    
+    introspection_query = """
+    query IntrospectEntityTypes {
+      __type(name: "EntityType") {
+        enumValues {
+          name
+        }
+      }
+    }
+    """
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            headers = {}
+            if DATAHUB_TOKEN:
+                headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
+                
+            response = await client.post(
+                DATAHUB_GMS_URL,
+                json={"query": introspection_query},
+                headers=headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            enum_values = data.get("data", {}).get("__type", {}).get("enumValues", [])
+            valid_types = [val["name"] for val in enum_values if val and "name" in val]
+            
+            if valid_types:
+                _DYNAMIC_SCHEMA_CACHE = (
+                    "### Valid DataHub Entity Types\n"
+                    "When searching DataHub, you MUST use one of the following exact strings for the entity_type:\n"
+                    f"{', '.join(valid_types)}\n"
+                )
+                print("[Engine D] Successfully cached dynamic DataHub schema map.")
+            else:
+                raise ValueError("No enum values found in response")
+            
+    except Exception as e:
+        print(f"[Engine D] Failed to introspect DataHub schema at startup: {e}")
+        _DYNAMIC_SCHEMA_CACHE = "### Valid DataHub Entity Types\nFallback: DATASET, DASHBOARD, CHART, DATA_FLOW, DATA_JOB"
+
+    yield
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -96,7 +149,13 @@ app = FastAPI(
     title="DataHub Metadata Wrapper",
     description="Engine D — Dynamic proxy for DataHub GraphQL Search API",
     version="0.2.0",
+    lifespan=lifespan,
 )
+
+@app.get("/dynamic_context")
+async def get_dynamic_context():
+    """Returns the minified, token-efficient DataHub schema map."""
+    return {"schema_map": _DYNAMIC_SCHEMA_CACHE}
 
 
 @app.get("/health")

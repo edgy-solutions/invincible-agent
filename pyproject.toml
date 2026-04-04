@@ -51,6 +51,7 @@ dev = [
     "dagster-webserver",
     "dagster-dg-cli",
     "pytest",
+    "pytest-asyncio",
 ]
 
 [build-system]

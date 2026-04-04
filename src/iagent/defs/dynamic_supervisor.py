@@ -24,6 +24,7 @@ NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-sv
 DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
 LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
 PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
+RESTATE_ANALYST_SVC_URL = os.getenv("RESTATE_ANALYST_SVC_URL", "http://restate-agent-svc.default.svc.cluster.local:8081")
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to Python path so we can import the generated client
@@ -117,6 +118,16 @@ def create_task_plan(config: SupervisorQueryConfig):
         )
 
 
+def get_datahub_context(datahub_wrapper_url: str) -> str:
+    """Fetch the dynamic schema map from Engine D."""
+    try:
+        response = requests.get(f"{datahub_wrapper_url}/dynamic_context", timeout=3.0)
+        response.raise_for_status()
+        return response.json().get("schema_map", "")
+    except Exception as e:
+        logger.warning(f"Could not fetch DataHub schema map: {e}")
+        return ""
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(context, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -129,20 +140,36 @@ def execute_subtask(context, task_def: Dict[str, Any]) -> Dict[str, Any]:
 
     # 🔗 ROUTING LOGIC: Fan-out to the correct domain-specific engine
     if domain == "DATA_ENGINEERING":
-        # All DATA_ENGINEERING tasks are routed to DataHub Wrapper (Engine D)
-        # It handles metadata discovery for dbt/Postgres via its active agent endpoint
-        engine_url = f"{DATAHUB_WRAPPER_URL}/query_metadata"
+        # DATA_ENGINEERING tasks are routed to Engine A (Restate Analyst)
+        engine_url = f"{RESTATE_ANALYST_SVC_URL}/analyze"
     else:
         # Default to Engine E (Neo4j Graph Expert) for MAINTENANCE and SUSTAINMENT
         engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph"
 
-    response = requests.post(
-        engine_url,
-        json={
+    # Fetch dynamic schema map if domain is DATA_ENGINEERING
+    dynamic_schema_map = ""
+    if domain == "DATA_ENGINEERING":
+        dynamic_schema_map = get_datahub_context(DATAHUB_WRAPPER_URL)
+
+    if domain == "DATA_ENGINEERING":
+        payload = {
+            "task_description": sub_query,
+            "dataset_id": "dynamic_datahub_search",
+            "dynamic_schema_map": dynamic_schema_map,
+            "persona": persona,
+            "domain": domain
+        }
+    else:
+        payload = {
             "user_query": sub_query,
             "persona": persona,
             "domain": domain, # Pass domain for strict node labeling in Cypher
-        },
+            "dynamic_schema_map": dynamic_schema_map,
+        }
+
+    response = requests.post(
+        engine_url,
+        json=payload,
         timeout=300,
     )
     response.raise_for_status()

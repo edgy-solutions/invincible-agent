@@ -110,7 +110,7 @@ def _resolve_ontology(task_description: str) -> dict:
     return resp.json()
 
 
-def _run_smolagent(task_description: str, dataset_id: str, semantic_ctx: dict) -> dict:
+def _run_smolagent(task_description: str, dataset_id: str, semantic_ctx: dict, dynamic_schema_map: str = "") -> dict:
     """Execute the HuggingFace smolagents CodeAgent with semantic context.
 
     The agent receives the resolved ontology URI and suggested dbt models
@@ -129,13 +129,71 @@ def _run_smolagent(task_description: str, dataset_id: str, semantic_ctx: dict) -
         f"  Resolved URI: {resolved_uri}\n"
         f"  Confidence: {confidence}\n"
         f"  Relevant dbt models / tables: {', '.join(suggested_models)}\n\n"
+    )
+
+    if dynamic_schema_map:
+        agent_prompt += f"{dynamic_schema_map}\n\n"
+
+    agent_prompt += (
         f"Use ONLY the tables listed above. Produce a brief summary of your "
         f"analysis and any key metrics you extract."
     )
 
+    from smolagents import tool
+
+    @tool
+    def search_datahub(query: str, entity_type: str = None) -> str:
+        """
+        Searches the DataHub metadata catalog.
+        
+        Args:
+            query: CRITICAL - You MUST extract 1-3 concise keywords (e.g. 'RSO Superset'). DO NOT pass full sentences.
+            entity_type: The specific entity to search. You MUST choose a value from the 'Valid DataHub Entity Types' list provided in your system prompt. Do NOT use '*'.
+        """
+        import requests
+        import os
+        DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
+        try:
+            resp = requests.post(
+                f"{DATAHUB_WRAPPER_URL}/query_metadata",
+                json={"user_query": query, "persona": "DATA_STEWARD", "domain": "DATA_ENGINEERING"},
+                timeout=15.0
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("data", {}).get("short_answer", "No results found.")
+        except Exception as e:
+            return f"Error executing DataHub search via Engine D: {str(e)}"
+
     model = get_smolagent_model()
-    agent = CodeAgent(tools=[], model=model)
+    agent = CodeAgent(tools=[search_datahub], model=model)
     result = agent.run(agent_prompt)
+
+    # Extract smolagents internal logs (trajectory)
+    formatted_trace = "--- Agent Execution Trace ---\n"
+    if hasattr(agent, 'logs'):
+        for log_entry in agent.logs:
+            if isinstance(log_entry, dict):
+                formatted_trace += f"Step: {log_entry.get('step', 'N/A')}\n"
+                if 'thought' in log_entry:
+                    formatted_trace += f"Thought: {log_entry['thought']}\n"
+                if 'tool_call' in log_entry:
+                    formatted_trace += f"Action: {log_entry['tool_call']}\n"
+                if 'tool_result' in log_entry:
+                    formatted_trace += f"Result: {log_entry['tool_result']}\n"
+            else:
+                formatted_trace += f"Step: {getattr(log_entry, 'step', 'N/A')}\n"
+                if hasattr(log_entry, 'thought') and getattr(log_entry, 'thought'):
+                    formatted_trace += f"Thought: {getattr(log_entry, 'thought')}\n"
+                if hasattr(log_entry, 'tool_call') and getattr(log_entry, 'tool_call'):
+                    formatted_trace += f"Action: {getattr(log_entry, 'tool_call')}\n"
+                elif hasattr(log_entry, 'action') and getattr(log_entry, 'action'):
+                    formatted_trace += f"Action: {getattr(log_entry, 'action')}\n"
+                if hasattr(log_entry, 'tool_result') and getattr(log_entry, 'tool_result'):
+                    formatted_trace += f"Result: {getattr(log_entry, 'tool_result')}\n"
+                elif hasattr(log_entry, 'observation') and getattr(log_entry, 'observation'):
+                    formatted_trace += f"Result: {getattr(log_entry, 'observation')}\n"
+            formatted_trace += "-" * 30 + "\n"
 
     return {
         "status": AgentStatus.SUCCESS.value,
@@ -143,6 +201,7 @@ def _run_smolagent(task_description: str, dataset_id: str, semantic_ctx: dict) -
         "extracted_metrics": {
             "ontology_confidence": confidence,
         },
+        "execution_trace": formatted_trace,
     }
 
 
@@ -155,6 +214,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
     """
     # Parse the incoming AgentTask
     task = AgentTask(**request)
+    dynamic_schema_map = request.get("dynamic_schema_map", "")
 
     # Step 1: Resolve semantic context via Engine O (durable HTTP call)
     semantic_ctx = await ctx.run(
@@ -169,6 +229,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
             task_description=task.task_description,
             dataset_id=task.dataset_id,
             semantic_ctx=semantic_ctx,
+            dynamic_schema_map=dynamic_schema_map,
         ),
     )
 
