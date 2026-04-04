@@ -5,10 +5,14 @@ from typing import Dict, Any
 from pathlib import Path
 
 # Add baml_shared to Python path so we can import telemetry
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_BAML_SHARED_PATH = _REPO_ROOT / "baml_shared"
-if str(_BAML_SHARED_PATH) not in sys.path:
-    sys.path.insert(0, str(_BAML_SHARED_PATH))
+_CURRENT_FILE = Path(__file__).resolve()
+try:
+    _REPO_ROOT = _CURRENT_FILE.parents[3]
+    _BAML_SHARED_PATH = _REPO_ROOT / "baml_shared"
+    if _BAML_SHARED_PATH.exists() and str(_BAML_SHARED_PATH) not in sys.path:
+        sys.path.insert(0, str(_BAML_SHARED_PATH))
+except IndexError:
+    pass
 
 try:
     from telemetry import safe_observe, safe_update_observation
