@@ -103,6 +103,7 @@ class AgentTask(BaseModel):
     task_description: str = Field(description='Human-readable description of the work the agent should perform.')
     dataset_id: str = Field(description='Identifier for the target dataset or data asset in the mesh.')
     semantic_context: typing.Optional["SemanticResolution"] = Field(default=None, description='Optional pre-resolved semantic context. When present, agents can skip their own classification step.')
+    user_id: typing.Optional[str] = Field(default=None, description='The identity of the user requesting the task, used for memory partitioning.')
 
 class AgentTaskDefinition(BaseModel):
     target_persona: typing.Union[PersonaTarget, str]

@@ -53,6 +53,8 @@ class AgentTask {
     @description("Identifier for the target dataset or data asset in the mesh.")
   semantic_context SemanticResolution?
     @description("Optional pre-resolved semantic context. When present, agents can skip their own classification step.")
+  user_id string?
+    @description("The identity of the user requesting the task, used for memory partitioning.")
 }
 
 // -----------------------------------------------------------------------------

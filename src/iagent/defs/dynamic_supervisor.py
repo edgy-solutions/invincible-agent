@@ -59,6 +59,7 @@ class SupervisorQueryConfig(Config):
     persona: str
     domain: str = "MAINTENANCE"
     task_plan_json: str = ""  # Optional pre-computed plan from BFF
+    user_id: str = "default_testing_user"
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -129,7 +130,7 @@ def get_datahub_context(datahub_wrapper_url: str) -> str:
         return ""
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
-def execute_subtask(context, task_def: Dict[str, Any]) -> Dict[str, Any]:
+def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes a single decomposed sub-task by calling Engine E (Neo4j Graph Expert).
     This op runs in parallel for each dynamically generated task.
@@ -157,7 +158,8 @@ def execute_subtask(context, task_def: Dict[str, Any]) -> Dict[str, Any]:
             "dataset_id": "dynamic_datahub_search",
             "dynamic_schema_map": dynamic_schema_map,
             "persona": persona,
-            "domain": domain
+            "domain": domain,
+            "user_id": config.user_id
         }
     else:
         payload = {
@@ -165,6 +167,7 @@ def execute_subtask(context, task_def: Dict[str, Any]) -> Dict[str, Any]:
             "persona": persona,
             "domain": domain, # Pass domain for strict node labeling in Cypher
             "dynamic_schema_map": dynamic_schema_map,
+            "user_id": config.user_id
         }
 
     response = requests.post(
@@ -199,6 +202,7 @@ def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, A
         f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
         json={
             "thread_id": config.thread_id,
+            "user_id": config.user_id,
             "user_query": config.user_query,
             "dagster_context": results,
         },

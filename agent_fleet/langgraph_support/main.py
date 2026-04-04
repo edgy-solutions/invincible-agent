@@ -188,6 +188,7 @@ app = FastAPI(
 class SupportRequest(BaseModel):
     """Incoming request to the /support endpoint."""
     thread_id: str
+    user_id: str = "default_testing_user"
     user_query: str = ""
     dagster_context: list | None = None
     task_description: str = ""
@@ -229,7 +230,10 @@ async def support(request: SupportRequest) -> dict:
 
     # Invoke with thread config for checkpointer memory
     config = {
-        "configurable": {"thread_id": request.thread_id},
+        "configurable": {
+            "thread_id": request.thread_id,
+            "user_id": request.user_id
+        },
         "callbacks": get_langgraph_callbacks()
     }
 

@@ -606,7 +606,7 @@ class AgentTaskAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("AgentTask")
-        self._properties: typing.Set[str] = set([  "task_description",  "dataset_id",  "semantic_context",  ])
+        self._properties: typing.Set[str] = set([  "task_description",  "dataset_id",  "semantic_context",  "user_id",  ])
         self._props = AgentTaskProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -645,6 +645,10 @@ class AgentTaskProperties:
     @property
     def semantic_context(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("semantic_context"))
+    
+    @property
+    def user_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("user_id"))
     
     
 
