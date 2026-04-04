@@ -121,11 +121,11 @@ def _resolve_ontology(task_description: str) -> dict:
 
 @analyst_service.handler()
 async def analyze(ctx: Context, request: dict) -> dict:
-    \"\"\"Durable handler: resolve ontology → run smolagent → return AgentResponse.
+    """Durable handler: resolve ontology → run smolagent → return AgentResponse.
 
     Every side-effectful operation is wrapped in ``ctx.run()`` so Restate
     can guarantee exactly-once execution even across pod restarts.
-    \"\"\"
+    """
     # Parse the incoming AgentTask
     task = AgentTask(**request)
     dynamic_schema_map = request.get("dynamic_schema_map", "")
@@ -197,13 +197,13 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         @tool
         def search_datahub(query: str, entity_type: str = None) -> str:
-            \"\"\"
+            """
             Searches the DataHub metadata catalog.
             
             Args:
                 query: CRITICAL - You MUST extract 1-3 concise keywords (e.g. 'RSO Superset'). DO NOT pass full sentences.
                 entity_type: The specific entity to search. You MUST choose a value from the 'Valid DataHub Entity Types' list provided in your system prompt. Do NOT use '*'.
-            \"\"\"
+            """
             import requests
             import os
             DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
@@ -226,29 +226,17 @@ async def analyze(ctx: Context, request: dict) -> dict:
             confidence = semantic_ctx.get("confidence_score", 0.0)
 
             agent_prompt = (
-                f"You are a sustainment data analyst. Analyze the following task.
-
-"
-                f"Task: {task.task_description}
-"
-                f"Dataset ID: {task.dataset_id}
-
-"
-                f"Semantic Context (from IOF/MIMOSA ontology):
-"
-                f"  Resolved URI: {resolved_uri}
-"
-                f"  Confidence: {confidence}
-"
-                f"  Relevant dbt models / tables: {', '.join(suggested_models)}
-
-"
+                f"You are a sustainment data analyst. Analyze the following task.\n\n"
+                f"Task: {task.task_description}\n"
+                f"Dataset ID: {task.dataset_id}\n\n"
+                f"Semantic Context (from IOF/MIMOSA ontology):\n"
+                f"  Resolved URI: {resolved_uri}\n"
+                f"  Confidence: {confidence}\n"
+                f"  Relevant dbt models / tables: {', '.join(suggested_models)}\n\n"
             )
 
             if dynamic_schema_map:
-                agent_prompt += f"{dynamic_schema_map}
-
-"
+                agent_prompt += f"{dynamic_schema_map}\n\n"
 
             agent_prompt += (
                 f"Use ONLY the tables listed above. Produce a brief summary of your "
@@ -258,12 +246,8 @@ async def analyze(ctx: Context, request: dict) -> dict:
             if user_id:
                 past_memories = fetch_user_memory(query=task.task_description, user_id=user_id)
                 if past_memories:
-                    memory_strings = "
-".join([f"- {mem['text']}" for mem in past_memories])
-                    prompt_extension = f"
-
-### Relevant Past Experience
-{memory_strings}"
+                    memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
+                    prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
                     agent_prompt += prompt_extension
 
             model = get_smolagent_model()
@@ -271,42 +255,30 @@ async def analyze(ctx: Context, request: dict) -> dict:
             
             result = str(await asyncio.to_thread(agent.run, agent_prompt))
 
-            formatted_trace = "--- Agent Execution Trace ---
-"
+            formatted_trace = "--- Agent Execution Trace ---\n"
             if hasattr(agent, 'logs'):
                 for log_entry in agent.logs:
                     if isinstance(log_entry, dict):
-                        formatted_trace += f"Step: {log_entry.get('step', 'N/A')}
-"
+                        formatted_trace += f"Step: {log_entry.get('step', 'N/A')}\n"
                         if 'thought' in log_entry:
-                            formatted_trace += f"Thought: {log_entry['thought']}
-"
+                            formatted_trace += f"Thought: {log_entry['thought']}\n"
                         if 'tool_call' in log_entry:
-                            formatted_trace += f"Action: {log_entry['tool_call']}
-"
+                            formatted_trace += f"Action: {log_entry['tool_call']}\n"
                         if 'tool_result' in log_entry:
-                            formatted_trace += f"Result: {log_entry['tool_result']}
-"
+                            formatted_trace += f"Result: {log_entry['tool_result']}\n"
                     else:
-                        formatted_trace += f"Step: {getattr(log_entry, 'step', 'N/A')}
-"
+                        formatted_trace += f"Step: {getattr(log_entry, 'step', 'N/A')}\n"
                         if hasattr(log_entry, 'thought') and getattr(log_entry, 'thought'):
-                            formatted_trace += f"Thought: {getattr(log_entry, 'thought')}
-"
+                            formatted_trace += f"Thought: {getattr(log_entry, 'thought')}\n"
                         if hasattr(log_entry, 'tool_call') and getattr(log_entry, 'tool_call'):
-                            formatted_trace += f"Action: {getattr(log_entry, 'tool_call')}
-"
+                            formatted_trace += f"Action: {getattr(log_entry, 'tool_call')}\n"
                         elif hasattr(log_entry, 'action') and getattr(log_entry, 'action'):
-                            formatted_trace += f"Action: {getattr(log_entry, 'action')}
-"
+                            formatted_trace += f"Action: {getattr(log_entry, 'action')}\n"
                         if hasattr(log_entry, 'tool_result') and getattr(log_entry, 'tool_result'):
-                            formatted_trace += f"Result: {getattr(log_entry, 'tool_result')}
-"
+                            formatted_trace += f"Result: {getattr(log_entry, 'tool_result')}\n"
                         elif hasattr(log_entry, 'observation') and getattr(log_entry, 'observation'):
-                            formatted_trace += f"Result: {getattr(log_entry, 'observation')}
-"
-                    formatted_trace += "-" * 30 + "
-"
+                            formatted_trace += f"Result: {getattr(log_entry, 'observation')}\n"
+                    formatted_trace += "-" * 30 + "\n"
 
             return result, formatted_trace, confidence
 
