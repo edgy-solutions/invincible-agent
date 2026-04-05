@@ -41,7 +41,26 @@ import weaviate
 from weaviate.connect import ConnectionParams
 from langchain_weaviate import WeaviateVectorStore
 from langchain_community.embeddings import FakeEmbeddings
-from telemetry import safe_observe, safe_update_observation
+
+# Add baml_shared to Python path so we can import telemetry
+_CURRENT_FILE = Path(__file__).resolve()
+try:
+    _REPO_ROOT = _CURRENT_FILE.parents[2]
+    _BAML_SHARED_PATH = _REPO_ROOT / "baml_shared"
+    if _BAML_SHARED_PATH.exists() and str(_BAML_SHARED_PATH) not in sys.path:
+        sys.path.insert(0, str(_BAML_SHARED_PATH))
+except IndexError:
+    pass
+
+try:
+    from telemetry import safe_observe, safe_update_observation
+except ImportError:
+    def safe_observe(**kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def safe_update_observation(input_data=None, output_data=None):
+        pass
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse

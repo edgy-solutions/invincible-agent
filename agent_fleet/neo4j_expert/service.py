@@ -7,7 +7,7 @@ from pathlib import Path
 # Add baml_shared to Python path so we can import telemetry
 _CURRENT_FILE = Path(__file__).resolve()
 try:
-    _REPO_ROOT = _CURRENT_FILE.parents[3]
+    _REPO_ROOT = _CURRENT_FILE.parents[2]
     _BAML_SHARED_PATH = _REPO_ROOT / "baml_shared"
     if _BAML_SHARED_PATH.exists() and str(_BAML_SHARED_PATH) not in sys.path:
         sys.path.insert(0, str(_BAML_SHARED_PATH))
