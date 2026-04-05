@@ -238,6 +238,77 @@ async def analyze(ctx: Context, request: dict) -> dict:
             except Exception as e:
                 return f"Error executing DataHub search via Engine D: {str(e)}"
 
+        @tool
+        def superset_analytics_manager(
+            action: str,
+            sql_query: str,
+            chart_title: str = "AI Generated Insights",
+            viz_type: str = "dist_bar",
+            database_id: int = 1
+        ) -> str:
+            """
+            Manages headless analytics via Apache Superset. 
+            Use 'preview' to run SQL and get data for a UI chart. 
+            Use 'publish' to save the query as a permanent Superset Dashboard Chart.
+
+            Args:
+                action: 'preview' to get raw data, or 'publish' to save to Superset.
+                sql_query: The validated SQL query to execute.
+                chart_title: The name for the published chart.
+                viz_type: Superset viz type (e.g., 'dist_bar', 'line', 'pie', 'area').
+                database_id: The ID of the Superset database connection.
+            """
+            import os
+            import json
+            import requests
+            import time
+
+            SUPERSET_URL = os.getenv("SUPERSET_URL", "http://superset:8088")
+            # In your environment, the Agent uses a pre-configured JWT or Admin creds
+            headers = {
+                "Authorization": f"Bearer {os.getenv('SUPERSET_ACCESS_TOKEN')}",
+                "Content-Type": "application/json"
+            }
+
+            if action == "preview":
+                # 1. Execute via SQL Lab API to get raw data for the Cortex UI preview
+                payload = {
+                    "database_id": database_id,
+                    "sql": sql_query,
+                    "run_async": False
+                }
+                resp = requests.post(f"{SUPERSET_URL}/api/v1/sqllab/execute/", json=payload, headers=headers)
+                if resp.status_code != 200:
+                    return f"Preview failed: {resp.text}"
+                
+                data = resp.json().get("data", [])
+                return json.dumps(data)
+
+            elif action == "publish":
+                # 2. Register the Virtual Dataset
+                ds_payload = {"database": database_id, "table_name": f"tmp_{int(time.time())}", "sql": sql_query}
+                ds_resp = requests.post(f"{SUPERSET_URL}/api/v1/dataset/", json=ds_payload, headers=headers)
+                if ds_resp.status_code != 201:
+                    return f"Dataset creation failed: {ds_resp.text}"
+                dataset_id = ds_resp.json().get("id")
+
+                # 3. Create the Chart (Slice)
+                chart_payload = {
+                    "slice_name": chart_title,
+                    "viz_type": viz_type,
+                    "datasource_id": dataset_id,
+                    "datasource_type": "table",
+                    "params": json.dumps({"metrics": ["count"], "groupby": []})
+                }
+                chart_resp = requests.post(f"{SUPERSET_URL}/api/v1/chart/", json=chart_payload, headers=headers)
+                if chart_resp.status_code != 201:
+                    return f"Chart publication failed: {chart_resp.text}"
+                
+                chart_id = chart_resp.json().get("id")
+                return f"PUBLISHED: Chart ID {chart_id}. URL: {SUPERSET_URL}/explore/?slice_id={chart_id}"
+
+            return "Invalid action. Use 'preview' or 'publish'."
+
         @safe_observe(name="smolagents_restate_execution")
         async def run_smolagent() -> tuple[str, str, float]:
             resolved_uri = semantic_ctx.get("resolved_uri", "unknown")
@@ -257,7 +328,10 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
             agent_prompt += (
                 f"Produce a brief summary of your "
-                f"analysis and any key metrics you extract."
+                f"analysis and any key metrics you extract.\n"
+                f"If you see a request for a 'chart' or 'visualization', you should:\n"
+                f"First, call superset_analytics_manager with action='preview'.\n"
+                f"Include the returned JSON in your final response so the UI Router can build the ChartUI object."
             )
 
             if user_id:
@@ -268,7 +342,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     agent_prompt += prompt_extension
 
             model = get_smolagent_model()
-            agent = CodeAgent(tools=[search_datahub], model=model)
+            agent = CodeAgent(tools=[search_datahub, superset_analytics_manager], model=model)
             
             result = str(await asyncio.to_thread(agent.run, agent_prompt))
 

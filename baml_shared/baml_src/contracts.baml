@@ -376,6 +376,7 @@ enum SemanticArchetype {
   HAZARD_DECLARATION   // Maps to safety, risk, warnings
   ASSET_STATE_METRIC   // Maps to inventory, telemetry, tables
   KNOWLEDGE_DOCUMENT   // Maps to manuals, standard text, code
+  CHART_WIDGET         // 🟢 NEW: Maps to Bar, Line, and Pie charts
 }
 
 enum SeverityLevel {
@@ -430,9 +431,26 @@ class DocumentUI {
   markdown_content string
 }
 
+enum ChartType {
+  BAR
+  LINE
+  PIE
+  SCATTER
+}
+
+class ChartUI {
+  archetype SemanticArchetype @description("MUST be CHART_WIDGET")
+  source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
+  subject_concept string? @description("What this chart is about (e.g., 'Pump 101 Vibration History')")
+  chart_type ChartType
+  chart_data string @description("A stringified JSON array containing the data points. e.g., '[{\"name\": \"Pump A\", \"value\": 120}]'")
+  x_axis_label string?
+  y_axis_label string?
+}
+
 // 3. Composite Dashboard Container
 class DashboardUI {
-  components (TopologyUI | HazardUI | MetricUI | DocumentUI)[]
+  components (TopologyUI | HazardUI | MetricUI | DocumentUI | ChartUI)[]
 }
 
 // 4. Update the router function to return the Composite Dashboard
@@ -456,7 +474,8 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
     EXAMPLES:
     - If the raw data has a Process Engineer's steps AND a Mechanic's safety warnings: 
       Output an array with 1 TopologyUI object AND 1 HazardUI object.
-    - If the raw data has a Tech Writer's text: Output a single DocumentUI object.
+    - If the raw data contains time-series data, aggregations, or explicitly mentions generating a chart:
+      Output a ChartUI object. Map the data into the `chart_data` JSON string.
     - PROCESS_ENGINEER: use TopologyUI. Map steps to nodes and connections to edges.
     - Safety warning: use HazardUI. Map hazards to the hazards array.
     - Manual/Text: use DocumentUI. Map text to markdown_content.
@@ -470,7 +489,8 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
     INSTRUCTIONS FOR DATA STEWARD / TABLES:
     - If the raw data contains a list of database tables, dbt models, or sensor schemas: 
       USE MetricUI (ASSET_STATE_METRIC). Map each table name to a UIEntity in the `metrics` array.
-    - If the raw data is from a DATA_STEWARD: prioritize MetricUI for schema/table lists.
+    - If the raw data contains actual query results (rows/columns) that represent aggregates or trends:
+      USE ChartUI (CHART_WIDGET) and guess the best ChartType.
     
     {{ ctx.output_format }}
   "#

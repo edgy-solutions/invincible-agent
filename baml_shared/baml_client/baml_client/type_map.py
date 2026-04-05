@@ -40,6 +40,9 @@ type_map = {
     "types.BPMNNode": types.BPMNNode,
     "stream_types.BPMNNode": stream_types.BPMNNode,
 
+    "types.ChartUI": types.ChartUI,
+    "stream_types.ChartUI": stream_types.ChartUI,
+
     "types.DashboardUI": types.DashboardUI,
     "stream_types.DashboardUI": stream_types.DashboardUI,
 
@@ -95,6 +98,8 @@ type_map = {
     "types.AgentStatus": types.AgentStatus,
 
     "types.BPMNNodeType": types.BPMNNodeType,
+
+    "types.ChartType": types.ChartType,
 
     "types.Domain": types.Domain,
 

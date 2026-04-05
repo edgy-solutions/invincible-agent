@@ -20,13 +20,13 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","BPMNNodeType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 8
+    # Generated enums 9
     # #########################################################################
 
     @property
@@ -36,6 +36,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def BPMNNodeType(self) -> "BPMNNodeTypeViewer":
         return BPMNNodeTypeViewer(self)
+
+    @property
+    def ChartType(self) -> "ChartTypeViewer":
+        return ChartTypeViewer(self)
 
     @property
     def Domain(self) -> "DomainBuilder":
@@ -63,7 +67,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 25
+    # Generated classes 26
     # #########################################################################
 
     @property
@@ -97,6 +101,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def BPMNNode(self) -> "BPMNNodeViewer":
         return BPMNNodeViewer(self)
+
+    @property
+    def ChartUI(self) -> "ChartUIViewer":
+        return ChartUIViewer(self)
 
     @property
     def DashboardUI(self) -> "DashboardUIViewer":
@@ -169,7 +177,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 8
+# Generated enums 9
 # #########################################################################
 
 class AgentStatusAst:
@@ -264,6 +272,56 @@ class BPMNNodeTypeValues:
     @property
     def TimerEvent(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("TimerEvent"))
+    
+    
+
+
+class ChartTypeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("ChartType")
+        self._values: typing.Set[str] = set([  "BAR",  "LINE",  "PIE",  "SCATTER",  ])
+        self._vals = ChartTypeValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "ChartTypeValues":
+        return self._vals
+
+
+class ChartTypeViewer(ChartTypeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class ChartTypeValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def BAR(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("BAR"))
+    
+    @property
+    def LINE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("LINE"))
+    
+    @property
+    def PIE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("PIE"))
+    
+    @property
+    def SCATTER(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("SCATTER"))
     
     
 
@@ -458,7 +516,7 @@ class SemanticArchetypeAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.enum("SemanticArchetype")
-        self._values: typing.Set[str] = set([  "PROCESS_TOPOLOGY",  "HAZARD_DECLARATION",  "ASSET_STATE_METRIC",  "KNOWLEDGE_DOCUMENT",  ])
+        self._values: typing.Set[str] = set([  "PROCESS_TOPOLOGY",  "HAZARD_DECLARATION",  "ASSET_STATE_METRIC",  "KNOWLEDGE_DOCUMENT",  "CHART_WIDGET",  ])
         self._vals = SemanticArchetypeValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
@@ -500,6 +558,10 @@ class SemanticArchetypeValues:
     @property
     def KNOWLEDGE_DOCUMENT(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("KNOWLEDGE_DOCUMENT"))
+    
+    @property
+    def CHART_WIDGET(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("CHART_WIDGET"))
     
     
 
@@ -552,7 +614,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 25
+# Generated classes 26
 # #########################################################################
 
 class AgentResponseAst:
@@ -943,6 +1005,69 @@ class BPMNNodeProperties:
     @property
     def data_source(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("data_source"))
+    
+    
+
+
+class ChartUIAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ChartUI")
+        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "chart_type",  "chart_data",  "x_axis_label",  "y_axis_label",  ])
+        self._props = ChartUIProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ChartUIProperties":
+        return self._props
+
+
+class ChartUIViewer(ChartUIAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ChartUIProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def archetype(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def source_persona(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_persona"))
+    
+    @property
+    def subject_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
+    
+    @property
+    def chart_type(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("chart_type"))
+    
+    @property
+    def chart_data(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("chart_data"))
+    
+    @property
+    def x_axis_label(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("x_axis_label"))
+    
+    @property
+    def y_axis_label(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("y_axis_label"))
     
     
 

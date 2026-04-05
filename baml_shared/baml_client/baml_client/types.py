@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (8)
+# Generated enums (9)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -52,6 +52,12 @@ class BPMNNodeType(str, Enum):
     UserTask = "UserTask"
     ExclusiveGateway = "ExclusiveGateway"
     TimerEvent = "TimerEvent"
+
+class ChartType(str, Enum):
+    BAR = "BAR"
+    LINE = "LINE"
+    PIE = "PIE"
+    SCATTER = "SCATTER"
 
 class Domain(str, Enum):
     pass
@@ -78,6 +84,7 @@ class SemanticArchetype(str, Enum):
     HAZARD_DECLARATION = "HAZARD_DECLARATION"
     ASSET_STATE_METRIC = "ASSET_STATE_METRIC"
     KNOWLEDGE_DOCUMENT = "KNOWLEDGE_DOCUMENT"
+    CHART_WIDGET = "CHART_WIDGET"
 
 class SeverityLevel(str, Enum):
     INFO = "INFO"
@@ -85,7 +92,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (25)
+# Generated classes (26)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -137,8 +144,17 @@ class BPMNNode(BaseModel):
     ontology_class: typing.Optional[str] = Field(default=None, description='IOF-MRO / MIMOSA ontology URI grounding this node. REQUIRED for ServiceTask, null for others. Must come from the available_ontology_classes list.')
     data_source: typing.Optional[str] = Field(default=None, description='DataHub / dbt model name grounding this node. REQUIRED for ServiceTask, null for others. Must come from the available_data_sources list.')
 
+class ChartUI(BaseModel):
+    archetype: SemanticArchetype = Field(description='MUST be CHART_WIDGET')
+    source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
+    subject_concept: typing.Optional[str] = Field(default=None, description='What this chart is about (e.g., \'Pump 101 Vibration History\')')
+    chart_type: ChartType
+    chart_data: str = Field(description='A stringified JSON array containing the data points. e.g., \'[{"name": "Pump A", "value": 120}]\'')
+    x_axis_label: typing.Optional[str] = None
+    y_axis_label: typing.Optional[str] = None
+
 class DashboardUI(BaseModel):
-    components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI"]]
+    components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI", "ChartUI"]]
 
 class DataStewardResponse(BaseModel):
     tool_list: typing.List[str]
