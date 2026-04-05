@@ -47,8 +47,10 @@ query SearchDataHub($input: SearchInput!) {
         urn
         type
         ... on Dataset {
-          name
-          description
+          properties {
+            name
+            description
+          }
         }
         ... on Dashboard {
           info {
@@ -269,14 +271,17 @@ async def query_metadata(request: MetadataQueryRequest):
         urn = entity.get("urn", "")
         entity_type = entity.get("type", "UNKNOWN")
         
-        # Extract name and description based on entity type
+        # Extract name and description based on entity type and specific aspects
         name = urn
         desc = "No description provided."
         
         if entity_type == "DATASET":
-            name = entity.get("name") or urn
-            desc = entity.get("description") or desc
+            # Datasets store these in the 'properties' aspect
+            props = entity.get("properties") or {}
+            name = props.get("name") or urn
+            desc = props.get("description") or desc
         elif entity_type in ["DASHBOARD", "CHART"]:
+            # Dashboards and Charts store these in the 'info' aspect
             info = entity.get("info") or {}
             name = info.get("name") or urn
             desc = info.get("description") or desc
