@@ -1480,7 +1480,7 @@ class SemanticResolutionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("SemanticResolution")
-        self._properties: typing.Set[str] = set([  "resolved_uri",  "confidence_score",  "suggested_dbt_models",  ])
+        self._properties: typing.Set[str] = set([  "resolved_uri",  "confidence_score",  ])
         self._props = SemanticResolutionProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1515,10 +1515,6 @@ class SemanticResolutionProperties:
     @property
     def confidence_score(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("confidence_score"))
-    
-    @property
-    def suggested_dbt_models(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("suggested_dbt_models"))
     
     
 

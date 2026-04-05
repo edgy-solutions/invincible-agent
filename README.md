@@ -214,9 +214,9 @@ All inter-service communication uses schemas defined in `contracts.baml`:
 |--------|-------------|
 | `AgentTask` | Universal input payload (task_description, dataset_id, semantic_context?) |
 | `AgentResponse` | Universal output (status, summary, extracted_metrics) |
-| `SemanticResolution` | Ontology resolution result (resolved_uri, confidence_score, suggested_dbt_models) |
+| `SemanticResolution` | Ontology resolution result (resolved_uri, confidence_score) |
 | `AgentStatus` | Enum: `SUCCESS` · `FAILED` · `HUMAN_REQUIRED` |
-|| `ClassifySustainmentIntent` | BAML function — maps queries to dynamic ontology URIs from the RDF graph |
+|| `ClassifyDomainIntent` | BAML function — maps queries to dynamic ontology URIs from the RDF graph |
 || `PersonaTarget` | Enum: `MECHANIC` · `TECH_WRITER` · `LOGISTICS` · `AUDITOR` · `PROCESS_ENGINEER` |
 || `GraphExpertResponse` | Union response from Engine E keyed by persona |
 || `DashboardUI` | Composite dashboard: `{ components: (TopologyUI \| HazardUI \| MetricUI \| DocumentUI)[] }` |

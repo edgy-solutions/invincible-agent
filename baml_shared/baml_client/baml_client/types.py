@@ -202,7 +202,6 @@ class SemanticResolution(BaseModel):
 # comes from the RDF graph at runtime.
     resolved_uri: str = Field(description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
     confidence_score: float = Field(description='Model confidence in the match, between 0.0 and 1.0.')
-    suggested_dbt_models: typing.List[str] = Field(description='Ordered list of dbt model names relevant to the resolved concept.')
 
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]

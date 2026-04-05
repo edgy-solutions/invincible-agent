@@ -179,7 +179,7 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Defined BAML contracts: `AgentTask`, `AgentResponse`, `SemanticResolution`,
   `AgentStatus`.
 - Ontology classes are dynamic (from RDF graph), not hardcoded enums.
-- Added `ClassifySustainmentIntent` BAML function — maps user queries to
+- Added `ClassifyDomainIntent` BAML function — maps user queries to
   ontology URIs injected at runtime via `active_ontology_classes` parameter.
 - Generated Python/Pydantic client via BAML codegen.
 
@@ -193,7 +193,7 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Created `agent_fleet/ontology_service/main.py` — FastAPI on port 8084.
 - Loads `iof_mro.ttl` (dummy IOF/MIMOSA MRO ontology) into rdflib on startup.
 - POST `/resolve`: SPARQL-queries graph for sustainment classes → formats as
-  string → calls BAML `ClassifySustainmentIntent` → returns `SemanticResolution`.
+  string → calls BAML `ClassifyDomainIntent` → returns `SemanticResolution`.
 - No compute or orchestration — strictly translates NL to IOF/MIMOSA terms.
 - GET `/health` for liveness probes.
 
@@ -202,8 +202,8 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Restate `AnalystService` with durable `analyze` handler.
 - Handler flow: `ctx.run(resolve_ontology)` → `ctx.run(run_smolagent)` →
   return `AgentResponse`.
-- Ontology pre-resolution injects `resolved_uri` + `suggested_dbt_models`
-  into the CodeAgent prompt so it knows which tables to query.
+- Ontology pre-resolution injects `resolved_uri`
+  into the CodeAgent prompt.
 - Proxy route `POST /analyze` forwards to `/restate/AnalystService/analyze`.
 - Restate `Workflow("BPMNWorkflowRunner")` for durable BPMN task execution:
   - `ServiceTask` → `ctx.run()` (durable HTTP POST).

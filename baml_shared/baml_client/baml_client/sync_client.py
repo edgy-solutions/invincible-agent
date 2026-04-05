@@ -94,18 +94,18 @@ class BamlSyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
-    def ClassifySustainmentIntent(self, query: str,active_ontology_classes: str,
+    def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> types.SemanticResolution:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
-            __stream__ = self.stream.ClassifySustainmentIntent(query=query,active_ontology_classes=active_ontology_classes,
+            __stream__ = self.stream.ClassifyDomainIntent(query=query,active_ontology_classes=active_ontology_classes,domain=domain,
                 baml_options=baml_options)
             return __stream__.get_final_response()
         else:
             # Original non-streaming code
-            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ClassifySustainmentIntent", args={
-                "query": query,"active_ontology_classes": active_ontology_classes,
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ClassifyDomainIntent", args={
+                "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
             })
             return typing.cast(types.SemanticResolution, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def DecomposeQuery(self, raw_query: str,active_personas: str,
@@ -215,11 +215,11 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifySustainmentIntent(self, query: str,active_ontology_classes: str,
+    def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.SemanticResolution, types.SemanticResolution]:
-        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ClassifySustainmentIntent", args={
-            "query": query,"active_ontology_classes": active_ontology_classes,
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ClassifyDomainIntent", args={
+            "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
         })
         return baml_py.BamlSyncStream[stream_types.SemanticResolution, types.SemanticResolution](
           __result__,
@@ -319,11 +319,11 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifySustainmentIntent(self, query: str,active_ontology_classes: str,
+    def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifySustainmentIntent", args={
-            "query": query,"active_ontology_classes": active_ontology_classes,
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifyDomainIntent", args={
+            "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
         }, mode="request")
         return __result__
     def DecomposeQuery(self, raw_query: str,active_personas: str,
@@ -383,11 +383,11 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifySustainmentIntent(self, query: str,active_ontology_classes: str,
+    def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifySustainmentIntent", args={
-            "query": query,"active_ontology_classes": active_ontology_classes,
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ClassifyDomainIntent", args={
+            "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
         }, mode="stream")
         return __result__
     def DecomposeQuery(self, raw_query: str,active_personas: str,

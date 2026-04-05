@@ -117,11 +117,9 @@ async def scrape(request: ScrapeRequest) -> dict:
     # Append semantic context if provided
     if request.semantic_context:
         resolved_uri = request.semantic_context.get("resolved_uri", "")
-        models = request.semantic_context.get("suggested_dbt_models", [])
         prompt += (
             f"\nSemantic Context:\n"
             f"  Resolved URI: {resolved_uri}\n"
-            f"  Relevant tables: {', '.join(models)}\n"
         )
 
     prompt += "\nReturn a concise summary and any numeric metrics you extract."

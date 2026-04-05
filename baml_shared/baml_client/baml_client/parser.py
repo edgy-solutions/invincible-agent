@@ -23,10 +23,10 @@ class LlmResponseParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifySustainmentIntent(
+    def ClassifyDomainIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.SemanticResolution:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifySustainmentIntent", llm_response=llm_response, mode="request")
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifyDomainIntent", llm_response=llm_response, mode="request")
         return typing.cast(types.SemanticResolution, __result__)
 
     def DecomposeQuery(
@@ -79,10 +79,10 @@ class LlmStreamParser:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifySustainmentIntent(
+    def ClassifyDomainIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> stream_types.SemanticResolution:
-        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifySustainmentIntent", llm_response=llm_response, mode="stream")
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifyDomainIntent", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.SemanticResolution, __result__)
 
     def DecomposeQuery(

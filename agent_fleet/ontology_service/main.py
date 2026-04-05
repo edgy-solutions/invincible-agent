@@ -8,7 +8,7 @@ classification.
 This service does NO compute or orchestration. It strictly:
 1. Loads the IOF MRO ontology (.ttl) into an rdflib graph on startup.
 2. Queries the graph for active ontology classes and their definitions.
-3. Passes the user query + ontology context to BAML ClassifySustainmentIntent.
+3. Passes the user query + ontology context to BAML ClassifyDomainIntent.
 4. Returns a SemanticResolution response.
 
 Run: uvicorn agent_fleet.ontology_service.main:app --host 0.0.0.0 --port 8084
@@ -341,7 +341,6 @@ class SemanticResolutionResponse(BaseModel):
     """Mirrors the BAML SemanticResolution schema for the HTTP response."""
     resolved_uri: str
     confidence_score: float
-    suggested_dbt_models: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +353,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     Steps:
     1. Query the loaded RDF graph for all active domain classes.
     2. Format the results into a string for the LLM prompt.
-    3. Call BAML ``ClassifySustainmentIntent`` with the query + ontology context.
+    3. Call BAML ``ClassifyDomainIntent`` with the query + ontology context.
     4. Return the ``SemanticResolution`` response.
     """
     # Step 1-2: Extract and format ontology classes from the RDF graph
@@ -367,9 +366,10 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
 
     # Step 3: Call BAML function — LLM classifies intent against live ontology
     try:
-        result: BamlSemanticResolution = await b.ClassifySustainmentIntent(
+        result: BamlSemanticResolution = await b.ClassifyDomainIntent(
             query=request.query,
             active_ontology_classes=active_classes,
+            domain=request.domain
         )
     except Exception as exc:
         raise HTTPException(
@@ -380,8 +380,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # Step 4: Return structured response
     return SemanticResolutionResponse(
         resolved_uri=result.resolved_uri,
-        confidence_score=result.confidence_score,
-        suggested_dbt_models=result.suggested_dbt_models,
+        confidence_score=result.confidence_score
     )
 
 

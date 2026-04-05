@@ -240,7 +240,6 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         @safe_observe(name="smolagents_restate_execution")
         async def run_smolagent() -> tuple[str, str, float]:
-            suggested_models = semantic_ctx.get("suggested_dbt_models", [])
             resolved_uri = semantic_ctx.get("resolved_uri", "unknown")
             confidence = semantic_ctx.get("confidence_score", 0.0)
 
@@ -250,15 +249,14 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 f"Dataset ID: {task.dataset_id}\n\n"
                 f"Semantic Context (from IOF/MIMOSA ontology):\n"
                 f"  Resolved URI: {resolved_uri}\n"
-                f"  Confidence: {confidence}\n"
-                f"  Relevant dbt models / tables: {', '.join(suggested_models)}\n\n"
+                f"  Confidence: {confidence}\n\n"
             )
 
             if dynamic_schema_map:
                 agent_prompt += f"{dynamic_schema_map}\n\n"
 
             agent_prompt += (
-                f"Use ONLY the tables listed above. Produce a brief summary of your "
+                f"Produce a brief summary of your "
                 f"analysis and any key metrics you extract."
             )
 

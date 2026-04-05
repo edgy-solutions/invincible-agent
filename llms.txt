@@ -85,7 +85,7 @@ OCI image, and K8s Service.
 - `GraphExpertResponse` — Union response from Engine E keyed by persona (MechanicResponse | AuthoringResponse | LogisticsResponse | AuditResponse).
 - `DashboardUI`        — Composite dashboard wrapper: `{ components: (TopologyUI | HazardUI | MetricUI | DocumentUI)[] }`.
 - `DesignUI`           — BAML function: `(raw_data, persona) -> DashboardUI`. Maps raw agent results to multi-panel UI.
-- `ClassifySustainmentIntent` — BAML function that classifies a query against
+- `ClassifyDomainIntent` — BAML function that classifies a query against
   dynamically-injected RDF ontology URIs (not hardcoded enums).
 
 ## BPMN Dynamic Factory (Imperative-Declarative Hybrid)
@@ -147,7 +147,7 @@ workflow definitions from a Postgres `bpmn_catalog` table and generates Dagster
 Created BAML contracts (`contracts.baml`) defining `AgentTask`, `AgentResponse`,
 `SemanticResolution`, and `AgentStatus`. Ontology classes are NOT hardcoded as
 an enum — they are dynamically injected at runtime from the RDF graph.
-Added `ClassifySustainmentIntent` BAML function that maps a user query to one
+Added `ClassifyDomainIntent` BAML function that maps a user query to one
 of the active ontology URIs provided at call time. Generated Python/Pydantic
 client via BAML codegen.
 
@@ -165,8 +165,8 @@ into IOF/MIMOSA terms:
 2. SPARQL queries the graph for all sustainment-domain classes (subclasses of
    `iof:Process` or `iof:MaterialEntity`) with labels and definitions.
 3. Formats the RDF results into a string and passes it + the user query to
-   BAML `ClassifySustainmentIntent`.
-4. Returns `SemanticResolution` (resolved_uri, confidence_score, suggested_dbt_models).
+   BAML `ClassifyDomainIntent`.
+4. Returns `SemanticResolution` (resolved_uri, confidence_score).
 Also created `iof_mro.ttl` — a dummy IOF/MIMOSA MRO ontology with 8 sustainment
 classes (MaintenanceWorkOrder, CorrectiveMaintenance, PreventiveMaintenance,
 AssetConditionAssessment, FailureMode, InspectionReport, SparePartInventory,
@@ -177,9 +177,9 @@ Created `agent_fleet/restate_analyst/main.py` — a FastAPI server on port 8081
 backed by the Restate SDK for durable execution:
 1. Restate `AnalystService` with an `analyze` handler.
 2. Handler first calls Engine O (`/resolve`) via `ctx.run()` to get
-   `SemanticResolution` (resolved_uri + suggested_dbt_models).
+   `SemanticResolution` (resolved_uri).
 3. Then runs a smolagents `CodeAgent` (also via `ctx.run()`) with the semantic
-   context injected so the agent knows which dbt tables to query.
+   context injected.
 4. Restate `Workflow("BPMNWorkflowRunner")` for BPMN task execution:
    - `run` handler processes tasks sequentially. `ServiceTask` → `ctx.run()`
      (durable HTTP POST). `UserTask` → `ctx.promise("approval_{task_id}").value()`

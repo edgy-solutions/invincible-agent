@@ -7,7 +7,7 @@
 //
 // IMPORTANT: Ontology classes are NOT hardcoded here. They are dynamically
 // injected at runtime from the RDF graph via the active_ontology_classes
-// parameter in ClassifySustainmentIntent.
+// parameter in ClassifyDomainIntent.
 // =============================================================================
 
 // -----------------------------------------------------------------------------
@@ -36,8 +36,6 @@ class SemanticResolution {
     @description("The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.")
   confidence_score float
     @description("Model confidence in the match, between 0.0 and 1.0.")
-  suggested_dbt_models string[]
-    @description("Ordered list of dbt model names relevant to the resolved concept.")
 }
 
 // -----------------------------------------------------------------------------
@@ -82,10 +80,10 @@ class AgentResponse {
 /// Classifies a user query against dynamically-provided ontology classes.
 /// The active_ontology_classes string is injected at runtime from the RDF
 /// graph — it contains a newline-delimited list of valid ontology URIs.
-function ClassifySustainmentIntent(query: string, active_ontology_classes: string) -> SemanticResolution {
+function ClassifyDomainIntent(query: string, active_ontology_classes: string, domain: string) -> SemanticResolution {
   client MainAgent
   prompt #"
-    You are a sustainment-domain semantic classifier.
+    You are a semantic classifier for the {{ domain }} domain.
     
     Your job is to map the user's query to exactly ONE ontology URI from the
     list below. Do NOT invent URIs — you must select strictly from this list.
@@ -97,11 +95,9 @@ function ClassifySustainmentIntent(query: string, active_ontology_classes: strin
     User query: {{ query }}
 
     Instructions:
-    1. Analyze the user's query for sustainment-domain intent.
+    1. Analyze the user's query for intent within the {{ domain }} domain.
     2. Select the single best-matching ontology URI from the list above.
     3. Assign a confidence score between 0.0 and 1.0.
-    4. Suggest an ordered list of dbt model names that would be relevant
-       to the matched concept.
 
     {{ ctx.output_format }}
   "#
