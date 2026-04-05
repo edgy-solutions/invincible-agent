@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -63,7 +63,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 24
+    # Generated classes 25
     # #########################################################################
 
     @property
@@ -149,6 +149,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def SupervisorTaskPlan(self) -> "SupervisorTaskPlanViewer":
         return SupervisorTaskPlanViewer(self)
+
+    @property
+    def TableClassificationResult(self) -> "TableClassificationResultViewer":
+        return TableClassificationResultViewer(self)
 
     @property
     def TopologyUI(self) -> "TopologyUIViewer":
@@ -548,7 +552,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 24
+# Generated classes 25
 # #########################################################################
 
 class AgentResponseAst:
@@ -1558,6 +1562,53 @@ class SupervisorTaskPlanProperties:
     @property
     def extracted_concepts(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("extracted_concepts"))
+    
+    @property
+    def reasoning(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
+    
+    
+
+
+class TableClassificationResultAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("TableClassificationResult")
+        self._properties: typing.Set[str] = set([  "resolved_uri",  "confidence_score",  "reasoning",  ])
+        self._props = TableClassificationResultProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "TableClassificationResultProperties":
+        return self._props
+
+
+class TableClassificationResultViewer(TableClassificationResultAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class TableClassificationResultProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def resolved_uri(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("resolved_uri"))
+    
+    @property
+    def confidence_score(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("confidence_score"))
     
     @property
     def reasoning(self) -> type_builder.ClassPropertyViewer:

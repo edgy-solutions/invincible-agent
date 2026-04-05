@@ -342,6 +342,19 @@ class SemanticResolutionResponse(BaseModel):
     resolved_uri: str
     confidence_score: float
 
+class LegacyTableDossier(BaseModel):
+    table_name: str
+    columns_schema: str = "Unknown"
+    dba_comments: str = "None provided"
+    orm_class_name: str = "None provided"
+    sample_data: str = "None provided"
+    domain: str = "DATA_ENGINEERING"
+
+class TableClassificationResponse(BaseModel):
+    resolved_uri: str | None
+    confidence_score: float
+    reasoning: str
+
 
 # ---------------------------------------------------------------------------
 # POST /resolve
@@ -381,6 +394,43 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     return SemanticResolutionResponse(
         resolved_uri=result.resolved_uri,
         confidence_score=result.confidence_score
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /classify_legacy_table
+# ---------------------------------------------------------------------------
+@app.post("/classify_legacy_table", response_model=TableClassificationResponse)
+async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificationResponse:
+    """
+    Ingests a Rich Context Dossier from Dagster and semantically maps 
+    the legacy table to an IOF Ontology URI.
+    """
+    # 1. Get the list of active URIs from the graph for this specific domain
+    active_classes = await _get_active_ontology_classes(domain=request.domain)
+    
+    if not active_classes:
+        raise HTTPException(status_code=404, detail=f"No active ontology classes found for domain {request.domain}.")
+
+    # 2. Ask the LLM to reason over the dossier
+    try:
+        result = await b.ClassifyLegacyTable(
+            table_name=request.table_name,
+            columns_schema=request.columns_schema,
+            dba_comments=request.dba_comments,
+            orm_class_name=request.orm_class_name,
+            sample_data=request.sample_data,
+            active_ontology_classes=active_classes,
+            domain=request.domain
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"BAML Table Classification failed: {exc}") from exc
+
+    # 3. Return the structured decision
+    return TableClassificationResponse(
+        resolved_uri=result.resolved_uri,
+        confidence_score=result.confidence_score,
+        reasoning=result.reasoning
     )
 
 

@@ -85,7 +85,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (24)
+# Generated classes (25)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -207,6 +207,11 @@ class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
     extracted_concepts: typing.List[str] = Field(description='List of main entities/components the user is asking about (e.g., \'Auxiliary Fuel Pump\', \'C-130\'). This populates the Ontology Map.')
     reasoning: str
+
+class TableClassificationResult(BaseModel):
+    resolved_uri: typing.Optional[str] = Field(default=None, description='The exact matching IOF Ontology URI, or null if uncertain/unrelated.')
+    confidence_score: float = Field(description='Confidence level from 0.0 to 1.0.')
+    reasoning: str = Field(description='A 1-2 sentence explanation of why this mapping was chosen based on the dossier.')
 
 class TopologyUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be PROCESS_TOPOLOGY')

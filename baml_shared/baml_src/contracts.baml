@@ -103,6 +103,56 @@ function ClassifyDomainIntent(query: string, active_ontology_classes: string, do
   "#
 }
 
+// -----------------------------------------------------------------------------
+// BAML Function — Legacy Table Classification
+// -----------------------------------------------------------------------------
+
+class TableClassificationResult {
+  resolved_uri string | null @description("The exact matching IOF Ontology URI, or null if uncertain/unrelated.")
+  confidence_score float @description("Confidence level from 0.0 to 1.0.")
+  reasoning string @description("A 1-2 sentence explanation of why this mapping was chosen based on the dossier.")
+}
+
+function ClassifyLegacyTable(
+  table_name: string,
+  columns_schema: string,
+  dba_comments: string,
+  orm_class_name: string,
+  sample_data: string,
+  active_ontology_classes: string,
+  domain: string
+) -> TableClassificationResult {
+  client MainAgent
+  prompt #"
+    You are a Principal Data Architect mapping legacy database tables to a strict Enterprise Knowledge Graph Ontology for the {{ domain }} domain.
+    
+    Review the following Rich Context Dossier for a specific database table:
+    ---
+    Table Name: {{ table_name }}
+    DBA Comments: {{ dba_comments }}
+    Developer ORM Class: {{ orm_class_name }}
+    Columns & Data Types: 
+    {{ columns_schema }}
+    Sample Data:
+    {{ sample_data }}
+    ---
+
+    Based on this dossier, which of the following Active Ontology Classes does this table represent?
+    
+    --- ACTIVE ONTOLOGY CLASSES ---
+    {{ active_ontology_classes }}
+    --- END CLASSES ---
+
+    Instructions:
+    1. Hierarchical Weighting: If 'Developer ORM Class' or 'DBA Comments' clearly indicate the business entity, heavily weight them over the raw 'Table Name'.
+    2. Verification: Verify your assumption against the 'Columns' and 'Sample Data'. (e.g., if the ORM class says 'Pump' but the columns are 'user_id' and 'password', flag a low confidence).
+    3. If there is a highly probable match, return the exact URI from the active classes list.
+    4. If the table is a system logging table, a complex many-to-many join table, or unidentifiable, set resolved_uri to null.
+
+    {{ ctx.output_format }}
+  "#
+}
+
 // =============================================================================
 // Engine E (Neo4j Graph Expert) Data Contracts
 // =============================================================================

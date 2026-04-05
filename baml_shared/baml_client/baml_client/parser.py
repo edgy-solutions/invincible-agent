@@ -29,6 +29,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifyDomainIntent", llm_response=llm_response, mode="request")
         return typing.cast(types.SemanticResolution, __result__)
 
+    def ClassifyLegacyTable(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.TableClassificationResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifyLegacyTable", llm_response=llm_response, mode="request")
+        return typing.cast(types.TableClassificationResult, __result__)
+
     def DecomposeQuery(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.SupervisorTaskPlan:
@@ -84,6 +90,12 @@ class LlmStreamParser:
     ) -> stream_types.SemanticResolution:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifyDomainIntent", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.SemanticResolution, __result__)
+
+    def ClassifyLegacyTable(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.TableClassificationResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ClassifyLegacyTable", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.TableClassificationResult, __result__)
 
     def DecomposeQuery(
         self, llm_response: str, baml_options: BamlCallOptions = {},

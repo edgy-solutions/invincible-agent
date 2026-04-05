@@ -79,6 +79,9 @@ type_map = {
     "types.SupervisorTaskPlan": types.SupervisorTaskPlan,
     "stream_types.SupervisorTaskPlan": stream_types.SupervisorTaskPlan,
 
+    "types.TableClassificationResult": types.TableClassificationResult,
+    "stream_types.TableClassificationResult": stream_types.TableClassificationResult,
+
     "types.TopologyUI": types.TopologyUI,
     "stream_types.TopologyUI": stream_types.TopologyUI,
 

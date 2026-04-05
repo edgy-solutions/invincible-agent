@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (24)
+# Generated classes (25)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -145,6 +145,11 @@ class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
     extracted_concepts: typing.List[str] = Field(description='List of main entities/components the user is asking about (e.g., \'Auxiliary Fuel Pump\', \'C-130\'). This populates the Ontology Map.')
     reasoning: typing.Optional[str] = None
+
+class TableClassificationResult(BaseModel):
+    resolved_uri: typing.Optional[str] = Field(default=None, description='The exact matching IOF Ontology URI, or null if uncertain/unrelated.')
+    confidence_score: typing.Optional[float] = Field(default=None, description='Confidence level from 0.0 to 1.0.')
+    reasoning: typing.Optional[str] = Field(default=None, description='A 1-2 sentence explanation of why this mapping was chosen based on the dossier.')
 
 class TopologyUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be PROCESS_TOPOLOGY')
