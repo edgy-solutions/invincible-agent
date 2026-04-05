@@ -440,12 +440,13 @@ enum ChartType {
 
 class ChartUI {
   archetype SemanticArchetype @description("MUST be CHART_WIDGET")
-  source_persona string? @description("The persona that produced this data. Copy from the raw data 'persona' field.")
-  subject_concept string? @description("What this chart is about (e.g., 'Pump 101 Vibration History')")
+  source_persona string?
+  subject_concept string?
   chart_type ChartType
-  chart_data string @description("A stringified JSON array containing the data points. e.g., '[{\"name\": \"Pump A\", \"value\": 120}]'")
-  x_axis_label string?
-  y_axis_label string?
+  chart_data string @description("JSON stringified array of data points for Recharts preview.")
+  sql_query string @description("The raw SQL query used. Required for Superset publication.")
+  superset_dataset_name string?
+  is_published bool
 }
 
 // 3. Composite Dashboard Container
@@ -457,40 +458,29 @@ class DashboardUI {
 function DesignUI(raw_data: string, persona: string) -> DashboardUI {
   client MainAgent
   prompt #"
-    Act as a Semantic UI Translator. Do NOT output frontend code. 
-    Analyze the raw data array (which contains outputs from multiple expert agents) and the Target Persona.
+    Act as a Semantic UI Translator for an Advanced Analytics Mesh.
+    Analyze the raw data array and the Target Persona.
     
+    --- DATA IDENTIFICATION RULES ---
+    1. SUPERSET DATA: If the data is a JSON array of objects (rows/columns) representing query results:
+       - USE ChartUI (CHART_WIDGET).
+       - Select the best `chart_type` (BAR for comparisons, LINE for trends, PIE for parts-of-whole).
+       - Ensure the `sql_query` used to generate the data is preserved in the object.
+    
+    2. METADATA LISTS: If the data is a list of table names or URNs from DataHub:
+       - USE MetricUI (ASSET_STATE_METRIC).
+    
+    3. TEXT/KNOWLEDGE: For standard responses, manuals, or instructions:
+       - USE DocumentUI (KNOWLEDGE_DOCUMENT).
+
     CRITICAL INSTRUCTION:
-    You are building a Composite Dashboard. You must output a `DashboardUI` object containing an array of components.
-    Create a separate UI component in the `components` array for EACH distinct expert response in the raw data.
-    ALWAYS copy the `persona` field from each raw data entry into the `source_persona` field of the corresponding component.
-    
-    CRITICAL GROUNDING RULES:
-    1. STRICT ADHERENCE: You are in a strict military context. DO NOT invent or hallucinate data, procedures, or hazards.
-    2. NO GENERIC ADVICE: Do not invent generic safety advice unless those exact words are in the raw data.
-    3. NULL STATE TRIGGER: If the data is empty or missing, trigger the Null State.
-    4. NULL STATE FORMAT: To trigger Null State, output a single DocumentUI in the components array. Set archetype to KNOWLEDGE_DOCUMENT and markdown_content to exactly: # SYSTEM ALERT\nNo relevant records found. Do not proceed without manual verification.
-    
-    EXAMPLES:
-    - If the raw data has a Process Engineer's steps AND a Mechanic's safety warnings: 
-      Output an array with 1 TopologyUI object AND 1 HazardUI object.
-    - If the raw data contains time-series data, aggregations, or explicitly mentions generating a chart:
-      Output a ChartUI object. Map the data into the `chart_data` JSON string.
-    - PROCESS_ENGINEER: use TopologyUI. Map steps to nodes and connections to edges.
-    - Safety warning: use HazardUI. Map hazards to the hazards array.
-    - Manual/Text: use DocumentUI. Map text to markdown_content.
+    Produce a `DashboardUI` object. Map each expert response in the input to its corresponding component.
     
     --- RAW DATA ---
     {{ raw_data }}
     
     --- TARGET PERSONA ---
     {{ persona }}
-    
-    INSTRUCTIONS FOR DATA STEWARD / TABLES:
-    - If the raw data contains a list of database tables, dbt models, or sensor schemas: 
-      USE MetricUI (ASSET_STATE_METRIC). Map each table name to a UIEntity in the `metrics` array.
-    - If the raw data contains actual query results (rows/columns) that represent aggregates or trends:
-      USE ChartUI (CHART_WIDGET) and guess the best ChartType.
     
     {{ ctx.output_format }}
   "#

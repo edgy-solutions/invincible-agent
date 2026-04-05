@@ -1013,7 +1013,7 @@ class ChartUIAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("ChartUI")
-        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "chart_type",  "chart_data",  "x_axis_label",  "y_axis_label",  ])
+        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "chart_type",  "chart_data",  "sql_query",  "superset_dataset_name",  "is_published",  ])
         self._props = ChartUIProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1062,12 +1062,16 @@ class ChartUIProperties:
         return type_builder.ClassPropertyViewer(self.__bldr.property("chart_data"))
     
     @property
-    def x_axis_label(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("x_axis_label"))
+    def sql_query(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("sql_query"))
     
     @property
-    def y_axis_label(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("y_axis_label"))
+    def superset_dataset_name(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("superset_dataset_name"))
+    
+    @property
+    def is_published(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("is_published"))
     
     
 

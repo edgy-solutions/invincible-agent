@@ -146,12 +146,13 @@ class BPMNNode(BaseModel):
 
 class ChartUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be CHART_WIDGET')
-    source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
-    subject_concept: typing.Optional[str] = Field(default=None, description='What this chart is about (e.g., \'Pump 101 Vibration History\')')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
     chart_type: ChartType
-    chart_data: str = Field(description='A stringified JSON array containing the data points. e.g., \'[{"name": "Pump A", "value": 120}]\'')
-    x_axis_label: typing.Optional[str] = None
-    y_axis_label: typing.Optional[str] = None
+    chart_data: str = Field(description='JSON stringified array of data points for Recharts preview.')
+    sql_query: str = Field(description='The raw SQL query used. Required for Superset publication.')
+    superset_dataset_name: typing.Optional[str] = None
+    is_published: bool
 
 class DashboardUI(BaseModel):
     components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI", "ChartUI"]]
