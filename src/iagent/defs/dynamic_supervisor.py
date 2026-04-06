@@ -24,7 +24,7 @@ NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-sv
 DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
 LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://langgraph-agent-svc.default.svc.cluster.local:8082")
 PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
-RESTATE_ANALYST_SVC_URL = os.getenv("RESTATE_ANALYST_SVC_URL", "http://restate-agent-svc.default.svc.cluster.local:8081")
+RESTATE_ANALYST_URL = os.getenv("RESTATE_ANALYST_URL", "http://restate-agent-svc.default.svc.cluster.local:8081")
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to Python path so we can import the generated client
@@ -142,7 +142,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # 🔗 ROUTING LOGIC: Fan-out to the correct domain-specific engine
     if domain == "DATA_ENGINEERING":
         # DATA_ENGINEERING tasks are routed to Engine A (Restate Analyst)
-        engine_url = f"{RESTATE_ANALYST_SVC_URL}/analyze"
+        engine_url = f"{RESTATE_ANALYST_URL}/analyze"
     else:
         # Default to Engine E (Neo4j Graph Expert) for MAINTENANCE and SUSTAINMENT
         engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph"
