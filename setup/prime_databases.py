@@ -75,7 +75,7 @@ def prime_jena():
     host = get_base_url(raw_host)
     ds_name = os.environ.get("JENA_DS", "ds")
     user = os.environ.get("JENA_USERNAME", "admin")
-    pw = os.environ.get("JENA_PASSWORD", "Admin123!") # matches docker-compose default
+    pw = os.environ.get("FUSEKI_PASSWORD", "Admin123!") # matches docker-compose default
     auth = (user, pw)
     
     # 1. ENSURE DATASET EXISTS
@@ -193,7 +193,7 @@ def wipe_databases(wipe_neo4j_weaviate=True, wipe_jena=False):
         host = get_base_url(raw_host)
         ds_name = os.environ.get("JENA_DS", "ds")
         user = os.environ.get("JENA_USERNAME", "admin")
-        pw = os.environ.get("JENA_PASSWORD", "Admin123!")
+        pw = os.environ.get("FUSEKI_PASSWORD", "Admin123!")
         
         try:
             update_query = "CLEAR ALL"

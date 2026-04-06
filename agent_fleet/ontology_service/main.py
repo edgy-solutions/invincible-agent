@@ -71,6 +71,8 @@ import os
 import httpx
 
 _JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
+_JENA_USERNAME = os.getenv("JENA_USERNAME", "admin")
+_JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
 _LOCAL_GRAPH = None
 
 # ---------------------------------------------------------------------------
@@ -191,17 +193,21 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
         # Simple injection: replace WHERE { with WHERE { GRAPH <named_graph> {
         if "WHERE {" in query:
             scoped_query = query.replace("WHERE {", f"WHERE {{ GRAPH {named_graph} {{", 1)
-            scoped_query += " } }"
+            last_brace_idx = scoped_query.rfind("}")
+            if last_brace_idx != -1:
+                scoped_query = scoped_query[:last_brace_idx] + "} }" + scoped_query[last_brace_idx+1:]
         elif "WHERE {" in query.upper():
             # Handle case-insensitive WHERE
             import re
             scoped_query = re.sub(r"WHERE\s*\{", f"WHERE {{ GRAPH {named_graph} {{", query, flags=re.IGNORECASE, count=1)
-            scoped_query += " } }"
+            last_brace_idx = scoped_query.rfind("}")
+            if last_brace_idx != -1:
+                scoped_query = scoped_query[:last_brace_idx] + "} }" + scoped_query[last_brace_idx+1:]
 
     # 🚀 PATH A: Apache Jena Fuseki via HTTP
     if _JENA_ENDPOINT:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
                 resp = await client.post(
                     _JENA_ENDPOINT,
                     data={"query": scoped_query},
@@ -277,7 +283,7 @@ async def _seed_jena_if_empty():
         with open(file_path, "rb") as f:
             file_data = f.read()
             
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
             resp = await client.post(
                 update_ep,
                 content=file_data,
