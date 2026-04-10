@@ -191,22 +191,61 @@ async def analyze(ctx: Context, request: dict) -> dict:
         from smolagents import tool
         import weaviate.classes as wvc
 
+        provider = os.getenv("SMOLAGENTS_PROVIDER", "ollama").lower()
+        
+        if provider == "ollama":
+            from langchain_community.embeddings import OllamaEmbeddings
+            ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434").replace("/v1", "")
+            langchain_embedder = OllamaEmbeddings(model="nomic-embed-text", base_url=ollama_url)
+            index_name = "Mem0migrationsOllama"
+        else:
+            from langchain_openai import OpenAIEmbeddings
+            langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+            index_name = "Mem0migrationsOpenAI"
+
         vector_store = WeaviateVectorStore(
             client=weaviate_client,
-            index_name="Mem0migrations",
+            index_name=index_name,
             text_key="text",
-            embedding=FakeEmbeddings(size=1536)
+            embedding=langchain_embedder
         )
 
-        m = Memory.from_config({
+        mem0_config = {
             "vector_store": {
                 "provider": "langchain",
                 "config": {
                     "client": vector_store,
-                    "collection_name": "Mem0migrations"
+                    "collection_name": index_name
                 }
             }
-        })
+        }
+
+        if provider == "ollama":
+            mem0_config["llm"] = {
+                "provider": "ollama",
+                "config": {
+                    "model": os.getenv("SMOLAGENTS_MODEL", "llama3.2"),
+                    "base_url": ollama_url
+                }
+            }
+            mem0_config["embedder"] = {
+                "provider": "ollama",
+                "config": {
+                    "model": "nomic-embed-text",
+                    "base_url": ollama_url
+                }
+            }
+        elif provider == "openrouter":
+            mem0_config["llm"] = {
+                "provider": "openai",
+                "config": {
+                    "model": os.getenv("SMOLAGENTS_MODEL", "anthropic/claude-3.5-sonnet"),
+                    "api_key": os.getenv("OPENROUTER_API_KEY", ""),
+                    "base_url": "https://openrouter.ai/api/v1"
+                }
+            }
+
+        m = Memory.from_config(mem0_config)
 
         @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
