@@ -414,9 +414,6 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 error_trace = traceback.format_exc()
                 print(f"ERROR in run_smolagent: {error_trace}")
                 raise e
-                    formatted_trace += "-" * 30 + "\n"
-
-            return result, formatted_trace, confidence
 
         raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
 
