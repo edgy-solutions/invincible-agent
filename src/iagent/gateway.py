@@ -206,6 +206,16 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
                     "user_id": user_id
                 }
             },
+            "execute_subtask": {
+                "config": {
+                    "user_query": query,
+                    "thread_id": thread_id,
+                    "persona": persona,
+                    "domain": domain,
+                    "task_plan_json": task_plan_json,
+                    "user_id": user_id
+                }
+            },
             "synthesize_stateful": {
                 "config": {
                     "user_query": query,
