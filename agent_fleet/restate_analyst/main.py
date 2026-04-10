@@ -203,18 +203,36 @@ async def analyze(ctx: Context, request: dict) -> dict:
             langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
             index_name = "Mem0migrationsOpenAI"
 
+        from weaviate.classes.query import Filter
         class Mem0CompatibleWeaviate(WeaviateVectorStore):
             """
-            A custom wrapper for LangChain's WeaviateVectorStore that explicitly 
-            adds support for mem0's required similarity_search_by_vector method.
+            Safely bridges mem0's vector search requirement with Weaviate's implementation,
+            and translates mem0's dictionary filters into Weaviate v4 Filter objects.
             """
             def similarity_search_by_vector(self, embedding, k=4, filter=None, **kwargs):
-                # Explicitly route to the supported method
+                weaviate_filter = None
+                
+                # Intercept and translate mem0's dictionary filter
+                if isinstance(filter, dict) and filter:
+                    filters_list = []
+                    for key, value in filter.items():
+                        filters_list.append(Filter.by_property(key).equal(value))
+                        
+                    # Combine multiple filters, or just use the single one
+                    if len(filters_list) == 1:
+                        weaviate_filter = filters_list[0]
+                    elif len(filters_list) > 1:
+                        weaviate_filter = Filter.all_of(filters_list)
+                else:
+                    # If it's already None or somehow a proper Weaviate Filter, let it through
+                    weaviate_filter = filter
+
+                # Route to the supported method with the translated filter
                 return self.similarity_search(
-                    query=None, # Weaviate allows None if vector is provided
+                    query=None, 
                     k=k, 
                     vector=embedding, 
-                    filters=filter, 
+                    filters=weaviate_filter, 
                     **kwargs
                 )
 
