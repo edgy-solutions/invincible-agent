@@ -207,6 +207,13 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             text_key="text",
             embedding=langchain_embedder
         )
+        
+        # Monkey-patch similarity_search_by_vector which is unimplemented in WeaviateVectorStore
+        # mem0's Langchain wrapper relies on this method.
+        def _patched_similarity_search_by_vector(embedding, k=4, filter=None, **kwargs):
+            return vector_store.similarity_search(query=None, k=k, vector=embedding, filters=filter, **kwargs)
+        
+        vector_store.similarity_search_by_vector = _patched_similarity_search_by_vector
 
         mem0_config = {
             "vector_store": {
