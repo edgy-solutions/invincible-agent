@@ -194,7 +194,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
         provider = os.getenv("SMOLAGENTS_PROVIDER", "ollama").lower()
         
         if provider == "ollama":
-            from langchain_community.embeddings import OllamaEmbeddings
+            from langchain_ollama import OllamaEmbeddings
             ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434").replace("/v1", "")
             langchain_embedder = OllamaEmbeddings(model="nomic-embed-text", base_url=ollama_url)
             index_name = "Mem0migrationsOllama"

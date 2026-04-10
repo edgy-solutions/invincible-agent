@@ -18,6 +18,8 @@ dependencies = [
     "weaviate-client",
     "langchain-weaviate",
     "langchain-community",
+    "langchain-ollama",
+    "ollama",
     "python-dotenv",
     "pysqlite3-binary",
     "langfuse",

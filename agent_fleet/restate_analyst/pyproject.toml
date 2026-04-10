@@ -20,6 +20,8 @@ dependencies = [
     "weaviate-client",
     "langchain-weaviate",
     "langchain-community",
+    "langchain-ollama",
+    "ollama",
     "langfuse",
     "litellm",
 ]
