@@ -223,14 +223,14 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
                 "provider": "ollama",
                 "config": {
                     "model": os.getenv("SMOLAGENTS_MODEL", "llama3.2"),
-                    "base_url": ollama_url
+                    "ollama_base_url": ollama_url
                 }
             }
             mem0_config["embedder"] = {
                 "provider": "ollama",
                 "config": {
                     "model": "nomic-embed-text",
-                    "base_url": ollama_url
+                    "ollama_base_url": ollama_url
                 }
             }
         elif provider == "openrouter":
