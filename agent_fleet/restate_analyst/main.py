@@ -349,65 +349,71 @@ async def analyze(ctx: Context, request: dict) -> dict:
             return "Invalid action. Use 'preview' or 'publish'."
 
         @safe_observe(name="smolagents_restate_execution")
+        @safe_observe(name="smolagents_analyst_execution")
         async def run_smolagent() -> tuple[str, str, float]:
-            resolved_uri = semantic_ctx.get("resolved_uri", "unknown")
-            confidence = semantic_ctx.get("confidence_score", 0.0)
+            try:
+                resolved_uri = semantic_ctx.get("resolved_uri", "unknown")
+                confidence = semantic_ctx.get("confidence_score", 0.0)
 
-            agent_prompt = (
-                f"You are a sustainment data analyst. Analyze the following task.\n\n"
-                f"Task: {task.task_description}\n"
-                f"Dataset ID: {task.dataset_id}\n\n"
-                f"Semantic Context (from IOF/MIMOSA ontology):\n"
-                f"  Resolved URI: {resolved_uri}\n"
-                f"  Confidence: {confidence}\n\n"
-            )
+                agent_prompt = (
+                    f"You are a sustainment data analyst. Analyze the following task.\n\n"
+                    f"Task: {task.task_description}\n"
+                    f"Dataset ID: {task.dataset_id}\n\n"
+                    f"Semantic Context (from IOF/MIMOSA ontology):\n"
+                    f"  Resolved URI: {resolved_uri}\n"
+                    f"  Confidence: {confidence}\n\n"
+                )
 
-            if dynamic_schema_map:
-                agent_prompt += f"{dynamic_schema_map}\n\n"
+                if dynamic_schema_map:
+                    agent_prompt += f"{dynamic_schema_map}\n\n"
 
-            agent_prompt += (
-                f"Produce a brief summary of your "
-                f"analysis and any key metrics you extract.\n"
-                f"If you see a request for a 'chart' or 'visualization', you should:\n"
-                f"First, call superset_analytics_manager with action='preview'.\n"
-                f"Include the returned JSON in your final response so the UI Router can build the ChartUI object."
-            )
+                agent_prompt += (
+                    f"Produce a brief summary of your "
+                    f"analysis and any key metrics you extract.\n"
+                    f"If you see a request for a 'chart' or 'visualization', you should:\n"
+                    f"First, call superset_analytics_manager with action='preview'.\n"
+                    f"Include the returned JSON in your final response so the UI Router can build the ChartUI object."
+                )
 
-            if user_id:
-                past_memories = fetch_user_memory(query=task.task_description, user_id=user_id)
-                if past_memories:
-                    memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
-                    prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
-                    agent_prompt += prompt_extension
+                if user_id:
+                    past_memories = fetch_user_memory(query=task.task_description, user_id=user_id)
+                    if past_memories:
+                        memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
+                        prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
+                        agent_prompt += prompt_extension
 
-            model = get_smolagent_model()
-            agent = CodeAgent(tools=[search_datahub, superset_analytics_manager], model=model)
-            
-            result = str(await asyncio.to_thread(agent.run, agent_prompt))
+                model = get_smolagent_model()
+                agent = CodeAgent(tools=[search_datahub, superset_analytics_manager], model=model)
+                
+                result = str(await asyncio.to_thread(agent.run, agent_prompt))
 
-            formatted_trace = "--- Agent Execution Trace ---\n"
-            if hasattr(agent, 'logs'):
-                for log_entry in agent.logs:
-                    if isinstance(log_entry, dict):
-                        formatted_trace += f"Step: {log_entry.get('step', 'N/A')}\n"
-                        if 'thought' in log_entry:
-                            formatted_trace += f"Thought: {log_entry['thought']}\n"
-                        if 'tool_call' in log_entry:
-                            formatted_trace += f"Action: {log_entry['tool_call']}\n"
-                        if 'tool_result' in log_entry:
-                            formatted_trace += f"Result: {log_entry['tool_result']}\n"
-                    else:
-                        formatted_trace += f"Step: {getattr(log_entry, 'step', 'N/A')}\n"
-                        if hasattr(log_entry, 'thought') and getattr(log_entry, 'thought'):
-                            formatted_trace += f"Thought: {getattr(log_entry, 'thought')}\n"
-                        if hasattr(log_entry, 'tool_call') and getattr(log_entry, 'tool_call'):
-                            formatted_trace += f"Action: {getattr(log_entry, 'tool_call')}\n"
-                        elif hasattr(log_entry, 'action') and getattr(log_entry, 'action'):
-                            formatted_trace += f"Action: {getattr(log_entry, 'action')}\n"
-                        if hasattr(log_entry, 'tool_result') and getattr(log_entry, 'tool_result'):
-                            formatted_trace += f"Result: {getattr(log_entry, 'tool_result')}\n"
-                        elif hasattr(log_entry, 'observation') and getattr(log_entry, 'observation'):
-                            formatted_trace += f"Result: {getattr(log_entry, 'observation')}\n"
+                formatted_trace = "--- Agent Execution Trace ---\n"
+                if hasattr(agent, 'logs'):
+                    for log_entry in agent.logs:
+                        if isinstance(log_entry, dict):
+                            formatted_trace += f"Step: {log_entry.get('step', 'N/A')}\n"
+                            if 'thought' in log_entry:
+                                formatted_trace += f"Thought: {log_entry['thought']}\n"
+                            if 'tool_call' in log_entry:
+                                formatted_trace += f"Action: {log_entry['tool_call']}\n"
+                            if 'tool_result' in log_entry:
+                                formatted_trace += f"Result: {log_entry['tool_result']}\n"
+                        else:
+                            formatted_trace += f"Step: {getattr(log_entry, 'step', 'N/A')}\n"
+                            if hasattr(log_entry, 'thought') and getattr(log_entry, 'thought'):
+                                formatted_trace += f"Thought: {getattr(log_entry, 'thought')}\n"
+                            if hasattr(log_entry, 'tool_call') and getattr(log_entry, 'tool_call'):
+                                formatted_trace += f"Action: {getattr(log_entry, 'tool_call')}\n"
+                            if hasattr(log_entry, 'tool_result') and getattr(log_entry, 'tool_result'):
+                                formatted_trace += f"Result: {getattr(log_entry, 'tool_result')}\n"
+                        formatted_trace += "-" * 40 + "\n"
+
+                return result, formatted_trace, confidence
+            except Exception as e:
+                import traceback
+                error_trace = traceback.format_exc()
+                print(f"ERROR in run_smolagent: {error_trace}")
+                raise e
                     formatted_trace += "-" * 30 + "\n"
 
             return result, formatted_trace, confidence
