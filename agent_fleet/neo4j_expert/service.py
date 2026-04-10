@@ -201,19 +201,27 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
             index_name = "Mem0migrationsOpenAI"
 
-        vector_store = WeaviateVectorStore(
+        class Mem0CompatibleWeaviate(WeaviateVectorStore):
+            """
+            A custom wrapper for LangChain's WeaviateVectorStore that explicitly 
+            adds support for mem0's required similarity_search_by_vector method.
+            """
+            def similarity_search_by_vector(self, embedding, k=4, filter=None, **kwargs):
+                # Explicitly route to the supported method
+                return self.similarity_search(
+                    query=None, # Weaviate allows None if vector is provided
+                    k=k, 
+                    vector=embedding, 
+                    filters=filter, 
+                    **kwargs
+                )
+
+        vector_store = Mem0CompatibleWeaviate(
             client=weaviate_client,
             index_name=index_name,
             text_key="text",
             embedding=langchain_embedder
         )
-        
-        # Monkey-patch similarity_search_by_vector which is unimplemented in WeaviateVectorStore
-        # mem0's Langchain wrapper relies on this method.
-        def _patched_similarity_search_by_vector(embedding, k=4, filter=None, **kwargs):
-            return vector_store.similarity_search(query=None, k=k, vector=embedding, filters=filter, **kwargs)
-        
-        vector_store.similarity_search_by_vector = _patched_similarity_search_by_vector
 
         mem0_config = {
             "vector_store": {
