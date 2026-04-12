@@ -225,14 +225,31 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
                     # If it's already None or somehow a proper Weaviate Filter, let it through
                     weaviate_filter = filter
 
-                # Route to the supported method with the translated filter
-                return self.similarity_search(
-                    query=None, 
-                    k=k, 
-                    vector=embedding, 
-                    filters=weaviate_filter, 
-                    **kwargs
-                )
+                # Route to the supported method with the translated filter.
+                # Wrapped in try/except to handle Weaviate's auto-schema trap:
+                # on first run, properties like 'user_id' don't exist until data is inserted.
+                try:
+                    return self.similarity_search(
+                        query=None, 
+                        k=k, 
+                        vector=embedding, 
+                        filters=weaviate_filter, 
+                        **kwargs
+                    )
+                except ValueError as e:
+                    # LangChain wraps Weaviate gRPC schema errors in ValueError
+                    if "no such prop" in str(e):
+                        print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
+                              f"This is expected on first run. Detail: {e}")
+                        return []
+                    raise
+                except Exception as e:
+                    # Catch raw WeaviateQueryError in case it leaks unwrapped
+                    if "no such prop" in str(e):
+                        print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
+                              f"This is expected on first run. Detail: {e}")
+                        return []
+                    raise
 
         vector_store = Mem0CompatibleWeaviate(
             client=weaviate_client,
