@@ -426,9 +426,15 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 )
 
                 if user_id:
-                    past_memories = fetch_user_memory(query=task.task_description, user_id=user_id)
+                    past_memories_response = fetch_user_memory(query=task.task_description, user_id=user_id)
+                    
+                    if isinstance(past_memories_response, dict):
+                        past_memories = past_memories_response.get("results", [])
+                    else:
+                        past_memories = past_memories_response
+                        
                     if past_memories:
-                        memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
+                        memory_strings = "\n".join([f"- {mem.get('memory', mem.get('text', ''))}" for mem in past_memories if isinstance(mem, dict)])
                         prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
                         agent_prompt += prompt_extension
 

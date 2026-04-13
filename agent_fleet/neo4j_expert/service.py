@@ -311,9 +311,15 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
             try:
                 # Retrieve past successful memories to inject into the system prompt
                 if user_id:
-                    past_memories = fetch_user_memory(query=user_query, user_id=user_id)
+                    past_memories_response = fetch_user_memory(query=user_query, user_id=user_id)
+                    
+                    if isinstance(past_memories_response, dict):
+                        past_memories = past_memories_response.get("results", [])
+                    else:
+                        past_memories = past_memories_response
+                        
                     if past_memories:
-                        memory_strings = "\n".join([f"- {mem['text']}" for mem in past_memories])
+                        memory_strings = "\n".join([f"- {mem.get('memory', mem.get('text', ''))}" for mem in past_memories if isinstance(mem, dict)])
                         prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
                         system_prompt_with_memory = system_prompt_with_segregation + prompt_extension
                     else:
