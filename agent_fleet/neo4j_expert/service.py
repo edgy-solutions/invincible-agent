@@ -229,13 +229,26 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
                 # Wrapped in try/except to handle Weaviate's auto-schema trap:
                 # on first run, properties like 'user_id' don't exist until data is inserted.
                 try:
-                    return self.similarity_search(
+                    results = self.similarity_search(
                         query=None, 
                         k=k, 
                         vector=embedding, 
                         filters=weaviate_filter, 
                         **kwargs
                     )
+                    
+                    # 🚨 FIX: Weaviate v4 returns dates as datetime objects, but mem0 expects ISO strings
+                    import datetime
+                    for doc in results:
+                        for key in ["created_at", "updated_at"]:
+                            if key in doc.metadata:
+                                val = doc.metadata[key]
+                                if isinstance(val, datetime.datetime):
+                                    doc.metadata[key] = val.isoformat()
+                                elif not isinstance(val, str):
+                                    doc.metadata[key] = str(val)
+                    
+                    return results
                 except ValueError as e:
                     # LangChain wraps Weaviate gRPC schema errors in ValueError
                     if "no such prop" in str(e):
