@@ -443,11 +443,16 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     agent_prompt += f"{dynamic_schema_map}\n\n"
 
                 agent_prompt += (
-                    f"Produce a brief summary of your "
-                    f"analysis and any key metrics you extract.\n"
+                    f"Produce a brief summary of your analysis and any key metrics you extract.\n"
                     f"If you see a request for a 'chart' or 'visualization', you should:\n"
                     f"First, call superset_analytics_manager with action='preview'.\n"
-                    f"Include the returned JSON in your final response so the UI Router can build the ChartUI object."
+                    f"Include the returned JSON in your final response so the UI Router can build the ChartUI object.\n\n"
+                    f"You MUST return your final answer as a Python dictionary matching this Pydantic schema:\n"
+                    f"class AgentFinalResponse(BaseModel):\n"
+                    f"    status: str\n"
+                    f"    summary_text: str = Field(description=\"A conversational summary of the findings.\")\n"
+                    f"    structured_data: Optional[Dict[str, Any]] = Field(description=\"MUST be a raw JSON object/dictionary containing the actual data (e.g., lists of dashboards, chart metrics). DO NOT stringify this.\")\n\n"
+                    f"Pass this dictionary to the final_answer() tool."
                 )
 
                 if user_id:
@@ -486,7 +491,7 @@ print(result)
                 model = get_smolagent_model()
                 agent = CodeAgent(tools=[search_datahub, superset_analytics_manager], model=model)
                 
-                result = str(await asyncio.to_thread(agent.run, agent_prompt))
+                result = await asyncio.to_thread(agent.run, agent_prompt)
 
                 formatted_trace = "--- Agent Execution Trace ---\n"
                 if hasattr(agent, 'logs'):
@@ -518,12 +523,21 @@ print(result)
 
         raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
 
+        summary_text = str(raw_agent_response)
+        structured_data_str = None
+        
+        if isinstance(raw_agent_response, dict):
+            summary_text = raw_agent_response.get("summary_text", str(raw_agent_response))
+            structured_data = raw_agent_response.get("structured_data")
+            if structured_data is not None:
+                structured_data_str = json.dumps(structured_data)
+
         async def save_memory() -> str:
             if user_id:
                 m.add(
                     messages=[
                         {"role": "user", "content": task.task_description},
-                        {"role": "assistant", "content": raw_agent_response}
+                        {"role": "assistant", "content": summary_text}
                     ],
                     user_id=user_id
                 )
@@ -533,7 +547,8 @@ print(result)
 
         agent_result = {
             "status": AgentStatus.SUCCESS.value,
-            "summary": raw_agent_response,
+            "summary": summary_text,
+            "structured_data": structured_data_str,
             "extracted_metrics": {
                 "ontology_confidence": conf,
             },

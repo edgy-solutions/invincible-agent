@@ -621,7 +621,7 @@ class AgentResponseAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("AgentResponse")
-        self._properties: typing.Set[str] = set([  "status",  "summary",  "extracted_metrics",  "execution_trace",  ])
+        self._properties: typing.Set[str] = set([  "status",  "summary",  "structured_data",  "extracted_metrics",  "execution_trace",  ])
         self._props = AgentResponseProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -656,6 +656,10 @@ class AgentResponseProperties:
     @property
     def summary(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("summary"))
+    
+    @property
+    def structured_data(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("structured_data"))
     
     @property
     def extracted_metrics(self) -> type_builder.ClassPropertyViewer:

@@ -101,6 +101,7 @@ class AgentResponse(BaseModel):
 # (e.g., retry, escalate, or continue the pipeline).
     status: AgentStatus = Field(description='Outcome of the agent\'s execution.')
     summary: str = Field(description='Brief human-readable summary of what the agent did.')
+    structured_data: typing.Optional[str] = Field(default=None, description='MUST be a raw JSON object/dictionary containing the actual data (e.g., lists of dashboards, chart metrics). DO NOT stringify this inside summary.')
     extracted_metrics: typing.Dict[str, float] = Field(description='Key-value pairs of domain metrics extracted during processing.')
     execution_trace: typing.Optional[str] = Field(default=None, description='The internal reasoning logs or trajectory of the agent.')
 
