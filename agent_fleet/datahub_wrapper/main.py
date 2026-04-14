@@ -282,12 +282,19 @@ async def query_metadata(request: MetadataQueryRequest):
             # Datasets store these in the 'properties' aspect
             props = entity.get("properties") or {}
             name = props.get("name") or urn
-            desc = props.get("description") or desc
+            desc = props.get("description", "")
+            if isinstance(desc, str):
+                desc = desc.strip()
         elif entity_type in ["DASHBOARD", "CHART"]:
             # Dashboards and Charts store these in the 'info' aspect
             info = entity.get("info") or {}
             name = info.get("name") or urn
-            desc = info.get("description") or desc
+            desc = info.get("description", "")
+            if isinstance(desc, str):
+                desc = desc.strip()
+            
+        if not desc:
+            desc = "UNAVAILABLE_IN_CATALOG"
             
         matched_assets.append(f"[{entity_type}] {name}: {desc}")
         referenced_uris.append(urn)

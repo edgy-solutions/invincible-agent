@@ -328,6 +328,8 @@ async def analyze(ctx: Context, request: dict) -> dict:
             safe_update_observation(input_data=query, output_data=results)
             return results
 
+        task_domain = request.get("domain", "ALL")
+
         @tool
         def search_datahub(query: str, entity_type: str = None) -> str:
             """
@@ -341,7 +343,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
             import os
             DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
             try:
-                payload = {"user_query": query, "persona": "DATA_STEWARD", "domain": "DATA_ENGINEERING"}
+                payload = {"user_query": query, "persona": "DATA_STEWARD", "domain": task_domain}
                 if entity_type:
                     payload["entity_type"] = entity_type
                 resp = requests.post(
@@ -434,27 +436,27 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 confidence = semantic_ctx.get("confidence_score", 0.0)
 
                 agent_prompt = (
-                    f"You are a sustainment data analyst. Analyze the following task.\n\n"
+                    f"You are an enterprise data analyst operating across all domains (Maintenance, Manufacturing, Sustainment, etc.). Your ONLY source of truth is the output of the `search_datahub` tool.\n\n"
                     f"Task: {task.task_description}\n"
                     f"Dataset ID: {task.dataset_id}\n\n"
                     f"Semantic Context (from IOF/MIMOSA ontology):\n"
                     f"  Resolved URI: {resolved_uri}\n"
                     f"  Confidence: {confidence}\n\n"
+                    f"CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate descriptions, business purposes, or metrics. If the tool returns an empty description or UNAVAILABLE_IN_CATALOG, you must state 'Not provided in DataHub'. Any hallucination of metadata is a critical failure.\n\n"
                 )
 
                 if dynamic_schema_map:
                     agent_prompt += f"{dynamic_schema_map}\n\n"
 
                 agent_prompt += (
-                    f"Produce a brief summary of your analysis and any key metrics you extract.\n"
                     f"If you see a request for a 'chart' or 'visualization', you should:\n"
                     f"First, call superset_analytics_manager with action='preview'.\n"
                     f"Include the returned JSON in your final response so the UI Router can build the ChartUI object.\n\n"
                     f"You MUST return your final answer as a Python dictionary matching this Pydantic schema:\n"
                     f"class AgentFinalResponse(BaseModel):\n"
                     f"    status: str\n"
-                    f"    summary_text: str = Field(description=\"A conversational summary of the findings.\")\n"
-                    f"    structured_data: Optional[Dict[str, Any]] = Field(description=\"MUST be a raw JSON object/dictionary containing the actual data (e.g., lists of dashboards, chart metrics). DO NOT stringify this.\")\n\n"
+                    f"    summary_text: str = Field(description=\"A conversational summary. STRICT RULE: You must ONLY state facts returned by the DataHub tool. DO NOT guess business purposes.\")\n"
+                    f"    structured_data: Optional[Dict[str, Any]] = Field(description=\"MUST be a raw JSON object. STRICT RULE: If a dashboard description is missing, UNAVAILABLE_IN_CATALOG, or empty, you MUST write 'No description available'. Do not infer or invent descriptions. DO NOT stringify this.\")\n\n"
                     f"Pass this dictionary to the final_answer() tool."
                 )
 

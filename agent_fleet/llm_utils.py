@@ -28,12 +28,14 @@ def get_smolagent_model():
             return LiteLLMModel(
                 model_id=f"openrouter/{model_id or 'anthropic/claude-3.5-sonnet'}",
                 api_base="https://openrouter.ai/api/v1",
-                api_key=openrouter_key
+                api_key=openrouter_key,
+                temperature=0.0
             )
         return OpenAIServerModel(
             model_id=model_id or "anthropic/claude-3.5-sonnet", # High performance default
             api_base="https://openrouter.ai/api/v1",
-            api_key=openrouter_key
+            api_key=openrouter_key,
+            temperature=0.0
         )
     elif provider == "ollama":
         # Note: In Docker, host.docker.internal reaches the host machine
@@ -42,26 +44,30 @@ def get_smolagent_model():
             return LiteLLMModel(
                 model_id=f"openai/{model_id or 'gpt-oss-120b'}",
                 api_base=base_url,
-                api_key="ollama" # Generic key for Ollama
+                api_key="ollama", # Generic key for Ollama
+                temperature=0.0
             )
         return OpenAIServerModel(
             model_id=model_id or "gpt-oss-120b",
             api_base=base_url,
-            api_key="ollama" # Generic key for Ollama
+            api_key="ollama", # Generic key for Ollama
+            temperature=0.0
         )
     elif provider == "openai":
         if USE_LITELLM:
             return LiteLLMModel(
                 model_id=model_id or "gpt-4o",
-                api_key=os.getenv("OPENAI_API_KEY")
+                api_key=os.getenv("OPENAI_API_KEY"),
+                temperature=0.0
             )
         return OpenAIServerModel(
             model_id=model_id or "gpt-4o",
-            api_key=os.getenv("OPENAI_API_KEY")
+            api_key=os.getenv("OPENAI_API_KEY"),
+            temperature=0.0
         )
     else:
         # Default to Hugging Face
-        return InferenceClientModel(model_id=model_id or "Qwen/Qwen2.5-Coder-32B-Instruct")
+        return InferenceClientModel(model_id=model_id or "Qwen/Qwen2.5-Coder-32B-Instruct", temperature=0.0)
 
 def init_baml_client(baml_client_instance):
     """
