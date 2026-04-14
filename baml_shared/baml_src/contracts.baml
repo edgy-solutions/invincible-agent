@@ -67,6 +67,8 @@ class AgentResponse {
     @description("Outcome of the agent's execution.")
   summary string
     @description("Brief human-readable summary of what the agent did.")
+  structured_data string?
+    @description("MUST be a raw JSON object/dictionary containing the actual data (e.g., lists of dashboards, chart metrics). DO NOT stringify this inside summary.")
   extracted_metrics map<string, float>
     @description("Key-value pairs of domain metrics extracted during processing.")
   execution_trace string?
@@ -462,19 +464,20 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
     Analyze the raw data array and the Target Persona.
     
     --- DATA IDENTIFICATION RULES ---
-    1. SUPERSET DATA: If the data is a JSON array of objects (rows/columns) representing query results:
+    1. SUPERSET DATA: If the data is a JSON array of objects (rows/columns) representing query results (EVEN IF IT IS WRAPPED IN A STRING OR SUMMARY FIELD):
        - USE ChartUI (CHART_WIDGET).
        - Select the best `chart_type` (BAR for comparisons, LINE for trends, PIE for parts-of-whole).
        - Ensure the `sql_query` used to generate the data is preserved in the object.
     
-    2. METADATA LISTS: If the data is a list of table names or URNs from DataHub:
+    2. METADATA LISTS: If the data describes a list of Dashboards, Charts, or Tables (like {'dashboards': [...]}):
        - USE MetricUI (ASSET_STATE_METRIC).
+       - Map each dashboard/chart to an item in the `metrics` array.
     
-    3. TEXT/KNOWLEDGE: For standard responses, manuals, or instructions:
-       - USE DocumentUI (KNOWLEDGE_DOCUMENT).
+    3. TEXT/KNOWLEDGE: ONLY use this if the response is a pure conversational paragraph with no structured lists or arrays.
 
     CRITICAL INSTRUCTION:
     Produce a `DashboardUI` object. Map each expert response in the input to its corresponding component.
+    If the `summary` or `structured_data` field contains a stringified dictionary (e.g. "{'dashboards': [...]}"), you MUST parse it and output the corresponding ASSET_STATE_METRIC or CHART_WIDGET components. Do NOT just dump it into a KNOWLEDGE_DOCUMENT.
     
     --- RAW DATA ---
     {{ raw_data }}
