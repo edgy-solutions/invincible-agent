@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import json
 from typing import Dict, Any
 from pathlib import Path
 
@@ -66,13 +67,26 @@ except ImportError:
             pass
 
 try:
-    from tools import execute_cypher, get_graph_schema
+    from tools import execute_cypher, get_graph_schema, get_neo4j_driver
     from prompts import PERSONA_PROMPTS
 except ImportError:
-    from .tools import execute_cypher, get_graph_schema
+    from .tools import execute_cypher, get_graph_schema, get_neo4j_driver
     from .prompts import PERSONA_PROMPTS
 
 service = Service("Neo4jExpertService")
+
+def fetch_dynamic_schema_from_neo4j() -> str:
+    """Fetches the live Neo4j database schema at boot-time."""
+    try:
+        from tools import get_neo4j_driver
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            result = session.execute_read(lambda tx: list(tx.run("CALL apoc.meta.schema() YIELD value RETURN value")))
+            if not result:
+                return "Schema not available."
+            return json.dumps(result[0]["value"], indent=2)
+    except Exception as e:
+        return f"Error fetching schema: {e}"
 
 @service.handler()
 async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -95,6 +109,18 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     # 3. Retrieve the prompt using the string key
     system_prompt = PERSONA_PROMPTS.get(persona_str, PERSONA_PROMPTS["MECHANIC"])
     
+    # Fetch schema dynamically via Restate to ensure durability
+    async def fetch_schema() -> str:
+        return fetch_dynamic_schema_from_neo4j()
+        
+    db_schema_string = await ctx.run("fetch-schema", fetch_schema)
+    
+    schema_injection = f"""
+CRITICAL GRAPH SCHEMA:
+You must ONLY use the following Nodes, Properties, and Relationships. Do not guess.
+{db_schema_string}
+"""
+    
     # 🔗 DOMAIN-SPECIFIC NODE LABEL CONSTRAINTS (Strict Data Segregation)
     domain = request.get("domain", "MAINTENANCE").upper()
     
@@ -102,6 +128,8 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     domain_label = domain.replace(" ", "_").replace("-", "_")
 
     domain_constraints = f"""
+{schema_injection}
+
     STRICT DATA SEGREGATION: You are operating strictly within the {domain} domain.
     
     CRITICAL RULE: Every single node you query MUST explicitly include the `:{domain_label}` label.
@@ -109,6 +137,8 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     Example of an INCORRECT query: MATCH (n:Procedure)
     
     Do not guess which node types exist. Use your `get_graph_schema` tool to discover available labels, but ALWAYS append `:{domain_label}` to your queries.
+    
+    Optimization Update: When searching for specific part numbers or gauge references, ALWAYS prioritize the `search_manual_text` tool before attempting complex Cypher traversal, as part numbers are often embedded in unstructured manual text.
     """
     
     system_prompt_with_segregation = system_prompt + "\n" + domain_constraints
@@ -367,6 +397,7 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
 CRITICAL SYNTAX REQUIREMENT:
 You are a Code Agent. You MUST wrap ALL of your Python code strictly inside <code> and </code> tags.
 DO NOT put your thoughts, explanations, or Markdown text inside the <code> tags. Only valid Python code belongs inside the tags.
+If your search results contain image references or file paths (e.g., `image_path`), you MUST include those exact file paths and their figure titles in your `final_answer` payload so the downstream formatter can render them.
 
 Example of BAD formatting:
 <code>
