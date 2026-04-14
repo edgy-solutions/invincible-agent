@@ -249,6 +249,10 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
                         else:
                             doc.metadata["id"] = str(doc.metadata["id"])
 
+                        # +++ NEW: Fix the top-level LangChain Document ID +++
+                        if hasattr(doc, "id"):
+                            doc.id = doc.metadata["id"]
+
                         # 2. Loop through all metadata and sanitize types
                         for key, val in list(doc.metadata.items()):
                             if isinstance(val, datetime.datetime):
