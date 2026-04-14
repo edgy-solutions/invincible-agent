@@ -24,37 +24,6 @@ def execute_cypher(query: str) -> str:
     Correct: MATCH (p:Procedure)
     Incorrect: MATCH (p:`mil:Procedure`)
 
-    AVAILABLE LABELS:
-    :DataModule         - A self-contained chunk of technical data.
-    :WorkPackage        - A collection of data modules or procedures for a specific maintenance task.
-    :Procedure          - A specific maintenance operation.
-    :ManufacturingStep  - A discrete step within a procedure.
-    :Tool               - Required support equipment or tools.
-    :Part               - Replaceable units, spares, or consumables.
-    :Hazard             - Safety warnings, cautions, or risk conditions.
-    :Standard           - Regulatory or compliance standards.
-    :SlangTerm          - Colloquial or tribal knowledge terms used by mechanics.
-    :Certification      - Required mechanic certifications (e.g., A&P).
-
-    COMMON RELATIONSHIPS:
-    (DataModule|WorkPackage)-[:REQUIRES_PROCEDURE]->(Procedure)
-    (Procedure)-[:CONTAINS_STEP]->(ManufacturingStep)
-    (ManufacturingStep)-[:REQUIRES_TOOL]->(Tool)  // Note: Tools connect to Steps, not directly to Procedures
-    (ManufacturingStep)-[:REQUIRES_PART]->(Part)  // Note: Parts connect to Steps, not directly to Procedures
-    (Procedure|ManufacturingStep)-[:HAS_HAZARD]->(Hazard)
-    (Procedure|Part)-[:GOVERNED_BY]->(Standard)
-    (Tool|Part)-[:USABLE_SLANG]->(SlangTerm)
-    (Procedure)-[:REQUIRES_CERT]->(Certification)
-
-    COMMON PROPERTIES:
-    Procedure: id, name, title, description, platform, estimatedTime, personnelRequired, category
-    ManufacturingStep: id, name, sequence, description, action, platform
-    Part: id, name, partNumber, part_number, nsn, nsn_number, manufacturer, unitCost, description
-    Tool: id, name, partNumber, part_number, description
-    Hazard: id, name, severity, category, hazard_type, description
-    Standard: id, name, title, description
-    Certification: id, name, description
-
     CASE SENSITIVITY:
     Neo4j CONTAINS is CASE-SENSITIVE. Always use toLower() for text matching:
     CORRECT:   WHERE toLower(p.name) CONTAINS 'fuel pump'
