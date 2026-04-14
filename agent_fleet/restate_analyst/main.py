@@ -463,6 +463,26 @@ async def analyze(ctx: Context, request: dict) -> dict:
                         prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
                         agent_prompt += prompt_extension
 
+                syntax_reminder = """
+CRITICAL SYNTAX REQUIREMENT:
+You are a Code Agent. You MUST wrap ALL of your Python code strictly inside <code> and </code> tags.
+DO NOT put your thoughts, explanations, or Markdown text inside the <code> tags. Only valid Python code belongs inside the tags.
+
+Example of BAD formatting:
+<code>
+I will now search the database.
+result = search("query")
+</code>
+
+Example of GOOD formatting:
+I will now search the database.
+<code>
+result = search("query")
+print(result)
+</code>
+"""
+                agent_prompt += f"\n\n{syntax_reminder}"
+
                 model = get_smolagent_model()
                 agent = CodeAgent(tools=[search_datahub, superset_analytics_manager], model=model)
                 
