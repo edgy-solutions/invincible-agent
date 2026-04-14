@@ -364,16 +364,23 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
                 
                 # 🚨 FIX: Add the syntax reminder back in!
                 syntax_reminder = """
-                CRITICAL SYNTAX REQUIREMENT:
-                You MUST wrap ALL of your Python code, including the final_answer() function, strictly inside <code> and </code> tags. 
-                Do NOT use Markdown triple backticks. 
-                
-                Example of a correct final answer:
-                <code>
-                result = {"key": "value"}
-                final_answer(result)
-                </code>
-                """
+CRITICAL SYNTAX REQUIREMENT:
+You are a Code Agent. You MUST wrap ALL of your Python code strictly inside <code> and </code> tags.
+DO NOT put your thoughts, explanations, or Markdown text inside the <code> tags. Only valid Python code belongs inside the tags.
+
+Example of BAD formatting:
+<code>
+I will now search the database.
+result = search("query")
+</code>
+
+Example of GOOD formatting:
+I will now search the database.
+<code>
+result = search("query")
+print(result)
+</code>
+"""
                 
                 final_prompt = f"{system_prompt_with_memory}\n\n{syntax_reminder}\n\nUser Query: {user_query}"
                 
