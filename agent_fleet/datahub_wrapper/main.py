@@ -77,6 +77,7 @@ class MetadataQueryRequest(BaseModel):
     user_query: str
     persona: str = "DATA_STEWARD"
     domain: str = "DATA_ENGINEERING"
+    entity_type: Optional[str] = None
 
 
 class DataStewardResponse(BaseModel):
@@ -192,12 +193,14 @@ async def query_metadata(request: MetadataQueryRequest):
     # Construct the dynamic DataHub SearchInput
     search_variables = {
         "input": {
-            "type": "*",  # Broad search across all entities
             "query": request.user_query,
             "start": 0,
             "count": 10,
         }
     }
+    
+    if request.entity_type:
+        search_variables["input"]["type"] = request.entity_type.upper()
     
     if or_filters:
         search_variables["input"]["orFilters"] = or_filters

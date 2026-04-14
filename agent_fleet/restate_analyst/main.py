@@ -341,9 +341,12 @@ async def analyze(ctx: Context, request: dict) -> dict:
             import os
             DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
             try:
+                payload = {"user_query": query, "persona": "DATA_STEWARD", "domain": "DATA_ENGINEERING"}
+                if entity_type:
+                    payload["entity_type"] = entity_type
                 resp = requests.post(
                     f"{DATAHUB_WRAPPER_URL}/query_metadata",
-                    json={"user_query": query, "persona": "DATA_STEWARD", "domain": "DATA_ENGINEERING"},
+                    json=payload,
                     timeout=15.0
                 )
                 resp.raise_for_status()
