@@ -239,16 +239,24 @@ async def analyze(ctx: Context, request: dict) -> dict:
                         **kwargs
                     )
                     
-                    # 🚨 FIX: Weaviate v4 returns dates as datetime objects, but mem0 expects ISO strings
+                    # 🚨 BULLETPROOF SANITIZATION:
+                    # Convert Weaviate's native Datetimes and UUIDs into strings for mem0
                     import datetime
+                    import uuid
                     for doc in results:
-                        for key in ["created_at", "updated_at"]:
-                            if key in doc.metadata:
-                                val = doc.metadata[key]
-                                if isinstance(val, datetime.datetime):
-                                    doc.metadata[key] = val.isoformat()
-                                elif not isinstance(val, str):
-                                    doc.metadata[key] = str(val)
+                        # 1. Fix missing 'id' (mem0 requires a string ID)
+                        if doc.metadata.get("id") is None:
+                            # Use stringified hash if available, otherwise generate a safe UUID string
+                            doc.metadata["id"] = str(doc.metadata.get("hash", uuid.uuid4()))
+                        else:
+                            doc.metadata["id"] = str(doc.metadata["id"])
+
+                        # 2. Loop through all metadata and sanitize types
+                        for key, val in list(doc.metadata.items()):
+                            if isinstance(val, datetime.datetime):
+                                doc.metadata[key] = val.isoformat()
+                            elif isinstance(val, uuid.UUID):
+                                doc.metadata[key] = str(val)
                     
                     return results
                 except ValueError as e:
