@@ -23,6 +23,22 @@ b = init_baml_client(b)
 
 service = Service("WeaviateExpertService")
 
+def fetch_weaviate_schema(weaviate_client, collection_name: str) -> str:
+    """Fetches the live metadata properties available in Weaviate."""
+    try:
+        collection = weaviate_client.collections.get(collection_name)
+        config = collection.config.get()
+        
+        # Extract the property names and their data types
+        properties = []
+        for prop in config.properties:
+            properties.append(f"- {prop.name} (Type: {prop.data_type.name})")
+            
+        schema_str = f"Available Metadata Filters for {collection_name}:\n" + "\n".join(properties)
+        return schema_str
+    except Exception as e:
+        return f"Could not fetch Weaviate schema: {str(e)}"
+
 @service.handler()
 async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -67,25 +83,43 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
         weaviate_client.connect()
         doc_collection_name = os.getenv("WEAVIATE_DOC_COLLECTION", "DocumentChunks")
 
+        # Fetch Weaviate schema dynamically via Restate
+        async def fetch_weaviate_schema_task() -> str:
+            return fetch_weaviate_schema(weaviate_client, doc_collection_name)
+            
+        weaviate_schema_string = await ctx.run("fetch-weaviate-schema", fetch_weaviate_schema_task)
+
         # --------------------------------------------------------------------------
         # The Semantic Tool
         # --------------------------------------------------------------------------
         @tool
-        def search_knowledge_base(semantic_query: str) -> str:
+        def search_knowledge_base(semantic_query: str, metadata_filters: dict = None) -> str:
             """
             Searches the text of the technical manuals for policies, definitions, summaries, and general knowledge.
             
             Args:
                 semantic_query: The natural language search phrase.
+                metadata_filters: Optional dictionary of metadata fields and exact values to filter by (e.g., {"doc_id": "TM-123"}).
             """
             try:
                 collection = weaviate_client.collections.get(doc_collection_name)
+                
+                # Base filter: strict domain segregation
+                base_filter = wvc.query.Filter.by_property("domain").equal(domain_label)
+                
+                if metadata_filters and isinstance(metadata_filters, dict):
+                    filter_list = [base_filter]
+                    for key, value in metadata_filters.items():
+                        filter_list.append(wvc.query.Filter.by_property(key).equal(value))
+                    final_filter = wvc.query.Filter.all_of(filter_list)
+                else:
+                    final_filter = base_filter
                 
                 # STRICT DOMAIN SEGREGATION FILTER
                 response = collection.query.near_text(
                     query=semantic_query,
                     limit=5,
-                    filters=wvc.query.Filter.by_property("domain").equal(domain_label)
+                    filters=final_filter
                 )
                 
                 if not response.objects:
@@ -118,6 +152,9 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
             Your sole job is to answer the user's query by searching the knowledge base and summarizing the findings accurately.
             Never invent information. If the search tool returns no results, state clearly that the information is unavailable.
             ALWAYS include the Source Document IDs in your final answer so the user knows where the information came from.
+            
+            When using the search_knowledge_base tool, you may only filter using the following metadata properties:
+{weaviate_schema_string}
             """
             
             syntax_reminder = """
