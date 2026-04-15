@@ -108,11 +108,11 @@ MASTER_PERSONAS = {
 MASTER_INTENTS = {
     "DIAGNOSTIC_AND_REPAIR": "PRIORITY INTENT. User is troubleshooting a breakdown or failure. This applies to physical machine symptoms AND software/data pipeline bugs. Requires reading documentation to find the fix.",
     
-    "STRUCTURAL_QUERY": "User is asking strictly about how things are linked together. This applies to physical assemblies (parts/inventory) AND data architecture (DataHub lineage, Postgres schemas, model dependencies). NO troubleshooting required.",
+    "STRUCTURAL_QUERY": "User is asking to find, view, or understand existing assets. This applies to physical assemblies (parts/inventory), data architecture (DataHub lineage, Postgres schemas), and viewing existing charts/dashboards/metrics. NO troubleshooting required.",
     
     "KNOWLEDGE_RETRIEVAL": "User wants to read, summarize, or learn about policies, theories, definitions, or standard operating procedures. NO physical parts lists, data schemas, or troubleshooting required.",
     
-    "PROCESS_CREATION": "User wants to build, design, write, or publish a NEW workflow, process, software code, or data product.",
+    "PROCESS_CREATION": "User wants to build, design, write, or publish a NEW workflow, process, software code, or data product. Do NOT use this if the user just wants to view or find an existing chart/dashboard.",
     
     "SYSTEM_META_AND_REJECTION": "User is asking what the system can do, how to use the system, OR asking a question completely outside the scope of technical maintenance and sustainment. The system must ONLY explain its capabilities or cleanly refuse the out-of-scope request. NO open-ended conversation."
 }
