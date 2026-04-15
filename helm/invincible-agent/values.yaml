@@ -153,8 +153,12 @@ agentFleet:
     # 🔗 Global Timeouts
     AGENT_HTTP_TIMEOUT: "300"
     
+    # 🔗 Superset Analytics
+    SUPERSET_URL: "http://superset:8088"
+    
   secrets:
     NEO4J_PASSWORD: "xxxxx"
+    SUPERSET_ACCESS_TOKEN: ""
     # openaiApiKey: ""
     # hfToken: ""
 
