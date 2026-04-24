@@ -39,6 +39,7 @@ DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-s
 NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://neo4j-expert-svc.default.svc.cluster.local:8086")
 PRESENTATION_AGENT_SVC_URL = os.getenv("PRESENTATION_AGENT_SVC_URL", "http://presentation-agent-svc.default.svc.cluster.local:8087")
 ONTOLOGY_SERVICE_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://ontology-svc.default.svc.cluster.local:8084")
+DATA_ANALYST_URL = os.getenv("DATA_ANALYST_URL", "http://data-analyst-svc.default.svc.cluster.local:8089")
 
 # ---------------------------------------------------------------------------
 # Assets
@@ -173,3 +174,33 @@ def trigger_presentation_agent() -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+@asset(
+    kinds={"restate", "python", "smolagents", "duckdb"},
+    group_name="agent_fleet",
+    metadata={
+        "Engine DA": _icon_card(
+            "restate",
+            "Engine DA: Data Analyst Agent",
+            "Data Analyst Agent built with smolagents and restate that writes SQL to analyze data. "
+            "Securely executes SQL over DataHub assets.\n\n"
+            "**Endpoint:** `POST :8089/analyze_data`",
+        ),
+    },
+)
+def trigger_data_analyst(context) -> dict:
+    """Trigger Engine DA (Data Analyst Agent) pod."""
+    response = requests.post(
+        f"{DATA_ANALYST_URL}/analyze_data",
+        json={"user_query": "Show me the top 5 tables by size", "persona": "DATA_STEWARD", "domain": "DATA_ENGINEERING", "user_id": "test_user"}, # Dummy payload
+        timeout=300,
+    )
+    response.raise_for_status()
+    
+    data = response.json()
+    
+    trace = data.get("execution_trace")
+    if trace:
+        context.log.info(f"🧠 Agent Reasoning Trajectory:\n{trace}")
+        
+    return data
