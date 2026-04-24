@@ -25,6 +25,9 @@ type_map = {
     "types.AgentTaskDefinition": types.AgentTaskDefinition,
     "stream_types.AgentTaskDefinition": stream_types.AgentTaskDefinition,
 
+    "types.AnomalyNode": types.AnomalyNode,
+    "stream_types.AnomalyNode": stream_types.AnomalyNode,
+
     "types.AuditResponse": types.AuditResponse,
     "stream_types.AuditResponse": stream_types.AuditResponse,
 
@@ -48,6 +51,9 @@ type_map = {
 
     "types.DataStewardResponse": types.DataStewardResponse,
     "stream_types.DataStewardResponse": stream_types.DataStewardResponse,
+
+    "types.DigitalTwinUI": types.DigitalTwinUI,
+    "stream_types.DigitalTwinUI": stream_types.DigitalTwinUI,
 
     "types.DocumentUI": types.DocumentUI,
     "stream_types.DocumentUI": stream_types.DocumentUI,

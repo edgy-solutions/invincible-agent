@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -67,7 +67,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 26
+    # Generated classes 28
     # #########################################################################
 
     @property
@@ -81,6 +81,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def AgentTaskDefinition(self) -> "AgentTaskDefinitionViewer":
         return AgentTaskDefinitionViewer(self)
+
+    @property
+    def AnomalyNode(self) -> "AnomalyNodeViewer":
+        return AnomalyNodeViewer(self)
 
     @property
     def AuditResponse(self) -> "AuditResponseViewer":
@@ -113,6 +117,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def DataStewardResponse(self) -> "DataStewardResponseViewer":
         return DataStewardResponseViewer(self)
+
+    @property
+    def DigitalTwinUI(self) -> "DigitalTwinUIViewer":
+        return DigitalTwinUIViewer(self)
 
     @property
     def DocumentUI(self) -> "DocumentUIViewer":
@@ -516,7 +524,7 @@ class SemanticArchetypeAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.enum("SemanticArchetype")
-        self._values: typing.Set[str] = set([  "PROCESS_TOPOLOGY",  "HAZARD_DECLARATION",  "ASSET_STATE_METRIC",  "KNOWLEDGE_DOCUMENT",  "CHART_WIDGET",  ])
+        self._values: typing.Set[str] = set([  "PROCESS_TOPOLOGY",  "HAZARD_DECLARATION",  "ASSET_STATE_METRIC",  "KNOWLEDGE_DOCUMENT",  "CHART_WIDGET",  "DIGITAL_TWIN_3D",  ])
         self._vals = SemanticArchetypeValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
@@ -562,6 +570,10 @@ class SemanticArchetypeValues:
     @property
     def CHART_WIDGET(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("CHART_WIDGET"))
+    
+    @property
+    def DIGITAL_TWIN_3D(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("DIGITAL_TWIN_3D"))
     
     
 
@@ -614,7 +626,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 26
+# Generated classes 28
 # #########################################################################
 
 class AgentResponseAst:
@@ -762,6 +774,53 @@ class AgentTaskDefinitionProperties:
     @property
     def sub_query(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("sub_query"))
+    
+    
+
+
+class AnomalyNodeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("AnomalyNode")
+        self._properties: typing.Set[str] = set([  "element_id",  "temp",  "status",  ])
+        self._props = AnomalyNodeProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "AnomalyNodeProperties":
+        return self._props
+
+
+class AnomalyNodeViewer(AnomalyNodeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class AnomalyNodeProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def element_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("element_id"))
+    
+    @property
+    def temp(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("temp"))
+    
+    @property
+    def status(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("status"))
     
     
 
@@ -1162,6 +1221,69 @@ class DataStewardResponseProperties:
     @property
     def short_answer(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("short_answer"))
+    
+    
+
+
+class DigitalTwinUIAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("DigitalTwinUI")
+        self._properties: typing.Set[str] = set([  "archetype",  "source_persona",  "subject_concept",  "device_id",  "core_temp",  "uptime_hours",  "anomalies",  ])
+        self._props = DigitalTwinUIProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "DigitalTwinUIProperties":
+        return self._props
+
+
+class DigitalTwinUIViewer(DigitalTwinUIAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class DigitalTwinUIProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def archetype(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("archetype"))
+    
+    @property
+    def source_persona(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("source_persona"))
+    
+    @property
+    def subject_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_concept"))
+    
+    @property
+    def device_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("device_id"))
+    
+    @property
+    def core_temp(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("core_temp"))
+    
+    @property
+    def uptime_hours(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("uptime_hours"))
+    
+    @property
+    def anomalies(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("anomalies"))
     
     
 

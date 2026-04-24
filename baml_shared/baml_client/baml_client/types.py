@@ -85,6 +85,7 @@ class SemanticArchetype(str, Enum):
     ASSET_STATE_METRIC = "ASSET_STATE_METRIC"
     KNOWLEDGE_DOCUMENT = "KNOWLEDGE_DOCUMENT"
     CHART_WIDGET = "CHART_WIDGET"
+    DIGITAL_TWIN_3D = "DIGITAL_TWIN_3D"
 
 class SeverityLevel(str, Enum):
     INFO = "INFO"
@@ -92,7 +93,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (26)
+# Generated classes (28)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -116,6 +117,11 @@ class AgentTask(BaseModel):
 class AgentTaskDefinition(BaseModel):
     target_persona: typing.Union[PersonaTarget, str]
     sub_query: str
+
+class AnomalyNode(BaseModel):
+    element_id: str = Field(description='e.g., TR-1042')
+    temp: float
+    status: str = Field(description='DEGRADED or CRITICAL_FAILURE')
 
 class AuditResponse(BaseModel):
     non_compliant_nodes: typing.List[str]
@@ -156,12 +162,21 @@ class ChartUI(BaseModel):
     is_published: bool
 
 class DashboardUI(BaseModel):
-    components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI", "ChartUI"]]
+    components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI", "ChartUI", "DigitalTwinUI"]]
 
 class DataStewardResponse(BaseModel):
     tool_list: typing.List[str]
     safety_warnings: typing.List[str]
     short_answer: str
+
+class DigitalTwinUI(BaseModel):
+    archetype: SemanticArchetype = Field(description='MUST be DIGITAL_TWIN_3D')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    device_id: str = Field(description='Name of the system, e.g., LTAMDS Gen-4')
+    core_temp: float = Field(description='Overall core temperature of the system')
+    uptime_hours: int
+    anomalies: typing.List["AnomalyNode"] = Field(description='List of elements that are not nominal')
 
 class DocumentUI(BaseModel):
     archetype: SemanticArchetype = Field(description='MUST be KNOWLEDGE_DOCUMENT')

@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (26)
+# Generated classes (28)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -47,6 +47,11 @@ class AgentTask(BaseModel):
 class AgentTaskDefinition(BaseModel):
     target_persona: typing.Optional[typing.Union[types.PersonaTarget, str]] = None
     sub_query: typing.Optional[str] = None
+
+class AnomalyNode(BaseModel):
+    element_id: typing.Optional[str] = Field(default=None, description='e.g., TR-1042')
+    temp: typing.Optional[float] = None
+    status: typing.Optional[str] = Field(default=None, description='DEGRADED or CRITICAL_FAILURE')
 
 class AuditResponse(BaseModel):
     non_compliant_nodes: typing.List[str]
@@ -87,12 +92,21 @@ class ChartUI(BaseModel):
     is_published: typing.Optional[bool] = None
 
 class DashboardUI(BaseModel):
-    components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI", "ChartUI"]]
+    components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI", "ChartUI", "DigitalTwinUI"]]
 
 class DataStewardResponse(BaseModel):
     tool_list: typing.List[str]
     safety_warnings: typing.List[str]
     short_answer: typing.Optional[str] = None
+
+class DigitalTwinUI(BaseModel):
+    archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be DIGITAL_TWIN_3D')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    device_id: typing.Optional[str] = Field(default=None, description='Name of the system, e.g., LTAMDS Gen-4')
+    core_temp: typing.Optional[float] = Field(default=None, description='Overall core temperature of the system')
+    uptime_hours: typing.Optional[int] = None
+    anomalies: typing.List["AnomalyNode"] = Field(description='List of elements that are not nominal')
 
 class DocumentUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be KNOWLEDGE_DOCUMENT')

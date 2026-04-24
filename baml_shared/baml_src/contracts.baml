@@ -379,6 +379,7 @@ enum SemanticArchetype {
   ASSET_STATE_METRIC   // Maps to inventory, telemetry, tables
   KNOWLEDGE_DOCUMENT   // Maps to manuals, standard text, code
   CHART_WIDGET         // 🟢 NEW: Maps to Bar, Line, and Pie charts
+  DIGITAL_TWIN_3D      // Maps to 3D Digital Twin models
 }
 
 enum SeverityLevel {
@@ -451,9 +452,25 @@ class ChartUI {
   is_published bool
 }
 
+class AnomalyNode {
+  element_id string @description("e.g., TR-1042")
+  temp float
+  status string @description("DEGRADED or CRITICAL_FAILURE")
+}
+
+class DigitalTwinUI {
+  archetype SemanticArchetype @description("MUST be DIGITAL_TWIN_3D")
+  source_persona string?
+  subject_concept string?
+  device_id string @description("Name of the system, e.g., LTAMDS Gen-4")
+  core_temp float @description("Overall core temperature of the system")
+  uptime_hours int
+  anomalies AnomalyNode[] @description("List of elements that are not nominal")
+}
+
 // 3. Composite Dashboard Container
 class DashboardUI {
-  components (TopologyUI | HazardUI | MetricUI | DocumentUI | ChartUI)[]
+  components (TopologyUI | HazardUI | MetricUI | DocumentUI | ChartUI | DigitalTwinUI)[]
 }
 
 // 4. Update the router function to return the Composite Dashboard
