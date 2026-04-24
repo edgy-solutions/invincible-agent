@@ -53,6 +53,9 @@ jobs:
           - service: weaviate-expert
             path: agent_fleet/weaviate_expert
             port: "8088"
+          - service: data-analyst
+            path: agent_fleet/data_analyst
+            port: "8089"
           - service: cortex-bff
             path: .
             port: "8000"
