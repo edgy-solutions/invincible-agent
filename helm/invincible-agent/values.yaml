@@ -403,6 +403,23 @@ keycloak:
       memory: 2Gi
 
 # ==========================================================================
+# Authorization (Topaz FGA)
+# ==========================================================================
+topaz:
+  enabled: true
+  image:
+    repository: ghcr.io/aserto-policies/topaz
+    tag: "latest"
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 1Gi
+
+externalTopaz:
+  url: ""     # e.g. "http://my-topaz.infra.svc:8383"
+  grpcUrl: "" # e.g. "my-topaz.infra.svc:8282"
+
+# ==========================================================================
 # Secrets — override these in your values-production.yaml
 # ==========================================================================
 secrets:

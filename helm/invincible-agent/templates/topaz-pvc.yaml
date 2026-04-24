@@ -1,0 +1,17 @@
+{{- if .Values.topaz.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-topaz-data
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.topaz.persistence.size | default "1Gi" }}
+  {{- if .Values.topaz.persistence.storageClass }}
+  storageClassName: {{ .Values.topaz.persistence.storageClass }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,88 @@
+{{- if .Values.topaz.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-topaz-config
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    version: 2
+    logging:
+      prod: true
+      log_level: info
+    directory:
+      db_path: /db/directory.db
+      seed_metadata: true
+    api:
+      health:
+        listen_address: "0.0.0.0:9494"
+      metrics:
+        listen_address: "0.0.0.0:9292"
+      services:
+        console:
+          gateway:
+            listen_address: "0.0.0.0:8080"
+          grpc:
+            listen_address: "0.0.0.0:8081"
+        reader:
+          grpc:
+            listen_address: "0.0.0.0:8282"
+          gateway:
+            listen_address: "0.0.0.0:8383"
+        writer:
+          grpc:
+            listen_address: "0.0.0.0:8282"
+          gateway:
+            listen_address: "0.0.0.0:8383"
+        model:
+          grpc:
+            listen_address: "0.0.0.0:8282"
+          gateway:
+            listen_address: "0.0.0.0:8383"
+    opa:
+      instance_id: "-"
+      graceful_shutdown_period_seconds: 2
+      local_bundles:
+        paths: ["/policies"]
+
+  manifest.yaml: |
+    # Topaz Zanzibar Schema
+    types:
+      user: {}
+      dataset:
+        relations:
+          owner: user
+          reader: user
+        permissions:
+          can_read: reader | owner
+          can_write: owner
+
+  data_broker.rego: |
+    package data_mesh.GET.api.v1.assets.__asset_key.authorize
+
+    import future.keywords.in
+
+    default allowed = false
+    default allowed_columns = []
+    default row_filters = ""
+
+    allowed {
+        check_relation({
+            "subject": {"type": "user", "key": input.user.id},
+            "object": {"type": "dataset", "key": input.resource.asset_key},
+            "relation": "can_read"
+        })
+    }
+
+    # Example mock policies for CLS/RLS
+    allowed_columns = ["timestamp", "rotor_id", "status"] {
+        allowed
+        input.user.role == "mechanic"
+    }
+
+    row_filters = "region = 'US-EAST'" {
+        allowed
+        input.user.role == "mechanic"
+    }
+{{- end }}

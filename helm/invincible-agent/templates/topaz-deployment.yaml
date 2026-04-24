@@ -1,0 +1,71 @@
+{{- if .Values.topaz.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-topaz
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: topaz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "topaz" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "topaz" "root" .) | nindent 8 }}
+    spec:
+      containers:
+        - name: topaz
+          image: "{{ .Values.topaz.image.repository }}:{{ .Values.topaz.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command: ["run", "--config-file", "/config/config.yaml"]
+          ports:
+            - name: grpc
+              containerPort: 8282
+            - name: http
+              containerPort: 8383
+            - name: metrics
+              containerPort: 9292
+            - name: health
+              containerPort: 9494
+          volumeMounts:
+            - name: data
+              mountPath: /db
+            - name: config
+              mountPath: /config
+            - name: policies
+              mountPath: /policies
+          livenessProbe:
+            httpGet:
+              path: /api/v2/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v2/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-topaz-data
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-topaz-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: policies
+          configMap:
+            name: {{ .Release.Name }}-topaz-config
+            items:
+              - key: manifest.yaml
+                path: manifest.yaml
+              - key: data_broker.rego
+                path: data_broker.rego
+{{- end }}

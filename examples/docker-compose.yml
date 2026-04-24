@@ -448,6 +448,22 @@ services:
     volumes:
       - ./keycloak_data:/opt/keycloak/data/import
 
+  # ==========================================
+  # 8. AUTHORIZATION (Topaz FGA)
+  # ==========================================
+  topaz:
+    image: ghcr.io/aserto-policies/topaz:latest
+    container_name: topaz
+    command: run --config-file /config/config.yaml
+    ports:
+      - "8282:8282" # gRPC
+      - "8383:8383" # REST/HTTP
+      - "9292:9292" # Metrics
+    volumes:
+      - ./topaz/data:/db
+      - ./topaz/cfg/config.yaml:/config/config.yaml
+      - ./topaz/policies:/policies
+
 volumes:
   pgdata:
   restate_data:

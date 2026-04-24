@@ -1,0 +1,38 @@
+version: 2
+logging:
+  prod: true
+  log_level: info
+directory:
+  db_path: /db/directory.db
+  seed_metadata: true
+api:
+  health:
+    listen_address: "0.0.0.0:9494"
+  metrics:
+    listen_address: "0.0.0.0:9292"
+  services:
+    console:
+      gateway:
+        listen_address: "0.0.0.0:8080"
+      grpc:
+        listen_address: "0.0.0.0:8081"
+    reader:
+      grpc:
+        listen_address: "0.0.0.0:8282"
+      gateway:
+        listen_address: "0.0.0.0:8383"
+    writer:
+      grpc:
+        listen_address: "0.0.0.0:8282"
+      gateway:
+        listen_address: "0.0.0.0:8383"
+    model:
+      grpc:
+        listen_address: "0.0.0.0:8282"
+      gateway:
+        listen_address: "0.0.0.0:8383"
+opa:
+  instance_id: "-"
+  graceful_shutdown_period_seconds: 2
+  local_bundles:
+    paths: ["/policies"]
