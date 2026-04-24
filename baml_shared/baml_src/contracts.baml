@@ -492,6 +492,11 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
     
     3. TEXT/KNOWLEDGE: ONLY use this if the response is a pure conversational paragraph with no structured lists or arrays.
 
+    4. DIGITAL TWIN: If the data explicitly describes physical hardware states, phased array sensor diagnostics, or element-level thermal/voltage telemetry from an edge device:
+       - USE DigitalTwinUI (DIGITAL_TWIN_3D).
+       - Extract the overall core_temp and uptime_hours for the global stats.
+       - Map the broken/overheating elements into the anomalies array.
+
     CRITICAL INSTRUCTION:
     Produce a `DashboardUI` object. Map each expert response in the input to its corresponding component.
     If the `summary` or `structured_data` field contains a stringified dictionary (e.g. "{'dashboards': [...]}"), you MUST parse it and output the corresponding ASSET_STATE_METRIC or CHART_WIDGET components. Do NOT just dump it into a KNOWLEDGE_DOCUMENT.
