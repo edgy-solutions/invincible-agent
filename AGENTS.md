@@ -323,6 +323,17 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Optimized for `KNOWLEDGE_RETRIEVAL` intents requiring manual summaries without graph lookups.
 - Integrated into Helm chart as a Deployment/Service pair.
 
+### Phase 17 — Agentic Auth Middleware (complete)
+- Created `agent_fleet/core/authz.py` with FastAPI dependency `require_topaz_auth`.
+- Intercepts requests, decodes Keycloak JWT, and queries Topaz REST API.
+- Injects validated `user_jwt` downstream into route handlers.
+- Secures the agent mesh and ensures agents only query data the user is authorized to see.
+
+### Phase 18 — Zero-Trust Data Mesh & Data Analyst Agent (complete)
+- **Component A (The Driver):** Created `agent_fleet/data_analyst/service.py` (Engine DA) — FastAPI on port 8089. Uses `smolagents.CodeAgent` to dynamically generate SQL. Securely invokes `CortexDataClient` using the closure pattern to prevent the LLM from seeing the JWT.
+- **Component B (The Policy Injector):** Upgraded `dag_tools/central_gateway/main.py` to extract `allowed_columns` and `row_filters` from the Topaz authorization response and inject them into the `BrokerTicketResponse`.
+- **Component C (The Enforcer):** Upgraded `dag_tools/cortex_data/client.py` to dynamically apply Column-Level Security (CLS) and Row-Level Security (RLS) to the Polars `LazyFrame` before the LLM's SQL is executed.
+
 ## Persona Reference
 
 The system supports 5 domain-expert personas defined in `PersonaTarget` (BAML enum).

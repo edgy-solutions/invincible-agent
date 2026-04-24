@@ -43,6 +43,7 @@ Ephemeral, lightweight pods. Uses only the `requests` library to trigger agents 
 | **F** | FastAPI + BAML | 8087 | `/render_ui` | Presentation Agent — Returns `DashboardUI` (composite multi-panel) by persona |
 | **G** | FastAPI + Dagster | 8888 | `/orchestrate` | Orchestration Gateway — Synchronous entry point for the mesh |
 | **W** | Restate + smolagents + Weaviate | 8088 | `/query_knowledge` | Weaviate Semantic Expert — pure semantic knowledge retrieval |
+| **DA** | Restate + smolagents + Polars | 8089 | `/analyze_data` | Data Analyst Agent — securely executes SQL over DataHub assets |
 
 ### Data Flow
 
@@ -192,6 +193,12 @@ agent_fleet/
   presentation_agent/
     main.py                   # Engine F: Presentation Agent (port 8087)
     Procfile / project.toml
+  weaviate_expert/
+    main.py                   # Engine W: Weaviate Semantic Expert (port 8088)
+    Procfile / project.toml
+  data_analyst/
+    service.py                # Engine DA: Data Analyst Agent (port 8089)
+    Procfile / project.toml
   models.py                   # SQLAlchemy ORM model for bpmn_catalog table
 
 sql/
@@ -312,6 +319,9 @@ uvicorn agent_fleet.presentation_agent.main:app --port 8087
 
 # Engine W — Weaviate Semantic Expert
 uvicorn agent_fleet.weaviate_expert.main:app --port 8088
+
+# Engine DA — Data Analyst Agent
+uvicorn agent_fleet.data_analyst.service:app --port 8089
 ```
 
 ---
@@ -329,6 +339,7 @@ pack build myregistry/datahub-wrapper   --path ./agent_fleet/datahub_wrapper   -
 pack build myregistry/neo4j-expert      --path ./agent_fleet/neo4j_expert      --builder paketobuildpacks/builder-jammy-base
 pack build myregistry/presentation-agent --path ./agent_fleet/presentation_agent --builder paketobuildpacks/builder-jammy-base
 pack build myregistry/weaviate-expert   --path ./agent_fleet/weaviate_expert   --builder paketobuildpacks/builder-jammy-base
+pack build myregistry/data-analyst      --path ./agent_fleet/data_analyst      --builder paketobuildpacks/builder-jammy-base
 ```
 
 ---
@@ -368,6 +379,7 @@ See `helm/invincible-agent/values.yaml` for a full list of overridable parameter
 | Engine E | `http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph` |
 | Engine F | `http://presentation-agent-svc.default.svc.cluster.local:8087/render_ui` |
 | Engine W | `http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge` |
+| Engine DA | `http://data-analyst-svc.default.svc.cluster.local:8089/analyze_data` |
 
 All services expose `GET /health` for liveness probes.
 

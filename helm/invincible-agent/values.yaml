@@ -251,6 +251,22 @@ engineF:
       memory: 512Mi
   env: {}
 
+dataAnalyst:
+  enabled: true
+  replicas: 1
+  image:
+    name: data-analyst
+    tag: ""
+  port: 8089
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  env: {}
+
 # ==========================================================================
 # Frontend Services
 # ==========================================================================
