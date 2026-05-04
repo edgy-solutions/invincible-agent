@@ -1,0 +1,11 @@
+{
+  "name": "@platform/iagent-contracts",
+  "version": "1.0.0",
+  "description": "Strictly typed BAML API contracts for the iagent backend. Internal models are encapsulated.",
+  "main": "baml_client_ts/public_api.ts",
+  "types": "baml_client_ts/public_api.ts",
+  "private": true,
+  "dependencies": {
+    "@boundaryml/baml": "^0.219.0"
+  }
+}

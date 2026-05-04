@@ -6,3 +6,9 @@ generator target {
   output_dir "../baml_client"
   version "0.219.0"
 }
+
+generator typescript_target {
+  output_type "typescript"
+  output_dir "../../baml_client_ts"
+  version "0.219.0"
+}
