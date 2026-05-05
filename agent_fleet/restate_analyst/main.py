@@ -138,6 +138,8 @@ def _resolve_ontology(task_description: str) -> dict:
     return resp.json()
 
 
+from .orchestrator.auth import current_user_token, current_trace_id
+
 @analyst_service.handler()
 async def analyze(ctx: Context, request: dict) -> dict:
     """Durable handler: resolve ontology → run smolagent → return AgentResponse.
@@ -145,10 +147,18 @@ async def analyze(ctx: Context, request: dict) -> dict:
     Every side-effectful operation is wrapped in ``ctx.run()`` so Restate
     can guarantee exactly-once execution even across pod restarts.
     """
-    # Parse the incoming AgentTask
     task = AgentTask(**request)
     dynamic_schema_map = request.get("dynamic_schema_map", "")
     user_id = request.get("user_id")
+
+    # Extract the injected token from the proxy and set it into ContextVar
+    auth_header = request.get("user_jwt")
+    if auth_header:
+        current_user_token.set(auth_header)
+
+    trace_id = request.get("trace_id")
+    if trace_id:
+        current_trace_id.set(trace_id)
 
     # Step 1: Resolve semantic context via Engine O (durable HTTP call)
     semantic_ctx = await ctx.run(
@@ -494,7 +504,22 @@ print(result)
                 agent_prompt += f"\n\n{syntax_reminder}"
 
                 model = get_smolagent_model()
-                agent = CodeAgent(tools=[search_datahub, superset_analytics_manager], model=model)
+                
+                trace_id = current_trace_id.get()
+                if trace_id:
+                    os.environ["LANGFUSE_TRACE_ID"] = trace_id
+                    try:
+                        from langfuse.decorators import langfuse_context
+                        langfuse_context.update_current_trace(id=trace_id)
+                    except Exception:
+                        pass
+                
+                # Fetch dynamically loaded tools from global app state
+                dynamic_tools = getattr(app.state, "active_mesh_tools", [])
+                base_tools = [search_datahub, superset_analytics_manager]
+                all_tools = base_tools + dynamic_tools
+                
+                agent = CodeAgent(tools=all_tools, model=model)
                 
                 result = await asyncio.to_thread(agent.run, agent_prompt)
 
@@ -823,6 +848,62 @@ async def get_status(ctx: ObjectContext, request: dict) -> dict:
 # ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
+from contextlib import asynccontextmanager
+import logging
+
+logger = logging.getLogger("RestateAnalyst")
+
+async def _poll_discovery_tools(fastapi_app: FastAPI):
+    """Background task to poll Engine D for dynamic tools every 30s until successful."""
+    import asyncio
+    from .orchestrator.discovery import fetch_tools_from_wrapper, DynamicMeshTool, bind_mcp_server
+    while True:
+        await asyncio.sleep(30)
+        try:
+            logger.info("Retrying fetch of Mesh Tools from Engine D...")
+            raw_tools = await fetch_tools_from_wrapper()
+            active_tools = []
+            for t in raw_tools:
+                if t.get("type") == "MCPServer":
+                    mcp_tools = await bind_mcp_server(t)
+                    active_tools.extend(mcp_tools)
+                else:
+                    active_tools.append(DynamicMeshTool(t))
+            fastapi_app.state.active_mesh_tools = active_tools
+            logger.info(f"Successfully bound {len(fastapi_app.state.active_mesh_tools)} dynamic tools on retry.")
+            break
+        except Exception as e:
+            logger.warning(f"Engine D still unreachable. Retrying in 30s. Error: {e}")
+
+@asynccontextmanager
+async def lifespan(fastapi_app: FastAPI):
+    # Boot Sequence
+    logger.info("Initializing Engine A: Fetching Mesh Tools from Engine D...")
+    try:
+        from .orchestrator.discovery import fetch_tools_from_wrapper, DynamicMeshTool, bind_mcp_server
+        raw_tools = await fetch_tools_from_wrapper()
+        active_tools = []
+        for t in raw_tools:
+            if t.get("type") == "MCPServer":
+                mcp_tools = await bind_mcp_server(t)
+                active_tools.extend(mcp_tools)
+            else:
+                active_tools.append(DynamicMeshTool(t))
+        fastapi_app.state.active_mesh_tools = active_tools
+        logger.info(f"Successfully bound {len(fastapi_app.state.active_mesh_tools)} dynamic tools.")
+    except Exception as e:
+        logger.warning(f"Engine D unreachable during boot. Starting with 0 dynamic tools. Error: {e}")
+        fastapi_app.state.active_mesh_tools = []
+        
+        # Spin up a background asyncio.create_task() to poll Engine D every 30 seconds
+        import asyncio
+        asyncio.create_task(_poll_discovery_tools(fastapi_app))
+        
+    yield
+    
+    # Teardown Sequence
+    logger.info("Shutting down Engine A...")
+
 app = FastAPI(
     title="Engine A — Restate Analyst",
     description=(
@@ -830,6 +911,7 @@ app = FastAPI(
         "Resolves ontology context via Engine O before analysis."
     ),
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Mount the Restate SDK so it handles /restate/* routes
@@ -860,6 +942,16 @@ async def analyze_proxy(request: Request) -> JSONResponse:
     """
     try:
         payload = await request.json()
+        
+        # Inject the incoming request Authorization into the Restate payload
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            payload["user_jwt"] = auth_header
+            
+        import uuid
+        trace_id = request.headers.get("X-Trace-Id") or str(uuid.uuid4())
+        payload["trace_id"] = trace_id
+            
         target_url = f"{RESTATE_INGRESS_URL}/AnalystService/analyze"
         
         # Use httpx for consistency and better error handling
