@@ -242,9 +242,10 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                f"{_DAGSTER_WEBSERVER_URL}/graphql",
+                f"{_RESTATE_INGRESS_URL}/DagsterRunTracker/{thread_id}/get_or_launch_run",
                 json={
-                    "query": mutation,
+                    "dagster_url": _DAGSTER_WEBSERVER_URL,
+                    "mutation": mutation,
                     "variables": {
                         "repo": _DAGSTER_REPOSITORY,
                         "loc": _DAGSTER_LOCATION,
@@ -253,16 +254,10 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
                 },
             )
             resp.raise_for_status()
-            data = resp.json()
+            return resp.json()
             
-            run_data = data.get("data", {}).get("launchRun", {})
-            if run_data.get("__typename") == "LaunchRunSuccess":
-                return run_data["run"]["runId"]
-            
-            logger.error("LaunchRun failed: %s", run_data)
-            return None
     except Exception as exc:
-        logger.error("Failed to call Dagster GraphQL: %s", exc)
+        logger.error("Failed to call Dagster GraphQL via Restate: %s", exc)
         return None
 
 async def _get_run_status(run_id: str) -> dict:

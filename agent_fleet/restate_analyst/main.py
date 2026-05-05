@@ -914,8 +914,53 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ---------------------------------------------------------------------------
+# Restate Virtual Object — DagsterRunTracker
+# ---------------------------------------------------------------------------
+run_tracker = VirtualObject("DagsterRunTracker")
+
+@run_tracker.handler()
+async def get_or_launch_run(ctx: ObjectContext, payload: dict) -> str | None:
+    # 1. Check if we already launched a Dagster job for this session
+    existing_run_id = await ctx.get("dagster_run_id")
+    if existing_run_id:
+        return existing_run_id
+
+    # 2. Extract configuration from payload to call Dagster
+    dagster_url = payload.get("dagster_url")
+    mutation = payload.get("mutation")
+    variables = payload.get("variables")
+
+    if not dagster_url or not mutation:
+        return None
+
+    # 3. HTTP call wrapped in ctx.run to Dagster Webserver
+    async def launch_dagster() -> str | None:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{dagster_url}/graphql",
+                json={
+                    "query": mutation,
+                    "variables": variables
+                }
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            run_data = data.get("data", {}).get("launchRun", {})
+            if run_data.get("__typename") == "LaunchRunSuccess":
+                return run_data["run"]["runId"]
+            return None
+
+    new_run_id = await ctx.run("launch_dagster", launch_dagster)
+
+    if new_run_id:
+        # 4. Save state
+        ctx.set("dagster_run_id", new_run_id)
+
+    return new_run_id
+
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, run_tracker]))
 
 
 # ---------------------------------------------------------------------------
