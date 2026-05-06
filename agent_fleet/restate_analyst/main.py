@@ -445,6 +445,27 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 resolved_uri = semantic_ctx.get("resolved_uri", "unknown")
                 confidence = semantic_ctx.get("confidence_score", 0.0)
 
+                # 🚀 JIT TOOL INJECTION: Fetch tools from Engine D based on resolved_uri
+                from .orchestrator.discovery import fetch_tools_by_uri, DynamicMeshTool, bind_mcp_server
+                raw_tools = await fetch_tools_by_uri(resolved_uri)
+                
+                jit_tools = []
+                for t in raw_tools:
+                    try:
+                        if t.get("type") == "MCPServer":
+                            mcp_proxies = await bind_mcp_server(t)
+                            jit_tools.extend(mcp_proxies)
+                        else:
+                            jit_tools.append(DynamicMeshTool(t))
+                    except Exception as te:
+                        logger.warning(f"Failed to bind JIT tool {t.get('urn')}: {te}")
+
+                # Base system tools
+                base_tools = [search_datahub, superset_analytics_manager]
+                all_tools = base_tools + jit_tools
+                
+                logger.info(f"JIT Execution: Bound {len(jit_tools)} dynamic tools for URI {resolved_uri}")
+
                 agent_prompt = (
                     f"You are an enterprise data analyst operating across all domains (Maintenance, Manufacturing, Sustainment, etc.). Your ONLY source of truth is the output of the `search_datahub` tool.\n\n"
                     f"Task: {task.task_description}\n"
@@ -513,11 +534,6 @@ print(result)
                         langfuse_context.update_current_trace(id=trace_id)
                     except Exception:
                         pass
-                
-                # Fetch dynamically loaded tools from global app state
-                dynamic_tools = getattr(app.state, "active_mesh_tools", [])
-                base_tools = [search_datahub, superset_analytics_manager]
-                all_tools = base_tools + dynamic_tools
                 
                 agent = CodeAgent(tools=all_tools, model=model)
                 
@@ -853,52 +869,11 @@ import logging
 
 logger = logging.getLogger("RestateAnalyst")
 
-async def _poll_discovery_tools(fastapi_app: FastAPI):
-    """Background task to poll Engine D for dynamic tools every 30s until successful."""
-    import asyncio
-    from .orchestrator.discovery import fetch_tools_from_wrapper, DynamicMeshTool, bind_mcp_server
-    while True:
-        await asyncio.sleep(30)
-        try:
-            logger.info("Retrying fetch of Mesh Tools from Engine D...")
-            raw_tools = await fetch_tools_from_wrapper()
-            active_tools = []
-            for t in raw_tools:
-                if t.get("type") == "MCPServer":
-                    mcp_tools = await bind_mcp_server(t)
-                    active_tools.extend(mcp_tools)
-                else:
-                    active_tools.append(DynamicMeshTool(t))
-            fastapi_app.state.active_mesh_tools = active_tools
-            logger.info(f"Successfully bound {len(fastapi_app.state.active_mesh_tools)} dynamic tools on retry.")
-            break
-        except Exception as e:
-            logger.warning(f"Engine D still unreachable. Retrying in 30s. Error: {e}")
-
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     # Boot Sequence
-    logger.info("Initializing Engine A: Fetching Mesh Tools from Engine D...")
-    try:
-        from .orchestrator.discovery import fetch_tools_from_wrapper, DynamicMeshTool, bind_mcp_server
-        raw_tools = await fetch_tools_from_wrapper()
-        active_tools = []
-        for t in raw_tools:
-            if t.get("type") == "MCPServer":
-                mcp_tools = await bind_mcp_server(t)
-                active_tools.extend(mcp_tools)
-            else:
-                active_tools.append(DynamicMeshTool(t))
-        fastapi_app.state.active_mesh_tools = active_tools
-        logger.info(f"Successfully bound {len(fastapi_app.state.active_mesh_tools)} dynamic tools.")
-    except Exception as e:
-        logger.warning(f"Engine D unreachable during boot. Starting with 0 dynamic tools. Error: {e}")
-        fastapi_app.state.active_mesh_tools = []
-        
-        # Spin up a background asyncio.create_task() to poll Engine D every 30 seconds
-        import asyncio
-        asyncio.create_task(_poll_discovery_tools(fastapi_app))
-        
+    logger.info("Initializing Engine A: Late Binding enabled (JIT Tool Injection).")
+    # We no longer preload tools globally. Discovery happens per-request.
     yield
     
     # Teardown Sequence

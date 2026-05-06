@@ -70,6 +70,30 @@ query SearchDataHub($input: SearchInput!) {
 }
 """
 
+# Query for finding tools based on ontology_uri in customProperties
+_FIND_TOOLS_QUERY = """
+query SearchDataHub($input: SearchInput!) {
+  search(input: $input) {
+    searchResults {
+      entity {
+        urn
+        type
+        ... on Dataset {
+          properties {
+            name
+            description
+          }
+          customProperties {
+            key
+            value
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
 # ---------------------------------------------------------------------------
 # Request / Response Models
 # ---------------------------------------------------------------------------
@@ -171,6 +195,66 @@ def health() -> dict:
 async def get_tables() -> dict:
     """Legacy endpoint — now deprecated in favor of /query_metadata."""
     return {"available_tables": "Dynamic search enabled via /query_metadata"}
+
+
+@app.get("/find_tools")
+async def find_tools(ontology_uri: str):
+    """
+    Search for AITool or MCPServer entities tagged with a specific ontology_uri.
+    Returns metadata for JIT tool injection in Engine A.
+    """
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if DATAHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
+
+    # Search for tools across likely entity types
+    search_variables = {
+        "input": {
+            "query": "*",
+            "start": 0,
+            "count": 50,
+            "filters": [
+                {
+                    "field": "customProperties.ontology_uri",
+                    "value": ontology_uri
+                }
+            ]
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                DATAHUB_GMS_URL,
+                json={"query": _FIND_TOOLS_QUERY, "variables": search_variables},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        print(f"ERROR in find_tools: {exc}")
+        return {"tools": [], "error": str(exc)}
+
+    search_results = data.get("data", {}).get("search", {}).get("searchResults", [])
+    tools = []
+
+    for result in search_results:
+        entity = result.get("entity", {})
+        props = entity.get("properties") or {}
+        custom_props = {cp["key"]: cp["value"] for cp in entity.get("customProperties", [])}
+        
+        # Tools can be 'AITool' (standard OpenAPI) or 'MCPServer' (SSE protocol)
+        # We handle both via the custom_props metadata
+        tools.append({
+            "name": props.get("name") or entity.get("urn"),
+            "description": props.get("description") or "Dynamic tool discovered from DataHub.",
+            "type": custom_props.get("type", "AITool"),
+            "openapi_schema": custom_props.get("openapi_schema", ""),
+            "endpoint_url": custom_props.get("endpoint_url", ""),
+            "urn": entity.get("urn")
+        })
+
+    return {"tools": tools, "ontology_uri": ontology_uri}
 
 
 @app.post("/query_metadata", response_model=ExpertResponse)

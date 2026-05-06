@@ -14,21 +14,24 @@ logger = logging.getLogger("RestateAnalyst")
 DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
 
 async def fetch_tools_from_wrapper() -> list[dict]:
-    """Fetch the active dynamic tools from Engine D (DataHub Wrapper)."""
+    """Legacy: Fetch all active tools."""
     endpoint = f"{DATAHUB_WRAPPER_URL}/api/v1/tools/active"
-    
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(endpoint)
-        response.raise_for_status()
-        data = response.json()
-        
-        # Assume Engine D returns a JSON array or a dict with a 'tools' key
-        if isinstance(data, list):
-            return data
-        elif isinstance(data, dict) and "tools" in data:
-            return data["tools"]
-        else:
-            logger.warning(f"Unexpected response format from Engine D: {data}")
+        return response.json() if response.status_code == 200 else []
+
+async def fetch_tools_by_uri(ontology_uri: str) -> list[dict]:
+    """JIT: Fetch tools tagged with a specific ontology URI from Engine D."""
+    endpoint = f"{DATAHUB_WRAPPER_URL}/find_tools"
+    
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            response = await client.get(endpoint, params={"ontology_uri": ontology_uri})
+            response.raise_for_status()
+            data = response.json()
+            return data.get("tools", [])
+        except Exception as e:
+            logger.error(f"Failed to fetch tools for URI {ontology_uri}: {e}")
             return []
 
 class DynamicMeshTool(Tool):
