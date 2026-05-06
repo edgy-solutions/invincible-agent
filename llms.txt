@@ -11,7 +11,6 @@
 
 - src/iagent/definitions.py            — Dagster entry point; auto-loads defs/ folder
 - src/iagent/defs/agent_routers.py     — Dagster assets that POST to agent pods
-- src/iagent/defs/data_layer.py        — Dagster asset: dbt ↔ ontology ↔ DataHub sync
 - src/iagent/defs/dynamic_factory.py   — Dynamic BPMN Factory: reads bpmn_catalog, generates Dagster jobs/ops
 - src/iagent/defs/dynamic_supervisor.py — Phase 2 Dynamic Fan-Out/Fan-In job for multi-domain queries
 - src/iagent/gateway.py            — Orchestration Gateway service (port 8888)
@@ -229,15 +228,11 @@ pack build myregistry/langgraph-support  --path ./agent_fleet/langgraph_support 
 pack build myregistry/swarms-scraper     --path ./agent_fleet/swarms_scraper     --builder paketobuildpacks/builder-jammy-base
 ```
 
-### Phase 7 — Data Mesh Bindings (dbt + DataHub)
-Created `src/iagent/defs/data_layer.py` with a `sync_dbt_to_ontology` asset:
-1. Reads `dbt_project/target/manifest.json` (falls back to a realistic dummy).
-2. Extracts `ontology_uri` meta tags from dbt models → builds URI-to-model map.
-3. POSTs glossary term updates to DataHub GMS (`/entities?action=ingest`).
-4. Writes `agent_fleet/ontology_service/mapping.ttl` linking dbt models to
-   IOF/MIMOSA ontology URIs via `rdfs:isDefinedBy` triples.
-This proves Dagster keeps the physical data layer (dbt) and the semantic brain
-(ontology_service) in sync.
+### Phase 7 — Late Binding & Mesh Discovery (migrated)
+Deprecated `data_layer.py`. Responsibility for dbt/SQL semantic mapping migrated to `doc-tools`.
+Implemented **Late Binding** architecture in Engine O.
+Semantic resolution now uses **Weaviate Hybrid Search** + **BAML TypeBuilder** for zero-hallucination routing.
+Physical data asset discovery is now performed via live **Neo4j Cypher queries** (using `[:HAS_DATA]` links).
 
 ### UI Polish — Asset badges and grouping
 Added `kinds` and `group_name` to all Dagster assets:

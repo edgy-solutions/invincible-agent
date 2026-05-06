@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (9)
+# Generated enums (10)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -73,6 +73,9 @@ class MoodType(str, Enum):
     SUCCESS = "SUCCESS"
     STRATEGIC = "STRATEGIC"
     EDUCATIONAL = "EDUCATIONAL"
+
+class OntologyClass(str, Enum):
+    pass
 
 class PersonaTarget(str, Enum):
     # Target persona for the graph expert response
@@ -233,8 +236,9 @@ class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
 # The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
 # comes from the RDF graph at runtime.
-    resolved_uri: str = Field(description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
+    resolved_uri: typing.Union[OntologyClass, str] = Field(description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
     confidence_score: float = Field(description='Model confidence in the match, between 0.0 and 1.0.')
+    reasoning: typing.Optional[str] = Field(default=None, description='1-2 sentence explanation of why this class was chosen.')
 
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
@@ -242,7 +246,7 @@ class SupervisorTaskPlan(BaseModel):
     reasoning: str
 
 class TableClassificationResult(BaseModel):
-    resolved_uri: typing.Optional[str] = Field(default=None, description='The exact matching IOF Ontology URI, or null if uncertain/unrelated.')
+    resolved_uri: typing.Optional[typing.Union[OntologyClass, str]] = Field(default=None, description='The exact matching IOF Ontology URI, or null if uncertain/unrelated.')
     confidence_score: float = Field(description='Confidence level from 0.0 to 1.0.')
     reasoning: str = Field(description='A 1-2 sentence explanation of why this mapping was chosen based on the dossier.')
 

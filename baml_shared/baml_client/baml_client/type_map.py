@@ -113,6 +113,8 @@ type_map = {
 
     "types.MoodType": types.MoodType,
 
+    "types.OntologyClass": types.OntologyClass,
+
     "types.PersonaTarget": types.PersonaTarget,
 
     "types.SemanticArchetype": types.SemanticArchetype,

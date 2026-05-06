@@ -87,6 +87,9 @@ export enum MoodType {
   EDUCATIONAL = "EDUCATIONAL",
 }
 
+export enum OntologyClass {
+}
+
 /**
  * Target persona for the graph expert response
  */
@@ -295,8 +298,9 @@ export interface MetricUI {
  * comes from the RDF graph at runtime.
  */
 export interface SemanticResolution {
-  resolved_uri: string
+  resolved_uri: (string | OntologyClass)
   confidence_score: number
+  reasoning?: string | null
   
 }
 
@@ -308,7 +312,7 @@ export interface SupervisorTaskPlan {
 }
 
 export interface TableClassificationResult {
-  resolved_uri?: string | null
+  resolved_uri?: (string | OntologyClass) | null
   confidence_score: number
   reasoning: string
   

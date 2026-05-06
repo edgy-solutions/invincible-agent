@@ -67,7 +67,8 @@ graph TD
     
     subgraph DataLayer["Data Mesh Services"]
         D --> dbt["dbt Manifest"]
-        dbt -.->|mapping.ttl| O
+        dbt --> doc["doc-tools (Semantic Binding Plane)"]
+        doc --> O
         D --> DH["DataHub Glossary"]
         DH --> DR["Engine D: DataHub Wrapper (8085)"]
     end
@@ -165,7 +166,6 @@ src/iagent/
   definitions.py              # Dagster entry point (auto-loads defs/)
   defs/
     agent_routers.py          # @asset: HTTP dispatchers for Engines A, B, C, D
-    data_layer.py             # @asset: dbt ↔ ontology ↔ DataHub sync
     dynamic_factory.py        # Dynamic BPMN Factory: reads bpmn_catalog, generates jobs/ops
     dynamic_supervisor.py     # Phase 2 Dynamic Fan-Out/Fan-In job for multi-domain queries
     gateway.py                # Orchestration Gateway service (port 8888)

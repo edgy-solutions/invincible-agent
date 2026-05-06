@@ -6,13 +6,11 @@ except ImportError:
     pass
 
 from dagster import Definitions, load_assets_from_modules
-from .defs import agent_routers, dynamic_supervisor, data_layer, dynamic_factory
+from .defs import agent_routers, dynamic_supervisor, dynamic_factory
 
-# Load assets explicitly from modules to Ensure they are visible in the UI
 all_assets = load_assets_from_modules([
     agent_routers,
     dynamic_supervisor,
-    data_layer,
     dynamic_factory
 ])
 

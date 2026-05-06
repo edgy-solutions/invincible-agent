@@ -71,7 +71,7 @@ export default class TypeBuilder {
     
     MetricUI: ClassViewer<'MetricUI', "archetype" | "source_persona" | "subject_concept" | "metrics">;
     
-    SemanticResolution: ClassViewer<'SemanticResolution', "resolved_uri" | "confidence_score">;
+    SemanticResolution: ClassViewer<'SemanticResolution', "resolved_uri" | "confidence_score" | "reasoning">;
     
     SupervisorTaskPlan: ClassViewer<'SupervisorTaskPlan', "tasks" | "extracted_concepts" | "reasoning">;
     
@@ -96,6 +96,8 @@ export default class TypeBuilder {
     
     MoodType: EnumViewer<'MoodType', "ROUTINE" | "URGENT" | "SUCCESS" | "STRATEGIC" | "EDUCATIONAL">;
     
+    OntologyClass: EnumBuilder<'OntologyClass'>;
+    
     PersonaTarget: EnumBuilder<'PersonaTarget'>;
     
     SemanticArchetype: EnumViewer<'SemanticArchetype', "PROCESS_TOPOLOGY" | "HAZARD_DECLARATION" | "ASSET_STATE_METRIC" | "KNOWLEDGE_DOCUMENT" | "CHART_WIDGET" | "DIGITAL_TWIN_3D">;
@@ -109,7 +111,7 @@ export default class TypeBuilder {
             "AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",
           ]),
           enums: new Set([
-            "AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",
+            "AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",
           ]),
           runtime: DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME
         });
@@ -203,7 +205,7 @@ export default class TypeBuilder {
         ]);
         
         this.SemanticResolution = this.tb.classViewer("SemanticResolution", [
-          "resolved_uri","confidence_score",
+          "resolved_uri","confidence_score","reasoning",
         ]);
         
         this.SupervisorTaskPlan = this.tb.classViewer("SupervisorTaskPlan", [
@@ -249,6 +251,10 @@ export default class TypeBuilder {
         
         this.MoodType = this.tb.enumViewer("MoodType", [
           "ROUTINE","URGENT","SUCCESS","STRATEGIC","EDUCATIONAL",
+        ]);
+        
+        this.OntologyClass = this.tb.enumBuilder("OntologyClass", [
+          
         ]);
         
         this.PersonaTarget = this.tb.enumBuilder("PersonaTarget", [

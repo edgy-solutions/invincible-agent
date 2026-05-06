@@ -22,7 +22,7 @@ import type { BamlRuntime, BamlCtxManager, Image, Audio, Pdf, Video } from "@bou
 import { toBamlError, HTTPRequest, ClientRegistry } from "@boundaryml/baml"
 import type { Checked, Check } from "./types"
 import type * as types from "./types"
-import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, MoodType, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation} from "./types"
+import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, MoodType, OntologyClass, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation} from "./types"
 import type TypeBuilder from "./type_builder"
 import type * as events from "./events"
 
@@ -39,7 +39,7 @@ export class HttpRequest {
 
   
   ClassifyDomainIntent(
-      query: string,active_ontology_classes: string,domain: string,
+      query: string,domain: string,
       __baml_options__?: BamlCallOptions<never>
   ): HTTPRequest {
     try {
@@ -58,7 +58,7 @@ export class HttpRequest {
       return this.runtime.buildRequestSync(
         "ClassifyDomainIntent",
         {
-          "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain
+          "query": query,"domain": domain
         },
         this.ctxManager.cloneContext(),
         __baml_options__?.tb?.__tb(),
@@ -72,7 +72,7 @@ export class HttpRequest {
   }
   
   ClassifyLegacyTable(
-      table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,active_ontology_classes: string,domain: string,
+      table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,domain: string,
       __baml_options__?: BamlCallOptions<never>
   ): HTTPRequest {
     try {
@@ -91,7 +91,7 @@ export class HttpRequest {
       return this.runtime.buildRequestSync(
         "ClassifyLegacyTable",
         {
-          "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain
+          "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain
         },
         this.ctxManager.cloneContext(),
         __baml_options__?.tb?.__tb(),
@@ -342,7 +342,7 @@ export class HttpStreamRequest {
 
   
   ClassifyDomainIntent(
-      query: string,active_ontology_classes: string,domain: string,
+      query: string,domain: string,
       __baml_options__?: BamlCallOptions<never>
   ): HTTPRequest {
     try {
@@ -361,7 +361,7 @@ export class HttpStreamRequest {
       return this.runtime.buildRequestSync(
         "ClassifyDomainIntent",
         {
-          "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain
+          "query": query,"domain": domain
         },
         this.ctxManager.cloneContext(),
         __baml_options__?.tb?.__tb(),
@@ -375,7 +375,7 @@ export class HttpStreamRequest {
   }
   
   ClassifyLegacyTable(
-      table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,active_ontology_classes: string,domain: string,
+      table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,domain: string,
       __baml_options__?: BamlCallOptions<never>
   ): HTTPRequest {
     try {
@@ -394,7 +394,7 @@ export class HttpStreamRequest {
       return this.runtime.buildRequestSync(
         "ClassifyLegacyTable",
         {
-          "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain
+          "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain
         },
         this.ctxManager.cloneContext(),
         __baml_options__?.tb?.__tb(),

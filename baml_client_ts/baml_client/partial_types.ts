@@ -20,7 +20,7 @@ $ pnpm add @boundaryml/baml
 
 import type { Image, Audio, Pdf, Video } from "@boundaryml/baml"
 import type { Checked, Check } from "./types"
-import type {  AgentResponse,  AgentStatus,  AgentTask,  AgentTaskDefinition,  AnomalyNode,  AuditResponse,  AuthoringResponse,  BPMNEdge,  BPMNInterviewState,  BPMNNode,  BPMNNodeType,  ChartType,  ChartUI,  DashboardUI,  DataStewardResponse,  DigitalTwinUI,  DocumentUI,  Domain,  FinalSynthesis,  GraphExpertResponse,  HazardUI,  Intent,  KnowledgeResponse,  LogisticsResponse,  MechanicResponse,  MeshRoutingDecision,  MetricUI,  MoodType,  PersonaTarget,  SemanticArchetype,  SemanticResolution,  SeverityLevel,  SupervisorTaskPlan,  TableClassificationResult,  TopologyUI,  UIEntity,  UIRelation } from "./types"
+import type {  AgentResponse,  AgentStatus,  AgentTask,  AgentTaskDefinition,  AnomalyNode,  AuditResponse,  AuthoringResponse,  BPMNEdge,  BPMNInterviewState,  BPMNNode,  BPMNNodeType,  ChartType,  ChartUI,  DashboardUI,  DataStewardResponse,  DigitalTwinUI,  DocumentUI,  Domain,  FinalSynthesis,  GraphExpertResponse,  HazardUI,  Intent,  KnowledgeResponse,  LogisticsResponse,  MechanicResponse,  MeshRoutingDecision,  MetricUI,  MoodType,  OntologyClass,  PersonaTarget,  SemanticArchetype,  SemanticResolution,  SeverityLevel,  SupervisorTaskPlan,  TableClassificationResult,  TopologyUI,  UIEntity,  UIRelation } from "./types"
 import type * as types from "./types"
 
 /******************************************************************************
@@ -179,8 +179,9 @@ export namespace partial_types {
  * comes from the RDF graph at runtime.
     */
     export interface SemanticResolution {
-      resolved_uri?: string | null
+      resolved_uri?: (string | types.OntologyClass) | null
       confidence_score?: number | null
+      reasoning?: string | null
     }
     export interface SupervisorTaskPlan {
       tasks: AgentTaskDefinition[]
@@ -188,7 +189,7 @@ export namespace partial_types {
       reasoning?: string | null
     }
     export interface TableClassificationResult {
-      resolved_uri?: string | null
+      resolved_uri?: (string | types.OntologyClass) | null
       confidence_score?: number | null
       reasoning?: string | null
     }

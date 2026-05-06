@@ -240,12 +240,11 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
   - `pack build myregistry/swarms-scraper --path ./agent_fleet/swarms_scraper --builder paketobuildpacks/builder-jammy-base`
   - `pack build myregistry/weaviate-expert --path ./agent_fleet/weaviate_expert --builder paketobuildpacks/builder-jammy-base`
 
-### Phase 7 — Data Mesh Bindings: dbt + DataHub (complete)
-- Created `src/iagent/defs/data_layer.py` with `sync_dbt_to_ontology` asset.
-- Reads dbt `manifest.json`, extracts `ontology_uri` meta tags from models.
-- POSTs glossary term updates to DataHub GMS (gracefully handles offline).
-- Writes `mapping.ttl` linking dbt models to ontology URIs.
-- Proves Dagster keeps physical data (dbt) and semantic brain (ontology) in sync.
+### Phase 7 — Late Binding & Mesh Discovery (migrated)
+- Deprecated `data_layer.py`. Responsibility for dbt/SQL semantic mapping migrated to `doc-tools`.
+- Implemented **Late Binding** architecture in Engine O.
+- Semantic resolution now uses **Weaviate Hybrid Search** + **BAML TypeBuilder** for zero-hallucination routing.
+- Physical data asset discovery is now performed via live **Neo4j Cypher queries** (using `[:HAS_DATA]` links).
 
 ### Phase 8 — Engine D: DataHub Metadata Wrapper (complete)
 - Created `agent_fleet/datahub_wrapper/main.py` — FastAPI on port 8085.

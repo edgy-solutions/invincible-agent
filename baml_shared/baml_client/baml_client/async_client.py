@@ -82,34 +82,34 @@ class BamlAsyncClient:
     def parse_stream(self):
       return self.__llm_stream_parser
 
-    async def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
+    async def ClassifyDomainIntent(self, query: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> types.SemanticResolution:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.ClassifyDomainIntent(query=query,active_ontology_classes=active_ontology_classes,domain=domain,
+            __stream__ = self.stream.ClassifyDomainIntent(query=query,domain=domain,
                 baml_options=baml_options)
             return await __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ClassifyDomainIntent", args={
-                "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
+                "query": query,"domain": domain,
             })
             return typing.cast(types.SemanticResolution, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    async def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,active_ontology_classes: str,domain: str,
+    async def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> types.TableClassificationResult:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.ClassifyLegacyTable(table_name=table_name,columns_schema=columns_schema,dba_comments=dba_comments,orm_class_name=orm_class_name,sample_data=sample_data,active_ontology_classes=active_ontology_classes,domain=domain,
+            __stream__ = self.stream.ClassifyLegacyTable(table_name=table_name,columns_schema=columns_schema,dba_comments=dba_comments,orm_class_name=orm_class_name,sample_data=sample_data,domain=domain,
                 baml_options=baml_options)
             return await __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ClassifyLegacyTable", args={
-                "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain,
+                "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
             })
             return typing.cast(types.TableClassificationResult, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def DecomposeQuery(self, raw_query: str,active_personas: str,
@@ -226,11 +226,11 @@ class BamlStreamClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
+    def ClassifyDomainIntent(self, query: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[stream_types.SemanticResolution, types.SemanticResolution]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ClassifyDomainIntent", args={
-            "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
+            "query": query,"domain": domain,
         })
         return baml_py.BamlStream[stream_types.SemanticResolution, types.SemanticResolution](
           __result__,
@@ -238,11 +238,11 @@ class BamlStreamClient:
           lambda x: typing.cast(types.SemanticResolution, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,active_ontology_classes: str,domain: str,
+    def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[stream_types.TableClassificationResult, types.TableClassificationResult]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ClassifyLegacyTable", args={
-            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain,
+            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
         })
         return baml_py.BamlStream[stream_types.TableClassificationResult, types.TableClassificationResult](
           __result__,
@@ -342,18 +342,18 @@ class BamlHttpRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    async def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
+    async def ClassifyDomainIntent(self, query: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ClassifyDomainIntent", args={
-            "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
+            "query": query,"domain": domain,
         }, mode="request")
         return __result__
-    async def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,active_ontology_classes: str,domain: str,
+    async def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ClassifyLegacyTable", args={
-            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain,
+            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
         }, mode="request")
         return __result__
     async def DecomposeQuery(self, raw_query: str,active_personas: str,
@@ -413,18 +413,18 @@ class BamlHttpStreamRequestClient:
     def __init__(self, options: DoNotUseDirectlyCallManager):
         self.__options = options
 
-    async def ClassifyDomainIntent(self, query: str,active_ontology_classes: str,domain: str,
+    async def ClassifyDomainIntent(self, query: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ClassifyDomainIntent", args={
-            "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain,
+            "query": query,"domain": domain,
         }, mode="stream")
         return __result__
-    async def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,active_ontology_classes: str,domain: str,
+    async def ClassifyLegacyTable(self, table_name: str,columns_schema: str,dba_comments: str,orm_class_name: str,sample_data: str,domain: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ClassifyLegacyTable", args={
-            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain,
+            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
         }, mode="stream")
         return __result__
     async def DecomposeQuery(self, raw_query: str,active_personas: str,
@@ -478,4 +478,4 @@ class BamlHttpStreamRequestClient:
         return __result__
     
 
-b = BamlAsyncClient(DoNotUseDirectlyCallManager({}))
+b = BamlAsyncClient(DoNotUseDirectlyCallManager({}))

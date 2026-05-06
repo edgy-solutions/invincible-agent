@@ -163,8 +163,9 @@ class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
 # The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
 # comes from the RDF graph at runtime.
-    resolved_uri: typing.Optional[str] = Field(default=None, description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
+    resolved_uri: typing.Optional[typing.Union[types.OntologyClass, str]] = Field(default=None, description='The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.')
     confidence_score: typing.Optional[float] = Field(default=None, description='Model confidence in the match, between 0.0 and 1.0.')
+    reasoning: typing.Optional[str] = Field(default=None, description='1-2 sentence explanation of why this class was chosen.')
 
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
@@ -172,7 +173,7 @@ class SupervisorTaskPlan(BaseModel):
     reasoning: typing.Optional[str] = None
 
 class TableClassificationResult(BaseModel):
-    resolved_uri: typing.Optional[str] = Field(default=None, description='The exact matching IOF Ontology URI, or null if uncertain/unrelated.')
+    resolved_uri: typing.Optional[typing.Union[types.OntologyClass, str]] = Field(default=None, description='The exact matching IOF Ontology URI, or null if uncertain/unrelated.')
     confidence_score: typing.Optional[float] = Field(default=None, description='Confidence level from 0.0 to 1.0.')
     reasoning: typing.Optional[str] = Field(default=None, description='A 1-2 sentence explanation of why this mapping was chosen based on the dossier.')
 

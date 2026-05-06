@@ -21,8 +21,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import rdflib
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+import weaviate
+import weaviate.classes as wvc
+from neo4j import GraphDatabase
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Add baml_shared to the Python path so we can import the generated client.
@@ -74,6 +77,16 @@ _JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
 _JENA_USERNAME = os.getenv("JENA_USERNAME", "admin")
 _JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
 _LOCAL_GRAPH = None
+
+# Weaviate Configuration
+_WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate.default.svc.cluster.local:8080")
+_WEAVIATE_CLIENT = None
+
+# Neo4j Configuration
+_NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j.default.svc.cluster.local:7687")
+_NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
+_NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+_NEO4J_DRIVER = None
 
 # ---------------------------------------------------------------------------
 # Master Agent & Domain Registry (Single Source of Truth)
@@ -276,12 +289,32 @@ async def _check_jena_populated():
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _WEAVIATE_CLIENT, _NEO4J_DRIVER
+    
+    # Initialize Weaviate
+    try:
+        _WEAVIATE_CLIENT = weaviate.connect_to_local(
+            host=_WEAVIATE_URL.split("//")[-1].split(":")[0],
+            port=int(_WEAVIATE_URL.split(":")[-1])
+        )
+        print(f"[ontology-service] Connected to Weaviate at {_WEAVIATE_URL}")
+    except Exception as e:
+        print(f"[ontology-service] FAILED to connect to Weaviate: {e}")
+
+    # Initialize Neo4j
+    try:
+        _NEO4J_DRIVER = GraphDatabase.driver(_NEO4J_URI, auth=(_NEO4J_USER, _NEO4J_PASSWORD))
+        _NEO4J_DRIVER.verify_connectivity()
+        print(f"[ontology-service] Connected to Neo4j at {_NEO4J_URI}")
+    except Exception as e:
+        print(f"[ontology-service] FAILED to connect to Neo4j: {e}")
+
     await _check_jena_populated()
-    classes = await _get_active_ontology_classes()
-    class_count = len(classes.strip().splitlines()) if classes.strip() else 0
-    backend = "Jena Fuseki" if _JENA_ENDPOINT else "Local rdflib"
-    print(f"[ontology-service] Loaded {class_count} maintenance classes (Backend: {backend})")
     yield
+    if _WEAVIATE_CLIENT:
+        _WEAVIATE_CLIENT.close()
+    if _NEO4J_DRIVER:
+        _NEO4J_DRIVER.close()
 
 
 app = FastAPI(
@@ -320,6 +353,7 @@ class SemanticResolutionResponse(BaseModel):
     """Mirrors the BAML SemanticResolution schema for the HTTP response."""
     resolved_uri: str
     confidence_score: float
+    reasoning: str | None = None
 
 class LegacyTableDossier(BaseModel):
     table_name: str
@@ -335,33 +369,59 @@ class TableClassificationResponse(BaseModel):
     reasoning: str
 
 
+async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> list[dict]:
+    """Retrieve the Top N most relevant ontology classes from Weaviate."""
+    if not _WEAVIATE_CLIENT:
+        return []
+    try:
+        collection = _WEAVIATE_CLIENT.collections.get("OntologyClass")
+        # Using hybrid search (BM25 + Vector)
+        # Filter by domain if provided
+        filters = wvc.query.Filter.by_property("domain").equal(domain.upper()) if domain else None
+        
+        response = collection.query.hybrid(
+            query=query,
+            limit=limit,
+            filters=filters
+        )
+        return [{"uri": obj.properties["uri"], "label": obj.properties["label"], "description": obj.properties.get("definition", "")} for obj in response.objects]
+    except Exception as e:
+        print(f"Weaviate search failed: {e}")
+        return []
+
+
 # ---------------------------------------------------------------------------
 # POST /resolve
 # ---------------------------------------------------------------------------
 @app.post("/resolve", response_model=SemanticResolutionResponse)
 async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
-    """Resolve a natural-language query to a canonical ontology URI.
+    """Resolve a natural-language query to a canonical ontology URI using Late Binding.
 
     Steps:
-    1. Query the loaded RDF graph for all active domain classes.
-    2. Format the results into a string for the LLM prompt.
-    3. Call BAML ``ClassifyDomainIntent`` with the query + ontology context.
-    4. Return the ``SemanticResolution`` response.
+    1. Hybrid Search in Weaviate for the Top 10 most relevant classes.
+    2. Inject these candidates into BAML TypeBuilder as a dynamic enum.
+    3. Call BAML ClassifyDomainIntent to strictly select the best match.
     """
-    # Step 1-2: Extract and format ontology classes from the RDF graph
-    active_classes = await _get_active_ontology_classes(domain=request.domain)
-    if not active_classes:
+    # Step 1: Hybrid Search for candidates
+    candidates = await weaviate_hybrid_search(query=request.query, domain=request.domain, limit=10)
+    
+    if not candidates:
         raise HTTPException(
-            status_code=404,  # Changed from 500 to 404 for missing domain data
-            detail=f"No ontology classes found for domain {request.domain} in the graph database.",
+            status_code=404,
+            detail=f"No relevant ontology classes found for query in Weaviate.",
         )
 
-    # Step 3: Call BAML function — LLM classifies intent against live ontology
+    # Step 2: Build BAML TypeBuilder
+    tb = TypeBuilder()
+    for cls in candidates:
+        tb.OntologyClass.add_value(cls["uri"]).description(f"{cls['label']}: {cls['description']}")
+
+    # Step 3: Call BAML function with strictly constrained enum
     try:
-        result: BamlSemanticResolution = await b.ClassifyDomainIntent(
+        result = await b.ClassifyDomainIntent(
             query=request.query,
-            active_ontology_classes=active_classes,
-            domain=request.domain
+            domain=request.domain,
+            baml_options={"tb": tb}
         )
     except Exception as exc:
         raise HTTPException(
@@ -371,9 +431,36 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
 
     # Step 4: Return structured response
     return SemanticResolutionResponse(
-        resolved_uri=result.resolved_uri,
-        confidence_score=result.confidence_score
+        resolved_uri=str(result.resolved_uri),
+        confidence_score=result.confidence_score,
+        reasoning=result.reasoning
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /get_physical_assets
+# ---------------------------------------------------------------------------
+@app.get("/get_physical_assets")
+async def get_physical_assets(uri: str = Query(..., description="The Ontology URI to resolve to physical assets")) -> dict:
+    """Query Neo4j for physical DataAsset URNs linked to an Ontology URI via [:HAS_DATA]."""
+    if not _NEO4J_DRIVER:
+        raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
+        
+    try:
+        with _NEO4J_DRIVER.session() as session:
+            # Execute the live Cypher query
+            result = session.run(
+                "MATCH (o:OntologyClass {uri: $uri})-[:HAS_DATA]->(d:DataAsset) RETURN d.urn as urn",
+                uri=uri
+            )
+            urns = [record["urn"] for record in result]
+            return {
+                "ontology_uri": uri,
+                "physical_assets": urns,
+                "count": len(urns)
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Neo4j query failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -383,15 +470,22 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
 async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificationResponse:
     """
     Ingests a Rich Context Dossier from Dagster and semantically maps 
-    the legacy table to an IOF Ontology URI.
+    the legacy table to an IOF Ontology URI using Late Binding.
     """
-    # 1. Get the list of active URIs from the graph for this specific domain
-    active_classes = await _get_active_ontology_classes(domain=request.domain)
+    # 1. Search for candidates in Weaviate using the table name/metadata
+    query_text = f"{request.table_name} {request.dba_comments}"
+    candidates = await weaviate_hybrid_search(query=query_text, domain=request.domain, limit=15)
     
-    if not active_classes:
+    if not candidates:
         raise HTTPException(status_code=404, detail=f"No active ontology classes found for domain {request.domain}.")
 
-    # 2. Ask the LLM to reason over the dossier
+    # 2. Build BAML TypeBuilder
+    tb = TypeBuilder()
+    for cls in candidates:
+        # Use the URI as the enum value for zero-hallucination selection
+        tb.OntologyClass.add_value(cls["uri"]).description(f"{cls['label']}: {cls['description']}")
+
+    # 3. Ask the LLM to reason over the dossier with strict constraints
     try:
         result = await b.ClassifyLegacyTable(
             table_name=request.table_name,
@@ -399,15 +493,15 @@ async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificat
             dba_comments=request.dba_comments,
             orm_class_name=request.orm_class_name,
             sample_data=request.sample_data,
-            active_ontology_classes=active_classes,
-            domain=request.domain
+            domain=request.domain,
+            baml_options={"tb": tb}
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"BAML Table Classification failed: {exc}") from exc
 
-    # 3. Return the structured decision
+    # 4. Return the structured decision
     return TableClassificationResponse(
-        resolved_uri=result.resolved_uri,
+        resolved_uri=str(result.resolved_uri) if result.resolved_uri else None,
         confidence_score=result.confidence_score,
         reasoning=result.reasoning
     )

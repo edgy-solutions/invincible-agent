@@ -24,6 +24,10 @@ enum AgentStatus {
     @description("The agent needs human-in-the-loop intervention to proceed.")
 }
 
+enum OntologyClass {
+  @@dynamic
+}
+
 // -----------------------------------------------------------------------------
 // Semantic Resolution
 // -----------------------------------------------------------------------------
@@ -32,10 +36,12 @@ enum AgentStatus {
 /// The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
 /// comes from the RDF graph at runtime.
 class SemanticResolution {
-  resolved_uri string
+  resolved_uri OntologyClass
     @description("The ontology URI that best matches the input query. Must be one of the URIs provided in active_ontology_classes.")
   confidence_score float
     @description("Model confidence in the match, between 0.0 and 1.0.")
+  reasoning string?
+    @description("1-2 sentence explanation of why this class was chosen.")
 }
 
 // -----------------------------------------------------------------------------
@@ -82,23 +88,19 @@ class AgentResponse {
 /// Classifies a user query against dynamically-provided ontology classes.
 /// The active_ontology_classes string is injected at runtime from the RDF
 /// graph — it contains a newline-delimited list of valid ontology URIs.
-function ClassifyDomainIntent(query: string, active_ontology_classes: string, domain: string) -> SemanticResolution {
+function ClassifyDomainIntent(query: string, domain: string) -> SemanticResolution {
   client MainAgent
   prompt #"
     You are a semantic classifier for the {{ domain }} domain.
     
     Your job is to map the user's query to exactly ONE ontology URI from the
-    list below. Do NOT invent URIs — you must select strictly from this list.
-
-    --- ACTIVE ONTOLOGY CLASSES ---
-    {{ active_ontology_classes }}
-    --- END ---
+    permitted values defined in the output format.
 
     User query: {{ query }}
 
     Instructions:
     1. Analyze the user's query for intent within the {{ domain }} domain.
-    2. Select the single best-matching ontology URI from the list above.
+    2. Select the single best-matching ontology URI from the permitted list.
     3. Assign a confidence score between 0.0 and 1.0.
 
     {{ ctx.output_format }}
@@ -110,7 +112,7 @@ function ClassifyDomainIntent(query: string, active_ontology_classes: string, do
 // -----------------------------------------------------------------------------
 
 class TableClassificationResult {
-  resolved_uri string | null @description("The exact matching IOF Ontology URI, or null if uncertain/unrelated.")
+  resolved_uri OntologyClass? @description("The exact matching IOF Ontology URI, or null if uncertain/unrelated.")
   confidence_score float @description("Confidence level from 0.0 to 1.0.")
   reasoning string @description("A 1-2 sentence explanation of why this mapping was chosen based on the dossier.")
 }
@@ -121,7 +123,6 @@ function ClassifyLegacyTable(
   dba_comments: string,
   orm_class_name: string,
   sample_data: string,
-  active_ontology_classes: string,
   domain: string
 ) -> TableClassificationResult {
   client MainAgent
@@ -139,17 +140,13 @@ function ClassifyLegacyTable(
     {{ sample_data }}
     ---
 
-    Based on this dossier, which of the following Active Ontology Classes does this table represent?
-    
-    --- ACTIVE ONTOLOGY CLASSES ---
-    {{ active_ontology_classes }}
-    --- END CLASSES ---
+    Your Task: Map this table to exactly ONE IOF Ontology URI from the 
+    permitted values defined in the output format.
 
     Instructions:
-    1. Hierarchical Weighting: If 'Developer ORM Class' or 'DBA Comments' clearly indicate the business entity, heavily weight them over the raw 'Table Name'.
-    2. Verification: Verify your assumption against the 'Columns' and 'Sample Data'. (e.g., if the ORM class says 'Pump' but the columns are 'user_id' and 'password', flag a low confidence).
-    3. If there is a highly probable match, return the exact URI from the active classes list.
-    4. If the table is a system logging table, a complex many-to-many join table, or unidentifiable, set resolved_uri to null.
+    1. Look for semantic overlap between table names/comments and the ontology class definitions.
+    2. If the table is a join table or metadata (e.g. `flyway_schema_history`), return null.
+    3. Select strictly from the permitted list.
 
     {{ ctx.output_format }}
   "#

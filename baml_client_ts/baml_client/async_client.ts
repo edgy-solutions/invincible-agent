@@ -24,7 +24,7 @@ import { toBamlError, BamlStream, BamlAbortError, Collector, ClientRegistry } fr
 import type { Checked, Check, RecursivePartialNull as MovedRecursivePartialNull } from "./types"
 import type { partial_types } from "./partial_types"
 import type * as types from "./types"
-import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, MoodType, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation} from "./types"
+import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, MoodType, OntologyClass, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation} from "./types"
 import type TypeBuilder from "./type_builder"
 import { AsyncHttpRequest, AsyncHttpStreamRequest } from "./async_request"
 import { LlmResponseParser, LlmStreamParser } from "./parser"
@@ -98,7 +98,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
 
         
         async ClassifyDomainIntent(
-        query: string,active_ontology_classes: string,domain: string,
+        query: string,domain: string,
         __baml_options__?: BamlCallOptions<never>
         ): Promise<types.SemanticResolution> {
           try {
@@ -112,7 +112,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
           // Check if onTick is provided - route through streaming if so
           if (__options__.onTick) {
           const __stream__ = this.stream.ClassifyDomainIntent(
-          query,active_ontology_classes,domain,
+          query,domain,
           __baml_options__
           );
 
@@ -136,7 +136,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
             const __raw__ = await this.runtime.callFunction(
             "ClassifyDomainIntent",
             {
-            "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain
+            "query": query,"domain": domain
             },
             this.ctxManager.cloneContext(),
             __options__.tb?.__tb(),
@@ -154,7 +154,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
             }
             
         async ClassifyLegacyTable(
-        table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,active_ontology_classes: string,domain: string,
+        table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,domain: string,
         __baml_options__?: BamlCallOptions<never>
         ): Promise<types.TableClassificationResult> {
           try {
@@ -168,7 +168,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
           // Check if onTick is provided - route through streaming if so
           if (__options__.onTick) {
           const __stream__ = this.stream.ClassifyLegacyTable(
-          table_name,columns_schema,dba_comments,orm_class_name,sample_data,active_ontology_classes,domain,
+          table_name,columns_schema,dba_comments,orm_class_name,sample_data,domain,
           __baml_options__
           );
 
@@ -192,7 +192,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
             const __raw__ = await this.runtime.callFunction(
             "ClassifyLegacyTable",
             {
-            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain
+            "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain
             },
             this.ctxManager.cloneContext(),
             __options__.tb?.__tb(),
@@ -616,7 +616,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
 
             
             ClassifyDomainIntent(
-            query: string,active_ontology_classes: string,domain: string,
+            query: string,domain: string,
             __baml_options__?: BamlCallOptions<never>
             ): BamlStream<partial_types.SemanticResolution, types.SemanticResolution>
               {
@@ -665,7 +665,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
                 const __raw__ = this.runtime.streamFunction(
                 "ClassifyDomainIntent",
                 {
-                "query": query,"active_ontology_classes": active_ontology_classes,"domain": domain
+                "query": query,"domain": domain
                 },
                 undefined,
                 this.ctxManager.cloneContext(),
@@ -690,7 +690,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
                   }
                   
             ClassifyLegacyTable(
-            table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,active_ontology_classes: string,domain: string,
+            table_name: string,columns_schema: string,dba_comments: string,orm_class_name: string,sample_data: string,domain: string,
             __baml_options__?: BamlCallOptions<never>
             ): BamlStream<partial_types.TableClassificationResult, types.TableClassificationResult>
               {
@@ -739,7 +739,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
                 const __raw__ = this.runtime.streamFunction(
                 "ClassifyLegacyTable",
                 {
-                "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"active_ontology_classes": active_ontology_classes,"domain": domain
+                "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain
                 },
                 undefined,
                 this.ctxManager.cloneContext(),

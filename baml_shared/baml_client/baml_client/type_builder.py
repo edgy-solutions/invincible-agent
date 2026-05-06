@@ -22,11 +22,11 @@ class TypeBuilder(type_builder.TypeBuilder):
         super().__init__(classes=set(
           ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","PersonaTarget","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 9
+    # Generated enums 10
     # #########################################################################
 
     @property
@@ -52,6 +52,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def MoodType(self) -> "MoodTypeViewer":
         return MoodTypeViewer(self)
+
+    @property
+    def OntologyClass(self) -> "OntologyClassBuilder":
+        return OntologyClassBuilder(self)
 
     @property
     def PersonaTarget(self) -> "PersonaTargetBuilder":
@@ -185,7 +189,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 9
+# Generated enums 10
 # #########################################################################
 
 class AgentStatusAst:
@@ -472,6 +476,50 @@ class MoodTypeValues:
     @property
     def EDUCATIONAL(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("EDUCATIONAL"))
+    
+    
+
+
+class OntologyClassAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("OntologyClass")
+        self._values: typing.Set[str] = set([  ])
+        self._vals = OntologyClassValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "OntologyClassValues":
+        return self._vals
+
+
+class OntologyClassBuilder(OntologyClassAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, baml_py.EnumValueBuilder]]:
+        return [(name, self._bldr.value(name)) for name in self._values]
+
+    def add_value(self, name: str) -> baml_py.EnumValueBuilder:
+        if name in self._values:
+            raise ValueError(f"Value {name} already exists.")
+        return self._bldr.value(name)
+    
+
+class OntologyClassValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    def __getattr__(self, name: str) -> baml_py.EnumValueBuilder:
+        if name not in self.__values:
+            raise AttributeError(f"Value {name} not found.")
+        return self.__bldr.value(name)
+
     
     
 
@@ -1739,7 +1787,7 @@ class SemanticResolutionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("SemanticResolution")
-        self._properties: typing.Set[str] = set([  "resolved_uri",  "confidence_score",  ])
+        self._properties: typing.Set[str] = set([  "resolved_uri",  "confidence_score",  "reasoning",  ])
         self._props = SemanticResolutionProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1774,6 +1822,10 @@ class SemanticResolutionProperties:
     @property
     def confidence_score(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("confidence_score"))
+    
+    @property
+    def reasoning(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
     
     
 
@@ -2028,3 +2080,4 @@ class UIRelationProperties:
     
     
 
+
