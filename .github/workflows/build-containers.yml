@@ -150,25 +150,25 @@ jobs:
           ARG AGENT_DIR
           COPY ${AGENT_DIR}/pyproject.toml* ${AGENT_DIR}/uv.lock* ./
           RUN --mount=type=cache,target=/root/.cache/uv \
-              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-install-project --no-dev --all-packages; fi
+              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev --compile-bytecode; fi
           COPY ${AGENT_DIR}/ /app/
           COPY baml_shared/baml_client/baml_client/ /app/baml_client/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           RUN --mount=type=cache,target=/root/.cache/uv \
-              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev --no-install-project --all-packages; fi
+              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev --compile-bytecode; fi
 
           # STAGE 2: SECURE RUNNER
           FROM python:3.12-slim-bookworm
           RUN groupadd -r appuser && useradd -r -g appuser appuser
           
-          WORKDIR /app
-          RUN mkdir -p /app/agent_workspace && chown -R appuser:appuser /app
-
           ENV PYTHONUNBUFFERED=1 \
               PYTHONDONTWRITEBYTECODE=1 \
-              PYTHONPATH="/app:/app/.venv/lib/python3.12/site-packages:${PYTHONPATH}" \
+              HOME=/app \
               PATH="/app/.venv/bin:$PATH"
           
+          WORKDIR /app
+          RUN mkdir -p /app/agent_workspace /app/.cache && chown -R appuser:appuser /app
+
           ARG PORT=8080
           ENV PORT=${PORT}
           RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -177,7 +177,7 @@ jobs:
           COPY --from=builder --chown=appuser:appuser /app /app
           
           USER appuser
-          CMD /app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${PORT}
+          CMD python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}
           EOF
             
             sed -i 's/^[ \t]*//' Dockerfile.agent
