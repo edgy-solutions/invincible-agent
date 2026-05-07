@@ -20,6 +20,7 @@ dependencies = [
     "python-dotenv",
     "langfuse",
     "litellm",
+    "packaging",
 ]
 
 [build-system]

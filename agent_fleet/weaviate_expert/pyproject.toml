@@ -12,6 +12,7 @@ dependencies = [
     "httpx",
     "weaviate-client",
     "python-dotenv",
+    "packaging",
 ]
 
 [build-system]

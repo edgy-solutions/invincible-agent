@@ -153,9 +153,7 @@ jobs:
           RUN --mount=type=cache,target=/root/.cache/uv \
               if [ -f "pyproject.toml" ]; then \
                   uv sync --frozen --no-dev --no-install-project --compile-bytecode && \
-                  if [ ! -f "/app/.venv/bin/hypercorn" ] && [ ! -f "/app/.venv/bin/uvicorn" ]; then \
-                      uv pip install uvicorn[standard]; \
-                  fi \
+                  uv pip install packaging setuptools wheel; \
               fi
           COPY ${AGENT_DIR}/ /app/
           COPY baml_shared/baml_client/baml_client/ /app/baml_client/
@@ -163,9 +161,7 @@ jobs:
           RUN --mount=type=cache,target=/root/.cache/uv \
               if [ -f "pyproject.toml" ]; then \
                   uv sync --frozen --no-dev --no-install-project --compile-bytecode && \
-                  if [ ! -f "/app/.venv/bin/hypercorn" ] && [ ! -f "/app/.venv/bin/uvicorn" ]; then \
-                      uv pip install uvicorn[standard]; \
-                  fi \
+                  uv pip install packaging setuptools wheel; \
               fi
 
           # STAGE 2: SECURE RUNNER
