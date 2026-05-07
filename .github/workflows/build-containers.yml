@@ -17,10 +17,10 @@ permissions:
 
 jobs:
   # ------------------------------------------------------------------
-  # Matrix build — all services via Cloud Native Buildpacks (no Docker)
+  # Matrix build — Native Multi-Stage Docker Builds (Powered by uv)
   # ------------------------------------------------------------------
   build:
-    name: "CNB · ${{ matrix.service }}"
+    name: "Docker · ${{ matrix.service }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -59,7 +59,6 @@ jobs:
           - service: cortex-bff
             path: .
             port: "8000"
-            default_process: bff
 
     steps:
       - name: Checkout
@@ -72,82 +71,80 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Pack CLI
-        uses: buildpacks/github-actions/setup-pack@v5.7.4
-
-      - name: Inject shared modules into build context
-        if: matrix.path != '.'
-        run: |
-          BUILD_DIR="./${{ matrix.path }}"
-
-          # Copy the BAML generated client (used by 6 of 8 engines)
-          # Note: repo structure is baml_shared/baml_client/baml_client/ (double-nested)
-          if [ -d "baml_shared/baml_client/baml_client" ]; then
-            cp -r baml_shared/baml_client/baml_client "$BUILD_DIR/baml_client"
-            echo "✅ Injected baml_client into $BUILD_DIR"
-          fi
-
-          # Copy shared LLM utilities (used by Engines A and E)
-          if [ -f "agent_fleet/llm_utils.py" ]; then
-            cp agent_fleet/llm_utils.py "$BUILD_DIR/llm_utils.py"
-            echo "✅ Injected llm_utils.py into $BUILD_DIR"
-          fi
-
-      - name: Install uv (for Dagster deployment)
-        if: matrix.service == 'dagster-control-plane'
-        uses: astral-sh/setup-uv@v5
-
-      - name: Build image (Dockerfile for Dagster, CNB for Agents)
+      - name: Build image (Dynamic Multi-Stage Dockerfiles)
         run: |
           if [ "${{ matrix.service }}" == "dagster-control-plane" ]; then
-            echo "Building dagster-control-plane with Dockerfile (doc-tools mechanism)..."
+            echo "Building dagster-control-plane with dynamic Multi-Stage Dockerfile..."
             
-            # Export requirements using uv
-            uv export --no-emit-project --format requirements-txt --no-hashes > requirements.txt
-            uv export --no-emit-project --only-group dev --format requirements-txt --no-hashes >> requirements.txt
-            
-            cat << 'EOF' > Dockerfile
-          FROM python:3.12-slim
-          ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-          
-          RUN apt-get update && apt-get install -y --no-install-recommends git libpq-dev gcc python3-dev && rm -rf /var/lib/apt/lists/*
-          
+            # Generate the Dagster Dockerfile on the fly
+            cat << 'EOF' > Dockerfile.dagster
+          # STAGE 1: BUILDER
+          FROM python:3.12-slim-bookworm AS builder
+          RUN apt-get update && apt-get install -y --no-install-recommends build-essential git libpq-dev && rm -rf /var/lib/apt/lists/*
           COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+          ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
           WORKDIR /app
-          
-          RUN uv venv /app/venv
-          COPY requirements.txt /app/
-          
+          COPY pyproject.toml uv.lock* requirements.txt* ./
           RUN --mount=type=cache,target=/root/.cache/uv \
-              uv pip install --python /app/venv -r /app/requirements.txt
-              
+              if [ -f "uv.lock" ]; then uv sync --frozen --no-install-project --no-dev; else uv pip install --system -r requirements.txt; fi
           COPY . /app
-          
           RUN --mount=type=cache,target=/root/.cache/uv \
-              uv pip install --python /app/venv -e .
-          
-          ENV PATH="/app/venv/bin:$PATH"
-          ENV PYTHONPATH="/app/src:/app"
-          
+              if [ -f "uv.lock" ]; then uv sync --frozen --no-dev; else uv pip install --system -e .; fi
+
+          # STAGE 2: SECURE RUNNER
+          FROM python:3.12-slim-bookworm
+          RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
+          ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/.venv/bin:$PATH" DAGSTER_HOME="/opt/dagster/dagster_home"
+          WORKDIR /app
+          # Install lightweight runtime libs only (no compilers)
+          RUN apt-get update && apt-get install -y --no-install-recommends libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
+          RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
+          COPY --from=builder --chown=dagsteruser:dagsteruser /app /app
+          USER dagsteruser
           CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "iagent.definitions"]
           EOF
             
-            # Fix potential leading spaces from the heredoc formatting in yaml
-            sed -i 's/^[ \t]*//' Dockerfile
+            # Strip leading spaces to ensure valid Dockerfile syntax
+            sed -i 's/^[ \t]*//' Dockerfile.dagster
             
-            docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} .
+            docker build -f Dockerfile.dagster -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} .
+          
           else
-            echo "Building ${{ matrix.service }} with Cloud Native Buildpacks..."
-            EXTRA_ARGS=""
-            if [ "${{ matrix.default_process }}" != "" ]; then
-              EXTRA_ARGS="--default-process ${{ matrix.default_process }}"
-            fi
-            pack build ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} \
-              --path ./${{ matrix.path }} \
-              --builder paketobuildpacks/builder-jammy-base \
-              --env BP_CPYTHON_VERSION=3.12 \
-              --trust-builder \
-              $EXTRA_ARGS
+            echo "Building ${{ matrix.service }} with dynamic Multi-Stage Dockerfile..."
+            
+            # Generate the Agent Fleet Dockerfile on the fly
+            cat << 'EOF' > Dockerfile.agent
+          # STAGE 1: BUILDER
+          FROM python:3.12-slim-bookworm AS builder
+          RUN apt-get update && apt-get install -y --no-install-recommends build-essential git && rm -rf /var/lib/apt/lists/*
+          COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+          ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
+          WORKDIR /app
+          ARG AGENT_DIR
+          COPY ${AGENT_DIR}/pyproject.toml ${AGENT_DIR}/uv.lock* ./
+          RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-project --no-dev
+          COPY ${AGENT_DIR}/ /app/
+          COPY baml_shared/ /app/baml_shared/
+          COPY agent_fleet/llm_utils.py /app/llm_utils.py
+          RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+
+          # STAGE 2: SECURE RUNNER
+          FROM python:3.12-slim-bookworm
+          RUN groupadd -r appuser && useradd -r -g appuser appuser
+          ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/.venv/bin:$PATH"
+          WORKDIR /app
+          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+          COPY --from=builder --chown=appuser:appuser /app /app
+          USER appuser
+          CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+          EOF
+            
+            sed -i 's/^[ \t]*//' Dockerfile.agent
+
+            # Execute from the repo root (.) so the Dockerfile can access baml_shared/
+            docker build -f Dockerfile.agent \
+              --build-arg AGENT_DIR=${{ matrix.path }} \
+              -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} .
           fi
 
       - name: Tag latest

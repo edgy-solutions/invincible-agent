@@ -102,7 +102,7 @@ pyproject.toml            # Project config
 
 ### DO NOT
 - Use `PipesK8sClient` for any agents — Dagster uses only `requests`.
-- Use Dockerfiles — all images are built with Cloud Native Buildpacks (`pack`).
+- Use manual Dockerfiles in the root — all images are built via dynamic multi-stage Dockerfiles in CI.
 - Import ML frameworks (torch, transformers, etc.) in the orchestrator.
 - Import Restate SDK or LangGraph SDK in the orchestrator.
 - Mix framework imports across engines (e.g. no Restate in Engine B).
@@ -229,16 +229,16 @@ description. The `_icon_card()` helper in `agent_routers.py` builds these cards.
 - Model configurable via `SWARMS_MODEL` env var (default: gpt-4o-mini).
 - GET `/health` for liveness probes.
 
-### Phase 6 — Cloud Native Buildpacks Containerization (complete)
-- No Dockerfiles. All OCI images built with `pack` CLI + `paketobuildpacks/builder-jammy-base`.
-- Each service in `agent_fleet/` now has a `Procfile` (uvicorn start command)
-  and `project.toml` (Python 3.12, PORT env var).
-- CI/CD build commands:
-  - `pack build myregistry/ontology-service --path ./agent_fleet/ontology_service --builder paketobuildpacks/builder-jammy-base`
-  - `pack build myregistry/restate-analyst --path ./agent_fleet/restate_analyst --builder paketobuildpacks/builder-jammy-base`
-  - `pack build myregistry/langgraph-support --path ./agent_fleet/langgraph_support --builder paketobuildpacks/builder-jammy-base`
-  - `pack build myregistry/swarms-scraper --path ./agent_fleet/swarms_scraper --builder paketobuildpacks/builder-jammy-base`
-  - `pack build myregistry/weaviate-expert --path ./agent_fleet/weaviate_expert --builder paketobuildpacks/builder-jammy-base`
+### Phase 6 — Native Multi-Stage Docker Migration (complete)
+- **Architecture Shift**: Abandoned Cloud Native Buildpacks (Paketo) in favor of secure, multi-stage native Docker builds powered by `uv`.
+- **Dynamic Dockerfiles**: Dockerfiles are generated dynamically within the CI/CD pipeline to keep the repository root clean while allowing full access to shared modules (`baml_shared`, `llm_utils.py`) during the build phase.
+- **CI/CD build commands**:
+  - `docker build -f Dockerfile.dagster -t myregistry/dagster-control-plane .`
+  - `docker build -f Dockerfile.agent --build-arg AGENT_DIR=agent_fleet/ontology_service -t myregistry/ontology-service .`
+  - `docker build -f Dockerfile.agent --build-arg AGENT_DIR=agent_fleet/restate_analyst -t myregistry/restate-analyst .`
+  - `docker build -f Dockerfile.agent --build-arg AGENT_DIR=agent_fleet/langgraph_support -t myregistry/langgraph-support .`
+  - `docker build -f Dockerfile.agent --build-arg AGENT_DIR=agent_fleet/swarms_scraper -t myregistry/swarms-scraper .`
+  - `docker build -f Dockerfile.agent --build-arg AGENT_DIR=agent_fleet/weaviate_expert -t myregistry/weaviate-expert .`
 
 ### Phase 7 — Late Binding & Mesh Discovery (migrated)
 - Deprecated `data_layer.py`. Responsibility for dbt/SQL semantic mapping migrated to `doc-tools`.
