@@ -94,7 +94,11 @@ jobs:
           FROM python:3.12-slim-bookworm AS builder
           RUN apt-get update && apt-get install -y --no-install-recommends build-essential git libpq-dev && rm -rf /var/lib/apt/lists/*
           COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-          ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
+          ENV UV_COMPILE_BYTECODE=1 \
+              UV_LINK_MODE=copy \
+              PYTHONUNBUFFERED=1 \
+              UV_PROJECT_ENVIRONMENT=/app/.venv \
+              UV_CACHE_DIR=/root/.cache/uv
           WORKDIR /app
           COPY pyproject.toml uv.lock* requirements.txt* ./
           RUN --mount=type=cache,target=/root/.cache/uv \
@@ -106,14 +110,17 @@ jobs:
           # STAGE 2: SECURE RUNNER
           FROM python:3.12-slim-bookworm
           RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
-          ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/.venv/bin:$PATH" DAGSTER_HOME="/opt/dagster/dagster_home"
+          ENV PYTHONUNBUFFERED=1 \
+              PYTHONDONTWRITEBYTECODE=1 \
+              PATH="/app/.venv/bin:$PATH" \
+              DAGSTER_HOME="/opt/dagster/dagster_home"
           WORKDIR /app
           # Install lightweight runtime libs only (no compilers)
           RUN apt-get update && apt-get install -y --no-install-recommends libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
           RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
           COPY --from=builder --chown=dagsteruser:dagsteruser /app /app
           USER dagsteruser
-          CMD ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "iagent.definitions"]
+          CMD ["/app/.venv/bin/dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000", "-m", "iagent.definitions"]
           EOF
             
             # Strip leading spaces to ensure valid Dockerfile syntax
@@ -170,7 +177,7 @@ jobs:
           COPY --from=builder --chown=appuser:appuser /app /app
           
           USER appuser
-          CMD /app/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}
+          CMD /app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${PORT}
           EOF
             
             sed -i 's/^[ \t]*//' Dockerfile.agent
