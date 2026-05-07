@@ -121,8 +121,9 @@ jobs:
           ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
           WORKDIR /app
           ARG AGENT_DIR
-          COPY ${AGENT_DIR}/pyproject.toml ${AGENT_DIR}/uv.lock* ./
-          RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-project --no-dev
+          COPY ${AGENT_DIR}/pyproject.toml* ${AGENT_DIR}/uv.lock* ./
+          RUN --mount=type=cache,target=/root/.cache/uv \
+              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-install-project --no-dev; fi
           COPY ${AGENT_DIR}/ /app/
           COPY baml_shared/ /app/baml_shared/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
@@ -133,10 +134,12 @@ jobs:
           RUN groupadd -r appuser && useradd -r -g appuser appuser
           ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/.venv/bin:$PATH"
           WORKDIR /app
+          ARG PORT=8080
+          ENV PORT=${PORT}
           RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
           COPY --from=builder --chown=appuser:appuser /app /app
           USER appuser
-          CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+          CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}
           EOF
             
             sed -i 's/^[ \t]*//' Dockerfile.agent
@@ -144,6 +147,7 @@ jobs:
             # Execute from the repo root (.) so the Dockerfile can access baml_shared/
             docker build -f Dockerfile.agent \
               --build-arg AGENT_DIR=${{ matrix.path }} \
+              --build-arg PORT=${{ matrix.port }} \
               -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} .
           fi
 
