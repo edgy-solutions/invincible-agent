@@ -128,7 +128,7 @@ jobs:
           COPY baml_shared/ /app/baml_shared/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           RUN --mount=type=cache,target=/root/.cache/uv \
-              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev; fi
+              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev --no-install-project; fi
 
           # STAGE 2: SECURE RUNNER
           FROM python:3.12-slim-bookworm
