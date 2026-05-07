@@ -180,8 +180,9 @@ jobs:
           # Copy everything from builder with appuser ownership
           COPY --from=builder --chown=appuser:appuser /app /app
           
+          WORKDIR /app
           USER appuser
-          CMD python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}
+          CMD /app/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}
           EOF
             
             sed -i 's/^[ \t]*//' Dockerfile.agent
