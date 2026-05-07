@@ -131,7 +131,7 @@ def _resolve_ontology(task_description: str) -> dict:
     return resp.json()
 
 
-from .orchestrator.auth import current_user_token, current_trace_id
+from orchestrator.auth import current_user_token, current_trace_id
 
 @analyst_service.handler()
 async def analyze(ctx: Context, request: dict) -> dict:
