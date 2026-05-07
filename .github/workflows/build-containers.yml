@@ -151,12 +151,22 @@ jobs:
           ARG AGENT_DIR
           COPY ${AGENT_DIR}/pyproject.toml* ${AGENT_DIR}/uv.lock* ./
           RUN --mount=type=cache,target=/root/.cache/uv \
-              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev --no-install-project --compile-bytecode; fi
+              if [ -f "pyproject.toml" ]; then \
+                  uv sync --frozen --no-dev --no-install-project --compile-bytecode && \
+                  if [ ! -f "/app/.venv/bin/hypercorn" ] && [ ! -f "/app/.venv/bin/uvicorn" ]; then \
+                      uv pip install uvicorn[standard]; \
+                  fi \
+              fi
           COPY ${AGENT_DIR}/ /app/
           COPY baml_shared/baml_client/baml_client/ /app/baml_client/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           RUN --mount=type=cache,target=/root/.cache/uv \
-              if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev --no-install-project --compile-bytecode; fi
+              if [ -f "pyproject.toml" ]; then \
+                  uv sync --frozen --no-dev --no-install-project --compile-bytecode && \
+                  if [ ! -f "/app/.venv/bin/hypercorn" ] && [ ! -f "/app/.venv/bin/uvicorn" ]; then \
+                      uv pip install uvicorn[standard]; \
+                  fi \
+              fi
 
           # STAGE 2: SECURE RUNNER
           FROM python:3.12-slim-bookworm
@@ -182,9 +192,15 @@ jobs:
           # Copy everything from builder with appuser ownership
           COPY --from=builder --chown=appuser:appuser /app /app
           
-          WORKDIR /app
           USER appuser
-          CMD /app/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}
+          CMD ["/bin/sh", "-c", "\
+              if [ -f '/app/.venv/bin/hypercorn' ]; then \
+                  echo 'Starting with Hypercorn (HTTP/2 enabled)...' && \
+                  /app/.venv/bin/python -m hypercorn main:app --bind 0.0.0.0:${PORT}; \
+              else \
+                  echo 'Starting with Uvicorn...' && \
+                  /app/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}; \
+              fi"]
           EOF
             
             sed -i 's/^[ \t]*//' Dockerfile.agent
