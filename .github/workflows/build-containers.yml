@@ -145,7 +145,7 @@ jobs:
           RUN --mount=type=cache,target=/root/.cache/uv \
               if [ -f "pyproject.toml" ]; then uv sync --frozen --no-install-project --no-dev --all-packages; fi
           COPY ${AGENT_DIR}/ /app/
-          COPY baml_shared/ /app/baml_shared/
+          COPY baml_shared/baml_client/baml_client/ /app/baml_client/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           RUN --mount=type=cache,target=/root/.cache/uv \
               if [ -f "pyproject.toml" ]; then uv sync --frozen --no-dev --no-install-project --all-packages; fi
