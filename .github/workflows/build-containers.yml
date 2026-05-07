@@ -71,8 +71,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build image (Dynamic Multi-Stage Dockerfiles)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push image (Multi-Arch)
         run: |
+          # Determine tags based on the branch
+          TAGS="-t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}"
+          if [[ "${{ github.ref }}" == "refs/heads/master" || "${{ github.ref }}" == "refs/heads/main" ]]; then
+            TAGS="$TAGS -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest"
+          fi
+
           if [ "${{ matrix.service }}" == "dagster-control-plane" ]; then
             echo "Building dagster-control-plane with dynamic Multi-Stage Dockerfile..."
             
@@ -107,7 +119,11 @@ jobs:
             # Strip leading spaces to ensure valid Dockerfile syntax
             sed -i 's/^[ \t]*//' Dockerfile.dagster
             
-            docker build -f Dockerfile.dagster -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} .
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              -f Dockerfile.dagster \
+              $TAGS \
+              --push .
           
           else
             echo "Building ${{ matrix.service }} with dynamic Multi-Stage Dockerfile..."
@@ -145,25 +161,15 @@ jobs:
             
             sed -i 's/^[ \t]*//' Dockerfile.agent
 
-            # Execute from the repo root (.) so the Dockerfile can access baml_shared/
-            docker build -f Dockerfile.agent \
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              -f Dockerfile.agent \
               --build-arg AGENT_DIR=${{ matrix.path }} \
               --build-arg PORT=${{ matrix.port }} \
-              -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} .
+              $TAGS \
+              --push .
           fi
 
-      - name: Tag latest
-        if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
-        run: |
-          docker tag \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }} \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
-
-      - name: Push images
-        if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
-        run: |
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest
 
   # ------------------------------------------------------------------
   # Lint & syntax check (runs in parallel with builds)
