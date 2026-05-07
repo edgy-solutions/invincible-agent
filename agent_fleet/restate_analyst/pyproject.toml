@@ -12,7 +12,6 @@ dependencies = [
     "httpx",
     "requests",
     "python-dotenv",
-    "pysqlite3-binary",
     "mem0ai",
     "weaviate-client",
     "langchain-weaviate",

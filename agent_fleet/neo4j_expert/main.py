@@ -10,13 +10,6 @@ the output per Persona.
 Run locally: uvicorn agent_fleet.neo4j_expert.main:app --host 0.0.0.0 --port 8086
 """
 
-import sys
-try:
-    import pysqlite3
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except ImportError:
-    pass
-
 import os
 import httpx
 import restate

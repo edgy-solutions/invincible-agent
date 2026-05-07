@@ -18,7 +18,6 @@ dependencies = [
     "langchain-ollama",
     "ollama",
     "python-dotenv",
-    "pysqlite3-binary",
     "langfuse",
     "litellm",
 ]

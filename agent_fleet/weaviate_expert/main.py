@@ -9,13 +9,6 @@ from a military technical manual database. BAML strictly types the output.
 Run locally: uvicorn agent_fleet.weaviate_expert.main:app --host 0.0.0.0 --port 8088
 """
 
-import sys
-try:
-    import pysqlite3
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except ImportError:
-    pass
-
 import os
 import httpx
 import restate
