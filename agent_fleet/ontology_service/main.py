@@ -402,13 +402,31 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     2. Inject these candidates into BAML TypeBuilder as a dynamic enum.
     3. Call BAML ClassifyDomainIntent to strictly select the best match.
     """
-    # Step 1: Hybrid Search for candidates
+    # Step 1: Hybrid Search for candidates in Weaviate
     candidates = await weaviate_hybrid_search(query=request.query, domain=request.domain, limit=10)
     
+    # Step 1.5: COLD START FALLBACK -> If Weaviate is empty, read the RDF graph
     if not candidates:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No relevant ontology classes found for query in Weaviate.",
+        print("="*60)
+        print(f"⚠️ [WARNING] WEAVIATE COLD START DETECTED: {request.domain}")
+        print("⚠️ No vectors found. Falling back to raw SPARQL/RDF Graph.")
+        print("⚠️ Action Required: doc-tools pipeline must sync ontologies into Weaviate.")
+        print("="*60)
+        
+        rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
+        for row in rows:
+            candidates.append({
+                "uri": row.get("cls"),
+                "label": row.get("label"),
+                "description": row.get("definition") or "No definition provided."
+            })
+            
+    # Step 1.6: Ultimate Fallback (Prevents Restate infinite loops)
+    if not candidates:
+        return SemanticResolutionResponse(
+            resolved_uri="UNKNOWN",
+            confidence_score=0.0,
+            reasoning=f"No ontology classes found in Weaviate OR the RDF graph for domain {request.domain}."
         )
 
     # Step 2: Build BAML TypeBuilder
@@ -476,8 +494,29 @@ async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificat
     query_text = f"{request.table_name} {request.dba_comments}"
     candidates = await weaviate_hybrid_search(query=query_text, domain=request.domain, limit=15)
     
+    # 1.5. COLD START FALLBACK -> If Weaviate is empty, read the RDF graph
     if not candidates:
-        raise HTTPException(status_code=404, detail=f"No active ontology classes found for domain {request.domain}.")
+        print("="*60)
+        print(f"⚠️ [WARNING] WEAVIATE COLD START DETECTED: {request.domain}")
+        print("⚠️ No vectors found. Falling back to raw SPARQL/RDF Graph.")
+        print("⚠️ Action Required: doc-tools pipeline must sync ontologies into Weaviate.")
+        print("="*60)
+        
+        rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
+        for row in rows:
+            candidates.append({
+                "uri": row.get("cls"),
+                "label": row.get("label"),
+                "description": row.get("definition") or "No definition provided."
+            })
+            
+    # 1.6. Ultimate Fallback
+    if not candidates:
+        return TableClassificationResponse(
+            resolved_uri=None,
+            confidence_score=0.0,
+            reasoning=f"No active ontology classes found in Weaviate OR the RDF graph for domain {request.domain}."
+        )
 
     # 2. Build BAML TypeBuilder
     tb = TypeBuilder()
