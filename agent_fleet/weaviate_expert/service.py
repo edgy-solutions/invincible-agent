@@ -16,6 +16,14 @@ except ImportError:
     except ImportError:
         from ..llm_utils import get_smolagent_model, init_baml_client
 
+try:
+    from ..utils.weaviate_utils import create_weaviate_client
+except ImportError:
+    try:
+        from utils.weaviate_utils import create_weaviate_client
+    except ImportError:
+        from agent_fleet.utils.weaviate_utils import create_weaviate_client
+
 from baml_client import b
 
 # Initialize runtime BAML configuration
@@ -36,36 +44,7 @@ def get_weaviate_client():
     if _GLOBAL_WEAVIATE_CLIENT is not None and _GLOBAL_WEAVIATE_CLIENT.is_connected():
         return _GLOBAL_WEAVIATE_CLIENT
 
-    # 🔗 Weaviate Connection Logic
-    raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
-    raw_grpc_env = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
-
-    def parse_host_port(env_val: str, default_port: int):
-        clean = env_val.replace("http://", "").replace("https://", "").replace("grpc://", "")
-        if ":" in clean:
-            h, p = clean.split(":", 1)
-            try:
-                return h, int(p)
-            except ValueError:
-                return h, default_port
-        return clean, default_port
-
-    weaviate_http_host, weaviate_http_port = parse_host_port(raw_http_env, 8080)
-    weaviate_grpc_host, weaviate_grpc_port = parse_host_port(raw_grpc_env, 50051)
-
-    connection_params = ConnectionParams.from_params(
-        http_host=weaviate_http_host,
-        http_port=weaviate_http_port,
-        http_secure=False,
-        grpc_host=weaviate_grpc_host,
-        grpc_port=weaviate_grpc_port,
-        grpc_secure=False,
-    )
-    
-    _GLOBAL_WEAVIATE_CLIENT = weaviate.WeaviateClient(connection_params=connection_params)
-    _GLOBAL_WEAVIATE_CLIENT.connect()
-    print(f"[WeaviateExpert] Connected persistent gRPC tunnel to {weaviate_grpc_host}:{weaviate_grpc_port}")
-    
+    _GLOBAL_WEAVIATE_CLIENT = create_weaviate_client()
     return _GLOBAL_WEAVIATE_CLIENT
 
 def fetch_weaviate_schema(weaviate_client, collection_name: str) -> str:

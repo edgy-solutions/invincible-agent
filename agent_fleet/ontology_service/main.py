@@ -55,6 +55,18 @@ except ImportError:
         pass
 
 # ---------------------------------------------------------------------------
+# Fleet-standard utilities
+# ---------------------------------------------------------------------------
+try:
+    from ..utils.weaviate_utils import create_weaviate_client
+except ImportError:
+    try:
+        from utils.weaviate_utils import create_weaviate_client
+    except ImportError:
+        # Fallback for CNB or flat layouts
+        from agent_fleet.utils.weaviate_utils import create_weaviate_client
+
+# ---------------------------------------------------------------------------
 # RDF namespace constants
 # ---------------------------------------------------------------------------
 OWL = rdflib.Namespace("http://www.w3.org/2002/07/owl#")
@@ -79,8 +91,6 @@ _JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
 _LOCAL_GRAPH = None
 
 # Weaviate Configuration
-_WEAVIATE_HTTP_HOST = os.getenv("WEAVIATE_HTTP_HOST", "weaviate:8080")
-_WEAVIATE_GRPC_HOST = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc:50051")
 _WEAVIATE_CLIENT = None
 
 # Neo4j Configuration
@@ -297,25 +307,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize Weaviate with Fleet-Standard Custom Connection
     try:
-        def parse_host_port(env_val: str, default_port: int):
-            clean = env_val.replace("http://", "").replace("https://", "").replace("grpc://", "")
-            if ":" in clean:
-                h, p = clean.split(":", 1)
-                return h, int(p)
-            return clean, default_port
-            
-        http_h, http_p = parse_host_port(_WEAVIATE_HTTP_HOST, 8080)
-        grpc_h, grpc_p = parse_host_port(_WEAVIATE_GRPC_HOST, 50051)
-
-        _WEAVIATE_CLIENT = weaviate.connect_to_custom(
-            http_host=http_h,
-            http_port=http_p,
-            http_secure=False,
-            grpc_host=grpc_h,
-            grpc_port=grpc_p,
-            grpc_secure=False
-        )
-        print(f"[ontology-service] Connected to Weaviate at HTTP {http_h}:{http_p} | gRPC {grpc_h}:{grpc_p}")
+        _WEAVIATE_CLIENT = create_weaviate_client()
     except Exception as e:
         print(f"[ontology-service] FAILED to connect to Weaviate: {e}")
 
