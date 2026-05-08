@@ -21,6 +21,7 @@ dependencies = [
     "langfuse",
     "litellm",
     "packaging",
+    "mcp",
 ]
 
 [build-system]

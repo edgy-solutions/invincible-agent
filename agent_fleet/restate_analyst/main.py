@@ -95,6 +95,39 @@ except ImportError:
     from ..llm_utils import get_smolagent_model
 
 # ---------------------------------------------------------------------------
+# Fleet-standard utilities
+# ---------------------------------------------------------------------------
+try:
+    from utils.weaviate_utils import create_weaviate_client
+except ImportError:
+    try:
+        from ..utils.weaviate_utils import create_weaviate_client
+    except ImportError:
+        # Fallback for CNB or flat layouts
+        from agent_fleet.utils.weaviate_utils import create_weaviate_client
+
+# GLOBAL SINGLETON: Persistent Weaviate Client
+_GLOBAL_WEAVIATE_CLIENT = None
+
+def get_weaviate_client():
+    """Lazy-loads a persistent, global Weaviate connection pool."""
+    global _GLOBAL_WEAVIATE_CLIENT
+    
+    # Return existing client if it's already connected
+    if _GLOBAL_WEAVIATE_CLIENT is not None:
+        try:
+            if _GLOBAL_WEAVIATE_CLIENT.is_connected():
+                return _GLOBAL_WEAVIATE_CLIENT
+        except Exception:
+            _GLOBAL_WEAVIATE_CLIENT = None
+
+    # Create new connection if none exists or it dropped
+    print(f"[restate-analyst] Connecting to Weaviate...")
+    _GLOBAL_WEAVIATE_CLIENT = create_weaviate_client()
+    _GLOBAL_WEAVIATE_CLIENT.connect()
+    return _GLOBAL_WEAVIATE_CLIENT
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 ONTOLOGY_RESOLVE_URL = os.getenv(
@@ -161,34 +194,8 @@ async def analyze(ctx: Context, request: dict) -> dict:
     # --------------------------------------------------------------------------
     # Initialize long-term memory via mem0 using Weaviate vector DB 
     # (Survives K8s ephemeral pod restarts)
-    raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
-    raw_grpc_env = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
-
-    def parse_host_port(env_val: str, default_port: int):
-        clean = env_val.replace("http://", "").replace("https://", "").replace("grpc://", "")
-        if ":" in clean:
-            h, p = clean.split(":", 1)
-            try:
-                return h, int(p)
-            except ValueError:
-                return h, default_port
-        return clean, default_port
-
-    weaviate_http_host, weaviate_http_port = parse_host_port(raw_http_env, 8080)
-    weaviate_grpc_host, weaviate_grpc_port = parse_host_port(raw_grpc_env, 50051)
-
-    connection_params = ConnectionParams.from_params(
-        http_host=weaviate_http_host,
-        http_port=weaviate_http_port,
-        http_secure=False,
-        grpc_host=weaviate_grpc_host,
-        grpc_port=weaviate_grpc_port,
-        grpc_secure=False,
-    )
-    
-    weaviate_client = weaviate.WeaviateClient(connection_params=connection_params)
+    weaviate_client = get_weaviate_client()
     try:
-        weaviate_client.connect()
 
         from smolagents import tool
         import weaviate.classes as wvc
@@ -595,8 +602,10 @@ print(result)
 
         response = AgentResponse(**agent_result)
         return response.model_dump()
-    finally:
-        weaviate_client.close()
+    except Exception as e:
+        print(f"[restate-analyst] Fatal error during agent execution: {e}")
+        raise e
+    # Note: We do NOT close the global client here
 
 
 # ---------------------------------------------------------------------------
