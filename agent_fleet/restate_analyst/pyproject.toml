@@ -12,7 +12,7 @@ dependencies = [
     "httpx",
     "requests",
     "python-dotenv",
-    "mem0ai",
+    "mem0ai[nlp]",
     "weaviate-client",
     "langchain-weaviate",
     "langchain-community",

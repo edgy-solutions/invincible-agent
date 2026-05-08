@@ -11,7 +11,7 @@ dependencies = [
     "baml-py==0.219.0",
     "httpx",
     "neo4j",
-    "mem0ai",
+    "mem0ai[nlp]",
     "weaviate-client",
     "langchain-weaviate",
     "langchain-community",

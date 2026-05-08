@@ -34,7 +34,7 @@ agent-fleet = [
     "psycopg[binary]",
     "swarms",
     "litellm",
-    "mem0ai",
+    "mem0ai[nlp]",
     "weaviate-client",
     "langchain-weaviate",
     "langchain-community",

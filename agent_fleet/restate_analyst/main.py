@@ -265,6 +265,11 @@ async def analyze(ctx: Context, request: dict) -> dict:
                         if hasattr(doc, "id"):
                             doc.id = doc.metadata["id"]
 
+                        # 🚨 ADD THIS FIX: Bypass mem0's NoneType crash 🚨
+                        # By explicitly providing a score, mem0 skips its None comparison
+                        if "score" not in doc.metadata:
+                            doc.metadata["score"] = 1.0
+
                         # 2. Loop through all metadata and sanitize types
                         for key, val in list(doc.metadata.items()):
                             if isinstance(val, datetime.datetime):
