@@ -406,8 +406,8 @@ keycloak:
 topaz:
   enabled: true
   image:
-    repository: ghcr.io/aserto-policies/topaz
-    tag: "latest"
+    repository: ghcr.io/aserto-dev/topaz
+    tag: "0.33.13"
   persistence:
     enabled: true
     storageClass: ""

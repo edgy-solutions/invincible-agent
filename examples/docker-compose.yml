@@ -452,7 +452,7 @@ services:
   # 8. AUTHORIZATION (Topaz FGA)
   # ==========================================
   topaz:
-    image: ghcr.io/aserto-policies/topaz:latest
+    image: ghcr.io/aserto-dev/topaz:latest
     container_name: topaz
     command: run --config-file /config/config.yaml
     ports:
