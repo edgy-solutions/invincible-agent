@@ -79,7 +79,8 @@ _JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
 _LOCAL_GRAPH = None
 
 # Weaviate Configuration
-_WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://weaviate.default.svc.cluster.local:8080")
+_WEAVIATE_HTTP_HOST = os.getenv("WEAVIATE_HTTP_HOST", "weaviate:8080")
+_WEAVIATE_GRPC_HOST = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc:50051")
 _WEAVIATE_CLIENT = None
 
 # Neo4j Configuration
@@ -243,8 +244,11 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
         rows = g.query(scoped_query)
         results = []
         for row in rows:
-            # Safely convert rdflib result row to dictionary of strings
-            row_dict = {str(k): str(v) for k, v in row.asdict().items()}
+            # Safely convert rdflib result row, preserving None types to avoid 'None' strings
+            row_dict = {
+                str(k): str(v) if v is not None else None 
+                for k, v in row.asdict().items()
+            }
             results.append(row_dict)
         return results
     except Exception as e:
@@ -291,13 +295,27 @@ async def _check_jena_populated():
 async def lifespan(app: FastAPI):
     global _WEAVIATE_CLIENT, _NEO4J_DRIVER
     
-    # Initialize Weaviate
+    # Initialize Weaviate with Fleet-Standard Custom Connection
     try:
-        _WEAVIATE_CLIENT = weaviate.connect_to_local(
-            host=_WEAVIATE_URL.split("//")[-1].split(":")[0],
-            port=int(_WEAVIATE_URL.split(":")[-1])
+        def parse_host_port(env_val: str, default_port: int):
+            clean = env_val.replace("http://", "").replace("https://", "").replace("grpc://", "")
+            if ":" in clean:
+                h, p = clean.split(":", 1)
+                return h, int(p)
+            return clean, default_port
+            
+        http_h, http_p = parse_host_port(_WEAVIATE_HTTP_HOST, 8080)
+        grpc_h, grpc_p = parse_host_port(_WEAVIATE_GRPC_HOST, 50051)
+
+        _WEAVIATE_CLIENT = weaviate.connect_to_custom(
+            http_host=http_h,
+            http_port=http_p,
+            http_secure=False,
+            grpc_host=grpc_h,
+            grpc_port=grpc_p,
+            grpc_secure=False
         )
-        print(f"[ontology-service] Connected to Weaviate at {_WEAVIATE_URL}")
+        print(f"[ontology-service] Connected to Weaviate at HTTP {http_h}:{http_p} | gRPC {grpc_h}:{grpc_p}")
     except Exception as e:
         print(f"[ontology-service] FAILED to connect to Weaviate: {e}")
 
