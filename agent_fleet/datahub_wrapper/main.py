@@ -235,13 +235,21 @@ async def find_tools(ontology_uri: str):
         print(f"ERROR in find_tools: {exc}")
         return {"tools": [], "error": str(exc)}
 
-    search_results = data.get("data", {}).get("search", {}).get("searchResults", [])
+    # Safely navigate the nested GraphQL response
+    data_dict = data.get("data") or {}
+    search_dict = data_dict.get("search") or {}
+    search_results = search_dict.get("searchResults") or []
     tools = []
 
     for result in search_results:
         entity = result.get("entity", {})
+        if not entity:
+            continue
+            
         props = entity.get("properties") or {}
-        custom_props = {cp["key"]: cp["value"] for cp in entity.get("customProperties", [])}
+        # Guard against customProperties being null/None
+        cp_list = entity.get("customProperties") or []
+        custom_props = {cp.get("key"): cp.get("value") for cp in cp_list if cp and "key" in cp}
         
         # Tools can be 'AITool' (standard OpenAPI) or 'MCPServer' (SSE protocol)
         # We handle both via the custom_props metadata

@@ -333,7 +333,8 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
-            results = m.search(query=query, user_id=user_id)
+            # Wrap user_id in the filters dictionary per the new mem0 API
+            results = m.search(query=query, filters={"user_id": user_id})
             safe_update_observation(input_data=query, output_data=results)
             return results
 
