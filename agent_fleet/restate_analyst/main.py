@@ -80,8 +80,9 @@ try:
     from llm_utils import init_baml_client
     b = init_baml_client(b)
 except ImportError:
+    # Fallback for local development
     try:
-        from ..llm_utils import init_baml_client
+        from agent_fleet.llm_utils import init_baml_client
         b = init_baml_client(b)
     except ImportError:
         pass
@@ -92,7 +93,7 @@ from smolagents import CodeAgent
 try:
     from llm_utils import get_smolagent_model
 except ImportError:
-    from ..llm_utils import get_smolagent_model
+    from agent_fleet.llm_utils import get_smolagent_model
 
 # ---------------------------------------------------------------------------
 # Fleet-standard utilities
@@ -101,10 +102,10 @@ try:
     from utils.weaviate_utils import create_weaviate_client
 except ImportError:
     try:
-        from ..utils.weaviate_utils import create_weaviate_client
-    except ImportError:
-        # Fallback for CNB or flat layouts
         from agent_fleet.utils.weaviate_utils import create_weaviate_client
+    except ImportError:
+        # Fallback for flat layout in container
+        from weaviate_utils import create_weaviate_client
 
 # GLOBAL SINGLETON: Persistent Weaviate Client
 _GLOBAL_WEAVIATE_CLIENT = None

@@ -45,11 +45,11 @@ from baml_client.type_builder import TypeBuilder
 
 # Initialize runtime BAML configuration logic
 try:
-    from ..llm_utils import init_baml_client
+    from llm_utils import init_baml_client
     b = init_baml_client(b)
 except ImportError:
     try:
-        from llm_utils import init_baml_client
+        from agent_fleet.llm_utils import init_baml_client
         b = init_baml_client(b)
     except ImportError:
         pass
@@ -58,13 +58,13 @@ except ImportError:
 # Fleet-standard utilities
 # ---------------------------------------------------------------------------
 try:
-    from ..utils.weaviate_utils import create_weaviate_client
+    from utils.weaviate_utils import create_weaviate_client
 except ImportError:
     try:
-        from utils.weaviate_utils import create_weaviate_client
-    except ImportError:
-        # Fallback for CNB or flat layouts
         from agent_fleet.utils.weaviate_utils import create_weaviate_client
+    except ImportError:
+        # Fallback for flat layout in container
+        from weaviate_utils import create_weaviate_client
 
 # ---------------------------------------------------------------------------
 # RDF namespace constants

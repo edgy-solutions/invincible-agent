@@ -14,10 +14,16 @@ Environment variables:
 from __future__ import annotations
 
 import os
+import logging
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, Union
+import json
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("DataHubWrapper")
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -231,8 +237,13 @@ async def find_tools(ontology_uri: str):
             )
             resp.raise_for_status()
             data = resp.json()
+            
+            # Check for GraphQL-level errors
+            if "errors" in data:
+                logger.error(f"DataHub GraphQL Errors for {ontology_uri}: {json.dumps(data['errors'])}")
+                
     except Exception as exc:
-        print(f"ERROR in find_tools: {exc}")
+        logger.error(f"HTTP Error in find_tools for {ontology_uri}: {exc}")
         return {"tools": [], "error": str(exc)}
 
     # Safely navigate the nested GraphQL response

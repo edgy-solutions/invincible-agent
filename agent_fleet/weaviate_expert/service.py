@@ -12,17 +12,17 @@ try:
     from llm_utils import get_smolagent_model, init_baml_client
 except ImportError:
     try:
-        from .llm_utils import get_smolagent_model, init_baml_client
+        from agent_fleet.llm_utils import get_smolagent_model, init_baml_client
     except ImportError:
-        from ..llm_utils import get_smolagent_model, init_baml_client
+        pass
 
 try:
-    from ..utils.weaviate_utils import create_weaviate_client
+    from utils.weaviate_utils import create_weaviate_client
 except ImportError:
     try:
-        from utils.weaviate_utils import create_weaviate_client
-    except ImportError:
         from agent_fleet.utils.weaviate_utils import create_weaviate_client
+    except ImportError:
+        from weaviate_utils import create_weaviate_client
 
 from baml_client import b
 

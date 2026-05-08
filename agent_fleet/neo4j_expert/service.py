@@ -42,7 +42,7 @@ except ImportError:
         from .llm_utils import get_smolagent_model
     except ImportError:
         # Parent-relative (Local dev)
-        from ..llm_utils import get_smolagent_model
+        from agent_fleet.llm_utils import get_smolagent_model
 
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
@@ -61,7 +61,7 @@ except ImportError:
     except ImportError:
         try:
             # Parent-relative
-            from ..llm_utils import init_baml_client
+            from agent_fleet.llm_utils import init_baml_client
             b = init_baml_client(b)
         except ImportError:
             pass
@@ -392,8 +392,8 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
 
         @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
-            results = m.search(query=query, user_id=user_id)
-            # Log the exact memories pulled from the vector DB to Langfuse
+            # Wrap user_id in filters for new mem0 API
+            results = m.search(query=query, filters={"user_id": user_id})
             safe_update_observation(input_data=query, output_data=results)
             return results
 

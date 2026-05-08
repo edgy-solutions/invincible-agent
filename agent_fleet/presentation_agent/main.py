@@ -9,11 +9,11 @@ from baml_client import b
 
 # Initialize runtime BAML configuration logic
 try:
-    from ..llm_utils import init_baml_client
+    from llm_utils import init_baml_client
     b = init_baml_client(b)
 except ImportError:
     try:
-        from llm_utils import init_baml_client
+        from agent_fleet.llm_utils import init_baml_client
         b = init_baml_client(b)
     except ImportError:
         pass
