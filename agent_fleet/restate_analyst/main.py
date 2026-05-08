@@ -77,23 +77,22 @@ from baml_client import b  # noqa: E402
 
 # Initialize runtime BAML configuration logic
 try:
-    from ..llm_utils import init_baml_client
+    from llm_utils import init_baml_client
     b = init_baml_client(b)
 except ImportError:
     try:
-        from llm_utils import init_baml_client
+        from ..llm_utils import init_baml_client
         b = init_baml_client(b)
     except ImportError:
         pass
 
-# ---------------------------------------------------------------------------
 # Smolagents imports — only used inside the Restate handler.
 # ---------------------------------------------------------------------------
 from smolagents import CodeAgent
 try:
-    from ..llm_utils import get_smolagent_model
-except ImportError:
     from llm_utils import get_smolagent_model
+except ImportError:
+    from ..llm_utils import get_smolagent_model
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -439,7 +438,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 confidence = semantic_ctx.get("confidence_score", 0.0)
 
                 # 🚀 JIT TOOL INJECTION: Fetch tools from Engine D based on resolved_uri
-                from .orchestrator.discovery import fetch_tools_by_uri, DynamicMeshTool, bind_mcp_server
+                from orchestrator.discovery import fetch_tools_by_uri, DynamicMeshTool, bind_mcp_server
                 raw_tools = await fetch_tools_by_uri(resolved_uri)
                 
                 jit_tools = []

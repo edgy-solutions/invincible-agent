@@ -7,7 +7,7 @@ import contextvars
 from smolagents import Tool
 from mcp import ClientSession
 from mcp.client.sse import sse_client
-from .auth import current_user_token, current_trace_id
+from orchestrator.auth import current_user_token, current_trace_id
 
 logger = logging.getLogger("RestateAnalyst")
 
