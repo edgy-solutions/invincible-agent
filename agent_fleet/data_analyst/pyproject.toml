@@ -13,6 +13,8 @@ dependencies = [
     "polars",
     "httpx",
     "python-dotenv",
+    "dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@master",
+    "pyjwt[crypto]",
 ]
 
 [build-system]

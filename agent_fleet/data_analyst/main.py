@@ -5,8 +5,25 @@ import restate
 from fastapi import FastAPI
 from restate import Context, Service
 from smolagents import CodeAgent, tool, LiteLLMModel
-from agent_fleet.core.authz import require_topaz_auth_decorator
-from dag_tools.cortex_data.client import CortexDataClient
+# Fallback routing for Topaz Authz and Dag Tools
+try:
+    from agent_fleet.core.authz import require_topaz_auth_decorator
+except ImportError:
+    from core.authz import require_topaz_auth_decorator
+
+try:
+    from dag_tools.cortex_data.client import CortexDataClient
+except ImportError:
+    # Fallback for some container layouts
+    try:
+        from cortex_data.client import CortexDataClient
+    except ImportError:
+        # Fallback for package-based install
+        try:
+            import dag_tools.cortex_data.client as cortex_client
+            CortexDataClient = cortex_client.CortexDataClient
+        except ImportError:
+            raise
 
 # Initialize FastAPI
 app = FastAPI()
