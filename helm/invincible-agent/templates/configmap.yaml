@@ -19,6 +19,7 @@ data:
 
   # Infrastructure URLs
   RESTATE_INGRESS_URL: {{ include "invincible-agent.restateIngressUrl" . | quote }}
+  CENTRAL_GATEWAY_URL: "http://{{ .Release.Name }}-central-gateway{{ include "invincible-agent.svcDomain" . }}:{{ .Values.centralGateway.port }}"
   NEO4J_URI: {{ include "invincible-agent.neo4jUri" . | quote }}
   NEO4J_USERNAME: {{ include "invincible-agent.neo4jUsername" . | quote }}
   WEAVIATE_HTTP_HOST: "{{ .Release.Name }}-weaviate:8080"

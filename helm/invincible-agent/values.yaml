@@ -266,6 +266,30 @@ dataAnalyst:
   env: {}
 
 # ==========================================================================
+# Data Plane Services
+# ==========================================================================
+
+centralGateway:
+  enabled: true
+  replicas: 1
+  image:
+    repository: "edgy-solutions/dag-tools/central-gateway"
+    tag: "latest"
+  port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  env:
+    # Topaz Authorizer URL (Internal K8s DNS)
+    TOPAZ_AUTHORIZER_URL: "http://topaz-svc:8383"
+    # DataHub GraphQL GMS URL
+    DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
+
+# ==========================================================================
 # Frontend Services
 # ==========================================================================
 

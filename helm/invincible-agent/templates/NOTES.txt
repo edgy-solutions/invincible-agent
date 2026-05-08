@@ -35,6 +35,18 @@ Your release "{{ .Release.Name }}" has been deployed.
 {{- if .Values.engineE.enabled }}
     Engine E (Neo4j):      {{ .Release.Name }}-engine-e:{{ .Values.engineE.port }}
 {{- end }}
+{{- if .Values.engineF.enabled }}
+    Engine F (UX Proxy):   {{ .Release.Name }}-engine-f:{{ .Values.engineF.port }}
+{{- end }}
+{{- if .Values.engineW.enabled }}
+    Engine W (Weaviate):   {{ .Release.Name }}-engine-w:{{ .Values.engineW.port }}
+{{- end }}
+{{- if .Values.dataAnalyst.enabled }}
+    Engine DA (Analyst):   {{ .Release.Name }}-data-analyst:{{ .Values.dataAnalyst.port }}
+{{- end }}
+{{- if .Values.centralGateway.enabled }}
+    Central Gateway:       {{ .Release.Name }}-central-gateway:{{ .Values.centralGateway.port }}
+{{- end }}
 
 == Quick Start ==
 
