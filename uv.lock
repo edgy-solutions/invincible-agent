@@ -1024,7 +1024,7 @@ requires-dist = [
     { name = "langgraph-checkpoint-postgres", marker = "extra == 'agent-fleet'" },
     { name = "litellm", marker = "extra == 'agent-fleet'" },
     { name = "mcp" },
-    { name = "mem0ai", marker = "extra == 'agent-fleet'" },
+    { name = "mem0ai", extras = ["nlp"], marker = "extra == 'agent-fleet'" },
     { name = "neo4j" },
     { name = "neo4j", marker = "extra == 'agent-fleet'" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'agent-fleet'" },
