@@ -31,6 +31,10 @@ app = FastAPI()
 # Define the Restate Service
 data_analyst_service = Service("DataAnalystService")
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 @data_analyst_service.handler()
 @require_topaz_auth_decorator(resource_type="global", action="analyze")
 async def analyze_data(ctx: Context, request: dict, user_jwt: str = None) -> dict:
