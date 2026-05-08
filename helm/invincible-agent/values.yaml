@@ -9,8 +9,8 @@ global:
   imagePullPolicy: IfNotPresent
   # -- Suffix for internal K8s service resolution (e.g., .default.svc.cluster.local)
   clusterDomain: ""
-  #imagePullSecrets:
-  #  - name: ghcr-pull-secret
+  imagePullSecrets:
+    - name: ghcr-pull-secret
   # -- Utility images for hooks/init-containers
   images:
     curl: "curlimages/curl:latest"

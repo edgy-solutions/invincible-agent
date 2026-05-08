@@ -17,11 +17,15 @@ spec:
         {{- include "invincible-agent.labels" . | nindent 8 }}
         {{- include "invincible-agent.selectorLabels" (dict "component" "topaz" "root" .) | nindent 8 }}
     spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: topaz
           image: "{{ .Values.topaz.image.repository }}:{{ .Values.topaz.image.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          command: ["run", "--config-file", "/config/config.yaml"]
+          args: ["run", "--config-file", "/config/config.yaml"]
           ports:
             - name: grpc
               containerPort: 8282
