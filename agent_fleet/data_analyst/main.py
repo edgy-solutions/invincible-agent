@@ -3,15 +3,13 @@ import os
 import duckdb
 import restate
 from fastapi import FastAPI
-from restate.fastapi import RestateAsyncAPI
 from restate import Context, Service
 from smolagents import CodeAgent, tool, LiteLLMModel
 from agent_fleet.core.authz import require_topaz_auth_decorator
 from dag_tools.cortex_data.client import CortexDataClient
 
-# Initialize FastAPI and Restate
+# Initialize FastAPI
 app = FastAPI()
-restate_api = RestateAsyncAPI()
 
 # Define the Restate Service
 data_analyst_service = Service("DataAnalystService")
@@ -62,9 +60,8 @@ async def analyze_data(ctx: Context, request: dict, user_jwt: str = None) -> dic
         "data": agent_result
     }
 
-# Register service and mount to FastAPI
-restate_api.register(data_analyst_service)
-app.mount("/restate", restate_api)
+# Mount Restate service to FastAPI
+app.mount("/restate", restate.app(services=[data_analyst_service]))
 
 if __name__ == "__main__":
     import uvicorn
