@@ -10,7 +10,7 @@ dependencies = [
     "baml-py==0.219.0",
     "httpx",
     "python-dotenv",
-    "weaviate-client",
+    "weaviate-client>=4.5.4",
     "neo4j",
     "packaging",
 ]

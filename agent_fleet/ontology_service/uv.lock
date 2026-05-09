@@ -303,7 +303,7 @@ requires-dist = [
     { name = "python-dotenv" },
     { name = "rdflib" },
     { name = "uvicorn", extras = ["standard"] },
-    { name = "weaviate-client" },
+    { name = "weaviate-client", specifier = ">=4.5.4" },
 ]
 
 [[package]]

@@ -13,7 +13,7 @@ dependencies = [
     "requests",
     "python-dotenv",
     "mem0ai[nlp]",
-    "weaviate-client",
+    "weaviate-client>=4.5.4",
     "langchain-weaviate",
     "langchain-community",
     "langchain-ollama",

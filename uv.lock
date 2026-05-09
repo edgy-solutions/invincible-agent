@@ -1040,7 +1040,7 @@ requires-dist = [
     { name = "swarms", marker = "extra == 'agent-fleet'" },
     { name = "uvicorn", marker = "extra == 'agent-fleet'" },
     { name = "uvicorn", extras = ["standard"] },
-    { name = "weaviate-client", marker = "extra == 'agent-fleet'" },
+    { name = "weaviate-client", marker = "extra == 'agent-fleet'", specifier = ">=4.5.4" },
 ]
 provides-extras = ["agent-fleet"]
 

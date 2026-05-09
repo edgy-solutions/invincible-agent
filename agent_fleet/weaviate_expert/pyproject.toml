@@ -10,7 +10,7 @@ dependencies = [
     "smolagents",
     "baml-py==0.219.0",
     "httpx",
-    "weaviate-client",
+    "weaviate-client>=4.5.4",
     "python-dotenv",
     "packaging",
 ]
