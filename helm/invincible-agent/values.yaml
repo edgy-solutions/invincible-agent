@@ -329,7 +329,7 @@ cortexBff:
   image:
     name: cortex-bff
     tag: ""
-  port: 8000
+  port: 8090
   resources:
     requests:
       cpu: 100m
