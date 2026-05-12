@@ -34,6 +34,9 @@ import weaviate
 from weaviate.connect import ConnectionParams
 from langchain_weaviate import WeaviateVectorStore
 from langchain_community.embeddings import FakeEmbeddings
+from weaviate.classes.query import Filter
+import datetime
+import uuid
 
 # Add baml_shared to Python path so we can import telemetry
 _CURRENT_FILE = Path(__file__).resolve()
@@ -122,11 +125,197 @@ def get_weaviate_client():
         except Exception:
             _GLOBAL_WEAVIATE_CLIENT = None
 
-    # Create new connection if none exists or it dropped
+    # Create new connection if none exists or it dropped.
+    # NOTE: create_weaviate_client() uses weaviate.connect_to_custom() which
+    # already returns a connected client. Calling .connect() again here would
+    # orphan the original ConnectionSync and produce GC noise
+    # ("AttributeError: 'ConnectionSync' object has no attribute '_client'").
     print(f"[restate-analyst] Connecting to Weaviate...")
     _GLOBAL_WEAVIATE_CLIENT = create_weaviate_client()
-    _GLOBAL_WEAVIATE_CLIENT.connect()
     return _GLOBAL_WEAVIATE_CLIENT
+
+
+# ---------------------------------------------------------------------------
+# Mem0 / Weaviate Adapter
+# ---------------------------------------------------------------------------
+# Moved out of the per-request analyze() handler. Building this class definition
+# and the mem0 Memory object on every request was the root cause of event-loop
+# starvation: synchronous gRPC schema work was sitting on the async loop, so
+# /health stopped responding the moment /analyze fired, readiness probes failed,
+# and k8s restarted the pod.
+class Mem0CompatibleWeaviate(WeaviateVectorStore):
+    """
+    Safely bridges mem0's vector search requirement with Weaviate's implementation,
+    and translates mem0's dictionary filters into Weaviate v4 Filter objects.
+    """
+    def similarity_search_by_vector(self, embedding, k=4, filter=None, **kwargs):
+        weaviate_filter = None
+
+        # Intercept and translate mem0's dictionary filter
+        if isinstance(filter, dict) and filter:
+            filters_list = []
+            for key, value in filter.items():
+                filters_list.append(Filter.by_property(key).equal(value))
+
+            # Combine multiple filters, or just use the single one
+            if len(filters_list) == 1:
+                weaviate_filter = filters_list[0]
+            elif len(filters_list) > 1:
+                weaviate_filter = Filter.all_of(filters_list)
+        else:
+            # If it's already None or somehow a proper Weaviate Filter, let it through
+            weaviate_filter = filter
+
+        # Route to the supported method with the translated filter.
+        # Wrapped in try/except to handle Weaviate's auto-schema trap:
+        # on first run, properties like 'user_id' don't exist until data is inserted.
+        try:
+            results = self.similarity_search(
+                query=None,
+                k=k,
+                vector=embedding,
+                filters=weaviate_filter,
+                **kwargs
+            )
+
+            # 🚨 BULLETPROOF SANITIZATION:
+            # Convert Weaviate's native Datetimes and UUIDs into strings for mem0
+            for doc in results:
+                # 1. Fix missing 'id' (mem0 requires a string ID)
+                if doc.metadata.get("id") is None:
+                    # Use stringified hash if available, otherwise generate a safe UUID string
+                    doc.metadata["id"] = str(doc.metadata.get("hash", uuid.uuid4()))
+                else:
+                    doc.metadata["id"] = str(doc.metadata["id"])
+
+                # +++ NEW: Fix the top-level LangChain Document ID +++
+                if hasattr(doc, "id"):
+                    doc.id = doc.metadata["id"]
+
+                # 🚨 ADD THIS FIX: Bypass mem0's NoneType crash 🚨
+                # By explicitly providing a score, mem0 skips its None comparison
+                if "score" not in doc.metadata:
+                    doc.metadata["score"] = 1.0
+
+                # 2. Loop through all metadata and sanitize types
+                for key, val in list(doc.metadata.items()):
+                    if isinstance(val, datetime.datetime):
+                        doc.metadata[key] = val.isoformat()
+                    elif isinstance(val, uuid.UUID):
+                        doc.metadata[key] = str(val)
+
+            return results
+        except ValueError as e:
+            # LangChain wraps Weaviate gRPC schema errors in ValueError
+            if "no such prop" in str(e):
+                print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
+                      f"This is expected on first run. Detail: {e}")
+                return []
+            raise
+        except Exception as e:
+            # Catch raw WeaviateQueryError in case it leaks unwrapped
+            if "no such prop" in str(e):
+                print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
+                      f"This is expected on first run. Detail: {e}")
+                return []
+            raise
+
+
+# ---------------------------------------------------------------------------
+# Mem0 Memory Singleton — built once per pod, off the event loop
+# ---------------------------------------------------------------------------
+# Previously the entire mem0 + Weaviate stack was constructed inside the async
+# analyze() handler on every request. Memory.from_config() makes blocking gRPC
+# calls (collection verification, schema checks); doing that on the asyncio loop
+# starved /health and tripped the readiness probe. The singleton + asyncio.Lock
+# pattern below ensures construction happens exactly once, on a worker thread,
+# without blocking the event loop or racing under concurrent requests.
+_MEM0_MEMORY = None
+_MEM0_LOCK = asyncio.Lock()
+
+
+async def get_mem0_memory():
+    """Lazy, thread-bridged init of the mem0 Memory singleton.
+
+    Heavy gRPC + schema work happens on first call only, off the event loop.
+    Subsequent calls return the cached instance immediately.
+    """
+    global _MEM0_MEMORY
+    if _MEM0_MEMORY is not None:
+        return _MEM0_MEMORY
+    async with _MEM0_LOCK:
+        if _MEM0_MEMORY is not None:
+            return _MEM0_MEMORY
+        _MEM0_MEMORY = await asyncio.to_thread(_build_mem0_memory)
+        return _MEM0_MEMORY
+
+
+def _build_mem0_memory():
+    """Synchronous mem0 stack builder. Called once via asyncio.to_thread.
+
+    Encapsulates: Weaviate client acquisition, embedder selection,
+    vector_store construction, and Memory.from_config(). All blocking I/O
+    (collection verification, schema checks, embedder warmup) is contained
+    inside this function so the async layer never sees it.
+    """
+    weaviate_client = get_weaviate_client()
+
+    provider = os.getenv("SMOLAGENTS_PROVIDER", "ollama").lower()
+
+    if provider == "ollama":
+        from langchain_ollama import OllamaEmbeddings
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434").replace("/v1", "")
+        langchain_embedder = OllamaEmbeddings(model="nomic-embed-text", base_url=ollama_url)
+        index_name = "Mem0migrationsOllama"
+    else:
+        from langchain_openai import OpenAIEmbeddings
+        langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+        index_name = "Mem0migrationsOpenAI"
+
+    vector_store = Mem0CompatibleWeaviate(
+        client=weaviate_client,
+        index_name=index_name,
+        text_key="text",
+        embedding=langchain_embedder
+    )
+
+    mem0_config = {
+        "vector_store": {
+            "provider": "langchain",
+            "config": {
+                "client": vector_store,
+                "collection_name": index_name
+            }
+        }
+    }
+
+    if provider == "ollama":
+        mem0_config["llm"] = {
+            "provider": "ollama",
+            "config": {
+                "model": os.getenv("SMOLAGENTS_MODEL", "llama3.2"),
+                "ollama_base_url": ollama_url
+            }
+        }
+        mem0_config["embedder"] = {
+            "provider": "ollama",
+            "config": {
+                "model": "nomic-embed-text",
+                "ollama_base_url": ollama_url
+            }
+        }
+    elif provider == "openrouter":
+        mem0_config["llm"] = {
+            "provider": "openai",
+            "config": {
+                "model": os.getenv("SMOLAGENTS_MODEL", "anthropic/claude-3.5-sonnet"),
+                "api_key": os.getenv("OPENROUTER_API_KEY", ""),
+                "base_url": "https://openrouter.ai/api/v1"
+            }
+        }
+
+    return Memory.from_config(mem0_config)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -193,149 +382,16 @@ async def analyze(ctx: Context, request: dict) -> dict:
     )
 
     # --------------------------------------------------------------------------
-    # Initialize long-term memory via mem0 using Weaviate vector DB 
-    # (Survives K8s ephemeral pod restarts)
-    weaviate_client = get_weaviate_client()
+    # Acquire the shared mem0 Memory singleton (built once per pod, off-loop).
+    # The Mem0CompatibleWeaviate adapter, the embedder selection, and the
+    # Memory.from_config() call all live at module scope now — see
+    # get_mem0_memory() / _build_mem0_memory() above. The first request pays
+    # a ~5-30s cold-start cost on a worker thread; the event loop stays free
+    # so /health remains responsive and readiness stays green.
     try:
+        m = await get_mem0_memory()
 
         from smolagents import tool
-        import weaviate.classes as wvc
-
-        provider = os.getenv("SMOLAGENTS_PROVIDER", "ollama").lower()
-        
-        if provider == "ollama":
-            from langchain_ollama import OllamaEmbeddings
-            ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434").replace("/v1", "")
-            langchain_embedder = OllamaEmbeddings(model="nomic-embed-text", base_url=ollama_url)
-            index_name = "Mem0migrationsOllama"
-        else:
-            from langchain_openai import OpenAIEmbeddings
-            langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
-            index_name = "Mem0migrationsOpenAI"
-
-        from weaviate.classes.query import Filter
-        class Mem0CompatibleWeaviate(WeaviateVectorStore):
-            """
-            Safely bridges mem0's vector search requirement with Weaviate's implementation,
-            and translates mem0's dictionary filters into Weaviate v4 Filter objects.
-            """
-            def similarity_search_by_vector(self, embedding, k=4, filter=None, **kwargs):
-                weaviate_filter = None
-                
-                # Intercept and translate mem0's dictionary filter
-                if isinstance(filter, dict) and filter:
-                    filters_list = []
-                    for key, value in filter.items():
-                        filters_list.append(Filter.by_property(key).equal(value))
-                        
-                    # Combine multiple filters, or just use the single one
-                    if len(filters_list) == 1:
-                        weaviate_filter = filters_list[0]
-                    elif len(filters_list) > 1:
-                        weaviate_filter = Filter.all_of(filters_list)
-                else:
-                    # If it's already None or somehow a proper Weaviate Filter, let it through
-                    weaviate_filter = filter
-
-                # Route to the supported method with the translated filter.
-                # Wrapped in try/except to handle Weaviate's auto-schema trap:
-                # on first run, properties like 'user_id' don't exist until data is inserted.
-                try:
-                    results = self.similarity_search(
-                        query=None, 
-                        k=k, 
-                        vector=embedding, 
-                        filters=weaviate_filter, 
-                        **kwargs
-                    )
-                    
-                    # 🚨 BULLETPROOF SANITIZATION:
-                    # Convert Weaviate's native Datetimes and UUIDs into strings for mem0
-                    import datetime
-                    import uuid
-                    for doc in results:
-                        # 1. Fix missing 'id' (mem0 requires a string ID)
-                        if doc.metadata.get("id") is None:
-                            # Use stringified hash if available, otherwise generate a safe UUID string
-                            doc.metadata["id"] = str(doc.metadata.get("hash", uuid.uuid4()))
-                        else:
-                            doc.metadata["id"] = str(doc.metadata["id"])
-
-                        # +++ NEW: Fix the top-level LangChain Document ID +++
-                        if hasattr(doc, "id"):
-                            doc.id = doc.metadata["id"]
-
-                        # 🚨 ADD THIS FIX: Bypass mem0's NoneType crash 🚨
-                        # By explicitly providing a score, mem0 skips its None comparison
-                        if "score" not in doc.metadata:
-                            doc.metadata["score"] = 1.0
-
-                        # 2. Loop through all metadata and sanitize types
-                        for key, val in list(doc.metadata.items()):
-                            if isinstance(val, datetime.datetime):
-                                doc.metadata[key] = val.isoformat()
-                            elif isinstance(val, uuid.UUID):
-                                doc.metadata[key] = str(val)
-                    
-                    return results
-                except ValueError as e:
-                    # LangChain wraps Weaviate gRPC schema errors in ValueError
-                    if "no such prop" in str(e):
-                        print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
-                              f"This is expected on first run. Detail: {e}")
-                        return []
-                    raise
-                except Exception as e:
-                    # Catch raw WeaviateQueryError in case it leaks unwrapped
-                    if "no such prop" in str(e):
-                        print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
-                              f"This is expected on first run. Detail: {e}")
-                        return []
-                    raise
-
-        vector_store = Mem0CompatibleWeaviate(
-            client=weaviate_client,
-            index_name=index_name,
-            text_key="text",
-            embedding=langchain_embedder
-        )
-
-        mem0_config = {
-            "vector_store": {
-                "provider": "langchain",
-                "config": {
-                    "client": vector_store,
-                    "collection_name": index_name
-                }
-            }
-        }
-
-        if provider == "ollama":
-            mem0_config["llm"] = {
-                "provider": "ollama",
-                "config": {
-                    "model": os.getenv("SMOLAGENTS_MODEL", "llama3.2"),
-                    "ollama_base_url": ollama_url
-                }
-            }
-            mem0_config["embedder"] = {
-                "provider": "ollama",
-                "config": {
-                    "model": "nomic-embed-text",
-                    "ollama_base_url": ollama_url
-                }
-            }
-        elif provider == "openrouter":
-            mem0_config["llm"] = {
-                "provider": "openai",
-                "config": {
-                    "model": os.getenv("SMOLAGENTS_MODEL", "anthropic/claude-3.5-sonnet"),
-                    "api_key": os.getenv("OPENROUTER_API_KEY", ""),
-                    "base_url": "https://openrouter.ai/api/v1"
-                }
-            }
-
-        m = Memory.from_config(mem0_config)
 
         @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
@@ -498,8 +554,12 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 )
 
                 if user_id:
-                    past_memories_response = fetch_user_memory(query=task.task_description, user_id=user_id)
-                    
+                    # Bridge to a worker thread — m.search() is sync gRPC and
+                    # must not block the asyncio loop.
+                    past_memories_response = await asyncio.to_thread(
+                        fetch_user_memory, task.task_description, user_id
+                    )
+
                     if isinstance(past_memories_response, dict):
                         past_memories = past_memories_response.get("results", [])
                     else:
@@ -586,7 +646,10 @@ print(result)
 
         async def save_memory() -> str:
             if user_id:
-                m.add(
+                # Bridge to a worker thread — m.add() is sync gRPC and must
+                # not block the asyncio loop.
+                await asyncio.to_thread(
+                    m.add,
                     messages=[
                         {"role": "user", "content": task.task_description},
                         {"role": "assistant", "content": summary_text}
