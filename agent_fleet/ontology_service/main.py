@@ -16,6 +16,7 @@ Run: uvicorn agent_fleet.ontology_service.main:app --host 0.0.0.0 --port 8084
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -379,8 +380,12 @@ class TableClassificationResponse(BaseModel):
     reasoning: str
 
 
-async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> list[dict]:
-    """Retrieve the Top N most relevant ontology classes from Weaviate."""
+def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> list[dict]:
+    """Synchronous hybrid search implementation. gRPC blocks here.
+
+    Always invoke via ``await asyncio.to_thread(...)`` from async paths so
+    the event loop stays free and /health keeps responding.
+    """
     if not _WEAVIATE_CLIENT:
         return []
     try:
@@ -388,7 +393,7 @@ async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> li
         # Using hybrid search (BM25 + Vector)
         # Filter by domain if provided
         filters = wvc.query.Filter.by_property("domain").equal(domain.upper()) if domain else None
-        
+
         response = collection.query.hybrid(
             query=query,
             limit=limit,
@@ -398,6 +403,11 @@ async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> li
     except Exception as e:
         print(f"Weaviate search failed: {e}")
         return []
+
+
+async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> list[dict]:
+    """Async wrapper that runs the blocking hybrid search on a worker thread."""
+    return await asyncio.to_thread(_weaviate_hybrid_search_sync, query, domain, limit)
 
 
 # ---------------------------------------------------------------------------

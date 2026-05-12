@@ -63,18 +63,36 @@ spec:
           {{- end }}
           resources:
             {{- toYaml $eng.resources | nindent 12 }}
+          # Probes tuned for engines whose first /analyze (or equivalent)
+          # triggers a heavy lazy init: smolagents + mem0 + Weaviate gRPC
+          # warmup is now off the event loop (see utils.mem0_utils singleton),
+          # but the warmup itself still takes 5-30s on a worker thread.
+          # Probe timing must give that headroom without masking real hangs.
+          #
+          # - Readiness uses /health (cheap, always async) so it stays green
+          #   while warmup runs on a thread. timeoutSeconds=10 + failureThreshold=6
+          #   gives ~60s grace if anything else stalls the loop.
+          # - Liveness uses a TCP probe to avoid re-killing the pod for a slow
+          #   /health response during a transient loop hiccup; only a true port
+          #   loss restarts the container.
           readinessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 10
+              scheme: HTTP
+            initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
+            successThreshold: 1
           livenessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: http
-            initialDelaySeconds: 15
+            initialDelaySeconds: 60
             periodSeconds: 30
+            timeoutSeconds: 1
+            failureThreshold: 5
+            successThreshold: 1
 ---
 apiVersion: v1
 kind: Service

@@ -27,11 +27,26 @@ except ImportError:
 
 from restate import Context, Service
 from smolagents import CodeAgent
-from mem0 import Memory
-import weaviate
-from weaviate.connect import ConnectionParams
-from langchain_weaviate import WeaviateVectorStore
-from langchain_community.embeddings import FakeEmbeddings
+
+# ---------------------------------------------------------------------------
+# Fleet-standard utilities — memoized Weaviate client + shared mem0 singleton.
+# Previously this engine built its own Weaviate client AND the full mem0 stack
+# inside every /query_graph request, which (a) leaked one gRPC + HTTP
+# connection per request and (b) blocked the async event loop with sync
+# Memory.from_config() schema verification. The shared singleton in
+# utils.mem0_utils builds the stack exactly once per pod on a worker thread.
+# ---------------------------------------------------------------------------
+try:
+    from utils.weaviate_utils import get_weaviate_client
+    from utils.mem0_utils import get_mem0_memory
+except ImportError:
+    try:
+        from agent_fleet.utils.weaviate_utils import get_weaviate_client
+        from agent_fleet.utils.mem0_utils import get_mem0_memory
+    except ImportError:
+        # Fallback for flat layout in container
+        from weaviate_utils import get_weaviate_client
+        from mem0_utils import get_mem0_memory
 
 try:
     # Workspace root (Container)
@@ -160,76 +175,53 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
     system_prompt_with_segregation = system_prompt + "\n" + domain_constraints
 
     # --------------------------------------------------------------------------
-    # Initialize long-term memory via mem0 using Weaviate vector DB 
-    # (Survives K8s ephemeral pod restarts)
-    # 🔗 Split-Service Configuration for Kubernetes (HTTP vs gRPC)
-    # Defensively strip protocols and ports! 
-    # 🔗 Split-Service Configuration for Kubernetes (HTTP vs gRPC)
-    # Defensively strip protocols and parse host/port! 
-    raw_http_env = os.getenv("WEAVIATE_HTTP_HOST", "weaviate")
-    raw_grpc_env = os.getenv("WEAVIATE_GRPC_HOST", "weaviate-grpc")
+    # Acquire shared Weaviate client + mem0 Memory singleton. Both are
+    # process-wide (built once per pod on a worker thread, see utils.*).
+    # Previously this section built a fresh Weaviate client AND the entire
+    # mem0 stack inside every request — leaking gRPC connections and
+    # starving the asyncio loop with sync Memory.from_config() schema work.
+    # --------------------------------------------------------------------------
+    weaviate_client = await asyncio.to_thread(get_weaviate_client)
+    m = await get_mem0_memory()
 
-    def parse_host_port(env_val: str, default_port: int):
-        clean = env_val.replace("http://", "").replace("https://", "").replace("grpc://", "")
-        if ":" in clean:
-            h, p = clean.split(":", 1)
-            try:
-                return h, int(p)
-            except ValueError:
-                return h, default_port
-        return clean, default_port
+    from smolagents import tool
+    import weaviate.classes as wvc
 
-    weaviate_http_host, weaviate_http_port = parse_host_port(raw_http_env, 8080)
-    weaviate_grpc_host, weaviate_grpc_port = parse_host_port(raw_grpc_env, 50051)
+    # The collection name where doc-tools ingests manual chunks
+    doc_collection_name = os.getenv("WEAVIATE_DOC_COLLECTION", "DocumentChunks")
 
-    # Connect to Weaviate explicitly using v4 ConnectionParams
-    connection_params = ConnectionParams.from_params(
-        http_host=weaviate_http_host,
-        http_port=weaviate_http_port,
-        http_secure=False,
-        grpc_host=weaviate_grpc_host,
-        grpc_port=weaviate_grpc_port,
-        grpc_secure=False,
-    )
-    
-    weaviate_client = weaviate.WeaviateClient(connection_params=connection_params)
-    try:
-        weaviate_client.connect()
+    # Fetch Weaviate schema dynamically via Restate (on a thread — gRPC is sync)
+    async def fetch_weaviate_schema_task() -> str:
+        return await asyncio.to_thread(
+            fetch_weaviate_schema, weaviate_client, doc_collection_name
+        )
 
-        from smolagents import tool
-        import weaviate.classes as wvc
+    weaviate_schema_string = await ctx.run("fetch-weaviate-schema", fetch_weaviate_schema_task)
 
-        # The collection name where doc-tools ingests manual chunks
-        doc_collection_name = os.getenv("WEAVIATE_DOC_COLLECTION", "DocumentChunks")
-
-        # Fetch Weaviate schema dynamically via Restate
-        async def fetch_weaviate_schema_task() -> str:
-            return fetch_weaviate_schema(weaviate_client, doc_collection_name)
-            
-        weaviate_schema_string = await ctx.run("fetch-weaviate-schema", fetch_weaviate_schema_task)
-        
-        weaviate_constraints = f"""
+    weaviate_constraints = f"""
     When using the search_manual_text tool, you may only filter using the following metadata properties:
 {weaviate_schema_string}
 """
-        system_prompt_with_segregation += "\n" + weaviate_constraints
+    system_prompt_with_segregation += "\n" + weaviate_constraints
+
+    try:
 
         @tool
         def search_manual_text(semantic_query: str, metadata_filters: dict = None) -> str:
             """
             Searches the actual text of the technical manuals for conceptual, symptom, or troubleshooting information.
             Use this when the user asks a "how-to", "why", or describes a symptom that isn't a simple part lookup.
-            
+
             Args:
                 semantic_query: The natural language search phrase (e.g., "troubleshoot whining noise on corroded rotor").
                 metadata_filters: Optional dictionary of metadata fields and exact values to filter by (e.g., {"doc_id": "TM-123"}).
             """
             try:
                 collection = weaviate_client.collections.get(doc_collection_name)
-                
+
                 # Base filter: strict domain segregation
                 base_filter = wvc.query.Filter.by_property("domain").equal(domain_label)
-                
+
                 if metadata_filters and isinstance(metadata_filters, dict):
                     filter_list = [base_filter]
                     for key, value in metadata_filters.items():
@@ -237,163 +229,24 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     final_filter = wvc.query.Filter.all_of(filter_list)
                 else:
                     final_filter = base_filter
-                
+
                 # 🔗 STRICT DOMAIN SEGREGATION APPLIED TO VECTOR SEARCH
                 response = collection.query.near_text(
                     query=semantic_query,
                     limit=3,
                     filters=final_filter
                 )
-                
+
                 if not response.objects:
                     return "No relevant manual text found for this query in the current domain."
-                    
+
                 results = []
                 for obj in response.objects:
                     results.append(obj.properties.get("text", ""))
-                    
+
                 return "\n\n---\n\n".join(results)
             except Exception as e:
                 return f"Error executing semantic search: {str(e)}"
-
-        # 🔗 LangChain Bridge (Bypasses mem0's rigid Weaviate config)
-        # WeaviateVectorStore requires an embedding model, so we provide a fake one 
-        # since mem0 handles embeddings internally before passing them to the store.
-        provider = os.getenv("SMOLAGENTS_PROVIDER", "ollama").lower()
-        
-        if provider == "ollama":
-            from langchain_ollama import OllamaEmbeddings
-            ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434").replace("/v1", "")
-            langchain_embedder = OllamaEmbeddings(model="nomic-embed-text", base_url=ollama_url)
-            index_name = "Mem0migrationsOllama"
-        else:
-            from langchain_openai import OpenAIEmbeddings
-            langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
-            index_name = "Mem0migrationsOpenAI"
-
-        from weaviate.classes.query import Filter
-        class Mem0CompatibleWeaviate(WeaviateVectorStore):
-            """
-            Safely bridges mem0's vector search requirement with Weaviate's implementation,
-            and translates mem0's dictionary filters into Weaviate v4 Filter objects.
-            """
-            def similarity_search_by_vector(self, embedding, k=4, filter=None, **kwargs):
-                weaviate_filter = None
-                
-                # Intercept and translate mem0's dictionary filter
-                if isinstance(filter, dict) and filter:
-                    filters_list = []
-                    for key, value in filter.items():
-                        filters_list.append(Filter.by_property(key).equal(value))
-                        
-                    # Combine multiple filters, or just use the single one
-                    if len(filters_list) == 1:
-                        weaviate_filter = filters_list[0]
-                    elif len(filters_list) > 1:
-                        weaviate_filter = Filter.all_of(filters_list)
-                else:
-                    # If it's already None or somehow a proper Weaviate Filter, let it through
-                    weaviate_filter = filter
-
-                # Route to the supported method with the translated filter.
-                # Wrapped in try/except to handle Weaviate's auto-schema trap:
-                # on first run, properties like 'user_id' don't exist until data is inserted.
-                try:
-                    results = self.similarity_search(
-                        query=None, 
-                        k=k, 
-                        vector=embedding, 
-                        filters=weaviate_filter, 
-                        **kwargs
-                    )
-                    
-                    # 🚨 BULLETPROOF SANITIZATION:
-                    # Convert Weaviate's native Datetimes and UUIDs into strings for mem0
-                    import datetime
-                    import uuid
-                    for doc in results:
-                        # 1. Fix missing 'id' (mem0 requires a string ID)
-                        if doc.metadata.get("id") is None:
-                            # Use stringified hash if available, otherwise generate a safe UUID string
-                            doc.metadata["id"] = str(doc.metadata.get("hash", uuid.uuid4()))
-                        else:
-                            doc.metadata["id"] = str(doc.metadata["id"])
-
-                        # +++ NEW: Fix the top-level LangChain Document ID +++
-                        if hasattr(doc, "id"):
-                            doc.id = doc.metadata["id"]
-
-                        # 🚨 ADD THIS FIX: Bypass mem0's NoneType crash 🚨
-                        # By explicitly providing a score, mem0 skips its None comparison
-                        if "score" not in doc.metadata:
-                            doc.metadata["score"] = 1.0
-
-                        # 2. Loop through all metadata and sanitize types
-                        for key, val in list(doc.metadata.items()):
-                            if isinstance(val, datetime.datetime):
-                                doc.metadata[key] = val.isoformat()
-                            elif isinstance(val, uuid.UUID):
-                                doc.metadata[key] = str(val)
-                    
-                    return results
-                except ValueError as e:
-                    # LangChain wraps Weaviate gRPC schema errors in ValueError
-                    if "no such prop" in str(e):
-                        print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
-                              f"This is expected on first run. Detail: {e}")
-                        return []
-                    raise
-                except Exception as e:
-                    # Catch raw WeaviateQueryError in case it leaks unwrapped
-                    if "no such prop" in str(e):
-                        print(f"[Mem0Bridge] Skipping memory search: schema property not yet created. "
-                              f"This is expected on first run. Detail: {e}")
-                        return []
-                    raise
-
-        vector_store = Mem0CompatibleWeaviate(
-            client=weaviate_client,
-            index_name=index_name,
-            text_key="text",
-            embedding=langchain_embedder
-        )
-
-        mem0_config = {
-            "vector_store": {
-                "provider": "langchain",
-                "config": {
-                    "client": vector_store,
-                    "collection_name": index_name
-                }
-            }
-        }
-
-        if provider == "ollama":
-            mem0_config["llm"] = {
-                "provider": "ollama",
-                "config": {
-                    "model": os.getenv("SMOLAGENTS_MODEL", "llama3.2"),
-                    "ollama_base_url": ollama_url
-                }
-            }
-            mem0_config["embedder"] = {
-                "provider": "ollama",
-                "config": {
-                    "model": "nomic-embed-text",
-                    "ollama_base_url": ollama_url
-                }
-            }
-        elif provider == "openrouter":
-            mem0_config["llm"] = {
-                "provider": "openai",
-                "config": {
-                    "model": os.getenv("SMOLAGENTS_MODEL", "anthropic/claude-3.5-sonnet"),
-                    "api_key": os.getenv("OPENROUTER_API_KEY", ""),
-                    "base_url": "https://openrouter.ai/api/v1"
-                }
-            }
-
-        m = Memory.from_config(mem0_config)
 
         @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
@@ -409,10 +262,14 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
         @safe_observe(name="smolagents_neo4j_execution")
         async def run_smolagent() -> tuple[str, str]:
             try:
-                # Retrieve past successful memories to inject into the system prompt
+                # Retrieve past successful memories to inject into the system prompt.
+                # Bridge to a worker thread — m.search() is sync gRPC and must
+                # not block the asyncio loop.
                 if user_id:
-                    past_memories_response = fetch_user_memory(query=user_query, user_id=user_id)
-                    
+                    past_memories_response = await asyncio.to_thread(
+                        fetch_user_memory, user_query, user_id
+                    )
+
                     if isinstance(past_memories_response, dict):
                         past_memories = past_memories_response.get("results", [])
                     else:
@@ -540,7 +397,10 @@ print(result)
         # --------------------------------------------------------------------------
         async def save_memory() -> str:
             if user_id:
-                m.add(
+                # Bridge to a worker thread — m.add() is sync gRPC and must
+                # not block the asyncio loop.
+                await asyncio.to_thread(
+                    m.add,
                     messages=[
                         {"role": "user", "content": user_query},
                         {"role": "assistant", "content": raw_agent_response}
@@ -548,9 +408,12 @@ print(result)
                     user_id=user_id
                 )
             return "saved"
-        
+
         await ctx.run("save-memory", save_memory)
-        
+
         return final_structured_dict
     finally:
-        weaviate_client.close()
+        # NOTE: we intentionally do NOT close weaviate_client here. It is a
+        # process-wide singleton from utils.weaviate_utils.get_weaviate_client
+        # shared across all requests for the lifetime of the pod.
+        pass
