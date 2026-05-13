@@ -44,7 +44,9 @@ data:
 
   # legacy/compat
   ONTOLOGY_RESOLVE_URL: "http://{{ .Release.Name }}-engine-o{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineO.port }}/resolve"
-  DATAHUB_GMS_URL: {{ .Values.engineD.env.DATAHUB_GMS_URL | quote }}
+  # DATAHUB_GMS_URL is provided via the agentFleet.env loop below — sourcing it
+  # here from engineD.env.DATAHUB_GMS_URL was a duplicate source-of-truth that
+  # would shadow operator overrides. Use agentFleet.env to set the cluster URL.
   SWARMS_MODEL: {{ .Values.engineC.env.SWARMS_MODEL | quote }}
   KEYCLOAK_REALM_URL: "http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080/realms/{{ .Values.keycloak.realm }}"
 
