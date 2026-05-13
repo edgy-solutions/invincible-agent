@@ -166,6 +166,24 @@ jobs:
                   uv pip install packaging setuptools wheel; \
               fi
 
+          # ------------------------------------------------------------------
+          # Pre-download offline-required NLP models.
+          # The target cluster has no internet access at runtime; mem0ai[nlp]
+          # otherwise tries to fetch spaCy models from raw.githubusercontent.com
+          # on first /search and crashes the request. We pre-bake the model
+          # into the venv during build (where the CI runner does have internet)
+          # so the runtime image is truly self-contained.
+          #
+          # Guarded by spacy availability — services that don't depend on
+          # mem0ai[nlp] (most of the fleet) skip this step at no cost.
+          # ------------------------------------------------------------------
+          RUN if /app/.venv/bin/python -c "import spacy" 2>/dev/null; then \
+                  echo "Pre-downloading spaCy en_core_web_sm for offline runtime..." && \
+                  /app/.venv/bin/python -m spacy download en_core_web_sm; \
+              else \
+                  echo "spaCy not installed for this service — skipping model bake."; \
+              fi
+
           # STAGE 2: SECURE RUNNER
           FROM python:3.12-slim-bookworm
           # Create appuser with an explicit home directory inside /app

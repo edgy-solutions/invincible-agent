@@ -101,9 +101,25 @@ class Mem0CompatibleWeaviate(WeaviateVectorStore):
                 if hasattr(doc, "id"):
                     doc.id = doc.metadata["id"]
 
-                # 🚨 Bypass mem0's NoneType crash by explicitly providing a score
-                if "score" not in doc.metadata:
-                    doc.metadata["score"] = 1.0
+                # 🚨 Guarantee a non-None float score. mem0's score_and_rank does
+                # ``if semantic_score < threshold:`` against whatever
+                # ``doc.metadata.get("score", 1.0)`` returns — and ``dict.get`` returns
+                # the stored value when the key exists (even if it's None), NOT the
+                # default. WeaviateVectorStore v4 puts ``score: None`` in metadata on
+                # some query paths, so the previous ``if "score" not in metadata``
+                # guard wasn't catching it. Derive from v4 distance/certainty when
+                # available, otherwise fall back to 1.0.
+                if doc.metadata.get("score") is None:
+                    certainty = doc.metadata.get("certainty")
+                    distance = doc.metadata.get("distance")
+                    if certainty is not None:
+                        doc.metadata["score"] = float(certainty)
+                    elif distance is not None:
+                        # Weaviate cosine distance is in [0, 2]; convert to a
+                        # similarity-style score in [-1, 1] clamped to [0, 1].
+                        doc.metadata["score"] = max(0.0, 1.0 - float(distance))
+                    else:
+                        doc.metadata["score"] = 1.0
 
                 # 2. Loop through all metadata and sanitize types
                 for key, val in list(doc.metadata.items()):
