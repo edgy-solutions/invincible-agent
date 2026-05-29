@@ -1,0 +1,183 @@
+# ============================================================================
+# Step 3 end-to-end smoke for the /analyze flow.
+#
+# Brings up the smallest set of services that exercise Engine A's full
+# request path end-to-end:
+#
+#   client -> Engine A /analyze (proxy)
+#          -> Restate server (durable AnalystService.analyze)
+#          -> Engine O /resolve (ontology classification, may return UNKNOWN
+#             with no ontology data — that's fine, the handler is graceful)
+#          -> get_mem0_memory() -> Weaviate insert/search + nomic-embed-text
+#          -> smolagents CodeAgent loop -> Ollama LLM on ai1
+#          -> returns AgentResponse
+#
+# Uses the PUBLISHED images (ghcr.io ...:latest) and mounts the patched
+# agent_fleet/utils/mem0_utils.py over the image's baked-in copy until CI
+# rebuilds. That way we test the actual production artifact + our fix.
+#
+# We point both Engine A and Engine O at gemma4:31b for SMOLAGENTS_MODEL
+# rather than gpt-oss-128k:120b. The structured-output workloads (mem0
+# fact extraction, BAML ClassifyDomainIntent, smolagents code blocks)
+# all trigger the ollama-engine instability we observed with gpt-oss
+# reasoning models; gemma4 handles JSON output cleanly. The point of this
+# stack is to validate the SDK fixes end-to-end, not to test the LLM
+# selection — that's orthogonal.
+#
+# Usage:
+#   docker compose -f docker-compose.e2e.yml up -d
+#   # wait ~30s for healthchecks + restate-init to complete
+#   docker compose -f docker-compose.e2e.yml logs -f test-runner
+#   docker compose -f docker-compose.e2e.yml down -v   # cleanup
+#
+# Requires ai1 reachable from this host (or override OLLAMA_HOST_IP).
+# ============================================================================
+
+name: iagent-e2e-step3
+
+services:
+  # --------------------------------------------------------------------------
+  # Vector store + persistence
+  # --------------------------------------------------------------------------
+  weaviate:
+    image: semitechnologies/weaviate:1.27.0
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - CLUSTER_HOSTNAME=node1
+      - GRPC_PORT=50051
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # --------------------------------------------------------------------------
+  # Durable execution layer
+  # --------------------------------------------------------------------------
+  restate:
+    image: docker.io/restatedev/restate:latest
+    command: --node-name restate-node
+    ports:
+      - "8083:8080"  # ingress (host-side; for direct ingress access if wanted)
+      - "9070:9070"  # admin
+    environment:
+      - RESTATE_ADMIN__BIND_ADDRESS=0.0.0.0:9070
+      - RESTATE_INGRESS__HTTP_SERVER__BIND_ADDRESS=0.0.0.0:8080
+    volumes:
+      - restate_data:/restate-data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9070/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # --------------------------------------------------------------------------
+  # Engine O — Ontology Reasoner
+  # No ontology data loaded; /resolve will return UNKNOWN. Engine A's
+  # analyze handler treats that as a confidence=0.0 result and continues.
+  # --------------------------------------------------------------------------
+  ontology-service:
+    image: ghcr.io/edgy-solutions/invincible-agent/ontology-service:latest
+    ports:
+      - "8084:8084"
+    extra_hosts:
+      - "ai1:192.168.1.119"
+    environment:
+      - WEAVIATE_HTTP_HOST=weaviate:8080
+      - WEAVIATE_GRPC_HOST=weaviate:50051
+      - SMOLAGENTS_PROVIDER=ollama
+      - SMOLAGENTS_MODEL=gpt-oss-128k:120b
+      - OLLAMA_BASE_URL=http://ai1:11434/v1
+      - JENA_SPARQL_ENDPOINT=
+      - BAML_LOG_LEVEL=info
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      # engine images don't ship curl/wget; use Python (always present)
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8084/health', timeout=2).status==200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      weaviate:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
+  # Engine A — Restate Analyst
+  # Mounts the locally-patched mem0_utils.py over the image's copy so we
+  # exercise the two upstream-mem0 monkey-patches before CI rebuilds.
+  # --------------------------------------------------------------------------
+  restate-analyst:
+    image: ghcr.io/edgy-solutions/invincible-agent/restate-analyst:latest
+    ports:
+      - "8081:8081"
+    extra_hosts:
+      - "ai1:192.168.1.119"
+    volumes:
+      - ./agent_fleet/utils/mem0_utils.py:/app/utils/mem0_utils.py:ro
+    environment:
+      - WEAVIATE_HTTP_HOST=weaviate:8080
+      - WEAVIATE_GRPC_HOST=weaviate:50051
+      - SMOLAGENTS_PROVIDER=ollama
+      - SMOLAGENTS_MODEL=gpt-oss-128k:120b
+      - MEM0_LLM_MODEL=gemma4:31b
+      - OLLAMA_BASE_URL=http://ai1:11434/v1
+      - ONTOLOGY_RESOLVE_URL=http://ontology-service:8084/resolve
+      - RESTATE_INGRESS_URL=http://restate:8080
+      - DATAHUB_WRAPPER_URL=http://datahub-stub:9999  # intentional non-route; tool degrades gracefully
+      - LOCAL_DEV=true
+      - BAML_LOG_LEVEL=info
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      # engine images don't ship curl/wget; use Python (always present)
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/health', timeout=2).status==200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      weaviate:
+        condition: service_healthy
+      restate:
+        condition: service_healthy
+      ontology-service:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
+  # Register Engine A's Restate services with the Restate admin API.
+  # Runs once and exits. Without this, AnalystService.analyze is undeployed
+  # and Engine A's /analyze proxy hits a 404 inside Restate.
+  # --------------------------------------------------------------------------
+  restate-init:
+    image: curlimages/curl:latest
+    depends_on:
+      restate:
+        condition: service_healthy
+      restate-analyst:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        echo "Registering Engine A services with Restate..."
+        for i in $$(seq 1 10); do
+          if curl -fsS -X POST http://restate:9070/deployments \
+            -H 'Content-Type: application/json' \
+            -d '{"uri": "http://restate-analyst:8081/restate", "force": true}'; then
+            echo
+            echo "  RESTATE_REGISTRATION_OK"
+            exit 0
+          fi
+          echo "  attempt $$i failed; retrying in 3s..."
+          sleep 3
+        done
+        echo "RESTATE_REGISTRATION_FAILED"
+        exit 1
+
+volumes:
+  weaviate_data:
+  restate_data:
