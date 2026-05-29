@@ -34,7 +34,119 @@ import os
 import uuid
 
 from langchain_weaviate import WeaviateVectorStore
-from mem0 import Memory
+
+# ---------------------------------------------------------------------------
+# mem0 None-score guard — installed BEFORE ``from mem0 import Memory`` so the
+# patched function is what ``mem0.memory.main`` picks up via its
+# ``from mem0.utils.scoring import score_and_rank`` line.
+# ---------------------------------------------------------------------------
+# mem0 0.1.x's ``score_and_rank`` does:
+#
+#     semantic_score = result.get("score", 0.0)
+#     if semantic_score < threshold:
+#
+# But ``dict.get(key, default)`` returns the *stored value* when the key
+# exists -- so a stored ``None`` becomes ``None``, NOT ``0.0``. The default
+# never fires, and the subsequent ``<`` raises TypeError every search.
+#
+# Our ``Mem0CompatibleWeaviate`` already guarantees a real float score on
+# the way OUT of the Weaviate adapter. But mem0's own internal result
+# pipeline (entity boost, BM25 fusion, score normalization) has multiple
+# code paths that can produce a None ``score`` field by the time
+# ``score_and_rank`` consumes it -- we saw "Entity boost computation failed"
+# and "Batch entity linking failed" both with the same NoneType complaint in
+# the live trace. Patching the Weaviate adapter alone is not sufficient;
+# the canonical fix point is ``score_and_rank`` itself.
+#
+# The patch normalizes ``None`` scores to ``0.0`` in the input list before
+# delegating to the original implementation. Idempotent; safe to import
+# multiple times.
+def _install_mem0_none_guards() -> None:
+    import sys
+    import mem0.utils.scoring as _scoring
+
+    if getattr(_scoring, "_NONE_GUARD_INSTALLED", False):
+        return
+
+    _original = _scoring.score_and_rank
+
+    def _safe_score_and_rank(semantic_results, *args, **kwargs):
+        for r in semantic_results or []:
+            if isinstance(r, dict) and r.get("score") is None:
+                r["score"] = 0.0
+        return _original(semantic_results, *args, **kwargs)
+
+    # Patch the canonical definition site.
+    _scoring.score_and_rank = _safe_score_and_rank
+
+    # Also rebind in every module that already did
+    # ``from mem0.utils.scoring import score_and_rank`` before we got here.
+    # ``mem0.memory.main`` is the known caller; sweep sys.modules in case
+    # any other module also imported the name directly.
+    for mod in list(sys.modules.values()):
+        if mod is None or mod is _scoring:
+            continue
+        if getattr(mod, "score_and_rank", None) is _original:
+            try:
+                setattr(mod, "score_and_rank", _safe_score_and_rank)
+            except Exception:
+                # Some module objects don't allow attribute assignment; skip.
+                pass
+
+    _scoring._NONE_GUARD_INSTALLED = True
+
+
+_install_mem0_none_guards()
+
+
+# ---------------------------------------------------------------------------
+# mem0 score-propagation fix — also installed before ``from mem0 import Memory``.
+# ---------------------------------------------------------------------------
+# mem0 0.1.x's Langchain vector store provider (mem0/vector_stores/langchain.py
+# :: Langchain._parse_output) literally hardcodes ``score=None`` when wrapping
+# LangChain ``Document`` objects, with a comment claiming "Document objects
+# typically don't include scores". That assumption is false for our adapter:
+# ``Mem0CompatibleWeaviate.similarity_search_by_vector`` explicitly writes a
+# real similarity score into ``doc.metadata["score"]``. mem0 throws it away.
+#
+# Downstream, every result lands with ``score=None`` -> our score_and_rank
+# guard normalizes it to 0.0 -> mem0's default threshold (~0.5) filters out
+# every result. Searches return empty even though Weaviate returned matches.
+#
+# Patch _parse_output to read score from doc.metadata when present, falling
+# back to None only when there genuinely isn't one. Method-level patch, so
+# any Langchain instance mem0 builds picks it up automatically.
+def _install_mem0_score_propagation_patch() -> None:
+    from mem0.vector_stores import langchain as _lc
+
+    if getattr(_lc, "_SCORE_PROPAGATION_PATCHED", False):
+        return
+
+    _original = _lc.Langchain._parse_output
+
+    def _patched_parse_output(self, data):
+        if isinstance(data, list) and all(
+            hasattr(doc, "metadata") for doc in data if hasattr(doc, "__dict__")
+        ):
+            result = []
+            for doc in data:
+                metadata = getattr(doc, "metadata", {}) or {}
+                entry = _lc.OutputData(
+                    id=getattr(doc, "id", None),
+                    score=metadata.get("score"),  # read instead of hardcode None
+                    payload=metadata,
+                )
+                result.append(entry)
+            return result
+        return _original(self, data)
+
+    _lc.Langchain._parse_output = _patched_parse_output
+    _lc._SCORE_PROPAGATION_PATCHED = True
+
+
+_install_mem0_score_propagation_patch()
+
+from mem0 import Memory  # noqa: E402 — must come after the guards installed above
 from weaviate.classes.query import Filter
 
 try:
@@ -180,6 +292,14 @@ def _build_mem0_memory() -> Memory:
     vector_store construction, and ``Memory.from_config()``. All blocking
     I/O (collection verification, schema checks, embedder warmup) is
     contained inside this function so the async layer never sees it.
+
+    LLM selection: mem0's internal LLM does fact extraction (structured
+    JSON output from short messages) — a fundamentally different task
+    from agent reasoning. We honor ``MEM0_LLM_MODEL`` if set so deployments
+    can point mem0 at a smaller, faster, more JSON-stable model
+    (e.g. ``gemma4:31b``, ``qwen2.5:7b``) while keeping ``SMOLAGENTS_MODEL``
+    pointed at the big reasoning model for agent loops. Falls back to
+    ``SMOLAGENTS_MODEL`` for backward compatibility, then to a sane default.
     """
     weaviate_client = get_weaviate_client()
 
@@ -218,11 +338,19 @@ def _build_mem0_memory() -> Memory:
         }
     }
 
+    # mem0's internal LLM — fact extraction, NOT agent reasoning. See
+    # docstring above. MEM0_LLM_MODEL wins; falls back to SMOLAGENTS_MODEL.
+    mem0_llm_model = (
+        os.getenv("MEM0_LLM_MODEL")
+        or os.getenv("SMOLAGENTS_MODEL")
+        or ("llama3.2" if provider == "ollama" else "anthropic/claude-3.5-sonnet")
+    )
+
     if provider == "ollama":
         mem0_config["llm"] = {
             "provider": "ollama",
             "config": {
-                "model": os.getenv("SMOLAGENTS_MODEL", "llama3.2"),
+                "model": mem0_llm_model,
                 "ollama_base_url": ollama_url,
             },
         }
@@ -237,9 +365,7 @@ def _build_mem0_memory() -> Memory:
         mem0_config["llm"] = {
             "provider": "openai",
             "config": {
-                "model": os.getenv(
-                    "SMOLAGENTS_MODEL", "anthropic/claude-3.5-sonnet"
-                ),
+                "model": mem0_llm_model,
                 "api_key": os.getenv("OPENROUTER_API_KEY", ""),
                 "base_url": "https://openrouter.ai/api/v1",
             },
