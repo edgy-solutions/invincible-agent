@@ -101,60 +101,45 @@ _NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 _NEO4J_DRIVER = None
 
 # ---------------------------------------------------------------------------
-# Master Agent & Domain Registry (Single Source of Truth)
+# Persona / Domain registry (ADR-0009 Step E')
 # ---------------------------------------------------------------------------
-MASTER_PERSONAS = {
-    "MECHANIC": {
-        "ui": {"label": "Line Mechanic", "icon": "Wrench", "color": "text-amber-500", "bg": "bg-amber-500/10 border-amber-500/30"},
-        "llm_prompt": "Wrench-turning, physical repairs, safety hazards, hardware component failures."
-    },
-    "TECH_WRITER": {
-        "ui": {"label": "Tech Writer", "icon": "BookOpen", "color": "text-blue-400", "bg": "bg-blue-400/10 border-blue-400/30"},
-        "llm_prompt": "Formatting manuals, procedures, standard Markdown text. DO NOT use XML."
-    },
-    "LOGISTICS": {
-        "ui": {"label": "Logistics", "icon": "Truck", "color": "text-emerald-500", "bg": "bg-emerald-500/10 border-emerald-500/30"},
-        "llm_prompt": "Supply chain, procurement, lifecycle management, inventory."
-    },
-    "AUDITOR": {
-        "ui": {"label": "Auditor", "icon": "ShieldCheck", "color": "text-red-400", "bg": "bg-red-400/10 border-red-400/30"},
-        "llm_prompt": "Safety compliance, rules, identifying non-compliant nodes."
-    },
-    "PROCESS_ENGINEER": {
-        "ui": {"label": "Process Eng", "icon": "Network", "color": "text-purple-500", "bg": "bg-purple-500/10 border-purple-500/30"},
-        "llm_prompt": "Workflows, sequential steps, and BPMN routing across any discipline."
-    },
-    "DATA_STEWARD": {
-        "ui": {"label": "Data Steward", "icon": "Database", "color": "text-cyan-400", "bg": "bg-cyan-400/10 border-cyan-400/30"},
-        "llm_prompt": "Databases, dbt models, Postgres schemas, telemetry data pipelines, and metadata. Any data engineering query MUST go to the DATA_STEWARD."
-    }
-}
+# Per ADR-0009 the active personas and domains are derived from the predicate
+# graph — every engine self-declares its `owner_persona` and `domains` at
+# registration; doc-tools projects those into Neo4j relationship properties;
+# Engine O reads them via the view-functions in registry_views.py. There is
+# no MASTER_INTENTS replacement — intent collapses into the binary `mode`
+# discriminator decided by ExtractIntent (Step F').
+#
+# The view-functions live in a sibling module so they can be unit-tested
+# without pulling in this file's heavy import chain (rdflib, weaviate,
+# baml_client).
+from agent_fleet.ontology_service.registry_views import (  # noqa: E402
+    PERSONA_UI_METADATA as _PERSONA_UI_METADATA,
+    DEFAULT_PERSONA_UI as _DEFAULT_PERSONA_UI,
+    LEGACY_PERSONA_PROMPTS as _LEGACY_PERSONA_PROMPTS,
+    LEGACY_DOMAIN_PROMPTS as _LEGACY_DOMAIN_PROMPTS,
+    LEGACY_INTENT_PROMPTS as _LEGACY_INTENT_PROMPTS,
+    fetch_active_personas as _fetch_personas_with_driver,
+    fetch_active_domains as _fetch_domains_with_driver,
+    get_baml_persona_string as _persona_string_with_driver,
+    get_baml_domain_string as _domain_string_with_driver,
+)
 
-MASTER_INTENTS = {
-    "DIAGNOSTIC_AND_REPAIR": "PRIORITY INTENT. User is troubleshooting a breakdown or failure. This applies to physical machine symptoms AND software/data pipeline bugs. Requires reading documentation to find the fix.",
-    
-    "STRUCTURAL_QUERY": "User is asking to find, view, or understand existing assets. This applies to physical assemblies (parts/inventory), data architecture (DataHub lineage, Postgres schemas), and viewing existing charts/dashboards/metrics. NO troubleshooting required.",
-    
-    "KNOWLEDGE_RETRIEVAL": "User wants to read, summarize, or learn about policies, theories, definitions, or standard operating procedures. NO physical parts lists, data schemas, or troubleshooting required.",
-    
-    "PROCESS_CREATION": "User wants to build, design, write, or publish a NEW workflow, process, software code, or data product. Do NOT use this if the user just wants to view or find an existing chart/dashboard.",
-    
-    "SYSTEM_META_AND_REJECTION": "User is asking what the system can do, how to use the system, OR asking a question completely outside the scope of technical maintenance and sustainment. The system must ONLY explain its capabilities or cleanly refuse the out-of-scope request. NO open-ended conversation."
-}
 
-MASTER_DOMAINS = {
-    "MAINTENANCE": "Wrench-turning, physical repairs, safety hazards, component failures.",
-    "MANUFACTURING": "Use for assembly, building, factory instructions, or production steps.",
-    "SUSTAINMENT": "Supply chain, logistics, procurement, lifecycle management, inventory.",
-    "DATA_ENGINEERING": "dbt models, Postgres, React, Kafka, data pipelines, software architecture.",
-    "UNKNOWN": "Use if the query is unrelated to the above domains."
-}
+async def fetch_active_personas() -> list[str]:
+    return await _fetch_personas_with_driver(_NEO4J_DRIVER)
 
-def get_baml_persona_string() -> str:
-    return "\n".join([f"- {k}: {v['llm_prompt']}" for k, v in MASTER_PERSONAS.items()])
 
-def get_baml_domain_string() -> str:
-    return "\n".join([f"- {k}: {v}" for k, v in MASTER_DOMAINS.items()])
+async def fetch_active_domains() -> list[str]:
+    return await _fetch_domains_with_driver(_NEO4J_DRIVER)
+
+
+async def get_baml_persona_string() -> str:
+    return await _persona_string_with_driver(_NEO4J_DRIVER)
+
+
+async def get_baml_domain_string() -> str:
+    return await _domain_string_with_driver(_NEO4J_DRIVER)
 
 # SPARQL: find all named OWL classes defined in the IOF maintenance namespace
 # along with their labels and natural-language definitions.
@@ -840,10 +825,10 @@ async def plan_query(request: PlanRequest) -> dict:
     assigned to different personas using the LLM.
     """
     try:
-        # INJECT active_personas HERE
+        # INJECT active_personas HERE (view-function — see ADR-0009 Step E')
         plan = await b.DecomposeQuery(
             raw_query=request.query,
-            active_personas=get_baml_persona_string()
+            active_personas=await get_baml_persona_string()
         )
         return {**plan.model_dump(), "domain": request.domain}
     except Exception as exc:
@@ -859,21 +844,34 @@ async def plan_query(request: PlanRequest) -> dict:
 @app.post("/route_and_plan")
 async def route_and_plan(request: RouteAndPlanRequest) -> dict:
     """
-    Act as the Kernel Scheduler using Dynamic BAML Enums.
+    Legacy 3-axis BAML classifier — kept temporarily so the gateway keeps
+    working through the ADR-0009 migration. Step F' replaces this endpoint
+    with ExtractIntent (mode + verb extraction); when that lands this body
+    becomes ``raise HTTPException(410, "use /route_intent")`` until callers
+    migrate.
     """
     try:
-        # Initialize the TypeBuilder
+        # Per ADR-0009 view-functions: persona/domain lists come from the
+        # predicate graph (graceful fallback to the local legacy keys when
+        # Neo4j is empty/unreachable). Intent has no graph source — kept as
+        # the legacy hardcoded set until Step F' deletes the whole classifier.
+        active_personas = await fetch_active_personas()
+        active_domains = await fetch_active_domains()
+
         tb = TypeBuilder()
-        
-        # Dynamically build the Enums from our SSOT dictionaries
-        for intent_name, description in MASTER_INTENTS.items():
+
+        for intent_name, description in _LEGACY_INTENT_PROMPTS.items():
             tb.Intent.add_value(intent_name).description(description)
-            
-        for domain_name, description in MASTER_DOMAINS.items():
-            tb.Domain.add_value(domain_name).description(description)
-            
-        for persona_name, data in MASTER_PERSONAS.items():
-            tb.PersonaTarget.add_value(persona_name).description(data["llm_prompt"])
+
+        for domain_name in active_domains:
+            tb.Domain.add_value(domain_name).description(
+                _LEGACY_DOMAIN_PROMPTS.get(domain_name, "Domain scope.")
+            )
+
+        for persona_name in active_personas:
+            tb.PersonaTarget.add_value(persona_name).description(
+                _LEGACY_PERSONA_PROMPTS.get(persona_name, "Persona-specific specialist.")
+            )
 
         # Execute BAML, passing the TypeBuilder via baml_options
         decision = await b.RouteAndPlan(
@@ -881,17 +879,17 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
             baml_options={"tb": tb}
         )
         res = decision.model_dump()
-        
-        # 🛡️ THE GUARDHOUSE INTERCEPT: Short-circuit out-of-scope queries natively
+
+        # 🛡️ Guardhouse intercept: short-circuit out-of-scope queries
         if res.get("intent") == "SYSTEM_META_AND_REJECTION":
             res["reasoning"] = "I am the routing interface for a grounded military technical data mesh. I can assist with Graph part lookups, Diagnostic troubleshooting, and Policy retrieval. I cannot engage in general conversation or process out-of-scope requests."
             res["task_plan"] = None
-        
+
         # Inject domain into tasks for downstream consumers
         if res.get("task_plan") and res["task_plan"].get("tasks"):
             for task in res["task_plan"]["tasks"]:
                 task["domain"] = res.get("domain")
-        
+
         return res
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"BAML routing failed: {exc}") from exc
@@ -926,10 +924,53 @@ async def health():
     """Simple liveness probe."""
     return {"status": "ok", "jena_reachable": _JENA_ENDPOINT != ""}
 
+@app.get("/personas")
+async def list_personas() -> dict:
+    """List active answerer-personas (ADR-0009 view-function).
+
+    Each persona is the distinct ``r.owner_persona`` value across every
+    predicate edge in the runtime substrate, dressed with UI metadata for
+    the frontend. Unknown personas (engines registering a new one) get a
+    default UI treatment until the frontend adds chrome for them.
+    """
+    personas = await fetch_active_personas()
+    return {
+        "personas": [
+            {
+                "name": p,
+                "ui": _PERSONA_UI_METADATA.get(p, _DEFAULT_PERSONA_UI),
+            }
+            for p in personas
+        ]
+    }
+
+
+@app.get("/domains")
+async def list_domains() -> dict:
+    """List active domain scopes (ADR-0009 view-function).
+
+    Each domain is the distinct entry across every predicate edge's
+    ``r.domains`` JSON array. /find_tool filters predicate matches against
+    the caller's ``user.entitled_domains``; this endpoint is the source of
+    truth the UI uses to populate scope pickers.
+    """
+    domains = await fetch_active_domains()
+    return {"domains": domains}
+
+
 @app.get("/mesh/config")
 async def get_mesh_config():
-    """Serves the UI configuration derived from the Master Registry."""
-    ui_personas = {k: v["ui"] for k, v in MASTER_PERSONAS.items()}
+    """Serves the UI configuration derived from the predicate registry.
+
+    Backward-compatible response shape — ``personas`` is still a dict keyed
+    by persona name with UI metadata as the value, for callers that haven't
+    moved to the new ``/personas`` listing endpoint.
+    """
+    personas = await fetch_active_personas()
+    ui_personas = {
+        p: _PERSONA_UI_METADATA.get(p, _DEFAULT_PERSONA_UI)
+        for p in personas
+    }
     return {"personas": ui_personas, "status": "ONLINE"}
 
 
