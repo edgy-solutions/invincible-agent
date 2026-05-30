@@ -68,6 +68,6 @@ the decision probably isn't ADR-worthy — it's permanent.
 | [0002](ADR-0002-mem0-monkeypatches.md) | Carry two upstream-mem0 monkey-patches in `utils/mem0_utils.py` | Accepted |
 | [0003](ADR-0003-llm-rightsizing.md) | Right-size LLMs per workload class on the agent mesh | Accepted |
 | [0004](ADR-0004-predicate-graph-routing.md) | Predicate-graph routing for the agent mesh (SPO/verb model) | Accepted |
-| 0005 | Verb namespace convention | TBD (deferred from ADR-0004) |
-| 0006 | Canonical verb registry location (DataHub vs Neo4j authority) | TBD (deferred from ADR-0004) |
-| 0007 | System-level concepts for compound workflows | TBD (deferred from ADR-0004) |
+| [0005](ADR-0005-verb-and-concept-namespaces.md) | Two-class namespacing for verbs and concepts (domain vs platform) | Accepted |
+| [0006](ADR-0006-verb-registry-location.md) | DataHub as proposal inbox, Neo4j as runtime substrate | Accepted |
+| [0007](ADR-0007-survey-before-mint.md) | Survey existing ontologies before minting `mesh:` concepts | Accepted |
