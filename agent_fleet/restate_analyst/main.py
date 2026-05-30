@@ -734,13 +734,53 @@ import logging
 
 logger = logging.getLogger("RestateAnalyst")
 
+# Engine self-registration for the predicate-graph routing layer
+# (iagent ADR-0004 Step D.1). Opt-in via MESH_REGISTER_ON_STARTUP; the helper
+# logs a clear "skipping" message when disabled or when DataHub creds are
+# missing, and never crashes the engine. Engine A is the first hardcoded
+# engine to register; the others (E, DA, W, etc.) follow the same call
+# pattern when D.1 propagates.
+try:
+    from utils.mesh_registration import register_engine_to_mesh
+except ImportError:
+    from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     # Boot Sequence
     logger.info("Initializing Engine A: Late Binding enabled (JIT Tool Injection).")
-    # We no longer preload tools globally. Discovery happens per-request.
+
+    # Register as a typed predicate edge in the mesh routing graph.
+    #
+    # Engine A operates on a generic (mesh:AgentTask) and produces a generic
+    # (mesh:AgentResponse). The verb mesh:analyzeWithCodeAgent names what
+    # it does: run a smolagents CodeAgent loop. See docs/adr/minted-concepts.md
+    # for the survey-before-mint record per ADR-0007.
+    register_engine_to_mesh(
+        name="engine_a_restate_analyst",
+        description=(
+            "Durable analyst engine. Runs a smolagents CodeAgent loop with "
+            "Restate-backed exactly-once execution; calls Engine O for "
+            "semantic resolution + DataHub / Superset tools as needed."
+        ),
+        verb="mesh:analyzeWithCodeAgent",
+        input_uri="mesh:AgentTask",
+        output_uri="mesh:AgentResponse",
+        verb_synonyms=[
+            "analyze", "investigate", "investigate data",
+            "code agent analysis", "smolagents loop",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_A_PUBLIC_URL",
+            "http://restate-agent-svc.default.svc.cluster.local:8081/analyze",
+        ),
+        owner_persona="DATA_STEWARD",
+        cost_class="slow",  # smolagents loops are not cheap
+    )
+
     yield
-    
+
     # Teardown Sequence
     logger.info("Shutting down Engine A...")
 
