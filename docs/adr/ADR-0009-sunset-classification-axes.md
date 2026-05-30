@@ -289,11 +289,13 @@ named steps. Step D.2 is folded in.
      Step F' — engines fall back to predicate-derived answerer
      persona until claims expand.
 
-4. **ADR-0008 (deferred routing-fallback policy) is folded into
-   Step F'.** With one routing mechanism and no `if/elif`, the
-   fallback question becomes "what does `/find_path` return when no
-   predicate matches?" — answer in Step F' rather than as a
-   standalone ADR.
+4. ~~**ADR-0008 (deferred routing-fallback policy) is folded into
+   Step F'.**~~ **Superseded by [ADR-0008](ADR-0008-routing-fallback-policy.md)
+   (2026-05-30).** Step F'.6 answered "what does Engine O return on a
+   match?" — it did not answer "what does the supervisor do on a
+   miss?" That's a real, separate decision (when to fall back, what
+   the fallback does, how operators see it firing) and deserves its
+   own ADR. Captured in ADR-0008.
 
 ## Open dependencies
 
