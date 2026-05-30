@@ -380,6 +380,71 @@ class TableClassificationResponse(BaseModel):
     reasoning: str
 
 
+# ---------------------------------------------------------------------------
+# Predicate-graph routing (iagent ADR-0004 Step C)
+# ---------------------------------------------------------------------------
+# These models describe the single-step and multi-step routing queries the
+# supervisor calls. ``/find_tool`` resolves an (input, verb) -> tool edge
+# directly; ``/find_path`` resolves an (input, output) composition over up
+# to ``max_hops`` predicate edges. Neither endpoint touches the LLM -- the
+# NLP-side (/route_and_plan, /resolve) calls these *after* it has resolved
+# NL into a (verb_label, subject_uri) pair.
+_VALID_COST_CLASSES = ("fast", "medium", "slow")
+
+
+class FindToolRequest(BaseModel):
+    """Single-step routing query.
+
+    The ``verb_label`` field accepts any of:
+      - the relationship type itself, e.g. ``"applyDiagnostics"``
+      - the full namespaced IRI, e.g. ``"mro:applyDiagnostics"``
+      - any registered synonym from ``r.synonyms``
+    """
+    subject_uri: str = Field(..., description="OntologyClass URI of the operation's input")
+    verb_label: str = Field(..., description="Verb to invoke -- relationship type, IRI, or synonym")
+
+
+class FindToolStep(BaseModel):
+    """One predicate edge in a routing result."""
+    verb_type: str
+    verb_iri: str
+    endpoint: str
+    output_uri: str
+    owner_persona: str | None = None
+    cost_class: str | None = None
+    requires_human_approval: bool = False
+    openapi_schema: str | None = None
+
+
+class FindToolResponse(BaseModel):
+    found: bool
+    step: FindToolStep | None = None
+    reason: str | None = None
+
+
+class FindPathRequest(BaseModel):
+    """Multi-step composition query."""
+    start_uri: str = Field(..., description="OntologyClass URI to start from")
+    end_uri: str = Field(..., description="OntologyClass URI to terminate in")
+    max_hops: int = Field(4, ge=1, le=8, description="Maximum predicate edges to traverse")
+    allowed_cost_classes: list[str] = Field(
+        default_factory=lambda: list(_VALID_COST_CLASSES),
+        description="Filter edges by cost class; empty means all classes allowed",
+    )
+    exclude_human_approval: bool = Field(
+        False,
+        description="If true, skip edges where requires_human_approval=true",
+    )
+
+
+class FindPathResponse(BaseModel):
+    found: bool
+    hops: int | None = None
+    total_latency_budget_ms: int | None = None
+    steps: list[FindToolStep] = Field(default_factory=list)
+    reason: str | None = None
+
+
 def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> list[dict]:
     """Synchronous hybrid search implementation. gRPC blocks here.
 
@@ -499,6 +564,205 @@ async def get_physical_assets(uri: str = Query(..., description="The Ontology UR
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Neo4j query failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Predicate-graph routing (iagent ADR-0004 Step C)
+# ---------------------------------------------------------------------------
+# Two pure-Cypher endpoints over the predicate graph that doc-tools' AITool
+# binding plane materializes. No LLM, no Weaviate -- deterministic graph
+# queries the supervisor and the NLP-side endpoints call to make routing
+# decisions.
+#
+# ``/find_tool`` resolves a single (subject_uri, verb_label) -> tool edge.
+# ``/find_path`` resolves a multi-step (start_uri, end_uri) composition.
+#
+# The supervisor walks ``steps`` in order, threading each step's output as
+# the next step's input.
+
+# Single-step Cypher. We match on three possible "verb_label" forms so the
+# caller can pass either a resolved IRI (from BAML / TypeBuilder) or a
+# user-facing synonym (rare; usually post-resolution it's the IRI).
+_FIND_TOOL_CYPHER = """
+MATCH (s:OntologyClass {uri: $subject_uri})-[r]->(o:OntologyClass)
+WHERE type(r) = $verb_label
+   OR r.iri  = $verb_label
+   OR $verb_label IN coalesce(r.synonyms, [])
+RETURN type(r)                  AS verb_type,
+       r.iri                    AS verb_iri,
+       r.endpoint_url           AS endpoint,
+       o.uri                    AS output_uri,
+       r.owner_persona          AS owner_persona,
+       r.cost_class             AS cost_class,
+       r.requires_human_approval AS requires_human_approval,
+       r.openapi_schema         AS openapi_schema
+ORDER BY CASE coalesce(r.cost_class, 'slow')
+              WHEN 'fast' THEN 0
+              WHEN 'medium' THEN 1
+              ELSE 2
+         END
+LIMIT 1
+"""
+
+
+def _build_find_path_cypher(max_hops: int) -> str:
+    """Build the variable-length-path Cypher with the validated ``max_hops``
+    interpolated. Cypher does not let the hop range be a parameter; we
+    template it after bounding the value via Pydantic (1..8)."""
+    return f"""
+    MATCH path = (start:OntologyClass {{uri: $start_uri}})
+                 -[rs*1..{max_hops}]->
+                 (end:OntologyClass {{uri: $end_uri}})
+    WHERE all(r IN relationships(path)
+              WHERE coalesce(r.cost_class, 'slow') IN $allowed_cost_classes
+                AND (NOT $exclude_human_approval
+                     OR coalesce(r.requires_human_approval, false) = false))
+    WITH path, relationships(path) AS rels, length(path) AS hops
+    RETURN [
+        r IN rels |
+        {{
+            verb_type:               type(r),
+            verb_iri:                r.iri,
+            endpoint:                r.endpoint_url,
+            output_uri:              endNode(r).uri,
+            owner_persona:           r.owner_persona,
+            cost_class:              r.cost_class,
+            requires_human_approval: coalesce(r.requires_human_approval, false),
+            openapi_schema:          r.openapi_schema
+        }}
+    ] AS steps,
+    hops,
+    reduce(t = 0, r IN rels | t + coalesce(r.latency_budget_ms, 0)) AS total_latency_budget_ms
+    ORDER BY hops ASC, total_latency_budget_ms ASC
+    LIMIT 1
+    """
+
+
+@app.post("/find_tool", response_model=FindToolResponse)
+async def find_tool(request: FindToolRequest) -> FindToolResponse:
+    """Resolve a single predicate edge from ``(subject_uri, verb_label)``.
+
+    Returns the cheapest matching edge (by ``cost_class``) -- the supervisor
+    can call this from a request handler without paying any LLM cost.
+    """
+    if not _NEO4J_DRIVER:
+        raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
+
+    def _run() -> dict | None:
+        with _NEO4J_DRIVER.session() as session:
+            record = session.run(
+                _FIND_TOOL_CYPHER,
+                subject_uri=request.subject_uri,
+                verb_label=request.verb_label,
+            ).single()
+            if not record:
+                return None
+            return dict(record)
+
+    try:
+        record = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Neo4j query failed: {e}")
+
+    if not record:
+        return FindToolResponse(
+            found=False,
+            reason=(
+                f"No predicate edge from subject_uri={request.subject_uri!r} "
+                f"matches verb_label={request.verb_label!r}. "
+                f"Either the verb is not registered, the subject concept is not "
+                f"in the graph, or the SDK registration has not yet synced."
+            ),
+        )
+
+    return FindToolResponse(
+        found=True,
+        step=FindToolStep(
+            verb_type=record["verb_type"],
+            verb_iri=record["verb_iri"] or "",
+            endpoint=record["endpoint"] or "",
+            output_uri=record["output_uri"],
+            owner_persona=record["owner_persona"],
+            cost_class=record["cost_class"],
+            requires_human_approval=bool(record["requires_human_approval"]),
+            openapi_schema=record["openapi_schema"],
+        ),
+    )
+
+
+@app.post("/find_path", response_model=FindPathResponse)
+async def find_path(request: FindPathRequest) -> FindPathResponse:
+    """Resolve a multi-step composition from ``start_uri`` to ``end_uri``.
+
+    Returns the shortest path that respects the ``allowed_cost_classes`` and
+    ``exclude_human_approval`` filters, breaking ties by total latency budget.
+    The supervisor walks ``steps`` in order, threading each step's output as
+    the next step's input.
+    """
+    if not _NEO4J_DRIVER:
+        raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
+
+    # Validate ``allowed_cost_classes`` to keep the Cypher parameter clean.
+    invalid = [c for c in request.allowed_cost_classes if c not in _VALID_COST_CLASSES]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid cost class(es) {invalid!r}; "
+                f"allowed: {list(_VALID_COST_CLASSES)}"
+            ),
+        )
+
+    cypher = _build_find_path_cypher(request.max_hops)
+
+    def _run() -> dict | None:
+        with _NEO4J_DRIVER.session() as session:
+            record = session.run(
+                cypher,
+                start_uri=request.start_uri,
+                end_uri=request.end_uri,
+                allowed_cost_classes=request.allowed_cost_classes or list(_VALID_COST_CLASSES),
+                exclude_human_approval=request.exclude_human_approval,
+            ).single()
+            if not record:
+                return None
+            return dict(record)
+
+    try:
+        record = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Neo4j query failed: {e}")
+
+    if not record:
+        return FindPathResponse(
+            found=False,
+            reason=(
+                f"No path from {request.start_uri!r} to {request.end_uri!r} "
+                f"within max_hops={request.max_hops} that respects the "
+                f"cost_class / human_approval filters. Either no composition "
+                f"exists, or the relevant predicate edges have not yet synced."
+            ),
+        )
+
+    steps = [
+        FindToolStep(
+            verb_type=s["verb_type"],
+            verb_iri=s.get("verb_iri") or "",
+            endpoint=s.get("endpoint") or "",
+            output_uri=s["output_uri"],
+            owner_persona=s.get("owner_persona"),
+            cost_class=s.get("cost_class"),
+            requires_human_approval=bool(s.get("requires_human_approval", False)),
+            openapi_schema=s.get("openapi_schema"),
+        )
+        for s in record["steps"]
+    ]
+    return FindPathResponse(
+        found=True,
+        hops=record["hops"],
+        total_latency_budget_ms=record["total_latency_budget_ms"],
+        steps=steps,
+    )
 
 
 # ---------------------------------------------------------------------------
