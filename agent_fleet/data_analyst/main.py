@@ -1,10 +1,19 @@
 import json
 import os
+from contextlib import asynccontextmanager
+
 import duckdb
 import restate
 from fastapi import FastAPI
 from restate import Context, Service
 from smolagents import CodeAgent, tool, LiteLLMModel
+
+# Engine self-registration for the predicate-graph routing layer
+# (iagent ADR-0004 Step D.1). Opt-in via MESH_REGISTER_ON_STARTUP.
+try:
+    from utils.mesh_registration import register_engine_to_mesh
+except ImportError:
+    from agent_fleet.utils.mesh_registration import register_engine_to_mesh
 # Fallback routing for Topaz Authz and Dag Tools
 try:
     from agent_fleet.core.authz import require_topaz_auth_decorator
@@ -25,8 +34,37 @@ except ImportError:
         except ImportError:
             raise
 
+# Engine DA's lifespan registers it as a predicate in the mesh routing graph.
+# Engine DA generates and executes SQL via smolagents over DataHub assets;
+# returns a structured dataset analysis report.
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    register_engine_to_mesh(
+        name="engine_da_data_analyst",
+        description=(
+            "Data analyst agent. smolagents CodeAgent writes SQL against "
+            "DataHub-backed datasets (CortexDataClient + DuckDB) with Topaz "
+            "RLS/CLS enforcement and Restate-durable execution."
+        ),
+        verb="mesh:analyzeDataset",
+        input_uri="mesh:DatasetAnalysisRequest",
+        output_uri="mesh:DatasetAnalysisReport",
+        verb_synonyms=[
+            "analyze data", "run SQL", "query dataset",
+            "data analysis", "sql analysis",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_DA_PUBLIC_URL",
+            "http://data-analyst-svc.default.svc.cluster.local:8089/analyze_data",
+        ),
+        owner_persona="DATA_STEWARD",
+        cost_class="slow",
+    )
+    yield
+
+
 # Initialize FastAPI
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 # Define the Restate Service
 data_analyst_service = Service("DataAnalystService")
