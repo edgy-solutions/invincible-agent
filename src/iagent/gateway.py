@@ -165,8 +165,33 @@ def _sse(event: str, data: str) -> str:
 # Dagster GraphQL Orchestration
 # ══════════════════════════════════════════════════════════
 
-async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PROCESS_ENGINEER", domain: str = "MAINTENANCE", task_plan_json: str = "", user_id: str = "default_testing_user") -> str | None:
-    """Launch the supervisor_query_job on Dagster."""
+async def _launch_supervisor_job(
+    query: str,
+    thread_id: str,
+    persona: str = "PROCESS_ENGINEER",
+    domain: str = "MAINTENANCE",
+    task_plan_json: str = "",
+    user_id: str = "default_testing_user",
+    # Per ADR-0009 Step F'.2: thread user-context fields into the supervisor
+    # so the supervisor's per-subtask predicate lookup (Step F'.3) can scope
+    # by entitled_domains and use user_persona as the answerer fallback when
+    # the matched predicate is persona-agnostic.
+    user_persona: str = "MECHANIC",
+    entitled_domains: list[str] | None = None,
+    candidate_verb: str = "",
+    entity_refs: list[str] | None = None,
+) -> str | None:
+    """Launch the supervisor_query_job on Dagster.
+
+    Per ADR-0009: ``persona``/``domain`` are legacy params kept for the
+    interim until the supervisor's ``execute_subtask`` op (Step F'.3)
+    switches to predicate-graph routing. The new ``user_persona`` /
+    ``entitled_domains`` / ``candidate_verb`` fields are forwarded as new
+    runConfig keys; the legacy ones default to sane values so the existing
+    Dagster ops still validate.
+    """
+    entitled_domains = entitled_domains or []
+    entity_refs = entity_refs or []
     mutation = """
     mutation LaunchSupervisor($repo: String!, $loc: String!, $runConfig: RunConfigData!) {
       launchRun(
@@ -198,47 +223,35 @@ async def _launch_supervisor_job(query: str, thread_id: str, persona: str = "PRO
     }
     """
     
+    # Shared op config — same keys to every op so a Dagster op author can
+    # rely on consistent context regardless of which op they're in.
+    op_config = {
+        "user_query": query,
+        "thread_id": thread_id,
+        "persona": persona,
+        "domain": domain,
+        "task_plan_json": task_plan_json,
+        "user_id": user_id,
+        # ADR-0009 Step F'.2 additions:
+        "user_persona": user_persona,
+        "entitled_domains": entitled_domains,
+        "candidate_verb": candidate_verb,
+        "entity_refs": entity_refs,
+    }
+
     run_config = {
         "ops": {
             "create_task_plan": {
-                "config": {
-                    "user_query": query,
-                    "thread_id": thread_id,
-                    "persona": persona,
-                    "domain": domain,
-                    "task_plan_json": task_plan_json,
-                    "user_id": user_id
-                }
+                "config": dict(op_config)
             },
             "execute_subtask": {
-                "config": {
-                    "user_query": query,
-                    "thread_id": thread_id,
-                    "persona": persona,
-                    "domain": domain,
-                    "task_plan_json": task_plan_json,
-                    "user_id": user_id
-                }
+                "config": dict(op_config)
             },
             "synthesize_stateful": {
-                "config": {
-                    "user_query": query,
-                    "thread_id": thread_id,
-                    "persona": persona,
-                    "domain": domain,
-                    "task_plan_json": task_plan_json,
-                    "user_id": user_id
-                }
+                "config": dict(op_config)
             },
             "generate_ui_payload": {
-                "config": {
-                    "user_query": query,
-                    "thread_id": thread_id,
-                    "persona": persona,
-                    "domain": domain,
-                    "task_plan_json": task_plan_json,
-                    "user_id": user_id
-                }
+                "config": dict(op_config)
             }
         }
     }
@@ -531,25 +544,36 @@ async def _get_ui_payload_output(run_id: str) -> dict:
 
 async def generate_dagster_stream(
     request: InterviewRequest,
-    user_id: str = "default_testing_user"
+    user_id: str = "default_testing_user",
+    # Per ADR-0009 Step F'.2: user persona + entitled_domains come from the
+    # JWT (see auth.User), threaded down from the /orchestrate route so we
+    # don't re-decode the token mid-stream. Defaults match the auth fallback
+    # so legacy callers that haven't been migrated still work.
+    user_persona: str = "MECHANIC",
+    entitled_domains: list[str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Trigger Dagster job and stream step status as Holographic Thinking Cards.
     """
+    entitled_domains = entitled_domains or []
+
     # session_id is now required by InterviewRequest — do NOT mint a fresh
     # UUID here. A per-request UUID gave every duplicate UI submission a
     # different DagsterRunTracker key, so the tracker's dedup never fired
     # and Dagster launched the same job multiple times.
     session_id = request.session_id
     user_query = request.message
-    
+
     yield _sse("status", json.dumps({
         "action": "think",
-        "category": "Process", 
+        "category": "Process",
         "label": "Analyzing intent..."
     }))
 
-    # 0. Check if there is an active Process Creation Interview in Restate
+    # 0. Check if there is an active Process Creation Interview in Restate.
+    # When a session is mid-interview, every subsequent message goes back
+    # to the interview regardless of NL content — the binary mode below
+    # gets forced to CONVERSATIONAL.
     is_interview_active = False
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -562,28 +586,47 @@ async def generate_dagster_stream(
     except Exception as e:
         logger.warning(f"Failed to check Restate status: {e}")
 
+    # ADR-0009 Step F'.2: replace 3-axis classifier with verb-extractor.
+    # `mode` is the binary discriminator; `candidate_verb` + `entity_refs`
+    # feed the supervisor's predicate-graph lookup (Step F'.3).
+    mode: str
+    candidate_verb: str = ""
+    entity_refs: list[str] = []
+    intent_extraction: dict = {}
+
     if is_interview_active:
-        intent = "PROCESS_CREATION"
-        decision = {}
+        mode = "CONVERSATIONAL"
     else:
-        # 1. Call Engine O to get the Intent
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
-                    f"{_DAGSONTOLOGY_SVC_URL}/route_and_plan",
-                    json={"query": user_query}
+                    f"{_DAGSONTOLOGY_SVC_URL}/route_intent",
+                    json={
+                        "query": user_query,
+                        "user_persona": user_persona,
+                        "entitled_domains": entitled_domains,
+                    }
                 )
                 resp.raise_for_status()
-                decision = resp.json()
+                intent_extraction = resp.json()
         except Exception as exc:
-            logger.error("Failed to route query: %s", exc)
+            logger.error("Failed to extract intent: %s", exc)
             yield _sse("status", json.dumps({"action": "error", "label": "Failed to determine execution intent."}))
             yield _sse("stream_end", "{}")
             return
 
-        intent = decision.get("intent")
-        domain = decision.get("domain", "MAINTENANCE")
-    
+        mode = intent_extraction.get("mode", "ONE_SHOT")
+        candidate_verb = intent_extraction.get("candidate_verb", "")
+        entity_refs = list(intent_extraction.get("entity_refs", []))
+
+    # Legacy 3-axis fields are no longer derived by Engine O. They survive
+    # only as Dagster runConfig keys until Step F'.3 deletes the
+    # supervisor's `if domain ==` switch and the supervisor stops needing
+    # them. We pass sane defaults so the runConfig schema still validates.
+    decision = intent_extraction  # kept for any downstream inspection
+    intent = "PROCESS_CREATION" if mode == "CONVERSATIONAL" else "ONE_SHOT"
+    domain = "MAINTENANCE"  # legacy default; supervisor will route by predicate
+
     if intent == "PROCESS_CREATION":
         # 🔵 THE INTERVIEW PATH (RESTATE)
         yield _sse("status", json.dumps({"action": "think", "category": "Process", "label": "Process Engineer is reviewing requirements..."}))
@@ -661,16 +704,28 @@ async def generate_dagster_stream(
         "label": "Engine O Planning Complete..."
     }))
 
-    # 2. Extract Task Plan if it exists to pass to Dagster (avoids "Two Brains" discrepancy)
-    task_plan = decision.get("task_plan")
-    task_plan_json = json.dumps(task_plan) if task_plan else ""
-    
+    # Per ADR-0009 Step F'.2: /route_intent does not produce a task_plan
+    # anymore — the supervisor's `create_task_plan` op asks Engine O's /plan
+    # endpoint itself when task_plan_json is empty. Step F'.3 will switch
+    # that decomposition path to be predicate-aware too.
+    task_plan_json = ""
+
     yield _sse("status", json.dumps({
         "action": "think",
-        "category": "Concept", 
+        "category": "Concept",
         "label": f"Triggering Supervisor Job for thread {session_id[:8]}..."
     }))
-    run_id = await _launch_supervisor_job(user_query, session_id, domain=domain, task_plan_json=task_plan_json, user_id=user_id)
+    run_id = await _launch_supervisor_job(
+        user_query,
+        session_id,
+        domain=domain,
+        task_plan_json=task_plan_json,
+        user_id=user_id,
+        user_persona=user_persona,
+        entitled_domains=entitled_domains,
+        candidate_verb=candidate_verb,
+        entity_refs=entity_refs,
+    )
     if not run_id:
         yield _sse("status", json.dumps({"action": "error", "label": "Failed to trigger Dagster job."}))
         yield _sse("stream_end", "{}")
@@ -806,9 +861,17 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
     Entry point for the Agentic Mesh.
     Delegates to Dagster GraphQL and streams step stats as SSE events
     to power Holographic Thinking Cards. Emits final payload when done.
+
+    Per ADR-0009 Step F'.2: user_persona + entitled_domains come from the
+    auth-resolved User and flow downstream to the supervisor + engines.
     """
     return StreamingResponse(
-        generate_dagster_stream(request, user_id=current_user.id),
+        generate_dagster_stream(
+            request,
+            user_id=current_user.id,
+            user_persona=current_user.persona,
+            entitled_domains=current_user.entitled_domains,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
