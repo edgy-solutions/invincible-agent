@@ -67,3 +67,7 @@ the decision probably isn't ADR-worthy — it's permanent.
 | [0001](ADR-0001-mem0-llm-decouple.md) | Decouple mem0's internal LLM from the agent reasoning LLM | Accepted |
 | [0002](ADR-0002-mem0-monkeypatches.md) | Carry two upstream-mem0 monkey-patches in `utils/mem0_utils.py` | Accepted |
 | [0003](ADR-0003-llm-rightsizing.md) | Right-size LLMs per workload class on the agent mesh | Accepted |
+| [0004](ADR-0004-predicate-graph-routing.md) | Predicate-graph routing for the agent mesh (SPO/verb model) | Accepted |
+| 0005 | Verb namespace convention | TBD (deferred from ADR-0004) |
+| 0006 | Canonical verb registry location (DataHub vs Neo4j authority) | TBD (deferred from ADR-0004) |
+| 0007 | System-level concepts for compound workflows | TBD (deferred from ADR-0004) |
