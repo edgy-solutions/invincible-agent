@@ -20,7 +20,7 @@ $ pnpm add @boundaryml/baml
 
 import type { Image, Audio, Pdf, Video } from "@boundaryml/baml"
 import type { Checked, Check } from "./types"
-import type {  AgentResponse,  AgentStatus,  AgentTask,  AgentTaskDefinition,  AnomalyNode,  AuditResponse,  AuthoringResponse,  BPMNEdge,  BPMNInterviewState,  BPMNNode,  BPMNNodeType,  ChartType,  ChartUI,  DashboardUI,  DataStewardResponse,  DigitalTwinUI,  DocumentUI,  Domain,  FinalSynthesis,  GraphExpertResponse,  HazardUI,  Intent,  KnowledgeResponse,  LogisticsResponse,  MechanicResponse,  MeshRoutingDecision,  MetricUI,  MoodType,  OntologyClass,  PersonaTarget,  SemanticArchetype,  SemanticResolution,  SeverityLevel,  SupervisorTaskPlan,  TableClassificationResult,  TopologyUI,  UIEntity,  UIRelation } from "./types"
+import type {  AgentResponse,  AgentStatus,  AgentTask,  AgentTaskDefinition,  AnomalyNode,  AuditResponse,  AuthoringResponse,  BPMNEdge,  BPMNInterviewState,  BPMNNode,  BPMNNodeType,  ChartType,  ChartUI,  DashboardUI,  DataStewardResponse,  DigitalTwinUI,  DocumentUI,  Domain,  ExtractedIntent,  FinalSynthesis,  GraphExpertResponse,  HazardUI,  Intent,  KnowledgeResponse,  LogisticsResponse,  MechanicResponse,  MeshRoutingDecision,  MetricUI,  Mode,  MoodType,  OntologyClass,  PersonaTarget,  SemanticArchetype,  SemanticResolution,  SeverityLevel,  SupervisorTaskPlan,  TableClassificationResult,  TopologyUI,  UIEntity,  UIRelation } from "./types"
 import type * as types from "./types"
 
 /******************************************************************************
@@ -127,6 +127,13 @@ export namespace partial_types {
       source_persona?: string | null
       subject_concept?: string | null
       markdown_content?: string | null
+    }
+    export interface ExtractedIntent {
+      mode?: types.Mode | null
+      candidate_verb?: string | null
+      entity_refs: string[]
+      confidence?: number | null
+      reasoning?: string | null
     }
     export interface FinalSynthesis {
       markdown_report?: string | null

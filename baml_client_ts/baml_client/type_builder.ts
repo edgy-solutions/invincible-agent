@@ -55,6 +55,8 @@ export default class TypeBuilder {
     
     DocumentUI: ClassViewer<'DocumentUI', "archetype" | "source_persona" | "subject_concept" | "markdown_content">;
     
+    ExtractedIntent: ClassViewer<'ExtractedIntent', "mode" | "candidate_verb" | "entity_refs" | "confidence" | "reasoning">;
+    
     FinalSynthesis: ClassViewer<'FinalSynthesis', "markdown_report">;
     
     GraphExpertResponse: ClassViewer<'GraphExpertResponse', "confidence_score" | "referenced_uris" | "data" | "execution_trace">;
@@ -94,6 +96,8 @@ export default class TypeBuilder {
     
     Intent: EnumBuilder<'Intent'>;
     
+    Mode: EnumViewer<'Mode', "ONE_SHOT" | "CONVERSATIONAL">;
+    
     MoodType: EnumViewer<'MoodType', "ROUTINE" | "URGENT" | "SUCCESS" | "STRATEGIC" | "EDUCATIONAL">;
     
     OntologyClass: EnumBuilder<'OntologyClass'>;
@@ -108,10 +112,10 @@ export default class TypeBuilder {
     constructor() {
         this.tb = new _TypeBuilder({
           classes: new Set([
-            "AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",
+            "AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",
           ]),
           enums: new Set([
-            "AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",
+            "AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",
           ]),
           runtime: DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME
         });
@@ -170,6 +174,10 @@ export default class TypeBuilder {
         
         this.DocumentUI = this.tb.classViewer("DocumentUI", [
           "archetype","source_persona","subject_concept","markdown_content",
+        ]);
+        
+        this.ExtractedIntent = this.tb.classViewer("ExtractedIntent", [
+          "mode","candidate_verb","entity_refs","confidence","reasoning",
         ]);
         
         this.FinalSynthesis = this.tb.classViewer("FinalSynthesis", [
@@ -247,6 +255,10 @@ export default class TypeBuilder {
         
         this.Intent = this.tb.enumBuilder("Intent", [
           
+        ]);
+        
+        this.Mode = this.tb.enumViewer("Mode", [
+          "ONE_SHOT","CONVERSATIONAL",
         ]);
         
         this.MoodType = this.tb.enumViewer("MoodType", [

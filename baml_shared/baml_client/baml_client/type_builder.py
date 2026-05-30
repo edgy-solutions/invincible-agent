@@ -20,13 +20,13 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 10
+    # Generated enums 11
     # #########################################################################
 
     @property
@@ -50,6 +50,10 @@ class TypeBuilder(type_builder.TypeBuilder):
         return IntentBuilder(self)
 
     @property
+    def Mode(self) -> "ModeViewer":
+        return ModeViewer(self)
+
+    @property
     def MoodType(self) -> "MoodTypeViewer":
         return MoodTypeViewer(self)
 
@@ -71,7 +75,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 28
+    # Generated classes 29
     # #########################################################################
 
     @property
@@ -129,6 +133,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def DocumentUI(self) -> "DocumentUIViewer":
         return DocumentUIViewer(self)
+
+    @property
+    def ExtractedIntent(self) -> "ExtractedIntentViewer":
+        return ExtractedIntentViewer(self)
 
     @property
     def FinalSynthesis(self) -> "FinalSynthesisViewer":
@@ -189,7 +197,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 10
+# Generated enums 11
 # #########################################################################
 
 class AgentStatusAst:
@@ -422,6 +430,48 @@ class IntentValues:
             raise AttributeError(f"Value {name} not found.")
         return self.__bldr.value(name)
 
+    
+    
+
+
+class ModeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("Mode")
+        self._values: typing.Set[str] = set([  "ONE_SHOT",  "CONVERSATIONAL",  ])
+        self._vals = ModeValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "ModeValues":
+        return self._vals
+
+
+class ModeViewer(ModeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class ModeValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def ONE_SHOT(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("ONE_SHOT"))
+    
+    @property
+    def CONVERSATIONAL(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("CONVERSATIONAL"))
     
     
 
@@ -674,7 +724,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 28
+# Generated classes 29
 # #########################################################################
 
 class AgentResponseAst:
@@ -1383,6 +1433,61 @@ class DocumentUIProperties:
     @property
     def markdown_content(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("markdown_content"))
+    
+    
+
+
+class ExtractedIntentAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ExtractedIntent")
+        self._properties: typing.Set[str] = set([  "mode",  "candidate_verb",  "entity_refs",  "confidence",  "reasoning",  ])
+        self._props = ExtractedIntentProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ExtractedIntentProperties":
+        return self._props
+
+
+class ExtractedIntentViewer(ExtractedIntentAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ExtractedIntentProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def mode(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("mode"))
+    
+    @property
+    def candidate_verb(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("candidate_verb"))
+    
+    @property
+    def entity_refs(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("entity_refs"))
+    
+    @property
+    def confidence(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("confidence"))
+    
+    @property
+    def reasoning(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
     
     
 

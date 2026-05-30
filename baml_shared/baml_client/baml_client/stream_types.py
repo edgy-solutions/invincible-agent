@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (28)
+# Generated classes (29)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -113,6 +113,13 @@ class DocumentUI(BaseModel):
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
     subject_concept: typing.Optional[str] = None
     markdown_content: typing.Optional[str] = None
+
+class ExtractedIntent(BaseModel):
+    mode: typing.Optional[types.Mode] = None
+    candidate_verb: typing.Optional[str] = Field(default=None, description='A short verb or verb-phrase capturing what the user wants done (e.g., \'diagnose\', \'find part\', \'summarize policy\', \'build workflow\'). The supervisor matches this against r.iri and r.synonyms in the predicate graph.')
+    entity_refs: typing.List[str] = Field(description='Concrete entities, parts, systems, datasets the user mentioned (e.g., \'Auxiliary Fuel Pump\', \'C-130 hydraulic system\'). Empty if the query has no specific referents.')
+    confidence: typing.Optional[float] = Field(default=None, description='Confidence in the verb extraction and mode choice.')
+    reasoning: typing.Optional[str] = Field(default=None, description='Why this verb and mode — for observability and debugging.')
 
 class FinalSynthesis(BaseModel):
     markdown_report: typing.Optional[str] = None

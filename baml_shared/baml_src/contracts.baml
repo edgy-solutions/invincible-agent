@@ -301,6 +301,58 @@ function RouteAndPlan(user_query: string) -> MeshRoutingDecision {
 }
 
 // =============================================================================
+// Phase 4 (ADR-0009 Step F'): Mesh Intent Extraction (verb + mode)
+// =============================================================================
+//
+// RouteAndPlan above is the legacy 3-axis classifier — slated for deletion
+// once gateway + supervisor migrate. ExtractIntent is its replacement: a
+// verb-extractor + mode discriminator that feeds Engine O's /find_tool
+// (for one_shot mode) or the conversational subgraph (BPMN interviewer,
+// future conversational engines). No hardcoded enums beyond Mode itself,
+// which IS the binary intent discriminator per ADR-0009.
+
+enum Mode {
+  ONE_SHOT @description("User wants the mesh to execute work and return a deterministic result (find, diagnose, summarize, query, analyze).")
+  CONVERSATIONAL @description("User wants a multi-turn dialog — BPMN interview, troubleshooting walkthrough, collaborative authoring, or any other interaction that requires back-and-forth before producing the artifact.")
+}
+
+class ExtractedIntent {
+  mode Mode
+  candidate_verb string @description("A short verb or verb-phrase capturing what the user wants done (e.g., 'diagnose', 'find part', 'summarize policy', 'build workflow'). The supervisor matches this against r.iri and r.synonyms in the predicate graph.")
+  entity_refs string[] @description("Concrete entities, parts, systems, datasets the user mentioned (e.g., 'Auxiliary Fuel Pump', 'C-130 hydraulic system'). Empty if the query has no specific referents.")
+  confidence float @description("Confidence in the verb extraction and mode choice.")
+  reasoning string @description("Why this verb and mode — for observability and debugging.")
+}
+
+function ExtractIntent(user_query: string) -> ExtractedIntent {
+  client MainAgent
+  prompt #"
+    Analyze the user's query and extract a routable intent for the iagent mesh.
+
+    Decide MODE first:
+    - mode = CONVERSATIONAL when the user is starting or continuing a multi-turn
+      interaction (e.g., "help me design a workflow", "walk me through the fix",
+      "build a process that..."). These are dialogs, not one-shot lookups.
+    - mode = ONE_SHOT for everything else: diagnose, find, look up, summarize,
+      analyze, query, retrieve. The user wants a deterministic result, not a chat.
+
+    Then extract:
+    - candidate_verb: the short verb-phrase that captures what they want done.
+      Examples: "diagnose", "find part", "summarize policy", "query graph",
+      "analyze dataset", "build workflow", "design process". Prefer common
+      verbs — the supervisor matches against a synonym list, so plain English
+      ("find", "summarize") beats jargon.
+    - entity_refs: concrete nouns the query mentions — parts, systems,
+      datasets, document names. Empty list if none.
+
+    User Query:
+    {{ user_query }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+// =============================================================================
 // Engine W (Weaviate Semantic Expert) Data Contracts
 // =============================================================================
 

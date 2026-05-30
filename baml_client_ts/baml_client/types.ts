@@ -76,6 +76,11 @@ export enum Domain {
 export enum Intent {
 }
 
+export enum Mode {
+  ONE_SHOT = "ONE_SHOT",
+  CONVERSATIONAL = "CONVERSATIONAL",
+}
+
 /**
  * The visual tone or mood to pass to the frontend
  */
@@ -228,6 +233,15 @@ export interface DocumentUI {
   source_persona?: string | null
   subject_concept?: string | null
   markdown_content: string
+  
+}
+
+export interface ExtractedIntent {
+  mode: Mode
+  candidate_verb: string
+  entity_refs: string[]
+  confidence: number
+  reasoning: string
   
 }
 

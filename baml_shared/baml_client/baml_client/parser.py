@@ -47,6 +47,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DesignUI", llm_response=llm_response, mode="request")
         return typing.cast(types.DashboardUI, __result__)
 
+    def ExtractIntent(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.ExtractedIntent:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractIntent", llm_response=llm_response, mode="request")
+        return typing.cast(types.ExtractedIntent, __result__)
+
     def FormatGraphResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
@@ -109,6 +115,12 @@ class LlmStreamParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="DesignUI", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.DashboardUI, __result__)
 
+    def ExtractIntent(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.ExtractedIntent:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="ExtractIntent", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.ExtractedIntent, __result__)
+
     def FormatGraphResponse(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> stream_types.GraphExpertResponse:
@@ -139,4 +151,4 @@ class LlmStreamParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeReports", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.FinalSynthesis, __result__)
 
-    
+    

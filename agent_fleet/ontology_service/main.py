@@ -333,6 +333,41 @@ class RouteAndPlanRequest(BaseModel):
     domain: str | None = None
 
 
+class RouteIntentRequest(BaseModel):
+    """Incoming request to the /route_intent endpoint (ADR-0009 Step F').
+
+    Carries the user's natural-language query and (optionally) the caller's
+    entitled domains so the supervisor can scope the downstream /find_tool
+    match. ``user_persona`` is informational — the predicate's
+    ``owner_persona`` drives answerer-persona selection; user_persona is
+    the fallback when the matched predicate is persona-agnostic.
+    """
+    query: str
+    user_persona: str | None = None
+    entitled_domains: list[str] = []
+
+
+class RouteIntentResponse(BaseModel):
+    """Output of /route_intent — what the gateway uses to route.
+
+    The shape is deliberately the verb-extractor output, not a 3-axis
+    classification. Per ADR-0009:
+      * ``mode`` is the binary routing discriminator.
+      * ``candidate_verb`` feeds the supervisor's predicate lookup.
+      * ``entity_refs`` are the concrete nouns the supervisor passes
+        through /resolve before /find_tool.
+      * ``user_persona`` / ``entitled_domains`` are echoed back so the
+        gateway can thread them to the engine without re-deriving.
+    """
+    mode: str  # "ONE_SHOT" | "CONVERSATIONAL"
+    candidate_verb: str
+    entity_refs: list[str]
+    confidence: float
+    reasoning: str
+    user_persona: str | None = None
+    entitled_domains: list[str] = []
+
+
 class PlanRequest(BaseModel):
     """Incoming request to the /plan endpoint."""
     query: str
@@ -399,6 +434,41 @@ class FindToolStep(BaseModel):
     cost_class: str | None = None
     requires_human_approval: bool = False
     openapi_schema: str | None = None
+
+
+class SearchPredicatesRequest(BaseModel):
+    """ADR-0009 Step F': verb-only predicate lookup with domain scoping.
+
+    ``verb_label`` matches against ``type(r)`` / ``r.iri`` / ``r.synonyms``;
+    ``entitled_domains`` (caller's JWT-derived scope) filters the result so
+    a user only sees predicates served by engines registered for their
+    domains. An empty entitled_domains list is treated as "no scope filter"
+    so unscoped callers (admin, system) still get every match.
+    """
+    verb_label: str = Field(..., description="Verb to match — IRI, relationship type, or synonym")
+    entitled_domains: list[str] = Field(default_factory=list, description="Caller's entitled domain scopes")
+    limit: int = Field(10, ge=1, le=50)
+
+
+class PredicateCandidate(BaseModel):
+    """One row of a /search_predicates result — includes subject_uri so the
+    supervisor knows what concept this predicate operates over."""
+    subject_uri: str
+    verb_type: str
+    verb_iri: str
+    endpoint: str
+    output_uri: str
+    owner_persona: str | None = None
+    domains: list[str] = Field(default_factory=list)
+    cost_class: str | None = None
+    requires_human_approval: bool = False
+    openapi_schema: str | None = None
+
+
+class SearchPredicatesResponse(BaseModel):
+    found: bool
+    candidates: list[PredicateCandidate] = Field(default_factory=list)
+    reason: str | None = None
 
 
 class FindToolResponse(BaseModel):
@@ -590,6 +660,41 @@ LIMIT 1
 """
 
 
+#: Subject-free predicate search used by the supervisor after ExtractIntent
+#: (ADR-0009 Step F'). Matches against verb_type / r.iri / r.synonyms and
+#: filters by domain scope when the caller supplies their entitled_domains.
+#:
+#: Scope filter semantics:
+#:   - empty `$entitled_domains` → no scope filter (admin / unscoped caller)
+#:   - non-empty → predicate is kept iff `r.domains` is empty (domain-agnostic
+#:     predicate) OR shares at least one entry with `$entitled_domains`.
+_SEARCH_PREDICATES_CYPHER = """
+MATCH (s:OntologyClass)-[r]->(o:OntologyClass)
+WHERE (type(r) = $verb_label
+       OR r.iri = $verb_label
+       OR $verb_label IN coalesce(r.synonyms, []))
+  AND (size($entitled_domains) = 0
+       OR coalesce(r.domains, []) = []
+       OR any(d IN coalesce(r.domains, []) WHERE d IN $entitled_domains))
+RETURN s.uri                     AS subject_uri,
+       type(r)                   AS verb_type,
+       r.iri                     AS verb_iri,
+       r.endpoint_url            AS endpoint,
+       o.uri                     AS output_uri,
+       r.owner_persona           AS owner_persona,
+       coalesce(r.domains, [])   AS domains,
+       r.cost_class              AS cost_class,
+       coalesce(r.requires_human_approval, false) AS requires_human_approval,
+       r.openapi_schema          AS openapi_schema
+ORDER BY CASE coalesce(r.cost_class, 'slow')
+              WHEN 'fast' THEN 0
+              WHEN 'medium' THEN 1
+              ELSE 2
+         END
+LIMIT $limit
+"""
+
+
 def _build_find_path_cypher(max_hops: int) -> str:
     """Build the variable-length-path Cypher with the validated ``max_hops``
     interpolated. Cypher does not let the hop range be a parameter; we
@@ -672,6 +777,75 @@ async def find_tool(request: FindToolRequest) -> FindToolResponse:
             requires_human_approval=bool(record["requires_human_approval"]),
             openapi_schema=record["openapi_schema"],
         ),
+    )
+
+
+@app.post("/search_predicates", response_model=SearchPredicatesResponse)
+async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicatesResponse:
+    """ADR-0009 Step F': subject-free predicate lookup with scope filtering.
+
+    Used by the supervisor after ExtractIntent: given a candidate verb-phrase
+    and the caller's entitled domains, return the candidate predicates the
+    user is allowed to invoke. The supervisor picks one (cheapest match) or
+    iterates if /resolve is needed to ground entity_refs to a specific
+    subject_uri.
+
+    Domain-scope semantics (mirrors the Cypher):
+      * Empty entitled_domains → no scope filter (unscoped caller).
+      * Domain-agnostic predicates (``r.domains == []``) are always allowed.
+      * Domain-scoped predicates require at least one shared entry with the
+        caller's entitled_domains.
+    """
+    if not _NEO4J_DRIVER:
+        raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
+
+    # Defensive: caller-supplied domains arrive uppercase from the auth
+    # layer but we normalize again so a mis-cased POST still scopes.
+    entitled = [d.upper() for d in (request.entitled_domains or [])]
+
+    def _run() -> list[dict]:
+        with _NEO4J_DRIVER.session() as session:
+            result = session.run(
+                _SEARCH_PREDICATES_CYPHER,
+                verb_label=request.verb_label,
+                entitled_domains=entitled,
+                limit=request.limit,
+            )
+            return [dict(record) for record in result]
+
+    try:
+        records = await asyncio.to_thread(_run)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Neo4j query failed: {e}")
+
+    if not records:
+        return SearchPredicatesResponse(
+            found=False,
+            reason=(
+                f"No predicate matches verb_label={request.verb_label!r} "
+                f"under entitled_domains={entitled}. Either the verb is not "
+                f"registered, no synonym matches, or no domain-scoped engine "
+                f"serves it for this caller."
+            ),
+        )
+
+    return SearchPredicatesResponse(
+        found=True,
+        candidates=[
+            PredicateCandidate(
+                subject_uri=r["subject_uri"],
+                verb_type=r["verb_type"],
+                verb_iri=r["verb_iri"] or "",
+                endpoint=r["endpoint"] or "",
+                output_uri=r["output_uri"],
+                owner_persona=r["owner_persona"],
+                domains=list(r.get("domains") or []),
+                cost_class=r["cost_class"],
+                requires_human_approval=bool(r["requires_human_approval"]),
+                openapi_schema=r["openapi_schema"],
+            )
+            for r in records
+        ],
     )
 
 
@@ -841,6 +1015,37 @@ async def plan_query(request: PlanRequest) -> dict:
 # ---------------------------------------------------------------------------
 # POST /route_and_plan
 # ---------------------------------------------------------------------------
+@app.post("/route_intent", response_model=RouteIntentResponse)
+async def route_intent(request: RouteIntentRequest) -> RouteIntentResponse:
+    """ADR-0009 Step F': verb-extractor + mode discriminator.
+
+    Replaces /route_and_plan's 3-axis classifier. No hardcoded enums beyond
+    the binary ``mode``; the candidate_verb feeds the supervisor's
+    predicate-graph lookup against r.iri and r.synonyms; entity_refs feed
+    /resolve when the supervisor needs to ground them to ontology URIs.
+
+    Behavior is deliberately stateless and side-effect-free — the gateway
+    can call this on every request without worrying about ordering.
+    """
+    try:
+        intent = await b.ExtractIntent(user_query=request.query)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"BAML ExtractIntent failed: {exc}",
+        ) from exc
+
+    return RouteIntentResponse(
+        mode=intent.mode.value if hasattr(intent.mode, "value") else str(intent.mode),
+        candidate_verb=intent.candidate_verb,
+        entity_refs=list(intent.entity_refs or []),
+        confidence=float(intent.confidence),
+        reasoning=intent.reasoning,
+        user_persona=request.user_persona,
+        entitled_domains=request.entitled_domains,
+    )
+
+
 @app.post("/route_and_plan")
 async def route_and_plan(request: RouteAndPlanRequest) -> dict:
     """

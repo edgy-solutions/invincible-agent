@@ -58,6 +58,9 @@ type_map = {
     "types.DocumentUI": types.DocumentUI,
     "stream_types.DocumentUI": stream_types.DocumentUI,
 
+    "types.ExtractedIntent": types.ExtractedIntent,
+    "stream_types.ExtractedIntent": stream_types.ExtractedIntent,
+
     "types.FinalSynthesis": types.FinalSynthesis,
     "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
 
@@ -110,6 +113,8 @@ type_map = {
     "types.Domain": types.Domain,
 
     "types.Intent": types.Intent,
+
+    "types.Mode": types.Mode,
 
     "types.MoodType": types.MoodType,
 
