@@ -163,6 +163,81 @@ routing primitive. The replacements:
   unchanged (still Accepted) — this ADR builds on it; the original
   "Step E / Step F" plan was an interim sketch that this ADR refines.
 
+## Cortex-UI consequences
+
+A wire-contract audit of [cortex-ui](../../../cortex-ui) against the
+ADR-0009 implementation (commits `24ba480` through `1605190`) confirms
+**no breaking changes at the wire boundary**. The UI was written
+defensively — no hardcoded `"PROCESS_CREATION"` / `"DATA_ENGINEERING"`
+/ mode literals, no `task_plan` / `sub_query` references, no JWT
+claim introspection. The switch from `intent` to `mode`, the deletion
+of the `if domain ==` switch, and the persona split are all invisible
+to the UI.
+
+What still works unchanged:
+
+- **SSE event types** (`status`, `context_update`, `chat_message`,
+  `ui_payload`, `final_payload`, `stream_end`) and their payload
+  shapes — gateway emits the same shapes after this ADR.
+- **`/mesh/config` response shape** (`{personas: {NAME: {label, icon,
+  color, bg}}, status}`) — we kept the shape; only the *source*
+  changed from the hardcoded `MASTER_PERSONAS` dict to the graph
+  view-function.
+- **`comp.source_persona` on UI components** — Engine F still sets
+  it, the canvas attribution badges in
+  [`SemanticInterpreter.tsx`](../../../cortex-ui/src/components/registry/SemanticInterpreter.tsx)
+  still read it.
+- **BPMN compile flow** (`/workflow/compile` and `CompileRequest`) —
+  not touched.
+- **JWT consumption** — UI only reads `access_token` for Bearer auth;
+  `persona` and `entitled_domains` are backend-internal so adding
+  them to the JWT (or not, falling back to defaults per this ADR)
+  doesn't surface to the UI.
+
+Three subtle behavior shifts the UI may notice — all expected, none
+breaking:
+
+1. **The persona roster the UI shows may be smaller.** Old
+   `/mesh/config` always returned all six hardcoded personas; new
+   `/mesh/config` returns only personas that *own a registered
+   predicate*. With the current engine set (A→DATA_STEWARD,
+   E→AUDITOR, DA→DATA_STEWARD, W→TECH_WRITER) that's three distinct
+   personas. The remaining three appear when an engine registers
+   with them as `owner_persona`. This is the right behavior per the
+   ADR's "registry is the source of truth" stance, and it's
+   self-consistent: `DecomposeQuery` only generates subtasks for
+   *registered* personas (it reads them from the same view-function),
+   so the UI never gets a `personas` array referencing a persona
+   `/mesh/config` doesn't know about.
+
+2. **The supervisor's fallback path (ADR-0008) is invisible at the
+   structured-event level.** When ADR-0008's Engine A generalist
+   fallback fires, the UI receives normal `ui_payload` and
+   `chat_message` events. The fallback signal is in the *chat
+   content* — Engine A's preamble says "I am operating as a
+   generalist because …" — but no SSE event carries a `fallback_fired`
+   flag the UI could use to render a visual badge. Acceptable for v1;
+   the gateway can emit a `status` event with `action="fallback_fired"`
+   in a later UI-affordance pass if needed.
+
+3. **The `personas` list in the `active_agent_roster` materialization
+   reflects `DecomposeQuery`'s plan, not the actual answerer.** Engine
+   selection happens at `execute_subtask` time via `/search_predicates`;
+   the predicate's `owner_persona` may differ from the
+   `target_persona` Engine O's `DecomposeQuery` assigned. The UI's
+   "active personas" chips are a *planning hint*, not ground truth.
+   This pre-dates ADR-0009 — the old `if domain ==` switch had the
+   same divergence — and is not made worse by this ADR.
+
+One UI-side cache consideration worth flagging (not blocking): the
+`/mesh/config` fetch in
+[`AgentTeamLoader.tsx`](../../../cortex-ui/src/components/NeuralStream/AgentTeamLoader.tsx)
+is a one-shot on mount. If the registry adds an engine mid-session,
+the UI's `personaConfig` is stale until reload. Today the registry
+rarely changes mid-session so this is a non-issue, but with predicate-
+graph routing live and DataHub-fed it's a known limit. Easy fix when
+relevant: `refetchInterval` on the React Query.
+
 ## Alternatives considered
 
 - **Keep the three-axis classifier and just dynamic-source the enums
