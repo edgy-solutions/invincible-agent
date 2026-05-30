@@ -350,17 +350,20 @@ class RouteIntentRequest(BaseModel):
 class RouteIntentResponse(BaseModel):
     """Output of /route_intent — what the gateway uses to route.
 
-    The shape is deliberately the verb-extractor output, not a 3-axis
-    classification. Per ADR-0009:
-      * ``mode`` is the binary routing discriminator.
-      * ``candidate_verb`` feeds the supervisor's predicate lookup.
-      * ``entity_refs`` are the concrete nouns the supervisor passes
-        through /resolve before /find_tool.
-      * ``user_persona`` / ``entitled_domains`` are echoed back so the
-        gateway can thread them to the engine without re-deriving.
+    Per ADR-0009 Step F'.6 ``candidate_verb`` is gone — Engine O's
+    /search_predicates runs Weaviate hybrid over the raw user query
+    directly, so an LLM-extracted verb is a lossy intermediate step. The
+    remaining LLM-derived fields are:
+
+      * ``mode`` — binary routing discriminator (conversational vs
+        one-shot). Real LLM judgment about intent shape.
+      * ``entity_refs`` — concrete nouns for the supervisor's /resolve
+        call when grounding subjects/objects to ontology URIs.
+
+    ``user_persona`` and ``entitled_domains`` are echoed back so the
+    gateway can thread them to the supervisor without re-decoding the JWT.
     """
     mode: str  # "ONE_SHOT" | "CONVERSATIONAL"
-    candidate_verb: str
     entity_refs: list[str]
     confidence: float
     reasoning: str
@@ -437,22 +440,39 @@ class FindToolStep(BaseModel):
 
 
 class SearchPredicatesRequest(BaseModel):
-    """ADR-0009 Step F': verb-only predicate lookup with domain scoping.
+    """ADR-0009 Step F'.6: NL-driven predicate lookup with domain scoping.
 
-    ``verb_label`` matches against ``type(r)`` / ``r.iri`` / ``r.synonyms``;
-    ``entitled_domains`` (caller's JWT-derived scope) filters the result so
-    a user only sees predicates served by engines registered for their
-    domains. An empty entitled_domains list is treated as "no scope filter"
-    so unscoped callers (admin, system) still get every match.
+    Either ``query`` (natural-language phrasing) or ``verb_label`` (exact
+    string match) MUST be provided.
+
+      * ``query`` is the user's NL text. Weaviate hybrid search ranks
+        candidate predicates by semantic + BM25 similarity to the
+        ``Predicate.search_text`` blob (verb form + synonyms + description).
+        This is the primary path post-F'.6 — it tolerates phrasing /
+        tense / plural variations the synonym list can't enumerate.
+      * ``verb_label`` is the legacy Cypher exact-match fallback for
+        callers that have already resolved a verb token (e.g. tests, or
+        explicit "verb_iri:foo" routing). Used unconditionally when
+        Weaviate is unavailable or returns no hits.
+
+    ``entitled_domains`` filters at both layers (Weaviate post-filter and
+    Cypher WHERE clause). An empty list means "no scope filter applied".
     """
-    verb_label: str = Field(..., description="Verb to match — IRI, relationship type, or synonym")
+    query: str | None = Field(None, description="NL phrasing — drives Weaviate hybrid search")
+    verb_label: str | None = Field(None, description="Exact verb token — Cypher fallback / legacy callers")
     entitled_domains: list[str] = Field(default_factory=list, description="Caller's entitled domain scopes")
     limit: int = Field(10, ge=1, le=50)
 
 
 class PredicateCandidate(BaseModel):
     """One row of a /search_predicates result — includes subject_uri so the
-    supervisor knows what concept this predicate operates over."""
+    supervisor knows what concept this predicate operates over.
+
+    ``score`` is the Weaviate hybrid score (0..1+) when the result came
+    from vector search; ``None`` when it came from the Cypher fallback
+    (the supervisor treats ``None`` as "no semantic ranking available —
+    rely on cost_class ordering").
+    """
     subject_uri: str
     verb_type: str
     verb_iri: str
@@ -463,6 +483,8 @@ class PredicateCandidate(BaseModel):
     cost_class: str | None = None
     requires_human_approval: bool = False
     openapi_schema: str | None = None
+    score: float | None = Field(None, description="Weaviate hybrid score; None for Cypher-fallback matches")
+    source: str = Field("weaviate", description="Which path produced this candidate — 'weaviate' or 'cypher_fallback'")
 
 
 class SearchPredicatesResponse(BaseModel):
@@ -528,6 +550,98 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
 async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> list[dict]:
     """Async wrapper that runs the blocking hybrid search on a worker thread."""
     return await asyncio.to_thread(_weaviate_hybrid_search_sync, query, domain, limit)
+
+
+# ---------------------------------------------------------------------------
+# Predicate hybrid search (ADR-0009 Step F'.6)
+# ---------------------------------------------------------------------------
+#: Name of the Weaviate collection where doc-tools mirrors registered
+#: predicates. Created by doc-tools' AITool sync on first registration.
+_PREDICATE_COLLECTION = "Predicate"
+
+
+def _predicate_hybrid_search_sync(
+    query: str,
+    entitled_domains: list[str],
+    limit: int,
+) -> list[dict]:
+    """Blocking Weaviate hybrid search over the Predicate collection.
+
+    Returns one dict per candidate with the routing fields the supervisor
+    needs (verb_iri, endpoint, owner_persona, domains, ...) plus the
+    Weaviate hybrid ``score`` so the caller can rank or threshold. Empty
+    list means the collection is empty, missing, or unreachable — caller
+    should fall back to Cypher exact-match.
+
+    Domain scoping is done as a Weaviate filter when the caller supplied
+    entitled_domains AND we want to keep domain-agnostic predicates too
+    (r.domains == []). We express that as an OR of two filters; if neither
+    branch matches, the candidate is dropped.
+    """
+    if not _WEAVIATE_CLIENT:
+        return []
+    try:
+        if not _WEAVIATE_CLIENT.collections.exists(_PREDICATE_COLLECTION):
+            return []
+        collection = _WEAVIATE_CLIENT.collections.get(_PREDICATE_COLLECTION)
+
+        # Build domain filter: pass through everything when entitled_domains
+        # is empty (unscoped caller); otherwise keep predicates that either
+        # declare a domain we're entitled to OR declare no domains at all
+        # (domain-agnostic engines, e.g. Engine A's fallback path).
+        filters = None
+        if entitled_domains:
+            # Weaviate v4 Filter: contains_any over domains list, OR
+            # is_null=True (the collection writes empty lists, not nulls,
+            # so we use len == 0 by checking against an empty-array equal).
+            filters = wvc.query.Filter.any_of([
+                wvc.query.Filter.by_property("domains").contains_any(entitled_domains),
+                # Match domain-agnostic predicates (empty domains array).
+                wvc.query.Filter.by_property("domains").equal([]),
+            ])
+
+        response = collection.query.hybrid(
+            query=query,
+            limit=limit,
+            filters=filters,
+            return_metadata=wvc.query.MetadataQuery(score=True),
+        )
+
+        out: list[dict] = []
+        for obj in response.objects:
+            p = obj.properties
+            score = None
+            if obj.metadata and obj.metadata.score is not None:
+                try:
+                    score = float(obj.metadata.score)
+                except (TypeError, ValueError):
+                    score = None
+            out.append({
+                "verb_iri": p.get("verb_iri", ""),
+                "verb_type": p.get("verb_local", ""),
+                "input_uri": p.get("input_uri", ""),
+                "output_uri": p.get("output_uri", ""),
+                "endpoint": p.get("endpoint_url", ""),
+                "owner_persona": p.get("owner_persona") or None,
+                "domains": list(p.get("domains") or []),
+                "cost_class": p.get("cost_class") or None,
+                "requires_human_approval": bool(p.get("requires_human_approval", False)),
+                "score": score,
+            })
+        return out
+    except Exception as e:
+        # Routing accelerator — failures degrade the system, not crash it.
+        print(f"[ontology-service] Predicate hybrid search failed: {e}")
+        return []
+
+
+async def predicate_hybrid_search(
+    query: str, entitled_domains: list[str], limit: int = 10
+) -> list[dict]:
+    """Async wrapper for the predicate hybrid search."""
+    return await asyncio.to_thread(
+        _predicate_hybrid_search_sync, query, entitled_domains, limit
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -782,71 +896,111 @@ async def find_tool(request: FindToolRequest) -> FindToolResponse:
 
 @app.post("/search_predicates", response_model=SearchPredicatesResponse)
 async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicatesResponse:
-    """ADR-0009 Step F': subject-free predicate lookup with scope filtering.
+    """ADR-0009 Step F'.6: NL → predicate routing via Weaviate hybrid search.
 
-    Used by the supervisor after ExtractIntent: given a candidate verb-phrase
-    and the caller's entitled domains, return the candidate predicates the
-    user is allowed to invoke. The supervisor picks one (cheapest match) or
-    iterates if /resolve is needed to ground entity_refs to a specific
-    subject_uri.
+    Pipeline:
+      1. If ``query`` is provided, run Weaviate hybrid search over the
+         Predicate collection (BM25 + vector). Filter by entitled_domains
+         at the vector store layer.
+      2. If Weaviate returns hits, that's the result — ordered by hybrid
+         score (high → low). Cypher is not touched on the hot path.
+      3. If Weaviate is empty / unreachable / returned no hits AND a
+         ``verb_label`` was provided, fall back to Cypher exact match
+         against ``r.iri`` / ``type(r)`` / ``r.synonyms``. Reported as
+         ``source = "cypher_fallback"`` so the caller can tell.
+      4. If both paths produce nothing, return ``found=false`` with a
+         reason that operators can act on.
 
-    Domain-scope semantics (mirrors the Cypher):
-      * Empty entitled_domains → no scope filter (unscoped caller).
-      * Domain-agnostic predicates (``r.domains == []``) are always allowed.
-      * Domain-scoped predicates require at least one shared entry with the
-        caller's entitled_domains.
+    Scope semantics in both paths:
+      * Empty entitled_domains → no scope filter (unscoped / admin).
+      * Domain-agnostic predicates (``r.domains == []``) are always kept.
+      * Domain-scoped predicates require at least one shared entry.
     """
-    if not _NEO4J_DRIVER:
-        raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
+    if not request.query and not request.verb_label:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide at least one of `query` (NL) or `verb_label` (exact).",
+        )
 
-    # Defensive: caller-supplied domains arrive uppercase from the auth
-    # layer but we normalize again so a mis-cased POST still scopes.
+    # Defensive: domains arrive uppercase from the auth layer but a
+    # mis-cased POST still scopes correctly.
     entitled = [d.upper() for d in (request.entitled_domains or [])]
 
-    def _run() -> list[dict]:
-        with _NEO4J_DRIVER.session() as session:
-            result = session.run(
-                _SEARCH_PREDICATES_CYPHER,
-                verb_label=request.verb_label,
-                entitled_domains=entitled,
-                limit=request.limit,
-            )
-            return [dict(record) for record in result]
+    candidates: list[PredicateCandidate] = []
 
-    try:
-        records = await asyncio.to_thread(_run)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Neo4j query failed: {e}")
+    # 1. Weaviate hybrid pass (only if caller supplied NL text)
+    if request.query:
+        hits = await predicate_hybrid_search(
+            query=request.query,
+            entitled_domains=entitled,
+            limit=request.limit,
+        )
+        for h in hits:
+            candidates.append(PredicateCandidate(
+                subject_uri=h["input_uri"],  # SPO: input concept = subject
+                verb_type=h["verb_type"],
+                verb_iri=h["verb_iri"],
+                endpoint=h["endpoint"],
+                output_uri=h["output_uri"],
+                owner_persona=h["owner_persona"],
+                domains=h["domains"],
+                cost_class=h["cost_class"],
+                requires_human_approval=h["requires_human_approval"],
+                openapi_schema=None,  # not stored in Weaviate; retrieve from Neo4j when needed
+                score=h["score"],
+                source="weaviate",
+            ))
 
-    if not records:
+    # 2. Cypher fallback — only when (a) Weaviate produced nothing AND
+    #    (b) caller gave us a verb_label to exact-match against. This
+    #    keeps the system useful in cold-start (Weaviate empty) and during
+    #    Weaviate outages without papering over a real registration miss.
+    if not candidates and request.verb_label:
+        if _NEO4J_DRIVER:
+            def _run() -> list[dict]:
+                with _NEO4J_DRIVER.session() as session:
+                    result = session.run(
+                        _SEARCH_PREDICATES_CYPHER,
+                        verb_label=request.verb_label,
+                        entitled_domains=entitled,
+                        limit=request.limit,
+                    )
+                    return [dict(record) for record in result]
+            try:
+                records = await asyncio.to_thread(_run)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Neo4j fallback failed: {e}")
+            for r in records:
+                candidates.append(PredicateCandidate(
+                    subject_uri=r["subject_uri"],
+                    verb_type=r["verb_type"],
+                    verb_iri=r["verb_iri"] or "",
+                    endpoint=r["endpoint"] or "",
+                    output_uri=r["output_uri"],
+                    owner_persona=r["owner_persona"],
+                    domains=list(r.get("domains") or []),
+                    cost_class=r["cost_class"],
+                    requires_human_approval=bool(r["requires_human_approval"]),
+                    openapi_schema=r["openapi_schema"],
+                    score=None,
+                    source="cypher_fallback",
+                ))
+
+    if not candidates:
         return SearchPredicatesResponse(
             found=False,
             reason=(
-                f"No predicate matches verb_label={request.verb_label!r} "
-                f"under entitled_domains={entitled}. Either the verb is not "
-                f"registered, no synonym matches, or no domain-scoped engine "
-                f"serves it for this caller."
+                f"No predicate matched query={request.query!r} / "
+                f"verb_label={request.verb_label!r} under "
+                f"entitled_domains={entitled}. Either no engine is "
+                f"registered for this verb, or no domain-scoped engine "
+                f"serves it for this caller. Check `/predicates/health` "
+                f"to see whether the Weaviate Predicate collection is "
+                f"populated."
             ),
         )
 
-    return SearchPredicatesResponse(
-        found=True,
-        candidates=[
-            PredicateCandidate(
-                subject_uri=r["subject_uri"],
-                verb_type=r["verb_type"],
-                verb_iri=r["verb_iri"] or "",
-                endpoint=r["endpoint"] or "",
-                output_uri=r["output_uri"],
-                owner_persona=r["owner_persona"],
-                domains=list(r.get("domains") or []),
-                cost_class=r["cost_class"],
-                requires_human_approval=bool(r["requires_human_approval"]),
-                openapi_schema=r["openapi_schema"],
-            )
-            for r in records
-        ],
-    )
+    return SearchPredicatesResponse(found=True, candidates=candidates)
 
 
 @app.post("/find_path", response_model=FindPathResponse)
@@ -1037,7 +1191,6 @@ async def route_intent(request: RouteIntentRequest) -> RouteIntentResponse:
 
     return RouteIntentResponse(
         mode=intent.mode.value if hasattr(intent.mode, "value") else str(intent.mode),
-        candidate_verb=intent.candidate_verb,
         entity_refs=list(intent.entity_refs or []),
         confidence=float(intent.confidence),
         reasoning=intent.reasoning,

@@ -238,7 +238,6 @@ export interface DocumentUI {
 
 export interface ExtractedIntent {
   mode: Mode
-  candidate_verb: string
   entity_refs: string[]
   confidence: number
   reasoning: string

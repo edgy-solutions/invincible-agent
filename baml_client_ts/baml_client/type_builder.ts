@@ -55,7 +55,7 @@ export default class TypeBuilder {
     
     DocumentUI: ClassViewer<'DocumentUI', "archetype" | "source_persona" | "subject_concept" | "markdown_content">;
     
-    ExtractedIntent: ClassViewer<'ExtractedIntent', "mode" | "candidate_verb" | "entity_refs" | "confidence" | "reasoning">;
+    ExtractedIntent: ClassViewer<'ExtractedIntent', "mode" | "entity_refs" | "confidence" | "reasoning">;
     
     FinalSynthesis: ClassViewer<'FinalSynthesis', "markdown_report">;
     
@@ -177,7 +177,7 @@ export default class TypeBuilder {
         ]);
         
         this.ExtractedIntent = this.tb.classViewer("ExtractedIntent", [
-          "mode","candidate_verb","entity_refs","confidence","reasoning",
+          "mode","entity_refs","confidence","reasoning",
         ]);
         
         this.FinalSynthesis = this.tb.classViewer("FinalSynthesis", [

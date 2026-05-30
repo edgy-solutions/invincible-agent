@@ -56,19 +56,23 @@ from dagster import (
 class SupervisorQueryConfig(Config):
     """Configuration for the supervisor job.
 
-    Per ADR-0009 Step F'.3, the routing-relevant fields are:
+    Per ADR-0009 Step F'.3 / F'.6, the routing-relevant fields are:
       * ``user_persona`` — caller-side persona from JWT (auth.User.persona).
         Drives UI prefs and is the answerer-persona fallback when the
         matched predicate is persona-agnostic.
       * ``entitled_domains`` — caller's domain scope from JWT. Scopes the
         predicate-graph lookup in ``execute_subtask``.
-      * ``candidate_verb`` + ``entity_refs`` — output of /route_intent's
-        ExtractIntent, threaded through the gateway so the supervisor
-        doesn't re-classify.
+      * ``entity_refs`` — output of ExtractIntent, available to subtasks
+        for /resolve calls when subject grounding is required.
 
-    Legacy fields (``persona``, ``domain``) are accepted for backward
-    compatibility and bubble through, but ``execute_subtask`` no longer
-    branches on ``domain`` — the ``if domain ==`` switch is gone.
+    Routing itself uses each subtask's ``sub_query`` as the NL hint into
+    Engine O's /search_predicates (Weaviate hybrid). Step F'.6 removed the
+    LLM-extracted ``candidate_verb`` — vector search runs against the raw
+    NL directly, so an intermediate verb token would just lose signal.
+
+    Legacy fields (``persona``, ``domain``, ``candidate_verb``) are accepted
+    for backward compatibility — older Dagster runs may have them in their
+    serialized config — but ``execute_subtask`` doesn't branch on them.
     """
     user_query: str
     thread_id: str
@@ -76,11 +80,12 @@ class SupervisorQueryConfig(Config):
     domain: str = "MAINTENANCE"  # legacy, no longer routes
     task_plan_json: str = ""  # Optional pre-computed plan from BFF
     user_id: str = "default_testing_user"
-    # ADR-0009 Step F'.2/F'.3 additions:
+    # ADR-0009 Step F'.2 / F'.3 additions:
     user_persona: str = "MECHANIC"
     entitled_domains: List[str] = []
-    candidate_verb: str = ""
     entity_refs: List[str] = []
+    # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
+    candidate_verb: str = ""
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -152,36 +157,47 @@ def get_datahub_context(datahub_wrapper_url: str) -> str:
 
 def _resolve_predicate_endpoint(
     context,
-    verb_label: str,
+    user_query: str,
     entitled_domains: List[str],
+    fallback_verb_label: str = "",
 ) -> Dict[str, Any] | None:
-    """Ask Engine O's /search_predicates for the cheapest matching predicate.
+    """Ask Engine O's /search_predicates for the best-matching predicate.
 
-    Per ADR-0009 Step F'.3 this replaces the legacy ``if domain ==`` switch.
+    Per ADR-0009 Step F'.6, this passes ``user_query`` so Engine O runs
+    Weaviate hybrid search (BM25 + vector) against the registered
+    predicates' synonyms / description / humanized verb form.
+    ``fallback_verb_label`` is the legacy exact-match token Engine O uses
+    only when Weaviate is unreachable or returns no hits.
+
     Returns ``None`` if no predicate matches — the caller must fail loud
-    rather than fall through to a hardcoded fallback.
+    rather than fall through to a hardcoded fallback. ADR-0009 keeps the
+    predicate graph as the single routing mechanism.
     """
+    payload: Dict[str, Any] = {
+        "query": user_query,
+        "entitled_domains": entitled_domains,
+        "limit": 5,
+    }
+    if fallback_verb_label:
+        payload["verb_label"] = fallback_verb_label
+
     try:
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/search_predicates",
-            json={
-                "verb_label": verb_label,
-                "entitled_domains": entitled_domains,
-                "limit": 5,
-            },
+            json=payload,
             timeout=10,
         )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
         context.log.error(
-            f"search_predicates failed for verb_label={verb_label!r}: {exc}"
+            f"search_predicates failed for query={user_query!r}: {exc}"
         )
         return None
 
     if not data.get("found"):
         context.log.warning(
-            f"No predicate found for verb_label={verb_label!r}; "
+            f"No predicate found for query={user_query!r}; "
             f"reason={data.get('reason')}"
         )
         return None
@@ -189,8 +205,16 @@ def _resolve_predicate_endpoint(
     candidates = data.get("candidates", [])
     if not candidates:
         return None
-    # search_predicates already orders by cost_class; pick the head.
-    return candidates[0]
+    # Weaviate hybrid returns ranked by score; cypher_fallback returns by
+    # cost_class. Either way the head candidate is the right pick.
+    head = candidates[0]
+    src = head.get("source", "unknown")
+    score = head.get("score")
+    context.log.info(
+        f"search_predicates picked {head.get('verb_iri')!r} "
+        f"(source={src}, score={score})"
+    )
+    return head
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
@@ -217,27 +241,30 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     """
     sub_query = task_def.get("sub_query", "")
 
-    # Per ADR-0009: domain is no longer a routing key. We use the global
-    # candidate_verb extracted by ExtractIntent if available, falling back
-    # to the per-task target_persona as a coarse verb hint for cases where
-    # an older decomposition hasn't been updated to set candidate_verb.
-    verb_label = (
-        task_def.get("candidate_verb")
-        or config.candidate_verb
-        or task_def.get("target_persona", "")
-    )
+    # Per ADR-0009 Step F'.6: routing is NL → Weaviate hybrid. The
+    # supervisor passes the subtask's natural-language sub_query straight
+    # to /search_predicates; Engine O matches against humanized verb +
+    # synonyms + description. ``fallback_verb_label`` is the per-task
+    # target_persona, only consulted if Weaviate is empty or unreachable
+    # (e.g. cold start before doc-tools has synced).
+    routing_query = sub_query or config.user_query
+    fallback_verb_label = task_def.get("target_persona", "")
 
     predicate = _resolve_predicate_endpoint(
-        context, verb_label, list(config.entitled_domains)
+        context,
+        routing_query,
+        list(config.entitled_domains),
+        fallback_verb_label=fallback_verb_label,
     )
 
     if predicate is None:
         # No fallback — per ADR-0009 the predicate graph IS the routing
-        # mechanism. A miss here means: engine not registered, synonym
-        # missing, or the user is not entitled to any engine that serves
-        # this verb. All three are operator-visible failure modes.
+        # mechanism. A miss here means: engine not registered, no matching
+        # synonyms/description, or the user is not entitled to any engine
+        # that serves this verb. All three are operator-visible failure
+        # modes.
         context.log.error(
-            f"No predicate matched verb_label={verb_label!r} for entitled_domains="
+            f"No predicate matched query={routing_query!r} for entitled_domains="
             f"{list(config.entitled_domains)}; aborting subtask."
         )
         return {

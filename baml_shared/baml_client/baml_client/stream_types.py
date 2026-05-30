@@ -116,10 +116,9 @@ class DocumentUI(BaseModel):
 
 class ExtractedIntent(BaseModel):
     mode: typing.Optional[types.Mode] = None
-    candidate_verb: typing.Optional[str] = Field(default=None, description='A short verb or verb-phrase capturing what the user wants done (e.g., \'diagnose\', \'find part\', \'summarize policy\', \'build workflow\'). The supervisor matches this against r.iri and r.synonyms in the predicate graph.')
     entity_refs: typing.List[str] = Field(description='Concrete entities, parts, systems, datasets the user mentioned (e.g., \'Auxiliary Fuel Pump\', \'C-130 hydraulic system\'). Empty if the query has no specific referents.')
-    confidence: typing.Optional[float] = Field(default=None, description='Confidence in the verb extraction and mode choice.')
-    reasoning: typing.Optional[str] = Field(default=None, description='Why this verb and mode — for observability and debugging.')
+    confidence: typing.Optional[float] = Field(default=None, description='Confidence in the mode choice.')
+    reasoning: typing.Optional[str] = Field(default=None, description='Why this mode — for observability and debugging.')
 
 class FinalSynthesis(BaseModel):
     markdown_report: typing.Optional[str] = None

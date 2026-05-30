@@ -301,15 +301,23 @@ function RouteAndPlan(user_query: string) -> MeshRoutingDecision {
 }
 
 // =============================================================================
-// Phase 4 (ADR-0009 Step F'): Mesh Intent Extraction (verb + mode)
+// Phase 4 (ADR-0009 Step F' / F'.6): Mesh Intent Extraction (mode + entities)
 // =============================================================================
 //
 // RouteAndPlan above is the legacy 3-axis classifier — slated for deletion
-// once gateway + supervisor migrate. ExtractIntent is its replacement: a
-// verb-extractor + mode discriminator that feeds Engine O's /find_tool
-// (for one_shot mode) or the conversational subgraph (BPMN interviewer,
-// future conversational engines). No hardcoded enums beyond Mode itself,
-// which IS the binary intent discriminator per ADR-0009.
+// once gateway + supervisor migrate. ExtractIntent is its replacement.
+//
+// Step F'.6 simplification: candidate_verb was removed. Engine O's
+// /search_predicates runs Weaviate hybrid search directly on the raw user
+// query against the Predicate collection's `search_text` field (verb
+// humanized + synonyms + description), so an LLM-extracted verb adds a
+// lossy intermediate step. The remaining LLM jobs are:
+//
+//   * `mode` — the binary routing discriminator (conversational vs
+//     one-shot). Genuinely needs LLM judgment about the user's intent
+//     shape; no vector store can replace it.
+//   * `entity_refs` — concrete nouns the supervisor feeds to /resolve
+//     when grounding subjects/objects to ontology URIs is needed.
 
 enum Mode {
   ONE_SHOT @description("User wants the mesh to execute work and return a deterministic result (find, diagnose, summarize, query, analyze).")
@@ -318,32 +326,31 @@ enum Mode {
 
 class ExtractedIntent {
   mode Mode
-  candidate_verb string @description("A short verb or verb-phrase capturing what the user wants done (e.g., 'diagnose', 'find part', 'summarize policy', 'build workflow'). The supervisor matches this against r.iri and r.synonyms in the predicate graph.")
   entity_refs string[] @description("Concrete entities, parts, systems, datasets the user mentioned (e.g., 'Auxiliary Fuel Pump', 'C-130 hydraulic system'). Empty if the query has no specific referents.")
-  confidence float @description("Confidence in the verb extraction and mode choice.")
-  reasoning string @description("Why this verb and mode — for observability and debugging.")
+  confidence float @description("Confidence in the mode choice.")
+  reasoning string @description("Why this mode — for observability and debugging.")
 }
 
 function ExtractIntent(user_query: string) -> ExtractedIntent {
   client MainAgent
   prompt #"
-    Analyze the user's query and extract a routable intent for the iagent mesh.
+    Analyze the user's query and extract routing-relevant facts.
 
-    Decide MODE first:
+    Decide MODE:
     - mode = CONVERSATIONAL when the user is starting or continuing a multi-turn
       interaction (e.g., "help me design a workflow", "walk me through the fix",
       "build a process that..."). These are dialogs, not one-shot lookups.
     - mode = ONE_SHOT for everything else: diagnose, find, look up, summarize,
       analyze, query, retrieve. The user wants a deterministic result, not a chat.
 
-    Then extract:
-    - candidate_verb: the short verb-phrase that captures what they want done.
-      Examples: "diagnose", "find part", "summarize policy", "query graph",
-      "analyze dataset", "build workflow", "design process". Prefer common
-      verbs — the supervisor matches against a synonym list, so plain English
-      ("find", "summarize") beats jargon.
+    Extract:
     - entity_refs: concrete nouns the query mentions — parts, systems,
-      datasets, document names. Empty list if none.
+      datasets, document names. Empty list if none. These feed the
+      supervisor's /resolve call when subject grounding is needed.
+
+    DO NOT try to pick a verb — verb matching is done by hybrid vector
+    search downstream from your output. Your job is the binary mode and
+    the entity list.
 
     User Query:
     {{ user_query }}

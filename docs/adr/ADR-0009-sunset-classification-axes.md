@@ -188,6 +188,55 @@ routing primitive. The replacements:
   zero; the risk of *not* doing this is permanent technical debt
   guarding a system that never worked.
 
+## Course correction — Step F'.6 (verb vector store)
+
+During implementation, the user flagged a real gap: the initial F'.1
+shipped `/search_predicates` doing *exact Cypher match* on `type(r)` /
+`r.iri` / `r.synonyms`, with an LLM-extracted `candidate_verb` as the
+input. That has two problems:
+
+1. **Cypher exact-match is brittle.** Plural / tense / phrasing variations
+   ("diagnose" vs "diagnoses" vs "troubleshoot vibration") all miss
+   unless the synonym list happens to enumerate them. The previous
+   3-axis `RouteAndPlan` had a constraint property (BAML TypeBuilder
+   enums forced the LLM to pick from a known list); dropping it
+   without a replacement reintroduced fragility.
+2. **`OntologyClass` already has Weaviate hybrid for nouns.** The
+   `/resolve` endpoint maps NL → ontology URI by running BM25 + vector
+   over the `OntologyClass` collection. There was no analogous
+   collection for verbs (predicates), so nouns got semantic matching
+   and verbs did not — an inconsistency that wouldn't have survived
+   the first real failure.
+
+**Resolution** — Step F'.6 (the "verb vector store"):
+
+* **doc-tools' AITool sync** also mirrors each registered predicate to
+  a Weaviate `Predicate` collection. The vectorized text combines
+  the humanized verb form ("queryKnowledgeGraph" →
+  "query knowledge graph"), the synonym list, and the mlModel
+  description. The Weaviate write runs *after* the Neo4j MERGE and
+  is fail-soft — Neo4j stays the system of record.
+* **Engine O's `/search_predicates`** runs Weaviate hybrid search
+  against `Predicate.search_text` as the primary path, with the
+  entitled-domains filter applied at the vector-store layer (OR of
+  `domains contains_any [entitled]` and `domains == []` to keep
+  domain-agnostic predicates visible to scoped callers). Cypher
+  exact-match is preserved as a fallback for cold-start (Weaviate
+  empty) and Weaviate outages. Candidates report their source
+  (`weaviate` vs `cypher_fallback`) and the Weaviate hybrid score.
+* **BAML `ExtractIntent`** is simplified to `{mode, entity_refs}` —
+  `candidate_verb` is gone. The supervisor passes each subtask's
+  raw NL `sub_query` straight to `/search_predicates`, so the LLM
+  no longer has to invent a routing token an embedding model could
+  have matched directly.
+
+This is the right architecture from the start. The earlier sketch in
+the Migration plan that referenced a `candidate_verb` field
+(implicit in "verb-extractor + predicate-matcher") underestimated how
+much of the matching work the embedding model could do directly. Both
+sides — the doc-tools mirror and the Engine O hybrid path — are
+captured in the migration plan below.
+
 ## Migration plan
 
 The original Step E / Step F from ADR-0004 are superseded by these
@@ -201,20 +250,31 @@ named steps. Step D.2 is folded in.
    - Engines already publish `owner_persona` and (via SDK extension)
      a `domains` list on registration; the view-functions read those.
 
-2. **Step F' / D.2 merged — Rebuild Engine O as verb-extractor +
-   predicate-matcher, and replace the supervisor's `domain ==` switch
-   with `/find_path` calls.**
-   - `RouteAndPlan` rewritten: output schema becomes
-     `{ mode: "one_shot"|"conversational", candidate_verb,
-        arguments, entity_refs }`.
+2. **Step F' / D.2 merged — Replace 3-axis classifier and supervisor
+   switch with predicate-graph routing.**
+   - `RouteAndPlan` (3-axis) → `ExtractIntent` (mode + entity_refs).
+     `candidate_verb` is intentionally NOT extracted — see Step F'.6.
    - Gateway routes on `mode`:
      - `conversational` → ProcessInterviewer (current) or future
        conversational engines, picked by predicate-graph match within
        the conversational subgraph.
-     - `one_shot` → `/find_tool` → engine.
-   - `dynamic_supervisor.py:143-175` `if/elif` chain replaced with
-     `/find_path` + iterator.
+     - `one_shot` → `/search_predicates` → engine.
+   - `dynamic_supervisor.py`'s `if/elif` chain replaced with
+     `/search_predicates` → cheapest match.
    - The `domain ==` switch is deleted; no engine is a code special-case.
+
+2b. **Step F'.6 — Verb vector store (Weaviate `Predicate` collection).**
+   - doc-tools' AITool sync mirrors each predicate to Weaviate after
+     the Neo4j MERGE. `search_text` = humanized verb + synonyms +
+     description; deterministic UUID = `verb_iri|input_uri` for
+     idempotent upserts.
+   - Engine O's `/search_predicates` runs Weaviate hybrid (BM25 +
+     vector) as the primary path, with domain scoping at the vector
+     layer (OR-filter to keep domain-agnostic predicates visible).
+     Cypher exact-match remains as a fallback for cold-start and
+     Weaviate outages; candidates self-report their source.
+   - Supervisor passes each subtask's NL `sub_query` straight to
+     `/search_predicates` — no intermediate LLM-extracted verb token.
 
 3. **Identity work — expand PingSSO claims.**
    - Catalog what claims are available today (under the *Open

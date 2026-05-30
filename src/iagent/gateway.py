@@ -176,9 +176,10 @@ async def _launch_supervisor_job(
     # so the supervisor's per-subtask predicate lookup (Step F'.3) can scope
     # by entitled_domains and use user_persona as the answerer fallback when
     # the matched predicate is persona-agnostic.
+    # Step F'.6: candidate_verb dropped — supervisor now sends user_query
+    # directly to /search_predicates (Weaviate hybrid).
     user_persona: str = "MECHANIC",
     entitled_domains: list[str] | None = None,
-    candidate_verb: str = "",
     entity_refs: list[str] | None = None,
 ) -> str | None:
     """Launch the supervisor_query_job on Dagster.
@@ -192,6 +193,10 @@ async def _launch_supervisor_job(
     """
     entitled_domains = entitled_domains or []
     entity_refs = entity_refs or []
+    # candidate_verb is no longer threaded — supervisor sends user_query to
+    # /search_predicates directly. Keep the op_config field as an empty
+    # string so the existing Dagster schema still validates.
+    candidate_verb = ""
     mutation = """
     mutation LaunchSupervisor($repo: String!, $loc: String!, $runConfig: RunConfigData!) {
       launchRun(
@@ -586,11 +591,11 @@ async def generate_dagster_stream(
     except Exception as e:
         logger.warning(f"Failed to check Restate status: {e}")
 
-    # ADR-0009 Step F'.2: replace 3-axis classifier with verb-extractor.
-    # `mode` is the binary discriminator; `candidate_verb` + `entity_refs`
-    # feed the supervisor's predicate-graph lookup (Step F'.3).
+    # ADR-0009 Step F'.2: replace 3-axis classifier with mode discriminator.
+    # Step F'.6: candidate_verb dropped — the supervisor's /search_predicates
+    # runs Weaviate hybrid against the raw user_query, no LLM-extracted verb
+    # in the middle. The supervisor receives user_query through op config.
     mode: str
-    candidate_verb: str = ""
     entity_refs: list[str] = []
     intent_extraction: dict = {}
 
@@ -616,7 +621,6 @@ async def generate_dagster_stream(
             return
 
         mode = intent_extraction.get("mode", "ONE_SHOT")
-        candidate_verb = intent_extraction.get("candidate_verb", "")
         entity_refs = list(intent_extraction.get("entity_refs", []))
 
     # Legacy 3-axis fields are no longer derived by Engine O. They survive
@@ -723,7 +727,6 @@ async def generate_dagster_stream(
         user_id=user_id,
         user_persona=user_persona,
         entitled_domains=entitled_domains,
-        candidate_verb=candidate_verb,
         entity_refs=entity_refs,
     )
     if not run_id:

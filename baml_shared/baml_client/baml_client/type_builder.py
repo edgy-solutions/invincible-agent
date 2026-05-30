@@ -1441,7 +1441,7 @@ class ExtractedIntentAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("ExtractedIntent")
-        self._properties: typing.Set[str] = set([  "mode",  "candidate_verb",  "entity_refs",  "confidence",  "reasoning",  ])
+        self._properties: typing.Set[str] = set([  "mode",  "entity_refs",  "confidence",  "reasoning",  ])
         self._props = ExtractedIntentProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -1472,10 +1472,6 @@ class ExtractedIntentProperties:
     @property
     def mode(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("mode"))
-    
-    @property
-    def candidate_verb(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("candidate_verb"))
     
     @property
     def entity_refs(self) -> type_builder.ClassPropertyViewer:

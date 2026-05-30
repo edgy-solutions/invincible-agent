@@ -130,7 +130,6 @@ export namespace partial_types {
     }
     export interface ExtractedIntent {
       mode?: types.Mode | null
-      candidate_verb?: string | null
       entity_refs: string[]
       confidence?: number | null
       reasoning?: string | null
