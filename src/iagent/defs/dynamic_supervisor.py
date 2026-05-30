@@ -159,32 +159,23 @@ def _resolve_predicate_endpoint(
     context,
     user_query: str,
     entitled_domains: List[str],
-    fallback_verb_label: str = "",
 ) -> Dict[str, Any] | None:
     """Ask Engine O's /search_predicates for the best-matching predicate.
 
-    Per ADR-0009 Step F'.6, this passes ``user_query`` so Engine O runs
-    Weaviate hybrid search (BM25 + vector) against the registered
-    predicates' synonyms / description / humanized verb form.
-    ``fallback_verb_label`` is the legacy exact-match token Engine O uses
-    only when Weaviate is unreachable or returns no hits.
-
-    Returns ``None`` if no predicate matches — the caller must fail loud
-    rather than fall through to a hardcoded fallback. ADR-0009 keeps the
-    predicate graph as the single routing mechanism.
+    Per ADR-0009 Step F'.6, Weaviate hybrid search is the only routing
+    path: ``user_query`` goes straight to the vector store, which scores
+    against the registered predicates' humanized verb + synonyms +
+    description. No exact-match fallback — if Engine O returns 503
+    (Weaviate unreachable) or ``found=false``, the caller must fail loud.
     """
-    payload: Dict[str, Any] = {
-        "query": user_query,
-        "entitled_domains": entitled_domains,
-        "limit": 5,
-    }
-    if fallback_verb_label:
-        payload["verb_label"] = fallback_verb_label
-
     try:
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/search_predicates",
-            json=payload,
+            json={
+                "query": user_query,
+                "entitled_domains": entitled_domains,
+                "limit": 5,
+            },
             timeout=10,
         )
         resp.raise_for_status()
@@ -205,14 +196,10 @@ def _resolve_predicate_endpoint(
     candidates = data.get("candidates", [])
     if not candidates:
         return None
-    # Weaviate hybrid returns ranked by score; cypher_fallback returns by
-    # cost_class. Either way the head candidate is the right pick.
     head = candidates[0]
-    src = head.get("source", "unknown")
-    score = head.get("score")
     context.log.info(
         f"search_predicates picked {head.get('verb_iri')!r} "
-        f"(source={src}, score={score})"
+        f"(score={head.get('score')})"
     )
     return head
 
@@ -244,17 +231,15 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # Per ADR-0009 Step F'.6: routing is NL → Weaviate hybrid. The
     # supervisor passes the subtask's natural-language sub_query straight
     # to /search_predicates; Engine O matches against humanized verb +
-    # synonyms + description. ``fallback_verb_label`` is the per-task
-    # target_persona, only consulted if Weaviate is empty or unreachable
-    # (e.g. cold start before doc-tools has synced).
+    # synonyms + description. No exact-match fallback in Engine O — a
+    # routing miss surfaces here as ``predicate is None`` and the subtask
+    # aborts loud.
     routing_query = sub_query or config.user_query
-    fallback_verb_label = task_def.get("target_persona", "")
 
     predicate = _resolve_predicate_endpoint(
         context,
         routing_query,
         list(config.entitled_domains),
-        fallback_verb_label=fallback_verb_label,
     )
 
     if predicate is None:

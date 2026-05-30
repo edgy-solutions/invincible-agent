@@ -217,13 +217,17 @@ input. That has two problems:
   description. The Weaviate write runs *after* the Neo4j MERGE and
   is fail-soft — Neo4j stays the system of record.
 * **Engine O's `/search_predicates`** runs Weaviate hybrid search
-  against `Predicate.search_text` as the primary path, with the
-  entitled-domains filter applied at the vector-store layer (OR of
+  against `Predicate.search_text`, with the entitled-domains filter
+  applied at the vector-store layer (OR of
   `domains contains_any [entitled]` and `domains == []` to keep
-  domain-agnostic predicates visible to scoped callers). Cypher
-  exact-match is preserved as a fallback for cold-start (Weaviate
-  empty) and Weaviate outages. Candidates report their source
-  (`weaviate` vs `cypher_fallback`) and the Weaviate hybrid score.
+  domain-agnostic predicates visible to scoped callers). Weaviate is
+  treated as **required routing infrastructure** — the endpoint
+  returns 503 if the client or `Predicate` collection is unavailable.
+  No Cypher exact-match fallback: the synonym list is unlikely to
+  catch what hybrid search missed, the fallback would only trigger
+  during an outage that already broke routing system-wide, and a
+  silent degraded path obscures the real signal operators need.
+  Exact `(subject_uri, verb_label)` lookups belong on `/find_tool`.
 * **BAML `ExtractIntent`** is simplified to `{mode, entity_refs}` —
   `candidate_verb` is gone. The supervisor passes each subtask's
   raw NL `sub_query` straight to `/search_predicates`, so the LLM
@@ -269,12 +273,13 @@ named steps. Step D.2 is folded in.
      description; deterministic UUID = `verb_iri|input_uri` for
      idempotent upserts.
    - Engine O's `/search_predicates` runs Weaviate hybrid (BM25 +
-     vector) as the primary path, with domain scoping at the vector
-     layer (OR-filter to keep domain-agnostic predicates visible).
-     Cypher exact-match remains as a fallback for cold-start and
-     Weaviate outages; candidates self-report their source.
+     vector), with domain scoping at the vector layer (OR-filter to
+     keep domain-agnostic predicates visible). Weaviate is required
+     routing infrastructure; the endpoint returns 503 if it's
+     unavailable rather than silently degrading to exact-match.
    - Supervisor passes each subtask's NL `sub_query` straight to
-     `/search_predicates` — no intermediate LLM-extracted verb token.
+     `/search_predicates` — no intermediate LLM-extracted verb token,
+     no fallback verb hint.
 
 3. **Identity work — expand PingSSO claims.**
    - Catalog what claims are available today (under the *Open
