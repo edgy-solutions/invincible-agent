@@ -133,11 +133,21 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     }
     """
     user_query = request.get("user_query")
-    # 2. Extract the persona directly as an uppercase string
-    persona_str = request.get("persona", "MECHANIC").upper()
+    # Per ADR-0009 persona split: Engine E's PERSONA_PROMPTS drives the
+    # smolagent's *answerer* voice — what response shape and tone the engine
+    # produces. Read answerer_persona first; fall back to legacy `persona`
+    # for callers that haven't migrated; finally default to MECHANIC.
+    answerer_persona = (
+        request.get("answerer_persona")
+        or request.get("persona")
+        or "MECHANIC"
+    )
+    persona_str = answerer_persona.upper()
+    # user_persona is captured for observability / future per-caller policy
+    # (e.g. response filtering) but does not currently change the prompt.
+    user_persona = (request.get("user_persona") or persona_str).upper()
     user_id = request.get("user_id")
-    
-    # 3. Retrieve the prompt using the string key
+
     system_prompt = PERSONA_PROMPTS.get(persona_str, PERSONA_PROMPTS["MECHANIC"])
     
     # Fetch schema dynamically via Restate to ensure durability

@@ -22,7 +22,14 @@ app = FastAPI(title="Engine F - Presentation Agent")
 
 class RenderRequest(BaseModel):
     raw_data: Union[Dict[str, Any], List[Dict[str, Any]], str]
-    persona: str
+    # Per ADR-0009 persona split: UI archetype is a *user-side* concern
+    # ("what chrome should I render for this caller?"), distinct from the
+    # *answerer* persona that lives on each subtask's response. We accept
+    # both fields and prefer user_persona; fall back to legacy `persona`
+    # for callers that haven't migrated.
+    user_persona: Optional[str] = None
+    persona: Optional[str] = None
+
 
 @app.post("/render_ui")
 async def render_ui(request: RenderRequest) -> Any:
@@ -31,11 +38,13 @@ async def render_ui(request: RenderRequest) -> Any:
         str_raw_data = json.dumps(request.raw_data)
     else:
         str_raw_data = str(request.raw_data)
-        
-    # 2. Call BAML router (now returns DashboardUI with components array)
-    baml_response = await b.DesignUI(str_raw_data, request.persona.upper())
-    
-    # 3. Return the model dump directly
+
+    # 2. Resolve persona — user_persona drives UI archetype selection.
+    effective_persona = (request.user_persona or request.persona or "MECHANIC").upper()
+
+    # 3. Call BAML router (returns DashboardUI with components array)
+    baml_response = await b.DesignUI(str_raw_data, effective_persona)
+
     return baml_response.model_dump()
 
 @app.get("/health")

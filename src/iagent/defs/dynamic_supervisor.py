@@ -54,13 +54,33 @@ from dagster import (
 
 
 class SupervisorQueryConfig(Config):
-    """Configuration for the supervisor job."""
+    """Configuration for the supervisor job.
+
+    Per ADR-0009 Step F'.3, the routing-relevant fields are:
+      * ``user_persona`` — caller-side persona from JWT (auth.User.persona).
+        Drives UI prefs and is the answerer-persona fallback when the
+        matched predicate is persona-agnostic.
+      * ``entitled_domains`` — caller's domain scope from JWT. Scopes the
+        predicate-graph lookup in ``execute_subtask``.
+      * ``candidate_verb`` + ``entity_refs`` — output of /route_intent's
+        ExtractIntent, threaded through the gateway so the supervisor
+        doesn't re-classify.
+
+    Legacy fields (``persona``, ``domain``) are accepted for backward
+    compatibility and bubble through, but ``execute_subtask`` no longer
+    branches on ``domain`` — the ``if domain ==`` switch is gone.
+    """
     user_query: str
     thread_id: str
-    persona: str
-    domain: str = "MAINTENANCE"
+    persona: str = "MECHANIC"  # legacy, prefer user_persona
+    domain: str = "MAINTENANCE"  # legacy, no longer routes
     task_plan_json: str = ""  # Optional pre-computed plan from BFF
     user_id: str = "default_testing_user"
+    # ADR-0009 Step F'.2/F'.3 additions:
+    user_persona: str = "MECHANIC"
+    entitled_domains: List[str] = []
+    candidate_verb: str = ""
+    entity_refs: List[str] = []
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -130,67 +150,163 @@ def get_datahub_context(datahub_wrapper_url: str) -> str:
         logger.warning(f"Could not fetch DataHub schema map: {e}")
         return ""
 
+def _resolve_predicate_endpoint(
+    context,
+    verb_label: str,
+    entitled_domains: List[str],
+) -> Dict[str, Any] | None:
+    """Ask Engine O's /search_predicates for the cheapest matching predicate.
+
+    Per ADR-0009 Step F'.3 this replaces the legacy ``if domain ==`` switch.
+    Returns ``None`` if no predicate matches — the caller must fail loud
+    rather than fall through to a hardcoded fallback.
+    """
+    try:
+        resp = requests.post(
+            f"{ONTOLOGY_SVC_URL}/search_predicates",
+            json={
+                "verb_label": verb_label,
+                "entitled_domains": entitled_domains,
+                "limit": 5,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        context.log.error(
+            f"search_predicates failed for verb_label={verb_label!r}: {exc}"
+        )
+        return None
+
+    if not data.get("found"):
+        context.log.warning(
+            f"No predicate found for verb_label={verb_label!r}; "
+            f"reason={data.get('reason')}"
+        )
+        return None
+
+    candidates = data.get("candidates", [])
+    if not candidates:
+        return None
+    # search_predicates already orders by cost_class; pick the head.
+    return candidates[0]
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Executes a single decomposed sub-task by calling Engine E (Neo4j Graph Expert).
-    This op runs in parallel for each dynamically generated task.
+    Execute a single decomposed sub-task by routing it through the
+    predicate graph (ADR-0009 Step F'.3).
+
+    The previous body branched on ``task_def['domain']`` to pick between
+    Engine DA / Engine E / Engine A. That `if/elif` is gone — the
+    supervisor now asks Engine O's ``/search_predicates`` which predicate
+    matches the verb the user wanted, scoped by the caller's entitled
+    domains. Engines self-declare both their domains and their answerer
+    persona at registration; the supervisor reads them off the matched
+    predicate without a code change per engine.
+
+    Notes on persona:
+      * ``answerer_persona`` is the matched predicate's ``owner_persona``
+        — drives the engine's response shape (BAML union resolution in
+        Engine E, UI archetype in Engine F).
+      * ``user_persona`` is the caller's identity-derived persona — drives
+        UI prefs and is the answerer fallback when the predicate is
+        persona-agnostic.
     """
-    persona = task_def.get("target_persona", "MECHANIC")
     sub_query = task_def.get("sub_query", "")
-    domain = task_def.get("domain", "MAINTENANCE") # Expected to be passed from create_task_plan if plan is domain-aware
 
-    # 🔗 ROUTING LOGIC: Fan-out to the correct domain-specific engine
-    if domain == "DATA_ENGINEERING":
-        # Structured data queries go to the new Data Analyst
-        engine_url = f"{DATA_ANALYST_URL}/analyze_data"
-    elif domain in ["MAINTENANCE", "MANUFACTURING"]:
-        # Graph-based manual queries go to the Neo4j Graph Expert
-        engine_url = f"{NEO4J_EXPERT_SVC_URL}/query_graph"
-    else:
-        # Fallback/General analysis goes to Engine A
-        engine_url = f"{RESTATE_ANALYST_URL}/analyze"
+    # Per ADR-0009: domain is no longer a routing key. We use the global
+    # candidate_verb extracted by ExtractIntent if available, falling back
+    # to the per-task target_persona as a coarse verb hint for cases where
+    # an older decomposition hasn't been updated to set candidate_verb.
+    verb_label = (
+        task_def.get("candidate_verb")
+        or config.candidate_verb
+        or task_def.get("target_persona", "")
+    )
 
-    # Fetch dynamic schema map if domain is DATA_ENGINEERING
+    predicate = _resolve_predicate_endpoint(
+        context, verb_label, list(config.entitled_domains)
+    )
+
+    if predicate is None:
+        # No fallback — per ADR-0009 the predicate graph IS the routing
+        # mechanism. A miss here means: engine not registered, synonym
+        # missing, or the user is not entitled to any engine that serves
+        # this verb. All three are operator-visible failure modes.
+        context.log.error(
+            f"No predicate matched verb_label={verb_label!r} for entitled_domains="
+            f"{list(config.entitled_domains)}; aborting subtask."
+        )
+        return {
+            "persona": config.user_persona,
+            "user_persona": config.user_persona,
+            "answerer_persona": None,
+            "sub_query": sub_query,
+            "expert_response": {
+                "status": "FAILED",
+                "summary": (
+                    f"No registered predicate matches '{verb_label}' under "
+                    f"your entitled domains. Either the verb is unsupported "
+                    f"or you lack scope to any engine that serves it."
+                ),
+            },
+        }
+
+    endpoint = predicate["endpoint"]
+    answerer_persona = predicate.get("owner_persona") or config.user_persona
+
+    # Domain context is sourced from the predicate's declared scope (first
+    # entry if multi-domain) so engines that still segregate data by domain
+    # (Engine W, Engine E label filters) keep working.
+    predicate_domains = predicate.get("domains") or []
+    routing_domain = predicate_domains[0] if predicate_domains else "MAINTENANCE"
+
+    # Engine DA needs a DataHub schema map injected; we ship it for any
+    # data-engineering-scoped predicate so the engine doesn't have to
+    # round-trip itself.
     dynamic_schema_map = ""
-    if domain == "DATA_ENGINEERING":
+    if "DATA_ENGINEERING" in predicate_domains:
         dynamic_schema_map = get_datahub_context(DATAHUB_WRAPPER_URL)
 
-    if domain == "DATA_ENGINEERING":
-        payload = {
-            "task_description": sub_query,
-            "dataset_id": "dynamic_datahub_search",
-            "dynamic_schema_map": dynamic_schema_map,
-            "persona": persona,
-            "domain": domain,
-            "user_id": config.user_id
-        }
-    else:
-        payload = {
-            "user_query": sub_query,
-            "persona": persona,
-            "domain": domain, # Pass domain for strict node labeling in Cypher
-            "dynamic_schema_map": dynamic_schema_map,
-            "user_id": config.user_id
-        }
+    payload = {
+        "user_query": sub_query,
+        # ADR-0009 persona split: both fields surfaced explicitly.
+        "user_persona": config.user_persona,
+        "answerer_persona": answerer_persona,
+        # Legacy aliases so engines that haven't migrated still work; both
+        # point to answerer_persona, which is what the old `persona` field
+        # was driving (response shape) in practice.
+        "persona": answerer_persona,
+        "domain": routing_domain,
+        "dynamic_schema_map": dynamic_schema_map,
+        "user_id": config.user_id,
+        # Hand the matched predicate to the engine for observability /
+        # provenance — engines can log which verb_iri served the call.
+        "predicate_verb_iri": predicate.get("verb_iri"),
+    }
 
-    response = requests.post(
-        engine_url,
-        json=payload,
-        timeout=300,
+    context.log.info(
+        f"Routing subtask via predicate {predicate.get('verb_iri')!r} "
+        f"(owner_persona={answerer_persona}, domains={predicate_domains}) → {endpoint}"
     )
+
+    response = requests.post(endpoint, json=payload, timeout=300)
     response.raise_for_status()
-    
+
     data = response.json()
-    
-    # Write the agent's internal monologue to the Dagster UI!
+
     trace = data.get("execution_trace")
     if trace:
         context.log.info(f"🧠 Agent Reasoning Trajectory:\n{trace}")
-    
+
     return {
-        "persona": persona,
-        "domain": domain,
+        "persona": answerer_persona,
+        "user_persona": config.user_persona,
+        "answerer_persona": answerer_persona,
+        "predicate_verb_iri": predicate.get("verb_iri"),
         "sub_query": sub_query,
         "expert_response": data,
     }
@@ -255,19 +371,28 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
         )
         return
 
-    # 2. If data exists, proceed with calling Engine F (Presentation Agent)
+    # 2. If data exists, proceed with calling Engine F (Presentation Agent).
+    # Per ADR-0009: Engine F's UI archetype is driven by the *user* persona
+    # (what chrome should I render?) — distinct from the *answerer* persona
+    # carried inside each subtask's response (what response shape did the
+    # engine produce?). We surface both so Engine F can choose.
     response = requests.post(
         f"{PRESENTATION_AGENT_SVC_URL}/render_ui",
         json={
             "raw_data": results,
-            "persona": config.persona,
+            "user_persona": config.user_persona,
+            # Legacy alias: keep `persona` set to user_persona for engines
+            # that haven't migrated. Engine F's current implementation reads
+            # `persona` to pick a chrome archetype, which is the user-side
+            # concern.
+            "persona": config.user_persona,
         },
         timeout=300,
     )
     response.raise_for_status()
     ui_payload_dict = response.json()
-    
-    context.log.info(f"Generated UI Payload for persona {config.persona}")
+
+    context.log.info(f"Generated UI Payload for user_persona {config.user_persona}")
     yield Output(
         value=ui_payload_dict,
         metadata={
