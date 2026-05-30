@@ -161,6 +161,14 @@ async def analyze(ctx: Context, request: dict) -> dict:
     dynamic_schema_map = request.get("dynamic_schema_map", "")
     user_id = request.get("user_id")
 
+    # ADR-0008 fallback context (when the supervisor escalates to Engine A
+    # because no specialist predicate matched or the top hit's confidence
+    # was below threshold). All three fields are optional; absence means
+    # this is a normal request, not a fallback.
+    fallback_reason = request.get("fallback_reason") or ""
+    fallback_score = request.get("fallback_score")
+    rejected_verb_iri = request.get("rejected_verb_iri") or ""
+
     # Extract the injected token from the proxy and set it into ContextVar
     auth_header = request.get("user_jwt")
     if auth_header:
@@ -323,7 +331,35 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 
                 logger.info(f"JIT Execution: Bound {len(jit_tools)} dynamic tools for URI {resolved_uri}")
 
+                # ADR-0008 fallback preamble: when this engine is acting as
+                # the generalist fallback (registry coverage gap or
+                # low-confidence specialist match), tell the agent that
+                # explicitly so its tone calibrates to uncertainty rather
+                # than presenting as authoritative.
+                fallback_preamble = ""
+                if fallback_reason == "no_predicate_matched":
+                    fallback_preamble = (
+                        "ROUTING CONTEXT: You are operating as the GENERALIST "
+                        "FALLBACK. The mesh's predicate registry has no "
+                        "specialized engine for this request. Do your best "
+                        "with the general-purpose tools below, and where the "
+                        "answer is uncertain say so explicitly. Do not "
+                        "present generalist judgment as specialist authority.\n\n"
+                    )
+                elif fallback_reason == "low_confidence":
+                    fallback_preamble = (
+                        f"ROUTING CONTEXT: You are operating as the GENERALIST "
+                        f"FALLBACK. A specialist predicate did match this "
+                        f"request ({rejected_verb_iri or 'unknown'}) but its "
+                        f"confidence score ({fallback_score}) was below the "
+                        f"threshold for confident routing. Do your best with "
+                        f"the general-purpose tools below; where the answer "
+                        f"is uncertain say so. Do not present generalist "
+                        f"judgment as specialist authority.\n\n"
+                    )
+
                 agent_prompt = (
+                    f"{fallback_preamble}"
                     f"You are an enterprise data analyst operating across all domains (Maintenance, Manufacturing, Sustainment, etc.). Your ONLY source of truth is the output of the `search_datahub` tool.\n\n"
                     f"Task: {task.task_description}\n"
                     f"Dataset ID: {task.dataset_id}\n\n"

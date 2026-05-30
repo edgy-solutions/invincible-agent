@@ -53,6 +53,15 @@ from dagster import (
 )
 
 
+#: Default fallback score threshold per ADR-0008. Operator-tunable via the
+#: ``PREDICATE_FALLBACK_SCORE_THRESHOLD`` env var; the supervisor's
+#: SupervisorQueryConfig uses this as its default so a Dagster run can
+#: also override per-launch from the gateway if needed.
+_FALLBACK_SCORE_THRESHOLD_DEFAULT = float(
+    os.getenv("PREDICATE_FALLBACK_SCORE_THRESHOLD", "0.40")
+)
+
+
 class SupervisorQueryConfig(Config):
     """Configuration for the supervisor job.
 
@@ -64,6 +73,12 @@ class SupervisorQueryConfig(Config):
         predicate-graph lookup in ``execute_subtask``.
       * ``entity_refs`` — output of ExtractIntent, available to subtasks
         for /resolve calls when subject grounding is required.
+
+    Per ADR-0008, the fallback policy is parameterized by:
+      * ``predicate_fallback_score_threshold`` — top hit must score at or
+        above this to be used as-is; otherwise the supervisor falls back
+        to Engine A with reason="low_confidence". Defaults to the
+        ``PREDICATE_FALLBACK_SCORE_THRESHOLD`` env var (0.40 default).
 
     Routing itself uses each subtask's ``sub_query`` as the NL hint into
     Engine O's /search_predicates (Weaviate hybrid). Step F'.6 removed the
@@ -86,6 +101,8 @@ class SupervisorQueryConfig(Config):
     entity_refs: List[str] = []
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
+    # ADR-0008 fallback policy:
+    predicate_fallback_score_threshold: float = _FALLBACK_SCORE_THRESHOLD_DEFAULT
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -155,18 +172,40 @@ def get_datahub_context(datahub_wrapper_url: str) -> str:
         logger.warning(f"Could not fetch DataHub schema map: {e}")
         return ""
 
+# ADR-0008 routing outcomes. Distinguishing these three is the load-bearing
+# decision: "no_match" routes to the LLM fallback (registry coverage gap is
+# something an LLM can attempt), while "infra_error" aborts the subtask
+# (masking an infrastructure outage by routing through Engine A would hide
+# the very signal ops needs to fix it).
+_ROUTING_MATCHED = "matched"
+_ROUTING_NO_MATCH = "no_match"
+_ROUTING_INFRA_ERROR = "infra_error"
+
+
 def _resolve_predicate_endpoint(
     context,
     user_query: str,
     entitled_domains: List[str],
-) -> Dict[str, Any] | None:
+) -> tuple[str, Dict[str, Any] | None]:
     """Ask Engine O's /search_predicates for the best-matching predicate.
+
+    Returns ``(status, predicate_or_none)``:
+
+      * ``("matched", predicate_dict)`` — Engine O found a candidate. The
+        caller applies the score threshold (ADR-0008) to decide whether
+        to use the specialist or fall back to Engine A.
+      * ``("no_match", None)`` — Engine O returned ``found=false``. The
+        registry has no predicate for this NL; ADR-0008 says fall back
+        to Engine A as a generalist.
+      * ``("infra_error", None)`` — could not reach Engine O, Engine O
+        returned 5xx, or the response was malformed. ADR-0008 says
+        **do not** fall back; abort the subtask so the infrastructure
+        signal is loud.
 
     Per ADR-0009 Step F'.6, Weaviate hybrid search is the only routing
     path: ``user_query`` goes straight to the vector store, which scores
     against the registered predicates' humanized verb + synonyms +
-    description. No exact-match fallback — if Engine O returns 503
-    (Weaviate unreachable) or ``found=false``, the caller must fail loud.
+    description.
     """
     try:
         resp = requests.post(
@@ -181,27 +220,116 @@ def _resolve_predicate_endpoint(
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
+        # Per ADR-0008: infrastructure failure must surface, not be masked
+        # by the LLM fallback. Return infra_error so execute_subtask aborts.
         context.log.error(
-            f"search_predicates failed for query={user_query!r}: {exc}"
+            f"search_predicates infrastructure error for query={user_query!r}: "
+            f"{exc}"
         )
-        return None
+        return _ROUTING_INFRA_ERROR, None
 
     if not data.get("found"):
         context.log.warning(
-            f"No predicate found for query={user_query!r}; "
-            f"reason={data.get('reason')}"
+            f"search_predicates no_match query={user_query!r} "
+            f"reason={data.get('reason')!r}"
         )
-        return None
+        return _ROUTING_NO_MATCH, None
 
     candidates = data.get("candidates", [])
     if not candidates:
-        return None
+        # found=true with no candidates would be an Engine-O bug; treat as
+        # no_match (still a registry-shape failure the LLM might handle).
+        context.log.warning(
+            f"search_predicates returned found=true with no candidates "
+            f"for query={user_query!r} — treating as no_match"
+        )
+        return _ROUTING_NO_MATCH, None
+
     head = candidates[0]
     context.log.info(
-        f"search_predicates picked {head.get('verb_iri')!r} "
-        f"(score={head.get('score')})"
+        f"search_predicates matched query={user_query!r} "
+        f"verb_iri={head.get('verb_iri')!r} score={head.get('score')}"
     )
-    return head
+    return _ROUTING_MATCHED, head
+
+
+def _call_engine_a_fallback(
+    context,
+    sub_query: str,
+    config: "SupervisorQueryConfig",
+    fallback_reason: str,
+    fallback_score: float | None,
+    rejected_predicate: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """Route a subtask to Engine A as the ADR-0008 generalist fallback.
+
+    Engine A's existing ``/analyze`` endpoint is reused unchanged at the
+    transport layer — the fallback signals ride as JSON fields so the
+    Restate analyst service can pick them up and adapt its smolagent
+    system prompt. The fields are namespaced under ``fallback_*`` to
+    keep them visually distinct from the routine request fields.
+
+    A structured-log line is emitted for the telemetry counter the ADR
+    describes (``predicate_fallback_total{reason=...}``): scrape with
+    your log-based metrics pipeline (Loki / Datadog / GCP logging) on
+    the key ``predicate_fallback_total``.
+    """
+    # ADR-0008 telemetry: structured log line scrapable as a counter.
+    context.log.info(
+        "predicate_fallback_total reason=%s score=%s query=%r",
+        fallback_reason,
+        fallback_score if fallback_score is not None else "none",
+        sub_query,
+    )
+
+    # Engine A's /analyze proxy expects the AgentTask shape
+    # (task_description / dataset_id), not the supervisor's specialist-path
+    # user_query field. Match that contract so the proxy passes payload
+    # through cleanly.
+    payload = {
+        "task_description": sub_query,
+        "dataset_id": "generalist_fallback",
+        # Persona split: Engine A is the generalist so the answerer
+        # persona collapses to whoever asked (no specialist owner_persona
+        # to inherit from).
+        "user_persona": config.user_persona,
+        "answerer_persona": config.user_persona,
+        "persona": config.user_persona,
+        "domain": "UNKNOWN",  # no scoped domain — generalist fallback
+        "dynamic_schema_map": "",
+        "user_id": config.user_id,
+        # ADR-0008 fallback context — Engine A's handler reads these to
+        # prepend a generalist-fallback preamble to its smolagent prompt.
+        "fallback_reason": fallback_reason,           # "no_predicate_matched" | "low_confidence"
+        "fallback_score": fallback_score,             # float or null
+        "fallback_query": sub_query,                  # verbatim user phrasing
+        "rejected_verb_iri": (
+            rejected_predicate.get("verb_iri") if rejected_predicate else None
+        ),
+    }
+
+    response = requests.post(
+        f"{RESTATE_ANALYST_URL}/analyze",
+        json=payload,
+        timeout=300,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    trace = data.get("execution_trace")
+    if trace:
+        context.log.info(f"🧠 Fallback Agent Reasoning Trajectory:\n{trace}")
+
+    return {
+        "persona": config.user_persona,
+        "user_persona": config.user_persona,
+        "answerer_persona": config.user_persona,
+        "predicate_verb_iri": None,
+        "fallback_reason": fallback_reason,
+        "fallback_score": fallback_score,
+        "sub_query": sub_query,
+        "expert_response": data,
+    }
 
 
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
@@ -231,26 +359,28 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # Per ADR-0009 Step F'.6: routing is NL → Weaviate hybrid. The
     # supervisor passes the subtask's natural-language sub_query straight
     # to /search_predicates; Engine O matches against humanized verb +
-    # synonyms + description. No exact-match fallback in Engine O — a
-    # routing miss surfaces here as ``predicate is None`` and the subtask
-    # aborts loud.
+    # synonyms + description.
     routing_query = sub_query or config.user_query
 
-    predicate = _resolve_predicate_endpoint(
+    status, predicate = _resolve_predicate_endpoint(
         context,
         routing_query,
         list(config.entitled_domains),
     )
 
-    if predicate is None:
-        # No fallback — per ADR-0009 the predicate graph IS the routing
-        # mechanism. A miss here means: engine not registered, no matching
-        # synonyms/description, or the user is not entitled to any engine
-        # that serves this verb. All three are operator-visible failure
-        # modes.
+    # ADR-0008 routing decision table:
+    #   matched + score ≥ threshold  → specialist
+    #   matched + score <  threshold → Engine A fallback (low_confidence)
+    #   no_match                      → Engine A fallback (no_predicate_matched)
+    #   infra_error                   → abort with INFRA_ERROR signal
+    if status == _ROUTING_INFRA_ERROR:
+        # Infrastructure outage — must surface, NOT mask via fallback.
+        # Same reasoning that drove the ADR-0009 Cypher-fallback removal:
+        # silent degradation hides the signal ops needs to fix the outage.
         context.log.error(
-            f"No predicate matched query={routing_query!r} for entitled_domains="
-            f"{list(config.entitled_domains)}; aborting subtask."
+            f"Aborting subtask due to routing infrastructure error "
+            f"(query={routing_query!r}). Engine O / Weaviate must recover "
+            f"before this subtask can be retried."
         )
         return {
             "persona": config.user_persona,
@@ -258,14 +388,51 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             "answerer_persona": None,
             "sub_query": sub_query,
             "expert_response": {
-                "status": "FAILED",
+                "status": "INFRA_ERROR",
                 "summary": (
-                    f"No registered predicate matches '{verb_label}' under "
-                    f"your entitled domains. Either the verb is unsupported "
-                    f"or you lack scope to any engine that serves it."
+                    "Routing service is unavailable. The mesh cannot route "
+                    "this request right now. Please retry shortly; if the "
+                    "error persists, the operator should check Engine O and "
+                    "the Weaviate Predicate collection."
                 ),
             },
         }
+
+    if status == _ROUTING_NO_MATCH:
+        # Per ADR-0008: registry coverage gap → generalist fallback.
+        return _call_engine_a_fallback(
+            context,
+            sub_query=sub_query,
+            config=config,
+            fallback_reason="no_predicate_matched",
+            fallback_score=None,
+            rejected_predicate=None,
+        )
+
+    # status == _ROUTING_MATCHED — apply the threshold per ADR-0008.
+    assert predicate is not None
+    score = predicate.get("score")
+    threshold = config.predicate_fallback_score_threshold
+
+    # ADR-0008 telemetry: emit the score for histogram/aggregation.
+    context.log.info(
+        "predicate_routing_score score=%s threshold=%s verb_iri=%s",
+        score if score is not None else "none",
+        threshold,
+        predicate.get("verb_iri"),
+    )
+
+    if score is None or score < threshold:
+        # Routing is guessing; Engine A as a generalist may do better than
+        # a low-confidence specialist whose synonyms only weakly matched.
+        return _call_engine_a_fallback(
+            context,
+            sub_query=sub_query,
+            config=config,
+            fallback_reason="low_confidence",
+            fallback_score=score,
+            rejected_predicate=predicate,
+        )
 
     endpoint = predicate["endpoint"]
     answerer_persona = predicate.get("owner_persona") or config.user_persona

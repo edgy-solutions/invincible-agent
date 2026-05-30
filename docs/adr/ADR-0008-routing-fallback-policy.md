@@ -1,6 +1,6 @@
 # ADR-0008 — Routing fallback policy (LLM as generalist fallback)
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-05-30
 **Deciders:** Platform team
 **Related:**
@@ -71,21 +71,34 @@ generalist fallback** — instead of aborting. The fallback is
 ### What the fallback does
 
 The supervisor calls Engine A's `/analyze` endpoint with the original
-`sub_query` and these additional fields:
+`sub_query` as `task_description` plus four fallback-context fields
+in the JSON body:
 
-```http
+```json
 POST {ENGINE_A_URL}/analyze
-X-Fallback-Reason: no_predicate_matched | low_confidence
-X-Fallback-Score: <float | "none">  # the rejected top-score, if any
-X-Fallback-Query: <original verbatim>
+{
+  "task_description": "<original sub_query>",
+  "dataset_id":        "generalist_fallback",
+  "user_persona":      "<JWT-derived>",
+  "fallback_reason":   "no_predicate_matched" | "low_confidence",
+  "fallback_score":    <float | null>,
+  "fallback_query":    "<verbatim user phrasing>",
+  "rejected_verb_iri": "<verb_iri> | null"
+}
 ```
 
-Engine A's smolagent prompt adapts: it knows the registry did not have
-a specialized tool for this NL and acts as a generalist. The prompt
-shift is small (a sentence in the system prompt) but matters for tone
-and uncertainty calibration — a fallback response should say "I am
-answering as a generalist because no registered tool matched your
-request" rather than presenting as authoritative.
+JSON fields rather than HTTP headers because Engine A's existing
+`/analyze` proxy already forwards the JSON body through to Restate
+unchanged — header parsing would have been a second translation layer
+for no benefit. The fields are namespaced under `fallback_*` to stay
+visually distinct from routine request fields.
+
+Engine A's smolagent system prompt prepends a single
+"ROUTING CONTEXT: You are operating as the GENERALIST FALLBACK …"
+paragraph when `fallback_reason` is set. The prompt shift is small but
+matters for tone and uncertainty calibration — a fallback response
+should say "I am answering as a generalist because no registered tool
+matched your request" rather than presenting as authoritative.
 
 ### Where the threshold lives
 
@@ -105,12 +118,27 @@ what payload").
 
 ### Telemetry
 
-The fallback is a first-class signal, not a hidden behavior:
+The fallback is a first-class signal, not a hidden behavior. The
+implementation emits structured `INFO`-level log lines on every
+routing decision:
 
 ```
-predicate_fallback_total{reason="no_match"}     counter
-predicate_fallback_total{reason="low_score"}    counter
-predicate_routing_score                          histogram
+predicate_fallback_total reason=no_predicate_matched score=none query='…'
+predicate_fallback_total reason=low_confidence       score=0.22 query='…'
+predicate_routing_score  score=0.81 threshold=0.40 verb_iri=mesh:queryKnowledgeGraph
+```
+
+Scrape these with your log-based metrics pipeline (Loki / Datadog /
+GCP logging / Promtail → Prometheus) on the leading token. The shape
+is deliberately grep-friendly so the metric can be reconstructed
+without a structured-logging library dependency.
+
+Logical metrics (whatever scraper materializes them as):
+
+```
+predicate_fallback_total{reason="no_predicate_matched"}     counter
+predicate_fallback_total{reason="low_confidence"}           counter
+predicate_routing_score                                      histogram
 ```
 
 Operators looking at the dashboard can answer:
@@ -183,23 +211,38 @@ threshold to mask the signal.
 
 ## Migration plan
 
-1. Add `PREDICATE_FALLBACK_SCORE_THRESHOLD` to the supervisor's
-   `SupervisorQueryConfig` with the 0.40 default.
-2. In `dynamic_supervisor.py:execute_subtask`, replace the
-   `predicate is None` abort branch with:
-   - If `predicate is None` (Engine O reported `found=false`) → call
-     Engine A with `X-Fallback-Reason: no_predicate_matched`.
-   - Else if `predicate.score < threshold` → call Engine A with
-     `X-Fallback-Reason: low_confidence`.
-   - Else → existing route to the matched engine.
-3. In Engine A (`agent_fleet/restate_analyst`), read the
-   `X-Fallback-Reason` / `X-Fallback-Score` headers and prepend a
-   single-sentence "you are operating as a generalist fallback because
-   …" block to the smolagent system prompt when set.
-4. Add the three telemetry instruments (`predicate_fallback_total`
-   counter with `reason` label, `predicate_routing_score` histogram).
-5. Document the threshold and the fallback semantics in the supervisor
-   readme so operators can find the knob.
+Status: **implemented** as of the same commit that flips this ADR to
+Accepted. Reference the dynamic_supervisor and restate_analyst diffs
+in that commit for the exact code shape.
+
+1. ✅ `PREDICATE_FALLBACK_SCORE_THRESHOLD` env var read at module
+   import; `SupervisorQueryConfig.predicate_fallback_score_threshold`
+   defaults to it. Operators can override per-launch by passing the
+   field in the Dagster runConfig.
+2. ✅ `_resolve_predicate_endpoint` returns a `(status, predicate)`
+   tuple distinguishing `matched` / `no_match` / `infra_error`. The
+   load-bearing decision is that `infra_error` (Engine O / Weaviate
+   outage) bypasses the LLM fallback entirely — that would mask the
+   outage signal, same logic that drove ADR-0009 Step F'.6's
+   Cypher-fallback removal.
+3. ✅ `execute_subtask` branches as the decision table above:
+   `infra_error` → INFRA_ERROR signal returned to the supervisor;
+   `no_match` → `_call_engine_a_fallback(reason="no_predicate_matched")`;
+   `matched` with `score < threshold` → `_call_engine_a_fallback(reason="low_confidence")`;
+   else → existing specialist route.
+4. ✅ `_call_engine_a_fallback` posts to `RESTATE_ANALYST_URL/analyze`
+   with the JSON payload shape above (not headers; Engine A's proxy
+   forwards the body unchanged so headers added nothing).
+5. ✅ Engine A's `analyze` handler reads `fallback_reason`,
+   `fallback_score`, and `rejected_verb_iri` from the request dict
+   and, when `fallback_reason` is set, prepends a generalist-fallback
+   preamble to the smolagent system prompt.
+6. ✅ Structured-log telemetry: `predicate_fallback_total reason=… score=…`
+   and `predicate_routing_score score=… threshold=… verb_iri=…` lines
+   emitted on every routing decision.
+7. 🔜 Operator-facing doc: the supervisor readme is still to be
+   updated with the env-var name and the score-distribution dashboard
+   panel queries. Tracked separately from this ADR.
 
 ## Indicators for revisiting
 
