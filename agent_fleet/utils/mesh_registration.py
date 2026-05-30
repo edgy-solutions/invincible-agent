@@ -69,6 +69,7 @@ def register_engine_to_mesh(
     endpoint_url: str,
     verb_synonyms: Optional[Iterable[str]] = None,
     owner_persona: Optional[str] = None,
+    domains: Optional[Iterable[str]] = None,
     cost_class: str = "medium",
     requires_human_approval: bool = False,
     version: str = "0.1.0",
@@ -140,6 +141,10 @@ def register_engine_to_mesh(
         "mesh_namespace_authority":     namespace_authority,
         # Routing / policy metadata
         "mesh_owner_persona":           owner_persona or "",
+        # Per ADR-0009: domains are a scope filter, not a routing key.
+        # JSON-encoded list of domain scopes this engine serves; empty list
+        # means domain-agnostic.
+        "mesh_domains":                 json.dumps(list(domains or [])),
         "mesh_cost_class":              cost_class,
         "mesh_requires_human_approval": "true" if requires_human_approval else "false",
         # Runtime

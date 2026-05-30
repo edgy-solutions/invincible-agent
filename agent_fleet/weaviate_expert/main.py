@@ -60,6 +60,10 @@ async def lifespan(app: FastAPI):
             "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
         ),
         owner_persona="TECH_WRITER",
+        # Per ADR-0009: Engine W's strict per-collection segregation
+        # already partitioned by domain; making it explicit here so the
+        # scope filter in /find_tool can match.
+        domains=["MAINTENANCE", "MANUFACTURING"],
         cost_class="medium",  # Weaviate is fast; embedding + smolagents = medium overall
     )
     yield

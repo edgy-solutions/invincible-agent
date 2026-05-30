@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI):
             "http://data-analyst-svc.default.svc.cluster.local:8089/analyze_data",
         ),
         owner_persona="DATA_STEWARD",
+        # Per ADR-0009: DA is no longer a special case routed by an
+        # `if domain == "DATA_ENGINEERING"` switch — it's a normal
+        # domain citizen that registers the domains it serves.
+        domains=["DATA_ENGINEERING"],
         cost_class="slow",
     )
     yield

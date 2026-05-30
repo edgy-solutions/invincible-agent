@@ -61,6 +61,9 @@ async def lifespan(app: FastAPI):
             "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
         ),
         owner_persona="AUDITOR",
+        # Per ADR-0009: Engine E queries the maintenance-manual knowledge
+        # graph; its domain scopes follow the manual corpus it serves.
+        domains=["MAINTENANCE", "MANUFACTURING"],
         cost_class="slow",
     )
     yield

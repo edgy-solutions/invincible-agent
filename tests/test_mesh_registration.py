@@ -213,9 +213,26 @@ def test_emits_full_predicate_payload(fake_datahub, monkeypatch, caplog):
     assert props["mesh_cost_class"] == "medium"
     assert props["mesh_requires_human_approval"] == "true"
     assert props["mesh_endpoint_url"] == "http://engine-a:8081/analyze"
+    # Per ADR-0009: domains default to empty list (domain-agnostic) when
+    # the caller omits the field.
+    assert json.loads(props["mesh_domains"]) == []
     assert json.loads(props["mesh_openapi_schema"]) == {}
     assert props["mesh_sdk_version"] == "0.0.0"  # engine emit, not SDK
     assert props["mesh_tool_version"] == "1.2.3"
+
+
+def test_domains_field_is_published(fake_datahub, monkeypatch):
+    """Per ADR-0009: ``domains`` list survives round-trip through DataHub
+    customProperties as a JSON-encoded array string."""
+    monkeypatch.setenv("MESH_REGISTER_ON_STARTUP", "true")
+    monkeypatch.setenv("DATAHUB_GMS_URL", "http://fake-gms:8080")
+
+    mesh_registration.register_engine_to_mesh(
+        **_call_kwargs(domains=["MAINTENANCE", "MANUFACTURING"])
+    )
+
+    props = _FakeEmitter.instances[0].emitted[0].aspect.customProperties
+    assert json.loads(props["mesh_domains"]) == ["MAINTENANCE", "MANUFACTURING"]
 
 
 def test_mesh_prefix_resolves_to_platform_authority(fake_datahub, monkeypatch):

@@ -777,6 +777,9 @@ async def lifespan(fastapi_app: FastAPI):
             "http://restate-agent-svc.default.svc.cluster.local:8081/analyze",
         ),
         owner_persona="DATA_STEWARD",
+        # Per ADR-0009: Engine A is the default fallback analyst for
+        # general-purpose work; it serves all non-specialized domains.
+        domains=["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT"],
         cost_class="slow",  # smolagents loops are not cheap
     )
 
