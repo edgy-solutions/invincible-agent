@@ -110,7 +110,11 @@ app.add_middleware(
 # ── Models ────────────────────────────────────────────────
 class InterviewRequest(BaseModel):
     message: str
-    session_id: str | None = None
+    # Required: identifies the chat thread / DagsterRunTracker key. A missing
+    # session_id used to be silently filled with a fresh UUID per request,
+    # which defeated the tracker's per-key dedup and caused back-to-back
+    # duplicate Dagster runs whenever the UI re-fired the same submission.
+    session_id: str
     current_graph_json: str | None = None
 
 
@@ -532,7 +536,11 @@ async def generate_dagster_stream(
     """
     Trigger Dagster job and stream step status as Holographic Thinking Cards.
     """
-    session_id = request.session_id or str(uuid.uuid4())
+    # session_id is now required by InterviewRequest — do NOT mint a fresh
+    # UUID here. A per-request UUID gave every duplicate UI submission a
+    # different DagsterRunTracker key, so the tracker's dedup never fired
+    # and Dagster launched the same job multiple times.
+    session_id = request.session_id
     user_query = request.message
     
     yield _sse("status", json.dumps({
