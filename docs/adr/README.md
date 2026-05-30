@@ -74,3 +74,4 @@ the decision probably isn't ADR-worthy — it's permanent.
 | [0008](ADR-0008-routing-fallback-policy.md) | Routing fallback policy (LLM as generalist fallback) | Accepted |
 | [0009](ADR-0009-sunset-classification-axes.md) | Sunset persona / domain / intent as classification axes | Proposed |
 | [0010](ADR-0010-distributed-tracing-strategy.md) | Distributed tracing strategy (OpenTelemetry at the HTTP boundary) | Proposed |
+| [0011](ADR-0011-multi-spo-routing.md) | Multi-SPO routing in NL (design exploration) | Proposed |
