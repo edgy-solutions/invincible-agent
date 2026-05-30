@@ -71,3 +71,4 @@ the decision probably isn't ADR-worthy — it's permanent.
 | [0005](ADR-0005-verb-and-concept-namespaces.md) | Two-class namespacing for verbs and concepts (domain vs platform) | Accepted |
 | [0006](ADR-0006-verb-registry-location.md) | DataHub as proposal inbox, Neo4j as runtime substrate | Accepted |
 | [0007](ADR-0007-survey-before-mint.md) | Survey existing ontologies before minting `mesh:` concepts | Accepted |
+| [0009](ADR-0009-sunset-classification-axes.md) | Sunset persona / domain / intent as classification axes | Proposed |
