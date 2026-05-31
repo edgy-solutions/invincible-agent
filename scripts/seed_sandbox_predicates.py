@@ -204,12 +204,21 @@ def seed_neo4j():
 # Weaviate seed
 # ---------------------------------------------------------------------------
 def ensure_predicate_collection(client):
+    # Delete and recreate so we pick up schema changes (inverted-index
+    # property-length config). Sandbox-safe — the seed below re-populates.
     if client.collections.exists(PREDICATE_COLLECTION):
-        print(f"[weaviate] {PREDICATE_COLLECTION} collection exists, reusing")
-        return client.collections.get(PREDICATE_COLLECTION)
+        print(f"[weaviate] {PREDICATE_COLLECTION} exists — dropping for re-create")
+        client.collections.delete(PREDICATE_COLLECTION)
     print(f"[weaviate] Creating {PREDICATE_COLLECTION} collection")
     return client.collections.create(
         name=PREDICATE_COLLECTION,
+        # IndexPropertyLength=true is required by Engine O's domain-scope
+        # filter which uses `Filter.by_property('domains', length=True).equal(0)`
+        # to match domain-agnostic predicates. Without it Weaviate errors:
+        # "Property length must be indexed to be filterable!"
+        inverted_index_config=wvc.config.Configure.inverted_index(
+            index_property_length=True,
+        ),
         properties=[
             wvc.config.Property(name="verb_iri", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="verb_local", data_type=wvc.config.DataType.TEXT),
