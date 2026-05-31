@@ -609,7 +609,15 @@ def _predicate_hybrid_search_sync(
                 wvc.query.Filter.by_property("domains", length=True).equal(0),
             ])
 
-        response = collection.query.hybrid(
+        # NOTE: hybrid() requires a text2vec module on the Weaviate cluster
+        # to vectorize the query. The sandbox Weaviate deployment has no
+        # vectorizer modules enabled (helm chart default), so hybrid() fails
+        # with "VectorFromInput was called without vectorizer on class
+        # Predicate". Fall back to bm25() (inverted-index-only) so routing
+        # still works while we figure out the long-term vectorizer choice
+        # (text2vec-ollama would match the LLM stack but needs Weaviate
+        # to be redeployed with the module enabled).
+        response = collection.query.bm25(
             query=query,
             limit=limit,
             filters=filters,
