@@ -190,27 +190,28 @@ keycloak:
 topaz:
   enabled: true
 
-# Dagster — webserver and daemon use the canonical multi-arch
-# docker.io/dagster/dagster-k8s image (the non-celery variant). It has
-# `dagster-webserver` and `dagster-daemon` on PATH and is far smaller
-# than rolling our own. User-code stays on the iagent dagster-control-plane
-# image because that one has `iagent.definitions` baked in.
+# Dagster — webserver and daemon use our own thin multi-arch
+# `dagster-server` image (built by iagent CI specifically for this
+# purpose — see the `dagster-server` matrix entry in build-containers.yml).
+# Canonical docker.io/dagster/dagster-k8s would be ideal but it's
+# amd64-only and the cluster is arm64. dagster-server has dagster +
+# webserver + daemon + postgres + graphql but no iagent code, so it
+# stays small while serving the orchestration plane.
+# User-code stays on the iagent dagster-control-plane image because
+# that one has `iagent.definitions` baked in.
 dagster:
   webserver:
     enabled: true
     image:
-      # Canonical Dagster image — has webserver + daemon + the dagster
-      # ecosystem packages (dagster-postgres, dagster-graphql, etc.).
-      # Multi-arch: amd64 + arm64.
-      registry: "docker.io"
-      repository: "dagster/dagster-k8s"
-      tag: "1.9.10"
+      # Our thin arm64-capable dagster runtime. ghcr.io/edgy-solutions/...
+      # is the default registry so no override needed.
+      tag: "latest"
+      repository: "edgy-solutions/invincible-agent/dagster-server"
   daemon:
     enabled: true
     image:
-      registry: "docker.io"
-      repository: "dagster/dagster-k8s"
-      tag: "1.9.10"
+      tag: "latest"
+      repository: "edgy-solutions/invincible-agent/dagster-server"
   userCode:
     enabled: true  # loads iagent.definitions
                     # doc-tools is deployed as a SEPARATE Dagster code-location
@@ -232,7 +233,12 @@ centralGateway:
   enabled: true
 
 cortexUi:
-  enabled: true
+  # Disabled for Phase 2 sandbox — the React frontend image
+  # (ghcr.io/edgy-solutions/cortex-ui/frontend:latest) is amd64-only
+  # and the cluster is arm64. Smoke tests for routing hit the gateway
+  # via curl + kubectl port-forward instead. Re-enable in Phase 3 after
+  # cortex-ui's CI adds multi-arch (same fix pattern as doc-tools/dag-tools).
+  enabled: false
   image:
     tag: "latest"
   ingress:

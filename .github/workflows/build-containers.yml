@@ -29,6 +29,13 @@ jobs:
           - service: dagster-control-plane
             path: .
             port: "3000"
+          # Thin dagster runtime image (dagster + webserver + daemon +
+          # postgres + graphql; no iagent code). docker.io/dagster/dagster-k8s
+          # is amd64-only, so we publish our own multi-arch equivalent for
+          # the webserver/daemon pods to use. Cluster: arm64 k3s.
+          - service: dagster-server
+            path: .
+            port: "3000"
           - service: ontology-service
             path: agent_fleet/ontology_service
             port: "8084"
@@ -58,7 +65,13 @@ jobs:
             port: "8089"
           - service: cortex-bff
             path: .
-            port: "8000"
+            # Port aligned with the helm chart's cortexBff.port (8090).
+            # The chart's Deployment templates use cortexBff.port for both
+            # the container port spec and the service targetPort, so the
+            # image's PORT env var (used in the uvicorn --port arg) must
+            # match. Previously was 8000, causing the readiness probe to
+            # hit a closed port — cortex-bff pod stuck 0/1 Ready.
+            port: "8090"
             # cortex-bff's source is at agent_fleet/cortex_bff/main.py but
             # the image needs the whole repo (src/iagent/gateway.py is the
             # FastAPI app). Build from repo root, override main module path.
@@ -89,9 +102,40 @@ jobs:
             TAGS="$TAGS -t ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest"
           fi
 
-          if [ "${{ matrix.service }}" == "dagster-control-plane" ]; then
+          if [ "${{ matrix.service }}" == "dagster-server" ]; then
+            echo "Building dagster-server (thin runtime, no iagent code)..."
+            # Tiny single-stage image: dagster + webserver + daemon + postgres
+            # + graphql. Used by the chart's webserver and daemon Deployments
+            # (multi-arch — replaces the amd64-only docker.io/dagster/dagster-k8s).
+            cat << 'EOF' > Dockerfile.dagster-server
+            FROM python:3.12-slim-bookworm
+            RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
+            ENV PYTHONUNBUFFERED=1 \
+                PYTHONDONTWRITEBYTECODE=1 \
+                DAGSTER_HOME="/opt/dagster/dagster_home" \
+                PIP_NO_CACHE_DIR=1
+            RUN apt-get update && apt-get install -y --no-install-recommends \
+                  libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
+            RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
+            # Pin to the same version the chart's userCode (dagster-control-plane)
+            # is built with, so the webserver/daemon code-location protocol
+            # version matches the user-code gRPC server.
+            RUN pip install --no-cache-dir \
+                "dagster==1.9.10" "dagster-webserver==1.9.10" \
+                "dagster-postgres==0.25.10" "dagster-graphql==1.9.10"
+            USER dagsteruser
+            WORKDIR /app
+            CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
+            EOF
+            sed -i 's/^[ \t]*//' Dockerfile.dagster-server
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
+              -f Dockerfile.dagster-server \
+              $TAGS \
+              --push .
+          elif [ "${{ matrix.service }}" == "dagster-control-plane" ]; then
             echo "Building dagster-control-plane with dynamic Multi-Stage Dockerfile..."
-            
+
             # Generate the Dagster Dockerfile on the fly
             cat << 'EOF' > Dockerfile.dagster
           # STAGE 1: BUILDER
