@@ -113,10 +113,16 @@ jobs:
             # match column 0 in bash to actually close the heredoc.
             cat << 'EOF' > Dockerfile.dagster-server
           FROM python:3.12-slim-bookworm
-          RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
+          # `useradd -r -m` creates the home directory at /home/dagsteruser
+          # so dagster_shared.telemetry's get_or_create_user_telemetry_dir
+          # doesn't crash with PermissionError. DAGSTER_TELEMETRY_ENABLED=false
+          # also short-circuits it but the dir still gets touched on import,
+          # so create it as a belt-and-suspenders fix.
+          RUN groupadd -r dagsteruser && useradd -r -m -g dagsteruser dagsteruser
           ENV PYTHONUNBUFFERED=1 \
               PYTHONDONTWRITEBYTECODE=1 \
               DAGSTER_HOME="/opt/dagster/dagster_home" \
+              DAGSTER_TELEMETRY_ENABLED=false \
               PIP_NO_CACHE_DIR=1
           RUN apt-get update && apt-get install -y --no-install-recommends \
                 libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
