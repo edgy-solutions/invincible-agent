@@ -112,18 +112,34 @@ _NEO4J_DRIVER = None
 #
 # The view-functions live in a sibling module so they can be unit-tested
 # without pulling in this file's heavy import chain (rdflib, weaviate,
-# baml_client).
-from agent_fleet.ontology_service.registry_views import (  # noqa: E402
-    PERSONA_UI_METADATA as _PERSONA_UI_METADATA,
-    DEFAULT_PERSONA_UI as _DEFAULT_PERSONA_UI,
-    LEGACY_PERSONA_PROMPTS as _LEGACY_PERSONA_PROMPTS,
-    LEGACY_DOMAIN_PROMPTS as _LEGACY_DOMAIN_PROMPTS,
-    LEGACY_INTENT_PROMPTS as _LEGACY_INTENT_PROMPTS,
-    fetch_active_personas as _fetch_personas_with_driver,
-    fetch_active_domains as _fetch_domains_with_driver,
-    get_baml_persona_string as _persona_string_with_driver,
-    get_baml_domain_string as _domain_string_with_driver,
-)
+# baml_client). Try/except needed because the container Dockerfile flattens
+# this directory into /app/ (so the sibling is at /app/registry_views.py
+# without the `agent_fleet.ontology_service.` prefix), while dev runs
+# import via the full package path.
+try:
+    from registry_views import (  # noqa: E402  — container path
+        PERSONA_UI_METADATA as _PERSONA_UI_METADATA,
+        DEFAULT_PERSONA_UI as _DEFAULT_PERSONA_UI,
+        LEGACY_PERSONA_PROMPTS as _LEGACY_PERSONA_PROMPTS,
+        LEGACY_DOMAIN_PROMPTS as _LEGACY_DOMAIN_PROMPTS,
+        LEGACY_INTENT_PROMPTS as _LEGACY_INTENT_PROMPTS,
+        fetch_active_personas as _fetch_personas_with_driver,
+        fetch_active_domains as _fetch_domains_with_driver,
+        get_baml_persona_string as _persona_string_with_driver,
+        get_baml_domain_string as _domain_string_with_driver,
+    )
+except ImportError:
+    from agent_fleet.ontology_service.registry_views import (  # noqa: E402
+        PERSONA_UI_METADATA as _PERSONA_UI_METADATA,
+        DEFAULT_PERSONA_UI as _DEFAULT_PERSONA_UI,
+        LEGACY_PERSONA_PROMPTS as _LEGACY_PERSONA_PROMPTS,
+        LEGACY_DOMAIN_PROMPTS as _LEGACY_DOMAIN_PROMPTS,
+        LEGACY_INTENT_PROMPTS as _LEGACY_INTENT_PROMPTS,
+        fetch_active_personas as _fetch_personas_with_driver,
+        fetch_active_domains as _fetch_domains_with_driver,
+        get_baml_persona_string as _persona_string_with_driver,
+        get_baml_domain_string as _domain_string_with_driver,
+    )
 
 
 async def fetch_active_personas() -> list[str]:

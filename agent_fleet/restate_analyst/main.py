@@ -839,9 +839,16 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 # Lives in a sibling module so its handler logic can be unit-tested without
 # importing the rest of this file (which pulls in smolagents / baml_client).
-from agent_fleet.restate_analyst.dagster_run_tracker import (  # noqa: E402
-    run_tracker,
-)
+# Try/except needed because the container Dockerfile flattens this directory
+# into /app/ (so the sibling is at /app/dagster_run_tracker.py without the
+# `agent_fleet.restate_analyst.` prefix), while dev runs import via the
+# full package path.
+try:
+    from dagster_run_tracker import run_tracker  # noqa: E402  — container path
+except ImportError:
+    from agent_fleet.restate_analyst.dagster_run_tracker import (  # noqa: E402
+        run_tracker,
+    )
 
 # Mount the Restate SDK so it handles /restate/* routes
 app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, run_tracker]))
