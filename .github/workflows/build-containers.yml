@@ -107,26 +107,31 @@ jobs:
             # Tiny single-stage image: dagster + webserver + daemon + postgres
             # + graphql. Used by the chart's webserver and daemon Deployments
             # (multi-arch — replaces the amd64-only docker.io/dagster/dagster-k8s).
+            # NOTE: heredoc body must NOT be extra-indented; YAML `|` strips
+            # the common 10-space leading indent of this `run:` block, so any
+            # extra indent here ends up in bash and the EOF terminator must
+            # match column 0 in bash to actually close the heredoc.
             cat << 'EOF' > Dockerfile.dagster-server
-            FROM python:3.12-slim-bookworm
-            RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
-            ENV PYTHONUNBUFFERED=1 \
-                PYTHONDONTWRITEBYTECODE=1 \
-                DAGSTER_HOME="/opt/dagster/dagster_home" \
-                PIP_NO_CACHE_DIR=1
-            RUN apt-get update && apt-get install -y --no-install-recommends \
-                  libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
-            RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
-            # Pin to the same version the chart's userCode (dagster-control-plane)
-            # is built with, so the webserver/daemon code-location protocol
-            # version matches the user-code gRPC server.
-            RUN pip install --no-cache-dir \
-                "dagster==1.9.10" "dagster-webserver==1.9.10" \
-                "dagster-postgres==0.25.10" "dagster-graphql==1.9.10"
-            USER dagsteruser
-            WORKDIR /app
-            CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
-            EOF
+          FROM python:3.12-slim-bookworm
+          RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
+          ENV PYTHONUNBUFFERED=1 \
+              PYTHONDONTWRITEBYTECODE=1 \
+              DAGSTER_HOME="/opt/dagster/dagster_home" \
+              PIP_NO_CACHE_DIR=1
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
+          RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
+          # Pin to the same version the chart's userCode (dagster-control-plane)
+          # is built with, so the webserver/daemon code-location protocol
+          # version matches the user-code gRPC server.
+          RUN pip install --no-cache-dir \
+              "dagster==1.9.10" "dagster-webserver==1.9.10" \
+              "dagster-postgres==0.25.10" "dagster-graphql==1.9.10"
+          USER dagsteruser
+          WORKDIR /app
+          CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
+          EOF
+
             sed -i 's/^[ \t]*//' Dockerfile.dagster-server
             docker buildx build \
               --platform linux/amd64,linux/arm64 \
