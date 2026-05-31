@@ -231,6 +231,10 @@ dagster:
 # --------------------------------------------------------------------------
 centralGateway:
   enabled: true
+  # The dag-tools central-gateway image binds to 8090 internally (hardcoded
+  # in its hypercorn invocation). Chart default of 8000 caused
+  # readiness/liveness probes to hit a closed port — pod stuck 0/1 Running.
+  port: 8090
 
 cortexUi:
   # Disabled for Phase 2 sandbox — the React frontend image

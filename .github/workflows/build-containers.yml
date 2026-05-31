@@ -121,12 +121,13 @@ jobs:
           RUN apt-get update && apt-get install -y --no-install-recommends \
                 libpq5 ca-certificates && rm -rf /var/lib/apt/lists/*
           RUN mkdir -p $DAGSTER_HOME && chown -R dagsteruser:dagsteruser $DAGSTER_HOME
-          # Pin to the same version the chart's userCode (dagster-control-plane)
-          # is built with, so the webserver/daemon code-location protocol
-          # version matches the user-code gRPC server.
+          # Install latest dagster ecosystem — the user-code image
+          # (dagster-control-plane) doesn't pin dagster in iagent's
+          # pyproject.toml (it pulls `dagster-postgres` which transitively
+          # pulls dagster latest), so we MUST match by also not pinning,
+          # otherwise the gRPC code-location protocol versions diverge.
           RUN pip install --no-cache-dir \
-              "dagster==1.9.10" "dagster-webserver==1.9.10" \
-              "dagster-postgres==0.25.10" "dagster-graphql==1.9.10"
+              dagster dagster-webserver dagster-postgres dagster-graphql
           USER dagsteruser
           WORKDIR /app
           CMD ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000"]
