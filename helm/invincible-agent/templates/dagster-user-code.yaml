@@ -63,16 +63,30 @@ spec:
                   key: BPMN_POSTGRES_PASSWORD
           resources:
             {{- toYaml .Values.dagster.userCode.resources | nindent 12 }}
+          # Probe timings have to accommodate the dagster CLI cold-start
+          # cost on arm64: the `dagster api grpc-health-check` command
+          # alone takes ~9 seconds on arm64 (vs ~2s on amd64) because of
+          # Python module import overhead. With timeoutSeconds=1 (the
+          # default), kubelet kills the pod within ~2 minutes of startup.
+          # Values below match `/tmp/probe-patch-v2.yaml`'s sandbox-tested
+          # config — generous enough that arm64 doesn't get killed during
+          # legitimate operation, while still catching real hangs.
+          # Tunable in future via `.Values.dagster.userCode.probes.*` if
+          # other deployments need different timings.
           readinessProbe:
             exec:
               command: ["dagster", "api", "grpc-health-check", "-p", "{{ .Values.dagster.userCode.port }}"]
-            initialDelaySeconds: 15
-            periodSeconds: 10
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 20
+            failureThreshold: 6
           livenessProbe:
             exec:
               command: ["dagster", "api", "grpc-health-check", "-p", "{{ .Values.dagster.userCode.port }}"]
-            initialDelaySeconds: 30
-            periodSeconds: 30
+            initialDelaySeconds: 300
+            periodSeconds: 120
+            timeoutSeconds: 30
+            failureThreshold: 5
 ---
 # User Code Service (gRPC)
 apiVersion: v1
