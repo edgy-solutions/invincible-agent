@@ -604,7 +604,9 @@ def _predicate_hybrid_search_sync(
             filters = wvc.query.Filter.any_of([
                 wvc.query.Filter.by_property("domains").contains_any(entitled_domains),
                 # Match domain-agnostic predicates (empty domains array).
-                wvc.query.Filter.by_property("domains").equal([]),
+                # Weaviate v4 rejects `.equal([])` ("Filtering on empty lists
+                # is not supported") — use length filter instead.
+                wvc.query.Filter.by_property("domains", length=True).equal(0),
             ])
 
         response = collection.query.hybrid(
