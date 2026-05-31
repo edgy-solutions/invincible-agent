@@ -25,12 +25,24 @@ Returns the global.clusterDomain suffix if set.
 {{- end }}
 
 {{/*
-Full image path for a service
-Usage: include "invincible-agent.image" (dict "name" "restate-analyst" "tag" .Values.engineA.image.tag "root" .)
+Full image path for a service.
+Usage:
+  include "invincible-agent.image" (dict
+    "name" "restate-analyst"
+    "tag" .Values.engineA.image.tag
+    "root" .)
+Optional override knobs (purely additive; existing callers unaffected):
+  "registry"   — full registry host, e.g. "docker.io". Takes precedence
+                 over .Values.global.imageRegistry when set. Lets a single
+                 component (e.g. the canonical dagster-k8s image) live at
+                 a different registry from the rest of the iagent images.
+  "repository" — repository path; concatenated with the registry above.
 */}}
 {{- define "invincible-agent.image" -}}
 {{- $tag := .tag | default .root.Chart.AppVersion -}}
-{{- if .repository -}}
+{{- if .registry -}}
+{{ .registry }}/{{ .repository | default (printf "%s/%s" .root.Values.global.imagePrefix .name) }}:{{ $tag }}
+{{- else if .repository -}}
 {{ .root.Values.global.imageRegistry }}/{{ .repository }}:{{ $tag }}
 {{- else -}}
 {{ .root.Values.global.imageRegistry }}/{{ .root.Values.global.imagePrefix }}/{{ .name }}:{{ $tag }}

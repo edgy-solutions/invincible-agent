@@ -1,0 +1,259 @@
+# ==========================================================================
+# Sandbox values override — Phase 2 deployment to k3s `sandbox` namespace.
+#
+# Scope: DA flow end-to-end + ADR-0008 fallback to Engine A + ADR-0009
+# routing through Weaviate hybrid + doc-tools registration loop +
+# DataHub Quickstart as the registry inbox.
+#
+# Disabled engines (B, C, E, W) are deferred to Phase 3 once the DA flow
+# is verified end-to-end. The chart's defaults are preserved for them
+# (enabled: true) — we explicitly flip them off here so the override is
+# auditable.
+#
+# Service-name override pattern: the chart creates `{Release}-foo`
+# services but the chart's agentFleet env defaults to bare names
+# (`bolt://neo4j` etc). We override the env to match the actual service
+# names this release will produce. Release name assumed: `iagent`.
+# Adjust the prefix if you use a different name.
+# ==========================================================================
+
+global:
+  imagePullSecrets:
+    - name: ghcr-pull-secret  # must exist in sandbox namespace — see deploy plan
+  # Sandbox uses :latest tags + iterates as CI rebuilds. Always re-pull
+  # so `kubectl delete pod` picks up the new :latest after CI finishes,
+  # instead of caching the broken pre-fix layer.
+  imagePullPolicy: Always
+
+# --------------------------------------------------------------------------
+# Disabled engines for Phase 2 (re-enable in Phase 3)
+# --------------------------------------------------------------------------
+engineB:
+  enabled: false  # LangGraph support — Phase 3 (stateful sessions)
+engineC:
+  enabled: false  # Swarms scraper — out of scope for DA
+engineE:
+  enabled: false  # Neo4j graph expert — Phase 3 (multi-engine fan-out)
+engineW:
+  enabled: false  # Weaviate semantic expert — Phase 3
+
+# --------------------------------------------------------------------------
+# Agent fleet env overrides.
+#
+# NOTE: most infrastructure URLs (NEO4J_URI, WEAVIATE_HTTP_HOST,
+# JENA_SPARQL_ENDPOINT, KEYCLOAK_REALM_URL, engine-to-engine discovery,
+# etc.) are rendered by the chart's configmap.yaml template with the
+# correct {Release.Name}-foo prefix already. Do NOT re-set them here —
+# duplicate keys in ConfigMaps create "last one wins" races. Only set
+# things the template doesn't already cover.
+# --------------------------------------------------------------------------
+agentFleet:
+  env:
+    # LLM endpoint — ai1 Ollama, IP-resolved (no LAN DNS for `ai1`)
+    SMOLAGENTS_PROVIDER: "ollama"
+    SMOLAGENTS_MODEL: "gpt-oss-128k:120b"
+    OLLAMA_BASE_URL: "http://192.168.1.119:11434/v1"  # verified reachable from sandbox pods
+    BAML_LOG_LEVEL: "info"
+
+    # mem0 LLM decoupling — gpt-oss crashes on mem0's structured-output
+    # request shape, so route mem0's internal extraction/scoring through
+    # gemma4:31b on the same Ollama host. ADR-0001.
+    MEM0_LLM_MODEL: "gemma4:31b"
+    MEM0_LLM_PROVIDER: "ollama"
+    MEM0_OLLAMA_BASE_URL: "http://192.168.1.119:11434"
+
+    # DataHub points at the separate datahub Helm release deployed in the
+    # same namespace (acryldata chart, release name "datahub").
+    DATAHUB_GMS_URL: "http://datahub-datahub-gms:8080/api/graphql"
+    DATAHUB_MOCK_MODE: "false"
+
+    # Work-around for chart bug: values.yaml's agentFleet.env has stale
+    # legacy URLs (`https://keycloak/realms/d4`, `http://jena:3030`) that
+    # render AFTER the configmap template's explicit lines and therefore
+    # win the "last-key-wins" race in the rendered ConfigMap. We re-declare
+    # the correct values here so OUR override is last. Fix in the chart
+    # itself is to remove these two keys from values.yaml's agentFleet.env
+    # since they duplicate the template-rendered values.
+    KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
+    JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/query"
+
+    # ADR-0008 routing fallback policy (operator-tunable). Start at the
+    # default and adjust based on observed predicate_routing_score logs.
+    PREDICATE_FALLBACK_SCORE_THRESHOLD: "0.40"
+
+  secrets:
+    NEO4J_PASSWORD: "changeme-neo4j-sandbox"  # CHANGE BEFORE DEPLOY — must match neo4j.auth.password
+
+# --------------------------------------------------------------------------
+# Resource trimming for sandbox — limit blast radius alongside goatyardarchive
+# Setting explicit `limits` so a runaway smolagents loop can't starve gya pods.
+# --------------------------------------------------------------------------
+# All engine + frontend + dagster images pinned to :latest so the sandbox
+# exercises the recent ADR-0008 / ADR-0009 commits, not the chart's
+# appVersion (0.1.1, which predates those changes). Engines A and central-
+# gateway and the disabled engines already default to :latest in values.yaml.
+dataAnalyst:
+  enabled: true
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi  # DuckDB query memory can spike — give headroom
+
+engineA:
+  enabled: true
+  # image.tag already "latest" in values.yaml default
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi  # smolagents loop can hold context
+
+engineO:
+  enabled: true
+  image:
+    tag: "latest"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+engineD:
+  enabled: true
+  image:
+    tag: "latest"
+  # Chart bug workaround: values.yaml has `engineD.resources:` with a
+  # literal `...` placeholder that renders as a string and breaks the
+  # Deployment schema. Re-declare with a real ResourceRequirements shape.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+engineF:
+  enabled: true
+  image:
+    tag: "latest"
+
+# --------------------------------------------------------------------------
+# Infrastructure — sandbox-sized storage
+# --------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "changeme-postgres-sandbox"  # CHANGE BEFORE DEPLOY
+    password: "changeme-iagent-sandbox"            # CHANGE BEFORE DEPLOY
+
+restate:
+  enabled: true
+  storage:
+    size: 2Gi  # sandbox — half the default
+
+neo4j:
+  enabled: true
+  auth:
+    username: "neo4j"
+    password: "changeme-neo4j-sandbox"  # CHANGE — must match agentFleet.secrets.NEO4J_PASSWORD
+  persistence:
+    size: 5Gi  # sandbox — half the default
+
+weaviate:
+  enabled: true
+  persistence:
+    size: 3Gi  # sandbox
+
+fuseki:
+  enabled: true
+  auth:
+    adminPassword: "changeme-fuseki-sandbox"
+  persistence:
+    size: 2Gi
+
+keycloak:
+  enabled: true
+  auth:
+    adminUser: "admin"
+    adminPassword: "changeme-keycloak-sandbox"  # CHANGE
+
+topaz:
+  enabled: true
+
+# Dagster — webserver and daemon use the canonical multi-arch
+# docker.io/dagster/dagster-k8s image (the non-celery variant). It has
+# `dagster-webserver` and `dagster-daemon` on PATH and is far smaller
+# than rolling our own. User-code stays on the iagent dagster-control-plane
+# image because that one has `iagent.definitions` baked in.
+dagster:
+  webserver:
+    enabled: true
+    image:
+      # Canonical Dagster image — has webserver + daemon + the dagster
+      # ecosystem packages (dagster-postgres, dagster-graphql, etc.).
+      # Multi-arch: amd64 + arm64.
+      registry: "docker.io"
+      repository: "dagster/dagster-k8s"
+      tag: "1.9.10"
+  daemon:
+    enabled: true
+    image:
+      registry: "docker.io"
+      repository: "dagster/dagster-k8s"
+      tag: "1.9.10"
+  userCode:
+    enabled: true  # loads iagent.definitions
+                    # doc-tools is deployed as a SEPARATE Dagster code-location
+                    # via the doc-tools chart; both register with this webserver.
+    image:
+      # The chart's default image name `dagster-user-code` is NOT built by
+      # CI (build-containers.yml matrix only builds `dagster-control-plane`).
+      # Both have identical CMD (`dagster api grpc -m iagent.definitions`)
+      # since they're built from the same Dockerfile. Point userCode at the
+      # control-plane image — same code, exists in GHCR with multi-arch
+      # (linux/amd64 + linux/arm64) variants needed for this arm64 k3s.
+      repository: "edgy-solutions/invincible-agent/dagster-control-plane"
+      tag: "latest"
+
+# --------------------------------------------------------------------------
+# Frontend — disable ingress for sandbox (use kubectl port-forward instead)
+# --------------------------------------------------------------------------
+centralGateway:
+  enabled: true
+
+cortexUi:
+  enabled: true
+  image:
+    tag: "latest"
+  ingress:
+    enabled: false  # use port-forward
+  env:
+    VITE_API_URL: "http://iagent-cortex-bff:8090"  # in-cluster BFF
+    VITE_KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
+    VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
+
+cortexBff:
+  enabled: true
+  image:
+    tag: "latest"
+  ingress:
+    enabled: false
+
+# --------------------------------------------------------------------------
+# Secrets — sandbox tokens. Real prod secrets go in a separate Sealed-
+# Secret or external-secrets-operator-managed object — NOT in this file.
+# --------------------------------------------------------------------------
+secrets:
+  openaiApiKey: ""  # not needed if Ollama is the only LLM provider
+  hfToken: ""
+  datahubToken: ""  # populate after DataHub deploys + generates a PAT

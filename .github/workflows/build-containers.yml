@@ -59,6 +59,10 @@ jobs:
           - service: cortex-bff
             path: .
             port: "8000"
+            # cortex-bff's source is at agent_fleet/cortex_bff/main.py but
+            # the image needs the whole repo (src/iagent/gateway.py is the
+            # FastAPI app). Build from repo root, override main module path.
+            main_module: "agent_fleet.cortex_bff.main"
 
     steps:
       - name: Checkout
@@ -110,9 +114,15 @@ jobs:
           # STAGE 2: SECURE RUNNER
           FROM python:3.12-slim-bookworm
           RUN groupadd -r dagsteruser && useradd -r -g dagsteruser dagsteruser
+          # PYTHONPATH includes /app/src first so `import iagent.definitions`
+          # resolves to /app/src/iagent/definitions.py (the iagent package
+          # uses a src/ layout in pyproject.toml [tool.hatch]). Previously
+          # missing — `uv sync --no-install-project` doesn't install iagent,
+          # so without /app/src on PYTHONPATH the dagster code-location
+          # server crashes on startup with `No module named 'iagent'`.
           ENV PYTHONUNBUFFERED=1 \
               PYTHONDONTWRITEBYTECODE=1 \
-              PYTHONPATH="/app:/app/.venv/lib/python3.12/site-packages:${PYTHONPATH}" \
+              PYTHONPATH="/app/src:/app:/app/.venv/lib/python3.12/site-packages:${PYTHONPATH}" \
               PATH="/app/.venv/bin:$PATH" \
               DAGSTER_HOME="/opt/dagster/dagster_home"
           WORKDIR /app
@@ -189,33 +199,47 @@ jobs:
           # Create appuser with an explicit home directory inside /app
           RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser
           
+          # PYTHONPATH includes /app/src first so cortex-bff's `from
+          # src.iagent.gateway import app` resolves to /app/src/iagent/
+          # when building with AGENT_DIR=. (whole-repo copy). Other agent
+          # fleet services don't have /app/src/ at all so this is a no-op
+          # for them.
           ENV PYTHONUNBUFFERED=1 \
               PYTHONDONTWRITEBYTECODE=1 \
               HOME=/app \
-              PYTHONPATH="/app:/app/.venv/lib/python3.12/site-packages:${PYTHONPATH}" \
+              PYTHONPATH="/app/src:/app:/app/.venv/lib/python3.12/site-packages:${PYTHONPATH}" \
               PATH="/app/.venv/bin:$PATH" \
               # Force swarms and other libs to use /app instead of /home/appuser
               SWARMS_WORKSPACE=/app/agent_workspace \
               XDG_CACHE_HOME=/app/.cache
-          
+
           WORKDIR /app
           RUN mkdir -p /app/agent_workspace /app/.cache && chown -R appuser:appuser /app
 
           ARG PORT=8080
           ENV PORT=${PORT}
+          # MAIN_MODULE is the Python module path (dotted) that exports
+          # the FastAPI `app`. Defaults to `main` (services with main.py
+          # at /app/main.py). cortex-bff overrides to
+          # `agent_fleet.cortex_bff.main` because its main.py lives at
+          # /app/agent_fleet/cortex_bff/main.py (the build pulls the whole
+          # repo). Without this override the runner CMD's hardcoded
+          # `main:app` fails for cortex-bff with "Could not import module 'main'".
+          ARG MAIN_MODULE=main
+          ENV MAIN_MODULE=${MAIN_MODULE}
           RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-          
+
           # Copy everything from builder with appuser ownership
           COPY --from=builder --chown=appuser:appuser /app /app
-          
+
           USER appuser
           CMD ["/bin/sh", "-c", "\
               if [ -f '/app/.venv/bin/hypercorn' ]; then \
-                  echo 'Starting with Hypercorn (HTTP/2 enabled)...' && \
-                  /app/.venv/bin/python -m hypercorn main:app --bind 0.0.0.0:${PORT}; \
+                  echo \"Starting with Hypercorn (HTTP/2 enabled) — module ${MAIN_MODULE}:app...\" && \
+                  /app/.venv/bin/python -m hypercorn ${MAIN_MODULE}:app --bind 0.0.0.0:${PORT}; \
               else \
-                  echo 'Starting with Uvicorn...' && \
-                  /app/.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}; \
+                  echo \"Starting with Uvicorn — module ${MAIN_MODULE}:app...\" && \
+                  /app/.venv/bin/python -m uvicorn ${MAIN_MODULE}:app --host 0.0.0.0 --port ${PORT}; \
               fi"]
           EOF
             
@@ -226,6 +250,7 @@ jobs:
               -f Dockerfile.agent \
               --build-arg AGENT_DIR=${{ matrix.path }} \
               --build-arg PORT=${{ matrix.port }} \
+              --build-arg MAIN_MODULE=${{ matrix.main_module || 'main' }} \
               $TAGS \
               --push .
           fi

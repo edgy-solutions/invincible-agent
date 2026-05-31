@@ -24,9 +24,13 @@ spec:
       {{- end }}
       containers:
         - name: webserver
-          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "repository" .Values.dagster.webserver.image.repository "tag" .Values.dagster.webserver.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.dagster.webserver.image.registry "repository" .Values.dagster.webserver.image.repository "tag" .Values.dagster.webserver.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          command: ["python", "-m", "dagster", "webserver", "-h", "0.0.0.0", "-p", "{{ .Values.dagster.webserver.port }}", "-w", "/dagster-workspace/workspace.yaml"]
+          # Canonical dagster-k8s image registers `dagster-webserver` as a
+          # binary on PATH; older iagent dagster-control-plane image had
+          # the same code via `python -m dagster webserver`. Both forms
+          # work because dagster-webserver entrypoint dispatches the same.
+          command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "{{ .Values.dagster.webserver.port }}", "-w", "/dagster-workspace/workspace.yaml"]
           ports:
             - name: http
               containerPort: {{ .Values.dagster.webserver.port }}
@@ -98,9 +102,14 @@ spec:
       {{- end }}
       containers:
         - name: daemon
-          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "repository" .Values.dagster.webserver.image.repository "tag" .Values.dagster.webserver.image.tag "root" .) }}
+          # Daemon uses .Values.dagster.daemon.image.* (was bug: referenced
+          # dagster.webserver.image.* which prevented per-component overrides).
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.dagster.daemon.image.registry "repository" .Values.dagster.daemon.image.repository "tag" .Values.dagster.daemon.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          command: ["python", "-m", "dagster-daemon", "run", "-w", "/dagster-workspace/workspace.yaml"]
+          # `python -m dagster-daemon` is broken (Python module names can't
+          # contain dashes). The canonical dagster-k8s image registers
+          # `dagster-daemon` as a binary on PATH; use that directly.
+          command: ["dagster-daemon", "run", "-w", "/dagster-workspace/workspace.yaml"]
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-config
