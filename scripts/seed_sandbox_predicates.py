@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""Sandbox seed: register the iagent engines as predicates in Neo4j + Weaviate.
+
+doc-tools normally does this via the AITool sensor → sync_aitool_predicate_to_neo4j
+asset chain after each engine self-registers to DataHub on startup. For sandbox
+testing without DataHub (Phase 2 Option A), this script writes the predicate
+edges directly so /search_predicates has something to return.
+
+Run via port-forwards from your local machine:
+    kubectl -n sandbox port-forward svc/iagent-neo4j 7687:7687 &
+    kubectl -n sandbox port-forward svc/iagent-weaviate 8080:8080 &
+    kubectl -n sandbox port-forward svc/iagent-weaviate-grpc 50051:50051 &
+    py scripts/seed_sandbox_predicates.py
+
+Idempotent: re-running upserts. Safe to re-seed after a code change.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+try:
+    from neo4j import GraphDatabase
+except ImportError:
+    print("ERROR: install neo4j: pip install neo4j", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    import weaviate
+    import weaviate.classes as wvc
+    from weaviate.util import generate_uuid5
+except ImportError:
+    print("ERROR: install weaviate-client: pip install weaviate-client>=4.5.4", file=sys.stderr)
+    sys.exit(1)
+
+
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "changeme-neo4j-sandbox")
+
+WEAVIATE_HTTP_HOST = os.getenv("WEAVIATE_HTTP_HOST", "localhost")
+WEAVIATE_HTTP_PORT = int(os.getenv("WEAVIATE_HTTP_PORT", "8080"))
+WEAVIATE_GRPC_HOST = os.getenv("WEAVIATE_GRPC_HOST", "localhost")
+WEAVIATE_GRPC_PORT = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
+
+
+# ---------------------------------------------------------------------------
+# The four engines deployed in Phase 2 sandbox. Mirrors what
+# `register_engine_to_mesh()` would have emitted to DataHub (and what
+# doc-tools' sensor would have synced).
+# ---------------------------------------------------------------------------
+ENGINES = [
+    {
+        "name": "engine_a_restate_analyst",
+        "verb_iri": "mesh:analyzeWithCodeAgent",
+        "input_uri": "mesh:AgentTask",
+        "output_uri": "mesh:AgentResponse",
+        "endpoint_url": "http://iagent-engine-a:8081/analyze",
+        "owner_persona": "DATA_STEWARD",
+        "domains": ["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT"],
+        "synonyms": ["analyze", "process query", "code agent analysis",
+                     "smolagents loop", "general analysis"],
+        "description": "Durable analyst engine. Runs a smolagents CodeAgent "
+                       "loop with mem0 memory + DataHub-aware tool injection.",
+        "cost_class": "slow",
+        "requires_human_approval": False,
+    },
+    {
+        "name": "engine_e_neo4j_expert",
+        "verb_iri": "mesh:queryKnowledgeGraph",
+        "input_uri": "mesh:GraphQuery",
+        "output_uri": "mesh:GraphExpertResponse",
+        "endpoint_url": "http://iagent-engine-e:8086/query_graph",
+        "owner_persona": "AUDITOR",
+        "domains": ["MAINTENANCE", "MANUFACTURING"],
+        "synonyms": ["query graph", "graph lookup", "cypher query",
+                     "find in graph", "knowledge graph search"],
+        "description": "Knowledge graph expert. Runs a smolagents CodeAgent "
+                       "over Neo4j with execute_cypher / get_graph_schema / "
+                       "search_manual_text tools.",
+        "cost_class": "slow",
+        "requires_human_approval": False,
+    },
+    {
+        "name": "engine_da_data_analyst",
+        "verb_iri": "mesh:analyzeDataset",
+        "input_uri": "mesh:DatasetAnalysisRequest",
+        "output_uri": "mesh:DatasetAnalysisReport",
+        "endpoint_url": "http://iagent-data-analyst:8089/analyze_data",
+        "owner_persona": "DATA_STEWARD",
+        "domains": ["DATA_ENGINEERING"],
+        "synonyms": ["analyze data", "run SQL", "query dataset",
+                     "data analysis", "sql analysis"],
+        "description": "Data analyst agent. smolagents writes SQL against "
+                       "DataHub-backed datasets via CortexDataClient + DuckDB.",
+        "cost_class": "slow",
+        "requires_human_approval": False,
+    },
+    {
+        "name": "engine_w_weaviate_expert",
+        "verb_iri": "mesh:retrieveKnowledge",
+        "input_uri": "mesh:KnowledgeQuery",
+        "output_uri": "mesh:KnowledgeRetrievalResponse",
+        "endpoint_url": "http://iagent-engine-w:8088/query_knowledge",
+        "owner_persona": "TECH_WRITER",
+        "domains": ["MAINTENANCE", "MANUFACTURING"],
+        "synonyms": ["search docs", "find in manuals", "semantic search",
+                     "look up policy", "consult manual"],
+        "description": "Knowledge retrieval engine. Weaviate v4 hybrid search "
+                       "(near_text + BM25) with strict domain segregation.",
+        "cost_class": "medium",
+        "requires_human_approval": False,
+    },
+]
+
+
+PREDICATE_COLLECTION = "Predicate"
+
+
+def humanize_verb_local(verb_local: str) -> str:
+    """camelCase → 'camel case' (matches doc-tools' _humanize_verb_local)."""
+    out = []
+    for i, ch in enumerate(verb_local):
+        if i > 0 and ch.isupper() and not verb_local[i - 1].isupper():
+            out.append(" ")
+        out.append(ch.lower())
+    return "".join(out).strip()
+
+
+def get_verb_local_name(verb_iri: str) -> str:
+    return verb_iri.split(":")[-1] if ":" in verb_iri else verb_iri
+
+
+def build_search_text(verb_iri: str, verb_local: str, synonyms: list,
+                      description: str) -> str:
+    parts = [humanize_verb_local(verb_local)]
+    if synonyms:
+        parts.append(", ".join(s for s in synonyms if s))
+    if description:
+        parts.append(description)
+    return ". ".join(p for p in parts if p)
+
+
+# ---------------------------------------------------------------------------
+# Neo4j seed
+# ---------------------------------------------------------------------------
+NEO4J_CYPHER = """
+MERGE (s:OntologyClass {uri: $input_uri})
+MERGE (o:OntologyClass {uri: $output_uri})
+WITH s, o
+CALL apoc.merge.relationship(
+    s,
+    $verb_local,
+    {iri: $verb_iri},
+    $props,
+    o,
+    $props
+) YIELD rel
+RETURN type(rel) AS rel_type
+"""
+
+
+def seed_neo4j():
+    print(f"[neo4j] Connecting to {NEO4J_URI} ...")
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    try:
+        driver.verify_connectivity()
+        with driver.session() as session:
+            for eng in ENGINES:
+                verb_local = get_verb_local_name(eng["verb_iri"])
+                props = {
+                    "iri": eng["verb_iri"],
+                    "synonyms": eng["synonyms"],
+                    "domains": eng["domains"],
+                    "owner_persona": eng["owner_persona"],
+                    "endpoint_url": eng["endpoint_url"],
+                    "cost_class": eng["cost_class"],
+                    "requires_human_approval": eng["requires_human_approval"],
+                    "namespace_authority": "platform",
+                    "tool_kind": "Engine",
+                    "version": "0.1.0",
+                    "sdk_version": "0.0.0",
+                    "openapi_schema": "",
+                    "tool_urn": f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{eng['name']},PROD)",
+                }
+                result = session.run(
+                    NEO4J_CYPHER,
+                    input_uri=eng["input_uri"],
+                    output_uri=eng["output_uri"],
+                    verb_local=verb_local,
+                    verb_iri=eng["verb_iri"],
+                    props=props,
+                )
+                rec = result.single()
+                print(f"  ✓ ({eng['input_uri']}) -[{rec['rel_type']}]-> "
+                      f"({eng['output_uri']}) for {eng['name']}")
+    finally:
+        driver.close()
+
+
+# ---------------------------------------------------------------------------
+# Weaviate seed
+# ---------------------------------------------------------------------------
+def ensure_predicate_collection(client):
+    if client.collections.exists(PREDICATE_COLLECTION):
+        print(f"[weaviate] {PREDICATE_COLLECTION} collection exists, reusing")
+        return client.collections.get(PREDICATE_COLLECTION)
+    print(f"[weaviate] Creating {PREDICATE_COLLECTION} collection")
+    return client.collections.create(
+        name=PREDICATE_COLLECTION,
+        properties=[
+            wvc.config.Property(name="verb_iri", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="verb_local", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="input_uri", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="output_uri", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="endpoint_url", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="owner_persona", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="domains", data_type=wvc.config.DataType.TEXT_ARRAY),
+            wvc.config.Property(name="cost_class", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="requires_human_approval", data_type=wvc.config.DataType.BOOL),
+            wvc.config.Property(name="search_text", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="synonyms", data_type=wvc.config.DataType.TEXT_ARRAY),
+            wvc.config.Property(name="description", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="tool_urn", data_type=wvc.config.DataType.TEXT),
+        ],
+    )
+
+
+def seed_weaviate():
+    print(f"[weaviate] Connecting to {WEAVIATE_HTTP_HOST}:{WEAVIATE_HTTP_PORT} "
+          f"+ grpc {WEAVIATE_GRPC_HOST}:{WEAVIATE_GRPC_PORT} ...")
+    client = weaviate.connect_to_custom(
+        http_host=WEAVIATE_HTTP_HOST,
+        http_port=WEAVIATE_HTTP_PORT,
+        http_secure=False,
+        grpc_host=WEAVIATE_GRPC_HOST,
+        grpc_port=WEAVIATE_GRPC_PORT,
+        grpc_secure=False,
+    )
+    try:
+        collection = ensure_predicate_collection(client)
+        for eng in ENGINES:
+            verb_local = get_verb_local_name(eng["verb_iri"])
+            search_text = build_search_text(
+                eng["verb_iri"], verb_local, eng["synonyms"], eng["description"]
+            )
+            uuid = generate_uuid5(f"{eng['verb_iri']}|{eng['input_uri']}")
+            props = {
+                "verb_iri": eng["verb_iri"],
+                "verb_local": verb_local,
+                "input_uri": eng["input_uri"],
+                "output_uri": eng["output_uri"],
+                "endpoint_url": eng["endpoint_url"],
+                "owner_persona": eng["owner_persona"],
+                "domains": eng["domains"],
+                "cost_class": eng["cost_class"],
+                "requires_human_approval": eng["requires_human_approval"],
+                "search_text": search_text,
+                "synonyms": eng["synonyms"],
+                "description": eng["description"],
+                "tool_urn": f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{eng['name']},PROD)",
+            }
+            if collection.data.exists(uuid=uuid):
+                collection.data.replace(uuid=uuid, properties=props)
+                print(f"  ✓ replaced {eng['verb_iri']} (uuid={uuid})")
+            else:
+                collection.data.insert(uuid=uuid, properties=props)
+                print(f"  ✓ inserted {eng['verb_iri']} (uuid={uuid})")
+    finally:
+        client.close()
+
+
+def main():
+    print("== Sandbox predicate seed ==")
+    print(f"  Neo4j: {NEO4J_URI}")
+    print(f"  Weaviate: http {WEAVIATE_HTTP_HOST}:{WEAVIATE_HTTP_PORT}, "
+          f"grpc {WEAVIATE_GRPC_HOST}:{WEAVIATE_GRPC_PORT}")
+    print(f"  {len(ENGINES)} engines to register")
+    print()
+    seed_neo4j()
+    print()
+    seed_weaviate()
+    print()
+    print("== Done ==")
+    print()
+    print("Verify with Engine O:")
+    print('  curl -s -X POST http://localhost:8084/search_predicates \\')
+    print('    -H "Content-Type: application/json" \\')
+    print('    -d \'{"query":"diagnose vibration","entitled_domains":["MAINTENANCE"],"limit":3}\' | jq')
+
+
+if __name__ == "__main__":
+    main()
