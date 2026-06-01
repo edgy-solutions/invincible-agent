@@ -472,7 +472,12 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         f"(owner_persona={answerer_persona}, domains={predicate_domains}) → {endpoint}"
     )
 
-    response = requests.post(endpoint, json=payload, timeout=300)
+    # Engine handlers run an LLM agent loop, and slow Ollama backends can
+    # take many minutes per multi-step query. Bumped from 300s to 900s so
+    # the supervisor doesn't time out mid-loop on heavier queries (the
+    # cortex-bff polling loop's 300-iteration timeout stops it from being
+    # truly infinite).
+    response = requests.post(endpoint, json=payload, timeout=900)
     response.raise_for_status()
 
     data = response.json()

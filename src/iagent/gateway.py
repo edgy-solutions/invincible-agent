@@ -740,7 +740,7 @@ async def generate_dagster_stream(
     emitted_steps = set()
     is_success = False
     
-    for idx in range(300): # 5 minute max timeout (aligns with Agent Mesh standard)
+    for idx in range(900): # 15 minute max timeout (slow Ollama backends)
         await asyncio.sleep(1.0)
         
         # 🛑 THE FIX: Keep-Alive Heartbeat (Fires every 10 seconds)
