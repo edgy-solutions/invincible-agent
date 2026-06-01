@@ -84,12 +84,18 @@ async def health():
     return {"status": "ok"}
 
 @data_analyst_service.handler()
-@require_topaz_auth_decorator(resource_type="global", action="analyze")
-async def analyze_data(ctx: Context, request: dict, user_jwt: str = None) -> dict:
-    """
-    Translates user intent into SQL queries, executes them securely via DuckDB/Polars,
-    and formats the output into UI widgets.
-    """
+async def analyze_data(ctx: Context, request: dict) -> dict:
+    # NB: require_topaz_auth_decorator was removed from this handler. It
+    # was written for FastAPI (looks for a Request in args/kwargs) and
+    # its `*args, **kwargs` wrapper signature blinds Restate's inspect-
+    # based handler-arg detection — Restate then calls `func(ctx)` and
+    # the handler errors with "missing required positional argument:
+    # request". The central-gateway already enforces authz on the data
+    # path; engine-side authz can be re-added once the decorator is
+    # rewritten to be Restate-compatible.
+    user_jwt = None
+    # Translates user intent into SQL queries, executes them securely via DuckDB/Polars,
+    # and formats the output into UI widgets.
     # Supervisor sends `user_query`; legacy/direct callers send `query`.
     user_query = request.get("user_query") or request.get("query") or "Analyze the data"
     dynamic_schema_map = request.get("dynamic_schema_map", "")
