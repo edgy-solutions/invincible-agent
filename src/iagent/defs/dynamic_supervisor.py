@@ -492,23 +492,41 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
 
 
 @op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Dict[str, Any]))
-def synthesize_stateful(config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def synthesize_stateful(context, config: SupervisorQueryConfig, results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Fans-in the results from all parallel sub-tasks and forwards them to
     Engine B (LangGraph Support) to maintain conversational memory.
+
+    Engine B is optional in some deployments (e.g. sandbox runs with
+    engineB.enabled=false). A failure here must not poison an otherwise-
+    successful pipeline — execute_subtask + generate_ui_payload have
+    already produced the user-visible payload. Log and return a stub.
     """
-    response = requests.post(
-        f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
-        json={
-            "thread_id": config.thread_id,
-            "user_id": config.user_id,
-            "user_query": config.user_query,
-            "dagster_context": results,
-        },
-        timeout=300,
-    )
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = requests.post(
+            f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
+            json={
+                "thread_id": config.thread_id,
+                "user_id": config.user_id,
+                "user_query": config.user_query,
+                "dagster_context": results,
+            },
+            timeout=300,
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError as exc:
+        context.log.warning(
+            f"Engine B (LangGraph Support) unreachable at {LANGGRAPH_SUPPORT_SVC_URL}: {exc}. "
+            "Skipping conversational-memory synthesis."
+        )
+        return {"status": "skipped", "reason": "engine_b_unreachable"}
+    except requests.exceptions.HTTPError as exc:
+        context.log.warning(
+            f"Engine B returned {exc.response.status_code if exc.response else '?'}. "
+            "Skipping conversational-memory synthesis."
+        )
+        return {"status": "skipped", "reason": "engine_b_error"}
 
 
 @op(ins={"results": In(List[Dict[str, Any]])}, out=Out(Any))
