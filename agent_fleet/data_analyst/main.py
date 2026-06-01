@@ -100,6 +100,10 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # Supervisor sends `user_query`; legacy/direct callers send `query`.
     user_query = request.get("user_query") or request.get("query") or "Analyze the data"
     dynamic_schema_map = request.get("dynamic_schema_map", "")
+    # The end user's Keycloak sub. The data client carries it through to
+    # central-gateway so user-level deny lists / row-level filters apply
+    # even though we're using a service-account JWT for the actual call.
+    originator_sub = request.get("user_id") or None
 
     # Sandbox fallback: when DataHub is in mock mode, the schema_map is
     # just a fallback string with no URNs. Inject the known sandbox URNs
@@ -128,7 +132,11 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             sql_query: The SQL query to execute against the dataset. The table name in the query should be 'dataset'.
         """
         broker_url = os.getenv("CENTRAL_GATEWAY_URL", "http://localhost:8000")
-        client = CortexDataClient(broker_url=broker_url, jwt_token=user_jwt)
+        client = CortexDataClient(
+            broker_url=broker_url,
+            jwt_token=user_jwt,
+            originator_sub=originator_sub,
+        )
 
         lazy_df = client.get_dataframe(urn)
         dataset = lazy_df.collect()

@@ -230,7 +230,7 @@ wheels = [
 [[package]]
 name = "dag-tools"
 version = "0.1.0"
-source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=master#ee922949d4c573d085e3c7decff7feed89c772c9" }
+source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=master#4577607a5aa00ee66c3b50936b767d60d0681439" }
 dependencies = [
     { name = "connectorx" },
     { name = "httpx" },
