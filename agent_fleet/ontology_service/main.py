@@ -1108,7 +1108,22 @@ async def plan_query(request: PlanRequest) -> dict:
             raw_query=request.query,
             active_personas=await get_baml_persona_string()
         )
-        return {**plan.model_dump(), "domain": request.domain}
+        result = {**plan.model_dump(), "domain": request.domain}
+
+        # Some LLM backends (e.g. gpt-oss via Ollama) populate reasoning
+        # and extracted_concepts but leave tasks=[]. Falling through with
+        # zero tasks means the supervisor's dynamic_tasks.map() spawns
+        # nothing and the user gets back a no-op. Synthesize a single
+        # passthrough task in that case so the predicate router still
+        # has a sub_query to dispatch.
+        if not result.get("tasks"):
+            result["tasks"] = [{
+                "sub_query": request.query,
+                "target_persona": "DATA_STEWARD",
+                "tools_needed": [],
+                "expected_output": "Direct response to the user's query.",
+            }]
+        return result
     except Exception as exc:
         raise HTTPException(
             status_code=502,
