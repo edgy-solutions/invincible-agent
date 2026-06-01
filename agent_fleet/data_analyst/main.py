@@ -6,7 +6,7 @@ import duckdb
 import restate
 from fastapi import FastAPI
 from restate import Context, Service
-from smolagents import CodeAgent, tool, LiteLLMModel
+from smolagents import CodeAgent, tool
 
 # Engine self-registration for the predicate-graph routing layer
 # (iagent ADR-0004 Step D.1). Opt-in via MESH_REGISTER_ON_STARTUP.
@@ -19,6 +19,12 @@ try:
     from agent_fleet.core.authz import require_topaz_auth_decorator
 except ImportError:
     from core.authz import require_topaz_auth_decorator
+# Shared smolagents model factory — honors SMOLAGENTS_PROVIDER/SMOLAGENTS_MODEL/OLLAMA_BASE_URL.
+# Avoids the hardcoded gpt-4o-mini that this engine had before.
+try:
+    from agent_fleet.llm_utils import get_smolagent_model
+except ImportError:
+    from llm_utils import get_smolagent_model
 
 try:
     from dag_tools.cortex_data.client import CortexDataClient
@@ -90,23 +96,31 @@ async def analyze_data(ctx: Context, request: dict, user_jwt: str = None) -> dic
     def query_datahub_asset(urn: str, sql_query: str) -> str:
         """
         Fetches a dataset from DataHub and executes a SQL query on it.
-        
+
         Args:
             urn: The DataHub URN of the dataset.
             sql_query: The SQL query to execute against the dataset. The table name in the query should be 'dataset'.
         """
         broker_url = os.getenv("CENTRAL_GATEWAY_URL", "http://localhost:8000")
         client = CortexDataClient(broker_url=broker_url, jwt_token=user_jwt)
-        
-        # Fetch the data
+
         lazy_df = client.get_dataframe(urn)
         dataset = lazy_df.collect()
-        
-        # DuckDB queries the 'dataset' variable in local scope
-        result_df = duckdb.query(sql_query).pl()
+
+        # DuckDB sees `dataset` because it picks up registered Python
+        # variables from the calling frame at query() time. The previous
+        # code relied on this but the scope wasn't right — the agent ran
+        # SQL in a different frame than this tool. Register explicitly
+        # on a dedicated connection so the query sees the table.
+        con = duckdb.connect()
+        con.register("dataset", dataset)
+        try:
+            result_df = con.execute(sql_query).pl()
+        finally:
+            con.close()
         return result_df.write_json()
 
-    model = LiteLLMModel(model_id="gpt-4o-mini")
+    model = get_smolagent_model()
     agent = CodeAgent(
         tools=[query_datahub_asset],
         model=model,
