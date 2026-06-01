@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
@@ -153,7 +154,12 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     )
     
     try:
-        agent_result = agent.run(augmented_prompt)
+        # agent.run() is synchronous and blocks for the LLM round-trips
+        # (often 30s+ on slow Ollama backends). Hypercorn is single-event-loop,
+        # so running it inline starves the readiness probe and any concurrent
+        # invocations. Offload to a worker thread so the event loop stays
+        # responsive.
+        agent_result = await asyncio.to_thread(agent.run, augmented_prompt)
     except Exception as e:
         return {"status": "error", "message": str(e)}
     
