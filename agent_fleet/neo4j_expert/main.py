@@ -92,7 +92,10 @@ async def query_graph_proxy(request: Request) -> JSONResponse:
         payload = await request.json()
         target_url = f"{RESTATE_INGRESS_URL}/Neo4jExpertService/query_graph"
         
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # Match the supervisor's per-engine call timeout. The Cypher-writing
+        # smolagent loop can take several minutes per multi-step query on
+        # slow Ollama backends; 300s reliably timed out mid-loop.
+        async with httpx.AsyncClient(timeout=900.0) as client:
             resp = await client.post(
                 target_url,
                 json=payload,
