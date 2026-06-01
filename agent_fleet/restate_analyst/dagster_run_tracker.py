@@ -111,20 +111,23 @@ async def get_or_launch_run(ctx: ObjectContext, payload: dict) -> str | None:
     # for its current status. Only relaunch if terminal.
     existing_run_id = await ctx.get("dagster_run_id")
     if existing_run_id:
-        status = await ctx.run(
-            "fetch_status",
-            lambda: fetch_dagster_run_status(dagster_url, existing_run_id),
-        )
+        # ctx.run needs a callable that the SDK awaits — a lambda that
+        # *returns* a coroutine object fails because the SDK tries to
+        # JSON-serialize the coroutine itself. Inline async closure works.
+        async def _check_status():
+            return await fetch_dagster_run_status(dagster_url, existing_run_id)
+
+        status = await ctx.run("fetch_status", _check_status)
         if status not in DAGSTER_TERMINAL_STATUSES:
             # Non-terminal OR unknown — dedupe.
             return existing_run_id
         ctx.clear("dagster_run_id")
 
     # 2. Launch a fresh run, durably journaled by ctx.run.
-    new_run_id = await ctx.run(
-        "launch_dagster",
-        lambda: _launch_dagster_run(dagster_url, mutation, variables),
-    )
+    async def _launch():
+        return await _launch_dagster_run(dagster_url, mutation, variables)
+
+    new_run_id = await ctx.run("launch_dagster", _launch)
 
     if new_run_id:
         ctx.set("dagster_run_id", new_run_id)
