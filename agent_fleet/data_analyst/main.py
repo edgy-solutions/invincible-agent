@@ -90,8 +90,27 @@ async def analyze_data(ctx: Context, request: dict, user_jwt: str = None) -> dic
     Translates user intent into SQL queries, executes them securely via DuckDB/Polars,
     and formats the output into UI widgets.
     """
-    user_query = request.get("query", "Analyze the data")
-    
+    # Supervisor sends `user_query`; legacy/direct callers send `query`.
+    user_query = request.get("user_query") or request.get("query") or "Analyze the data"
+    dynamic_schema_map = request.get("dynamic_schema_map", "")
+
+    # Sandbox fallback: when DataHub is in mock mode, the schema_map is
+    # just a fallback string with no URNs. Inject the known sandbox URNs
+    # so the smolagent can find a dataset to query without hallucinating.
+    sandbox_urn_hints = (
+        "\n\nKnown URNs in this sandbox you can pass to query_datahub_asset:\n"
+        "- urn:li:dataset:(urn:li:dataPlatform:postgres,sales_customers,PROD) "
+        "  — customer_id, name, revenue (analytics).\n"
+        "- urn:li:dataset:(urn:li:dataPlatform:postgres,instance_state,PROD) "
+        "  — instance_id, ts, pressure, temperature, vibration_rms, flow_rate, status (telemetry).\n"
+    )
+
+    augmented_prompt = (
+        f"{user_query}\n\n"
+        f"### DataHub schema map\n{dynamic_schema_map or '(empty)'}"
+        f"{sandbox_urn_hints}"
+    )
+
     @tool
     def query_datahub_asset(urn: str, sql_query: str) -> str:
         """
@@ -128,7 +147,7 @@ async def analyze_data(ctx: Context, request: dict, user_jwt: str = None) -> dic
     )
     
     try:
-        agent_result = agent.run(user_query)
+        agent_result = agent.run(augmented_prompt)
     except Exception as e:
         return {"status": "error", "message": str(e)}
     
