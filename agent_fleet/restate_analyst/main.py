@@ -157,6 +157,12 @@ async def analyze(ctx: Context, request: dict) -> dict:
     Every side-effectful operation is wrapped in ``ctx.run()`` so Restate
     can guarantee exactly-once execution even across pod restarts.
     """
+    # The supervisor sends `user_query` (and no `dataset_id` for analyst
+    # tasks that aren't tied to a specific asset). AgentTask requires
+    # task_description and dataset_id, so map defensively. Direct callers
+    # sending the canonical AgentTask shape still work unchanged.
+    request.setdefault("task_description", request.get("user_query") or "Analyze")
+    request.setdefault("dataset_id", request.get("dataset_id", ""))
     task = AgentTask(**request)
     dynamic_schema_map = request.get("dynamic_schema_map", "")
     user_id = request.get("user_id")
