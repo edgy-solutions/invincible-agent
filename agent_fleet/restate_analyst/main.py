@@ -888,9 +888,12 @@ async def analyze_proxy(request: Request) -> JSONResponse:
         payload["trace_id"] = trace_id
             
         target_url = f"{RESTATE_INGRESS_URL}/AnalystService/analyze"
-        
-        # Use httpx for consistency and better error handling
-        async with httpx.AsyncClient(timeout=300.0) as client:
+
+        # Match the supervisor's per-engine call timeout (900s). The Engine A
+        # smolagent loop can take many minutes per multi-step reasoning task
+        # on slow Ollama backends; 300s reliably timed out mid-loop and
+        # surfaced as a 502 to the supervisor.
+        async with httpx.AsyncClient(timeout=900.0) as client:
             resp = await client.post(
                 target_url,
                 json=payload,
