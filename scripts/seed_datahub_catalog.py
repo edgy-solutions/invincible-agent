@@ -62,6 +62,7 @@ from datahub.emitter.mcp import MetadataChangeProposalWrapper
 from datahub.emitter.rest_emitter import DatahubRestEmitter
 from datahub.metadata.schema_classes import (
     AuditStampClass,
+    ChangeAuditStampsClass,
     ChangeTypeClass,
     ChartInfoClass,
     ChartTypeClass,
@@ -414,18 +415,17 @@ def emit_dataset(emitter: DatahubRestEmitter, ds: dict) -> None:
 
 
 def emit_dashboard(emitter: DatahubRestEmitter, d: dict) -> None:
+    owner_urn = make_user_urn(d["owner"])
+    stamp = AuditStampClass(time=NOW_MS, actor=owner_urn)
     info = DashboardInfoClass(
         title=d["title"],
         description=d["description"],
         charts=d.get("charts", []),
         datasets=d.get("datasets", []),
-        lastModified=AuditStampClass(time=NOW_MS, actor=make_user_urn(d["owner"])).__dict__ if False else None,  # type: ignore
+        lastModified=ChangeAuditStampsClass(created=stamp, lastModified=stamp),
         lastRefreshed=NOW_MS,
         customProperties={"owner": d["owner"]},
     )
-    # DashboardInfoClass requires lastModified to be a ChangeAuditStamps
-    # (not AuditStamp). Skip for simplicity — info still carries title/desc.
-    info.lastModified = None
     emitter.emit_mcp(MetadataChangeProposalWrapper(
         entityUrn=d["urn"], aspect=info,
     ))
@@ -446,12 +446,14 @@ def emit_dashboard(emitter: DatahubRestEmitter, d: dict) -> None:
 
 
 def emit_chart(emitter: DatahubRestEmitter, c: dict) -> None:
+    owner_urn = make_user_urn(c["owner"])
+    stamp = AuditStampClass(time=NOW_MS, actor=owner_urn)
     info = ChartInfoClass(
         title=c["title"],
         description=c["description"],
         inputs=c.get("datasets", []),
         type=ChartTypeClass.LINE,
-        lastModified=None,  # type: ignore
+        lastModified=ChangeAuditStampsClass(created=stamp, lastModified=stamp),
         lastRefreshed=NOW_MS,
         customProperties={"owner": c["owner"]},
     )
