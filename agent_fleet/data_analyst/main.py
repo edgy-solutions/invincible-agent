@@ -108,12 +108,29 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # Sandbox fallback: when DataHub is in mock mode, the schema_map is
     # just a fallback string with no URNs. Inject the known sandbox URNs
     # so the smolagent can find a dataset to query without hallucinating.
+    # All these URNs have the same schema (customer_id, name, revenue) so
+    # the agent can use whichever backend the user mentioned.
     sandbox_urn_hints = (
         "\n\nKnown URNs in this sandbox you can pass to query_datahub_asset:\n"
+        "POSTGRES backends:\n"
         "- urn:li:dataset:(urn:li:dataPlatform:postgres,sales_customers,PROD) "
         "  — customer_id, name, revenue (analytics).\n"
         "- urn:li:dataset:(urn:li:dataPlatform:postgres,instance_state,PROD) "
         "  — instance_id, ts, pressure, temperature, vibration_rms, flow_rate, status (telemetry).\n"
+        "\nCLICKHOUSE backends:\n"
+        "- urn:li:dataset:(urn:li:dataPlatform:clickhouse,sales_customers,PROD) "
+        "  — customer_id, name, revenue (same shape as postgres customers).\n"
+        "\nS3 PARQUET backends (in MinIO):\n"
+        "- urn:li:dataset:(urn:li:dataPlatform:s3,sales_customers_parquet,PROD) "
+        "  — customer_id, name, revenue.\n"
+        "\nDELTA LAKE backends (in MinIO):\n"
+        "- urn:li:dataset:(urn:li:dataPlatform:s3,sales_customers_delta,PROD) "
+        "  — customer_id, name, revenue.\n"
+        "\nICEBERG backends (in MinIO):\n"
+        "- urn:li:dataset:(urn:li:dataPlatform:s3,sales_customers_iceberg,PROD) "
+        "  — customer_id, name, revenue.\n"
+        "\nWhen the user names a specific backend (clickhouse, parquet, delta, iceberg), "
+        "pick the matching URN. Default to postgres if no backend is specified.\n"
     )
 
     augmented_prompt = (
