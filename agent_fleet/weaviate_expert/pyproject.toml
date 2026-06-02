@@ -8,6 +8,7 @@ dependencies = [
     "pydantic",
     "restate-sdk==0.14.0",
     "smolagents",
+    "litellm",
     "baml-py==0.219.0",
     "httpx",
     "weaviate-client>=4.5.4",

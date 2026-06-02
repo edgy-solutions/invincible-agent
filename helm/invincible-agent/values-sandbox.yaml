@@ -158,6 +158,15 @@ postgresql:
 
 restate:
   enabled: true
+  image:
+    # Pin to a tag compatible with the existing /restate-data PVC. The chart
+    # default "1.1" is a floating tag that drifted on Docker Hub and at one
+    # point pulled 1.1.6, which is forward-incompatible with data dirs
+    # written by Restate >= 1.5.0 — that's how this sandbox first cratered
+    # after a routine helm upgrade. Keep this pinned to whatever is currently
+    # on the StatefulSet; do not change without coordinating a PVC reset.
+    repository: docker.io/restatedev/restate
+    tag: "1.6.2"
   storage:
     size: 2Gi  # sandbox — half the default
 
