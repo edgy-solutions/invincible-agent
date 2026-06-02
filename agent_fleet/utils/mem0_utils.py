@@ -308,11 +308,18 @@ def _build_mem0_memory() -> Memory:
     if provider == "ollama":
         from langchain_ollama import OllamaEmbeddings
 
+        # Prefer MEM0_OLLAMA_BASE_URL so Mem0's embedder can be pointed at a
+        # separate ollama instance from the main agent LLM. Falls back to the
+        # shared OLLAMA_BASE_URL for backward compatibility. Allows physically
+        # splitting Mem0 (sidecar concern) onto a different GPU from the main
+        # reasoning model — avoids GPU memory contention.
         ollama_url = os.getenv(
-            "OLLAMA_BASE_URL", "http://host.docker.internal:11434"
+            "MEM0_OLLAMA_BASE_URL",
+            os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434"),
         ).replace("/v1", "")
+        embedder_model = os.getenv("MEM0_EMBEDDER_MODEL", "nomic-embed-text")
         langchain_embedder = OllamaEmbeddings(
-            model="nomic-embed-text", base_url=ollama_url
+            model=embedder_model, base_url=ollama_url
         )
         index_name = "Mem0migrationsOllama"
     else:
