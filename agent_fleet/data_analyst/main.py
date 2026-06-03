@@ -49,16 +49,23 @@ async def lifespan(app: FastAPI):
     register_engine_to_mesh(
         name="engine_da_data_analyst",
         description=(
-            "Data analyst agent. smolagents CodeAgent writes SQL against "
-            "DataHub-backed datasets (CortexDataClient + DuckDB) with Topaz "
-            "RLS/CLS enforcement and Restate-durable execution."
+            "Data analysis engine. Executes SQL or Polars expressions over "
+            "the actual ROWS of a SPECIFIC dataset whose URN is already "
+            "known. Reads via CortexDataClient with Topaz row/column "
+            "policies enforced. REQUIRES the caller to supply a URN — does "
+            "NOT discover or search the catalog. For catalog Q&A "
+            "(ownership, lineage, freshness, schema) use the metadata "
+            "analysis engine instead. See ADR-0014."
         ),
         verb="mesh:analyzeDataset",
         input_uri="mesh:DatasetAnalysisRequest",
         output_uri="mesh:DatasetAnalysisReport",
         verb_synonyms=[
-            "analyze data", "run SQL", "query dataset",
-            "data analysis", "sql analysis",
+            "execute SQL on", "run SQL against urn",
+            "aggregate rows", "sum revenue from",
+            "top customers by", "filter rows where",
+            "calculate from data", "row-level analytics",
+            "compute over dataset",
         ],
         endpoint_url=os.getenv(
             "ENGINE_DA_PUBLIC_URL",

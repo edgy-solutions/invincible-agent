@@ -811,23 +811,39 @@ async def lifespan(fastapi_app: FastAPI):
 
     # Register as a typed predicate edge in the mesh routing graph.
     #
-    # Engine A operates on a generic (mesh:AgentTask) and produces a generic
-    # (mesh:AgentResponse). The verb mesh:analyzeWithCodeAgent names what
-    # it does: run a smolagents CodeAgent loop. See docs/adr/minted-concepts.md
-    # for the survey-before-mint record per ADR-0007.
+    # Engine A is the **metadata analysis** engine: catalog Q&A, lineage
+    # traversal, ownership lookup, freshness checks, schema queries, tag
+    # filtering, downstream-impact analysis. It uses search_datahub to
+    # discover assets and walks lineage by making follow-up search calls.
+    # It does NOT read the row data — that's Engine DA's job (data
+    # analysis). The verb IRI stays mesh:analyzeWithCodeAgent (per ADR-
+    # 0007's survey-before-mint), but the description and synonyms are
+    # sharpened along the metadata vs data axis so Weaviate hybrid
+    # search ranks catalog questions onto Engine A and SQL questions
+    # onto Engine DA. See ADR-0014 for the routing-precision rationale.
     register_engine_to_mesh(
         name="engine_a_restate_analyst",
         description=(
-            "Durable analyst engine. Runs a smolagents CodeAgent loop with "
-            "Restate-backed exactly-once execution; calls Engine O for "
-            "semantic resolution + DataHub / Superset tools as needed."
+            "Metadata analysis engine. Answers questions ABOUT datasets, "
+            "dashboards, and charts in the DataHub catalog: who owns what, "
+            "what feeds what (lineage), when was X last updated, what "
+            "columns does Y have, which assets are tagged PII, what breaks "
+            "if Z's schema changes. Searches the catalog via DataHub, "
+            "follows lineage by chaining queries. Does NOT read the "
+            "underlying rows of any dataset — that's a separate engine."
         ),
         verb="mesh:analyzeWithCodeAgent",
         input_uri="mesh:AgentTask",
         output_uri="mesh:AgentResponse",
         verb_synonyms=[
-            "analyze", "investigate", "investigate data",
-            "code agent analysis", "smolagents loop",
+            "catalog question", "metadata question",
+            "who owns", "list assets owned by",
+            "what is the lineage", "source of truth",
+            "downstream impact", "what breaks if",
+            "when was last updated", "freshness", "is it stale",
+            "what columns", "schema of", "data types",
+            "tagged pii", "compliance audit", "ownership audit",
+            "describe dataset", "investigate metadata",
         ],
         endpoint_url=os.getenv(
             "ENGINE_A_PUBLIC_URL",
