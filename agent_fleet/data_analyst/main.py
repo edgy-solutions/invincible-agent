@@ -105,38 +105,36 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # even though we're using a service-account JWT for the actual call.
     originator_sub = request.get("user_id") or None
 
-    # Sandbox fallback: when DataHub is in mock mode, the schema_map is
-    # just a fallback string with no URNs. Inject the known sandbox URNs
-    # so the smolagent can find a dataset to query without hallucinating.
-    # All these URNs have the same schema (customer_id, name, revenue) so
-    # the agent can use whichever backend the user mentioned.
-    sandbox_urn_hints = (
-        "\n\nKnown URNs in this sandbox you can pass to query_datahub_asset:\n"
-        "POSTGRES backends:\n"
-        "- urn:li:dataset:(urn:li:dataPlatform:postgres,sales_customers,PROD) "
-        "  — customer_id, name, revenue (analytics).\n"
-        "- urn:li:dataset:(urn:li:dataPlatform:postgres,instance_state,PROD) "
-        "  — instance_id, ts, pressure, temperature, vibration_rms, flow_rate, status (telemetry).\n"
-        "\nCLICKHOUSE backends:\n"
-        "- urn:li:dataset:(urn:li:dataPlatform:clickhouse,sales_customers,PROD) "
-        "  — customer_id, name, revenue (same shape as postgres customers).\n"
-        "\nS3 PARQUET backends (in MinIO):\n"
-        "- urn:li:dataset:(urn:li:dataPlatform:s3,sales_customers_parquet,PROD) "
-        "  — customer_id, name, revenue.\n"
-        "\nDELTA LAKE backends (in MinIO):\n"
-        "- urn:li:dataset:(urn:li:dataPlatform:s3,sales_customers_delta,PROD) "
-        "  — customer_id, name, revenue.\n"
-        "\nICEBERG backends (in MinIO):\n"
-        "- urn:li:dataset:(urn:li:dataPlatform:s3,sales_customers_iceberg,PROD) "
-        "  — customer_id, name, revenue.\n"
-        "\nWhen the user names a specific backend (clickhouse, parquet, delta, iceberg), "
-        "pick the matching URN. Default to postgres if no backend is specified.\n"
-    )
-
+    # Engine DA's prompt deliberately does NOT inject hardcoded URN hints.
+    # Earlier versions had a `sandbox_urn_hints` block enumerating 6 specific
+    # URNs (postgres / clickhouse / s3 sales_customers variants) so the
+    # smolagent had something to point query_datahub_asset at without
+    # hallucinating. That hint set was added during overnight backend-
+    # coverage testing — see ADR-0014 for why it has to leave.
+    #
+    # Once Engine DA was reachable through the predicate router, the
+    # hardcoded hints became a context poison: the supervisor routed
+    # catalog-Q&A queries to Engine DA on the `mesh:analyzeDataset`
+    # verb, and the agent answered "list datasets owned by alice@..."
+    # with the hardcoded fixture URNs (which weren't in DataHub at all,
+    # and weren't owned by alice). The agent had no way to know the
+    # hint block was sandbox scaffolding rather than ground truth.
+    #
+    # New contract: Engine DA discovers asset URNs the same way every
+    # other engine does — through search_datahub. The prompt below
+    # tells the agent to do that explicitly when it doesn't already
+    # have a URN from upstream context (semantic_ctx.resolved_uri or
+    # the supervisor-provided dataset_id).
     augmented_prompt = (
         f"{user_query}\n\n"
-        f"### DataHub schema map\n{dynamic_schema_map or '(empty)'}"
-        f"{sandbox_urn_hints}"
+        f"### DataHub schema map\n{dynamic_schema_map or '(empty)'}\n\n"
+        f"### Asset discovery\n"
+        f"If you do not already have a DataHub URN from upstream context, "
+        f"call search_datahub first to discover the URN that matches what "
+        f"the user is asking about. Only pass URNs you have *seen* in a "
+        f"search_datahub or other tool response to query_datahub_asset. "
+        f"Do NOT invent or recall URNs from prior context. If no matching "
+        f"asset is in the catalog, say so explicitly rather than guessing.\n"
     )
 
     @tool
