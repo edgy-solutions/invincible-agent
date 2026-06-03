@@ -43,7 +43,11 @@ PLATFORM_MAP = {
 }
 
 # ---------------------------------------------------------------------------
-# Generic GraphQL query — search across ALL entities
+# Generic GraphQL query — search across ALL entities.
+#
+# Extended to fetch ownership, upstream/downstream lineage, tags, and
+# the most recent operation timestamp so the agent can answer
+# ownership / lineage / freshness questions without a second hop.
 # ---------------------------------------------------------------------------
 _GENERIC_SEARCH_QUERY = """
 query SearchDataHub($input: SearchInput!) {
@@ -53,21 +57,36 @@ query SearchDataHub($input: SearchInput!) {
         urn
         type
         ... on Dataset {
-          properties {
-            name
-            description
+          properties { name description }
+          ownership { owners { owner { ... on CorpUser { username properties { displayName email } } } } }
+          tags { tags { tag { urn } } }
+          schemaMetadata { fields { fieldPath nativeDataType description } }
+          upstream: relationships(input: {types: ["DownstreamOf"], direction: OUTGOING, count: 25, start: 0}) {
+            relationships { entity { urn type ... on Dataset { properties { name } } } }
           }
+          downstream: relationships(input: {types: ["DownstreamOf","Consumes"], direction: INCOMING, count: 25, start: 0}) {
+            relationships { entity { urn type
+              ... on Dataset { properties { name } }
+              ... on Dashboard { info { name } }
+              ... on Chart { info { name } }
+            } }
+          }
+          operations(limit: 1) { timestampMillis operationType }
         }
         ... on Dashboard {
-          info {
-            name
-            description
+          info { name description }
+          ownership { owners { owner { ... on CorpUser { username } } } }
+          tags { tags { tag { urn } } }
+          upstream: relationships(input: {types: ["Consumes"], direction: OUTGOING, count: 25, start: 0}) {
+            relationships { entity { urn type ... on Dataset { properties { name } } } }
           }
         }
         ... on Chart {
-          info {
-            name
-            description
+          info { name description }
+          ownership { owners { owner { ... on CorpUser { username } } } }
+          tags { tags { tag { urn } } }
+          upstream: relationships(input: {types: ["Consumes"], direction: OUTGOING, count: 25, start: 0}) {
+            relationships { entity { urn type ... on Dataset { properties { name } } } }
           }
         }
       }
@@ -371,35 +390,102 @@ async def query_metadata(request: MetadataQueryRequest):
     search_results = search_dict.get("searchResults") or []
     matched_assets = []
     referenced_uris = []
-    
+
+    def _owners(entity_dict: Dict[str, Any]) -> List[str]:
+        own = entity_dict.get("ownership") or {}
+        out: List[str] = []
+        for o in own.get("owners") or []:
+            owner = (o or {}).get("owner") or {}
+            uname = owner.get("username")
+            if uname:
+                out.append(uname)
+        return out
+
+    def _tags(entity_dict: Dict[str, Any]) -> List[str]:
+        tags = (entity_dict.get("tags") or {}).get("tags") or []
+        out: List[str] = []
+        for t in tags:
+            tag = (t or {}).get("tag") or {}
+            urn = tag.get("urn") or ""
+            if urn.startswith("urn:li:tag:"):
+                out.append(urn[len("urn:li:tag:"):])
+        return out
+
+    def _lineage_names(entity_dict: Dict[str, Any], key: str) -> List[str]:
+        rels = ((entity_dict.get(key) or {}).get("relationships")) or []
+        out: List[str] = []
+        for r in rels:
+            ent = (r or {}).get("entity") or {}
+            etype = ent.get("type", "")
+            props = ent.get("properties") or ent.get("info") or {}
+            name = props.get("name") or ent.get("urn", "")
+            if name:
+                out.append(f"{etype}:{name}")
+        return out
+
+    def _last_updated(entity_dict: Dict[str, Any]) -> Optional[str]:
+        ops = entity_dict.get("operations") or []
+        if not ops:
+            return None
+        ts = (ops[0] or {}).get("timestampMillis")
+        if not ts:
+            return None
+        try:
+            from datetime import datetime, timezone
+            return datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        except Exception:
+            return str(ts)
+
     for result in search_results:
         entity = result.get("entity", {})
         urn = entity.get("urn", "")
         entity_type = entity.get("type", "UNKNOWN")
-        
-        # Extract name and description based on entity type and specific aspects
+
+        # Extract name and description based on entity type
         name = urn
-        desc = "No description provided."
-        
+        desc = ""
         if entity_type == "DATASET":
-            # Datasets store these in the 'properties' aspect
             props = entity.get("properties") or {}
             name = props.get("name") or urn
-            desc = props.get("description", "")
-            if isinstance(desc, str):
-                desc = desc.strip()
+            desc = (props.get("description") or "").strip()
         elif entity_type in ["DASHBOARD", "CHART"]:
-            # Dashboards and Charts store these in the 'info' aspect
             info = entity.get("info") or {}
             name = info.get("name") or urn
-            desc = info.get("description", "")
-            if isinstance(desc, str):
-                desc = desc.strip()
-            
-        if not desc:
-            desc = "UNAVAILABLE_IN_CATALOG"
-            
-        matched_assets.append(f"[{entity_type}] {name}: {desc}")
+            desc = (info.get("description") or "").strip()
+
+        owners = _owners(entity)
+        tags = _tags(entity)
+        upstream = _lineage_names(entity, "upstream")
+        downstream = _lineage_names(entity, "downstream")
+        last_updated = _last_updated(entity)
+
+        line = f"[{entity_type}] {name}"
+        if owners:
+            line += f" | owner={','.join(owners)}"
+        if last_updated:
+            line += f" | last_updated={last_updated}"
+        if tags:
+            line += f" | tags={','.join(tags)}"
+        if desc:
+            line += f"\n    description: {desc}"
+        if upstream:
+            line += f"\n    upstream: {', '.join(upstream)}"
+        if downstream:
+            line += f"\n    downstream: {', '.join(downstream)}"
+
+        # Per-entity schema for datasets — keep it bounded so the prompt
+        # doesn't balloon under wide tables.
+        if entity_type == "DATASET":
+            schema = entity.get("schemaMetadata") or {}
+            fields = (schema.get("fields") or [])[:12]
+            if fields:
+                cols = ", ".join(
+                    f"{(f or {}).get('fieldPath','?')}:{(f or {}).get('nativeDataType','?')}"
+                    for f in fields
+                )
+                line += f"\n    columns: {cols}"
+
+        matched_assets.append(line)
         referenced_uris.append(urn)
 
     # Construct the final ExpertResponse
