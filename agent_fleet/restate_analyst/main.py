@@ -214,8 +214,23 @@ async def analyze(ctx: Context, request: dict) -> dict:
         @tool
         def search_datahub(query: str, entity_type: str = None) -> str:
             """
-            Searches the DataHub metadata catalog.
-            
+            Searches the DataHub metadata catalog and returns matched assets
+            with their owner, last_updated, tags, description, lineage, and
+            schema as authoritative facts.
+
+            Response shape — each matched asset starts with a header line
+            of the form
+
+                [TYPE] name | key=value | key=value | ...
+
+            where the header keys include `owner`, `last_updated`, and
+            `tags` when present. Indented continuation lines below the
+            header may carry `description:`, `upstream:`, `downstream:`,
+            and `columns:`. Read these fields verbatim — they are returned
+            from DataHub, not inferred. To trace lineage end-to-end, you
+            may issue follow-up search_datahub calls on the names that
+            appear in `upstream:` or `downstream:`.
+
             Args:
                 query: CRITICAL - You MUST extract 1-3 concise keywords (e.g. 'RSO Superset'). DO NOT pass full sentences.
                 entity_type: The specific entity to search. You MUST choose a value from the 'Valid DataHub Entity Types' list provided in your system prompt. Do NOT use '*'.
@@ -372,23 +387,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     f"Semantic Context (from IOF/MIMOSA ontology):\n"
                     f"  Resolved URI: {resolved_uri}\n"
                     f"  Confidence: {confidence}\n\n"
-                    f"CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate descriptions, business purposes, or metrics. If the tool returns an empty description or UNAVAILABLE_IN_CATALOG, you must state 'Not provided in DataHub'. Any hallucination of metadata is a critical failure.\n\n"
-                    f"SEARCH_DATAHUB OUTPUT FORMAT — IMPORTANT: Each matched asset is returned as a multi-line entry. The first line is:\n"
-                    f"  [TYPE] name | owner=USERNAME | last_updated=YYYY-MM-DD | tags=tag1,tag2\n"
-                    f"Subsequent indented lines may contain:\n"
-                    f"  description: the asset's description\n"
-                    f"  upstream: TYPE:name, TYPE:name  (datasets that feed this asset)\n"
-                    f"  downstream: TYPE:name, TYPE:name  (datasets/dashboards/charts that consume this asset)\n"
-                    f"  columns: col1:TYPE, col2:TYPE  (schema, datasets only)\n\n"
-                    f"These pipe-separated and indented fields are AUTHORITATIVE FACTS retrieved from DataHub. Use them directly:\n"
-                    f"  - Ownership questions: read the `owner=` field.\n"
-                    f"  - Freshness/staleness: read the `last_updated=` field.\n"
-                    f"  - Lineage / source-of-truth: walk the `upstream:` chain. The root of the upstream chain (the asset with no upstream itself) is the source of truth.\n"
-                    f"  - Impact analysis: read the `downstream:` field — those are the assets that break if the queried asset changes.\n"
-                    f"  - Schema questions: read the `columns:` field.\n"
-                    f"  - PII / compliance: check the `tags=` field for 'pii' or other relevant tags.\n"
-                    f"  - To trace lineage end-to-end, you MAY issue follow-up search_datahub calls on the named upstream/downstream assets to walk the chain further.\n"
-                    f"Treat these fields as facts. Do not say 'owner not available' if an `owner=` field is present — state the username verbatim.\n\n"
+                    f"CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate facts. Use only what the tools return. If a specific field the user asked about is genuinely absent from the tool result, state it is not available — but do NOT claim a field is missing if the tool returned it. See each tool's docstring for the shape of its response.\n\n"
                 )
 
                 if dynamic_schema_map:
