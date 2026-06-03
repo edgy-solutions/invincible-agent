@@ -852,7 +852,12 @@ async def lifespan(fastapi_app: FastAPI):
         owner_persona="DATA_STEWARD",
         # Per ADR-0009: Engine A is the default fallback analyst for
         # general-purpose work; it serves all non-specialized domains.
-        domains=["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT"],
+        # Engine A serves catalog metadata Q&A in DATA_ENGINEERING as well
+        # as the maintenance / manufacturing / sustainment domains. Engine DA
+        # also serves DATA_ENGINEERING; the discrimination between them
+        # happens at the verb description / synonym matching layer (see this
+        # file's mesh_registration call and Engine DA's mirror call).
+        domains=["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT", "DATA_ENGINEERING"],
         cost_class="slow",  # smolagents loops are not cheap
     )
 
