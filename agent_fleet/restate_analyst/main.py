@@ -373,6 +373,22 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     f"  Resolved URI: {resolved_uri}\n"
                     f"  Confidence: {confidence}\n\n"
                     f"CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate descriptions, business purposes, or metrics. If the tool returns an empty description or UNAVAILABLE_IN_CATALOG, you must state 'Not provided in DataHub'. Any hallucination of metadata is a critical failure.\n\n"
+                    f"SEARCH_DATAHUB OUTPUT FORMAT — IMPORTANT: Each matched asset is returned as a multi-line entry. The first line is:\n"
+                    f"  [TYPE] name | owner=USERNAME | last_updated=YYYY-MM-DD | tags=tag1,tag2\n"
+                    f"Subsequent indented lines may contain:\n"
+                    f"  description: the asset's description\n"
+                    f"  upstream: TYPE:name, TYPE:name  (datasets that feed this asset)\n"
+                    f"  downstream: TYPE:name, TYPE:name  (datasets/dashboards/charts that consume this asset)\n"
+                    f"  columns: col1:TYPE, col2:TYPE  (schema, datasets only)\n\n"
+                    f"These pipe-separated and indented fields are AUTHORITATIVE FACTS retrieved from DataHub. Use them directly:\n"
+                    f"  - Ownership questions: read the `owner=` field.\n"
+                    f"  - Freshness/staleness: read the `last_updated=` field.\n"
+                    f"  - Lineage / source-of-truth: walk the `upstream:` chain. The root of the upstream chain (the asset with no upstream itself) is the source of truth.\n"
+                    f"  - Impact analysis: read the `downstream:` field — those are the assets that break if the queried asset changes.\n"
+                    f"  - Schema questions: read the `columns:` field.\n"
+                    f"  - PII / compliance: check the `tags=` field for 'pii' or other relevant tags.\n"
+                    f"  - To trace lineage end-to-end, you MAY issue follow-up search_datahub calls on the named upstream/downstream assets to walk the chain further.\n"
+                    f"Treat these fields as facts. Do not say 'owner not available' if an `owner=` field is present — state the username verbatim.\n\n"
                 )
 
                 if dynamic_schema_map:
