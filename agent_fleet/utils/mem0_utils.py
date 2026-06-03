@@ -169,6 +169,62 @@ class Mem0CompatibleWeaviate(WeaviateVectorStore):
     Weaviate v4 ``Filter`` objects.
     """
 
+    # Properties mem0 may write that the collection schema does not define.
+    # Weaviate rejects unknown properties strictly. `id` is the worst case
+    # because it is *reserved* — Weaviate uses it for the object UUID, so
+    # nothing can be inserted with it as a regular property. mem0 v2.0.1
+    # writes `id`, `score`, and `linked_memory_ids` as properties; the
+    # collection schema only declares `text`, `data`, `attributed_to`,
+    # `created_at`, `user_id`, `text_lemmatized`, `updated_at`, `hash`.
+    # We drop everything outside that allow-list before delegating to the
+    # parent insert.
+    _MEM0_ALLOWED_PROPS = {
+        "text", "data", "attributed_to", "created_at",
+        "user_id", "text_lemmatized", "updated_at", "hash",
+    }
+
+    def _sanitize_metadatas(self, metadatas):
+        """Strip mem0-only fields the Weaviate schema does not accept."""
+        if not metadatas:
+            return metadatas
+        cleaned = []
+        for m in metadatas:
+            if not isinstance(m, dict):
+                cleaned.append(m)
+                continue
+            cleaned.append({
+                k: v for k, v in m.items()
+                if k in self._MEM0_ALLOWED_PROPS
+            })
+        return cleaned
+
+    def add_texts(self, texts, metadatas=None, **kwargs):
+        # Mem0 v2.0.1 writes `id`, `score`, `linked_memory_ids` as
+        # properties — Weaviate rejects `id` (reserved) and the others
+        # (not in schema). Sanitize before insert. Memory persistence
+        # then works as best-effort: the next insert with the same
+        # `hash` will be a no-op via Weaviate's UUIDv5-on-hash assignment
+        # (langchain_weaviate generates uuid.uuid5(NAMESPACE_DNS, hash))
+        # so we don't need to round-trip mem0's `id` value.
+        return super().add_texts(
+            texts,
+            metadatas=self._sanitize_metadatas(metadatas),
+            **kwargs,
+        )
+
+    def add_documents(self, documents, **kwargs):
+        # langchain_weaviate's add_documents() unwraps Document.metadata
+        # into metadatas before calling add_texts(). Override here too in
+        # case mem0 calls add_documents directly.
+        if documents:
+            for doc in documents:
+                if hasattr(doc, "metadata") and isinstance(doc.metadata, dict):
+                    doc.metadata = {
+                        k: v for k, v in doc.metadata.items()
+                        if k in self._MEM0_ALLOWED_PROPS
+                    }
+        return super().add_documents(documents, **kwargs)
+
     def similarity_search_by_vector(self, embedding, k=4, filter=None, **kwargs):
         weaviate_filter = None
 
