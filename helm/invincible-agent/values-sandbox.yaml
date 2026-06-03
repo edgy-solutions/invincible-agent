@@ -68,12 +68,26 @@ agentFleet:
     # thrash on every smolagent step.
     #
     # New layout: agent reasoning (120b) stays on ai1; mem0 LLM moves to
-    # the openwebui host (192.168.1.188, 24 GB VRAM) running phi4:14b
-    # (~9 GB). phi4 satisfies the no-Chinese-models constraint and emits
-    # clean JSON for mem0's fact-extraction pipeline.
-    MEM0_LLM_MODEL: "phi4:14b"
+    # the openwebui host (192.168.1.188, 24 GB VRAM) running phi4-16k:14b
+    # (~9 GB) — a custom Modelfile tag of phi4:14b with num_ctx 16384
+    # (the model's native max). The bare `phi4:14b` tag would serve at
+    # ollama's default 2k context, which silently truncates Mem0's
+    # fact-extraction prompts as soon as the agent's conversation grows
+    # beyond a couple of turns — and once truncated facts are written
+    # to the Mem0migrationsOllama Weaviate collection, they poison every
+    # subsequent agent run. phi4 satisfies the no-Chinese-models
+    # constraint and emits clean JSON for mem0's fact-extraction
+    # pipeline. Embedder switches to `nomic-embed-8k:latest` (same
+    # custom-Modelfile pattern) for consistency, though the underlying
+    # `nomic-bert.context_length` is architecturally capped at 2048
+    # regardless — see follow-up note about switching to
+    # `nomic-embed-text:v1.5` or `snowflake-arctic-embed` for a
+    # genuinely-8k embedder when we revisit.
+    MEM0_LLM_MODEL: "phi4-16k:14b"
     MEM0_LLM_PROVIDER: "ollama"
     MEM0_OLLAMA_BASE_URL: "http://192.168.1.188:11434"
+    MEM0_EMBEDDER_MODEL: "nomic-embed-8k:latest"
+    MEM0_EMBEDDING_MODEL: "nomic-embed-8k:latest"
 
     # DataHub points at the separate datahub Helm release deployed in the
     # same namespace (acryldata chart, release name "datahub").
