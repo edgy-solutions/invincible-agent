@@ -1,210 +1,266 @@
 # Invincible Agent — Coding Rules
 
-## Governing Architecture: Master Architect Recipe V3 (Polyglot Mesh Edition)
-This project implements a "Polyglot Agentic Data Mesh" on Kubernetes.
-- **Orchestration:** Dagster (triggers, routing, asset catalog). Uses ONLY
-  `requests` to call agents. Do NOT use `PipesK8sClient`.
+## Governing Architecture
+A "Polyglot Agentic Data Mesh" on Kubernetes.
+- **BFF:** Cortex BFF (`iagent-cortex-bff`, port 8090) is the synchronous
+  user-facing entry point. `POST /orchestrate` with a Keycloak JWT.
+- **Orchestration:** Dagster (triggers, supervisor jobs, asset materializations).
+  Uses ONLY `requests` to call agents. Do NOT use `PipesK8sClient`.
 - **API Layer:** FastAPI is the universal wrapper for ALL agent frameworks.
-- **Interface:** BAML for type-safe LLM parsing, shared across all agents.
-- **Engine A:** Restate + Smolagents (durable, serverless, code-centric).
-- **Engine B:** LangGraph (stateful DAGs, async checkpointers).
-- **Engine C:** Swarms.ai (high-concurrency topologies).
-- **Engine F:** FastAPI + BAML (Stateless presentation and UI router).
-- **Data Layer (implemented):** dbt (transformation), DataHub (catalog).
-- **Data Layer (planned):** dlthub (ingestion), Neo4j (graph), Weaviate (vector).
-- Each engine gets its own isolated codebase, OCI image, and K8s Service.
+- **Contracts:** BAML for type-safe LLM I/O and inter-service schemas.
+- **Routing:** Predicate-graph routing via Weaviate (ADR-0004). Engines
+  self-register their verbs at startup; the supervisor calls Engine O
+  `/search_predicates` to pick the right engine per subtask, filtered
+  by the caller's `entitled_domains` claim.
+- **Identity / Authz:** Keycloak (JWT) + Topaz (RLS/CLS).
+- **Engine A / DA / E / W:** Restate + smolagents (durable code-agent loops).
+- **Engine B:** LangGraph (stateful synthesis + follow-up via `AsyncPostgresSaver`).
+- **Engine C:** Swarms.ai (high-concurrency extraction).
+- **Engine F:** FastAPI + BAML (presentation router, six UI archetypes).
+- **Engine O:** rdflib + Weaviate + BAML (ontology + predicate router).
+- **Engine D:** httpx + DataHub GMS (catalog wrapper with enriched response).
+- **Data plane:** Polars + CortexDataClient (Postgres / ClickHouse / S3
+  Parquet / Delta / Iceberg) with Topaz-enforced policies.
+- Each engine has its own isolated codebase, OCI image, and K8s Service.
   Do NOT mix framework imports across engines.
-- **Data Mesh Orchestration:** Uses dynamic fan-out/fan-in via Dagster and `baml` to orchestrate multi-domain queries.
 
 ## Language & Runtime
-- Python >=3.10, <3.15.
+- Python 3.12 (each engine pins `requires-python = ">=3.12,<3.13"`).
 - Use type hints on all function signatures (PEP 484+).
 - Target Dagster 1.12.x APIs. Do NOT use deprecated Dagster APIs.
 
 ## Project Layout
 - Dagster definitions live in `src/iagent/defs/`. The entry point
-  (`definitions.py`) uses `load_from_defs_folder` — never register assets
-  manually.
-- Shared data contracts live in `baml_shared/baml_src/`. After editing `.baml`
-  files, regenerate the Python client with `baml generate`.
-- Agent microservices live in `agent_fleet/<service_name>/`.
-- Tests go in `tests/`.
+  (`definitions.py`) uses `load_from_defs_folder` — never register
+  assets manually.
+- Cortex BFF FastAPI app: `src/iagent/gateway.py` (port 8090).
+- Shared data contracts: `baml_shared/baml_src/contracts.baml`. After
+  editing, regenerate:
+  ```
+  cd baml_shared
+  uv run --no-project --with baml-py==0.219.0 baml-cli generate --from baml_src
+  ```
+- Each agent service lives in `agent_fleet/<service>/` with its own
+  `pyproject.toml`, `uv.lock`, `main.py`, `Procfile`.
+- Tests: pytest unit/mock tests in `tests/`; end-to-end mesh tests in
+  `tests/sandbox_e2e/`.
+- Architecture decision records in `docs/adr/`.
 
 ## Orchestrator Assets (src/iagent/defs/)
-- Assets that call agent pods must use **only `requests`** (stdlib + requests).
-  Do NOT import Restate SDK, LangGraph, Smolagents, or any ML framework here.
-  The orchestrator is a lightweight control plane.
-- Always set `timeout=120` (seconds) on outbound HTTP calls.
+- Assets that call agent pods must use **only `requests`** (stdlib).
+  Do NOT import Restate SDK, LangGraph, smolagents, or any ML framework.
+- Always set `timeout=120` (or longer when calling Restate ingress —
+  smolagent loops can run for many minutes).
 - Always call `response.raise_for_status()` before parsing JSON.
-- Return `dict` from asset functions (Dagster will handle serialization).
+- Return `dict` from asset functions.
 
 ## BAML Contracts (baml_shared/)
 - `contracts.baml` is the single source of truth for all inter-service schemas.
 - Every agent pod must serialize/deserialize to these schemas.
-- Do NOT hand-edit files in `baml_shared/baml_client/` — they are auto-generated.
-- Ontology classes are dynamic (from RDF graph), NOT hardcoded enums.
-  The `ClassifySustainmentIntent` function accepts them as a runtime string.
-- After editing `.baml` files, run `baml generate` to regenerate the client.
+- Do NOT hand-edit files in `baml_shared/baml_client/` or
+  `baml_client_ts/baml_client/` — they are regenerated.
+- Commit BOTH the `.baml` change AND the regenerated clients in the
+  same commit. CI does not regenerate on its own.
+- Ontology classes, personas, and domains are **dynamic** (from RDF and
+  Weaviate), NOT hardcoded enums.
+
+## Tool Docstrings Are Part of the Contract (ADR-0013)
+- When defining a smolagent `@tool`, the docstring is read by the agent
+  at tool-selection time. It is part of the BAML grounding surface, not
+  free-form documentation.
+- Document the tool's response shape in the docstring (the wire format
+  it returns, what fields exist, how to interpret them). The caller's
+  system prompt should stay domain-level and NOT duplicate the format.
+- If the upstream service's response shape changes, update the tool's
+  docstring in the SAME PR. This is the boundary between two engines.
 
 ## Style
 - Use `ruff` for linting and formatting.
 - Keep imports sorted: stdlib → third-party → local.
-- Prefer explicit over implicit. No wildcard imports.
-- Docstrings on all public functions (Google style).
-- Keep Dagster assets small and focused — one HTTP call per asset.
+- No wildcard imports.
+- Docstrings on all public functions (Google style for code, free-form
+  for tool docstrings — see above).
 
-## Data Layer Assets (src/iagent/defs/data_layer.py)
-- The `sync_dbt_to_ontology` asset reads dbt `manifest.json` and extracts
-  `ontology_uri` meta tags from model nodes.
-- It syncs glossary terms to DataHub GMS and writes `mapping.ttl` for the
-  ontology_service to consume alongside `iof_mro.ttl`.
-- Only uses stdlib + `requests` — no ML/SDK imports.
-- If manifest.json doesn't exist, a dummy manifest is used so the asset
-  is always runnable in dev/CI.
+## Engine A — Restate Analyst (agent_fleet/restate_analyst/)
+- Restate SDK for durable execution.
+- ALL side effects MUST be wrapped in `ctx.run()`.
+- Before running the smolagent, call Engine O `/resolve` to get
+  `SemanticResolution` and inject `semantic_context.resolved_uri` into
+  the agent prompt.
+- `smolagents.CodeAgent` with `get_smolagent_model()` from `llm_utils`.
+- Built-in tools: `search_datahub` (calls Engine D), `superset_analytics_manager`.
+- JIT tools discovered via Engine D `/find_tools?ontology_uri=...`.
+- System prompt stays domain-level. Tool wire-format details live on
+  tool docstrings, not the prompt (ADR-0013).
+- Return `AgentResponse` (BAML-validated).
+- `RESTATE_INGRESS_URL` env var (default `http://restate:8080`).
 
-## Restate Analyst (agent_fleet/restate_analyst/)
-- Engine A uses the Restate SDK for durable execution.
-- ALL side effects (HTTP calls, agent runs) MUST be wrapped in `ctx.run()`.
-- Before running the smolagent, ALWAYS call Engine O `/resolve` first to get
-  `SemanticResolution`. Pass the semantic context into the agent prompt.
-- Use `smolagents.CodeAgent` with `HfApiModel` for analysis tasks.
-- The proxy `/analyze` route forwards to `/restate/AnalystService/analyze`.
-- Return `AgentResponse` (validated via BAML types) from all handlers.
-- **BPMNWorkflowRunner** (`restate.Workflow`):
-  - `ServiceTask` → `ctx.run()` (durable HTTP POST to agent endpoint).
-  - `UserTask` → `ctx.promise("approval_{task_id}", type_hint=dict).value()`
-    suspends at zero cost. NEVER use polling loops.
-  - The `approve` handler resolves the promise:
-    `ctx.promise(name, type_hint=dict).resolve(payload)`.
-  - Approval endpoint: `POST /workflow/{wf}/task/{tid}/approve` calls
-    the `approve` handler via `RESTATE_INGRESS_URL`.
-  - `RESTATE_INGRESS_URL` env var (default: `http://localhost:8081/restate`).
+## Engine DA — Data Analyst (agent_fleet/data_analyst/)
+- Restate-durable smolagent that generates SQL/Polars expressions.
+- Uses `CortexDataClient` from `dag-tools` to read from Postgres /
+  ClickHouse / S3 Parquet / Delta / Iceberg.
+- The data plane enforces Topaz row + column policies BEFORE the
+  LLM's expression is executed. NEVER bypass the central gateway.
+- The JWT used by CortexDataClient comes from the user's request, NOT
+  from a service account. Closure pattern: the agent never sees the JWT.
 
-## LangGraph Support (agent_fleet/langgraph_support/)
-- Engine B is entirely isolated — do NOT import Restate, Dagster, or smolagents.
-- Uses `AsyncPostgresSaver` for conversational memory across requests.
-- PostgreSQL URI comes from env var `LANGGRAPH_POSTGRES_URI`.
-- The `/support` endpoint requires a `thread_id` for checkpoint keying.
-- Graph nodes are plain sync functions; the graph is invoked via `ainvoke()`.
-- Return `AgentResponse` (validated via BAML types) from the endpoint.
+## Engine B — LangGraph Support (agent_fleet/langgraph_support/)
+- Entirely isolated — do NOT import Restate, Dagster, or smolagents.
+- `AsyncPostgresSaver` checkpointer keyed by `thread_id`.
+- PostgreSQL URI from `LANGGRAPH_POSTGRES_URI`.
+- Return `AgentResponse` (BAML-validated).
 
-## Swarms Scraper (agent_fleet/swarms_scraper/)
-- Engine C is stateless and highly concurrent — pure compute node.
-- Do NOT import Restate, LangGraph, Dagster, or database checkpointers.
-- Uses `swarms.SequentialWorkflow` with `swarms.Agent` for extraction.
-- Model configurable via `SWARMS_MODEL` env var.
-- Return `AgentResponse` (validated via BAML types) from the endpoint.
+## Engine C — Swarms Scraper (agent_fleet/swarms_scraper/)
+- Stateless, highly concurrent.
+- Do NOT import Restate, LangGraph, Dagster, or checkpointers.
+- `swarms.SequentialWorkflow` with `swarms.Agent`.
+- Model from `SWARMS_MODEL`.
+- Return `AgentResponse`.
 
-## Ontology Service (agent_fleet/ontology_service/)
-- Engine O does NO compute or orchestration — pure semantic resolution only.
+## Engine O — Ontology + Predicate Router (agent_fleet/ontology_service/)
+- NO compute or orchestration — pure semantic resolution + routing lookup.
 - Loads `.ttl` ontology files via `rdflib` on startup.
-- Uses SPARQL to extract active classes, then calls BAML
-  `ClassifySustainmentIntent` to classify intent.
-- Exposes `/plan` endpoint using BAML `DecomposeQuery` for multi-domain routing.
-- Do NOT import ML frameworks, Dagster, or agent SDKs here.
-- The `.ttl` file lives alongside `main.py` in the service directory.
+- Endpoints:
+  - `/route_intent` — BAML `ExtractIntent` (mode + entity_refs).
+  - `/resolve` — RDF URI classification via BAML `ClassifyDomainIntent`.
+  - `/plan` — BAML `DecomposeQuery` (supervisor task plan).
+  - `/search_predicates` — Weaviate hybrid search over the Predicate
+    collection. This is the router (ADR-0004).
+  - `/find_tool` — exact (subject_uri, verb_label) lookup.
+  - `/find_path` — multi-hop traversal (ADR-0011).
+  - `/get_physical_assets` — DataHub-side asset lookup.
+- Do NOT import ML frameworks, Dagster, or agent SDKs.
 
-## Neo4j Graph Expert (agent_fleet/neo4j_expert/)
-- Engine E uses the Restate SDK for durable execution and `smolagents` for cypher generation.
-- Uses `mem0` back by Weaviate vector DB to inject long-term episodic memory into the LLM system prompt for improved retrieval over time.
-- Returns `GraphExpertResponse` (validated via BAML types) from all handlers.
+## Engine D — DataHub Wrapper (agent_fleet/datahub_wrapper/)
+- Lightweight metadata service — no ML, no orchestration.
+- `httpx.AsyncClient` to query DataHub GMS GraphQL.
+- The current `_GENERIC_SEARCH_QUERY` returns enriched assets:
+  ownership.owners.owner.username, tags, schemaMetadata.fields,
+  upstream/downstream relationships (DownstreamOf, Consumes),
+  operations[0] for last_updated.
+- Response formatter emits a header line `[TYPE] name | owner=... |
+  last_updated=... | tags=...` plus indented `description:`,
+  `upstream:`, `downstream:`, `columns:` continuation lines.
+- Endpoints: `POST /query_metadata`, `GET /find_tools?ontology_uri=`,
+  `GET /dynamic_context`.
+- 503 if DataHub unreachable — callers handle fallback.
+- Env: `DATAHUB_GMS_URL`, `DATAHUB_TOKEN`.
+- See ADR-0013 for the planned capability-tool generalization
+  (replacing the single fuzzy-search tool with focused capabilities).
 
-## Presentation Agent (agent_fleet/presentation_agent/)
-- Engine F is highly stateless. Fast UI mapping and presentation routing to decouple model/view based on persona targets.
-- Do NOT import agent loops or workflows here. Maps standard Python models against `b.DesignUI()`.
-- `DesignUI` returns `DashboardUI` containing a `components` array of UI unions. NOT a single component.
-- Each component has an `archetype` field: `PROCESS_TOPOLOGY`, `HAZARD_DECLARATION`, `ASSET_STATE_METRIC`, or `KNOWLEDGE_DOCUMENT`.
-- The persona parameter is now a plain `string`, not the `PersonaTarget` enum.
+## Engine E — Neo4j Graph Expert (agent_fleet/neo4j_expert/)
+- Restate-durable smolagent for Cypher generation.
+- `mem0` backed by Weaviate for long-term episodic memory.
+- Returns `GraphExpertResponse` (BAML-validated).
 
-## Personas (BAML `PersonaTarget` enum)
-- **MECHANIC** — Safety warnings, tool lists. Response: `MechanicResponse`. UI: `HAZARD_DECLARATION` / `ASSET_STATE_METRIC`.
-- **TECH_WRITER** — Procedure docs. Response: `AuthoringResponse`. UI: `KNOWLEDGE_DOCUMENT`.
-- **LOGISTICS** — Supply chain analysis. Response: `LogisticsResponse`. UI: `ASSET_STATE_METRIC` / `HAZARD_DECLARATION`.
-- **AUDITOR** — Compliance checks. Response: `AuditResponse`. UI: `HAZARD_DECLARATION` / `KNOWLEDGE_DOCUMENT`.
-- **PROCESS_ENGINEER** — Workflow graphs. UI: `PROCESS_TOPOLOGY`.
+## Engine F — Presentation Agent (agent_fleet/presentation_agent/)
+- Highly stateless. Single endpoint: `POST /render_ui`.
+- Calls `b.DesignUI(raw_data, persona) → DashboardUI`.
+- `DashboardUI` has a `components` array of:
+  `TopologyUI | HazardUI | MetricUI | DocumentUI | ChartUI | DigitalTwinUI`.
+- Six archetypes: `PROCESS_TOPOLOGY`, `HAZARD_DECLARATION`,
+  `ASSET_STATE_METRIC`, `KNOWLEDGE_DOCUMENT`, `CHART_WIDGET`,
+  `DIGITAL_TWIN_3D`.
+- DesignUI prompt has explicit grounding rules forbidding URN invention
+  and steering catalog Q&A to `KNOWLEDGE_DOCUMENT` (ADR-0012 workaround).
+- Do NOT import agent loops or workflows here.
+- The persona parameter is a `string`, not an enum.
+
+## Engine W — Weaviate Semantic Expert (agent_fleet/weaviate_expert/)
+- Restate-durable smolagent over Weaviate.
+- `near_text` hybrid search on `DocumentChunk` collection with
+  strict per-domain segregation via filter.
+- Vectorizer: `text2vec-ollama` against the cluster's ollama embedding
+  endpoint (e.g. `nomic-embed-text`).
+- Returns `KnowledgeResponse` (BAML-validated).
+- Requires `litellm` declared in `pyproject.toml` (smolagents'
+  `LiteLLMModel` import succeeds without it but the constructor
+  raises — common mistake).
+
+## Personas (BAML `PersonaTarget`, dynamic enum)
+- **MECHANIC** — `MechanicResponse`. UI: HAZARD_DECLARATION / ASSET_STATE_METRIC.
+- **TECH_WRITER** — `AuthoringResponse`. UI: KNOWLEDGE_DOCUMENT.
+- **LOGISTICS** — `LogisticsResponse`. UI: ASSET_STATE_METRIC / HAZARD_DECLARATION.
+- **AUDITOR** — `AuditResponse`. UI: HAZARD_DECLARATION / KNOWLEDGE_DOCUMENT.
+- **PROCESS_ENGINEER** — Any. UI: PROCESS_TOPOLOGY.
+- **DATA_STEWARD** — `DataStewardResponse`. UI: KNOWLEDGE_DOCUMENT (catalog Q&A).
+
+Persona split (ADR-0009): UI archetype is a *caller-side* concern;
+answerer persona is a *per-subtask* concern. Don't conflate.
 
 ## Composite Dashboard (`DashboardUI`)
-- Engine F returns `{ components: [...] }` — an array of semantic UI objects.
-- The frontend iterates over `components` and renders each with `RadarReveal` animation.
-- Layout: `PROCESS_TOPOLOGY` and `KNOWLEDGE_DOCUMENT` are `col-span-full`. Cards are inline in a 2-col grid.
-- The `active_agent_roster` AssetMaterialization broadcasts personas during fan-out for the "Agents Assembling" loading state.
+- Engine F returns `{ components: [...] }`.
+- Frontend iterates with `RadarReveal` animation.
+- Layout: full-width archetypes (TOPOLOGY / DOCUMENT / TWIN) =
+  `col-span-full`; cards (HAZARD / METRIC / CHART) flow inline 2-col.
+- `active_agent_roster` AssetMaterialization broadcasts personas for
+  the "Agents Assembling" state.
 
-## Containerization (Cloud Native Buildpacks)
-- We do NOT use Dockerfiles. All OCI images are built with `pack` CLI.
-- Builder: `paketobuildpacks/builder-jammy-base`.
-- Each service in `agent_fleet/` has a `Procfile` and `project.toml`.
-- `Procfile` declares `web: uvicorn ... --host 0.0.0.0 --port <PORT>`.
-- `project.toml` sets `BP_CPYTHON_VERSION` and `PORT` env var.
-- Build command: `pack build <image> --path ./agent_fleet/<service> --builder paketobuildpacks/builder-jammy-base`.
-
-## DataHub Wrapper (agent_fleet/datahub_wrapper/)
-- Engine D is a lightweight metadata service — no ML, no orchestration.
-- Uses `httpx.AsyncClient` to query DataHub GMS GraphQL API.
-- Do NOT import Restate, LangGraph, Dagster, or agent SDKs here.
-- `GET /tables` returns `{"available_tables": "..."}` for LLM context.
-- Returns HTTP 503 if DataHub is unreachable — callers must handle fallback.
-- Env vars: `DATAHUB_GMS_URL`, `DATAHUB_TOKEN`.
+## Containerization
+- Each engine has a **multi-stage Dockerfile generated in CI**, NOT
+  Cloud Native Buildpacks. We migrated off Paketo. Don't add Dockerfiles
+  to the repo root.
+- Build pattern: copy uv binary, copy engine's `pyproject.toml` +
+  `uv.lock`, run `uv sync --frozen --no-dev`, copy code, run.
+- Each engine's `Procfile` declares
+  `web: uvicorn ... --host 0.0.0.0 --port <PORT>` (or hypercorn for
+  HTTP/2 engines like W).
+- CI matrix builds one image per engine via
+  `.github/workflows/build-containers.yml`.
 
 ## Kubernetes / Infra Conventions
-- Agent service URLs follow the pattern:
-  `http://<service-name>.default.svc.cluster.local:<port>/<endpoint>`
-- Ontology reasoner (Engine O): port 8084, endpoint `/resolve` & `/plan`
-- Restate analyst: port 8081, endpoint `/analyze`
-- LangGraph support: port 8082, endpoint `/support`
-- Swarms scraper (Engine C): port 8083, endpoint `/scrape`
-- DataHub wrapper (Engine D): port 8085, endpoint `/tables`
-- Presentation Agent (Engine F): port 8087, endpoint `/render_ui`
+- Cluster service names: `iagent-<engine>` (e.g. `iagent-engine-a`).
+- BFF: `http://iagent-cortex-bff:8090/orchestrate`
+- Engine O: port 8084 — `/route_intent`, `/resolve`, `/plan`, `/search_predicates`, `/find_tool`, `/find_path`
+- Engine A: port 8081 — `/analyze`
+- Engine B: port 8082 — `/support`
+- Engine C: port 8083 — `/scrape`
+- Engine D: port 8085 — `/query_metadata`, `/find_tools`, `/dynamic_context`
+- Engine DA: port 8089 — `/analyze`
+- Engine E: port 8086 — `/query_proxy`
+- Engine F: port 8087 — `/render_ui`
+- Engine W: port 8088 — `/query_knowledge`
+- All engines expose `GET /health`.
+- Restate image: **pin to a specific tag** (sandbox uses `1.6.2`). The
+  chart's default floating `1.1` tag has drifted on Docker Hub and
+  broken the cluster.
 
 ## Dagster UI Conventions
-- Use `kinds={"tech1", "tech2"}` (not deprecated `compute_kind`) for multi-tech badges.
-- Use `group_name` to cluster related assets in the UI.
-- Built-in icons exist for: dbt, datahub, postgres, python, snowflake, spark, etc.
-- Custom icons (restate, smolagents, langgraph, swarms) are NOT supported as kind badges.
-  These show as text-only badges. Do NOT attempt to monkey-patch the JS bundle.
-- **Workaround:** Use `MetadataValue.md()` with base64-encoded SVGs from `assets/icons/`
-  to show rich icon cards in the asset detail panel.
-- Use the `_icon_card()` helper in `agent_routers.py` for consistent formatting.
-- When adding new agent assets, create a matching SVG in `assets/icons/` and add
-  a metadata card via `_icon_card(icon_name, title, description)`.
+- Use `kinds={"tech1", "tech2"}` for multi-tech badges.
+- Use `group_name` to cluster related assets.
+- Custom icons via `MetadataValue.md()` with base64-encoded SVGs in
+  `assets/icons/`. Do NOT monkey-patch the Dagster JS bundle.
 
 ## BPMN Dynamic Factory (src/iagent/defs/dynamic_factory.py)
-- Implements the Imperative-Declarative Hybrid Pattern: ops control flow
-  (imperative), AssetMaterialization tracks lineage (declarative).
-- `create_agent_op(task_node, input_names, gateway_branches)` generates `@op`.
+- Imperative-Declarative Hybrid: ops control flow, `AssetMaterialization`
+  tracks lineage.
+- `create_agent_op(task_node, input_names, gateway_branches)` generates `@op`:
   - MUST `yield AssetMaterialization` (asset_key = task name).
-  - MUST `yield Output` so downstream ops receive data.
-  - MUST use `requests.post()` only — same isolation rules as orchestrator.
-  - Op name comes from `task_node["id"]` — must be a valid Python identifier.
-- **Exclusive gateway routing:** When `gateway_branches` is provided, the op
-  uses `Out(is_required=False)` per branch. At runtime, `_evaluate_condition()`
-  evaluates each branch's `condition_expression` against the HTTP response dict.
-  Only the FIRST matching branch gets `yield Output` — this implements XOR semantics.
-  Order branches so the "default" (no condition) branch is LAST.
-- `build_gateway_routing()` identifies tasks preceding exclusive gateways and
-  maps their outgoing branches. Only `type: "exclusive"` gateways trigger
-  multi-output routing; other gateway types are ignored.
-- `_resolve_direct_flows()` returns only non-gateway task→task edges.
-- `build_dynamic_jobs()` wires two types of DependencyDefinition:
-  - Direct edges: `DependencyDefinition(src_id, "result")`
-  - Gateway edges: `DependencyDefinition(src_id, "branch_{target_id}")`
-- `build_dynamic_jobs()` runs at **module-load time** — errors block
-  Dagster from starting. Wrap job construction in try/except and log errors.
-- Environment variables for Postgres: `BPMN_POSTGRES_HOST`, `BPMN_POSTGRES_PORT`,
-  `BPMN_POSTGRES_DB`, `BPMN_POSTGRES_USER`, `BPMN_POSTGRES_PASSWORD`.
-- `AGENT_HTTP_TIMEOUT` controls the requests timeout (default 120s).
+  - MUST `yield Output` for downstream chaining.
+  - MUST use `requests.post()` only — same isolation as orchestrator.
+- Exclusive gateway routing: `Out(is_required=False)` per branch;
+  `_evaluate_condition()` picks the first matching branch.
+- `build_dynamic_jobs()` runs at module-load time — wrap in try/except.
+- Env: `BPMN_POSTGRES_*`, `AGENT_HTTP_TIMEOUT`.
 
-## SQLAlchemy Model (agent_fleet/models.py)
-- `BPMNCatalog` maps to the `bpmn_catalog` Postgres table.
-- Uses `JSONB` for `bpmn_payload` — do NOT store as plain `Text`.
-- `updated_at` uses `onupdate=func.now()` in SQLAlchemy; the raw SQL script
-  uses a `BEFORE UPDATE` trigger for the same effect.
-- Schema changes must be reflected in BOTH `models.py` AND
-  `sql/create_bpmn_catalog.sql`.
+## ADR Conventions
+- Load-bearing architectural changes get an ADR in `docs/adr/`.
+- Template the latest ADR (e.g. `ADR-0013-engine-d-capability-surface.md`).
+- Sections: Status / Date / Deciders / Related / Context / The constraint
+  we want to keep / Options / Decision / Open items / Out of scope.
+- Each option discussion frames trade-offs against the **operating
+  environment** (audit-graded business decision support, not consumer
+  chatbot). Avoid choices that trade validation for flexibility.
 
 ## Git
-- Commit messages: imperative mood, ≤72 chars subject line.
-- Include `Co-Authored-By: Warp <agent@warp.dev>` when AI-assisted.
+- Commit messages: imperative mood, ≤72 chars subject.
+- Include `Co-Authored-By:` lines for AI-assisted commits.
+- Reference the ADR number in commits implementing an architectural
+  decision (e.g. `feat(routing): implement /search_predicates per ADR-0004`).
 
 ## Security
-- Never hardcode secrets. Use environment variables or Kubernetes secrets.
+- Never hardcode secrets. Use env vars or Kubernetes secrets.
 - Never log full request/response payloads in production — redact PII.
+- Never log JWTs or DataHub PATs.
+- The CortexDataClient must receive the user's JWT via closure, NEVER
+  visible to the smolagent's prompt or LLM.
