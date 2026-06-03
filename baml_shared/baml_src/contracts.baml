@@ -535,34 +535,74 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
   prompt #"
     Act as a Semantic UI Translator for an Advanced Analytics Mesh.
     Analyze the raw data array and the Target Persona.
-    
+
     --- DATA IDENTIFICATION RULES ---
     1. SUPERSET DATA: If the data is a JSON array of objects (rows/columns) representing query results (EVEN IF IT IS WRAPPED IN A STRING OR SUMMARY FIELD):
        - USE ChartUI (CHART_WIDGET).
        - Select the best `chart_type` (BAR for comparisons, LINE for trends, PIE for parts-of-whole).
        - Ensure the `sql_query` used to generate the data is preserved in the object.
-    
+
     2. METADATA LISTS: If the data describes a list of Dashboards, Charts, or Tables (like {'dashboards': [...]}):
        - USE MetricUI (ASSET_STATE_METRIC).
        - Map each dashboard/chart to an item in the `metrics` array.
-    
-    3. TEXT/KNOWLEDGE: ONLY use this if the response is a pure conversational paragraph with no structured lists or arrays.
+
+    3. TEXT/KNOWLEDGE: Use this when the answer is a natural-language explanation,
+       a single fact about an asset (ownership, freshness, source-of-truth),
+       a lineage trace described in prose, or any response that does NOT contain
+       a fresh list of catalog items the user explicitly asked to enumerate.
+       Catalog Q&A queries (e.g. "who owns dashboard X", "when was Y last
+       updated", "what is the source of truth for Z") belong here, NOT in
+       ASSET_STATE_METRIC, because the answer is descriptive prose grounded
+       in the agent's text, not a list of new assets to inventory.
 
     4. DIGITAL TWIN: If the data explicitly describes physical hardware states, phased array sensor diagnostics, or element-level thermal/voltage telemetry from an edge device:
        - USE DigitalTwinUI (DIGITAL_TWIN_3D).
        - Extract the overall core_temp and uptime_hours for the global stats.
        - Map the broken/overheating elements into the anomalies array.
 
-    CRITICAL INSTRUCTION:
-    Produce a `DashboardUI` object. Map each expert response in the input to its corresponding component.
-    If the `summary` or `structured_data` field contains a stringified dictionary (e.g. "{'dashboards': [...]}"), you MUST parse it and output the corresponding ASSET_STATE_METRIC or CHART_WIDGET components. Do NOT just dump it into a KNOWLEDGE_DOCUMENT.
-    
+    CRITICAL GROUNDING RULES (read carefully — failures here are silently
+    incorrect, never visibly broken):
+
+    A. NEVER INVENT IDENTIFIERS. Every `id` value you emit (UIEntity.id,
+       UIRelation.source, UIRelation.target, AnomalyNode.element_id,
+       device_id, etc.) MUST appear *verbatim* somewhere in the raw_data
+       text. If raw_data does not contain a URN, dataset name, or asset
+       identifier for an item you want to include, either:
+         (a) omit the item entirely, or
+         (b) emit only the human-readable name in `name` and use that same
+             string as `id`.
+       NEVER make up DataHub URNs, Snowflake table names, postgres
+       schemas, or S3 paths you did not see in raw_data.
+
+    B. NEVER INVENT ASSETS. Do not add entries to `metrics`, `nodes`,
+       `edges`, `hazards`, or `anomalies` for assets the agent did not
+       mention in raw_data. If the agent named three datasets, your
+       metrics array has exactly those three datasets — not five.
+
+    C. PREFER PROSE WHEN IN DOUBT. If raw_data is the agent's natural-
+       language answer to a question (e.g. "the Sales Performance Q1
+       dashboard is owned by Bob"), choose KNOWLEDGE_DOCUMENT and put
+       the agent's text into markdown_content. KNOWLEDGE_DOCUMENT
+       preserves grounded facts. ASSET_STATE_METRIC is only correct
+       when the user explicitly asked to enumerate a list of catalog
+       items AND the raw_data contains an explicit list with
+       identifiable entries.
+
+    D. NO PARSING-WITHOUT-EVIDENCE. If a summary mentions abstractly
+       that "downstream datasets will be impacted" without naming
+       them, do NOT manufacture downstream dataset names to populate
+       a metrics array. Use KNOWLEDGE_DOCUMENT and let the user see
+       the agent's reasoning verbatim.
+
+    Produce a `DashboardUI` object. Map each expert response in the input
+    to its corresponding component.
+
     --- RAW DATA ---
     {{ raw_data }}
-    
+
     --- TARGET PERSONA ---
     {{ persona }}
-    
+
     {{ ctx.output_format }}
   "#
 }
