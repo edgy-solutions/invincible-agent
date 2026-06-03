@@ -56,11 +56,24 @@ agentFleet:
     BAML_LOG_LEVEL: "info"
 
     # mem0 LLM decoupling — gpt-oss crashes on mem0's structured-output
-    # request shape, so route mem0's internal extraction/scoring through
-    # gemma4:31b on the same Ollama host. ADR-0001.
-    MEM0_LLM_MODEL: "gemma4:31b"
+    # request shape, so route mem0's internal extraction/scoring through a
+    # smaller non-reasoning model on a DIFFERENT physical ollama host.
+    # ADR-0001.
+    #
+    # Before 2026-06-03: both 120b (agent) and gemma4:31b (mem0) lived on
+    # ai1 (192.168.1.119). The Strix Halo unified 128 GB pool held both
+    # while flash attention compressed the 120b KV cache (~70 GB). After
+    # flash-attn was disabled for stability the 120b grew to ~97 GB and
+    # no longer co-resided with gemma4:31b (~37 GB), causing model swap
+    # thrash on every smolagent step.
+    #
+    # New layout: agent reasoning (120b) stays on ai1; mem0 LLM moves to
+    # the openwebui host (192.168.1.188, 24 GB VRAM) running phi4:14b
+    # (~9 GB). phi4 satisfies the no-Chinese-models constraint and emits
+    # clean JSON for mem0's fact-extraction pipeline.
+    MEM0_LLM_MODEL: "phi4:14b"
     MEM0_LLM_PROVIDER: "ollama"
-    MEM0_OLLAMA_BASE_URL: "http://192.168.1.119:11434"
+    MEM0_OLLAMA_BASE_URL: "http://192.168.1.188:11434"
 
     # DataHub points at the separate datahub Helm release deployed in the
     # same namespace (acryldata chart, release name "datahub").
