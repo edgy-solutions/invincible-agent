@@ -185,6 +185,38 @@ def _lookup_capability(output_uri: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _extract_agent_response(raw_data: Any) -> Optional[Dict[str, Any]]:
+    """Extract the agent's response dict from the shape cortex-bff sends.
+
+    cortex-bff's supervisor wraps each subtask's result in
+    ``{persona, user_persona, answerer_persona, predicate_verb_iri,
+    sub_query, expert_response}`` and passes the LIST of those wrappers
+    as ``raw_data``. The agent's actual response (summary,
+    structured_data, output_uri, etc.) is inside ``expert_response``
+    of the first entry whose output_uri matches.
+
+    Test callers (e.g. ``trigger_presentation_agent``) pass a plain
+    dict instead. Handle both: if raw_data is already the response
+    shape (has ``summary`` or ``structured_data`` keys), use it
+    directly.
+    """
+    if isinstance(raw_data, list) and raw_data:
+        first = raw_data[0]
+        if isinstance(first, dict):
+            expert = first.get("expert_response")
+            if isinstance(expert, dict):
+                return expert
+            # Bare dict at the top level (legacy/test shape).
+            if "summary" in first or "structured_data" in first:
+                return first
+    if isinstance(raw_data, dict):
+        if "expert_response" in raw_data:
+            expert = raw_data["expert_response"]
+            return expert if isinstance(expert, dict) else None
+        return raw_data
+    return None
+
+
 def _render_document_deterministic(
     raw_data: Any,
     persona: str,
@@ -202,13 +234,14 @@ def _render_document_deterministic(
     summary_text = ""
     structured: Any = None
 
-    if isinstance(raw_data, dict):
+    agent_response = _extract_agent_response(raw_data)
+    if agent_response is not None:
         summary_text = (
-            raw_data.get("summary")
-            or raw_data.get("summary_text")
+            agent_response.get("summary")
+            or agent_response.get("summary_text")
             or ""
         )
-        structured = raw_data.get("structured_data")
+        structured = agent_response.get("structured_data")
         if isinstance(structured, str):
             try:
                 structured = json.loads(structured)
