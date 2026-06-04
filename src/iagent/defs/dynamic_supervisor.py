@@ -478,11 +478,14 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     )
 
     # Engine handlers run an LLM agent loop, and slow Ollama backends can
-    # take many minutes per multi-step query. Bumped from 300s to 900s so
-    # the supervisor doesn't time out mid-loop on heavier queries (the
-    # cortex-bff polling loop's 300-iteration timeout stops it from being
-    # truly infinite).
-    response = requests.post(endpoint, json=payload, timeout=900)
+    # take many minutes per multi-step query. Bumped from 300s to 900s for
+    # the initial sandbox runs; then to 1800s after ADR-0017's per-verb
+    # narrowing pushed Q3 lineage_src and Q8 catalog_superset into deeper
+    # recursive walks that exceeded 900s. The cortex-bff polling loop's
+    # 300-iteration timeout still prevents this from being truly infinite.
+    # Must move in lockstep with restate_analyst/main.py's /analyze
+    # proxy timeout, or the inner 900s ceiling defeats this one.
+    response = requests.post(endpoint, json=payload, timeout=1800)
     response.raise_for_status()
 
     data = response.json()

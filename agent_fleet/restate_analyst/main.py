@@ -1310,11 +1310,13 @@ async def analyze_proxy(request: Request) -> JSONResponse:
             
         target_url = f"{RESTATE_INGRESS_URL}/AnalystService/analyze"
 
-        # Match the supervisor's per-engine call timeout (900s). The Engine A
-        # smolagent loop can take many minutes per multi-step reasoning task
-        # on slow Ollama backends; 300s reliably timed out mid-loop and
-        # surfaced as a 502 to the supervisor.
-        async with httpx.AsyncClient(timeout=900.0) as client:
+        # Match the supervisor's per-engine call timeout (1800s post-
+        # ADR-0017). The Engine A smolagent loop can take many minutes
+        # per multi-step reasoning task on slow Ollama backends; 300s
+        # reliably timed out mid-loop, 900s started failing when
+        # per-verb prompts narrowed the agent into deeper recursive
+        # lineage walks (Q3 lineage_src, Q8 catalog_superset).
+        async with httpx.AsyncClient(timeout=1800.0) as client:
             resp = await client.post(
                 target_url,
                 json=payload,
