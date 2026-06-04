@@ -58,6 +58,17 @@ _TRUTHY = {"true", "1", "yes", "on"}
 #: side. Currently informational only; doc-tools doesn't branch on it.
 _TOOL_KIND_ENGINE = "Engine"
 
+#: Presentation capabilities (per ADR-0017) use the same registration
+#: pipeline as engines but advertise an SPO triple instead of a verb
+#: edge. The kind lets the consume side distinguish without changing
+#: the URN scheme.
+_TOOL_KIND_PRESENTATION = "Presentation"
+
+#: The predicate IRI for every presentation registration. Per ADR-0017,
+#: presentation capabilities are SPO triples of shape
+#: ``(output_shape, mesh:rendersAs, archetype)``.
+_PREDICATE_RENDERS_AS = "mesh:rendersAs"
+
 
 def register_engine_to_mesh(
     *,
@@ -178,6 +189,164 @@ def register_engine_to_mesh(
             "⚠️ Failed to register engine %s to DataHub: %s. "
             "Engine will keep serving; routing will resume after the next "
             "successful registration cycle.",
+            urn,
+            e,
+        )
+
+
+def register_presentation_to_mesh(
+    *,
+    name: str,
+    description: str,
+    subject_uri: str,
+    object_uri: str,
+    archetype: str,
+    expected_fields: Optional[Iterable[str]] = None,
+    persona_fit: Optional[Iterable[str]] = None,
+    domain_fit: Optional[Iterable[str]] = None,
+    version: str = "0.1.0",
+) -> None:
+    """Emit a DataHub MCP describing a presentation capability as a
+    ``(subject_uri, mesh:rendersAs, object_uri)`` triple.
+
+    Per ADR-0017, Engine F (and any other component that knows how to
+    render a shape) advertises its capabilities through this helper.
+    The triple flows into the same Weaviate Predicate collection as
+    engine verbs (ADR-0004) and is found by ``/search_predicates``
+    when ``cortex-bff`` calls ``/render_ui`` with an ``output_uri``.
+
+    The wire shape matches ``register_engine_to_mesh`` byte-for-byte
+    except:
+
+    - ``mesh_tool_kind`` is ``"Presentation"`` instead of ``"Engine"``.
+    - The semantic fields name an SPO triple, not a verb edge:
+      ``mesh_subject_uri``, ``mesh_predicate_iri`` (always
+      ``mesh:rendersAs``), ``mesh_object_uri``.
+    - ``mesh_archetype`` carries the BAML archetype enum string the
+      renderer expects (e.g. ``"KNOWLEDGE_DOCUMENT"``).
+    - ``mesh_expected_fields`` is a JSON-encoded list of fields the
+      archetype expects to find in ``structured_data``.
+    - There is no ``endpoint_url`` — the presentation isn't a callable
+      peer, it's a capability advertised by Engine F.
+
+    Same opt-in env var (``MESH_REGISTER_ON_STARTUP``) and same
+    no-crash failure mode as the engine helper. If registration is
+    skipped, Engine F's ``/render_ui`` falls back to the legacy
+    BAML ``DesignUI`` path automatically (per ADR-0017 §6) and the
+    presentation is simply not discoverable via the predicate graph
+    until the next successful emit.
+
+    Parameters
+    ----------
+    name : str
+        Unique slug for the URN. Convention:
+        ``presentation_<archetype_lower>_for_<subject_slug>``.
+    description : str
+        Free-form, written to the DataHub aspect ``description`` field.
+    subject_uri : str
+        The output-shape IRI this presentation can render
+        (e.g. ``mesh:OwnershipFact``). Must be one of the IRIs declared
+        by an engine's ``output_uri`` for the lookup to fire.
+    object_uri : str
+        The archetype IRI (e.g. ``mesh:KnowledgeDocument``). See
+        :class:`iagent_mesh.shapes.Archetypes`.
+    archetype : str
+        The BAML archetype enum string Engine F's renderer uses
+        (e.g. ``"KNOWLEDGE_DOCUMENT"``). Resolves ``object_uri`` back
+        to the BAML-side identifier.
+    expected_fields : Iterable[str], optional
+        Field names the archetype expects to find in
+        ``structured_data``. Used by Engine F's strict-validation mode
+        (ADR-0017 open item) and by future schema validators.
+    persona_fit : Iterable[str], optional
+        User personas this presentation is well-suited for. Ranks higher
+        when ``/search_predicates`` is called with a matching
+        ``persona_hint``.
+    domain_fit : Iterable[str], optional
+        Domains this presentation is well-suited for. Ranks higher when
+        ``/search_predicates`` is called with a matching ``domain_hint``.
+    version : str
+        Tool-version stamp; same field as engine registrations.
+    """
+    if os.getenv("MESH_REGISTER_ON_STARTUP", "false").lower() not in _TRUTHY:
+        logger.info(
+            "Skipping DataHub registration for presentation %s "
+            "(set MESH_REGISTER_ON_STARTUP=true to enable)",
+            name,
+        )
+        return
+
+    gms_url = os.getenv("DATAHUB_GMS_URL")
+    token = os.getenv("DATAHUB_TOKEN", "")
+
+    if not gms_url:
+        logger.warning(
+            "MESH_REGISTER_ON_STARTUP=true but DATAHUB_GMS_URL not set; "
+            "skipping registration for presentation %s. /render_ui will "
+            "fall back to legacy BAML DesignUI until the next successful "
+            "registration cycle.",
+            name,
+        )
+        return
+
+    try:
+        from datahub.emitter.mcp import MetadataChangeProposalWrapper
+        from datahub.emitter.rest_emitter import DatahubRestEmitter
+        from datahub.metadata.schema_classes import MLModelPropertiesClass
+    except ImportError:
+        logger.warning(
+            "acryl-datahub is not installed; skipping registration for "
+            "presentation %s. Install acryl-datahub in the image to "
+            "enable.",
+            name,
+        )
+        return
+
+    urn = f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{name},PROD)"
+    namespace_authority = "platform" if subject_uri.startswith("mesh:") else "domain"
+
+    custom_props = {
+        # Marker for doc-tools' filter — same key as engine registrations.
+        "mesh_is_registration":         "true",
+        "mesh_tool_kind":               _TOOL_KIND_PRESENTATION,
+        # SPO triple identity. Per ADR-0017 the predicate is constant.
+        "mesh_subject_uri":             subject_uri,
+        "mesh_predicate_iri":           _PREDICATE_RENDERS_AS,
+        "mesh_object_uri":              object_uri,
+        # Renderer-side metadata.
+        "mesh_archetype":               archetype,
+        "mesh_expected_fields":         json.dumps(list(expected_fields or [])),
+        "mesh_namespace_authority":     namespace_authority,
+        # Scoping. Same JSON-encoded list convention as engine
+        # registrations so /search_predicates handles both uniformly.
+        "mesh_persona_fit":             json.dumps(list(persona_fit or [])),
+        "mesh_domain_fit":              json.dumps(list(domain_fit or [])),
+        # Versioning.
+        "mesh_sdk_version":             "0.0.0",
+        "mesh_tool_version":            version,
+    }
+
+    props = MLModelPropertiesClass(
+        description=description,
+        customProperties=custom_props,
+    )
+
+    try:
+        emitter = DatahubRestEmitter(gms_server=gms_url, token=token)
+        mcp = MetadataChangeProposalWrapper(entityUrn=urn, aspect=props)
+        emitter.emit(mcp)
+        logger.info(
+            "✅ Registered presentation %s as (%s -> %s -> %s)",
+            urn,
+            subject_uri,
+            _PREDICATE_RENDERS_AS,
+            object_uri,
+        )
+    except Exception as e:  # noqa: BLE001  -- ADR-0006: do not crash the engine
+        logger.warning(
+            "⚠️ Failed to register presentation %s to DataHub: %s. "
+            "Engine F /render_ui will fall back to legacy BAML DesignUI "
+            "for this shape until the next successful registration cycle.",
             urn,
             e,
         )

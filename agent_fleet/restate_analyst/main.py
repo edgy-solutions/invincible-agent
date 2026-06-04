@@ -127,6 +127,176 @@ RESTATE_INGRESS_URL = os.getenv(
 )
 
 # ---------------------------------------------------------------------------
+# Per-verb prompt blocks (ADR-0017)
+# ---------------------------------------------------------------------------
+# Engine A advertises one verb per question shape (see registrations in
+# lifespan() below). The router picks a verb based on Weaviate hybrid
+# search over the predicate edges; the picked verb's IRI is passed back
+# to /analyze in the request body as ``routed_verb_iri``. This handler
+# selects the matching prompt block from the dict below, which carries:
+#
+#   - ``task_framing``: a short paragraph telling the agent what kind of
+#     question this verb handles and what shape of answer to produce.
+#   - ``reasoning_patterns``: only the reasoning patterns relevant to
+#     this verb. Recursive lineage lives on lineage/impact verbs;
+#     cross-feature predicate composability lives on tag/impact verbs;
+#     simple lookups (ownership, schema, freshness) get neither, which
+#     prevents over-recursion and over-search noise on those questions.
+#   - ``output_uri``: the literal IRI the agent must echo back in
+#     ``final_answer()`` so Engine F's /render_ui can do a deterministic
+#     predicate-graph lookup for the presentation (ADR-0017 §6).
+#
+# When ``routed_verb_iri`` is missing or unknown, falls back to the
+# generic ``mesh:analyzeWithCodeAgent`` block which retains the
+# pre-ADR-0017 behavior (both reasoning patterns active, generic
+# output_uri).
+
+_REASONING_RECURSIVE_LINEAGE = (
+    "REASONING PATTERN — RECURSIVE LINEAGE TRAVERSAL.\n"
+    "When tracing the SOURCE OF TRUTH, the RAW source, what FEEDS an "
+    "asset, or any phrasing that implies tracing all the way back (or "
+    "all the way forward), do not stop at the first hop. The "
+    "search_datahub response gives upstream and downstream names for "
+    "the directly-matched asset only. To trace a full chain you MUST "
+    "call search_datahub recursively on each name that appears in the "
+    "upstream/downstream lines, walking the graph until you reach a "
+    "node whose upstream list is empty (for source-of-truth questions) "
+    "or downstream list is empty (for ultimate-consumer questions). "
+    "Then report the full path. If the asset has 3 layers of upstream, "
+    "you make 3 follow-up search_datahub calls — not 0, not 1.\n\n"
+)
+
+_REASONING_CROSS_FEATURE = (
+    "REASONING PATTERN — CROSS-FEATURE PREDICATES.\n"
+    "When the user's question requires assets to satisfy TWO OR MORE "
+    "conditions simultaneously (e.g. \"tagged X AND consumed by Y\", "
+    "\"in domain D AND owned by alice\", \"PII AND no owner\"), do not "
+    "assume the search returns nothing just because a single search "
+    "term doesn't surface the joint result. The search_datahub "
+    "response carries multiple fields per asset on a single entry — "
+    "for each search hit, inspect ALL of the fields the user's "
+    "question mentions and select only those that satisfy EVERY "
+    "condition. If a question mentions a tag AND a downstream "
+    "relationship, search by the broader of the two, then check each "
+    "result's other field. Do not give up after one search; do not "
+    "say \"none found\" when you have not actually applied the second "
+    "condition to the candidates the first search returned.\n\n"
+)
+
+_VERB_PROMPT_BLOCKS = {
+    "mesh:lookupOwnership": {
+        "task_framing": (
+            "VERB SCOPE: mesh:lookupOwnership.\n"
+            "Your task is to look up the OWNER of a specific named "
+            "asset. Issue a single search_datahub call on the asset "
+            "name and report the owner identity (email, team) plus the "
+            "ownership timestamp if available. Do NOT walk lineage; do "
+            "NOT inspect schema; do NOT search broadly. Stay focused "
+            "on the ownership fields of the matched asset."
+        ),
+        "reasoning_patterns": "",
+        "output_uri": "mesh:OwnershipFact",
+    },
+    "mesh:traceLineage": {
+        "task_framing": (
+            "VERB SCOPE: mesh:traceLineage.\n"
+            "Your task is to TRACE THE LINEAGE of a named asset. The "
+            "user wants the upstream chain (source of truth) or "
+            "downstream chain (ultimate consumers). Apply the "
+            "recursive-lineage-traversal pattern below — single-hop "
+            "answers are insufficient when the user asks for the "
+            "source or what feeds an asset."
+        ),
+        "reasoning_patterns": _REASONING_RECURSIVE_LINEAGE,
+        "output_uri": "mesh:LineageTopology",
+    },
+    "mesh:assessImpact": {
+        "task_framing": (
+            "VERB SCOPE: mesh:assessImpact.\n"
+            "Your task is to identify the BLAST RADIUS of a change to "
+            "a named asset: which downstream dashboards, charts, and "
+            "datasets depend on it and would break or change if it "
+            "changes schema. Walk the downstream lineage and optionally "
+            "filter by additional conditions the user mentions."
+        ),
+        "reasoning_patterns": _REASONING_RECURSIVE_LINEAGE + _REASONING_CROSS_FEATURE,
+        "output_uri": "mesh:ImpactSet",
+    },
+    "mesh:findSchema": {
+        "task_framing": (
+            "VERB SCOPE: mesh:findSchema.\n"
+            "Your task is to return the COLUMN SCHEMA of a named "
+            "dataset: field names, data types, and field descriptions "
+            "as they appear in the catalog. Do NOT read row data; do "
+            "NOT walk lineage; do NOT search broadly."
+        ),
+        "reasoning_patterns": "",
+        "output_uri": "mesh:SchemaDescription",
+    },
+    "mesh:checkFreshness": {
+        "task_framing": (
+            "VERB SCOPE: mesh:checkFreshness.\n"
+            "Your task is to report the LAST UPDATED timestamp of a "
+            "named dataset, compared against any SLA or staleness "
+            "threshold the user mentions. Single search_datahub call, "
+            "single timestamp read."
+        ),
+        "reasoning_patterns": "",
+        "output_uri": "mesh:FreshnessReport",
+    },
+    "mesh:filterByTag": {
+        "task_framing": (
+            "VERB SCOPE: mesh:filterByTag.\n"
+            "Your task is to identify assets matching a given tag, "
+            "optionally composed with a secondary condition (e.g. "
+            "tagged X AND exposed to a downstream dashboard, tagged Y "
+            "AND owned by team Z). PII-exposure audits are the most "
+            "common shape but the verb covers any tag-conditional "
+            "query. Apply the cross-feature-predicate pattern below — "
+            "do NOT report 'none found' until you have applied every "
+            "condition to the candidates the tag search returned."
+        ),
+        "reasoning_patterns": _REASONING_CROSS_FEATURE,
+        "output_uri": "mesh:TagFilterResult",
+    },
+    "mesh:describeAsset": {
+        "task_framing": (
+            "VERB SCOPE: mesh:describeAsset.\n"
+            "Your task is to return a structured PROFILE of a named "
+            "asset: owner, tags, domain, description, last-updated, "
+            "and a short summary. The user wants an overview rather "
+            "than any single attribute. Do NOT walk lineage; do NOT "
+            "audit compliance."
+        ),
+        "reasoning_patterns": "",
+        "output_uri": "mesh:AssetProfile",
+    },
+    # Generic fallback (ADR-0017 transition window). Both reasoning
+    # patterns active since we don't know the question shape.
+    "mesh:analyzeWithCodeAgent": {
+        "task_framing": (
+            "VERB SCOPE: mesh:analyzeWithCodeAgent (generic fallback).\n"
+            "Your task is a general catalog Q&A question that didn't "
+            "match a specialized verb. Use the broadest applicable "
+            "approach: search the catalog, inspect the returned "
+            "fields, apply both reasoning patterns below as needed."
+        ),
+        "reasoning_patterns": _REASONING_RECURSIVE_LINEAGE + _REASONING_CROSS_FEATURE,
+        "output_uri": "mesh:AgentResponse",
+    },
+}
+
+
+def _select_verb_prompt_block(routed_verb_iri: str | None) -> dict:
+    """Return the prompt block for a routed verb, falling back to the
+    generic block when ``routed_verb_iri`` is missing or unknown.
+    """
+    if routed_verb_iri and routed_verb_iri in _VERB_PROMPT_BLOCKS:
+        return _VERB_PROMPT_BLOCKS[routed_verb_iri]
+    return _VERB_PROMPT_BLOCKS["mesh:analyzeWithCodeAgent"]
+
+
+# ---------------------------------------------------------------------------
 # Restate Service — AnalystService
 # ---------------------------------------------------------------------------
 analyst_service = Service("AnalystService")
@@ -174,6 +344,18 @@ async def analyze(ctx: Context, request: dict) -> dict:
     fallback_reason = request.get("fallback_reason") or ""
     fallback_score = request.get("fallback_score")
     rejected_verb_iri = request.get("rejected_verb_iri") or ""
+
+    # ADR-0017 routing context: the router passes back the verb IRI it
+    # matched (e.g. "mesh:lookupOwnership", "mesh:traceLineage"). This
+    # handler selects a verb-specific prompt block — only the reasoning
+    # patterns relevant to that verb make it into the agent's context —
+    # and instructs the agent to echo the verb's declared output_uri in
+    # final_answer(). When the router doesn't pass a verb, or passes one
+    # we don't recognize, _select_verb_prompt_block returns the generic
+    # fallback block (both reasoning patterns active, output_uri
+    # mesh:AgentResponse).
+    routed_verb_iri = request.get("routed_verb_iri") or ""
+    verb_block = _select_verb_prompt_block(routed_verb_iri)
 
     # Extract the injected token from the proxy and set it into ContextVar
     auth_header = request.get("user_jwt")
@@ -379,9 +561,14 @@ async def analyze(ctx: Context, request: dict) -> dict:
                         f"judgment as specialist authority.\n\n"
                     )
 
+                # ADR-0017: per-verb prompt assembly. Reasoning patterns are
+                # no longer always-on; only the patterns relevant to the routed
+                # verb are included. The verb_block also carries the
+                # output_uri the agent must echo in final_answer().
                 agent_prompt = (
                     f"{fallback_preamble}"
                     f"You are an enterprise data analyst operating across all domains (Maintenance, Manufacturing, Sustainment, etc.). Your ONLY source of truth is the output of the `search_datahub` tool.\n\n"
+                    f"{verb_block['task_framing']}\n\n"
                     f"Task: {task.task_description}\n"
                     f"Dataset ID: {task.dataset_id}\n\n"
                     f"Semantic Context (from IOF/MIMOSA ontology):\n"
@@ -390,10 +577,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     f"CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate facts. Use only what the tools return. If a specific field the user asked about is genuinely absent from the tool result, state it is not available — but do NOT claim a field is missing if the tool returned it. See each tool's docstring for the shape of its response.\n\n"
                     f"PAST EXPERIENCE IS A HINT, NEVER A FACT.\n"
                     f"The \"Relevant Past Experience\" block (when present below) is drawn from earlier sessions and is generated by an extractor LLM, not by your tools. It MAY reflect summaries of your own previous answers — and you have been wrong before. Treat past experience as a possibly-stale starting hypothesis, NEVER as ground truth. You MUST verify against the current tool output before reporting anything. If past experience says \"no X exists\" for the current question, IGNORE that claim and run the tool anyway; an empty result must come from a fresh search, not from memory. Repeating a past wrong answer because it appears in past experience is the most common cascading failure in this system. The tool is authoritative; past experience is conversational background only.\n\n"
-                    f"REASONING PATTERN — CROSS-FEATURE PREDICATES.\n"
-                    f"When the user's question requires assets to satisfy TWO OR MORE conditions simultaneously (e.g. \"tagged X AND consumed by Y\", \"in domain D AND owned by alice\", \"PII AND no owner\"), do not assume the search returns nothing just because a single search term doesn't surface the joint result. The search_datahub response carries multiple fields per asset on a single entry — for each search hit, inspect ALL of the fields the user's question mentions and select only those that satisfy EVERY condition. If a question mentions a tag AND a downstream relationship, search by the broader of the two, then check each result's other field. Do not give up after one search; do not say \"none found\" when you have not actually applied the second condition to the candidates the first search returned.\n\n"
-                    f"REASONING PATTERN — RECURSIVE LINEAGE TRAVERSAL.\n"
-                    f"When the user asks for the SOURCE OF TRUTH, the RAW source, what FEEDS an asset, or any phrasing that implies tracing all the way back (or all the way forward), do not stop at the first hop. The search_datahub response gives upstream and downstream names for the directly-matched asset only. To trace a full chain you MUST call search_datahub recursively on each name that appears in the upstream/downstream lines, walking the graph until you reach a node whose upstream list is empty (for source-of-truth questions) or downstream list is empty (for ultimate-consumer questions). Then report the full path. If the user asks for the source system of an asset that has 3 layers of upstream, you make 3 follow-up search_datahub calls — not 0, not 1.\n\n"
+                    f"{verb_block['reasoning_patterns']}"
                 )
 
                 if dynamic_schema_map:
@@ -407,7 +591,8 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     f"class AgentFinalResponse(BaseModel):\n"
                     f"    status: str\n"
                     f"    summary_text: str = Field(description=\"A conversational summary. STRICT RULE: You must ONLY state facts returned by the DataHub tool. DO NOT guess business purposes.\")\n"
-                    f"    structured_data: Optional[Dict[str, Any]] = Field(description=\"MUST be a raw JSON object. STRICT RULE: If a dashboard description is missing, UNAVAILABLE_IN_CATALOG, or empty, you MUST write 'No description available'. Do not infer or invent descriptions. DO NOT stringify this.\")\n\n"
+                    f"    structured_data: Optional[Dict[str, Any]] = Field(description=\"MUST be a raw JSON object. STRICT RULE: If a dashboard description is missing, UNAVAILABLE_IN_CATALOG, or empty, you MUST write 'No description available'. Do not infer or invent descriptions. DO NOT stringify this.\")\n"
+                    f"    output_uri: str = Field(description=\"MUST be the literal string '{verb_block['output_uri']}'. This is the declared output shape of the verb you were routed to handle (ADR-0017). Downstream presentation routing depends on this exact value — echo it verbatim, do not modify, do not omit.\")\n\n"
                     f"Pass this dictionary to the final_answer() tool."
                 )
 
@@ -495,12 +680,21 @@ print(result)
 
         summary_text = str(raw_agent_response)
         structured_data_str = None
-        
+        # ADR-0017: the agent is instructed to echo the verb's declared
+        # output_uri in final_answer(). If the agent obeyed, use what it
+        # echoed (cheap drift detection — the audit table can compare
+        # echoed vs declared). If it didn't, fall back to the declared
+        # URI so the downstream presentation lookup still fires.
+        echoed_output_uri = None
+
         if isinstance(raw_agent_response, dict):
             summary_text = raw_agent_response.get("summary_text", str(raw_agent_response))
             structured_data = raw_agent_response.get("structured_data")
             if structured_data is not None:
                 structured_data_str = json.dumps(structured_data)
+            echoed_output_uri = raw_agent_response.get("output_uri")
+
+        output_uri = echoed_output_uri or verb_block["output_uri"]
 
         async def save_memory() -> str:
             if user_id:
@@ -529,7 +723,14 @@ print(result)
         }
 
         response = AgentResponse(**agent_result)
-        return response.model_dump()
+        # ADR-0017 transition: output_uri rides as a top-level extra
+        # field alongside the BAML-typed payload. When AgentResponse's
+        # BAML source grows the field, this extra-key path becomes
+        # schema-validated automatically without consumer-side change.
+        result_dict = response.model_dump()
+        result_dict["output_uri"] = output_uri
+        result_dict["routed_verb_iri"] = routed_verb_iri
+        return result_dict
     except Exception as e:
         print(f"[restate-analyst] Fatal error during agent execution: {e}")
         raise e
@@ -815,18 +1016,200 @@ async def lifespan(fastapi_app: FastAPI):
     # Boot Sequence
     logger.info("Initializing Engine A: Late Binding enabled (JIT Tool Injection).")
 
-    # Register as a typed predicate edge in the mesh routing graph.
+    # Register as typed predicate edges in the mesh routing graph.
     #
-    # Engine A is the **metadata analysis** engine: catalog Q&A, lineage
-    # traversal, ownership lookup, freshness checks, schema queries, tag
-    # filtering, downstream-impact analysis. It uses search_datahub to
-    # discover assets and walks lineage by making follow-up search calls.
-    # It does NOT read the row data — that's Engine DA's job (data
-    # analysis). The verb IRI stays mesh:analyzeWithCodeAgent (per ADR-
-    # 0007's survey-before-mint), but the description and synonyms are
-    # sharpened along the metadata vs data axis so Weaviate hybrid
-    # search ranks catalog questions onto Engine A and SQL questions
-    # onto Engine DA. See ADR-0014 for the routing-precision rationale.
+    # Per ADR-0017, Engine A advertises one registration per question
+    # shape it handles, each with a specific output_uri. Same pod, same
+    # endpoint URL, six distinct verb edges in the predicate graph. The
+    # inbound mesh task envelope carries the routed verb so this engine's
+    # handler can select the per-verb prompt block and echo the matching
+    # output_uri in the response.
+    #
+    # The pre-existing `mesh:analyzeWithCodeAgent` registration (with
+    # output_uri `mesh:AgentResponse`) is retained at the end of this
+    # block as a fallback for queries that don't match any specific verb's
+    # synonyms. It is scheduled for removal once the audit table shows
+    # the specific verbs cover the observed query distribution (ADR-0017
+    # §1 open item).
+    _engine_a_endpoint = os.getenv(
+        "ENGINE_A_PUBLIC_URL",
+        "http://restate-agent-svc.default.svc.cluster.local:8081/analyze",
+    )
+    _engine_a_domains = ["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT", "DATA_ENGINEERING"]
+
+    register_engine_to_mesh(
+        name="engine_a_lookup_ownership",
+        description=(
+            "Answers who owns a specific dataset, dashboard, or chart in "
+            "the DataHub catalog. Returns the owner identity (email, team) "
+            "and the ownership timestamp. Does NOT walk lineage or inspect "
+            "schema — use mesh:traceLineage or mesh:findSchema for those."
+        ),
+        verb="mesh:lookupOwnership",
+        input_uri="mesh:CatalogAssetQuery",
+        output_uri="mesh:OwnershipFact",
+        verb_synonyms=[
+            "who owns", "owner of", "ownership of",
+            "list assets owned by", "who is responsible for",
+            "owning team for", "who maintains",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        name="engine_a_trace_lineage",
+        description=(
+            "Walks the upstream/downstream lineage graph from a named "
+            "asset in DataHub. Returns the full lineage chain or topology, "
+            "recursively traversing until the upstream-empty source-of-"
+            "truth node is reached. Use this for 'what feeds X' or 'what "
+            "is the source of truth for X' questions."
+        ),
+        verb="mesh:traceLineage",
+        input_uri="mesh:CatalogAssetQuery",
+        output_uri="mesh:LineageTopology",
+        verb_synonyms=[
+            "what is the lineage", "lineage of",
+            "source of truth", "raw source of",
+            "what feeds", "upstream of", "trace lineage",
+            "underlying source systems", "raw tables behind",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        name="engine_a_assess_impact",
+        description=(
+            "Identifies the set of downstream assets impacted by a change "
+            "to a named asset. Walks the downstream lineage graph and "
+            "returns the blast-radius set: which dashboards, datasets, "
+            "and charts depend on this asset and would be affected if it "
+            "changed schema or broke."
+        ),
+        verb="mesh:assessImpact",
+        input_uri="mesh:CatalogAssetQuery",
+        output_uri="mesh:ImpactSet",
+        verb_synonyms=[
+            "downstream impact", "what breaks if",
+            "what is impacted by", "blast radius",
+            "consumers of", "what depends on",
+            "downstream of", "if X changes what breaks",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        name="engine_a_find_schema",
+        description=(
+            "Returns the column schema of a named dataset in DataHub: "
+            "field names, data types, and field descriptions. Use this "
+            "for 'what columns does X have' or 'what is the schema of X' "
+            "questions. Does NOT return row data — that's Engine DA's job."
+        ),
+        verb="mesh:findSchema",
+        input_uri="mesh:CatalogAssetQuery",
+        output_uri="mesh:SchemaDescription",
+        verb_synonyms=[
+            "what columns", "schema of", "data types",
+            "fields of", "column descriptions",
+            "what fields does", "describe schema",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        name="engine_a_check_freshness",
+        description=(
+            "Reports the last-updated timestamp of a named dataset and "
+            "compares it against an SLA or staleness threshold if "
+            "provided. Use this for 'when was X last updated', 'is X "
+            "stale', or freshness-SLA questions."
+        ),
+        verb="mesh:checkFreshness",
+        input_uri="mesh:CatalogAssetQuery",
+        output_uri="mesh:FreshnessReport",
+        verb_synonyms=[
+            "when was last updated", "last updated",
+            "freshness", "is it stale", "data freshness",
+            "how recent is", "is the data current",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        name="engine_a_filter_by_tag",
+        description=(
+            "Returns datasets, dashboards, or charts matching a given tag "
+            "in the DataHub catalog, optionally composed with a secondary "
+            "condition (e.g. tagged X AND exposed to a downstream "
+            "dashboard, tagged Y AND owned by team Z). Handles PII-"
+            "exposure audits, sensitive-data compliance checks, and any "
+            "other tag-conditional asset query. Composes the cross-"
+            "feature predicate: tag-match AND optional-condition-check."
+        ),
+        verb="mesh:filterByTag",
+        input_uri="mesh:CatalogAssetQuery",
+        output_uri="mesh:TagFilterResult",
+        verb_synonyms=[
+            "tagged", "datasets tagged", "assets tagged",
+            "filter by tag", "find assets with tag",
+            "tagged pii", "pii datasets", "pii exposure",
+            "compliance audit", "pii audit", "sensitive data exposed",
+            "what pii is exposed", "pii datasets in dashboards",
+            "datasets tagged X exposed to", "assets tagged X owned by",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        name="engine_a_describe_asset",
+        description=(
+            "Returns a structured profile of a named asset in the DataHub "
+            "catalog: owner, tags, domain, description, last-updated "
+            "timestamp, and a high-level summary. Use this for general "
+            "'tell me about X' or 'describe X' questions where the user "
+            "wants an overview rather than a specific attribute. For "
+            "single-attribute lookups (owner only, schema only, freshness "
+            "only), the more specific verbs rank higher."
+        ),
+        verb="mesh:describeAsset",
+        input_uri="mesh:CatalogAssetQuery",
+        output_uri="mesh:AssetProfile",
+        verb_synonyms=[
+            "describe", "describe dataset", "describe dashboard",
+            "tell me about", "profile of", "summarize",
+            "what is", "overview of", "asset profile",
+            "give me the rundown on", "summary of",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    # --- Fallback: generic catalog-Q&A verb (ADR-0017 transition window). ---
+    # Retained for queries that don't match any specific verb's synonyms.
+    # The router scores the specific verbs higher when their synonyms hit;
+    # everything else falls through to this entry. Scheduled for removal
+    # per ADR-0017 §1 open item.
     register_engine_to_mesh(
         name="engine_a_restate_analyst",
         description=(
@@ -851,19 +1234,9 @@ async def lifespan(fastapi_app: FastAPI):
             "tagged pii", "compliance audit", "ownership audit",
             "describe dataset", "investigate metadata",
         ],
-        endpoint_url=os.getenv(
-            "ENGINE_A_PUBLIC_URL",
-            "http://restate-agent-svc.default.svc.cluster.local:8081/analyze",
-        ),
+        endpoint_url=_engine_a_endpoint,
         owner_persona="DATA_STEWARD",
-        # Per ADR-0009: Engine A is the default fallback analyst for
-        # general-purpose work; it serves all non-specialized domains.
-        # Engine A serves catalog metadata Q&A in DATA_ENGINEERING as well
-        # as the maintenance / manufacturing / sustainment domains. Engine DA
-        # also serves DATA_ENGINEERING; the discrimination between them
-        # happens at the verb description / synonym matching layer (see this
-        # file's mesh_registration call and Engine DA's mirror call).
-        domains=["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT", "DATA_ENGINEERING"],
+        domains=_engine_a_domains,
         cost_class="slow",  # smolagents loops are not cheap
     )
 

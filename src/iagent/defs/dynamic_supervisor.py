@@ -465,6 +465,11 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # Hand the matched predicate to the engine for observability /
         # provenance — engines can log which verb_iri served the call.
         "predicate_verb_iri": predicate.get("verb_iri"),
+        # ADR-0017: Engine A (post-decomposition) selects a per-verb
+        # prompt block keyed on routed_verb_iri. Same value as
+        # predicate_verb_iri; surfaced under the name the engine's
+        # handler reads. Engines that don't read it ignore it.
+        "routed_verb_iri": predicate.get("verb_iri"),
     }
 
     context.log.info(
@@ -578,6 +583,22 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     # (what chrome should I render?) — distinct from the *answerer* persona
     # carried inside each subtask's response (what response shape did the
     # engine produce?). We surface both so Engine F can choose.
+    #
+    # ADR-0017: extract the agent's declared output_uri (echoed in
+    # final_answer per the per-verb prompt block) and forward it so
+    # Engine F can do a deterministic predicate-graph lookup instead of
+    # asking the BAML LLM to classify the data shape. For multi-engine
+    # composite responses we take the first non-empty output_uri; full
+    # multi-archetype composition is an ADR-0017 open item. When no
+    # subtask declared an output_uri (engines pre-ADR-0017), Engine F
+    # falls back to legacy BAML DesignUI automatically.
+    agent_output_uri = None
+    for res in results:
+        expert_res = res.get("expert_response", {})
+        if isinstance(expert_res, dict) and expert_res.get("output_uri"):
+            agent_output_uri = expert_res["output_uri"]
+            break
+
     response = requests.post(
         f"{PRESENTATION_AGENT_SVC_URL}/render_ui",
         json={
@@ -588,6 +609,7 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
             # `persona` to pick a chrome archetype, which is the user-side
             # concern.
             "persona": config.user_persona,
+            "output_uri": agent_output_uri,
         },
         timeout=300,
     )
