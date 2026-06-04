@@ -507,6 +507,34 @@ provides the namespacing without the split.
   output URIs in their registrations; they need the
   final_answer-echo change and verification that their declared
   shapes match what they return. Small per-engine PRs, parallelizable.
+- **Harden the non-document archetype hint into a true constraint.**
+  Today, when the matched capability's archetype is not
+  KNOWLEDGE_DOCUMENT, Engine F calls `b.DesignUI(raw_data, persona)`
+  with the archetype appended to the persona string as
+  `f"{persona}::REQUIRED_ARCHETYPE={archetype}"`. The 2026-06-04
+  baseline suite (Runs 7–10) shows the BAML LLM honors the hint in
+  practice — every PROCESS_TOPOLOGY / HAZARD_DECLARATION response
+  in those runs matched the hinted archetype — but architecturally
+  this is a soft bias inside a free-form persona parameter, not a
+  hard pin. A drift would not be detectable at the call site.
+  Cleanup: introduce a new BAML function
+  `RenderAs(raw_data: string, archetype: SemanticArchetype, persona: string) -> ⟨archetype-specific UI⟩`
+  that returns the specific archetype class directly (the
+  `TopologyUI`/`HazardUI`/`MetricUI`/`ChartUI`/`DigitalTwinUI`
+  pydantic), removing the LLM's ability to pick a different
+  archetype at all. The current path stays as a transition fallback.
+- **Surface which presentation path served each request.** Engine F
+  has three paths today — deterministic doc render, archetype-hinted
+  BAML, legacy DesignUI — and the caller can't tell which one fired.
+  An info-level log says "matched capability" or "no match, falling
+  back" but nothing reaches cortex-bff or the audit table. Cleanup:
+  emit a response header (e.g. `X-Presentation-Path: deterministic`
+  / `hint` / `fallback`) and, more importantly, record the chosen
+  path in the routing-decisions audit row from
+  [ADR-0015](ADR-0015-router-regression-L1.md). This lets the
+  canary alert when fallback hits exceed a threshold — drift from
+  "every shape has a capability" back toward ADR-0012's LLM-picks-
+  archetype world — without anyone having to read logs to notice.
 
 ## Out of scope
 
