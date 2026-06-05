@@ -33,9 +33,9 @@ engineB:
 engineC:
   enabled: false  # Swarms scraper — out of scope for DA
 engineE:
-  enabled: false  # Neo4j graph expert — Phase 3 (multi-engine fan-out)
+  enabled: true   # Neo4j graph expert — promoted from Phase 3 (was running as a deployment orphan; this aligns values with cluster reality)
 engineW:
-  enabled: false  # Weaviate semantic expert — Phase 3
+  enabled: true   # Weaviate semantic expert — exercised by the DataHub regression suite tonight; aligned with cluster reality
 
 # --------------------------------------------------------------------------
 # Agent fleet env overrides.
@@ -273,16 +273,15 @@ centralGateway:
   port: 8090
 
 cortexUi:
-  # Disabled for Phase 2 sandbox — the React frontend image
-  # (ghcr.io/edgy-solutions/cortex-ui/frontend:latest) is amd64-only
-  # and the cluster is arm64. Smoke tests for routing hit the gateway
-  # via curl + kubectl port-forward instead. Re-enable in Phase 3 after
-  # cortex-ui's CI adds multi-arch (same fix pattern as doc-tools/dag-tools).
-  enabled: false
+  # Enabled 2026-06-04. cortex-ui CI now builds multi-arch
+  # (linux/amd64,linux/arm64) per cortex-ui commit 6312f31 — the prior
+  # amd64-only image was the only thing keeping this off; the rest of
+  # the chart wiring was correct.
+  enabled: true
   image:
     tag: "latest"
   ingress:
-    enabled: false  # use port-forward
+    enabled: false  # use port-forward for sandbox; ingress in Phase 3
   env:
     VITE_API_URL: "http://iagent-cortex-bff:8090"  # in-cluster BFF
     VITE_KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
