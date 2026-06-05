@@ -2,10 +2,19 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from enum import Enum
-from typing import Dict, Any, Optional, Union, List
-from fastapi import FastAPI, Request
+from typing import Dict, Any, Optional, Tuple, Union, List
+from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
 import uvicorn
+
+# ADR-0017 follow-up: presentation-path labels emitted on
+# X-Presentation-Path response header and recorded by cortex-bff /
+# the ADR-0015 audit table when it lands. Keep these strings stable —
+# they are the values an alert/canary would match on.
+PRESENTATION_PATH_DETERMINISTIC = "deterministic-document"
+PRESENTATION_PATH_ARCHETYPE_HARDENED = "archetype-hardened"
+PRESENTATION_PATH_FALLBACK_DESIGNUI = "fallback-designui"
+PRESENTATION_PATH_FALLBACK_NO_OUTPUT_URI = "fallback-no-output-uri"
 
 from baml_client import b
 
@@ -267,9 +276,64 @@ def _render_document_deterministic(
     }
 
 
+# ADR-0017 follow-up: archetype-hardened renderers. Each maps a BAML
+# archetype enum string to the matching RenderAs* function that
+# RETURNS the specific archetype class (not the union). The LLM has
+# no way to pick a different shape — the return type is constrained.
+# DIGITAL_TWIN_3D is intentionally absent because it's not in the
+# current capability table; if it lands, add RenderAsDigitalTwin
+# alongside.
+async def _render_archetype_hardened(
+    archetype: str,
+    str_raw_data: str,
+    persona: str,
+) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """Dispatch to the right RenderAs* BAML function for the chosen
+    archetype. Returns (components_dict, handled). handled=False means
+    no hardened function exists for this archetype and the caller
+    should fall back to legacy DesignUI.
+    """
+    if archetype == "PROCESS_TOPOLOGY":
+        ui = await b.RenderAsTopology(str_raw_data, persona)
+    elif archetype == "HAZARD_DECLARATION":
+        ui = await b.RenderAsHazard(str_raw_data, persona)
+    elif archetype == "ASSET_STATE_METRIC":
+        ui = await b.RenderAsMetric(str_raw_data, persona)
+    elif archetype == "CHART_WIDGET":
+        ui = await b.RenderAsChart(str_raw_data, persona)
+    else:
+        return None, False
+    # Each RenderAs* returns a single archetype class; wrap it in the
+    # DashboardUI shape callers already expect.
+    return {"components": [ui.model_dump()]}, True
+
+
 @app.post("/render_ui")
-async def render_ui(request: RenderRequest) -> Any:
-    # 1. Stringify raw data safely
+async def render_ui(request: RenderRequest, response: Response) -> Any:
+    """Render the agent's response into a UI shape.
+
+    Three paths, chosen deterministically by the predicate-graph
+    capability table (see ADR-0017) and the agent's declared
+    output_uri:
+
+    - **deterministic-document**: KNOWLEDGE_DOCUMENT capabilities.
+      Hand-constructed; no LLM at all.
+    - **archetype-hardened**: PROCESS_TOPOLOGY / HAZARD_DECLARATION /
+      ASSET_STATE_METRIC / CHART_WIDGET capabilities. Dispatched to
+      the matching RenderAs* BAML function whose return type is the
+      specific archetype class — the LLM populates fields but cannot
+      pick a different shape.
+    - **fallback-designui** / **fallback-no-output-uri**: legacy
+      DesignUI runs free archetype choice. This is the path that
+      ADR-0017 is replacing; alerting on its hit-rate is the point of
+      the X-Presentation-Path header below.
+
+    Every response carries an `X-Presentation-Path` header naming
+    which of the four paths served the request, so cortex-bff (or
+    the ADR-0015 audit table when it lands) can record it and a
+    canary can alert when fallback-* exceeds threshold.
+    """
+    # 1. Stringify raw data safely.
     if isinstance(request.raw_data, (dict, list)):
         str_raw_data = json.dumps(request.raw_data)
     else:
@@ -279,11 +343,9 @@ async def render_ui(request: RenderRequest) -> Any:
     effective_persona = (request.user_persona or request.persona or "MECHANIC").upper()
 
     # 3. ADR-0017: predicate-graph lookup. When the upstream agent
-    # declared an output_uri (Engine A post-ADR-0017, Engine DA, Engine
-    # W), look up the registered presentation capability for that shape
-    # and render deterministically. Otherwise fall through to the
-    # legacy BAML DesignUI path so callers that haven't migrated still
-    # work.
+    # declared an output_uri (Engine A post-ADR-0017, Engine DA,
+    # Engine W), look up the registered presentation capability and
+    # dispatch deterministically.
     if request.output_uri:
         cap = _lookup_capability(request.output_uri)
         if cap:
@@ -293,32 +355,37 @@ async def render_ui(request: RenderRequest) -> Any:
                 request.output_uri, archetype,
             )
             if archetype == "KNOWLEDGE_DOCUMENT":
+                response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
                 return _render_document_deterministic(
                     request.raw_data,
                     effective_persona,
                     subject_concept=request.output_uri,
                 )
-            # Non-document archetypes still go through BAML for now
-            # because their pydantic shapes (TopologyUI nodes/edges,
-            # HazardUI severity+hazards, MetricUI metrics, ChartUI
-            # chart_data+sql_query, DigitalTwinUI) carry structured
-            # subfields that BAML knows how to extract from raw data.
-            # We pin the archetype choice via the persona string so the
-            # BAML LLM no longer chooses freely — it just fills in.
-            constrained_persona = (
-                f"{effective_persona}::REQUIRED_ARCHETYPE={archetype}"
+            hardened, handled = await _render_archetype_hardened(
+                archetype, str_raw_data, effective_persona,
             )
-            baml_response = await b.DesignUI(str_raw_data, constrained_persona)
-            return baml_response.model_dump()
-        logger.info(
-            "render_ui: output_uri=%s did not match any capability; "
-            "falling back to legacy BAML DesignUI",
-            request.output_uri,
-        )
+            if handled:
+                response.headers["X-Presentation-Path"] = PRESENTATION_PATH_ARCHETYPE_HARDENED
+                return hardened
+            logger.warning(
+                "render_ui: no hardened renderer for archetype=%s; "
+                "falling back to legacy DesignUI. Add RenderAs<X> to "
+                "contracts.baml + _render_archetype_hardened dispatch.",
+                archetype,
+            )
+        else:
+            logger.info(
+                "render_ui: output_uri=%s did not match any capability; "
+                "falling back to legacy BAML DesignUI",
+                request.output_uri,
+            )
+        response.headers["X-Presentation-Path"] = PRESENTATION_PATH_FALLBACK_DESIGNUI
+        baml_response = await b.DesignUI(str_raw_data, effective_persona)
+        return baml_response.model_dump()
 
-    # 4. Legacy path: BAML LLM decides archetype.
+    # 4. No output_uri at all. Legacy callers; LLM decides archetype.
+    response.headers["X-Presentation-Path"] = PRESENTATION_PATH_FALLBACK_NO_OUTPUT_URI
     baml_response = await b.DesignUI(str_raw_data, effective_persona)
-
     return baml_response.model_dump()
 
 @app.get("/health")

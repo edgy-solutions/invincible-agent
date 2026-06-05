@@ -71,6 +71,30 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="IterateBPMNGraph", llm_response=llm_response, mode="request")
         return typing.cast(types.BPMNInterviewState, __result__)
 
+    def RenderAsChart(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.ChartUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsChart", llm_response=llm_response, mode="request")
+        return typing.cast(types.ChartUI, __result__)
+
+    def RenderAsHazard(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.HazardUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsHazard", llm_response=llm_response, mode="request")
+        return typing.cast(types.HazardUI, __result__)
+
+    def RenderAsMetric(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.MetricUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsMetric", llm_response=llm_response, mode="request")
+        return typing.cast(types.MetricUI, __result__)
+
+    def RenderAsTopology(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.TopologyUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsTopology", llm_response=llm_response, mode="request")
+        return typing.cast(types.TopologyUI, __result__)
+
     def RouteAndPlan(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.MeshRoutingDecision:
@@ -138,6 +162,30 @@ class LlmStreamParser:
     ) -> stream_types.BPMNInterviewState:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="IterateBPMNGraph", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.BPMNInterviewState, __result__)
+
+    def RenderAsChart(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.ChartUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsChart", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.ChartUI, __result__)
+
+    def RenderAsHazard(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.HazardUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsHazard", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.HazardUI, __result__)
+
+    def RenderAsMetric(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.MetricUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsMetric", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.MetricUI, __result__)
+
+    def RenderAsTopology(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.TopologyUI:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RenderAsTopology", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.TopologyUI, __result__)
 
     def RouteAndPlan(
         self, llm_response: str, baml_options: BamlCallOptions = {},

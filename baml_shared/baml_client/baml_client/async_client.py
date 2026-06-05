@@ -202,6 +202,66 @@ class BamlAsyncClient:
                 "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
             })
             return typing.cast(types.BPMNInterviewState, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def RenderAsChart(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.ChartUI:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.RenderAsChart(raw_data=raw_data,persona=persona,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="RenderAsChart", args={
+                "raw_data": raw_data,"persona": persona,
+            })
+            return typing.cast(types.ChartUI, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def RenderAsHazard(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.HazardUI:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.RenderAsHazard(raw_data=raw_data,persona=persona,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="RenderAsHazard", args={
+                "raw_data": raw_data,"persona": persona,
+            })
+            return typing.cast(types.HazardUI, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def RenderAsMetric(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.MetricUI:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.RenderAsMetric(raw_data=raw_data,persona=persona,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="RenderAsMetric", args={
+                "raw_data": raw_data,"persona": persona,
+            })
+            return typing.cast(types.MetricUI, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def RenderAsTopology(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.TopologyUI:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.RenderAsTopology(raw_data=raw_data,persona=persona,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="RenderAsTopology", args={
+                "raw_data": raw_data,"persona": persona,
+            })
+            return typing.cast(types.TopologyUI, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def RouteAndPlan(self, user_query: str,
         baml_options: BamlCallOptions = {},
     ) -> types.MeshRoutingDecision:
@@ -337,6 +397,54 @@ class BamlStreamClient:
           lambda x: typing.cast(types.BPMNInterviewState, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def RenderAsChart(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.ChartUI, types.ChartUI]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="RenderAsChart", args={
+            "raw_data": raw_data,"persona": persona,
+        })
+        return baml_py.BamlStream[stream_types.ChartUI, types.ChartUI](
+          __result__,
+          lambda x: typing.cast(stream_types.ChartUI, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.ChartUI, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def RenderAsHazard(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.HazardUI, types.HazardUI]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="RenderAsHazard", args={
+            "raw_data": raw_data,"persona": persona,
+        })
+        return baml_py.BamlStream[stream_types.HazardUI, types.HazardUI](
+          __result__,
+          lambda x: typing.cast(stream_types.HazardUI, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.HazardUI, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def RenderAsMetric(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.MetricUI, types.MetricUI]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="RenderAsMetric", args={
+            "raw_data": raw_data,"persona": persona,
+        })
+        return baml_py.BamlStream[stream_types.MetricUI, types.MetricUI](
+          __result__,
+          lambda x: typing.cast(stream_types.MetricUI, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.MetricUI, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def RenderAsTopology(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.TopologyUI, types.TopologyUI]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="RenderAsTopology", args={
+            "raw_data": raw_data,"persona": persona,
+        })
+        return baml_py.BamlStream[stream_types.TopologyUI, types.TopologyUI](
+          __result__,
+          lambda x: typing.cast(stream_types.TopologyUI, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.TopologyUI, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def RouteAndPlan(self, user_query: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[stream_types.MeshRoutingDecision, types.MeshRoutingDecision]:
@@ -425,6 +533,34 @@ class BamlHttpRequestClient:
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
         }, mode="request")
         return __result__
+    async def RenderAsChart(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsChart", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="request")
+        return __result__
+    async def RenderAsHazard(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsHazard", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="request")
+        return __result__
+    async def RenderAsMetric(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsMetric", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="request")
+        return __result__
+    async def RenderAsTopology(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsTopology", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="request")
+        return __result__
     async def RouteAndPlan(self, user_query: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -501,6 +637,34 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="IterateBPMNGraph", args={
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
+        }, mode="stream")
+        return __result__
+    async def RenderAsChart(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsChart", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="stream")
+        return __result__
+    async def RenderAsHazard(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsHazard", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="stream")
+        return __result__
+    async def RenderAsMetric(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsMetric", args={
+            "raw_data": raw_data,"persona": persona,
+        }, mode="stream")
+        return __result__
+    async def RenderAsTopology(self, raw_data: str,persona: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RenderAsTopology", args={
+            "raw_data": raw_data,"persona": persona,
         }, mode="stream")
         return __result__
     async def RouteAndPlan(self, user_query: str,

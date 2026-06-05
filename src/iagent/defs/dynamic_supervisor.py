@@ -619,12 +619,26 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     response.raise_for_status()
     ui_payload_dict = response.json()
 
-    context.log.info(f"Generated UI Payload for user_persona {config.user_persona}")
+    # ADR-0017 follow-up: Engine F emits X-Presentation-Path naming
+    # which of the four paths served the request — deterministic-
+    # document, archetype-hardened, fallback-designui, or
+    # fallback-no-output-uri. Surface it in Dagster metadata now so
+    # operators can see the path per request, and so the ADR-0015
+    # routing_decisions audit table (when it lands) has a single field
+    # to record. Alerting target: fallback-* exceeding a threshold
+    # indicates capability-coverage drift (engines emitting output URIs
+    # Engine F doesn't have a capability triple for).
+    presentation_path = response.headers.get("X-Presentation-Path", "unknown")
+    context.log.info(
+        f"Generated UI Payload for user_persona {config.user_persona} "
+        f"via presentation_path={presentation_path}"
+    )
     yield Output(
         value=ui_payload_dict,
         metadata={
             "ui_json_payload": MetadataValue.json(ui_payload_dict),
-            "referenced_uris": MetadataValue.json(unique_uris)
+            "referenced_uris": MetadataValue.json(unique_uris),
+            "presentation_path": MetadataValue.text(presentation_path),
         }
     )
 

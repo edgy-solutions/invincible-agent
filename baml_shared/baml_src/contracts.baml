@@ -529,7 +529,139 @@ class DashboardUI {
   components (TopologyUI | HazardUI | MetricUI | DocumentUI | ChartUI | DigitalTwinUI)[]
 }
 
-// 4. Update the router function to return the Composite Dashboard
+// 4a. ADR-0017 archetype-hardened renderers (per-archetype, no LLM choice).
+//
+// Each RenderAs* function returns a SPECIFIC archetype class — not the
+// DashboardUI union — so the LLM cannot pick a different archetype, only
+// populate the fields of the one chosen by the caller (Engine F's
+// predicate-graph lookup). This is the hard-constraint replacement for
+// the soft hint that lived in the persona string
+// (f"{persona}::REQUIRED_ARCHETYPE={archetype}") between ADR-0017 ship
+// and this cleanup. The grounding rules ported from DesignUI prevent
+// invented identifiers and asset hallucination.
+
+function RenderAsTopology(raw_data: string, persona: string) -> TopologyUI {
+  client MainAgent
+  prompt #"
+    Populate a TopologyUI (PROCESS_TOPOLOGY archetype) from the raw_data.
+    The caller has already chosen this archetype — your job is to fill
+    in nodes and edges, not to pick a different shape.
+
+    GROUNDING RULES (failures here are silently wrong):
+
+    A. NEVER INVENT IDENTIFIERS. Every UIEntity.id, UIRelation.source,
+       UIRelation.target MUST appear verbatim somewhere in raw_data.
+
+    B. NEVER INVENT NODES. If raw_data names three datasets in a
+       lineage chain, your nodes array contains those three. Not five.
+
+    C. EDGES MUST REFERENCE NODES IN THE NODES ARRAY. No dangling edges.
+
+    --- RAW DATA ---
+    {{ raw_data }}
+
+    --- PERSONA HINT (for tone, not archetype selection) ---
+    {{ persona }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+function RenderAsHazard(raw_data: string, persona: string) -> HazardUI {
+  client MainAgent
+  prompt #"
+    Populate a HazardUI (HAZARD_DECLARATION archetype) from the raw_data.
+    The caller has already chosen this archetype — your job is to fill
+    in severity and hazards, not to pick a different shape.
+
+    GROUNDING RULES:
+
+    A. NEVER INVENT IDENTIFIERS. Every UIEntity.id in the hazards array
+       MUST appear verbatim in raw_data.
+
+    B. NEVER INVENT HAZARDS. If raw_data describes one PII-exposed
+       dataset, your hazards array has one entry. Not three.
+
+    C. SEVERITY REFLECTS RAW_DATA. If raw_data describes a confirmed
+       policy violation, severity is WARNING or CRITICAL. If raw_data
+       describes the absence of a problem (e.g. "no PII datasets
+       without an owner"), severity is INFO.
+
+    --- RAW DATA ---
+    {{ raw_data }}
+
+    --- PERSONA HINT (for tone, not archetype selection) ---
+    {{ persona }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+function RenderAsMetric(raw_data: string, persona: string) -> MetricUI {
+  client MainAgent
+  prompt #"
+    Populate a MetricUI (ASSET_STATE_METRIC archetype) from the raw_data.
+    The caller has already chosen this archetype — your job is to fill
+    in metrics, not to pick a different shape.
+
+    GROUNDING RULES:
+
+    A. NEVER INVENT IDENTIFIERS. Every UIEntity.id MUST appear verbatim
+       in raw_data.
+
+    B. NEVER INVENT METRICS. If raw_data names three assets, your
+       metrics array has exactly those three.
+
+    C. ONE METRIC PER NAMED ASSET. Do not split a single asset into
+       multiple metric rows or merge several into one.
+
+    --- RAW DATA ---
+    {{ raw_data }}
+
+    --- PERSONA HINT (for tone, not archetype selection) ---
+    {{ persona }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+function RenderAsChart(raw_data: string, persona: string) -> ChartUI {
+  client MainAgent
+  prompt #"
+    Populate a ChartUI (CHART_WIDGET archetype) from the raw_data.
+    The caller has already chosen this archetype — your job is to fill
+    in chart_type, chart_data, and sql_query, not to pick a different
+    shape.
+
+    GROUNDING RULES:
+
+    A. CHART_DATA IS VERBATIM. The chart_data field is a JSON-stringified
+       array of data points. Use the rows present in raw_data; do not
+       invent rows.
+
+    B. SQL_QUERY IS PRESERVED. If raw_data contains a sql_query field
+       or a sql query inline, copy it into ChartUI.sql_query verbatim.
+       If absent, set sql_query to an empty string.
+
+    C. CHART_TYPE INFERENCE. BAR for category comparisons, LINE for
+       time series, PIE for parts-of-whole, SCATTER for two-axis
+       distributions. Pick based on what the data shape supports, not
+       what looks nicer.
+
+    --- RAW DATA ---
+    {{ raw_data }}
+
+    --- PERSONA HINT (for tone, not archetype selection) ---
+    {{ persona }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+// 4b. The legacy union-returning router. Retained for backward
+// compatibility with /render_ui's fallback path (output_uri missing or
+// no capability matched). Engine F's deterministic + archetype-hardened
+// paths bypass this entirely.
 function DesignUI(raw_data: string, persona: string) -> DashboardUI {
   client MainAgent
   prompt #"

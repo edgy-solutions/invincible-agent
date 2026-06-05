@@ -507,34 +507,35 @@ provides the namespacing without the split.
   output URIs in their registrations; they need the
   final_answer-echo change and verification that their declared
   shapes match what they return. Small per-engine PRs, parallelizable.
-- **Harden the non-document archetype hint into a true constraint.**
-  Today, when the matched capability's archetype is not
-  KNOWLEDGE_DOCUMENT, Engine F calls `b.DesignUI(raw_data, persona)`
-  with the archetype appended to the persona string as
-  `f"{persona}::REQUIRED_ARCHETYPE={archetype}"`. The 2026-06-04
-  baseline suite (Runs 7–10) shows the BAML LLM honors the hint in
-  practice — every PROCESS_TOPOLOGY / HAZARD_DECLARATION response
-  in those runs matched the hinted archetype — but architecturally
-  this is a soft bias inside a free-form persona parameter, not a
-  hard pin. A drift would not be detectable at the call site.
-  Cleanup: introduce a new BAML function
-  `RenderAs(raw_data: string, archetype: SemanticArchetype, persona: string) -> ⟨archetype-specific UI⟩`
-  that returns the specific archetype class directly (the
-  `TopologyUI`/`HazardUI`/`MetricUI`/`ChartUI`/`DigitalTwinUI`
-  pydantic), removing the LLM's ability to pick a different
-  archetype at all. The current path stays as a transition fallback.
-- **Surface which presentation path served each request.** Engine F
-  has three paths today — deterministic doc render, archetype-hinted
-  BAML, legacy DesignUI — and the caller can't tell which one fired.
-  An info-level log says "matched capability" or "no match, falling
-  back" but nothing reaches cortex-bff or the audit table. Cleanup:
-  emit a response header (e.g. `X-Presentation-Path: deterministic`
-  / `hint` / `fallback`) and, more importantly, record the chosen
-  path in the routing-decisions audit row from
-  [ADR-0015](ADR-0015-router-regression-L1.md). This lets the
-  canary alert when fallback hits exceed a threshold — drift from
-  "every shape has a capability" back toward ADR-0012's LLM-picks-
-  archetype world — without anyone having to read logs to notice.
+- **~~Harden the non-document archetype hint into a true constraint.~~ (RESOLVED 2026-06-04)**
+  Originally the matched capability's archetype was appended to the
+  persona string as `f"{persona}::REQUIRED_ARCHETYPE={archetype}"` —
+  a soft prompt bias that the BAML LLM happened to honor in Runs
+  7–10 but with no architectural guarantee. **Resolution:** added
+  four per-archetype BAML functions —
+  `RenderAsTopology(raw_data, persona) -> TopologyUI`,
+  `RenderAsHazard(...) -> HazardUI`,
+  `RenderAsMetric(...) -> MetricUI`,
+  `RenderAsChart(...) -> ChartUI`
+  — whose return types ARE the specific archetype class, not the
+  `DashboardUI` union. The LLM cannot return a different shape; it
+  can only populate fields of the one chosen by the predicate-graph
+  lookup. Engine F's `_render_archetype_hardened` dispatches to the
+  matching function. Falls back to legacy `DesignUI` for archetypes
+  with no hardened function (e.g. `DIGITAL_TWIN_3D` until needed) or
+  when no capability triple matches at all.
+- **~~Surface which presentation path served each request.~~ (RESOLVED 2026-06-04)**
+  Engine F now emits an `X-Presentation-Path` response header on
+  every `/render_ui` call with one of four stable values:
+  `deterministic-document`, `archetype-hardened`, `fallback-designui`,
+  or `fallback-no-output-uri`. Cortex-bff's supervisor reads the
+  header and surfaces it in the Dagster `Output.metadata` as
+  `presentation_path`, ready to be recorded by the ADR-0015
+  `routing_decisions` audit table when it lands. Alerting target:
+  `fallback-*` exceeding a threshold indicates capability-coverage
+  drift — engines emitting output URIs Engine F doesn't have a
+  capability triple for — and is the early-warning signal for ADR-
+  0012 regression.
 
 ## Out of scope
 
