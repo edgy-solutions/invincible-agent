@@ -205,15 +205,15 @@ $ExternalImages = @(
     @{ src='secoresearch/fuseki:latest';                               dst='secoresearch/fuseki:latest' },
     @{ src='ghcr.io/aserto-dev/topaz:0.33.13';                         dst='aserto-dev/topaz:0.33.13' },
 
-    # Persistent state.
+    # Persistent state (deployed by the iagent chart as third-party
+    # sidecars to engines that need them — clickhouse for analytics,
+    # minio for object store, redis for cache).
     @{ src='postgres:16';                                              dst='library/postgres:16' },
     @{ src='redis:7-alpine';                                           dst='library/redis:7-alpine' },
     @{ src='minio/minio:latest';                                       dst='minio/minio:latest' },
 
-    # Text extraction (Tika, deployed as a separate chart).
-    @{ src='apache/tika:latest-full';                                  dst='apache/tika:latest-full' },
-
-    # Utility / sidecar.
+    # Utility / sidecar. python is the runtime image for the
+    # domain-broker pod (config-driven, not a custom CI image).
     @{ src='curlimages/curl:latest';                                   dst='curlimages/curl:latest' },
     @{ src='busybox:latest';                                           dst='library/busybox:latest' },
     @{ src='python:3.12-slim';                                         dst='library/python:3.12-slim' }
