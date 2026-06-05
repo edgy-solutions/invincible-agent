@@ -214,6 +214,36 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
 """
     system_prompt_with_segregation += "\n" + weaviate_constraints
 
+    # ADR-0016 r2 Open Items: port Engine A's grounding rule into Engine E.
+    # Engine A had the "PAST EXPERIENCE IS A HINT, NEVER A FACT" guard at
+    # restate_analyst/main.py:577-580; Engine E lacked it, which made
+    # Engine E re-enable a known regression risk. Even though infer=False
+    # neuters the write-side extractor poisoning, the read-side surfacing
+    # of past raw transcripts still needs a grounding fence so the agent
+    # doesn't treat stale summaries as authoritative.
+    grounding_rule = (
+        "\n\n"
+        "CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate facts. "
+        "Use only what the tools return (execute_cypher, get_graph_schema, "
+        "search_manual_text). If a specific field the user asked about is genuinely "
+        "absent from the tool result, state it is not available — but do NOT claim a "
+        "field is missing if the tool returned it.\n\n"
+        "PAST EXPERIENCE IS A HINT, NEVER A FACT.\n"
+        "The \"Relevant Past Experience\" block (when present below) is drawn from "
+        "earlier sessions in this engine's own memory partition — raw user questions "
+        "and the agent's prior summaries of how it answered them. It MAY reflect "
+        "summaries of your own previous answers — and you have been wrong before. "
+        "Treat past experience as a possibly-stale starting hypothesis, NEVER as "
+        "ground truth. You MUST verify against the current tool output before "
+        "reporting anything. If past experience says \"no X exists\" for the current "
+        "question, IGNORE that claim and run the tool anyway; an empty result must "
+        "come from a fresh search, not from memory. Repeating a past wrong answer "
+        "because it appears in past experience is the most common cascading failure "
+        "in this system. The tool is authoritative; past experience is conversational "
+        "background only.\n"
+    )
+    system_prompt_with_segregation += grounding_rule
+
     try:
 
         @tool
@@ -260,8 +290,17 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
 
         @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
         def fetch_user_memory(query: str, user_id: str):
-            # Wrap user_id in filters for new mem0 API
-            results = m.search(query=query, filters={"user_id": user_id})
+            # ADR-0016 r2 Open Items: agent_id partition.
+            # Mirrors restate_analyst/main.py; Engine A and Engine E
+            # share the Mem0 collection so the partition is required
+            # to isolate engine voices from each other.
+            results = m.search(
+                query=query,
+                filters={
+                    "user_id": user_id,
+                    "agent_id": "engine_e_neo4j_expert",
+                },
+            )
             safe_update_observation(input_data=query, output_data=results)
             return results
 
@@ -424,6 +463,7 @@ print(result)
                         {"role": "assistant", "content": raw_agent_response}
                     ],
                     user_id=user_id,
+                    agent_id="engine_e_neo4j_expert",
                     infer=False,
                 )
             return "saved"

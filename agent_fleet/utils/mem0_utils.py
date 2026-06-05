@@ -174,13 +174,18 @@ class Mem0CompatibleWeaviate(WeaviateVectorStore):
     # because it is *reserved* — Weaviate uses it for the object UUID, so
     # nothing can be inserted with it as a regular property. mem0 v2.0.1
     # writes `id`, `score`, and `linked_memory_ids` as properties; the
-    # collection schema only declares `text`, `data`, `attributed_to`,
-    # `created_at`, `user_id`, `text_lemmatized`, `updated_at`, `hash`.
+    # collection schema only declares the properties listed below.
     # We drop everything outside that allow-list before delegating to the
     # parent insert.
+    #
+    # `agent_id` was added per ADR-0016 r2 Open Items so Engine A and
+    # Engine E can partition their memory streams within the shared
+    # collection. The Weaviate collection schema must carry an `agent_id`
+    # TEXT property — recreate the collection (or add the property
+    # in-place) if it predates this change.
     _MEM0_ALLOWED_PROPS = {
         "text", "data", "attributed_to", "created_at",
-        "user_id", "text_lemmatized", "updated_at", "hash",
+        "user_id", "agent_id", "text_lemmatized", "updated_at", "hash",
     }
 
     def _sanitize_metadatas(self, metadatas):
