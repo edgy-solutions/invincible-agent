@@ -234,12 +234,28 @@ function Get-RepoOnly {
 
 # -----------------------------------------------------------------------
 # Resolve a reference to the digest we WANT the destination to point at.
-# For multi-arch sources, this is the platform-specific child digest.
+# For multi-arch sources, this is the platform-specific child digest (the
+# same value Copy-WithBuildx uses as the source-by-digest ref).
 # For single-arch sources, it's the manifest's own digest.
-# Returns $null on failure — caller treats null as "can't verify".
+# Returns $null on failure — caller treats null as "destination absent /
+# can't verify, just mirror" (the NEW path).
 # -----------------------------------------------------------------------
 function Resolve-DesiredDigest {
     param([string]$Ref, [string]$Platform)
+
+    # Relax $ErrorActionPreference inside this function. The script-wide
+    # 'Stop' policy turns the stderr `2>$null` redirection below into a
+    # terminating error on PowerShell 5.1: when a native exe like
+    # `docker buildx imagetools inspect` writes to stderr (e.g. "image not
+    # found" on a never-mirrored destination tag), PS wraps each stderr line
+    # in a NativeCommandError ErrorRecord. With Stop, that ErrorRecord
+    # terminates BEFORE we get to the `if ($LASTEXITCODE -ne 0)` null-
+    # return below; the outer try/catch in the main loop then treats the
+    # SOURCE image as FAILED instead of recognizing the destination is
+    # simply absent (NEW path), and a first-time mirror of a fresh
+    # destination tag never happens. Restoring 'Continue' locally lets the
+    # exit-code check do its job.
+    $ErrorActionPreference = 'Continue'
 
     if ($Method -eq 'crane') {
         $out = & crane digest --platform $Platform $Ref 2>$null
