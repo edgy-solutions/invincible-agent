@@ -273,15 +273,22 @@ def _verify_verb_choice_with_baml(
     context,
     query: str,
     predicate: Dict[str, Any],
-) -> tuple[bool, str]:
+) -> tuple[bool, str] | None:
     """ADR-0008 follow-up — yellow-zone LLM verifier.
 
-    Returns ``(primary_is_correct, reasoning)``. On any BAML failure
-    (network, schema, etc.) returns ``(True, "verifier_unavailable")`` so
-    we degrade to the existing trust-the-BM25-winner behavior rather than
-    masking calibration outages as systematic verb rejections. Same logic
-    as ADR-0008's bias against silent degradation: the supervisor should
-    distinguish "the LLM said no" from "the LLM never answered."
+    Returns ``(primary_is_correct, reasoning)`` on successful BAML call.
+    Returns ``None`` when the BAML call itself fails (no API key, model
+    not found, network error, schema mismatch, etc.) so the caller can
+    distinguish "the LLM said yes/no" from "the LLM never answered."
+
+    The previous version returned ``(True, "verifier_unavailable")`` on
+    failure which silently degraded the yellow-zone gate to a no-op
+    whenever BAML was misconfigured. That hid two real bugs in a row
+    (MainAgent missing OpenRouter key; Ollama wrong model name). Letting
+    the caller route to the generalist fallback on verifier failure
+    means the operator sees ``predicate_fallback_total
+    reason=verifier_unavailable`` in metrics and the user still gets a
+    useful response instead of a confidently-wrong specialist.
     """
     import asyncio  # local import — the supervisor is sync-by-default
     try:
@@ -295,11 +302,11 @@ def _verify_verb_choice_with_baml(
         return (bool(result.primary_is_correct), str(result.reasoning or ""))
     except Exception as exc:  # noqa: BLE001
         context.log.warning(
-            "VerifyVerbChoice failed verb_iri=%s err=%s — degrading to trust-primary",
+            "VerifyVerbChoice failed verb_iri=%s err=%s — routing to generalist fallback",
             predicate.get("verb_iri"),
             exc,
         )
-        return (True, "verifier_unavailable")
+        return None
 
 
 def _call_engine_a_fallback(
@@ -494,9 +501,29 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # confidently-wrong-routing failure mode (e.g. the 5fee663d run
     # where mesh:traceLineage scored 0.71 for "what tables do you have?").
     if score < threshold_high:
-        primary_is_correct, reasoning = _verify_verb_choice_with_baml(
+        verdict = _verify_verb_choice_with_baml(
             context, routing_query, predicate,
         )
+        if verdict is None:
+            # Verifier itself failed (BAML config bug, model not found,
+            # Ollama unreachable, etc.). Route to generalist fallback so
+            # the user gets a useful answer and the operator sees the
+            # verifier-down signal in predicate_fallback_total. The earlier
+            # silent-trust degradation masked two real bugs back-to-back;
+            # failing closed surfaces them immediately.
+            context.log.info(
+                "yellow_zone_verify verdict=verifier_unavailable score=%s verb_iri=%s",
+                score, predicate.get("verb_iri"),
+            )
+            return _call_engine_a_fallback(
+                context,
+                sub_query=sub_query,
+                config=config,
+                fallback_reason="verifier_unavailable",
+                fallback_score=score,
+                rejected_predicate=predicate,
+            )
+        primary_is_correct, reasoning = verdict
         context.log.info(
             "yellow_zone_verify primary_is_correct=%s score=%s verb_iri=%s reasoning=%r",
             primary_is_correct,
