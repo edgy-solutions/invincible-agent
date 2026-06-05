@@ -409,13 +409,22 @@ print(result)
             if user_id:
                 # Bridge to a worker thread — m.add() is sync gRPC and must
                 # not block the asyncio loop.
+                #
+                # ADR-0016 (r2) Tier 0(b): infer=False disables the Mem0
+                # extractor LLM. Mirrors Engine A's restate_analyst/main.py
+                # save_memory site — Engine E shares the Mem0 collection
+                # under user_id-only scoping, so the same poisoning path
+                # exists here. Lands in lockstep with Engine A so Phase 3
+                # re-enable doesn't reintroduce the failure mode from a
+                # second entry point.
                 await asyncio.to_thread(
                     m.add,
                     messages=[
                         {"role": "user", "content": user_query},
                         {"role": "assistant", "content": raw_agent_response}
                     ],
-                    user_id=user_id
+                    user_id=user_id,
+                    infer=False,
                 )
             return "saved"
 

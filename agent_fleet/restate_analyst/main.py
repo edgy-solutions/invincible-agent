@@ -700,16 +700,27 @@ print(result)
             if user_id:
                 # Bridge to a worker thread — m.add() is sync gRPC and must
                 # not block the asyncio loop.
+                #
+                # ADR-0016 (r2) Tier 0(b): infer=False disables the Mem0
+                # extractor LLM. Without it, mem0 v2.0.1's default
+                # ADDITIVE_EXTRACTION_PROMPT mines the assistant message
+                # (which is summary_text — the agent's own voice, an
+                # inference) and reframes it as a fact attributed to the
+                # user. That is the Q9 catalog-PII poisoning mechanism.
+                # Setting infer=False stores the raw transcript only and
+                # makes m.search a similarity lookup over user queries,
+                # not over agent-derived claims about the world.
                 await asyncio.to_thread(
                     m.add,
                     messages=[
                         {"role": "user", "content": task.task_description},
                         {"role": "assistant", "content": summary_text}
                     ],
-                    user_id=user_id
+                    user_id=user_id,
+                    infer=False,
                 )
             return "saved"
-        
+
         await ctx.run("save-memory", save_memory)
 
         agent_result = {
