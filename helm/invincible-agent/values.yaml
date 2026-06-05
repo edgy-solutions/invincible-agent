@@ -428,6 +428,16 @@ keycloak:
     limits:
       cpu: "1"
       memory: 2Gi
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: keycloak.iagent.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    tls: []
 
 # ==========================================================================
 # Authorization (Topaz FGA)
