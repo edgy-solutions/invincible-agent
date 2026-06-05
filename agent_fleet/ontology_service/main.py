@@ -654,6 +654,47 @@ async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> li
 #: predicates. Created by doc-tools' AITool sync on first registration.
 _PREDICATE_COLLECTION = "Predicate"
 
+#: ADR-0008 follow-up — anti-synonym penalty. Each candidate's BM25 score
+#: from Weaviate gets reduced by ``ANTI_SYN_PENALTY_ALPHA * overlap`` where
+#: ``overlap`` is the Jaccard similarity between the query's lowercased
+#: token n-grams and the candidate's verb_anti_synonyms. Tunable via env
+#: var so operators can dial penalty strength without a redeploy.
+#:
+#: The penalty is computed in Python (not Weaviate) because the
+#: Predicate collection's vectorizer-less BM25 setup can't easily express
+#: a "score against this field, subtract from primary score" query in
+#: one round trip. A Python-side overlap check after the candidate list
+#: lands is simpler and observable.
+_ANTI_SYN_PENALTY_ALPHA = float(os.getenv("PREDICATE_ANTI_SYNONYM_ALPHA", "0.50"))
+
+
+def _anti_synonym_overlap(query: str, anti_synonyms: list[str]) -> float:
+    """Return a 0..1 lexical-overlap score between ``query`` and the union
+    of ``anti_synonyms``.
+
+    Lowercases both sides, tokenizes on whitespace, computes Jaccard
+    similarity between the query's token set and the union of all
+    anti-synonym phrase token sets. Cheap, deterministic, and works
+    without a vectorizer.
+
+    Returns 0.0 if anti_synonyms is empty or there is no overlap — the
+    common case until doc-tools propagation lands.
+    """
+    if not anti_synonyms:
+        return 0.0
+    q_tokens = set(query.lower().split())
+    if not q_tokens:
+        return 0.0
+    anti_tokens: set[str] = set()
+    for phrase in anti_synonyms:
+        if isinstance(phrase, str):
+            anti_tokens.update(phrase.lower().split())
+    if not anti_tokens:
+        return 0.0
+    inter = q_tokens & anti_tokens
+    union = q_tokens | anti_tokens
+    return len(inter) / len(union) if union else 0.0
+
 
 def _predicate_hybrid_search_sync(
     query: str,
@@ -721,6 +762,35 @@ def _predicate_hybrid_search_sync(
                     score = float(obj.metadata.score)
                 except (TypeError, ValueError):
                     score = None
+            # Read verb_anti_synonyms if doc-tools has propagated them to
+            # the Predicate collection. Missing/empty → penalty is 0; this
+            # path is the graceful-degradation phase before doc-tools
+            # ships its propagation update. See ADR-0008 follow-up.
+            raw_anti = p.get("verb_anti_synonyms") or []
+            if isinstance(raw_anti, str):
+                # doc-tools may serialize as JSON string for parity with
+                # mesh_verb_anti_synonyms; tolerate either shape.
+                try:
+                    parsed = json.loads(raw_anti)
+                    raw_anti = parsed if isinstance(parsed, list) else []
+                except (ValueError, TypeError):
+                    raw_anti = []
+            anti_overlap = _anti_synonym_overlap(query, list(raw_anti))
+            adjusted_score = score
+            if score is not None and anti_overlap > 0.0:
+                # Penalize by alpha * overlap. Floor at 0.0 — a candidate
+                # never gets a negative score even if its anti-synonyms
+                # tokenize-overlap the query completely.
+                adjusted_score = max(0.0, score - _ANTI_SYN_PENALTY_ALPHA * anti_overlap)
+            # verb_synonyms may be stored as a JSON-string (older sync) or
+            # a list (newer sync). Tolerate either.
+            raw_syn = p.get("verb_synonyms") or []
+            if isinstance(raw_syn, str):
+                try:
+                    parsed = json.loads(raw_syn)
+                    raw_syn = parsed if isinstance(parsed, list) else []
+                except (ValueError, TypeError):
+                    raw_syn = []
             out.append({
                 "verb_iri": p.get("verb_iri", ""),
                 "verb_type": p.get("verb_local", ""),
@@ -731,8 +801,22 @@ def _predicate_hybrid_search_sync(
                 "domains": list(p.get("domains") or []),
                 "cost_class": p.get("cost_class") or None,
                 "requires_human_approval": bool(p.get("requires_human_approval", False)),
-                "score": score,
+                "score": adjusted_score,
+                # Diagnostic fields — let the supervisor / structured log
+                # see exactly how much the anti-synonym pass shifted things.
+                "raw_score": score,
+                "anti_synonym_overlap": anti_overlap,
+                # ADR-0008 yellow-zone verifier needs these so the BAML LLM
+                # has the verb's documentation in hand when judging the
+                # match. Empty strings fall through cleanly when doc-tools
+                # hasn't propagated the field.
+                "description": p.get("description") or "",
+                "verb_synonyms": list(raw_syn),
             })
+        # Re-rank by adjusted score so the supervisor's top-1 reflects the
+        # penalty. Without this the order would still be Weaviate's BM25
+        # ranking and a penalty on the top-1 wouldn't change selection.
+        out.sort(key=lambda r: (r["score"] if r["score"] is not None else -1.0), reverse=True)
         return out
     except Exception as e:
         # Routing accelerator — failures degrade the system, not crash it.

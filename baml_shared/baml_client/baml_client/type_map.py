@@ -103,6 +103,9 @@ type_map = {
     "types.UIRelation": types.UIRelation,
     "stream_types.UIRelation": stream_types.UIRelation,
 
+    "types.VerbVerificationResult": types.VerbVerificationResult,
+    "stream_types.VerbVerificationResult": stream_types.VerbVerificationResult,
+
 
     "types.AgentStatus": types.AgentStatus,
 

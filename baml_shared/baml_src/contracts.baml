@@ -658,6 +658,57 @@ function RenderAsChart(raw_data: string, persona: string) -> ChartUI {
   "#
 }
 
+// =============================================================================
+// ADR-0008 follow-up — yellow-zone verb routing verifier
+// =============================================================================
+//
+// When Engine O's /search_predicates returns a candidate whose score sits
+// between THRESHOLD_LOW and THRESHOLD_HIGH (the "yellow zone"), the supervisor
+// asks this function "is this verb really the right choice for the user's
+// query?" If primary_is_correct=false, the supervisor falls back to Engine A
+// as a generalist instead of routing to a confidently-wrong specialist.
+//
+// Why this exists: the BM25 + anti-synonym re-rank closes most of the
+// confidently-wrong-routing failure modes, but borderline scores remain. An
+// LLM with the verb's description in hand can disambiguate cases keyword
+// matching can't (semantic adjacency without lexical overlap).
+
+class VerbVerificationResult {
+  primary_is_correct bool @description("true if the proposed verb correctly answers the user's query; false if it does not.")
+  reasoning string @description("One concise sentence explaining why. If primary_is_correct is false, name what the user actually wants.")
+}
+
+function VerifyVerbChoice(query: string, verb_iri: string, verb_description: string, verb_synonyms_json: string) -> VerbVerificationResult {
+  client MainAgent
+  prompt #"
+    A natural-language query routed to a verb based on lexical matching.
+    Decide whether the proposed verb is the right one.
+
+    USER QUERY:
+    "{{ query }}"
+
+    PROPOSED VERB:
+    Identifier:   {{ verb_iri }}
+    Description:  {{ verb_description }}
+    Synonyms:     {{ verb_synonyms_json }}
+
+    Set primary_is_correct=true if and only if the proposed verb's description
+    cleanly answers the user's intent. Otherwise primary_is_correct=false.
+
+    Examples of mismatches to reject:
+      - User asks to enumerate a catalog ("what tables", "list datasets") but
+        the verb traces lineage of a named asset.
+      - User asks for a single asset's profile but the verb returns an
+        enumeration.
+      - User asks for a freshness check but the verb describes schema.
+
+    Reasoning: one short sentence. Be specific about what the user is
+    actually asking for vs. what the verb does.
+
+    {{ ctx.output_format }}
+  "#
+}
+
 // 4b. The legacy union-returning router. Retained for backward
 // compatibility with /render_ui's fallback path (output_uri missing or
 // no capability matched). Engine F's deterministic + archetype-hardened

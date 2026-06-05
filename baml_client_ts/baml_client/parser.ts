@@ -23,7 +23,7 @@ import { toBamlError } from "@boundaryml/baml"
 import type { Checked, Check } from "./types"
 import type { partial_types } from "./partial_types"
 import type * as types from "./types"
-import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, ExtractedIntent, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, Mode, MoodType, OntologyClass, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation} from "./types"
+import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, ExtractedIntent, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, Mode, MoodType, OntologyClass, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation, VerbVerificationResult} from "./types"
 import type TypeBuilder from "./type_builder"
 
 export class LlmResponseParser {
@@ -352,6 +352,29 @@ export class LlmResponseParser {
     }
   }
   
+  VerifyVerbChoice(
+      llmResponse: string,
+      __baml_options__?: { tb?: TypeBuilder, clientRegistry?: ClientRegistry, env?: Record<string, string | undefined> }
+  ): types.VerbVerificationResult {
+    try {
+      const __rawEnv__ = __baml_options__?.env ? { ...process.env, ...__baml_options__.env } : { ...process.env };
+      const __env__: Record<string, string> = Object.fromEntries(
+        Object.entries(__rawEnv__).filter(([_, value]) => value !== undefined) as [string, string][]
+      );
+      return this.runtime.parseLlmResponse(
+        "VerifyVerbChoice",
+        llmResponse,
+        false,
+        this.ctxManager.cloneContext(),
+        __baml_options__?.tb?.__tb(),
+        __baml_options__?.clientRegistry,
+        __env__,
+      ) as types.VerbVerificationResult
+    } catch (error) {
+      throw toBamlError(error);
+    }
+  }
+  
 }
 
 export class LlmStreamParser {
@@ -675,6 +698,29 @@ export class LlmStreamParser {
         __baml_options__?.clientRegistry,
         __env__,
       ) as partial_types.FinalSynthesis
+    } catch (error) {
+      throw toBamlError(error);
+    }
+  }
+  
+  VerifyVerbChoice(
+      llmResponse: string,
+      __baml_options__?: { tb?: TypeBuilder, clientRegistry?: ClientRegistry, env?: Record<string, string | undefined> }
+  ): partial_types.VerbVerificationResult {
+    try {
+      const __rawEnv__ = __baml_options__?.env ? { ...process.env, ...__baml_options__.env } : { ...process.env };
+      const __env__: Record<string, string> = Object.fromEntries(
+        Object.entries(__rawEnv__).filter(([_, value]) => value !== undefined) as [string, string][]
+      );
+      return this.runtime.parseLlmResponse(
+        "VerifyVerbChoice",
+        llmResponse,
+        true,
+        this.ctxManager.cloneContext(),
+        __baml_options__?.tb?.__tb(),
+        __baml_options__?.clientRegistry,
+        __env__,
+      ) as partial_types.VerbVerificationResult
     } catch (error) {
       throw toBamlError(error);
     }

@@ -355,3 +355,9 @@ export interface UIRelation {
   predicate?: string | null
   
 }
+
+export interface VerbVerificationResult {
+  primary_is_correct: boolean
+  reasoning: string
+  
+}

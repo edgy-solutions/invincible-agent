@@ -20,7 +20,7 @@ $ pnpm add @boundaryml/baml
 
 import type { Image, Audio, Pdf, Video } from "@boundaryml/baml"
 import type { Checked, Check } from "./types"
-import type {  AgentResponse,  AgentStatus,  AgentTask,  AgentTaskDefinition,  AnomalyNode,  AuditResponse,  AuthoringResponse,  BPMNEdge,  BPMNInterviewState,  BPMNNode,  BPMNNodeType,  ChartType,  ChartUI,  DashboardUI,  DataStewardResponse,  DigitalTwinUI,  DocumentUI,  Domain,  ExtractedIntent,  FinalSynthesis,  GraphExpertResponse,  HazardUI,  Intent,  KnowledgeResponse,  LogisticsResponse,  MechanicResponse,  MeshRoutingDecision,  MetricUI,  Mode,  MoodType,  OntologyClass,  PersonaTarget,  SemanticArchetype,  SemanticResolution,  SeverityLevel,  SupervisorTaskPlan,  TableClassificationResult,  TopologyUI,  UIEntity,  UIRelation } from "./types"
+import type {  AgentResponse,  AgentStatus,  AgentTask,  AgentTaskDefinition,  AnomalyNode,  AuditResponse,  AuthoringResponse,  BPMNEdge,  BPMNInterviewState,  BPMNNode,  BPMNNodeType,  ChartType,  ChartUI,  DashboardUI,  DataStewardResponse,  DigitalTwinUI,  DocumentUI,  Domain,  ExtractedIntent,  FinalSynthesis,  GraphExpertResponse,  HazardUI,  Intent,  KnowledgeResponse,  LogisticsResponse,  MechanicResponse,  MeshRoutingDecision,  MetricUI,  Mode,  MoodType,  OntologyClass,  PersonaTarget,  SemanticArchetype,  SemanticResolution,  SeverityLevel,  SupervisorTaskPlan,  TableClassificationResult,  TopologyUI,  UIEntity,  UIRelation,  VerbVerificationResult } from "./types"
 import type * as types from "./types"
 
 /******************************************************************************
@@ -217,5 +217,9 @@ export namespace partial_types {
       target?: string | null
       relation?: string | null
       predicate?: string | null
+    }
+    export interface VerbVerificationResult {
+      primary_is_correct?: boolean | null
+      reasoning?: string | null
     }
 }

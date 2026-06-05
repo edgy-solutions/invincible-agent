@@ -79,6 +79,7 @@ def register_engine_to_mesh(
     output_uri: str,
     endpoint_url: str,
     verb_synonyms: Optional[Iterable[str]] = None,
+    verb_anti_synonyms: Optional[Iterable[str]] = None,
     owner_persona: Optional[str] = None,
     domains: Optional[Iterable[str]] = None,
     cost_class: str = "medium",
@@ -147,6 +148,12 @@ def register_engine_to_mesh(
         # Predicate identity + typing
         "mesh_verb_iri":                verb,
         "mesh_verb_synonyms":           json.dumps(list(verb_synonyms or [])),
+        # Anti-synonyms: NL phrases that should REPEL this verb in the
+        # /search_predicates re-rank. See ADR-0008 follow-up — addresses
+        # the confidently-wrong routing pattern where verb_synonyms alone
+        # can't disambiguate semantically-adjacent intents (e.g.
+        # traceLineage scoring 0.71 for "what tables do you have").
+        "mesh_verb_anti_synonyms":      json.dumps(list(verb_anti_synonyms or [])),
         "mesh_input_uri":               input_uri,
         "mesh_output_uri":              output_uri,
         "mesh_namespace_authority":     namespace_authority,

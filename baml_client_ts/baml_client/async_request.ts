@@ -23,7 +23,7 @@ import type { BamlRuntime, BamlCtxManager, Image, Audio, Pdf, Video, FunctionLog
 import { toBamlError, HTTPRequest, ClientRegistry } from "@boundaryml/baml"
 import type { Checked, Check } from "./types"
 import type * as types from "./types"
-import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, ExtractedIntent, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, Mode, MoodType, OntologyClass, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation} from "./types"
+import type {AgentResponse, AgentStatus, AgentTask, AgentTaskDefinition, AnomalyNode, AuditResponse, AuthoringResponse, BPMNEdge, BPMNInterviewState, BPMNNode, BPMNNodeType, ChartType, ChartUI, DashboardUI, DataStewardResponse, DigitalTwinUI, DocumentUI, Domain, ExtractedIntent, FinalSynthesis, GraphExpertResponse, HazardUI, Intent, KnowledgeResponse, LogisticsResponse, MechanicResponse, MeshRoutingDecision, MetricUI, Mode, MoodType, OntologyClass, PersonaTarget, SemanticArchetype, SemanticResolution, SeverityLevel, SupervisorTaskPlan, TableClassificationResult, TopologyUI, UIEntity, UIRelation, VerbVerificationResult} from "./types"
 import type TypeBuilder from "./type_builder"
 import type * as events from "./events"
 
@@ -504,6 +504,39 @@ env?: Record<string, string | undefined>
       }
       }
       
+  async VerifyVerbChoice(
+  query: string,verb_iri: string,verb_description: string,verb_synonyms_json: string,
+  __baml_options__?: BamlCallOptions<never>
+  ): Promise<HTTPRequest> {
+    try {
+    const __rawEnv__ = __baml_options__?.env ? { ...process.env, ...__baml_options__.env } : { ...process.env };
+    const __env__: Record<string, string> = Object.fromEntries(
+      Object.entries(__rawEnv__).filter(([_, value]) => value !== undefined) as [string, string][]
+      );
+
+      // Resolve client option to clientRegistry (client takes precedence)
+      let __clientRegistry__ = __baml_options__?.clientRegistry;
+      if (__baml_options__?.client) {
+        __clientRegistry__ = __clientRegistry__ || new ClientRegistry();
+        __clientRegistry__.setPrimary(__baml_options__.client);
+      }
+
+      return await this.runtime.buildRequest(
+      "VerifyVerbChoice",
+      {
+      "query": query,"verb_iri": verb_iri,"verb_description": verb_description,"verb_synonyms_json": verb_synonyms_json
+      },
+      this.ctxManager.cloneContext(),
+      __baml_options__?.tb?.__tb(),
+      __clientRegistry__,
+      false,
+      __env__
+      )
+      } catch (error) {
+      throw toBamlError(error);
+      }
+      }
+      
       }
 
       export class AsyncHttpStreamRequest {
@@ -960,6 +993,39 @@ env?: Record<string, string | undefined>
           "SynthesizeReports",
           {
           "original_query": original_query,"raw_json_results": raw_json_results
+          },
+          this.ctxManager.cloneContext(),
+          __baml_options__?.tb?.__tb(),
+          __clientRegistry__,
+          true,
+          __env__
+          )
+          } catch (error) {
+          throw toBamlError(error);
+          }
+          }
+          
+      async VerifyVerbChoice(
+      query: string,verb_iri: string,verb_description: string,verb_synonyms_json: string,
+      __baml_options__?: BamlCallOptions<never>
+      ): Promise<HTTPRequest> {
+        try {
+        const __rawEnv__ = __baml_options__?.env ? { ...process.env, ...__baml_options__.env } : { ...process.env };
+        const __env__: Record<string, string> = Object.fromEntries(
+          Object.entries(__rawEnv__).filter(([_, value]) => value !== undefined) as [string, string][]
+          );
+
+          // Resolve client option to clientRegistry (client takes precedence)
+          let __clientRegistry__ = __baml_options__?.clientRegistry;
+          if (__baml_options__?.client) {
+            __clientRegistry__ = __clientRegistry__ || new ClientRegistry();
+            __clientRegistry__.setPrimary(__baml_options__.client);
+          }
+
+          return await this.runtime.buildRequest(
+          "VerifyVerbChoice",
+          {
+          "query": query,"verb_iri": verb_iri,"verb_description": verb_description,"verb_synonyms_json": verb_synonyms_json
           },
           this.ctxManager.cloneContext(),
           __baml_options__?.tb?.__tb(),

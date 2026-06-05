@@ -100,7 +100,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (29)
+# Generated classes (30)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -278,6 +278,10 @@ class UIRelation(BaseModel):
     target: str
     relation: typing.Optional[str] = None
     predicate: typing.Optional[str] = None
+
+class VerbVerificationResult(BaseModel):
+    primary_is_correct: bool = Field(description='true if the proposed verb correctly answers the user\'s query; false if it does not.')
+    reasoning: str = Field(description='One concise sentence explaining why. If primary_is_correct is false, name what the user actually wants.')
 
 # #########################################################################
 # Generated type aliases (0)

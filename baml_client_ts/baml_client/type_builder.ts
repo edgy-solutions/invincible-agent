@@ -85,6 +85,8 @@ export default class TypeBuilder {
     
     UIRelation: ClassViewer<'UIRelation', "source" | "target" | "relation" | "predicate">;
     
+    VerbVerificationResult: ClassViewer<'VerbVerificationResult', "primary_is_correct" | "reasoning">;
+    
     
     AgentStatus: EnumViewer<'AgentStatus', "SUCCESS" | "FAILED" | "HUMAN_REQUIRED">;
     
@@ -112,7 +114,7 @@ export default class TypeBuilder {
     constructor() {
         this.tb = new _TypeBuilder({
           classes: new Set([
-            "AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",
+            "AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation","VerbVerificationResult",
           ]),
           enums: new Set([
             "AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",
@@ -234,6 +236,10 @@ export default class TypeBuilder {
         
         this.UIRelation = this.tb.classViewer("UIRelation", [
           "source","target","relation","predicate",
+        ]);
+        
+        this.VerbVerificationResult = this.tb.classViewer("VerbVerificationResult", [
+          "primary_is_correct","reasoning",
         ]);
         
         

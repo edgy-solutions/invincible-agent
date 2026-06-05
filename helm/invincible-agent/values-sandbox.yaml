@@ -106,7 +106,16 @@ agentFleet:
 
     # ADR-0008 routing fallback policy (operator-tunable). Start at the
     # default and adjust based on observed predicate_routing_score logs.
+    #
+    # THRESHOLD (0.40): below this → low_confidence → generalist fallback.
+    # THRESHOLD_HIGH (0.85): between THRESHOLD and this → yellow zone →
+    #   supervisor calls BAML.VerifyVerbChoice; LLM confirms or rejects.
+    # Above THRESHOLD_HIGH → trust BM25 score, no LLM verifier.
+    # ANTI_SYNONYM_ALPHA (0.50): penalty weight Engine O applies when a
+    #   candidate's verb_anti_synonyms lexically overlap the query.
     PREDICATE_FALLBACK_SCORE_THRESHOLD: "0.40"
+    PREDICATE_FALLBACK_SCORE_THRESHOLD_HIGH: "0.85"
+    PREDICATE_ANTI_SYNONYM_ALPHA: "0.50"
 
   secrets:
     NEO4J_PASSWORD: "changeme-neo4j-sandbox"  # CHANGE BEFORE DEPLOY — must match neo4j.auth.password

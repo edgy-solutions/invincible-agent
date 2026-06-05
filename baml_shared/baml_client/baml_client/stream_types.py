@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (29)
+# Generated classes (30)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -201,6 +201,10 @@ class UIRelation(BaseModel):
     target: typing.Optional[str] = None
     relation: typing.Optional[str] = None
     predicate: typing.Optional[str] = None
+
+class VerbVerificationResult(BaseModel):
+    primary_is_correct: typing.Optional[bool] = Field(default=None, description='true if the proposed verb correctly answers the user\'s query; false if it does not.')
+    reasoning: typing.Optional[str] = Field(default=None, description='One concise sentence explaining why. If primary_is_correct is false, name what the user actually wants.')
 
 # #########################################################################
 # Generated type aliases (0)

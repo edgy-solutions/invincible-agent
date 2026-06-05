@@ -107,6 +107,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeReports", llm_response=llm_response, mode="request")
         return typing.cast(types.FinalSynthesis, __result__)
 
+    def VerifyVerbChoice(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.VerbVerificationResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="VerifyVerbChoice", llm_response=llm_response, mode="request")
+        return typing.cast(types.VerbVerificationResult, __result__)
+
     
 
 class LlmStreamParser:
@@ -198,5 +204,11 @@ class LlmStreamParser:
     ) -> stream_types.FinalSynthesis:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeReports", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.FinalSynthesis, __result__)
+
+    def VerifyVerbChoice(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.VerbVerificationResult:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="VerifyVerbChoice", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.VerbVerificationResult, __result__)
 
     

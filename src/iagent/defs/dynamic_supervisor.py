@@ -61,6 +61,20 @@ _FALLBACK_SCORE_THRESHOLD_DEFAULT = float(
     os.getenv("PREDICATE_FALLBACK_SCORE_THRESHOLD", "0.40")
 )
 
+#: ADR-0008 follow-up — yellow-zone upper bound. Top-1 candidates with score
+#: between THRESHOLD (low) and THRESHOLD_HIGH (high) trigger a BAML
+#: VerifyVerbChoice call: an LLM with the verb's description in hand decides
+#: whether the BM25 winner is actually right. Above THRESHOLD_HIGH the
+#: supervisor trusts the score and skips the verifier. Below THRESHOLD it
+#: routes straight to the generalist fallback (existing behavior).
+#:
+#: The default 0.85 means the verifier runs on roughly the middle of the
+#: confidence distribution; tune via PREDICATE_FALLBACK_SCORE_THRESHOLD_HIGH
+#: against the actual score distribution your registry produces.
+_FALLBACK_SCORE_THRESHOLD_HIGH_DEFAULT = float(
+    os.getenv("PREDICATE_FALLBACK_SCORE_THRESHOLD_HIGH", "0.85")
+)
+
 
 class SupervisorQueryConfig(Config):
     """Configuration for the supervisor job.
@@ -103,6 +117,8 @@ class SupervisorQueryConfig(Config):
     candidate_verb: str = ""
     # ADR-0008 fallback policy:
     predicate_fallback_score_threshold: float = _FALLBACK_SCORE_THRESHOLD_DEFAULT
+    # ADR-0008 follow-up — yellow-zone upper bound (see env-var docs above).
+    predicate_fallback_score_threshold_high: float = _FALLBACK_SCORE_THRESHOLD_HIGH_DEFAULT
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -251,6 +267,39 @@ def _resolve_predicate_endpoint(
         f"verb_iri={head.get('verb_iri')!r} score={head.get('score')}"
     )
     return _ROUTING_MATCHED, head
+
+
+def _verify_verb_choice_with_baml(
+    context,
+    query: str,
+    predicate: Dict[str, Any],
+) -> tuple[bool, str]:
+    """ADR-0008 follow-up — yellow-zone LLM verifier.
+
+    Returns ``(primary_is_correct, reasoning)``. On any BAML failure
+    (network, schema, etc.) returns ``(True, "verifier_unavailable")`` so
+    we degrade to the existing trust-the-BM25-winner behavior rather than
+    masking calibration outages as systematic verb rejections. Same logic
+    as ADR-0008's bias against silent degradation: the supervisor should
+    distinguish "the LLM said no" from "the LLM never answered."
+    """
+    import asyncio  # local import — the supervisor is sync-by-default
+    try:
+        coro = b.VerifyVerbChoice(
+            query=query,
+            verb_iri=str(predicate.get("verb_iri") or ""),
+            verb_description=str(predicate.get("description") or ""),
+            verb_synonyms_json=json.dumps(list(predicate.get("verb_synonyms") or [])),
+        )
+        result = asyncio.run(coro) if asyncio.iscoroutine(coro) else coro
+        return (bool(result.primary_is_correct), str(result.reasoning or ""))
+    except Exception as exc:  # noqa: BLE001
+        context.log.warning(
+            "VerifyVerbChoice failed verb_iri=%s err=%s — degrading to trust-primary",
+            predicate.get("verb_iri"),
+            exc,
+        )
+        return (True, "verifier_unavailable")
 
 
 def _call_engine_a_fallback(
@@ -413,12 +462,14 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     assert predicate is not None
     score = predicate.get("score")
     threshold = config.predicate_fallback_score_threshold
+    threshold_high = config.predicate_fallback_score_threshold_high
 
     # ADR-0008 telemetry: emit the score for histogram/aggregation.
     context.log.info(
-        "predicate_routing_score score=%s threshold=%s verb_iri=%s",
+        "predicate_routing_score score=%s threshold=%s threshold_high=%s verb_iri=%s",
         score if score is not None else "none",
         threshold,
+        threshold_high,
         predicate.get("verb_iri"),
     )
 
@@ -433,6 +484,36 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_score=score,
             rejected_predicate=predicate,
         )
+
+    # ADR-0008 follow-up — yellow-zone LLM verifier.
+    #
+    # Between THRESHOLD and THRESHOLD_HIGH the BM25 + anti-synonym score is
+    # "good but not certain". Ask a BAML LLM with the verb's description
+    # in hand whether the proposed verb actually answers the query. If
+    # not, fall back to Engine A as a generalist. Catches the
+    # confidently-wrong-routing failure mode (e.g. the 5fee663d run
+    # where mesh:traceLineage scored 0.71 for "what tables do you have?").
+    if score < threshold_high:
+        primary_is_correct, reasoning = _verify_verb_choice_with_baml(
+            context, routing_query, predicate,
+        )
+        context.log.info(
+            "yellow_zone_verify primary_is_correct=%s score=%s verb_iri=%s reasoning=%r",
+            primary_is_correct,
+            score,
+            predicate.get("verb_iri"),
+            reasoning,
+        )
+        if not primary_is_correct:
+            return _call_engine_a_fallback(
+                context,
+                sub_query=sub_query,
+                config=config,
+                fallback_reason="llm_rejected_in_yellow_zone",
+                fallback_score=score,
+                rejected_predicate=predicate,
+            )
+        # Verifier said yes; fall through to specialist dispatch.
 
     endpoint = predicate["endpoint"]
     answerer_persona = predicate.get("owner_persona") or config.user_persona

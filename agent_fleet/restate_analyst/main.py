@@ -1121,6 +1121,19 @@ async def lifespan(fastapi_app: FastAPI):
             "what feeds", "upstream of", "trace lineage",
             "underlying source systems", "raw tables behind",
         ],
+        # ADR-0008 follow-up: explicitly repel catalog-enumeration phrasings.
+        # The 5fee663d run scored this verb at 0.71 for "what tables do
+        # you have" against the BM25 lexical match on "what" and "tables"
+        # in the synonyms / description. Adding anti-synonyms drops the
+        # BM25 score via Engine O's _anti_synonym_overlap re-rank so
+        # mesh:enumerateCatalog (the right verb) wins the ranking.
+        verb_anti_synonyms=[
+            "what tables do you have", "what datasets do you have",
+            "list tables", "list datasets", "list dashboards",
+            "show me the catalog", "show all tables",
+            "what's in the warehouse", "what's in the catalog",
+            "enumerate catalog", "browse catalog",
+        ],
         endpoint_url=_engine_a_endpoint,
         owner_persona="DATA_STEWARD",
         domains=_engine_a_domains,
@@ -1242,6 +1255,14 @@ async def lifespan(fastapi_app: FastAPI):
             "tell me about", "profile of", "summarize",
             "what is", "overview of", "asset profile",
             "give me the rundown on", "summary of",
+        ],
+        # ADR-0008 follow-up: repel multi-asset / catalog-listing phrasings.
+        # describeAsset is single-asset by contract; questions framed as
+        # "list / show all / what tables" are asking for the enumeration
+        # verb, not a single-asset profile.
+        verb_anti_synonyms=[
+            "list all", "show all", "what tables do you have",
+            "what datasets do you have", "enumerate", "catalog listing",
         ],
         endpoint_url=_engine_a_endpoint,
         owner_persona="DATA_STEWARD",
