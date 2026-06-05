@@ -10,6 +10,11 @@ data:
     {
       "realm": "{{ .Values.keycloak.realm }}",
       "enabled": true,
+      "accessTokenLifespan": 3600,
+      "ssoSessionIdleTimeout": 28800,
+      "ssoSessionMaxLifespan": 86400,
+      "clientSessionIdleTimeout": 28800,
+      "clientSessionMaxLifespan": 86400,
       "users": [
           {
               "username": "agent-user",
