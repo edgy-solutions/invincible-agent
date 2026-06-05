@@ -104,6 +104,13 @@ agentFleet:
     KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
     JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/query"
 
+    # Default Ollama model for BAML's `client Ollama`. Switch via configmap +
+    # rolling restart (no rebuild). The 128k-context variant is the standing
+    # default for reasoning-heavy prompts (e.g. VerifyVerbChoice can stuff
+    # several candidate descriptions into context); fall back to `gpt-oss:120b`
+    # if you need the standard-context build for latency.
+    OLLAMA_MODEL: "gpt-oss-128k:120b"
+
     # ADR-0008 routing fallback policy (operator-tunable). Start at the
     # default and adjust based on observed predicate_routing_score logs.
     #
