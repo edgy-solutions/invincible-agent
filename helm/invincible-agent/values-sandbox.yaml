@@ -284,6 +284,14 @@ cortexUi:
     # 2026-06-04: Traefik ingress at 192.168.1.50, matching the existing
     # *.edgy-solutions.com hostname pattern (vault/redpanda/tika already
     # live there). Pi-hole resolves the new hostnames to .50.
+    #
+    # TLS added 2026-06-04 because oidc-client-ts uses window.crypto.subtle
+    # for PKCE, which browsers refuse to expose on plain HTTP origins.
+    # Self-signed wildcard cert lives in the `edgy-wildcard-tls` Secret
+    # (sandbox namespace), generated locally and applied via kubectl.
+    # Browsers throw a one-time untrusted-cert warning; users click
+    # through. Replace with cert-manager + a real CA when this graduates
+    # out of sandbox.
     enabled: true
     className: traefik
     hosts:
@@ -291,13 +299,20 @@ cortexUi:
         paths:
           - path: /
             pathType: Prefix
+    tls:
+      - hosts:
+          - cortex.edgy-solutions.com
+        secretName: edgy-wildcard-tls
   env:
-    # External URLs — must match what the browser will use after the
-    # Pi-hole DNS entries land. cortex-ui's docker-entrypoint.sh injects
-    # these into /config.js at container boot so the bundled JS picks
-    # them up via window.__RUNTIME_CONFIG__ without a rebuild.
-    VITE_API_URL: "http://bff.edgy-solutions.com"
-    VITE_KEYCLOAK_REALM_URL: "http://keycloak.edgy-solutions.com/realms/invincible-agent"
+    # External URLs — HTTPS because the browser needs a secure context
+    # to use crypto.subtle for PKCE. Traefik does the TLS termination
+    # and forwards plain HTTP upstream to the backends (X-Forwarded-Proto
+    # carries the protocol the browser used). cortex-ui's
+    # docker-entrypoint.sh injects these into /config.js at container
+    # boot so the bundled JS picks them up via window.__RUNTIME_CONFIG__
+    # without a rebuild.
+    VITE_API_URL: "https://bff.edgy-solutions.com"
+    VITE_KEYCLOAK_REALM_URL: "https://keycloak.edgy-solutions.com/realms/invincible-agent"
     VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
 
 cortexBff:
@@ -312,14 +327,19 @@ cortexBff:
         paths:
           - path: /
             pathType: Prefix
+    tls:
+      - hosts:
+          - bff.edgy-solutions.com
+        secretName: edgy-wildcard-tls
 
 keycloak:
   ingress:
     # Keycloak ingress added 2026-06-04. Template (templates/keycloak.yaml)
     # adds KC_PROXY_HEADERS=xforwarded + KC_HTTP_ENABLED=true when
-    # ingress.enabled, so Keycloak trusts Traefik's X-Forwarded-* headers
-    # and the issuer URL in .well-known/openid-configuration matches the
-    # hostname the browser used (keycloak.edgy-solutions.com).
+    # ingress.enabled, so Keycloak trusts Traefik's X-Forwarded-Proto
+    # header and the issuer URL in .well-known/openid-configuration
+    # flips to https when Traefik terminates TLS on the ingress —
+    # which is exactly what cortex-ui's OIDC client expects.
     enabled: true
     className: traefik
     hosts:
@@ -327,6 +347,10 @@ keycloak:
         paths:
           - path: /
             pathType: Prefix
+    tls:
+      - hosts:
+          - keycloak.edgy-solutions.com
+        secretName: edgy-wildcard-tls
 
 # --------------------------------------------------------------------------
 # Secrets — sandbox tokens. Real prod secrets go in a separate Sealed-
