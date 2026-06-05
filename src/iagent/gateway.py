@@ -161,6 +161,69 @@ def _sse(event: str, data: str) -> str:
     """Format a Server-Sent Event line pair."""
     return f"event: {event}\ndata: {data}\n\n"
 
+
+async def _keepalive_wrap(stream, interval_s: float = 10.0):
+    """Wrap an SSE generator so it emits `: keepalive\\n\\n` comments
+    during quiet stretches.
+
+    Cortex-bff went silent during long-running steps — most notably the
+    Engine O ``/route_intent`` call (up to 30 s) and while waiting for
+    Dagster materializations — long enough for either Traefik or
+    @microsoft/fetch-event-source on the browser side to consider the
+    connection idle and reconnect. Each reconnect re-fired POST
+    /interview/stream and replayed the early events ("Analyzing
+    intent...", "Triggering Supervisor Job...", "Dagster Run Initiated:
+    fadd4876"), producing the visible loop where the same prefix
+    appeared 3–6× per submission.
+
+    SSE comment lines start with ``:`` and are ignored by the EventSource
+    API (no event fires on the client). They are pure on-the-wire heartbeats
+    that keep TCP+HTTP/1.1 layers bidirectionally active without affecting
+    application logic. Every 10 s of silence is well below any reasonable
+    proxy timeout while still being light enough to be invisible.
+
+    Implementation: consume the wrapped generator into a queue and pull
+    from the queue with a timeout. On timeout, emit a keepalive; on real
+    events, forward them. The wrapped generator runs in a background
+    task so it can produce while we wait.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    DONE: object = object()  # sentinel
+
+    async def producer():
+        try:
+            async for event in stream:
+                await queue.put(event)
+        except Exception as exc:  # noqa: BLE001
+            await queue.put(_sse("status", json.dumps({
+                "action": "error",
+                "label": f"Stream producer error: {exc}",
+            })))
+        finally:
+            await queue.put(DONE)
+
+    prod_task = asyncio.create_task(producer())
+
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval_s)
+                if item is DONE:
+                    return
+                yield item
+            except asyncio.TimeoutError:
+                # No event in `interval_s`; emit an SSE comment line so
+                # intermediate proxies and the browser EventSource see
+                # the connection as alive.
+                yield ": keepalive\n\n"
+    finally:
+        if not prod_task.done():
+            prod_task.cancel()
+            try:
+                await prod_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
 # ══════════════════════════════════════════════════════════
 # Dagster GraphQL Orchestration
 # ══════════════════════════════════════════════════════════
@@ -869,11 +932,14 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
     auth-resolved User and flow downstream to the supervisor + engines.
     """
     return StreamingResponse(
-        generate_dagster_stream(
-            request,
-            user_id=current_user.id,
-            user_persona=current_user.persona,
-            entitled_domains=current_user.entitled_domains,
+        _keepalive_wrap(
+            generate_dagster_stream(
+                request,
+                user_id=current_user.id,
+                user_persona=current_user.persona,
+                entitled_domains=current_user.entitled_domains,
+            ),
+            interval_s=10.0,
         ),
         media_type="text/event-stream",
         headers={
