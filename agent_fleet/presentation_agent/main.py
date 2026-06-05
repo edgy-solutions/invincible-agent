@@ -107,6 +107,21 @@ _PRESENTATION_CAPABILITIES = [
         "expected_fields": ["asset_name", "owner", "tags", "domain", "description", "last_updated"],
         "description": "Renders mesh:AssetProfile as a KNOWLEDGE_DOCUMENT profile card",
     },
+    {
+        # Catalog enumeration (mesh:enumerateCatalog verb). Renders as
+        # KNOWLEDGE_DOCUMENT so the deterministic-document path composes
+        # markdown from summary_text + a fenced JSON block of the
+        # `tables` list — the right shape for a flat catalog listing.
+        # WITHOUT this entry the router fell back to mesh:traceLineage
+        # which forces output_uri=mesh:LineageTopology and routes to
+        # PROCESS_TOPOLOGY (BPMN canvas). See ADR-0017 §1 and the run
+        # 5fee663d post-mortem.
+        "subject_uri": "mesh:CatalogListing",
+        "object_uri": "mesh:KnowledgeDocument",
+        "archetype": "KNOWLEDGE_DOCUMENT",
+        "expected_fields": ["scope", "tables", "asset_count"],
+        "description": "Renders mesh:CatalogListing as a KNOWLEDGE_DOCUMENT flat enumeration",
+    },
     # Engine DA — DatasetAnalysisReport renders as a chart.
     {
         "subject_uri": "mesh:DatasetAnalysisReport",

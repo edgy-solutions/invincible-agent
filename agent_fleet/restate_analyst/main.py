@@ -271,6 +271,25 @@ _VERB_PROMPT_BLOCKS = {
         "reasoning_patterns": "",
         "output_uri": "mesh:AssetProfile",
     },
+    "mesh:enumerateCatalog": {
+        "task_framing": (
+            "VERB SCOPE: mesh:enumerateCatalog.\n"
+            "Your task is to ENUMERATE the data assets present in the "
+            "DataHub catalog. The user wants a FLAT LIST of the "
+            "available tables / datasets / dashboards — possibly "
+            "scoped by tier (bronze / silver / gold), domain, or "
+            "platform — not lineage, schema, ownership, or any "
+            "single-asset attribute. Do NOT walk lineage; do NOT "
+            "inspect columns; do NOT pick one asset to describe. "
+            "Issue catalog-level searches and report the set of "
+            "assets you find as a flat list. The downstream renderer "
+            "is KNOWLEDGE_DOCUMENT, so emit `summary_text` describing "
+            "what you found and `structured_data` with a `tables` (or "
+            "`assets`) field listing the asset names."
+        ),
+        "reasoning_patterns": "",
+        "output_uri": "mesh:CatalogListing",
+    },
     # Generic fallback (ADR-0017 transition window). Both reasoning
     # patterns active since we don't know the question shape.
     "mesh:analyzeWithCodeAgent": {
@@ -1223,6 +1242,45 @@ async def lifespan(fastapi_app: FastAPI):
             "tell me about", "profile of", "summarize",
             "what is", "overview of", "asset profile",
             "give me the rundown on", "summary of",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        name="engine_a_enumerate_catalog",
+        description=(
+            "Returns a flat list of data assets (tables, datasets, "
+            "dashboards) in the DataHub catalog, optionally scoped by "
+            "tier (bronze/silver/gold), domain, or platform. Use this "
+            "for catalog-enumeration questions where the user has no "
+            "specific asset in mind and wants to see what is available: "
+            "'what tables do you have', 'list datasets', 'show me the "
+            "catalog', 'what's in the warehouse'. Does NOT walk lineage, "
+            "inspect schema, or describe any single asset — use the "
+            "asset-specific verbs for those. Outputs CatalogListing "
+            "which renders as a flat KNOWLEDGE_DOCUMENT panel, NOT a "
+            "lineage topology graph."
+        ),
+        verb="mesh:enumerateCatalog",
+        input_uri="mesh:CatalogScopeQuery",
+        output_uri="mesh:CatalogListing",
+        verb_synonyms=[
+            "what tables do you have",
+            "what datasets do you have",
+            "what data do you have",
+            "list tables", "list datasets", "list dashboards",
+            "list all tables", "list all datasets",
+            "show all tables", "show all datasets",
+            "show me the catalog", "show me what's available",
+            "show me what's in datahub",
+            "what's in the warehouse", "what's in the catalog",
+            "what assets are available", "what data is available",
+            "enumerate catalog", "catalog listing",
+            "all tables in", "all datasets in",
+            "browse catalog", "browse datasets",
         ],
         endpoint_url=_engine_a_endpoint,
         owner_persona="DATA_STEWARD",
