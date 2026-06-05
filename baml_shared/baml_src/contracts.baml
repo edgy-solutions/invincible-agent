@@ -679,7 +679,13 @@ class VerbVerificationResult {
 }
 
 function VerifyVerbChoice(query: string, verb_iri: string, verb_description: string, verb_synonyms_json: string) -> VerbVerificationResult {
-  client MainAgent
+  // Use Ollama directly (not MainAgent) because the sandbox cluster has no
+  // OPENROUTER_API_KEY / OPENAI_API_KEY wired — MainAgent's fallback chain
+  // [OpenRouter, OpenAI] fails BAML's env-var validation at call time.
+  // The cluster's actual reasoning model is ai1's 120b served over Ollama
+  // (OLLAMA_BASE_URL=http://192.168.1.119:11434/v1), which is what other
+  // engines like Engine A's smolagents loop already use.
+  client Ollama
   prompt #"
     A natural-language query routed to a verb based on lexical matching.
     Decide whether the proposed verb is the right one.
