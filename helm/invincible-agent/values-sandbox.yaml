@@ -243,6 +243,21 @@ dagster:
       # is the default registry so no override needed.
       tag: "latest"
       repository: "edgy-solutions/invincible-agent/dagster-server"
+    ingress:
+      # Dagster UI exposed at dagster.edgy-solutions.com — useful for
+      # inspecting supervisor_query_job runs / Engine A routing decisions
+      # / Op state on a real query. Same TLS pattern as the other four.
+      enabled: true
+      className: traefik
+      hosts:
+        - host: dagster.edgy-solutions.com
+          paths:
+            - path: /
+              pathType: Prefix
+      tls:
+        - hosts:
+            - dagster.edgy-solutions.com
+          secretName: edgy-wildcard-tls
   daemon:
     enabled: true
     image:

@@ -82,3 +82,46 @@ spec:
           {{- end }}
     {{- end }}
 {{- end }}
+
+---
+{{- if and .Values.dagster.webserver.enabled .Values.dagster.webserver.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-dagster
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  {{- with .Values.dagster.webserver.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.dagster.webserver.ingress.className }}
+  ingressClassName: {{ .Values.dagster.webserver.ingress.className }}
+  {{- end }}
+  {{- if .Values.dagster.webserver.ingress.tls }}
+  tls:
+    {{- range .Values.dagster.webserver.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.dagster.webserver.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $.Release.Name }}-dagster
+                port:
+                  number: {{ $.Values.dagster.webserver.port }}
+          {{- end }}
+    {{- end }}
+{{- end }}
