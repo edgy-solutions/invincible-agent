@@ -17,8 +17,13 @@ Run: uvicorn agent_fleet.ontology_service.main:app --host 0.0.0.0 --port 8084
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import sys
+import time
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import rdflib
@@ -66,6 +71,79 @@ except ImportError:
     except ImportError:
         # Fallback for flat layout in container
         from weaviate_utils import create_weaviate_client
+
+# ---------------------------------------------------------------------------
+# ADR-0015 Phase 1: routing-decisions audit (structured-log substrate).
+# ---------------------------------------------------------------------------
+# The ADR proposes a Postgres `routing_decisions` table. Phase 1 emits the
+# same row shape as a single-line JSON log, so:
+#   (a) every /search_predicates decision is queryable via existing log
+#       aggregation (Loki/Datadog/Langfuse — no new infra),
+#   (b) ADR-0016 §5's revisit trigger has the per-decision substrate it
+#       needs without waiting for Postgres ops,
+#   (c) ADR-0017's X-Presentation-Path field gets a destination (cortex-bff
+#       reads the header and emits its own routing_decision log with
+#       presentation_path populated; Engine O writes the engine-routing
+#       half).
+# Phase 2 (deferred): swap the print() for an async INSERT into a
+# bounded asyncio queue draining to Postgres. The row shape is intentionally
+# isomorphic to the ADR §3 SQL DDL so the swap is mechanical.
+_routing_audit_logger = logging.getLogger("iagent.routing.audit")
+# Always emit to stdout so kubectl logs / fluentbit pick it up.
+if not _routing_audit_logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(message)s"))
+    _routing_audit_logger.addHandler(_h)
+    _routing_audit_logger.setLevel(logging.INFO)
+    _routing_audit_logger.propagate = False
+
+
+def _emit_routing_decision(
+    *,
+    source: str,
+    request_id: str | None,
+    user_id: str | None,
+    sub_query: str,
+    entitled_domains: list[str],
+    candidates_raw: list[dict],
+    picked_engine: str | None,
+    picked_verb: str | None,
+    pick_score: float | None,
+    pick_margin: float | None,
+    fallback_reason: str | None,
+    search_ms: int,
+    total_ms: int,
+) -> None:
+    """Emit one routing-decision row as a single-line JSON log.
+
+    The schema mirrors the ADR-0015 §3 SQL DDL exactly so the eventual
+    Phase 2 INSERT is a column-for-column copy. ``candidates_filt`` is
+    omitted here because the current ``predicate_hybrid_search`` returns
+    the post-filter list directly; if we later split raw vs filtered the
+    field gets added without breaking consumers.
+    """
+    try:
+        record = {
+            "event": "routing_decision",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "request_id": request_id,
+            "user_id": user_id,
+            "sub_query": sub_query,
+            "entitled_domains": entitled_domains,
+            "candidates_raw": candidates_raw,
+            "picked_engine": picked_engine,
+            "picked_verb": picked_verb,
+            "pick_score": pick_score,
+            "pick_margin": pick_margin,
+            "fallback_reason": fallback_reason,
+            "search_ms": search_ms,
+            "total_ms": total_ms,
+        }
+        _routing_audit_logger.info(json.dumps(record, default=str))
+    except Exception:  # noqa: BLE001 — never let audit emit kill a request
+        pass
+
 
 # ---------------------------------------------------------------------------
 # RDF namespace constants
@@ -471,6 +549,16 @@ class SearchPredicatesRequest(BaseModel):
     """
     query: str = Field(..., description="NL phrasing — drives Weaviate hybrid search")
     entitled_domains: list[str] = Field(default_factory=list, description="Caller's entitled domain scopes")
+    # ADR-0015 Phase 1: optional audit context. Callers that want trace
+    # correlation pass request_id; cron canaries set audit_source to
+    # distinguish synthetic traffic from real (default user_request).
+    # All three are optional so existing callers don't have to migrate.
+    request_id: str | None = Field(default=None, description="Trace correlation ID")
+    user_id: str | None = Field(default=None, description="Caller user_id for slicing the audit log; null for canary")
+    audit_source: str | None = Field(
+        default=None,
+        description="ADR-0015 audit source label: 'user_request' | 'canary' | 'registration_validation'. Defaults to user_request when unset.",
+    )
     limit: int = Field(10, ge=1, le=50)
 
 
@@ -898,6 +986,10 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
     Exact ``(subject_uri, verb_label)`` lookups belong on ``/find_tool``;
     this endpoint is exclusively NL-driven.
     """
+    # ADR-0015 Phase 1: capture timings + decision context for the
+    # routing-decision audit log emit at the end of the handler.
+    _total_t0 = time.perf_counter()
+    _request_id = request.request_id or str(uuid.uuid4())
     if not _WEAVIATE_CLIENT or not _WEAVIATE_CLIENT.collections.exists(
         _PREDICATE_COLLECTION
     ):
@@ -916,13 +1008,30 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
     # mis-cased POST still scopes correctly.
     entitled = [d.upper() for d in (request.entitled_domains or [])]
 
+    _search_t0 = time.perf_counter()
     hits = await predicate_hybrid_search(
         query=request.query,
         entitled_domains=entitled,
         limit=request.limit,
     )
+    _search_ms = int((time.perf_counter() - _search_t0) * 1000)
 
     if not hits:
+        _emit_routing_decision(
+            source=(request.audit_source or "user_request"),
+            request_id=_request_id,
+            user_id=request.user_id,
+            sub_query=request.query,
+            entitled_domains=entitled,
+            candidates_raw=[],
+            picked_engine=None,
+            picked_verb=None,
+            pick_score=None,
+            pick_margin=None,
+            fallback_reason="no_predicate_matched",
+            search_ms=_search_ms,
+            total_ms=int((time.perf_counter() - _total_t0) * 1000),
+        )
         return SearchPredicatesResponse(
             found=False,
             reason=(
@@ -949,6 +1058,42 @@ async def search_predicates(request: SearchPredicatesRequest) -> SearchPredicate
         )
         for h in hits
     ]
+
+    # ADR-0015 Phase 1: emit the routing decision row. pick_margin is
+    # top-1 minus top-2 absolute score; useful for the confidence-gating
+    # follow-up but already valuable as drift telemetry.
+    _top = hits[0]
+    _second_score = hits[1]["score"] if len(hits) > 1 and hits[1].get("score") is not None else None
+    _pick_score = _top.get("score")
+    _pick_margin = (
+        _pick_score - _second_score
+        if _pick_score is not None and _second_score is not None
+        else None
+    )
+    _emit_routing_decision(
+        source=(request.audit_source or "user_request"),
+        request_id=_request_id,
+        user_id=request.user_id,
+        sub_query=request.query,
+        entitled_domains=entitled,
+        candidates_raw=[
+            {
+                "verb_iri": h["verb_iri"],
+                "endpoint": h["endpoint"],
+                "score": h.get("score"),
+                "domains": h.get("domains"),
+                "cost_class": h.get("cost_class"),
+            }
+            for h in hits
+        ],
+        picked_engine=_top.get("endpoint"),
+        picked_verb=_top.get("verb_iri"),
+        pick_score=_pick_score,
+        pick_margin=_pick_margin,
+        fallback_reason=None,
+        search_ms=_search_ms,
+        total_ms=int((time.perf_counter() - _total_t0) * 1000),
+    )
 
     return SearchPredicatesResponse(found=True, candidates=candidates)
 

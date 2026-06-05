@@ -1,7 +1,9 @@
 # ADR-0015 — Router regression testing at the `/search_predicates` layer
 
-**Status:** Proposed
-**Date:** 2026-06-03
+**Status:** Phase 1 Accepted (2026-06-04). Phase 2 (Postgres table +
+canary cron + drift detection) deferred. See "Implementation status"
+below.
+**Date:** 2026-06-03 (proposed); 2026-06-04 (Phase 1 shipped)
 **Deciders:** Platform team
 **Related:**
   - [ADR-0004](ADR-0004-predicate-graph-routing.md) — the predicate-
@@ -247,7 +249,59 @@ on margin (top-1 vs top-2), not on absolute score. A 0.9 score that
 beats top-2 by only 0.02 is still ambiguous; a 0.4 score that beats
 top-2 by 0.3 is unambiguous.
 
-## Implementation sketch
+## Implementation status
+
+**Phase 1 (Accepted 2026-06-04)** — structured-log substrate. Every
+`/search_predicates` call in Engine O emits a single-line JSON record
+with the exact column shape of the Phase 2 SQL DDL below. The emit
+goes to stdout via a dedicated logger
+(`iagent.routing.audit`); kubectl logs / fluentbit / Loki / Datadog /
+Langfuse all pick it up unchanged. Aggregation queries are immediate
+("how many decisions had margin < 0.05 last hour" = log query, not
+SQL — but the SQL DDL below is what makes the migration mechanical
+when Phase 2 lands).
+
+Phase 1 also lets the consumer side close ADR-0017's
+`X-Presentation-Path` loop: cortex-bff already reads the header and
+puts it in Dagster `Output.metadata`, and a follow-up commit will
+have cortex-bff emit its own `routing_decision` log line with
+`source='presentation_decision'` and the `picked_engine` set to the
+chosen presentation path. Same audit shape, two emitters.
+
+Schema additions made to support Phase 1 emit:
+[`SearchPredicatesRequest`](../../agent_fleet/ontology_service/main.py)
+gained three optional fields: `request_id` (trace correlation),
+`user_id` (slicing the audit log per caller), `audit_source`
+(`'user_request' | 'canary' | 'registration_validation'`, default
+user_request). All existing callers continue to work without
+migration.
+
+What Phase 1 does NOT yet have, and why deferring is okay:
+
+- **Postgres table.** Adds a non-trivial Engine O ↔ Postgres
+  dependency (connection pool, migration, async write worker,
+  failure modes). The structured-log substrate satisfies the
+  per-decision visibility goal today; Phase 2's value is aggregate
+  queries that don't go through log search. Defer until either the
+  log-search latency becomes painful OR ADR-0016 §5's revisit
+  trigger needs SQL-shaped queries the log system can't serve.
+- **Canary pulse + K8s CronJob.** The audit emit shape is ready —
+  `audit_source='canary'` is wired — but the canary endpoint and
+  CronJob aren't built. Defer until the per-engine `expected_questions`
+  contracts are authored (it's wasted infrastructure without them).
+- **Per-engine `expected_questions` registration.** The 30-50 question
+  contracts per engine are the biggest single cost of the full ADR.
+  Defer until at least one drift incident makes the case concrete.
+- **Drift detection at registration time.** Same dependency: needs
+  the per-engine expected_questions before it has anything to compare
+  against.
+- **Confidence-threshold gating.** Available as a Phase 2 follow-up;
+  current sandbox margins look healthy from the Phase 1 emit so
+  there's no urgency.
+- **Grafana dashboard.** Phase 1's logs work today via Loki/Langfuse
+  log query. Promote to a dashboard once Phase 2 lands the SQL.
+
+## Implementation sketch (Phase 2, deferred)
 
 Engine O changes (single file, modest):
 
