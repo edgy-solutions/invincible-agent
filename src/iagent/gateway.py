@@ -157,6 +157,65 @@ class CompileResponse(BaseModel):
     boot_log: str = ""
 
 
+# ── ADR-0017 frontend self-registration ──────────────────────
+# The original ADR-0017 vision was that frontends self-advertise their
+# presentation capabilities ("I can render mesh:OwnershipFact as a
+# KNOWLEDGE_DOCUMENT") rather than the backend assuming what the frontend
+# can render. The current state: Engine F's startup advertises 9 capability
+# triples on cortex-ui's behalf via an in-memory table. That works for one
+# frontend; it breaks the moment a second frontend (mobile, voice, etc.)
+# registers different capabilities.
+#
+# This stage of the cleanup ships the frontend-advertisement HALF of the
+# proper architecture: cortex-ui POSTs its capability list at login, this
+# endpoint receives it, validates the JWT, and logs the advertisement to
+# the iagent.registry.frontend_capabilities logger. The capability set is
+# then observable in cluster logs and Langfuse traces — proving the
+# pattern end-to-end without breaking Engine F's existing lookup behavior.
+#
+# Stage 2 (follow-up): replace Engine F's in-memory _lookup_capability
+# with a /search_predicates call so the live registry IS the authoritative
+# source. Until then, this endpoint produces the data Stage 2 will consume.
+
+class FrontendCapability(BaseModel):
+    """One presentation capability advertised by a frontend.
+
+    Shape mirrors the existing register_presentation_to_mesh helper in
+    agent_fleet/utils/mesh_registration.py so cortex-bff can route this
+    into the same SPO-triple substrate later.
+    """
+    subject_uri: str          # e.g. "mesh:OwnershipFact"
+    object_uri: str           # e.g. "mesh:KnowledgeDocument"
+    archetype: str            # e.g. "KNOWLEDGE_DOCUMENT"
+    component: str | None = None
+    layout: str | None = None
+    expected_fields: list[str] = []
+    persona_fit: list[str] = []
+    domain_fit: list[str] = []
+
+
+class RegisterFrontendCapabilitiesRequest(BaseModel):
+    """Sent by cortex-ui (and any future frontend) after auth completes.
+
+    `frontend_id` distinguishes registrations from different surfaces in
+    the predicate graph (cortex-ui-desktop, cortex-ui-mobile, voice-cli,
+    etc.). `frontend_version` rides along so drift between code that
+    declared the capability and code that's serving it is detectable.
+    """
+    frontend_id: str          # e.g. "cortex-ui-desktop"
+    frontend_version: str     # e.g. "0.1.0"
+    capabilities: list[FrontendCapability]
+
+
+class RegisterFrontendCapabilitiesResponse(BaseModel):
+    accepted: int
+    frontend_id: str
+
+
+# Dedicated logger so registrations are easy to slice out in log search.
+_frontend_registry_logger = logging.getLogger("iagent.registry.frontend_capabilities")
+
+
 def _sse(event: str, data: str) -> str:
     """Format a Server-Sent Event line pair."""
     return f"event: {event}\ndata: {data}\n\n"
@@ -918,6 +977,57 @@ async def generate_dagster_stream(
 # ══════════════════════════════════════════════════════════
 # Endpoints
 # ══════════════════════════════════════════════════════════
+
+
+@app.post("/register_frontend_capabilities", response_model=RegisterFrontendCapabilitiesResponse)
+async def register_frontend_capabilities(
+    payload: RegisterFrontendCapabilitiesRequest,
+    current_user: User = Depends(get_current_user),
+) -> RegisterFrontendCapabilitiesResponse:
+    """ADR-0017 frontend self-registration of presentation capabilities.
+
+    cortex-ui (and any future frontend) POSTs its capability list at
+    login. We log it structurally so the advertisement is observable in
+    cluster logs / Langfuse / Loki, then return an accepted count.
+
+    Stage 2 will plumb this into the SPO predicate graph alongside the
+    engine-side `register_presentation_to_mesh` registrations, at which
+    point Engine F's lookup becomes the live registry rather than its
+    in-memory default table.
+
+    Auth: requires a valid bearer token. Anyone holding a JWT for the
+    realm can advertise — there is no per-frontend authorization yet.
+    For sandbox that's fine. Production should bind frontend_id to a
+    Keycloak client identity or service account once we have multiple
+    surfaces.
+    """
+    _frontend_registry_logger.info(
+        json.dumps({
+            "event": "frontend_capabilities_registered",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "user_id": current_user.id,
+            "frontend_id": payload.frontend_id,
+            "frontend_version": payload.frontend_version,
+            "capability_count": len(payload.capabilities),
+            "capabilities": [
+                {
+                    "subject_uri": c.subject_uri,
+                    "object_uri": c.object_uri,
+                    "archetype": c.archetype,
+                    "component": c.component,
+                    "layout": c.layout,
+                    "expected_fields_count": len(c.expected_fields),
+                    "persona_fit": c.persona_fit,
+                    "domain_fit": c.domain_fit,
+                }
+                for c in payload.capabilities
+            ],
+        })
+    )
+    return RegisterFrontendCapabilitiesResponse(
+        accepted=len(payload.capabilities),
+        frontend_id=payload.frontend_id,
+    )
 
 
 @app.post("/orchestrate")
