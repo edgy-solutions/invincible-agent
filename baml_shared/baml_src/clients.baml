@@ -45,9 +45,23 @@ client<llm> OpenAI {
 // --- Main Mesh Brain ---
 // This acts as the single point of configuration for all agents.
 // Switch the fallback order or primary client here.
+//
+// Strategy is OpenRouter → OpenAI → Ollama. Ollama is the explicit
+// final fallback so the cluster behaves deterministically when the
+// cloud clients fail validation (no OPENROUTER_API_KEY /
+// OPENAI_API_KEY set, the sandbox state). Empirically BAML 0.219
+// sometimes silently routes to Ollama anyway when its strategy
+// validates empty (observed in Engine F's DesignUI run d29c2672)
+// and sometimes raises (observed in the supervisor's VerifyVerbChoice
+// run d29c2672 before commit b636615 pinned it). Explicit fallback
+// kills the ambiguity: same behavior in every pod, every cluster.
+//
+// VerifyVerbChoice still pins directly to `client Ollama` for the
+// supervisor's hot-path verifier — keeps the verifier model
+// independent of operator-chosen production reasoning models.
 client<llm> MainAgent {
   provider fallback
   options {
-    strategy [OpenRouter, OpenAI] // Primary OpenRouter, fallback to OpenAI
+    strategy [OpenRouter, OpenAI, Ollama]
   }
 }
