@@ -35,18 +35,6 @@ spec:
               value: {{ .Values.cortexUi.env.VITE_KEYCLOAK_REALM_URL | quote }}
             - name: VITE_KEYCLOAK_CLIENT_ID
               value: {{ .Values.cortexUi.env.VITE_KEYCLOAK_CLIENT_ID | quote }}
-            # MinIO federation — read by FederatedImage.tsx to build a
-            # browser-side S3Client that talks to MinIO (not real AWS S3)
-            # and assumes a Keycloak-federated role. `default ""` keeps
-            # backward compat with existing values files that don't
-            # declare these; the component treats empty endpoint as "no
-            # override" and falls through to its defaults.
-            - name: VITE_AWS_S3_ENDPOINT
-              value: {{ .Values.cortexUi.env.VITE_AWS_S3_ENDPOINT | default "" | quote }}
-            - name: VITE_AWS_REGION
-              value: {{ .Values.cortexUi.env.VITE_AWS_REGION | default "us-east-1" | quote }}
-            - name: VITE_AWS_ROLE_ARN
-              value: {{ .Values.cortexUi.env.VITE_AWS_ROLE_ARN | default "" | quote }}
           resources:
             {{- toYaml .Values.cortexUi.resources | nindent 12 }}
 ---

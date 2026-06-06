@@ -1418,3 +1418,129 @@ async def bpmn_catalog(db: AsyncSession = Depends(get_db)):
         )
         for r in rows
     ]
+
+
+# ══════════════════════════════════════════════════════════
+# Federated Image Proxy — Option A for cortex-MinIO image flow
+# ══════════════════════════════════════════════════════════
+#
+# The frontend FederatedImage component (cortex-ui) detects image markdown
+# whose `src` is an s3://bucket/key URI (typically emitted by Engine E
+# when a Neo4j node has an attached procedure diagram extracted by
+# doc-tools) and rewrites it to GET /federated_image?src=...
+#
+# This endpoint enforces the SAME authorization gate as the rest of the
+# bff: get_current_user validates the JWT, then we apply the
+# entitled_domains scope filter that the data path uses (per ADR-0009).
+# An earlier attempt routed the browser directly to MinIO STS via
+# AssumeRoleWithWebIdentity; that worked but introduced a separate authz
+# surface (token-claim-driven IAM policies in MinIO) inconsistent with
+# the rest of the system. This proxy is the consistent answer.
+
+from fastapi import HTTPException, Query
+from urllib.parse import urlparse
+
+_MINIO_ENDPOINT_URL = os.getenv("MINIO_ENDPOINT_URL", "http://iagent-minio:9000")
+_MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minio-sandbox")
+_MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minio-sandbox-secret")
+_MINIO_REGION = os.getenv("MINIO_REGION", "us-east-1")
+
+#: Bucket-name convention: doc-tools writes per-domain buckets like
+#: ``doc-tools-maintenance`` / ``doc-tools-manufacturing``. The portion
+#: after the prefix is the domain slug we compare against the caller's
+#: entitled_domains JWT claim. Buckets that don't follow the convention
+#: are treated as "no scoped domain" and pass through (operator can
+#: tighten this once the bucket naming policy is finalized).
+_DOC_TOOLS_BUCKET_PREFIX = "doc-tools-"
+
+
+def _bucket_domain(bucket: str) -> str | None:
+    """Extract a domain slug from a bucket name, or None if the bucket
+    doesn't follow the doc-tools-{domain} convention. Returned slug is
+    upper-cased to match the entitled_domains vocabulary engines use.
+    """
+    if not bucket.startswith(_DOC_TOOLS_BUCKET_PREFIX):
+        return None
+    slug = bucket[len(_DOC_TOOLS_BUCKET_PREFIX):]
+    return slug.upper() if slug else None
+
+
+@app.get("/federated_image")
+def federated_image(
+    src: str = Query(..., description="s3://bucket/key URI to stream from MinIO"),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy an image stored in MinIO to the browser, gated by the
+    caller's JWT + entitled_domains.
+
+    Sync handler (boto3 is sync-only without an extra dep). FastAPI
+    runs sync routes in its threadpool so this doesn't block the
+    event loop.
+    """
+    # 1. Parse src — must be s3://bucket/key.
+    if not src.startswith("s3://"):
+        raise HTTPException(status_code=400, detail="src must be an s3:// URI")
+    parsed = urlparse(src)
+    bucket = parsed.netloc
+    key = parsed.path.lstrip("/")
+    if not bucket or not key:
+        raise HTTPException(status_code=400, detail="malformed s3:// URI")
+    # Reject path traversal in key (defense in depth — boto3 will also
+    # reject these, but we want a fast 400 with a clear error).
+    if ".." in key.split("/"):
+        raise HTTPException(status_code=400, detail="key may not contain '..'")
+
+    # 2. Authorization: apply the entitled_domains scope filter the same
+    # way Engine O's /search_predicates does. Empty entitled_domains list
+    # means the JWT didn't carry the claim (PingSSO baseline) — pass
+    # through, mirroring the data path's "no claim = no scope filter"
+    # behavior. Per-asset Topaz checks are a follow-up; the gate today is
+    # JWT auth + this domain scope, same as the supervisor.
+    if current_user.entitled_domains:
+        domain = _bucket_domain(bucket)
+        if domain is not None and domain not in current_user.entitled_domains:
+            logger.warning(
+                "federated_image denied user=%s bucket=%s domain=%s entitled=%s",
+                current_user.id, bucket, domain, current_user.entitled_domains,
+            )
+            raise HTTPException(status_code=403, detail="not entitled for this domain")
+
+    # 3. Fetch from MinIO with the bff's own static credentials.
+    # Lazy-imported so boto3's ~10MB cost doesn't hit every cortex-bff
+    # startup that never serves an image.
+    import boto3
+    from botocore.config import Config
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=_MINIO_ENDPOINT_URL,
+        aws_access_key_id=_MINIO_ACCESS_KEY,
+        aws_secret_access_key=_MINIO_SECRET_KEY,
+        region_name=_MINIO_REGION,
+        # MinIO requires path-style addressing (bucket-as-path, not
+        # virtual-hosted-style). The signature_version=s3v4 line matches
+        # MinIO's only supported sig version.
+        config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+    )
+
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+    except s3.exceptions.NoSuchKey:
+        raise HTTPException(status_code=404, detail="image not found")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("federated_image MinIO get_object error: %s", exc)
+        raise HTTPException(status_code=502, detail="upstream object store error")
+
+    content_type = obj.get("ContentType") or "application/octet-stream"
+    # StreamingResponse iterates the botocore StreamingBody in chunks so
+    # we don't load the whole image into memory.
+    return StreamingResponse(
+        obj["Body"].iter_chunks(chunk_size=64 * 1024),
+        media_type=content_type,
+        headers={
+            # Private cache — presigned analogue. 1h is plenty for
+            # session-scoped procedure images, short enough that
+            # entitlement changes propagate within an hour.
+            "Cache-Control": "private, max-age=3600",
+        },
+    )

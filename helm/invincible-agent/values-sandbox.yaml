@@ -356,25 +356,22 @@ cortexUi:
     VITE_KEYCLOAK_REALM_URL: "https://keycloak.edgy-solutions.com/realms/invincible-agent"
     VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
 
-    # MinIO federation for FederatedImage component (s3://bucket/key → presigned URL).
-    # The browser-side @aws-sdk/client-s3 needs the endpoint pointed at MinIO
-    # (not real AWS) and forced into path-style addressing. Region is arbitrary
-    # — MinIO doesn't care — but the SDK requires it to be set. Role ARN must
-    # match what MinIO's STS OIDC provider is configured to accept.
-    #
-    # The STS web-identity flow uses the user's Keycloak access_token as the
-    # web identity. For this to actually work end-to-end, MinIO must be
-    # configured as an OIDC relying party against the same Keycloak realm.
-    # Documented separately; until that's done the browser will see
-    # "Image Not Authorized" because MinIO rejects the AssumeRole call.
-    VITE_AWS_S3_ENDPOINT: "https://minio.edgy-solutions.com"
-    VITE_AWS_REGION: "us-east-1"
-    VITE_AWS_ROLE_ARN: "arn:minio:iam:::role/KeycloakS3Reader"
-
 cortexBff:
   enabled: true
   image:
     tag: "latest"
+  # MinIO connection for the /federated_image endpoint (Option A: bff
+  # proxies image reads from MinIO so they share the same JWT +
+  # entitled_domains gate as the rest of the data path; the browser
+  # never speaks to MinIO directly). Credentials are minio-sandbox /
+  # minio-sandbox-secret per the cluster's iagent-minio StatefulSet
+  # root user/password env vars. Endpoint is the in-cluster service
+  # name; production would point at a TLS-terminated ingress.
+  env:
+    MINIO_ENDPOINT_URL: "http://iagent-minio:9000"
+    MINIO_ACCESS_KEY: "minio-sandbox"
+    MINIO_SECRET_KEY: "minio-sandbox-secret"
+    MINIO_REGION: "us-east-1"
   ingress:
     enabled: true
     className: traefik

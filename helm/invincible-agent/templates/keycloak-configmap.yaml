@@ -50,43 +50,6 @@ data:
               ],
               "webOrigins": [
                   "*"
-              ],
-              "protocolMappers": [
-                  {
-                      "name": "minio-sts-audience",
-                      "protocol": "openid-connect",
-                      "protocolMapper": "oidc-audience-mapper",
-                      "consentRequired": false,
-                      "config": {
-                          "included.client.audience": "minio-sts",
-                          "id.token.claim": "false",
-                          "access.token.claim": "true"
-                      }
-                  }
-              ]
-          },
-          {
-              "clientId": "minio-sts",
-              "enabled": true,
-              "publicClient": false,
-              "bearerOnly": true,
-              "serviceAccountsEnabled": true,
-              "redirectUris": [],
-              "webOrigins": [],
-              "protocolMappers": [
-                  {
-                      "name": "minio-policy",
-                      "protocol": "openid-connect",
-                      "protocolMapper": "oidc-hardcoded-claim-mapper",
-                      "consentRequired": false,
-                      "config": {
-                          "claim.name": "policy",
-                          "claim.value": "KeycloakS3Reader",
-                          "jsonType.label": "String",
-                          "id.token.claim": "true",
-                          "access.token.claim": "true"
-                      }
-                  }
               ]
           }
       ],

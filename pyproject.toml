@@ -19,6 +19,12 @@ dependencies = [
     "cryptography",
     "dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@master",
     "mcp",
+    # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
+    # reads through the same JWT + entitled_domains gate the rest of the bff
+    # uses (Option A in the doc-tools image-from-MinIO architecture). The
+    # browser never talks to MinIO STS directly — consistent authz with the
+    # rest of the data path.
+    "boto3",
 ]
 
 [project.optional-dependencies]
