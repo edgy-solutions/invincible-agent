@@ -293,6 +293,16 @@ dagster:
       repository: "edgy-solutions/invincible-agent/dagster-control-plane"
       tag: "latest"
 
+  # Doc-tools is deployed standalone via the doc-tools chart but exposes
+  # a Dagster gRPC code-location server on port 3030. Wiring it into this
+  # workspace.yaml lets the iagent dagster daemon discover doc-tools'
+  # sensors + assets (aitool_registration_sensor, sync_aitool_predicate_*).
+  # Disabled by default; sandbox flips it on.
+  docToolsCodeLocation:
+    enabled: true
+    host: "doc-tools"
+    port: 3030
+
 # --------------------------------------------------------------------------
 # Frontend — disable ingress for sandbox (use kubectl port-forward instead)
 # --------------------------------------------------------------------------

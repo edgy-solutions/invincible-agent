@@ -117,4 +117,18 @@ data:
           host: {{ .Release.Name }}-dagster-user-code
           port: {{ .Values.dagster.userCode.port }}
           location_name: iagent
+      {{- if .Values.dagster.docToolsCodeLocation.enabled }}
+      # doc-tools is deployed as a separate helm release (see
+      # ../../doc-tools/charts/doc-tools/values-sandbox.yaml) running a
+      # Dagster code-location gRPC server. Wiring it here lets the iagent
+      # dagster daemon discover doc-tools' sensors (aitool_registration_sensor)
+      # and assets (sync_aitool_predicate_to_neo4j, etc.) without merging
+      # the two codebases. Gate with docToolsCodeLocation.enabled so deploys
+      # that don't have doc-tools installed in the namespace don't get a
+      # "could not resolve grpc server" failure in dagster-webserver.
+      - grpc_server:
+          host: {{ .Values.dagster.docToolsCodeLocation.host | default "doc-tools" }}
+          port: {{ .Values.dagster.docToolsCodeLocation.port | default 3030 }}
+          location_name: doc-tools
+      {{- end }}
 {{- end }}
