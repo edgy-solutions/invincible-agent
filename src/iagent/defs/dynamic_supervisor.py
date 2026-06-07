@@ -231,34 +231,99 @@ def _resolve_subject(
     )
 
 
+def _find_compatible_verbs(
+    context,
+    subject_uri: str,
+    entitled_domains: List[str],
+) -> tuple[list[dict] | None, str | None]:
+    """ADR-0018 addendum (proper SPO). Ask Engine O which predicates can
+    operate on this subject according to Neo4j (the compatibility
+    reasoner). Returns ``(verbs, error_or_None)``.
+
+    Empty list = no verb whose registered ``input_uri`` covers this
+    subject's class chain (caller routes to generalist fallback).
+    ``error`` is a non-fatal message (e.g., Neo4j hiccup) — the caller
+    treats it as "couldn't check; fall back to unconstrained classifier".
+    """
+    if not subject_uri or subject_uri == "UNKNOWN":
+        return [], None
+    try:
+        resp = requests.post(
+            f"{ONTOLOGY_SVC_URL}/find_compatible_verbs",
+            json={
+                "subject_uri": subject_uri,
+                "max_hops": 5,
+                "entitled_domains": entitled_domains,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return list(data.get("verbs") or []), None
+    except Exception as exc:
+        context.log.warning(
+            "_find_compatible_verbs failed for subject_uri=%s: %s — "
+            "falling through to unconstrained predicate classification",
+            subject_uri, exc,
+        )
+        return None, str(exc)
+
+
 def _classify_route(
     context,
     user_query: str,
     entitled_domains: List[str],
     routing_domain: str,
 ) -> tuple[str, Dict[str, Any] | None, dict]:
-    """Two-stage SPO routing: /resolve then /classify_predicate.
+    """Three-stage SPO routing per ADR-0018 (with addendum): /resolve →
+    /find_compatible_verbs → /classify_predicate.
 
-    Returns ``(status, predicate_or_none, telemetry_dict)``:
+    The middle step is the load-bearing addition: Neo4j returns the
+    verbs whose registered ``input_uri`` covers the resolved subject's
+    class chain (via ``subClassOf*``). /classify_predicate is then
+    constrained to that subset — the LLM cannot pick an incompatible
+    (subject, verb) pair because the offending verb never enters its
+    enum. Falls back to unconstrained classification when the subject
+    is UNKNOWN (cold ontology, no /resolve match) so we never get
+    worse than the prior 2-call symmetric behavior.
 
-      * ``("matched", predicate, t)`` — LLM picked a verb with full
-        predicate record (endpoint, owner_persona, domains). Caller
-        applies the confidence threshold.
-      * ``("no_match", None, t)`` — Either /resolve returned UNKNOWN
-        AND /classify_predicate returned UNKNOWN, OR the candidate set
-        was empty. ADR-0008 says fall back to Engine A as generalist.
-      * ``("infra_error", None, t)`` — Could not reach Engine O.
-        ADR-0008 says abort with INFRA_ERROR signal.
-
-    ``telemetry_dict`` carries the per-decision audit context (resolved
-    subject + confidence, predicate confidence, candidate set, reasoning
-    strings) so the structured-log emit can stamp them on every routing
-    decision. Replaces the old predicate_routing_score + yellow_zone_*
-    log lines with a unified routing_decision record.
+    Returns ``(status, predicate_or_none, telemetry_dict)``.
     """
     subject_uri, subject_conf, subject_reason = _resolve_subject(
         context, user_query, routing_domain,
     )
+
+    compatible_verbs, find_err = _find_compatible_verbs(
+        context, subject_uri, entitled_domains,
+    )
+    # compatible_verbs is None on Neo4j error → fall through unconstrained.
+    # Empty list with valid Neo4j = subject is genuinely unsupported.
+    compatible_verb_iris = (
+        [v.get("verb_iri") for v in compatible_verbs if v.get("verb_iri")]
+        if compatible_verbs
+        else []
+    )
+
+    # When the subject is resolved AND Neo4j returns ZERO compatible
+    # verbs, that's a hard no-match: no engine in the registry can
+    # operate on this subject's class chain. Route to generalist
+    # fallback without burning an LLM call on /classify_predicate.
+    if subject_uri != "UNKNOWN" and compatible_verbs is not None and not compatible_verbs:
+        context.log.info(
+            "routing_decision subject_uri=%s subject_conf=%s "
+            "no_compatible_verbs_in_neo4j → generalist fallback",
+            subject_uri, subject_conf,
+        )
+        return _ROUTING_NO_MATCH, None, {
+            "subject_uri": subject_uri,
+            "subject_confidence": subject_conf,
+            "subject_reasoning": subject_reason,
+            "verb_iri": "UNKNOWN",
+            "verb_confidence": 0.0,
+            "verb_reasoning": "Neo4j marks zero verbs as compatible with this subject.",
+            "candidate_verbs": [],
+            "neo4j_find_error": find_err,
+        }
 
     try:
         resp = requests.post(
@@ -269,6 +334,10 @@ def _classify_route(
                 "subject_reasoning": subject_reason,
                 "entitled_domains": entitled_domains,
                 "domain": routing_domain or "MAINTENANCE",
+                # ADR-0018 addendum: constrain the LLM to graph-
+                # compatible verbs. Empty = unconstrained (Weaviate
+                # hybrid as before).
+                "compatible_verb_iris": compatible_verb_iris,
             },
             timeout=30,  # LLM call inside; longer than /search_predicates.
         )
@@ -282,6 +351,7 @@ def _classify_route(
         return _ROUTING_INFRA_ERROR, None, {
             "subject_uri": subject_uri,
             "subject_confidence": subject_conf,
+            "compatible_verb_iris": compatible_verb_iris,
             "error": str(exc),
         }
 
@@ -291,10 +361,32 @@ def _classify_route(
     predicate = data.get("predicate")
     candidates = list(data.get("candidate_verb_iris") or [])
 
+    # When the LLM picked a compatible verb but /classify_predicate
+    # couldn't materialize a full predicate dict (Weaviate-vs-Neo4j sync
+    # gap), fill it in from the Neo4j-returned compatible_verbs record so
+    # the supervisor can still dispatch.
+    if predicate is None and verb_iri != "UNKNOWN" and compatible_verbs:
+        for cv in compatible_verbs:
+            if cv.get("verb_iri") == verb_iri:
+                predicate = {
+                    "verb_iri": cv.get("verb_iri"),
+                    "verb_type": cv.get("verb_local"),
+                    "input_uri": cv.get("input_uri"),
+                    "output_uri": cv.get("output_uri"),
+                    "endpoint": cv.get("endpoint_url") or "",
+                    "owner_persona": cv.get("owner_persona"),
+                    "domains": cv.get("domains") or [],
+                    "cost_class": cv.get("cost_class"),
+                    "requires_human_approval": cv.get("requires_human_approval", False),
+                }
+                break
+
     telemetry = {
         "subject_uri": subject_uri,
         "subject_confidence": subject_conf,
         "subject_reasoning": subject_reason,
+        "compatible_verb_iris": compatible_verb_iris,
+        "neo4j_find_error": find_err,
         "verb_iri": verb_iri,
         "verb_confidence": verb_conf,
         "verb_reasoning": verb_reason,
@@ -304,20 +396,22 @@ def _classify_route(
     if verb_iri == "UNKNOWN" or not predicate:
         context.log.warning(
             "classify_predicate no_match query=%r subject_uri=%s "
-            "candidates=%s reasoning=%r",
-            user_query, subject_uri, candidates, verb_reason,
+            "compatible=%s candidates=%s reasoning=%r",
+            user_query, subject_uri, compatible_verb_iris,
+            candidates, verb_reason,
         )
         return _ROUTING_NO_MATCH, None, telemetry
 
-    # Ensure score is present in the predicate dict so existing dispatch
-    # logic (and the audit log emit) can read it. The LLM's confidence
-    # replaces the BM25 score in the new architecture.
+    # LLM confidence replaces the BM25 score on the predicate dict so
+    # the supervisor's threshold check reads from the same field as
+    # before. (Dispatch logic + audit log unchanged from ADR-0018.)
     predicate["score"] = verb_conf
 
     context.log.info(
         "routing_decision subject_uri=%s subject_conf=%s "
-        "verb_iri=%s verb_conf=%s candidates=%s reasoning=%r",
-        subject_uri, subject_conf,
+        "compatible_count=%d verb_iri=%s verb_conf=%s "
+        "candidates=%s reasoning=%r",
+        subject_uri, subject_conf, len(compatible_verb_iris),
         verb_iri, verb_conf, candidates, verb_reason,
     )
     return _ROUTING_MATCHED, predicate, telemetry

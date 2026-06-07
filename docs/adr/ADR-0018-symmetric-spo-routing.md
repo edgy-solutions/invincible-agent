@@ -314,3 +314,134 @@ Engines unchanged. Frontend unchanged. Helm values:
 `PREDICATE_FALLBACK_SCORE_THRESHOLD_HIGH` removed
 (`PREDICATE_FALLBACK_SCORE_THRESHOLD` keeps the same meaning but
 applies to LLM confidence rather than BM25 score).
+
+---
+
+## Addendum — Neo4j is the (S, P) compatibility reasoner
+
+**Status:** Accepted
+**Date:** 2026-06-07
+**Trigger:** Operator-observed regression. With the symmetric routing
+shipped above, subject and verb classification each individually
+performed well, but the **pair** could still be incoherent: e.g.,
+`(mro:WorkInstruction, mesh:enumerateCatalog)` would be picked when
+"enumerate" was a strong lexical hit in the predicate corpus, even
+though no engine has a registered edge from `WorkInstruction` to
+`enumerateCatalog` in the predicate graph. The verb classifier was
+unconstrained by the subject's actual graph neighborhood.
+
+### What changed
+
+A **middle leg** was inserted between `/resolve` and
+`/classify_predicate`: a pure-Cypher endpoint on Engine O that asks
+Neo4j which verbs can operate on the resolved subject according to
+the registered predicate graph (the original ADR-0004 reasoner).
+
+```
+POST /find_compatible_verbs
+  body: { subject_uri, max_hops=5, entitled_domains[] }
+  →
+    MATCH (start:OntologyClass {uri: $subject_uri})
+    OPTIONAL MATCH (start)-[:subClassOf*0..N]->(ancestor)
+    WITH collect(DISTINCT ancestor)+[start] AS scope_classes
+    UNWIND scope_classes AS scope
+    MATCH (scope)-[r]->(o:OntologyClass) WHERE r.iri IS NOT NULL
+    RETURN DISTINCT r.iri, type(r), scope.uri AS input_uri, o.uri AS output_uri,
+                   r.endpoint_url, r.owner_persona, r.domains,
+                   r.cost_class, r.requires_human_approval,
+                   length(shortestPath(...)) AS hops
+    ORDER BY hops, verb_iri
+```
+
+`/classify_predicate` now accepts a `compatible_verb_iris: list[str]`
+field. When non-empty, the endpoint **filters its candidate set down
+to that whitelist before building the TypeBuilder enum**. The LLM
+literally cannot pick an incompatible verb because the offending
+options never enter its constrained-enum vocabulary.
+
+The supervisor's `_classify_route` chains the three calls:
+
+```
+subject_uri, subject_conf, subject_reason = /resolve(query, domain)
+
+compatible = /find_compatible_verbs(subject_uri, entitled_domains)
+  # subject_uri == "UNKNOWN" → skip, unconstrained classification
+  # subject_uri valid, empty verbs → hard NO_MATCH (generalist fallback);
+  #                                  do not burn an LLM call.
+  # subject_uri valid, N verbs   → constrain classify_predicate.
+
+verb = /classify_predicate(query, subject_uri, subject_reasoning,
+                           compatible_verb_iris=[v.iri for v in compatible])
+```
+
+### Why this restores the original ADR-0004 intent
+
+ADR-0004 always specified Neo4j as the routing reasoner — the LLM
+was meant to give names to nodes/edges, and Cypher was meant to find
+the path. The two-stage symmetric routing in the main body of this
+ADR closed the LLM-precision gap on the verb side but left the LLM
+making the (S, P) pair decision **alone**, with no graph-level
+compatibility check. That was the regression operator-observed
+queries surfaced. This addendum puts the graph back in the loop as
+the gating filter; the LLM still picks among compatible options,
+but it cannot escape the registered graph.
+
+### Failure modes the addendum closes
+
+- **Lexical-proximity verb hits an incompatible subject.** The
+  offending verb is filtered out by `/find_compatible_verbs` before
+  the LLM sees it. Routing falls back to generalist when no
+  compatible verb scores well, which is the correct behavior.
+- **New verb registered, no Neo4j edge planted.** The verb is
+  invisible to `/find_compatible_verbs`, so it routes nowhere.
+  Catches the registration gap that the symmetric routing would
+  silently route around.
+- **Engine registers an edge but the ontology graph drifts.** When
+  the subject's class is moved under a different parent, the
+  Cypher hop count changes; verbs lose / gain compatibility
+  automatically. The graph is the source of truth.
+
+### New failure mode the addendum introduces
+
+- **Subject resolves but no compatible verbs.** Previously the
+  symmetric router would unconstrained-classify and (sometimes)
+  pick a wrong verb anyway. Now it short-circuits to generalist
+  fallback before the LLM is called. Watch the
+  `no_compatible_verbs_in_neo4j` log line — a sustained rate of it
+  means a registration gap (either an engine never planted its
+  Neo4j edges, or the ontology lacks the subClassOf bridge to the
+  registered verb's `input_uri`).
+
+### Cost
+
+Adds one Cypher call (~5–15 ms in the sandbox cluster) to every
+routing decision. The Cypher is cheaper than `/search_predicates`
+(no Weaviate roundtrip) and the result set is bounded by the verb
+registry, not the corpus size. No additional LLM call.
+
+### Test gate impact
+
+`tests/routing/test_classify_route.py` now chains the three calls
+in the same order the supervisor does and passes
+`compatible_verb_iris` through to `/classify_predicate`. A test that
+flipped wrong under the original symmetric routing **and now passes
+purely because Neo4j filtered the offending verb out** is the
+regression cover this addendum was written to install.
+
+### Indicators for revisiting
+
+- **`no_compatible_verbs_in_neo4j` rate sustained above ~5%.**
+  Either a class of subjects isn't bridged into the registered
+  ontology, or new engines aren't planting Neo4j edges on
+  registration. Triage from the structured-log `subject_uri`
+  distribution.
+- **Compatible set is consistently size-1 for queries the operator
+  thinks should have a real choice.** The graph is over-constrained;
+  registration is too granular; verbs that should share an
+  `input_uri` ancestor don't. Promote shared parents in the ontology.
+- **Cypher latency > 50 ms.** The compat query is path-bounded;
+  >50 ms means the ontology graph has grown beyond what a single
+  unindexed walk can serve. Add an index on `OntologyClass(uri)`
+  (already present) and re-profile; if persistent, cache the
+  result keyed on `(subject_uri, entitled_domains)` — verbs change
+  on registration, not per-query.

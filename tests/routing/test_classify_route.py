@@ -269,6 +269,23 @@ def test_routing_decision(case: RouteCase) -> None:
             f"reasoning={subject_reason!r})"
         )
 
+    # --- /find_compatible_verbs (ADR-0018 addendum: Neo4j is the reasoner) ---
+    # When subject_uri is UNKNOWN, skip the compat call and let the LLM
+    # classify unconstrained — that is the documented fallback.
+    compatible_verb_iris: list[str] = []
+    compat_latency = 0.0
+    if subject_uri and subject_uri != "UNKNOWN":
+        compat_resp, compat_latency = _post("/find_compatible_verbs", {
+            "subject_uri": subject_uri,
+            "max_hops": 5,
+            "entitled_domains": list(case.entitled_domains),
+        })
+        compatible_verb_iris = [
+            v.get("verb_iri")
+            for v in (compat_resp.get("verbs") or [])
+            if v.get("verb_iri")
+        ]
+
     # --- /classify_predicate ---
     classify_resp, classify_latency = _post("/classify_predicate", {
         "query": case.query,
@@ -276,6 +293,7 @@ def test_routing_decision(case: RouteCase) -> None:
         "subject_reasoning": subject_reason,
         "entitled_domains": list(case.entitled_domains),
         "domain": case.domain,
+        "compatible_verb_iris": compatible_verb_iris,
     })
     verb_iri = classify_resp.get("resolved_verb_iri", "UNKNOWN")
     verb_conf = classify_resp.get("confidence_score", 0.0)
@@ -285,16 +303,19 @@ def test_routing_decision(case: RouteCase) -> None:
     # Report — pytest -v surfaces these as the assertion failure context
     # if anything below fails.
     print(
-        f"\n  query                = {case.query!r}\n"
-        f"  subject_uri          = {subject_uri}\n"
-        f"  subject_confidence   = {subject_conf:.2f}\n"
-        f"  verb_iri             = {verb_iri}\n"
-        f"  verb_confidence      = {verb_conf:.2f}\n"
-        f"  candidate_verbs      = {candidates}\n"
-        f"  verb_reasoning       = {verb_reason!r}\n"
-        f"  resolve_latency_s    = {resolve_latency:.2f}\n"
-        f"  classify_latency_s   = {classify_latency:.2f}\n"
-        f"  total_latency_s      = {resolve_latency + classify_latency:.2f}\n"
+        f"\n  query                  = {case.query!r}\n"
+        f"  subject_uri            = {subject_uri}\n"
+        f"  subject_confidence     = {subject_conf:.2f}\n"
+        f"  compatible_verb_iris   = {compatible_verb_iris}\n"
+        f"  verb_iri               = {verb_iri}\n"
+        f"  verb_confidence        = {verb_conf:.2f}\n"
+        f"  candidate_verbs        = {candidates}\n"
+        f"  verb_reasoning         = {verb_reason!r}\n"
+        f"  resolve_latency_s      = {resolve_latency:.2f}\n"
+        f"  compat_latency_s       = {compat_latency:.2f}\n"
+        f"  classify_latency_s     = {classify_latency:.2f}\n"
+        f"  total_latency_s        = "
+        f"{resolve_latency + compat_latency + classify_latency:.2f}\n"
     )
 
     assert verb_iri == case.expected_verb_iri, (

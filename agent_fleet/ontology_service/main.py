@@ -622,23 +622,43 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
 
     Always invoke via ``await asyncio.to_thread(...)`` from async paths so
     the event loop stays free and /health keeps responding.
+
+    Hybrid (BM25 + vector) requires a text2vec module on the Weaviate
+    cluster. The sandbox deployment has no vectorizer enabled (helm
+    default), so hybrid() raises "VectorFromInput was called without
+    vectorizer on class OntologyClass". We fall through to pure bm25()
+    so /resolve still works while a vectorizer module is decided on —
+    same pragmatic pattern that _predicate_hybrid_search_sync already
+    uses for the Predicate collection. When a vectorizer is added,
+    hybrid() succeeds first and the bm25 fallback is dormant.
     """
     if not _WEAVIATE_CLIENT:
         return []
+    if not _WEAVIATE_CLIENT.collections.exists("OntologyClass"):
+        return []
     try:
         collection = _WEAVIATE_CLIENT.collections.get("OntologyClass")
-        # Using hybrid search (BM25 + Vector)
-        # Filter by domain if provided
         filters = wvc.query.Filter.by_property("domain").equal(domain.upper()) if domain else None
 
-        response = collection.query.hybrid(
-            query=query,
-            limit=limit,
-            filters=filters
-        )
-        return [{"uri": obj.properties["uri"], "label": obj.properties["label"], "description": obj.properties.get("definition", "")} for obj in response.objects]
+        try:
+            response = collection.query.hybrid(
+                query=query, limit=limit, filters=filters,
+            )
+        except Exception:
+            # No vectorizer module on Weaviate — fall back to BM25.
+            response = collection.query.bm25(
+                query=query, limit=limit, filters=filters,
+            )
+        return [
+            {
+                "uri": obj.properties["uri"],
+                "label": obj.properties["label"],
+                "description": obj.properties.get("definition", ""),
+            }
+            for obj in response.objects
+        ]
     except Exception as e:
-        print(f"Weaviate search failed: {e}")
+        print(f"Weaviate OntologyClass search failed: {e}")
         return []
 
 
@@ -1511,6 +1531,152 @@ async def list_domains() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# POST /find_compatible_verbs — Neo4j IS the (S,P) compatibility reasoner
+# ---------------------------------------------------------------------------
+#
+# ADR-0018 addendum (proper SPO). Given a resolved subject_uri, return the
+# verbs that Neo4j marks as edges originating at that subject — directly
+# OR via subClassOf traversal up to N hops. This is the constraint that
+# makes (S, P) pair routing correct by construction: the LLM never sees
+# verbs whose graph edges don't include the subject's class, so it
+# cannot pick an incompatible pair.
+#
+# This is the Cypher leg ADR-0004 originally proposed for routing. The
+# /classify_predicate step that ADR-0018 added on top of it is the LLM
+# precision step that picks among the compatible set when there are
+# multiple choices.
+
+class FindCompatibleVerbsRequest(BaseModel):
+    subject_uri: str
+    # How many subClassOf hops to walk. 0 = direct edges only;
+    # 5 is a sensible default for most ontologies. Set higher when the
+    # class hierarchy is deep.
+    max_hops: int = 5
+    # When set, only return verbs whose domains overlap with these
+    # (or are domain-agnostic). Mirrors the entitled_domains filter on
+    # /search_predicates.
+    entitled_domains: list[str] = Field(default_factory=list)
+
+
+class CompatibleVerb(BaseModel):
+    verb_iri: str
+    verb_local: str
+    input_uri: str
+    output_uri: str
+    endpoint_url: str | None = None
+    owner_persona: str | None = None
+    domains: list[str] = Field(default_factory=list)
+    cost_class: str | None = None
+    requires_human_approval: bool = False
+    hops: int = 0
+
+
+class FindCompatibleVerbsResponse(BaseModel):
+    subject_uri: str
+    verbs: list[CompatibleVerb] = Field(default_factory=list)
+    # Diagnostic: how Neo4j answered. Helps when the answer is empty.
+    cypher_executed: str | None = None
+
+
+_FIND_COMPAT_VERBS_CYPHER = """
+MATCH (start:OntologyClass {uri: $subject_uri})
+OPTIONAL MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(ancestor:OntologyClass)
+WITH collect(DISTINCT ancestor) + [start] AS scope_classes
+UNWIND scope_classes AS scope
+WITH DISTINCT scope WHERE scope IS NOT NULL
+MATCH (scope)-[r]->(o:OntologyClass)
+WHERE r.iri IS NOT NULL
+RETURN DISTINCT
+    r.iri                         AS verb_iri,
+    type(r)                       AS verb_local,
+    scope.uri                     AS input_uri,
+    o.uri                         AS output_uri,
+    r.endpoint_url                AS endpoint_url,
+    r.owner_persona               AS owner_persona,
+    coalesce(r.domains, [])       AS domains,
+    r.cost_class                  AS cost_class,
+    coalesce(r.requires_human_approval, false) AS requires_human_approval,
+    length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops
+ORDER BY hops ASC, verb_iri ASC
+"""
+
+
+@app.post("/find_compatible_verbs", response_model=FindCompatibleVerbsResponse)
+async def find_compatible_verbs(
+    request: FindCompatibleVerbsRequest,
+) -> FindCompatibleVerbsResponse:
+    """Cypher-only: which predicates can operate on this subject?
+
+    The Cypher walks ``(subject)-[:subClassOf*0..max_hops]->(ancestor)``
+    then collects every ``(ancestor)-[r]->(_)`` where ``r.iri`` is set
+    (i.e., the edge is a registered predicate). The result is the set
+    of verbs whose registered ``input_uri`` covers the resolved subject
+    via the class hierarchy. Returns an empty list when:
+
+      - The subject_uri isn't in the OntologyClass graph (cold ontology
+        load, typo, or a UNKNOWN subject from /resolve).
+      - No verb has a registered edge that the subject's class chain
+        reaches in max_hops hops.
+
+    Empty list → the supervisor's caller routes to the generalist
+    fallback. Non-empty list → caller passes the verb_iris into
+    /classify_predicate as compatible_verb_iris.
+    """
+    if not _NEO4J_DRIVER:
+        raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
+
+    max_hops = max(0, min(10, int(request.max_hops or 5)))
+    cypher = _FIND_COMPAT_VERBS_CYPHER.replace("$MAXHOPS$", str(max_hops))
+
+    def _run() -> list[dict]:
+        with _NEO4J_DRIVER.session() as session:
+            return [
+                dict(r)
+                for r in session.run(
+                    cypher,
+                    subject_uri=request.subject_uri,
+                )
+            ]
+
+    try:
+        rows = await asyncio.to_thread(_run)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Neo4j compatibility query failed: {exc}",
+        ) from exc
+
+    entitled = {d.upper() for d in (request.entitled_domains or [])}
+    verbs: list[CompatibleVerb] = []
+    for row in rows:
+        verb_domains = [d.upper() for d in (row.get("domains") or [])]
+        # Scope filter: same semantics as /search_predicates. Empty entitled
+        # = pass through; empty verb domains = domain-agnostic (always
+        # keep); intersection > 0 = compatible.
+        if entitled and verb_domains:
+            if not entitled.intersection(verb_domains):
+                continue
+        verbs.append(CompatibleVerb(
+            verb_iri=str(row["verb_iri"]),
+            verb_local=str(row["verb_local"]),
+            input_uri=str(row["input_uri"]),
+            output_uri=str(row["output_uri"]),
+            endpoint_url=row.get("endpoint_url"),
+            owner_persona=row.get("owner_persona"),
+            domains=verb_domains,
+            cost_class=row.get("cost_class"),
+            requires_human_approval=bool(row.get("requires_human_approval", False)),
+            hops=int(row.get("hops") or 0),
+        ))
+
+    return FindCompatibleVerbsResponse(
+        subject_uri=request.subject_uri,
+        verbs=verbs,
+        cypher_executed=cypher.strip(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /classify_predicate  (symmetric of /resolve)
 # ---------------------------------------------------------------------------
 #
@@ -1538,6 +1704,15 @@ class ClassifyPredicateRequest(BaseModel):
     # How many Weaviate candidates to put in front of the LLM. Higher =
     # better recall, more tokens. 10 mirrors /resolve's default.
     candidate_limit: int = 10
+    # ADR-0018 addendum (proper SPO): when populated, the LLM is
+    # constrained to picking among ONLY these verb_iris — sourced from
+    # the supervisor's prior call to /find_compatible_verbs (Cypher walk
+    # of (subject)-[:subClassOf*]->()-[verb]->(o) over the predicate
+    # graph). Bad (subject, verb) pairs become impossible because they
+    # never enter the candidate enum. When empty list / None, the
+    # endpoint falls back to the prior behavior of using Weaviate hybrid
+    # as the recall step (subject is reasoning context only).
+    compatible_verb_iris: list[str] = Field(default_factory=list)
 
 
 class ClassifyPredicateResponse(BaseModel):
@@ -1577,25 +1752,55 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     against it the same way ADR-0008 thresholded against the BM25 score.
     """
     entitled = [d.upper() for d in (request.entitled_domains or [])]
+    compatible = set(request.compatible_verb_iris or [])
 
     candidates = await predicate_hybrid_search(
         query=request.query,
         entitled_domains=entitled,
-        limit=request.candidate_limit,
+        limit=max(request.candidate_limit, 25),  # widen so the filter survives
     )
+
+    # ADR-0018 addendum: when the caller has resolved the subject and
+    # asked /find_compatible_verbs which predicates Neo4j says can
+    # operate on it, filter the Weaviate candidate set to that subset
+    # BEFORE the LLM sees anything. The LLM cannot then pick an
+    # incompatible (subject, verb) pair because the offending verb
+    # never enters the constrained enum. If the intersection is empty
+    # (the subject's compatible verbs aren't in Weaviate at all),
+    # synthesize candidate dicts directly from the supplied IRIs so the
+    # LLM still has them — the predicate-registry-vs-Weaviate sync gap
+    # shouldn't silently swallow a valid route.
+    if compatible:
+        filtered = [c for c in candidates if c.get("verb_iri") in compatible]
+        if not filtered:
+            # Fabricate minimal candidate dicts for the supplied verbs so
+            # the LLM at least sees their IRIs. The predicate dict that
+            # the supervisor needs to dispatch will be None (no Weaviate
+            # record for these) — caller must call /find_tool to
+            # materialize the dispatch info.
+            filtered = [
+                {"verb_iri": v, "description": "", "input_uri": "", "owner_persona": ""}
+                for v in compatible
+            ]
+        candidates = filtered
 
     if not candidates:
         # No registered predicate this caller is entitled to. Caller
         # routes to the generalist fallback (ADR-0008 no_match path).
+        reason = (
+            f"No registered predicate matched query={request.query!r} "
+            f"under entitled_domains={entitled}."
+        )
+        if compatible:
+            reason = (
+                f"No predicates that Neo4j marks compatible with the "
+                f"resolved subject ({list(compatible)}) survived the "
+                f"entitled_domains scope filter."
+            )
         return ClassifyPredicateResponse(
             resolved_verb_iri="UNKNOWN",
             confidence_score=0.0,
-            reasoning=(
-                f"No registered predicate matched query={request.query!r} "
-                f"under entitled_domains={entitled}. Either no engine "
-                f"serves this intent, or doc-tools has not synced "
-                f"registrations into Weaviate yet."
-            ),
+            reasoning=reason,
             candidate_verb_iris=[],
         )
 
