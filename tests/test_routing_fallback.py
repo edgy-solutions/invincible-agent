@@ -122,79 +122,212 @@ class _FakeResp:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_predicate_endpoint — the 4-way status disambiguation
+# _classify_route — three-stage SPO disambiguation (ADR-0018 + addendum)
 # ---------------------------------------------------------------------------
+#
+# The original tests here exercised _resolve_predicate_endpoint, which
+# was removed in ADR-0018 (5ed222a) and supplanted by _classify_route.
+# Same 4-way status outcomes (matched / no_match / infra_error / and
+# the new compatibility-empty branch); same fallback policy; different
+# orchestrator. The tests below mock the three HTTP endpoints
+# (/resolve, /find_compatible_verbs, /classify_predicate) so the
+# routing decision graph is exercised end-to-end without requiring
+# a live Engine O.
+#
+# Endpoint shape recap (matches ontology_service/main.py):
+#   /resolve  ⇒ {resolved_uri, confidence_score, reasoning}
+#   /find_compatible_verbs ⇒ {subject_uri, verbs: [{verb_iri, ...}]}
+#   /classify_predicate ⇒ {resolved_verb_iri, confidence_score,
+#                          reasoning, predicate?, candidate_verb_iris}
+
+def _route_with_endpoints(supervisor_mod, monkeypatch, responses: dict):
+    """Helper: monkeypatch requests.post to route by URL substring.
+
+    ``responses`` maps endpoint name → either a _FakeResp/value, or a
+    callable that raises (for infra-error tests). Endpoints we don't
+    set explicitly default to a safe empty response.
+    """
+    def _dispatch(url, *args, **kwargs):
+        for key, value in responses.items():
+            if key in url:
+                if callable(value) and not isinstance(value, _FakeResp):
+                    return value(url, *args, **kwargs)
+                return value
+        return _FakeResp({})
+    monkeypatch.setattr(supervisor_mod.requests, "post", _dispatch)
+    return _FakeCtx()
+
+
 def test_matched_returns_predicate_dict(supervisor_mod, monkeypatch):
-    """Engine O found a candidate → status=matched, predicate forwarded."""
-    monkeypatch.setattr(
-        supervisor_mod.requests, "post",
-        lambda *a, **k: _FakeResp({
-            "found": True,
-            "candidates": [{
+    """End-to-end happy path. /resolve picks subject, /find_compatible_verbs
+    returns one verb (Neo4j decisive at N=1), /classify_predicate returns
+    matched. _classify_route plumbs the full predicate dict through with
+    the LLM's confidence as ``score``."""
+    ctx = _route_with_endpoints(supervisor_mod, monkeypatch, {
+        "/resolve": _FakeResp({
+            "resolved_uri": "mro:WorkInstruction",
+            "confidence_score": 0.95,
+            "reasoning": "WI",
+        }),
+        "/find_compatible_verbs": _FakeResp({
+            "subject_uri": "mro:WorkInstruction",
+            "verbs": [{
+                "verb_iri": "mesh:queryKnowledgeGraph",
+                "verb_local": "queryKnowledgeGraph",
+                "input_uri": "mesh:GraphQuery",
+                "output_uri": "mesh:GraphExpertResponse",
+                "endpoint_url": "http://engine-e/query_graph",
+                "owner_persona": "AUDITOR",
+                "domains": ["MAINTENANCE"],
+            }],
+        }),
+        "/classify_predicate": _FakeResp({
+            "resolved_verb_iri": "mesh:queryKnowledgeGraph",
+            "confidence_score": 0.82,
+            "reasoning": "graph match",
+            "predicate": {
                 "verb_iri": "mesh:queryKnowledgeGraph",
                 "endpoint": "http://engine-e/query_graph",
                 "owner_persona": "AUDITOR",
                 "domains": ["MAINTENANCE"],
-                "score": 0.82,
-            }],
+            },
+            "candidate_verb_iris": ["mesh:queryKnowledgeGraph"],
         }),
-    )
-    ctx = _FakeCtx()
-    status, pred = supervisor_mod._resolve_predicate_endpoint(
-        ctx, "find vibration symptoms", ["MAINTENANCE"]
+    })
+
+    status, pred, telemetry = supervisor_mod._classify_route(
+        ctx, "find vibration symptoms", ["MAINTENANCE"], "MAINTENANCE",
     )
     assert status == supervisor_mod._ROUTING_MATCHED
     assert pred["verb_iri"] == "mesh:queryKnowledgeGraph"
+    # LLM confidence replaces BM25 score on the predicate dict.
     assert pred["score"] == 0.82
+    assert telemetry["subject_uri"] == "mro:WorkInstruction"
+    assert telemetry["verb_iri"] == "mesh:queryKnowledgeGraph"
 
 
 def test_no_match_returns_none(supervisor_mod, monkeypatch):
-    """Engine O returned found=false → status=no_match, predicate=None."""
-    monkeypatch.setattr(
-        supervisor_mod.requests, "post",
-        lambda *a, **k: _FakeResp({"found": False, "reason": "no synonym hit"}),
-    )
-    ctx = _FakeCtx()
-    status, pred = supervisor_mod._resolve_predicate_endpoint(
-        ctx, "do something weird", []
+    """/resolve UNKNOWN + /classify_predicate UNKNOWN → no_match.
+    The addendum's compatibility-empty shortcut doesn't fire when
+    subject_uri itself is UNKNOWN — we fall through unconstrained."""
+    ctx = _route_with_endpoints(supervisor_mod, monkeypatch, {
+        "/resolve": _FakeResp({
+            "resolved_uri": "UNKNOWN",
+            "confidence_score": 0.0,
+            "reasoning": "no match",
+        }),
+        "/classify_predicate": _FakeResp({
+            "resolved_verb_iri": "UNKNOWN",
+            "confidence_score": 0.0,
+            "reasoning": "no fit",
+            "predicate": None,
+            "candidate_verb_iris": [],
+        }),
+    })
+    status, pred, telemetry = supervisor_mod._classify_route(
+        ctx, "do something weird", [], "MAINTENANCE",
     )
     assert status == supervisor_mod._ROUTING_NO_MATCH
     assert pred is None
+    assert telemetry["subject_uri"] == "UNKNOWN"
 
 
-def test_found_true_empty_candidates_treated_as_no_match(supervisor_mod, monkeypatch):
-    """Engine O bug: found=true with empty candidates → treat as no_match
-    (still a registry-shape failure the LLM might handle)."""
-    monkeypatch.setattr(
-        supervisor_mod.requests, "post",
-        lambda *a, **k: _FakeResp({"found": True, "candidates": []}),
+def test_zero_compatible_verbs_is_no_match_without_llm(supervisor_mod, monkeypatch):
+    """ADR-0018 addendum: subject resolves, but Neo4j marks zero verbs
+    compatible → hard NO_MATCH without burning an LLM call on
+    /classify_predicate. This is the Neo4j-as-reasoner contract: when
+    the graph says no edge exists, route to the generalist fallback
+    immediately."""
+    classify_called = {"count": 0}
+    def _count_classify(url, *a, **k):
+        classify_called["count"] += 1
+        return _FakeResp({
+            "resolved_verb_iri": "UNKNOWN",
+            "confidence_score": 0.0,
+            "predicate": None,
+            "candidate_verb_iris": [],
+        })
+    ctx = _route_with_endpoints(supervisor_mod, monkeypatch, {
+        "/resolve": _FakeResp({
+            "resolved_uri": "mro:WorkInstruction",
+            "confidence_score": 0.99,
+            "reasoning": "WI",
+        }),
+        "/find_compatible_verbs": _FakeResp({
+            "subject_uri": "mro:WorkInstruction",
+            "verbs": [],
+        }),
+        "/classify_predicate": _count_classify,
+    })
+    status, pred, telemetry = supervisor_mod._classify_route(
+        ctx, "do something the graph rejects", [], "MAINTENANCE",
     )
-    ctx = _FakeCtx()
-    status, pred = supervisor_mod._resolve_predicate_endpoint(ctx, "q", [])
     assert status == supervisor_mod._ROUTING_NO_MATCH
     assert pred is None
+    # Critical: we did NOT call /classify_predicate. Neo4j's "no edge"
+    # answer is decisive; an LLM call would be pure overhead.
+    assert classify_called["count"] == 0
 
 
 def test_http_503_returns_infra_error(supervisor_mod, monkeypatch):
-    """Weaviate-unreachable 503 from Engine O → status=infra_error.
-    Must NOT be conflated with no_match — different ADR-0008 branches."""
-    monkeypatch.setattr(
-        supervisor_mod.requests, "post",
-        lambda *a, **k: _FakeResp({"detail": "weaviate down"}, status_code=503),
+    """/classify_predicate returns 503 → infra_error. Must NOT be
+    conflated with no_match — different ADR-0008 branches."""
+    ctx = _route_with_endpoints(supervisor_mod, monkeypatch, {
+        "/resolve": _FakeResp({
+            "resolved_uri": "mro:WorkInstruction",
+            "confidence_score": 0.9,
+            "reasoning": "WI",
+        }),
+        "/find_compatible_verbs": _FakeResp({
+            "subject_uri": "mro:WorkInstruction",
+            "verbs": [{
+                "verb_iri": "mesh:queryKnowledgeGraph",
+                "input_uri": "mesh:GraphQuery",
+                "output_uri": "mesh:GraphExpertResponse",
+            }],
+        }),
+        "/classify_predicate": _FakeResp(
+            {"detail": "baml down"}, status_code=503,
+        ),
+    })
+    status, pred, telemetry = supervisor_mod._classify_route(
+        ctx, "q", [], "MAINTENANCE",
     )
-    ctx = _FakeCtx()
-    status, pred = supervisor_mod._resolve_predicate_endpoint(ctx, "q", [])
     assert status == supervisor_mod._ROUTING_INFRA_ERROR
     assert pred is None
+    assert "error" in telemetry
 
 
 def test_network_exception_returns_infra_error(supervisor_mod, monkeypatch):
-    """Connection refused / DNS / timeout → infra_error."""
-    def _boom(*a, **k):
+    """Connection refused / DNS / timeout on /classify_predicate →
+    infra_error. /find_compatible_verbs network errors are non-fatal
+    (we degrade to unconstrained classification), but a downed
+    /classify_predicate IS fatal — the router cannot pick a verb."""
+    def _resolve_ok(*a, **k):
+        return _FakeResp({
+            "resolved_uri": "mro:WorkInstruction",
+            "confidence_score": 0.9,
+            "reasoning": "WI",
+        })
+    def _compat_ok(*a, **k):
+        return _FakeResp({
+            "subject_uri": "mro:WorkInstruction",
+            "verbs": [{
+                "verb_iri": "mesh:queryKnowledgeGraph",
+                "input_uri": "mesh:GraphQuery",
+                "output_uri": "mesh:GraphExpertResponse",
+            }],
+        })
+    def _classify_boom(*a, **k):
         raise ConnectionError("connection refused")
-    monkeypatch.setattr(supervisor_mod.requests, "post", _boom)
-    ctx = _FakeCtx()
-    status, pred = supervisor_mod._resolve_predicate_endpoint(ctx, "q", [])
+    ctx = _route_with_endpoints(supervisor_mod, monkeypatch, {
+        "/resolve": _resolve_ok,
+        "/find_compatible_verbs": _compat_ok,
+        "/classify_predicate": _classify_boom,
+    })
+    status, pred, telemetry = supervisor_mod._classify_route(
+        ctx, "q", [], "MAINTENANCE",
+    )
     assert status == supervisor_mod._ROUTING_INFRA_ERROR
     assert pred is None
 

@@ -42,31 +42,47 @@ def _install_stubs():
         rdflib.Graph = type("Graph", (), {})
         sys.modules["rdflib"] = rdflib
 
-    if "weaviate" not in sys.modules:
-        wv = types.ModuleType("weaviate")
-        sys.modules["weaviate"] = wv
-    if "weaviate.classes" not in sys.modules:
-        wvc = types.ModuleType("weaviate.classes")
-        class _Q:
-            class Filter:
-                @staticmethod
-                def any_of(parts): return ("any_of", parts)
-                @staticmethod
-                def by_property(name):
-                    class _P:
-                        def contains_any(self, vals): return ("contains_any", name, vals)
-                        def equal(self, val): return ("equal", name, val)
-                    return _P()
-            class MetadataQuery:
-                def __init__(self, **kw): self.kw = kw
-        wvc.query = _Q
-        class _CCfg:
-            class DataType:
-                TEXT = "TEXT"; TEXT_ARRAY = "TEXT_ARRAY"; BOOL = "BOOL"
-            class Property:
-                def __init__(self, *a, **kw): pass
-        wvc.config = _CCfg
-        sys.modules["weaviate.classes"] = wvc
+    # Always overwrite weaviate AND weaviate.classes. Other test modules
+    # (notably test_ontology_routing.py) install MagicMock() for both
+    # via sys.modules.setdefault, and a MagicMock weaviate module
+    # auto-magic-generates a .classes attribute that would shadow our
+    # sys.modules["weaviate.classes"] entry when the test's freshly-
+    # imported ontology_main does `import weaviate.classes as wvc`.
+    # Force-replace both with real ModuleTypes so our stub wins.
+    wv = types.ModuleType("weaviate")
+    sys.modules["weaviate"] = wv
+    wvc = types.ModuleType("weaviate.classes")
+    class _Q:
+        class Filter:
+            @staticmethod
+            def any_of(parts): return ("any_of", parts)
+            @staticmethod
+            def by_property(name, length=False):
+                # length kwarg matches the Weaviate v4 API: a length
+                # filter projects to the array's len before .equal()
+                # is applied. Stub ignores it (the test asserts the
+                # final tuple shape only).
+                class _P:
+                    def contains_any(self, vals): return ("contains_any", name, vals)
+                    def equal(self, val): return ("equal", name, val)
+                return _P()
+        class MetadataQuery:
+            def __init__(self, **kw): self.kw = kw
+    wvc.query = _Q
+    class _CCfg:
+        class DataType:
+            TEXT = "TEXT"; TEXT_ARRAY = "TEXT_ARRAY"; BOOL = "BOOL"
+        class Property:
+            def __init__(self, *a, **kw): pass
+    wvc.config = _CCfg
+    sys.modules["weaviate.classes"] = wvc
+    # Also expose .classes on the weaviate module — `import weaviate.classes`
+    # binds via sys.modules but `weaviate.classes` attribute access (as may
+    # happen indirectly via __init__-driven submodule registration) wants
+    # the attribute set on the parent. Without this, a MagicMock could
+    # still leak in if anything reads weaviate.classes before the import
+    # statement resolves.
+    wv.classes = wvc
 
     if "neo4j" not in sys.modules:
         n = types.ModuleType("neo4j")
@@ -137,6 +153,19 @@ class _FakeQuery:
         self.last_call = {
             "query": query, "limit": limit,
             "filters": filters, "return_metadata": return_metadata,
+            "mode": "hybrid",
+        }
+        return _FakeHybridResponse(self._scripted)
+
+    # ADR-0018 sandbox bm25() fallback: the production code falls back to
+    # bm25() when hybrid() raises (sandbox Weaviate has no vectorizer
+    # configured for the Predicate collection). Mirror the same signature
+    # so the mock supports both call paths.
+    def bm25(self, query, limit, filters, return_metadata):
+        self.last_call = {
+            "query": query, "limit": limit,
+            "filters": filters, "return_metadata": return_metadata,
+            "mode": "bm25",
         }
         return _FakeHybridResponse(self._scripted)
 
@@ -263,7 +292,11 @@ def test_scoped_caller_builds_or_filter(ontology_main, monkeypatch):
     assert last["filters"][0] == "any_of"  # tag from our stub Filter
     parts = last["filters"][1]
     assert ("contains_any", "domains", ["MAINTENANCE"]) in parts
-    assert ("equal", "domains", []) in parts
+    # Production code switched from .equal([]) to a length-filter
+    # .by_property("domains", length=True).equal(0) after Weaviate v4
+    # rejected empty-list filters. The stub ignores the length kwarg
+    # so this still resolves through by_property(name).equal(0).
+    assert ("equal", "domains", 0) in parts
 
 
 # ---------------------------------------------------------------------------
