@@ -1578,12 +1578,18 @@ class FindCompatibleVerbsResponse(BaseModel):
     cypher_executed: str | None = None
 
 
+# NB on the shape of this query: the `*0..N` form is the trick that
+# unifies "the subject's own class" with "any registered ancestor"
+# under a single MATCH — at hop=0, `scope` rebinds to `start`. We
+# initially tried an OPTIONAL MATCH variant that mixed
+# `collect(DISTINCT ancestor) + [start]` in a single WITH clause; Neo4j
+# rejects it on implicit-grouping grounds. The form below is the one
+# that passes cypher-shell validation against the live graph.
 _FIND_COMPAT_VERBS_CYPHER = """
 MATCH (start:OntologyClass {uri: $subject_uri})
-OPTIONAL MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(ancestor:OntologyClass)
-WITH collect(DISTINCT ancestor) + [start] AS scope_classes
-UNWIND scope_classes AS scope
-WITH DISTINCT scope WHERE scope IS NOT NULL
+MATCH (start)-[:subClassOf*0..$MAXHOPS$]->(scope:OntologyClass)
+WITH start, collect(DISTINCT scope) AS scopes
+UNWIND scopes AS scope
 MATCH (scope)-[r]->(o:OntologyClass)
 WHERE r.iri IS NOT NULL
 RETURN DISTINCT
