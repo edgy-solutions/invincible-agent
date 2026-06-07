@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (11)
+# Generated enums (12)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -84,6 +84,9 @@ class OntologyClass(str, Enum):
 class PersonaTarget(str, Enum):
     # Target persona for the graph expert response
     
+    pass
+
+class Predicate(str, Enum):
     pass
 
 class SemanticArchetype(str, Enum):
@@ -242,6 +245,11 @@ class MetricUI(BaseModel):
     subject_concept: typing.Optional[str] = None
     metrics: typing.List["UIEntity"]
 
+class PredicateClassification(BaseModel):
+    resolved_verb_iri: typing.Union[Predicate, str] = Field(description='The verb IRI that best matches the user\'s intent given the resolved subject. Must be one of the IRIs provided in the dynamic enum.')
+    confidence_score: float = Field(description='0.0 (no fit) to 1.0 (clear fit). The supervisor\'s PREDICATE_FALLBACK_SCORE_THRESHOLD env var thresholds against this.')
+    reasoning: str = Field(description='One sentence on why this verb was picked given the query and subject. If subject_uri == \'UNKNOWN\', explain the pick against query alone.')
+
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.
 # The resolved_uri is a dynamic ontology URI (not a hardcoded enum) that
@@ -278,10 +286,6 @@ class UIRelation(BaseModel):
     target: str
     relation: typing.Optional[str] = None
     predicate: typing.Optional[str] = None
-
-class VerbVerificationResult(BaseModel):
-    primary_is_correct: bool = Field(description='true if the proposed verb correctly answers the user\'s query; false if it does not.')
-    reasoning: str = Field(description='One concise sentence explaining why. If primary_is_correct is false, name what the user actually wants.')
 
 # #########################################################################
 # Generated type aliases (0)

@@ -659,57 +659,97 @@ function RenderAsChart(raw_data: string, persona: string) -> ChartUI {
 }
 
 // =============================================================================
-// ADR-0008 follow-up — yellow-zone verb routing verifier
+// Predicate classification — symmetric of /resolve (ADR-0004 restored)
 // =============================================================================
 //
-// When Engine O's /search_predicates returns a candidate whose score sits
-// between THRESHOLD_LOW and THRESHOLD_HIGH (the "yellow zone"), the supervisor
-// asks this function "is this verb really the right choice for the user's
-// query?" If primary_is_correct=false, the supervisor falls back to Engine A
-// as a generalist instead of routing to a confidently-wrong specialist.
+// Engine O's /resolve has done vector-recall + LLM-precision classification
+// for OntologyClass SUBJECTS since the system was first wired:
+//   weaviate_hybrid → top-10 candidates → TypeBuilder dynamic enum →
+//     ClassifyDomainIntent → (subject_uri, confidence, reasoning)
 //
-// Why this exists: the BM25 + anti-synonym re-rank closes most of the
-// confidently-wrong-routing failure modes, but borderline scores remain. An
-// LLM with the verb's description in hand can disambiguate cases keyword
-// matching can't (semantic adjacency without lexical overlap).
+// PREDICATES had no analogous machinery. ADR-0009 Step F'.6 added Weaviate
+// hybrid over a Predicate collection, but stopped short of the LLM-precision
+// step — verb routing became "BM25 picks the top score, supervisor uses it,
+// VerifyVerbChoice second-guesses in a yellow zone." That asymmetry was the
+// root cause of every "confidently wrong" routing failure we hit (mesh:
+// describeAsset winning at 1.44 for procedure queries, etc.) because BM25
+// over verb synonyms can't reason about subject context or semantic fit.
+//
+// ClassifyPredicate restores the symmetry. The supervisor calls Engine O's
+// new /classify_predicate endpoint, which:
+//   1. Runs predicate_hybrid_search (BM25) to get top-10 verb candidates
+//      filtered by the caller's entitled_domains.
+//   2. Builds a Predicate TypeBuilder dynamic enum from those 10 verb_iris,
+//      each with its description as the enum value description.
+//   3. Calls THIS function with the user query + resolved subject +
+//      domain context. The LLM picks ONE verb (constrained by the enum)
+//      with confidence + reasoning, or "UNKNOWN" if nothing fits.
+//
+// The PredicateClassification confidence score replaces the BM25 score
+// for the supervisor's threshold decision (ADR-0008 fallback machinery
+// keeps working — threshold on the LLM's confidence rather than BM25's).
+// VerifyVerbChoice + the yellow-zone band are retired: the LLM is the
+// primary classifier, not a second-guess gate over BM25.
 
-class VerbVerificationResult {
-  primary_is_correct bool @description("true if the proposed verb correctly answers the user's query; false if it does not.")
-  reasoning string @description("One concise sentence explaining why. If primary_is_correct is false, name what the user actually wants.")
+enum Predicate {
+  @@dynamic
 }
 
-function VerifyVerbChoice(query: string, verb_iri: string, verb_description: string, verb_synonyms_json: string) -> VerbVerificationResult {
-  // Use Ollama directly (not MainAgent) because the sandbox cluster has no
-  // OPENROUTER_API_KEY / OPENAI_API_KEY wired — MainAgent's fallback chain
-  // [OpenRouter, OpenAI] fails BAML's env-var validation at call time.
-  // The cluster's actual reasoning model is ai1's 120b served over Ollama
-  // (OLLAMA_BASE_URL=http://192.168.1.119:11434/v1), which is what other
-  // engines like Engine A's smolagents loop already use.
-  client Ollama
+class PredicateClassification {
+  resolved_verb_iri Predicate
+    @description("The verb IRI that best matches the user's intent given the resolved subject. Must be one of the IRIs provided in the dynamic enum.")
+  confidence_score float
+    @description("0.0 (no fit) to 1.0 (clear fit). The supervisor's PREDICATE_FALLBACK_SCORE_THRESHOLD env var thresholds against this.")
+  reasoning string
+    @description("One sentence on why this verb was picked given the query and subject. If subject_uri == 'UNKNOWN', explain the pick against query alone.")
+}
+
+function ClassifyPredicate(
+  query: string,
+  subject_uri: string,
+  subject_reasoning: string,
+  domain: string,
+) -> PredicateClassification {
+  // Same client rationale as /resolve's ClassifyDomainIntent: MainAgent has
+  // Ollama as its terminal fallback, so this works on sandbox (no
+  // OpenRouter / OpenAI key) and in production (cloud LLM via the
+  // configured fallback chain). The constrained-enum return + UNKNOWN
+  // value let BAML handle the "nothing fits" case cleanly.
+  client MainAgent
   prompt #"
-    A natural-language query routed to a verb based on lexical matching.
-    Decide whether the proposed verb is the right one.
+    You are the predicate classifier for an SPO routing layer. The
+    upstream subject classifier already placed this query against a
+    registered OntologyClass. Your job is to pick the ONE predicate (verb)
+    from the permitted list below that best operates on a subject of that
+    class, given the user's intent.
+
+    The permitted predicate list is injected as a strict enum in the
+    output format. You may NOT invent a verb IRI; select one of the
+    given values or "UNKNOWN" if none fit.
 
     USER QUERY:
     "{{ query }}"
 
-    PROPOSED VERB:
-    Identifier:   {{ verb_iri }}
-    Description:  {{ verb_description }}
-    Synonyms:     {{ verb_synonyms_json }}
+    RESOLVED SUBJECT:
+    Class IRI:    {{ subject_uri }}
+    Why:          {{ subject_reasoning }}
 
-    Set primary_is_correct=true if and only if the proposed verb's description
-    cleanly answers the user's intent. Otherwise primary_is_correct=false.
+    DOMAIN:
+    {{ domain }}
 
-    Examples of mismatches to reject:
-      - User asks to enumerate a catalog ("what tables", "list datasets") but
-        the verb traces lineage of a named asset.
-      - User asks for a single asset's profile but the verb returns an
-        enumeration.
-      - User asks for a freshness check but the verb describes schema.
-
-    Reasoning: one short sentence. Be specific about what the user is
-    actually asking for vs. what the verb does.
+    GUIDANCE:
+    - The subject is a STRONG signal. A verb whose description says it
+      operates on catalog assets does NOT belong on a WorkInstruction,
+      even if the verb name and the query share the word "describe".
+      Lexical proximity is not correctness; substrate fit is.
+    - If subject_uri is "UNKNOWN", the upstream classifier could not
+      place the query — pick the verb that best matches the raw query
+      and lower confidence accordingly.
+    - confidence_score is your own assessment of how well the verb fits.
+      Below ~0.4 the supervisor will fall back to a generalist agent;
+      above that, the specialist gets dispatched.
+    - reasoning: one sentence. If you reject substrate mismatches, say
+      so explicitly so the operator can act on the signal.
 
     {{ ctx.output_format }}
   "#

@@ -85,6 +85,9 @@ type_map = {
     "types.MetricUI": types.MetricUI,
     "stream_types.MetricUI": stream_types.MetricUI,
 
+    "types.PredicateClassification": types.PredicateClassification,
+    "stream_types.PredicateClassification": stream_types.PredicateClassification,
+
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
 
@@ -102,9 +105,6 @@ type_map = {
 
     "types.UIRelation": types.UIRelation,
     "stream_types.UIRelation": stream_types.UIRelation,
-
-    "types.VerbVerificationResult": types.VerbVerificationResult,
-    "stream_types.VerbVerificationResult": stream_types.VerbVerificationResult,
 
 
     "types.AgentStatus": types.AgentStatus,
@@ -124,6 +124,8 @@ type_map = {
     "types.OntologyClass": types.OntologyClass,
 
     "types.PersonaTarget": types.PersonaTarget,
+
+    "types.Predicate": types.Predicate,
 
     "types.SemanticArchetype": types.SemanticArchetype,
 

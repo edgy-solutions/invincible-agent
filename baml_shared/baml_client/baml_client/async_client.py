@@ -112,6 +112,21 @@ class BamlAsyncClient:
                 "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
             })
             return typing.cast(types.TableClassificationResult, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.PredicateClassification:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.ClassifyPredicate(query=query,subject_uri=subject_uri,subject_reasoning=subject_reasoning,domain=domain,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="ClassifyPredicate", args={
+                "query": query,"subject_uri": subject_uri,"subject_reasoning": subject_reasoning,"domain": domain,
+            })
+            return typing.cast(types.PredicateClassification, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def DecomposeQuery(self, raw_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> types.SupervisorTaskPlan:
@@ -292,21 +307,6 @@ class BamlAsyncClient:
                 "original_query": original_query,"raw_json_results": raw_json_results,
             })
             return typing.cast(types.FinalSynthesis, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    async def VerifyVerbChoice(self, query: str,verb_iri: str,verb_description: str,verb_synonyms_json: str,
-        baml_options: BamlCallOptions = {},
-    ) -> types.VerbVerificationResult:
-        # Check if on_tick is provided
-        if 'on_tick' in baml_options:
-            # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.VerifyVerbChoice(query=query,verb_iri=verb_iri,verb_description=verb_description,verb_synonyms_json=verb_synonyms_json,
-                baml_options=baml_options)
-            return await __stream__.get_final_response()
-        else:
-            # Original non-streaming code
-            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="VerifyVerbChoice", args={
-                "query": query,"verb_iri": verb_iri,"verb_description": verb_description,"verb_synonyms_json": verb_synonyms_json,
-            })
-            return typing.cast(types.VerbVerificationResult, __result__.cast_to(types, types, stream_types, False, __runtime__))
     
 
 
@@ -338,6 +338,18 @@ class BamlStreamClient:
           __result__,
           lambda x: typing.cast(stream_types.TableClassificationResult, x.cast_to(types, types, stream_types, True, __runtime__)),
           lambda x: typing.cast(types.TableClassificationResult, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.PredicateClassification, types.PredicateClassification]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="ClassifyPredicate", args={
+            "query": query,"subject_uri": subject_uri,"subject_reasoning": subject_reasoning,"domain": domain,
+        })
+        return baml_py.BamlStream[stream_types.PredicateClassification, types.PredicateClassification](
+          __result__,
+          lambda x: typing.cast(stream_types.PredicateClassification, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.PredicateClassification, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     def DecomposeQuery(self, raw_query: str,active_personas: str,
@@ -484,18 +496,6 @@ class BamlStreamClient:
           lambda x: typing.cast(types.FinalSynthesis, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def VerifyVerbChoice(self, query: str,verb_iri: str,verb_description: str,verb_synonyms_json: str,
-        baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlStream[stream_types.VerbVerificationResult, types.VerbVerificationResult]:
-        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="VerifyVerbChoice", args={
-            "query": query,"verb_iri": verb_iri,"verb_description": verb_description,"verb_synonyms_json": verb_synonyms_json,
-        })
-        return baml_py.BamlStream[stream_types.VerbVerificationResult, types.VerbVerificationResult](
-          __result__,
-          lambda x: typing.cast(stream_types.VerbVerificationResult, x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(types.VerbVerificationResult, x.cast_to(types, types, stream_types, False, __runtime__)),
-          __ctx__,
-        )
     
 
 class BamlHttpRequestClient:
@@ -516,6 +516,13 @@ class BamlHttpRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ClassifyLegacyTable", args={
             "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
+        }, mode="request")
+        return __result__
+    async def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ClassifyPredicate", args={
+            "query": query,"subject_uri": subject_uri,"subject_reasoning": subject_reasoning,"domain": domain,
         }, mode="request")
         return __result__
     async def DecomposeQuery(self, raw_query: str,active_personas: str,
@@ -600,13 +607,6 @@ class BamlHttpRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeReports", args={
             "original_query": original_query,"raw_json_results": raw_json_results,
-        }, mode="request")
-        return __result__
-    async def VerifyVerbChoice(self, query: str,verb_iri: str,verb_description: str,verb_synonyms_json: str,
-        baml_options: BamlCallOptions = {},
-    ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="VerifyVerbChoice", args={
-            "query": query,"verb_iri": verb_iri,"verb_description": verb_description,"verb_synonyms_json": verb_synonyms_json,
         }, mode="request")
         return __result__
     
@@ -631,6 +631,13 @@ class BamlHttpStreamRequestClient:
             "table_name": table_name,"columns_schema": columns_schema,"dba_comments": dba_comments,"orm_class_name": orm_class_name,"sample_data": sample_data,"domain": domain,
         }, mode="stream")
         return __result__
+    async def ClassifyPredicate(self, query: str,subject_uri: str,subject_reasoning: str,domain: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="ClassifyPredicate", args={
+            "query": query,"subject_uri": subject_uri,"subject_reasoning": subject_reasoning,"domain": domain,
+        }, mode="stream")
+        return __result__
     async def DecomposeQuery(self, raw_query: str,active_personas: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -713,13 +720,6 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="SynthesizeReports", args={
             "original_query": original_query,"raw_json_results": raw_json_results,
-        }, mode="stream")
-        return __result__
-    async def VerifyVerbChoice(self, query: str,verb_iri: str,verb_description: str,verb_synonyms_json: str,
-        baml_options: BamlCallOptions = {},
-    ) -> baml_py.baml_py.HTTPRequest:
-        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="VerifyVerbChoice", args={
-            "query": query,"verb_iri": verb_iri,"verb_description": verb_description,"verb_synonyms_json": verb_synonyms_json,
         }, mode="stream")
         return __result__
     

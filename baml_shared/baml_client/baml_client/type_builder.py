@@ -20,13 +20,13 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation","VerbVerificationResult",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","PredicateClassification","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 11
+    # Generated enums 12
     # #########################################################################
 
     @property
@@ -64,6 +64,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def PersonaTarget(self) -> "PersonaTargetBuilder":
         return PersonaTargetBuilder(self)
+
+    @property
+    def Predicate(self) -> "PredicateBuilder":
+        return PredicateBuilder(self)
 
     @property
     def SemanticArchetype(self) -> "SemanticArchetypeViewer":
@@ -171,6 +175,10 @@ class TypeBuilder(type_builder.TypeBuilder):
         return MetricUIViewer(self)
 
     @property
+    def PredicateClassification(self) -> "PredicateClassificationViewer":
+        return PredicateClassificationViewer(self)
+
+    @property
     def SemanticResolution(self) -> "SemanticResolutionViewer":
         return SemanticResolutionViewer(self)
 
@@ -194,14 +202,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     def UIRelation(self) -> "UIRelationViewer":
         return UIRelationViewer(self)
 
-    @property
-    def VerbVerificationResult(self) -> "VerbVerificationResultViewer":
-        return VerbVerificationResultViewer(self)
-
 
 
 # #########################################################################
-# Generated enums 11
+# Generated enums 12
 # #########################################################################
 
 class AgentStatusAst:
@@ -608,6 +612,50 @@ class PersonaTargetBuilder(PersonaTargetAst):
     
 
 class PersonaTargetValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    def __getattr__(self, name: str) -> baml_py.EnumValueBuilder:
+        if name not in self.__values:
+            raise AttributeError(f"Value {name} not found.")
+        return self.__bldr.value(name)
+
+    
+    
+
+
+class PredicateAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("Predicate")
+        self._values: typing.Set[str] = set([  ])
+        self._vals = PredicateValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "PredicateValues":
+        return self._vals
+
+
+class PredicateBuilder(PredicateAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, baml_py.EnumValueBuilder]]:
+        return [(name, self._bldr.value(name)) for name in self._values]
+
+    def add_value(self, name: str) -> baml_py.EnumValueBuilder:
+        if name in self._values:
+            raise ValueError(f"Value {name} already exists.")
+        return self._bldr.value(name)
+    
+
+class PredicateValues:
     def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
         self.__bldr = enum_bldr
         self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
@@ -1888,6 +1936,53 @@ class MetricUIProperties:
     
 
 
+class PredicateClassificationAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("PredicateClassification")
+        self._properties: typing.Set[str] = set([  "resolved_verb_iri",  "confidence_score",  "reasoning",  ])
+        self._props = PredicateClassificationProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "PredicateClassificationProperties":
+        return self._props
+
+
+class PredicateClassificationViewer(PredicateClassificationAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class PredicateClassificationProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def resolved_verb_iri(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("resolved_verb_iri"))
+    
+    @property
+    def confidence_score(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("confidence_score"))
+    
+    @property
+    def reasoning(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
+    
+    
+
+
 class SemanticResolutionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -2182,49 +2277,6 @@ class UIRelationProperties:
     @property
     def predicate(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("predicate"))
-    
-    
-
-
-class VerbVerificationResultAst:
-    def __init__(self, tb: type_builder.TypeBuilder):
-        _tb = tb._tb # type: ignore (we know how to use this private attribute)
-        self._bldr = _tb.class_("VerbVerificationResult")
-        self._properties: typing.Set[str] = set([  "primary_is_correct",  "reasoning",  ])
-        self._props = VerbVerificationResultProperties(self._bldr, self._properties)
-
-    def type(self) -> baml_py.FieldType:
-        return self._bldr.field()
-
-    @property
-    def props(self) -> "VerbVerificationResultProperties":
-        return self._props
-
-
-class VerbVerificationResultViewer(VerbVerificationResultAst):
-    def __init__(self, tb: type_builder.TypeBuilder):
-        super().__init__(tb)
-
-    
-    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
-        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
-    
-
-
-class VerbVerificationResultProperties:
-    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
-        self.__bldr = bldr
-        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
-
-    
-    
-    @property
-    def primary_is_correct(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("primary_is_correct"))
-    
-    @property
-    def reasoning(self) -> type_builder.ClassPropertyViewer:
-        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
     
     
 

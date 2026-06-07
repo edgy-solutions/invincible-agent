@@ -35,7 +35,11 @@ _BAML_CLIENT_PATH = _REPO_ROOT / "baml_shared" / "baml_client"
 if str(_BAML_CLIENT_PATH) not in sys.path:
     sys.path.insert(0, str(_BAML_CLIENT_PATH))
 
-from baml_client import b
+# Note: the supervisor no longer imports the BAML client. The /resolve and
+# /classify_predicate endpoints on Engine O handle all LLM calls now; the
+# supervisor just orchestrates the HTTP requests. The sys.path hack above
+# stays only because other modules in this defs/ directory may still need
+# baml_client and rely on this entry being present.
 
 from dagster import (
     DynamicOut,
@@ -60,21 +64,6 @@ from dagster import (
 _FALLBACK_SCORE_THRESHOLD_DEFAULT = float(
     os.getenv("PREDICATE_FALLBACK_SCORE_THRESHOLD", "0.40")
 )
-
-#: ADR-0008 follow-up — yellow-zone upper bound. Top-1 candidates with score
-#: between THRESHOLD (low) and THRESHOLD_HIGH (high) trigger a BAML
-#: VerifyVerbChoice call: an LLM with the verb's description in hand decides
-#: whether the BM25 winner is actually right. Above THRESHOLD_HIGH the
-#: supervisor trusts the score and skips the verifier. Below THRESHOLD it
-#: routes straight to the generalist fallback (existing behavior).
-#:
-#: The default 0.85 means the verifier runs on roughly the middle of the
-#: confidence distribution; tune via PREDICATE_FALLBACK_SCORE_THRESHOLD_HIGH
-#: against the actual score distribution your registry produces.
-_FALLBACK_SCORE_THRESHOLD_HIGH_DEFAULT = float(
-    os.getenv("PREDICATE_FALLBACK_SCORE_THRESHOLD_HIGH", "0.85")
-)
-
 
 class SupervisorQueryConfig(Config):
     """Configuration for the supervisor job.
@@ -115,10 +104,10 @@ class SupervisorQueryConfig(Config):
     entity_refs: List[str] = []
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
-    # ADR-0008 fallback policy:
+    # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
+    # against the LLM's confidence from /classify_predicate, replacing the
+    # BM25-era yellow-zone band + VerifyVerbChoice gate).
     predicate_fallback_score_threshold: float = _FALLBACK_SCORE_THRESHOLD_DEFAULT
-    # ADR-0008 follow-up — yellow-zone upper bound (see env-var docs above).
-    predicate_fallback_score_threshold_high: float = _FALLBACK_SCORE_THRESHOLD_HIGH_DEFAULT
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -198,115 +187,140 @@ _ROUTING_NO_MATCH = "no_match"
 _ROUTING_INFRA_ERROR = "infra_error"
 
 
-def _resolve_predicate_endpoint(
+def _resolve_subject(
     context,
     user_query: str,
-    entitled_domains: List[str],
-) -> tuple[str, Dict[str, Any] | None]:
-    """Ask Engine O's /search_predicates for the best-matching predicate.
+    domain: str,
+) -> tuple[str, float, str]:
+    """Ask Engine O's /resolve for the subject ontology class.
 
-    Returns ``(status, predicate_or_none)``:
+    /resolve does vector-recall (Weaviate hybrid over OntologyClass) +
+    LLM-precision (ClassifyDomainIntent via TypeBuilder dynamic enum).
+    Returns ``(subject_uri, confidence, reasoning)``. On failure or
+    UNKNOWN return ``("UNKNOWN", 0.0, "<reason>")`` so the downstream
+    predicate classifier still runs against the raw query.
 
-      * ``("matched", predicate_dict)`` — Engine O found a candidate. The
-        caller applies the score threshold (ADR-0008) to decide whether
-        to use the specialist or fall back to Engine A.
-      * ``("no_match", None)`` — Engine O returned ``found=false``. The
-        registry has no predicate for this NL; ADR-0008 says fall back
-        to Engine A as a generalist.
-      * ``("infra_error", None)`` — could not reach Engine O, Engine O
-        returned 5xx, or the response was malformed. ADR-0008 says
-        **do not** fall back; abort the subtask so the infrastructure
-        signal is loud.
-
-    Per ADR-0009 Step F'.6, Weaviate hybrid search is the only routing
-    path: ``user_query`` goes straight to the vector store, which scores
-    against the registered predicates' humanized verb + synonyms +
-    description.
+    Subject classification was the missing leg of SPO routing for years
+    (ADR-0004 proposed it; ADR-0009 Step F'.6 simplified it away). With
+    the predicate side now using the same vector-recall + LLM-precision
+    pattern (/classify_predicate), restoring this call gives the LLM
+    classifier real SPO context — it picks a verb that's a sensible
+    operation ON THE RESOLVED SUBJECT, not just lexically adjacent to
+    the query text.
     """
     try:
         resp = requests.post(
-            f"{ONTOLOGY_SVC_URL}/search_predicates",
-            json={
-                "query": user_query,
-                "entitled_domains": entitled_domains,
-                "limit": 5,
-            },
-            timeout=10,
+            f"{ONTOLOGY_SVC_URL}/resolve",
+            json={"query": user_query, "domain": domain or "MAINTENANCE"},
+            timeout=15,
         )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
-        # Per ADR-0008: infrastructure failure must surface, not be masked
-        # by the LLM fallback. Return infra_error so execute_subtask aborts.
-        context.log.error(
-            f"search_predicates infrastructure error for query={user_query!r}: "
-            f"{exc}"
-        )
-        return _ROUTING_INFRA_ERROR, None
-
-    if not data.get("found"):
         context.log.warning(
-            f"search_predicates no_match query={user_query!r} "
-            f"reason={data.get('reason')!r}"
+            "resolve_subject failed for query=%r: %s — predicate classifier "
+            "will see subject_uri=UNKNOWN",
+            user_query, exc,
         )
-        return _ROUTING_NO_MATCH, None
+        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}")
 
-    candidates = data.get("candidates", [])
-    if not candidates:
-        # found=true with no candidates would be an Engine-O bug; treat as
-        # no_match (still a registry-shape failure the LLM might handle).
-        context.log.warning(
-            f"search_predicates returned found=true with no candidates "
-            f"for query={user_query!r} — treating as no_match"
-        )
-        return _ROUTING_NO_MATCH, None
-
-    head = candidates[0]
-    context.log.info(
-        f"search_predicates matched query={user_query!r} "
-        f"verb_iri={head.get('verb_iri')!r} score={head.get('score')}"
+    return (
+        str(data.get("resolved_uri") or "UNKNOWN"),
+        float(data.get("confidence_score") or 0.0),
+        str(data.get("reasoning") or ""),
     )
-    return _ROUTING_MATCHED, head
 
 
-def _verify_verb_choice_with_baml(
+def _classify_route(
     context,
-    query: str,
-    predicate: Dict[str, Any],
-) -> tuple[bool, str] | None:
-    """ADR-0008 follow-up — yellow-zone LLM verifier.
+    user_query: str,
+    entitled_domains: List[str],
+    routing_domain: str,
+) -> tuple[str, Dict[str, Any] | None, dict]:
+    """Two-stage SPO routing: /resolve then /classify_predicate.
 
-    Returns ``(primary_is_correct, reasoning)`` on successful BAML call.
-    Returns ``None`` when the BAML call itself fails (no API key, model
-    not found, network error, schema mismatch, etc.) so the caller can
-    distinguish "the LLM said yes/no" from "the LLM never answered."
+    Returns ``(status, predicate_or_none, telemetry_dict)``:
 
-    The previous version returned ``(True, "verifier_unavailable")`` on
-    failure which silently degraded the yellow-zone gate to a no-op
-    whenever BAML was misconfigured. That hid two real bugs in a row
-    (MainAgent missing OpenRouter key; Ollama wrong model name). Letting
-    the caller route to the generalist fallback on verifier failure
-    means the operator sees ``predicate_fallback_total
-    reason=verifier_unavailable`` in metrics and the user still gets a
-    useful response instead of a confidently-wrong specialist.
+      * ``("matched", predicate, t)`` — LLM picked a verb with full
+        predicate record (endpoint, owner_persona, domains). Caller
+        applies the confidence threshold.
+      * ``("no_match", None, t)`` — Either /resolve returned UNKNOWN
+        AND /classify_predicate returned UNKNOWN, OR the candidate set
+        was empty. ADR-0008 says fall back to Engine A as generalist.
+      * ``("infra_error", None, t)`` — Could not reach Engine O.
+        ADR-0008 says abort with INFRA_ERROR signal.
+
+    ``telemetry_dict`` carries the per-decision audit context (resolved
+    subject + confidence, predicate confidence, candidate set, reasoning
+    strings) so the structured-log emit can stamp them on every routing
+    decision. Replaces the old predicate_routing_score + yellow_zone_*
+    log lines with a unified routing_decision record.
     """
-    import asyncio  # local import — the supervisor is sync-by-default
+    subject_uri, subject_conf, subject_reason = _resolve_subject(
+        context, user_query, routing_domain,
+    )
+
     try:
-        coro = b.VerifyVerbChoice(
-            query=query,
-            verb_iri=str(predicate.get("verb_iri") or ""),
-            verb_description=str(predicate.get("description") or ""),
-            verb_synonyms_json=json.dumps(list(predicate.get("verb_synonyms") or [])),
+        resp = requests.post(
+            f"{ONTOLOGY_SVC_URL}/classify_predicate",
+            json={
+                "query": user_query,
+                "subject_uri": subject_uri,
+                "subject_reasoning": subject_reason,
+                "entitled_domains": entitled_domains,
+                "domain": routing_domain or "MAINTENANCE",
+            },
+            timeout=30,  # LLM call inside; longer than /search_predicates.
         )
-        result = asyncio.run(coro) if asyncio.iscoroutine(coro) else coro
-        return (bool(result.primary_is_correct), str(result.reasoning or ""))
-    except Exception as exc:  # noqa: BLE001
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        context.log.error(
+            "classify_predicate infrastructure error for query=%r: %s",
+            user_query, exc,
+        )
+        return _ROUTING_INFRA_ERROR, None, {
+            "subject_uri": subject_uri,
+            "subject_confidence": subject_conf,
+            "error": str(exc),
+        }
+
+    verb_iri = str(data.get("resolved_verb_iri") or "UNKNOWN")
+    verb_conf = float(data.get("confidence_score") or 0.0)
+    verb_reason = str(data.get("reasoning") or "")
+    predicate = data.get("predicate")
+    candidates = list(data.get("candidate_verb_iris") or [])
+
+    telemetry = {
+        "subject_uri": subject_uri,
+        "subject_confidence": subject_conf,
+        "subject_reasoning": subject_reason,
+        "verb_iri": verb_iri,
+        "verb_confidence": verb_conf,
+        "verb_reasoning": verb_reason,
+        "candidate_verbs": candidates,
+    }
+
+    if verb_iri == "UNKNOWN" or not predicate:
         context.log.warning(
-            "VerifyVerbChoice failed verb_iri=%s err=%s — routing to generalist fallback",
-            predicate.get("verb_iri"),
-            exc,
+            "classify_predicate no_match query=%r subject_uri=%s "
+            "candidates=%s reasoning=%r",
+            user_query, subject_uri, candidates, verb_reason,
         )
-        return None
+        return _ROUTING_NO_MATCH, None, telemetry
+
+    # Ensure score is present in the predicate dict so existing dispatch
+    # logic (and the audit log emit) can read it. The LLM's confidence
+    # replaces the BM25 score in the new architecture.
+    predicate["score"] = verb_conf
+
+    context.log.info(
+        "routing_decision subject_uri=%s subject_conf=%s "
+        "verb_iri=%s verb_conf=%s candidates=%s reasoning=%r",
+        subject_uri, subject_conf,
+        verb_iri, verb_conf, candidates, verb_reason,
+    )
+    return _ROUTING_MATCHED, predicate, telemetry
 
 
 def _call_engine_a_fallback(
@@ -412,31 +426,45 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     """
     sub_query = task_def.get("sub_query", "")
 
-    # Per ADR-0009 Step F'.6: routing is NL → Weaviate hybrid. The
-    # supervisor passes the subtask's natural-language sub_query straight
-    # to /search_predicates; Engine O matches against humanized verb +
-    # synonyms + description.
+    # Symmetric SPO routing: /resolve does subject classification (Weaviate
+    # OntologyClass recall + ClassifyDomainIntent precision), then
+    # /classify_predicate does the same for the verb side (predicate
+    # Weaviate recall + ClassifyPredicate precision) with the resolved
+    # subject as context. The yellow-zone band + VerifyVerbChoice gate
+    # are gone — the LLM IS the classifier, not a second-guess gate over
+    # BM25. The threshold below applies to the LLM's own confidence.
     routing_query = sub_query or config.user_query
 
-    status, predicate = _resolve_predicate_endpoint(
+    # Domain used for the BAML domain field on /resolve. Same value used
+    # for the /classify_predicate domain hint. First entitled domain
+    # wins; falls back to MAINTENANCE if no scope (preserves
+    # backward-compatible behavior with the prior router).
+    routing_domain = (
+        list(config.entitled_domains)[0]
+        if config.entitled_domains else "MAINTENANCE"
+    )
+
+    status, predicate, telemetry = _classify_route(
         context,
         routing_query,
         list(config.entitled_domains),
+        routing_domain=routing_domain,
     )
 
-    # ADR-0008 routing decision table:
-    #   matched + score ≥ threshold  → specialist
-    #   matched + score <  threshold → Engine A fallback (low_confidence)
-    #   no_match                      → Engine A fallback (no_predicate_matched)
-    #   infra_error                   → abort with INFRA_ERROR signal
+    # Routing decision table (simpler than the prior version: no
+    # yellow-zone band):
+    #   matched  + confidence ≥ threshold → specialist
+    #   matched  + confidence < threshold → Engine A fallback (low_confidence)
+    #   no_match                          → Engine A fallback (no_predicate_matched)
+    #   infra_error                       → abort with INFRA_ERROR signal
     if status == _ROUTING_INFRA_ERROR:
         # Infrastructure outage — must surface, NOT mask via fallback.
         # Same reasoning that drove the ADR-0009 Cypher-fallback removal:
         # silent degradation hides the signal ops needs to fix the outage.
         context.log.error(
             f"Aborting subtask due to routing infrastructure error "
-            f"(query={routing_query!r}). Engine O / Weaviate must recover "
-            f"before this subtask can be retried."
+            f"(query={routing_query!r}). Engine O must recover before "
+            f"this subtask can be retried. telemetry={telemetry}"
         )
         return {
             "persona": config.user_persona,
@@ -448,8 +476,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 "summary": (
                     "Routing service is unavailable. The mesh cannot route "
                     "this request right now. Please retry shortly; if the "
-                    "error persists, the operator should check Engine O and "
-                    "the Weaviate Predicate collection."
+                    "error persists, the operator should check Engine O, "
+                    "the Weaviate Predicate collection, and the LLM "
+                    "endpoint backing ClassifyPredicate."
                 ),
             },
         }
@@ -465,24 +494,23 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             rejected_predicate=None,
         )
 
-    # status == _ROUTING_MATCHED — apply the threshold per ADR-0008.
+    # status == _ROUTING_MATCHED — apply the threshold against the LLM's
+    # confidence (replaces the BM25 + yellow-zone gate machinery).
     assert predicate is not None
     score = predicate.get("score")
     threshold = config.predicate_fallback_score_threshold
-    threshold_high = config.predicate_fallback_score_threshold_high
 
-    # ADR-0008 telemetry: emit the score for histogram/aggregation.
     context.log.info(
-        "predicate_routing_score score=%s threshold=%s threshold_high=%s verb_iri=%s",
+        "predicate_routing_score score=%s threshold=%s verb_iri=%s "
+        "subject_uri=%s subject_conf=%s",
         score if score is not None else "none",
         threshold,
-        threshold_high,
         predicate.get("verb_iri"),
+        telemetry.get("subject_uri"),
+        telemetry.get("subject_confidence"),
     )
 
     if score is None or score < threshold:
-        # Routing is guessing; Engine A as a generalist may do better than
-        # a low-confidence specialist whose synonyms only weakly matched.
         return _call_engine_a_fallback(
             context,
             sub_query=sub_query,
@@ -491,56 +519,6 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             fallback_score=score,
             rejected_predicate=predicate,
         )
-
-    # ADR-0008 follow-up — yellow-zone LLM verifier.
-    #
-    # Between THRESHOLD and THRESHOLD_HIGH the BM25 + anti-synonym score is
-    # "good but not certain". Ask a BAML LLM with the verb's description
-    # in hand whether the proposed verb actually answers the query. If
-    # not, fall back to Engine A as a generalist. Catches the
-    # confidently-wrong-routing failure mode (e.g. the 5fee663d run
-    # where mesh:traceLineage scored 0.71 for "what tables do you have?").
-    if score < threshold_high:
-        verdict = _verify_verb_choice_with_baml(
-            context, routing_query, predicate,
-        )
-        if verdict is None:
-            # Verifier itself failed (BAML config bug, model not found,
-            # Ollama unreachable, etc.). Route to generalist fallback so
-            # the user gets a useful answer and the operator sees the
-            # verifier-down signal in predicate_fallback_total. The earlier
-            # silent-trust degradation masked two real bugs back-to-back;
-            # failing closed surfaces them immediately.
-            context.log.info(
-                "yellow_zone_verify verdict=verifier_unavailable score=%s verb_iri=%s",
-                score, predicate.get("verb_iri"),
-            )
-            return _call_engine_a_fallback(
-                context,
-                sub_query=sub_query,
-                config=config,
-                fallback_reason="verifier_unavailable",
-                fallback_score=score,
-                rejected_predicate=predicate,
-            )
-        primary_is_correct, reasoning = verdict
-        context.log.info(
-            "yellow_zone_verify primary_is_correct=%s score=%s verb_iri=%s reasoning=%r",
-            primary_is_correct,
-            score,
-            predicate.get("verb_iri"),
-            reasoning,
-        )
-        if not primary_is_correct:
-            return _call_engine_a_fallback(
-                context,
-                sub_query=sub_query,
-                config=config,
-                fallback_reason="llm_rejected_in_yellow_zone",
-                fallback_score=score,
-                rejected_predicate=predicate,
-            )
-        # Verifier said yes; fall through to specialist dispatch.
 
     endpoint = predicate["endpoint"]
     answerer_persona = predicate.get("owner_persona") or config.user_persona

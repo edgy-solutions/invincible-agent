@@ -1510,6 +1510,159 @@ async def list_domains() -> dict:
     return {"domains": domains}
 
 
+# ---------------------------------------------------------------------------
+# POST /classify_predicate  (symmetric of /resolve)
+# ---------------------------------------------------------------------------
+#
+# /resolve does vector-recall + LLM-precision for OntologyClass subjects.
+# /classify_predicate does the same for predicates (verbs). The pair restores
+# the symmetry ADR-0004 originally proposed and ADR-0009 Step F'.6 simplified
+# away. The supervisor now calls /resolve then /classify_predicate as the
+# two-step routing decision; VerifyVerbChoice + the yellow-zone gate are
+# obsolete because the LLM IS the classifier, not a second-guess gate.
+
+class ClassifyPredicateRequest(BaseModel):
+    """Incoming request to the /classify_predicate endpoint."""
+    query: str
+    # Resolved subject from a prior /resolve call. Pass "UNKNOWN" when the
+    # subject classifier returned UNKNOWN; the LLM falls back to judging
+    # the predicate against the raw query alone.
+    subject_uri: str = "UNKNOWN"
+    subject_reasoning: str = ""
+    # Domain scope from the JWT entitled_domains claim. The Weaviate
+    # candidate set is filtered to predicates this caller is entitled to.
+    entitled_domains: list[str] = Field(default_factory=list)
+    # Primary domain used as the BAML domain field. Match what /resolve
+    # was called with for consistency.
+    domain: str = "MAINTENANCE"
+    # How many Weaviate candidates to put in front of the LLM. Higher =
+    # better recall, more tokens. 10 mirrors /resolve's default.
+    candidate_limit: int = 10
+
+
+class ClassifyPredicateResponse(BaseModel):
+    """Response shape: the LLM's chosen verb + confidence + reasoning.
+
+    The ``predicate`` field carries the full Weaviate record for the chosen
+    verb (endpoint URL, owner_persona, domains, etc.) so the supervisor can
+    dispatch without a second lookup. None when verb_iri == "UNKNOWN".
+    """
+    resolved_verb_iri: str
+    confidence_score: float
+    reasoning: str | None = None
+    # The full predicate record the supervisor needs to dispatch the
+    # subtask: endpoint URL, owner_persona, domains, cost_class, etc.
+    # Sourced from the Weaviate candidate that matched the LLM's pick.
+    predicate: dict | None = None
+    # For audit: the candidate verbs the LLM was permitted to choose from.
+    candidate_verb_iris: list[str] = Field(default_factory=list)
+
+
+@app.post("/classify_predicate", response_model=ClassifyPredicateResponse)
+async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredicateResponse:
+    """Two-stage predicate classification: Weaviate recall + BAML precision.
+
+    Mirrors /resolve's flow so the supervisor's routing decision is
+    symmetric across subject and predicate:
+
+      1. predicate_hybrid_search → top-N predicate candidates filtered by
+         entitled_domains.
+      2. TypeBuilder dynamic enum populated from those N candidates
+         (each value's description is the verb description so the LLM
+         can reason about substrate fit, not just verb names).
+      3. ClassifyPredicate BAML call. Constrained-enum return guarantees
+         a valid verb_iri or UNKNOWN.
+
+    Confidence is the LLM's own assessment; the supervisor thresholds
+    against it the same way ADR-0008 thresholded against the BM25 score.
+    """
+    entitled = [d.upper() for d in (request.entitled_domains or [])]
+
+    candidates = await predicate_hybrid_search(
+        query=request.query,
+        entitled_domains=entitled,
+        limit=request.candidate_limit,
+    )
+
+    if not candidates:
+        # No registered predicate this caller is entitled to. Caller
+        # routes to the generalist fallback (ADR-0008 no_match path).
+        return ClassifyPredicateResponse(
+            resolved_verb_iri="UNKNOWN",
+            confidence_score=0.0,
+            reasoning=(
+                f"No registered predicate matched query={request.query!r} "
+                f"under entitled_domains={entitled}. Either no engine "
+                f"serves this intent, or doc-tools has not synced "
+                f"registrations into Weaviate yet."
+            ),
+            candidate_verb_iris=[],
+        )
+
+    # Build TypeBuilder dynamic enum from the Weaviate candidates. Each
+    # enum value's description is the verb's description string — the LLM
+    # sees that when picking, which lets it judge substrate fit
+    # ("operates on WorkInstruction" vs "operates on catalog assets"
+    # rather than just the verb name's lexical proximity).
+    candidate_iris: list[str] = []
+    tb = TypeBuilder()
+    for cand in candidates:
+        verb_iri = cand.get("verb_iri") or ""
+        if not verb_iri:
+            continue
+        candidate_iris.append(verb_iri)
+        desc_bits = []
+        if cand.get("description"):
+            desc_bits.append(cand["description"])
+        if cand.get("verb_type") and cand["verb_type"] not in desc_bits:
+            desc_bits.append(f"verb_type={cand['verb_type']}")
+        if cand.get("input_uri"):
+            desc_bits.append(f"operates on {cand['input_uri']}")
+        if cand.get("owner_persona"):
+            desc_bits.append(f"owner persona {cand['owner_persona']}")
+        enum_desc = "; ".join(desc_bits) if desc_bits else verb_iri
+        tb.Predicate.add_value(verb_iri).description(enum_desc)
+    # Always offer UNKNOWN so the LLM can decline without inventing a
+    # poor match — same pattern as ClassifyDomainIntent's UNKNOWN.
+    tb.Predicate.add_value("UNKNOWN").description(
+        "No registered predicate in the candidate set is a sensible fit "
+        "for this query given the resolved subject. Use this when every "
+        "candidate would be the wrong substrate or wrong intent."
+    )
+
+    try:
+        result = await b.ClassifyPredicate(
+            query=request.query,
+            subject_uri=request.subject_uri or "UNKNOWN",
+            subject_reasoning=request.subject_reasoning or "",
+            domain=request.domain,
+            baml_options={"tb": tb},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"BAML ClassifyPredicate failed: {exc}",
+        ) from exc
+
+    resolved_verb_iri = str(result.resolved_verb_iri)
+    # Find the full predicate record for the chosen verb so the supervisor
+    # can dispatch without a second Weaviate hit. UNKNOWN → None.
+    matched_predicate: dict | None = None
+    if resolved_verb_iri and resolved_verb_iri != "UNKNOWN":
+        for cand in candidates:
+            if cand.get("verb_iri") == resolved_verb_iri:
+                matched_predicate = cand
+                break
+
+    return ClassifyPredicateResponse(
+        resolved_verb_iri=resolved_verb_iri,
+        confidence_score=result.confidence_score,
+        reasoning=result.reasoning,
+        predicate=matched_predicate,
+        candidate_verb_iris=candidate_iris,
+    )
+
+
 @app.get("/mesh/config")
 async def get_mesh_config():
     """Serves the UI configuration derived from the predicate registry.
