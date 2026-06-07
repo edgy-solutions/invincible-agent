@@ -60,12 +60,24 @@ benchmark the optimization PR commits against.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from dataclasses import dataclass
 from typing import Optional
 
 import pytest
 import requests
+
+# Windows' default cp1252 console can't encode the Unicode hyphens / smart
+# quotes that show up in the diagnostic prints when a test case includes
+# them (e.g. "TEST-1234" with a U+2011 non-break hyphen). Reconfigure
+# stdout/stderr to utf-8 so the print() below never masks a real
+# assertion error with a UnicodeEncodeError.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # ---------------------------------------------------------------------------
 # Configuration
