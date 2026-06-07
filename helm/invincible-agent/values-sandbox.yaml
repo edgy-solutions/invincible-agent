@@ -103,6 +103,14 @@ agentFleet:
     # since they duplicate the template-rendered values.
     KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
     JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/query"
+    # Same race: values.yaml's agentFleet.env defaults NEO4J_URI to bare
+    # `bolt://neo4j` which doesn't exist in the cluster (actual service is
+    # iagent-neo4j). The configmap template's correct rendering (line 23)
+    # gets clobbered by the agentFleet.env loop (line 54-58). Engine E was
+    # silently swallowing the DNS failure and the smolagent then concluded
+    # "knowledge graph was not accessible" — the exact symptom of run
+    # 850f43fa where TEST-1234 wasn't found despite being planted in Neo4j.
+    NEO4J_URI: "bolt://iagent-neo4j:7687"
 
     # Default Ollama model for BAML's `client Ollama`. Switch via configmap +
     # rolling restart (no rebuild). The 128k-context variant is the standing
