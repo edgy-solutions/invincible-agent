@@ -21,6 +21,7 @@ dependencies = [
     "langfuse",
     "litellm",
     "packaging",
+    "acryl-datahub",
 ]
 
 [build-system]

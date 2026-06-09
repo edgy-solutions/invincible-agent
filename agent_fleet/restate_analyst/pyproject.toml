@@ -22,6 +22,7 @@ dependencies = [
     "litellm",
     "packaging",
     "mcp",
+    "acryl-datahub",
 ]
 
 [build-system]
