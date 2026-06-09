@@ -275,23 +275,60 @@ def _classify_route(
     entitled_domains: List[str],
     routing_domain: str,
 ) -> tuple[str, Dict[str, Any] | None, dict]:
-    """Three-stage SPO routing per ADR-0018 (with addendum): /resolve →
+    """Three-stage SPO routing per ADR-0018 + ADR-0019: /resolve →
     /find_compatible_verbs → /classify_predicate.
 
-    The middle step is the load-bearing addition: Neo4j returns the
-    verbs whose registered ``input_uri`` covers the resolved subject's
-    class chain (via ``subClassOf*``). /classify_predicate is then
-    constrained to that subset — the LLM cannot pick an incompatible
-    (subject, verb) pair because the offending verb never enters its
-    enum. Falls back to unconstrained classification when the subject
-    is UNKNOWN (cold ontology, no /resolve match) so we never get
-    worse than the prior 2-call symmetric behavior.
+    The middle step is the load-bearing addition (ADR-0018 addendum):
+    Neo4j returns the verbs whose registered ``input_uri`` covers the
+    resolved subject's class chain (via ``subClassOf*``).
+    /classify_predicate is then constrained to that subset — the LLM
+    cannot pick an incompatible (subject, verb) pair because the
+    offending verb never enters its enum.
+
+    ADR-0019 Contract B: when ``/resolve`` returns ``UNKNOWN`` the
+    router short-circuits to ``NO_MATCH`` *immediately*, with no LLM
+    call. The prior fallthrough-to-unconstrained-classification path
+    is the verb-only regression shape that caused the trigger
+    incident; with no subject grounding the only sound route is the
+    Engine A generalist (ADR-0008). The structural defense is
+    "the LLM is not asked to pick a verb for a subject the graph
+    didn't recognize" — confirmed by the routing-fallback test that
+    asserts ``classify_predicate`` was not called for the
+    UNKNOWN-subject branch.
 
     Returns ``(status, predicate_or_none, telemetry_dict)``.
     """
     subject_uri, subject_conf, subject_reason = _resolve_subject(
         context, user_query, routing_domain,
     )
+
+    # ADR-0019 Contract B — UNKNOWN-subject short-circuit. No
+    # /find_compatible_verbs (would be empty), no /classify_predicate
+    # (would be unconstrained and could emit a confident wrong verb).
+    # The honest answer is the generalist; route there directly.
+    if subject_uri == "UNKNOWN":
+        context.log.info(
+            "routing_decision subject_uri=UNKNOWN subject_conf=%s "
+            "→ generalist fallback (ADR-0019 Contract B: no LLM call "
+            "without subject grounding)",
+            subject_conf,
+        )
+        return _ROUTING_NO_MATCH, None, {
+            "subject_uri": "UNKNOWN",
+            "subject_confidence": subject_conf,
+            "subject_reasoning": subject_reason,
+            "verb_iri": "UNKNOWN",
+            "verb_confidence": 0.0,
+            "verb_reasoning": (
+                "ADR-0019 Contract B: /resolve returned UNKNOWN, so the "
+                "router short-circuits to the generalist without asking "
+                "the LLM to pick a verb. Confident specialist routing "
+                "without subject grounding is the regression shape "
+                "ADR-0019 deletes."
+            ),
+            "candidate_verbs": [],
+            "compatible_verb_iris": [],
+        }
 
     compatible_verbs, find_err = _find_compatible_verbs(
         context, subject_uri, entitled_domains,

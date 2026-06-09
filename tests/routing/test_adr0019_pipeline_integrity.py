@@ -99,19 +99,39 @@ _WEAVIATE_BASE = os.getenv(
 )
 
 
+# Capture the real neo4j module at THIS file's import time. A sibling
+# test file (test_adr0019_engine_o_contract_a.py) installs a stub
+# ``neo4j`` module into sys.modules so it can import Engine O without
+# the real driver in scope; if pytest runs that file before this one,
+# our fixture-time ``from neo4j import GraphDatabase`` would hit the
+# stub and return None silently, making every Axis-2 live test skip
+# for the wrong reason. Holding the real driver class here prevents
+# the leak — order-independent regardless of test-file ordering.
+try:
+    import sys as _sys
+    _stashed = _sys.modules.pop("neo4j", None)
+    import neo4j as _real_neo4j  # noqa: WPS433
+    if _stashed is not None and not hasattr(_stashed, "__file__"):
+        # Stub was installed before us; restore it for sibling tests.
+        _sys.modules["neo4j"] = _stashed
+    else:
+        _sys.modules["neo4j"] = _real_neo4j
+    _NEO4J_GRAPH_DATABASE = _real_neo4j.GraphDatabase
+except ImportError:
+    _NEO4J_GRAPH_DATABASE = None
+
+
 def _neo4j_driver():
     """Return a Neo4j driver, or None if the import or connection fails.
 
-    Importing neo4j is fine (it's in the base deps), but the driver
-    construction itself is what fails when the cluster isn't reachable.
-    Caller treats None as the gating signal.
+    Uses the module-level ``_NEO4J_GRAPH_DATABASE`` captured at this
+    file's import time so a sibling test's neo4j stub cannot leak in.
+    None signals the fixture to skip with an env-var hint.
     """
-    try:
-        from neo4j import GraphDatabase  # noqa: WPS433
-    except ImportError:
+    if _NEO4J_GRAPH_DATABASE is None:
         return None
     try:
-        drv = GraphDatabase.driver(
+        drv = _NEO4J_GRAPH_DATABASE.driver(
             _NEO4J_BOLT_URL, auth=(_NEO4J_USER, _NEO4J_PASSWORD),
         )
         # Verify connectivity once so the test skips cleanly rather
@@ -224,14 +244,19 @@ _D_VALID_RANGE = (
     "registers successfully and the edge appears in both stores."
 )
 _D_INVALID_RANGE_REJECTED = (
-    "ADR-0019 Contract D — register_engine_to_mesh() currently auto-MERGEs "
-    "input/output classes on the verb edge (no validation), which silently "
-    "creates phantom :OntologyClass nodes when the URI is invented. "
-    "Production surface needed: REPLACE the MERGE with a MATCH that fails "
-    "loud if the class doesn't pre-exist. Once that change lands, this "
-    "case asserts: registering a verb with input_uri='mesh:NotAClass' "
-    "raises a specific exception naming the offending URI, AND a post-"
-    "registration scan finds zero new :OntologyClass nodes."
+    "ADR-0019 Contract D — MATCH-not-MERGE landed in source at "
+    "doc-tools/doc_tools/assets/aitool_linker.py (replaces the MERGE "
+    "form that silently fabricated phantom :OntologyClass nodes). The "
+    "test surface that LIFTS this skip needs the updated doc-tools "
+    "image rolled to the cluster, plus a way to exercise the "
+    "registration path end-to-end from this repo's test (currently "
+    "doc-tools is a separate repo with its own test suite that covers "
+    "the asset directly). Lift when: (a) doc-tools image rebuilt with "
+    "the MATCH change, (b) iagent-dagster-user-code re-deployed against "
+    "that image, (c) a test fixture exists here that calls the "
+    "aitool_linker asset with a known-bad input_uri and asserts "
+    "{status: 'rejected', missing_uris: ['mesh:NotAClass']} comes back "
+    "AND a post-call Cypher scan finds zero new :OntologyClass nodes."
 )
 _D_PHANTOM_SCAN = (
     "ADR-0019 Contract D — phantom scan utility does not exist. "

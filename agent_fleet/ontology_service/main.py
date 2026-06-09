@@ -1790,39 +1790,22 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             ]
         candidates = filtered
 
-        # ADR-0018 addendum (Neo4j-decisive shortcut): when Neo4j returns
-        # EXACTLY ONE compatible verb for the resolved subject, the answer
-        # is deterministic. The graph already proved this verb is the only
-        # one whose registered input_uri covers this subject's class chain;
-        # asking the LLM to confirm is pure overhead AND can backfire — we
-        # observed the LLM picking UNKNOWN when its single option's name
-        # didn't lexically match the query (e.g. "rotor assembly maintenance
-        # steps" rejecting mesh:queryKnowledgeGraph). The Cypher constraint
-        # outweighs LLM linguistic doubt at N=1. Skip the LLM and return
-        # the verb with a deterministic-decision confidence.
-        if len(candidates) == 1:
-            cand = candidates[0]
-            verb_iri = cand.get("verb_iri") or ""
-            # When the candidate came from Weaviate, it has the full
-            # dispatch record (endpoint, owner_persona, domains). When the
-            # caller-supplied IRI wasn't in Weaviate, the candidate is a
-            # synthesized stub with input_uri="" — in that case return
-            # predicate=None and let the supervisor fill it in from the
-            # /find_compatible_verbs response it already holds.
-            predicate_record: dict | None = cand if cand.get("input_uri") else None
-            return ClassifyPredicateResponse(
-                resolved_verb_iri=verb_iri,
-                confidence_score=0.99,
-                reasoning=(
-                    f"Neo4j compatibility query identified exactly one "
-                    f"predicate ({verb_iri}) whose registered input_uri "
-                    f"covers the resolved subject "
-                    f"({request.subject_uri}). The graph constraint is "
-                    f"decisive at N=1 — no LLM precision step is needed."
-                ),
-                predicate=predicate_record,
-                candidate_verb_iris=[verb_iri],
-            )
+        # ADR-0019 Contract A — cardinality is not fit. The previous
+        # "N=1 Neo4j-decisive shortcut" returned the lone candidate at
+        # 0.99 confidence without consulting the LLM, which made
+        # off-topic queries against valid subjects return confidently
+        # wrong (e.g. "what color was Napoleon's horse?" against a
+        # WorkInstruction returned mesh:queryKnowledgeGraph at 0.99).
+        # The graph constraint supplies the candidate *set*; the LLM
+        # validates *fit*. At N=1 the general path below builds a
+        # two-value enum ({the_verb, UNKNOWN}) and calls BAML — that
+        # preserves the Cypher-decisive shape while keeping the
+        # "or none fit" escape. Removing the shortcut entirely is the
+        # implementation: the general path already handles N≥1.
+        #
+        # The only sound way to skip the LLM at N=1 is an explicit
+        # ``is_default: true`` flag on the registered predicate (ADR-
+        # 0019 open item — not authored today, so no skip applies).
 
     if not candidates:
         # No registered predicate this caller is entitled to. Caller
