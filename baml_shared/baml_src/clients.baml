@@ -30,6 +30,18 @@ client<llm> Ollama {
     base_url env.OLLAMA_BASE_URL
     api_key "ollama"
     model env.OLLAMA_MODEL
+    // Pin temperature to 0 for the routing classifications.
+    // Every BAML call in this codebase is a constrained-enum
+    // classification or a structured JSON extraction — *not* an
+    // open-ended generation. Temperature > 0 introduces sampling
+    // variance that surfaces as nondeterministic routing on N=1
+    // boundary cases (e.g., TEST-1234 flipping accept/UNKNOWN on
+    // the same query+subject+verb_candidates across runs of the
+    // ADR-0019 Phase 1 stable harness — 4/5 accept, 1/5 reject,
+    // different reasoning text every time, classic sampling flake).
+    // Routing is argmax-over-enum, not creative generation —
+    // 0 is the right answer regardless of model.
+    temperature 0
   }
 }
 
