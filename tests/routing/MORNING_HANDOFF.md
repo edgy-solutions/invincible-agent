@@ -7,8 +7,28 @@ migrated compact → full IRI, `maintenance_extension.ttl` authored so the
 4 hand-curated mro: classes are now reproducible from MinIO, and the
 canonical pipeline (no hand-seeding) produces them at `domain=MAINTENANCE`
 with full-IRI URIs that match the verb edges. Substrate invariants
-8/8. Matrix 54/55 (one flake on the **unmigrated** catalog path — not a
-regression from tonight's work).
+8/8. Matrix 54/55 across two 5x runs, with one flake per run on a
+DIFFERENT boundary case each time — diagnosed as the known
+pre-temperature-0 sampling flake, NOT a migration regression.
+
+**Close-out verifications** (per the recommended "closed (A)" handoff):
+
+1. **Pipeline deploy verified WORKING, not just present.** A probe
+   class uploaded to `s3://ontologies/PROBE/` with
+   `extra_metadata={"domain": "MAINTENANCE"}` override landed in
+   Weaviate at `domain=MAINTENANCE`, not `PROBE`. The just-deployed
+   `explicit_domain` code path actually does what it says.
+
+2. **The 54/55 flake is sampling, not regression.** Re-ran the matrix
+   5 more times after the migration; same 54/55 outcome, but the
+   failing case was TEST-1234 (the MIGRATED path) instead of the
+   catalog query that flaked the first time. If the migration had
+   broken the catalog path, the catalog flake would recur; it didn't.
+   Both flakes share the identical signature: "verb chosen correctly,
+   confidence 0.00 < min 0.5" — the LLM is at non-zero temperature
+   and picks UNKNOWN on a marginal classification. Fix: ship
+   `temperature 0` (clients.baml commit 7ffd294) via the Engine-O
+   image rebuild that's already in the open queue.
 
 ## What changed tonight (in order)
 
