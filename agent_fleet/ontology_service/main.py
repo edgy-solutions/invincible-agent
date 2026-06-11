@@ -936,10 +936,9 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
         for r in rows
         if r.get("endpoint_url")
     ]
-    logger.info(
-        "Discovered %d mesh:resolveInstance providers: %s",
-        len(_INSTANCE_RESOLVERS_CACHE),
-        [r["endpoint_url"] for r in _INSTANCE_RESOLVERS_CACHE],
+    print(
+        f"Discovered {len(_INSTANCE_RESOLVERS_CACHE)} mesh:resolveInstance providers: "
+        f"{[r['endpoint_url'] for r in _INSTANCE_RESOLVERS_CACHE]}"
     )
     return _INSTANCE_RESOLVERS_CACHE
 
@@ -958,9 +957,9 @@ async def _call_resolver(
             resp.raise_for_status()
             data = resp.json() or {}
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "mesh:resolveInstance provider %s timed out or errored on %r: %s",
-            resolver.get("endpoint_url"), identifier, exc,
+        print(
+            f"mesh:resolveInstance provider {resolver.get('endpoint_url')!r} "
+            f"timed out or errored on identifier={identifier!r}: {exc}"
         )
         return []
     out: list[_IRCandidate] = []
