@@ -56,13 +56,21 @@ PSEUDO_FIXED = frozenset({
     "mesh:CatalogAssetQuery",      # was input_uri for 7 catalog-asset verbs
     "mesh:CatalogScopeQuery",      # was input_uri for mesh:enumerateCatalog
     "mesh:DatasetAnalysisRequest", # was input_uri for mesh:analyzeDataset
+    # FIXED on 2026-06-11 same evening as Phase 5 close-out:
+    # mesh_system.ttl ingested at canonical domain=MESH so the full-IRI
+    # mesh:AgentTask exists; analyzeWithCodeAgent re-typed against it.
+    # System verbs are not exempt from canonical reproducibility — they
+    # satisfy the contract by typing against canonical mesh:* classes
+    # that come from a canonical TTL source. Contract D debt: 0.
+    "mesh:AgentTask",              # was input_uri for analyzeWithCodeAgent
 })
 
-PSEUDO_KNOWN_DEBT = frozenset({
-    "mesh:AgentTask",              # 1 verb: analyzeWithCodeAgent — not a catalog
-                                   # concept, needs its own semantic input
-                                   # decision. Deferred from Phase 5.
-})
+# Contract D debt: 0. KNOWN_DEBT stays empty until a future verb gets
+# registered against a non-canonical input shape — at which point this
+# guard fails loudly and the drift-detection forces the decision to
+# either type against a real ontology class or accept the debt
+# explicitly by adding it here.
+PSEUDO_KNOWN_DEBT: frozenset[str] = frozenset()
 
 PSEUDO_CLASSES = PSEUDO_FIXED | PSEUDO_KNOWN_DEBT
 
@@ -131,12 +139,10 @@ def test_pseudo_class_debt_matches_known_set(driver):
 
     Either failure mode means an entry in this file needs updating.
     """
-    expected_debt = {
-        # Only one entry remaining after Phase 5 catalog migration (2026-06-11)
-        # — analyzeWithCodeAgent isn't catalog and needs its own semantic
-        # input class decision before it can join the FIXED set.
-        ("mesh:AgentTask", "mesh:analyzeWithCodeAgent"),
-    }
+    # Contract D debt cleared 2026-06-11 same evening as Phase 5:
+    # analyzeWithCodeAgent re-typed against full-IRI mesh:AgentTask
+    # once mesh_system.ttl was canonically ingested at domain=MESH.
+    expected_debt: set[tuple[str, str]] = set()
     with driver.session() as session:
         result = session.run(
             """

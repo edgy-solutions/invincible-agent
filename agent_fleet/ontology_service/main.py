@@ -1739,6 +1739,41 @@ class ClassifyPredicateResponse(BaseModel):
     candidate_verb_iris: list[str] = Field(default_factory=list)
 
 
+_SUBJECT_ANCESTOR_CHAIN_CYPHER = """
+MATCH (start:OntologyClass {uri: $subject_uri})
+MATCH path = (start)-[:subClassOf*0..$MAXHOPS$]->(scope:OntologyClass)
+WITH scope, length(path) AS hops
+ORDER BY hops ASC
+RETURN scope.uri AS uri, scope.label AS label, hops
+"""
+
+
+async def _get_subject_ancestor_chain(subject_uri: str, max_hops: int = 5) -> list[dict]:
+    """Walk the subClassOf chain from ``subject_uri`` up to ``max_hops``.
+
+    Returns ordered list of ``{uri, label, hops}`` dicts, where hops=0 is
+    the subject itself. The chain is what the LLM in /classify_predicate
+    needs to see in order to validate a verb's compatibility against
+    inheritance rather than against the raw input_uri string —
+    addresses the subClassOf-LLM-gap ADR-0018 amendment from 2026-06-11.
+
+    Empty list when subject doesn't exist as :OntologyClass (or Neo4j
+    is unreachable; we degrade silently rather than fail the route).
+    """
+    if not _NEO4J_DRIVER or not subject_uri or subject_uri == "UNKNOWN":
+        return []
+    cypher = _SUBJECT_ANCESTOR_CHAIN_CYPHER.replace("$MAXHOPS$", str(max_hops))
+
+    def _run() -> list[dict]:
+        with _NEO4J_DRIVER.session() as session:
+            return [dict(r) for r in session.run(cypher, subject_uri=subject_uri)]
+
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception:
+        return []
+
+
 @app.post("/classify_predicate", response_model=ClassifyPredicateResponse)
 async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredicateResponse:
     """Two-stage predicate classification: Weaviate recall + BAML precision.
@@ -1827,6 +1862,31 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             candidate_verb_iris=[],
         )
 
+    # Walk the subject's subClassOf chain from Neo4j so the LLM can see
+    # WHY a verb is compatible via inheritance, not just the raw
+    # input_uri string. Without this annotation the LLM (correctly,
+    # per Contract A) refuses a Dataset-typed verb against a Table
+    # subject as a "substrate mismatch" — the graph's subClassOf walk
+    # found the match, but its reasoning never reached the prompt.
+    # See STATE_2026_06_11.md "subClassOf doesn't reach the LLM" and
+    # the ADR-0018 amendment it cites.
+    ancestor_chain = await _get_subject_ancestor_chain(request.subject_uri or "")
+    # Quick-lookup map: ancestor_uri -> hops (0 = subject itself).
+    ancestor_hops: dict[str, int] = {a["uri"]: a["hops"] for a in ancestor_chain}
+    # Pretty-printed chain like "idp:Table ⊆ idp:Dataset", used when
+    # annotating a candidate whose input_uri matches an ancestor at hops>0.
+    def _inheritance_phrase(input_uri: str) -> str | None:
+        if not input_uri or input_uri not in ancestor_hops:
+            return None
+        h = ancestor_hops[input_uri]
+        if h == 0:
+            return None  # subject IS the verb's input — no inheritance hint needed
+        # Build the chain text. We have the linear order from the Cypher
+        # (sorted by hops). Include only the steps from subject up to the
+        # matched ancestor.
+        chain_uris = [a["uri"] for a in ancestor_chain if a["hops"] <= h]
+        return " ⊆ ".join(chain_uris)
+
     # Build TypeBuilder dynamic enum from the Weaviate candidates. Each
     # enum value's description is the verb's description string — the LLM
     # sees that when picking, which lets it judge substrate fit
@@ -1844,8 +1904,20 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             desc_bits.append(cand["description"])
         if cand.get("verb_type") and cand["verb_type"] not in desc_bits:
             desc_bits.append(f"verb_type={cand['verb_type']}")
-        if cand.get("input_uri"):
-            desc_bits.append(f"operates on {cand['input_uri']}")
+        input_uri = cand.get("input_uri") or ""
+        if input_uri:
+            inh = _inheritance_phrase(input_uri)
+            if inh:
+                # The graph walked subClassOf* and confirmed the subject
+                # is a subclass of this verb's typed input. Tell the LLM
+                # that explicitly so it doesn't treat the input_uri
+                # string mismatch as a fit failure.
+                desc_bits.append(
+                    f"operates on {input_uri} — compatible with subject "
+                    f"via inheritance ({inh})"
+                )
+            else:
+                desc_bits.append(f"operates on {input_uri}")
         if cand.get("owner_persona"):
             desc_bits.append(f"owner persona {cand['owner_persona']}")
         enum_desc = "; ".join(desc_bits) if desc_bits else verb_iri

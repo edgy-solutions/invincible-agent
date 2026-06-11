@@ -742,6 +742,20 @@ function ClassifyPredicate(
       operates on catalog assets does NOT belong on a WorkInstruction,
       even if the verb name and the query share the word "describe".
       Lexical proximity is not correctness; substrate fit is.
+    - **Inheritance counts as substrate fit.** A candidate's description
+      may include a phrase like "compatible with subject via inheritance
+      (idp:Table ⊆ idp:Dataset)". That phrase is a GUARANTEE from the
+      ontology graph that the verb's typed input is an ancestor of the
+      resolved subject in the subClassOf hierarchy. Treat such a
+      candidate as a valid substrate fit — do NOT refuse it just because
+      the verb's input_uri string differs from the subject_uri string.
+      The graph already validated the relationship; you only need to
+      validate intent (does the user's query actually match what this
+      verb does).
+    - When you do refuse with UNKNOWN, the reasoning must name the
+      specific intent mismatch (e.g., "the user asked for cost data,
+      not lineage"). Do not refuse on a substrate string mismatch when
+      an inheritance phrase is present.
     - If subject_uri is "UNKNOWN", the upstream classifier could not
       place the query — pick the verb that best matches the raw query
       and lower confidence accordingly.
