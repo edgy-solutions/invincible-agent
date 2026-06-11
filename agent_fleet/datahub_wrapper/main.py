@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import logging
+import difflib
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -129,6 +130,47 @@ class MetadataQueryRequest(BaseModel):
     entity_type: Optional[str] = None
 
 
+# Recipe v2 instance-resolution contract.
+# Engine D registers (mesh:InstanceIdentifier)-[mesh:resolveInstance]->(mesh:InstanceResolution)
+# at startup; the router fans an identifier here and reads the class
+# from the candidate list. An EMPTY list is a first-class answer.
+class ResolveInstanceRequest(BaseModel):
+    identifier: str
+    query: Optional[str] = None  # full user query, advisory only
+
+
+class InstanceCandidate(BaseModel):
+    instance_id: str    # DataHub URN
+    class_uri: str      # idp:* class — what the resolver consumes
+    label: str
+    score: float        # provider relevance, 0.0–1.0
+
+
+class ResolveInstanceResponse(BaseModel):
+    candidates: List[InstanceCandidate]
+
+
+# DataHub entity_type → canonical idp:* class. The mapping is intentionally
+# narrow: only entity types whose canonical class already lives in
+# idp_extension.ttl and has verbs typed against it (or against an ancestor
+# reachable via subClassOf). Anything else is dropped — abstaining is the
+# contract.
+_DATAHUB_TO_IDP: Dict[str, str] = {
+    "DATASET":   "idp:Table",      # warehouse three-part names land here
+    "DASHBOARD": "idp:Dashboard",
+    "CHART":     "idp:Dashboard",  # charts hang off dashboards in our model
+    "DATA_FLOW": "idp:Pipeline",
+    "DATA_JOB":  "idp:Job",
+}
+
+# Identifier patterns that suggest a column (last segment after the dataset
+# path) — used to prefer idp:Column over idp:Table when the DataHub-returned
+# schema mentions the trailing token. The classification still comes from
+# DataHub's authoritative entity type; this only chooses Column when the
+# query identifier ends in `.<schema-field-name>`.
+RESOLVE_INSTANCE_MIN_SCORE = float(os.getenv("RESOLVE_INSTANCE_MIN_SCORE", "0.7"))
+
+
 class DataStewardResponse(BaseModel):
     tool_list: List[str] = []
     safety_warnings: List[str] = []
@@ -192,6 +234,55 @@ async def lifespan(app: FastAPI):
         print(f"[Engine D] Failed to introspect DataHub schema at startup: {e}")
         _DYNAMIC_SCHEMA_CACHE = "### Valid DataHub Entity Types\nFallback: DATASET, DASHBOARD, CHART, DATA_FLOW, DATA_JOB"
 
+    # Recipe v2: register Engine D as the v1 mesh:resolveInstance provider.
+    # The router fans an identifier-shaped token here when /resolve's LLM
+    # extracts one, and the candidate list returned (class + score) drives
+    # the routing subject override. This is Engine D's FIRST registered
+    # mesh predicate — it was a silent backend tool before.
+    try:
+        try:
+            from utils.mesh_registration import register_engine_to_mesh
+        except ImportError:
+            from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+
+        _engine_d_endpoint = os.getenv(
+            "DATAHUB_WRAPPER_SVC_URL",
+            "http://iagent-engine-d:8085",
+        ).rstrip("/") + "/resolve_instance"
+
+        register_engine_to_mesh(
+            name="engine_d_resolve_instance",
+            description=(
+                "Resolves a named individual (catalog asset path, dotted "
+                "dataset name, dashboard title, or other identifier-shaped "
+                "token) to its canonical idp:* class via authoritative "
+                "DataHub search. Used by the router's instance-resolution "
+                "pre-step (Recipe v2). Returns candidate instances with "
+                "class URI, label, identity URN, and provider relevance "
+                "score sorted descending. An empty list is a first-class "
+                "answer — the provider abstains below "
+                "RESOLVE_INSTANCE_MIN_SCORE rather than returning least-"
+                "bad matches. The lexical SHAPE of the identifier never "
+                "decides the class — only DataHub's authoritative entity "
+                "type does."
+            ),
+            verb="mesh:resolveInstance",
+            input_uri="mesh:InstanceIdentifier",
+            output_uri="mesh:InstanceResolution",
+            verb_synonyms=[
+                "resolve instance", "look up named asset",
+                "what kind of asset", "identify catalog path",
+                "classify identifier",
+            ],
+            endpoint_url=_engine_d_endpoint,
+            owner_persona="DATA_STEWARD",
+            domains=["DATA_ENGINEERING"],
+            cost_class="fast",
+            requires_human_approval=False,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[Engine D] mesh:resolveInstance registration failed: {e}")
+
     yield
 
 # ---------------------------------------------------------------------------
@@ -220,6 +311,179 @@ def health() -> dict:
 async def get_tables() -> dict:
     """Legacy endpoint — now deprecated in favor of /query_metadata."""
     return {"available_tables": "Dynamic search enabled via /query_metadata"}
+
+
+# ---------------------------------------------------------------------------
+# Instance resolution — Recipe v2 Piece 2.
+# ---------------------------------------------------------------------------
+def _name_score(identifier: str, candidate_name: str) -> float:
+    """Provider relevance for a candidate name against the lookup token.
+
+    1.0  exact match (case-insensitive).
+    0.9  identifier is a suffix of the candidate name (resolved against a
+         shorter alias) OR vice versa — a strong hit either way.
+    else difflib.SequenceMatcher ratio — fuzzy / typo tolerant.
+
+    The contract requires honest scores; do NOT inflate to win. The
+    routing decision table treats anything below
+    RESOLVE_INSTANCE_MIN_SCORE as absent.
+    """
+    a = (identifier or "").strip().lower()
+    b = (candidate_name or "").strip().lower()
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if a.endswith(b) or b.endswith(a):
+        return 0.9
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _column_match(identifier: str, entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """If the identifier looks like <dataset>.<field> and the trailing
+    segment matches a schemaMetadata.fields[*].fieldPath on the returned
+    DATASET, classify it as idp:Column rather than idp:Table.
+
+    This is NOT a dot-counting heuristic at the router layer — Engine D
+    uses its own catalog-domain knowledge (schemas, fields) to decide.
+    The router consumes whatever class Engine D returns.
+    """
+    if entity.get("type") != "DATASET":
+        return None
+    if "." not in (identifier or ""):
+        return None
+    dataset_name = (entity.get("properties") or {}).get("name") or ""
+    if not dataset_name:
+        return None
+    prefix = dataset_name + "."
+    ident_norm = identifier.strip()
+    if not ident_norm.startswith(prefix):
+        return None
+    field_path = ident_norm[len(prefix):]
+    schema = entity.get("schemaMetadata") or {}
+    fields = schema.get("fields") or []
+    for f in fields:
+        fp = (f or {}).get("fieldPath", "")
+        if fp == field_path:
+            return {
+                "instance_id": f"{entity.get('urn', '')}.{fp}",
+                "class_uri": "idp:Column",
+                "label": f"{dataset_name}.{fp}",
+                "score": 0.95,  # exact field match
+            }
+    # Identifier names a dataset-prefixed segment but no matching field
+    # was returned. Treat as Column with lower confidence so the router
+    # still classifies as Column (the user's intent) even if the schema
+    # cache is stale.
+    return {
+        "instance_id": f"{entity.get('urn', '')}.{field_path}",
+        "class_uri": "idp:Column",
+        "label": f"{dataset_name}.{field_path}",
+        "score": 0.75,
+    }
+
+
+@app.post("/resolve_instance", response_model=ResolveInstanceResponse)
+async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceResponse:
+    """Instance-resolution endpoint for the mesh:resolveInstance predicate.
+
+    Given an identifier-shaped token, search DataHub and return the
+    candidate instances above ``RESOLVE_INSTANCE_MIN_SCORE`` with their
+    canonical idp:* class, label, identity URN, and provider relevance
+    score. An empty list is a first-class answer — do NOT return
+    least-bad matches when nothing meets the floor.
+
+    Contract:
+      - The score is the provider's honest relevance, not inflated.
+      - Class assignment comes from DataHub's authoritative entity type
+        (or a column-field match), never from the identifier's shape.
+      - Both DATASET-trailing-by-field (Column) and DATASET-as-whole
+        (Table) are returned when the identifier matches both — the
+        router's decision table handles the mixed-class case.
+    """
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if DATAHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
+
+    # Try the full identifier first; if it looks like <dataset>.<field>,
+    # also query the dataset prefix so DataHub returns schema metadata
+    # for the column-detection pass.
+    search_queries = [request.identifier]
+    if "." in request.identifier:
+        prefix = request.identifier.rsplit(".", 1)[0]
+        if prefix and prefix not in search_queries:
+            search_queries.append(prefix)
+
+    all_results: List[Dict[str, Any]] = []
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for q in search_queries:
+                payload = {
+                    "query": _GENERIC_SEARCH_QUERY,
+                    "variables": {"input": {"query": q, "start": 0, "count": 10}},
+                }
+                resp = await client.post(DATAHUB_GMS_URL, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json() or {}
+                results = (
+                    ((data.get("data") or {}).get("search") or {}).get("searchResults")
+                    or []
+                )
+                all_results.extend(results)
+    except Exception as exc:  # noqa: BLE001 — empty answer is a first-class result
+        logger.warning(
+            "resolve_instance: DataHub search failed for %r: %s",
+            request.identifier, exc,
+        )
+        return ResolveInstanceResponse(candidates=[])
+
+    candidates: List[InstanceCandidate] = []
+    seen_ids: set[str] = set()
+    for result in all_results:
+        entity = (result or {}).get("entity") or {}
+        urn = entity.get("urn", "")
+        entity_type = entity.get("type", "")
+        if not urn:
+            continue
+
+        # Column path takes priority for DATASETs whose schema fields
+        # match the identifier's trailing segment.
+        col = _column_match(request.identifier, entity)
+        if col:
+            cid = col["instance_id"]
+            if cid not in seen_ids:
+                seen_ids.add(cid)
+                candidates.append(InstanceCandidate(**col))
+            continue
+
+        class_uri = _DATAHUB_TO_IDP.get(entity_type)
+        if not class_uri:
+            continue
+
+        if entity_type == "DATASET":
+            name = (entity.get("properties") or {}).get("name") or urn
+        elif entity_type in ("DASHBOARD", "CHART"):
+            name = (entity.get("info") or {}).get("name") or urn
+        else:
+            name = urn
+
+        score = _name_score(request.identifier, name)
+        if score < RESOLVE_INSTANCE_MIN_SCORE:
+            continue
+        if urn in seen_ids:
+            continue
+        seen_ids.add(urn)
+        candidates.append(
+            InstanceCandidate(
+                instance_id=urn,
+                class_uri=class_uri,
+                label=name,
+                score=round(score, 3),
+            )
+        )
+
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    return ResolveInstanceResponse(candidates=candidates)
 
 
 @app.get("/find_tools")
