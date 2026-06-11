@@ -189,9 +189,89 @@ TEST_CASES: list[RouteCase] = [
         min_confidence=0.0,
         domain="DATA_ENGINEERING",
     ),
+    # --- Instance-resolution gate (Recipe v2, Step-0, added 2026-06-11) ---
+    # These rows are the spec for the instance-resolution capability
+    # (mesh:resolveInstance, registry-discovered). They stay RED until the
+    # full Recipe v2 lands — that pressure is intentional, not technical
+    # debt. The failing row drives the real fix; do NOT make it green any
+    # other way. See `docs/routing/recipe_v2_instance_resolution.md`.
+    #
+    # Forbidden interim fixes (explicit):
+    #   - dotted-path → class regex anywhere in Engine O
+    #   - lexical detector in front of /resolve
+    #   - DataHub-named branch (any backend name) inside the router
+    #
+    # The classes-vs-instances boundary: the resolver classifies KINDS;
+    # named INDIVIDUALS resolve via providers that register
+    # (mesh:InstanceIdentifier)-[mesh:resolveInstance]->(mesh:InstanceResolution).
+    # Engine D registers v1; Engine E joins as v2 with ZERO router changes
+    # (that's the generality acceptance test).
+
+    # R1 — the load-bearing red. Currently fails because resolver picks
+    # idp:Column for the dotted name (revenue/summary embed near Column
+    # definitions); after Recipe v2, Engine D's instance lookup returns
+    # the canonical class authoritatively and overrides the LLM guess.
     RouteCase(
         query="Tell me about gold.sales.revenue_summary",
+        expected_subject_substring="Table",
+        expected_verb_iri="mesh:describeAsset",
+        min_confidence=0.5,
+        domain="DATA_ENGINEERING",
+    ),
+    # R2 — typo / fuzzy unanimous: cohort of near-matches all classify the
+    # same way; provenance instance_match=fuzzy. Class inference from a
+    # cohort is sound even when identity is uncertain — that's what makes
+    # the design robust to misspelling.
+    RouteCase(
+        query="Tell me about gold.sales.revenue_sumary",
+        expected_subject_substring="Table",
+        expected_verb_iri="mesh:describeAsset",
+        min_confidence=0.5,
+        domain="DATA_ENGINEERING",
+    ),
+    # R3 — ghost name: providers all return empty (above their own
+    # relevance threshold). Fall through to normal class resolution, which
+    # will likely UNKNOWN → generalist. This row is the proof that empty
+    # answers are first-class.
+    RouteCase(
+        query="Tell me about foo.bar.zzz_nope",
         expected_subject_substring=None,
+        expected_verb_iri="UNKNOWN",
+        min_confidence=0.0,
+        domain="DATA_ENGINEERING",
+    ),
+    # R4 — four-segment column path. Phone book classifies as idp:Column
+    # (not a Table, despite the dot count). No Column verbs are registered
+    # until Wave-3, so compat-walk returns empty and the verb is UNKNOWN.
+    # This row is the proof that we did NOT build a dot-counter — if the
+    # router were dot-counting, three-segments-table-vs-four-segments-
+    # column logic would have to live somewhere, and it doesn't.
+    RouteCase(
+        query="What feeds gold.sales.revenue_summary.amount?",
+        expected_subject_substring="Column",
+        expected_verb_iri="UNKNOWN",
+        min_confidence=0.0,
+        domain="DATA_ENGINEERING",
+    ),
+    # R6 — titled name with NO identifier-shape: the win over v1's regex.
+    # The LLM must extract "Customer 360" from natural prose into the new
+    # instance_identifier output field; the phone book resolves it to a
+    # Dashboard.
+    RouteCase(
+        query="Tell me about the Customer 360 dashboard",
+        expected_subject_substring="Dashboard",
+        expected_verb_iri="mesh:describeAsset",
+        min_confidence=0.5,
+        domain="DATA_ENGINEERING",
+    ),
+    # R7 — extraction probe: a name buried in awkward conversational
+    # phrasing. Gates LLM extraction recall (the new load-bearing property
+    # of the resolver model — joins abstention in the frozen-baseline
+    # benchmark). If a future model swap breaks recall, this row turns red
+    # before users notice.
+    RouteCase(
+        query="so yesterday someone mentioned customers_gold or something, what is that?",
+        expected_subject_substring="Table",
         expected_verb_iri="mesh:describeAsset",
         min_confidence=0.5,
         domain="DATA_ENGINEERING",
