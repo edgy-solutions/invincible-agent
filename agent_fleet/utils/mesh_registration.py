@@ -70,6 +70,101 @@ _TOOL_KIND_PRESENTATION = "Presentation"
 _PREDICATE_RENDERS_AS = "mesh:rendersAs"
 
 
+def _emit_to_registrar(
+    *,
+    registrar_url: str,
+    name: str,
+    description: str,
+    verb: str,
+    input_uri: str,
+    output_uri: str,
+    endpoint_url: str,
+    verb_synonyms: Optional[Iterable[str]],
+    verb_anti_synonyms: Optional[Iterable[str]],
+    owner_persona: Optional[str],
+    domains: Optional[Iterable[str]],
+    cost_class: str,
+    requires_human_approval: bool,
+    version: str,
+    openapi_schema: Optional[dict],
+) -> None:
+    """POST a structured manifest to the mesh-registrar gateway.
+
+    The gateway validates Contract D (input_uri/output_uri must resolve
+    to real :OntologyClass nodes in Neo4j), emits the DataHub MCP, and
+    handles idempotency by tool_urn. Engines that go through this path
+    don't need ``acryl-datahub`` or DataHub protocol knowledge — that
+    cost lives once in the gateway image instead of in every engine.
+
+    Manifest shape mirrors mesh-registrar's ``RegistrationManifest``
+    pydantic model (``agent_fleet/mesh_registrar/main.py``).
+
+    On Contract D rejection (HTTP 422) or DataHub failure (HTTP 502),
+    logs the gateway's reason and returns. Per ADR-0006, registration
+    failure must not crash the engine — serving keeps working;
+    routing for this engine resumes after the next successful
+    registration cycle.
+    """
+    try:
+        import httpx
+    except ImportError:
+        logger.warning(
+            "httpx is not installed; falling back from mesh-registrar to "
+            "direct DataHub emit for engine %s. Install httpx to use the "
+            "gateway path.",
+            name,
+        )
+        return
+
+    urn = f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{name},PROD)"
+    manifest = {
+        "name": name,
+        "verb_iri": verb,
+        "input_uri": input_uri,
+        "output_uri": output_uri,
+        "endpoint_url": endpoint_url,
+        "owner_persona": owner_persona or "",
+        "domains": list(domains or []),
+        "description": description,
+        "verb_synonyms": list(verb_synonyms or []),
+        "verb_anti_synonyms": list(verb_anti_synonyms or []),
+        "cost_class": cost_class,
+        "requires_human_approval": requires_human_approval,
+        "version": version,
+        "openapi_schema": json.dumps(openapi_schema) if openapi_schema else None,
+    }
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(f"{registrar_url}/v1/register", json=manifest)
+        if resp.status_code == 200:
+            logger.info(
+                "✅ Registered engine %s via mesh-registrar (%s -> %s)",
+                urn, input_uri, output_uri,
+            )
+            return
+        if resp.status_code == 422:
+            # Contract D rejection — the gateway tells us exactly which
+            # URI is missing. Surface it so the operator can fix the
+            # ontology rather than guessing.
+            logger.warning(
+                "⚠️ mesh-registrar rejected engine %s (Contract D): %s. "
+                "Engine will keep serving; run the canonical ontology "
+                "ingest then redeploy to retry.",
+                urn, resp.text[:500],
+            )
+            return
+        logger.warning(
+            "⚠️ mesh-registrar returned HTTP %d for engine %s: %s",
+            resp.status_code, urn, resp.text[:500],
+        )
+    except Exception as e:  # noqa: BLE001 — ADR-0006: do not crash the engine
+        logger.warning(
+            "⚠️ Failed to register engine %s via mesh-registrar at %s: %s",
+            urn, registrar_url, e,
+        )
+
+
 def register_engine_to_mesh(
     *,
     name: str,
@@ -110,14 +205,36 @@ def register_engine_to_mesh(
         )
         return
 
+    # mesh-registrar gateway dispatch — opt-in via MESH_REGISTRAR_URL.
+    # When set, the engine POSTs a small manifest to the gateway and the
+    # gateway handles Contract D validation + DataHub emit + idempotency
+    # centrally. Engine doesn't need acryl-datahub or DataHub protocol
+    # knowledge. Returns early on success — the legacy DataHub path
+    # below is only used when the gateway isn't configured.
+    registrar_url = os.getenv("MESH_REGISTRAR_URL", "").rstrip("/")
+    if registrar_url:
+        _emit_to_registrar(
+            registrar_url=registrar_url,
+            name=name, description=description,
+            verb=verb, input_uri=input_uri, output_uri=output_uri,
+            endpoint_url=endpoint_url,
+            verb_synonyms=verb_synonyms, verb_anti_synonyms=verb_anti_synonyms,
+            owner_persona=owner_persona, domains=domains,
+            cost_class=cost_class,
+            requires_human_approval=requires_human_approval,
+            version=version, openapi_schema=openapi_schema,
+        )
+        return
+
     gms_url = os.getenv("DATAHUB_GMS_URL")
     token = os.getenv("DATAHUB_TOKEN", "")
 
     if not gms_url:
         logger.warning(
-            "MESH_REGISTER_ON_STARTUP=true but DATAHUB_GMS_URL not set; "
-            "skipping registration for engine %s. The engine will keep "
-            "serving but won't be reachable via /find_tool.",
+            "MESH_REGISTER_ON_STARTUP=true but neither MESH_REGISTRAR_URL "
+            "nor DATAHUB_GMS_URL set; skipping registration for engine %s. "
+            "The engine will keep serving but won't be reachable via "
+            "/find_tool.",
             name,
         )
         return
@@ -282,6 +399,19 @@ def register_presentation_to_mesh(
             name,
         )
         return
+
+    # Presentations don't currently go through the mesh-registrar
+    # gateway — the gateway's RegistrationManifest only models verb
+    # edges (input_uri/output_uri pair); the (subject, mesh:rendersAs,
+    # archetype) triple shape isn't supported yet. When the gateway
+    # adds presentation support, mirror the dispatch above.
+    if os.getenv("MESH_REGISTRAR_URL"):
+        logger.info(
+            "MESH_REGISTRAR_URL set but presentation %s won't go through "
+            "the gateway (presentation triples aren't yet supported by "
+            "RegistrationManifest); using direct DataHub emit.",
+            name,
+        )
 
     gms_url = os.getenv("DATAHUB_GMS_URL")
     token = os.getenv("DATAHUB_TOKEN", "")
