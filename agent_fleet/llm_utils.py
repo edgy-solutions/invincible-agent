@@ -96,15 +96,34 @@ def init_baml_client(baml_client_instance):
         cr = ClientRegistry()
         cr.set_primary(active_client)
 
-        # Redefine Ollama client with the correct base URL from environment
+        # Redefine Ollama client with the correct base URL from environment.
+        #
+        # IMPORTANT: this registration OVERRIDES the Ollama client declared
+        # in clients.baml. The original BAML config sets ``temperature 0``
+        # (see baml_shared/baml_src/clients.baml, commit 7ffd294) because
+        # every BAML call in this repo is a constrained-enum classification
+        # or structured JSON extraction — argmax-over-enum, not creative
+        # generation. Without ``temperature: 0`` here, that setting from
+        # clients.baml is silently ignored: this ClientRegistry registration
+        # wins at runtime, and the model defaults to whatever Ollama applies
+        # (typically 0.8). Symptom observed: TEST-1234 boundary case in
+        # tests/routing/test_classify_route.py flips accept ↔ UNKNOWN
+        # across runs of the routing matrix on identical input. routing-
+        # baseline-v1 was lucky-deterministic, not truly temperature-0.
+        #
+        # Also reads OLLAMA_MODEL first so engines that aren't smolagents
+        # (engine-o uses BAML only) can be configured via the obvious env
+        # var. Falls back to SMOLAGENTS_MODEL for backwards compatibility.
         ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
+        ollama_model = os.getenv("OLLAMA_MODEL") or os.getenv("SMOLAGENTS_MODEL", "gpt-oss-120b")
         cr.add_llm_client(
             name="Ollama",
             provider="openai",
             options={
                 "base_url": ollama_url,
                 "api_key": "ollama",
-                "model": os.getenv("SMOLAGENTS_MODEL", "gpt-oss-120b"),
+                "model": ollama_model,
+                "temperature": 0,
             }
         )
 

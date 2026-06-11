@@ -138,6 +138,42 @@ so a surprise is a finding.
 - Phase 5: re-type 10 catalog verbs onto idp:* subjects
 - Wave 3: full route tests on the new dispatch paths, plus `data:*` retirement
 
+## Wave-1 class retirement note (added retrospectively)
+
+After Phase 5 verb migration completed, the 4 Wave-1 classes that have
+no Phase 5 verb coverage (`idp:Table`, `idp:Column`, `idp:Pipeline`,
+`idp:Job`) were observed to **pollute the catalog candidate pool** in
+Weaviate hybrid search:
+
+- `"Who owns the customer_silver table?"` was resolving to `idp:Table`.
+  Subject was correct, compat-walk found verbs via subClassOf inheritance,
+  but the LLM REFUSED them with reasoning that the verbs are typed
+  against `idp:Dataset`, not Table — the subClassOf relationship doesn't
+  carry into the LLM's constrained-enum reasoning. This is the same
+  pattern as the original rotor failure (Contract A working correctly:
+  LLM refuses to lie when types don't match its prompt-level signal).
+- `"Tell me about gold.sales.revenue_summary"` was resolving to
+  `idp:Job` at 0.45 confidence (LLM read the dotted name as a job path)
+  → no verbs typed against Job → UNKNOWN.
+
+**Resolution**: the 4 classes were deleted from Weaviate (Table, Column,
+Pipeline, Job). They remain in Neo4j (where Phase 5+/Wave-3 verb edges
+will eventually anchor) and in the canonical TTL source
+(`doc-tools/setup/idp_extension.ttl`). The Weaviate retirement is a
+temporary measure that gets undone in the same coordinated change as
+the verb migration extension to these subjects.
+
+This is consistent with the spec discipline: **don't declare nouns in
+Weaviate before they have verb coverage**, because they'll either
+intercept queries they can't serve (these 4 cases) or hit the
+no_compatible_verbs telemetry rise the Wave-1 predictions already
+called out.
+
+Status as of 2026-06-11: only `idp:Dataset` and `idp:Dashboard` are in
+Weaviate at DATA_ENGINEERING. Catalog matrix queries all resolve to
+`idp:Dataset` at 0.95-0.99 confidence and route via direct compat-walk
+to the Phase-5-migrated verbs.
+
 ## Mystery-seed scope re-scope
 
 Discovery during this phase: the 41 `data:*` / PROV-O entries in
