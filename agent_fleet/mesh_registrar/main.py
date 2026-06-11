@@ -180,23 +180,31 @@ def _emit_to_datahub(manifest: RegistrationManifest, tool_urn: str) -> dict:
     from datahub.emitter.rest_emitter import DatahubRestEmitter
     from datahub.metadata.schema_classes import MLModelPropertiesClass
 
+    # IMPORTANT: keys MUST use the ``mesh_`` prefix to match the
+    # doc-tools aitool sensor's expected property names — it reads
+    # ``mesh_verb_iri`` / ``mesh_input_uri`` / ``mesh_output_uri`` and
+    # rejects with ``incomplete`` props otherwise. Bare names without the
+    # prefix were the first real gateway↔sensor protocol bug, discovered
+    # when engine-d/e/w opted in and silently failed materialization.
+    # Mirror exactly the legacy direct-emit path in
+    # ``agent_fleet/utils/mesh_registration.py``.
     custom_props = {
-        "mesh_is_registration": "true",
-        "verb_iri": manifest.verb_iri,
-        "input_uri": manifest.input_uri,
-        "output_uri": manifest.output_uri,
-        "endpoint_url": manifest.endpoint_url,
-        "owner_persona": manifest.owner_persona,
-        "domains": ",".join(manifest.domains),
-        "cost_class": manifest.cost_class,
-        "requires_human_approval": str(manifest.requires_human_approval).lower(),
-        "verb_synonyms": ",".join(manifest.verb_synonyms),
-        "verb_anti_synonyms": ",".join(manifest.verb_anti_synonyms),
-        "version": manifest.version,
-        "registrar_version": REGISTRAR_VERSION,
+        "mesh_is_registration":         "true",
+        "mesh_verb_iri":                manifest.verb_iri,
+        "mesh_input_uri":               manifest.input_uri,
+        "mesh_output_uri":              manifest.output_uri,
+        "mesh_endpoint_url":            manifest.endpoint_url,
+        "mesh_owner_persona":           manifest.owner_persona,
+        "mesh_domains":                 ",".join(manifest.domains),
+        "mesh_cost_class":              manifest.cost_class,
+        "mesh_requires_human_approval": str(manifest.requires_human_approval).lower(),
+        "mesh_verb_synonyms":           ",".join(manifest.verb_synonyms),
+        "mesh_verb_anti_synonyms":      ",".join(manifest.verb_anti_synonyms),
+        "mesh_version":                 manifest.version,
+        "mesh_registrar_version":       REGISTRAR_VERSION,
     }
     if manifest.openapi_schema:
-        custom_props["openapi_schema"] = manifest.openapi_schema
+        custom_props["mesh_openapi_schema"] = manifest.openapi_schema
 
     props = MLModelPropertiesClass(
         description=manifest.description or "",
