@@ -102,10 +102,14 @@ query SearchDataHub($input: SearchAcrossEntitiesInput!) {
 }
 """
 
-# Query for finding tools based on ontology_uri in customProperties
+# Query for finding tools based on ontology_uri in customProperties.
+# Switched from `search` (type required, silently empty on validation
+# failure) to `searchAcrossEntities` for the same reason as the generic
+# query above — Engine D's "find anything tagged with X" use case never
+# wanted a type narrowing.
 _FIND_TOOLS_QUERY = """
-query SearchDataHub($input: SearchInput!) {
-  search(input: $input) {
+query SearchDataHub($input: SearchAcrossEntitiesInput!) {
+  searchAcrossEntities(input: $input) {
     searchResults {
       entity {
         urn
@@ -431,6 +435,20 @@ async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceRe
                 resp = await client.post(DATAHUB_GMS_URL, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json() or {}
+                # LOUD error path: DataHub returns HTTP 200 with
+                # `errors[]` + `data=null` on GraphQL validation
+                # failures. The previous code's `data.get("search")` ->
+                # empty list pattern silently swallowed those, which
+                # masked the missing-`type` bug for who knows how long.
+                # Empty candidates must be REAL empties (no asset
+                # found), never a polite shape over a malformed query.
+                gql_errors = data.get("errors") or []
+                if gql_errors:
+                    logger.error(
+                        "DataHub GraphQL errors for /resolve_instance "
+                        "identifier=%r search_query=%r: %s",
+                        request.identifier, q, json.dumps(gql_errors),
+                    )
                 data_dict = data.get("data") or {}
                 # Tolerate both shapes — searchAcrossEntities (new) and
                 # search (legacy) — in case the GraphQL schema is rolled
@@ -538,7 +556,7 @@ async def find_tools(ontology_uri: str):
 
     # Safely navigate the nested GraphQL response
     data_dict = data.get("data") or {}
-    search_dict = data_dict.get("search") or {}
+    search_dict = data_dict.get("searchAcrossEntities") or data_dict.get("search") or {}
     search_results = search_dict.get("searchResults") or []
     tools = []
 
