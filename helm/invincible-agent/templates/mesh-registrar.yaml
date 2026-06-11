@@ -1,0 +1,73 @@
+{{- if .Values.meshRegistrar.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-mesh-registrar
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "mesh-registrar" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.meshRegistrar.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "mesh-registrar" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "mesh-registrar" "root" .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mesh-registrar
+          image: {{ include "invincible-agent.image" (dict "name" .Values.meshRegistrar.image.name "repository" .Values.meshRegistrar.image.repository "tag" .Values.meshRegistrar.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.meshRegistrar.image.pullPolicy | default "Always" }}
+          ports:
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+          env:
+            - name: DATAHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: DATAHUB_TOKEN
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /v1/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.meshRegistrar.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-mesh-registrar
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8090
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "mesh-registrar" "root" .) | nindent 4 }}
+{{- end }}

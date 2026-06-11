@@ -1,0 +1,19 @@
+[project]
+name = "mesh-registrar"
+version = "0.1.0"
+description = "Contract D registration gateway for the agentic data mesh."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2.0",
+    "httpx",
+    "neo4j",
+    # acryl-datahub ships here ONCE so engines don't each pay the ~150MB cost.
+    "acryl-datahub",
+    "python-dotenv",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

@@ -48,18 +48,20 @@ NEO4J_PASS = os.getenv("NEO4J_PASSWORD", "changeme-neo4j-sandbox")
 # KNOWN_DEBT set is tracked by a separate informational test so future fixes
 # DON'T silently expand the debt.
 PSEUDO_FIXED = frozenset({
-    "mesh:GraphQuery",       # was input_uri for mesh:queryKnowledgeGraph
-    "mesh:KnowledgeQuery",   # was input_uri for mesh:retrieveKnowledge
-    "mesh:Request",          # never had verbs typed against it
+    "mesh:GraphQuery",             # was input_uri for mesh:queryKnowledgeGraph (mro migration, 2026-06-10)
+    "mesh:KnowledgeQuery",         # was input_uri for mesh:retrieveKnowledge (mro migration, 2026-06-10)
+    "mesh:Request",                # never had verbs typed against it
+    # The 3 below were FIXED on 2026-06-11 via Phase 5 catalog migration —
+    # the 9 catalog verbs all moved to idp:Dataset as input.
+    "mesh:CatalogAssetQuery",      # was input_uri for 7 catalog-asset verbs
+    "mesh:CatalogScopeQuery",      # was input_uri for mesh:enumerateCatalog
+    "mesh:DatasetAnalysisRequest", # was input_uri for mesh:analyzeDataset
 })
 
 PSEUDO_KNOWN_DEBT = frozenset({
-    "mesh:CatalogAssetQuery",      # 7 verbs: assessImpact, checkFreshness,
-                                   # describeAsset, filterByTag, findSchema,
-                                   # lookupOwnership, traceLineage
-    "mesh:CatalogScopeQuery",      # 1 verb: enumerateCatalog
-    "mesh:DatasetAnalysisRequest", # 1 verb: analyzeDataset
-    "mesh:AgentTask",              # 1 verb: analyzeWithCodeAgent
+    "mesh:AgentTask",              # 1 verb: analyzeWithCodeAgent — not a catalog
+                                   # concept, needs its own semantic input
+                                   # decision. Deferred from Phase 5.
 })
 
 PSEUDO_CLASSES = PSEUDO_FIXED | PSEUDO_KNOWN_DEBT
@@ -130,15 +132,9 @@ def test_pseudo_class_debt_matches_known_set(driver):
     Either failure mode means an entry in this file needs updating.
     """
     expected_debt = {
-        ("mesh:CatalogAssetQuery", "mesh:assessImpact"),
-        ("mesh:CatalogAssetQuery", "mesh:checkFreshness"),
-        ("mesh:CatalogAssetQuery", "mesh:describeAsset"),
-        ("mesh:CatalogAssetQuery", "mesh:filterByTag"),
-        ("mesh:CatalogAssetQuery", "mesh:findSchema"),
-        ("mesh:CatalogAssetQuery", "mesh:lookupOwnership"),
-        ("mesh:CatalogAssetQuery", "mesh:traceLineage"),
-        ("mesh:CatalogScopeQuery", "mesh:enumerateCatalog"),
-        ("mesh:DatasetAnalysisRequest", "mesh:analyzeDataset"),
+        # Only one entry remaining after Phase 5 catalog migration (2026-06-11)
+        # — analyzeWithCodeAgent isn't catalog and needs its own semantic
+        # input class decision before it can join the FIXED set.
         ("mesh:AgentTask", "mesh:analyzeWithCodeAgent"),
     }
     with driver.session() as session:

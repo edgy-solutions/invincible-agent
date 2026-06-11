@@ -305,6 +305,29 @@ centralGateway:
     # ConfigMap is the single source of truth and remains overridable.
 
 # ==========================================================================
+# mesh-registrar — Contract D registration gateway.
+# Engines opt into this path by setting MESH_REGISTRAR_URL on themselves
+# (typically via agentFleet.env so all engines pick it up). Disabled by
+# default until the SDK in registering engines is updated to use the
+# gateway path (see iagent_mesh.core._emit_to_registrar).
+# ==========================================================================
+
+meshRegistrar:
+  enabled: false
+  replicas: 1
+  image:
+    name: mesh-registrar
+    tag: "latest"
+  port: 8090
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ==========================================================================
 # Frontend Services
 # ==========================================================================
 

@@ -39,6 +39,9 @@ jobs:
           - service: ontology-service
             path: agent_fleet/ontology_service
             port: "8084"
+          - service: mesh-registrar
+            path: agent_fleet/mesh_registrar
+            port: "8090"
           - service: restate-analyst
             path: agent_fleet/restate_analyst
             port: "8081"
