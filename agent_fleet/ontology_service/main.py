@@ -903,8 +903,14 @@ RETURN DISTINCT
 
 _INSTANCE_RESOLVERS_CACHE: list[dict] | None = None
 _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S = float(
-    os.getenv("INSTANCE_RESOLVER_TIMEOUT_S", "2.0")
+    os.getenv("INSTANCE_RESOLVER_TIMEOUT_S", "8.0")
 )
+# 8s default — the recipe's "~2s" was sized for an in-memory phone
+# book; real catalog providers (Engine D → DataHub GraphQL) routinely
+# take 3-5s for the first uncached search. A timeout below the
+# provider's p95 silently kills lookups and the abstention contract
+# masks the kill as a miss. Override via env when adding a provider
+# with tighter SLO; never set below the slowest provider's p95.
 _INSTANCE_RESOLVE_EXACT = float(
     os.getenv("INSTANCE_RESOLVE_EXACT_THRESHOLD", str(_IR_DEFAULT_EXACT))
 )

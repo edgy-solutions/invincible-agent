@@ -59,7 +59,16 @@ canonical re-ingest closed it.
 
 ## Matrix steady-state
 
-**13 / 17 passing** (5-row Recipe v2 block + Wave-1 hierarchy + 11 originals).
+**16 / 17 passing** (post-Engine-D-fix + 8s timeout). The four
+instance-resolution rows flipped from RED to GREEN-via-override
+with `instance_match=exact` in provenance. R6 stayed GREEN but its
+provenance changed from `null` (lucky LLM semantic alignment) to
+`instance_match=exact, instance_provider=resolveInstance,
+instance_id=urn:li:dashboard:(superset,customer_360)` — the
+assertion tighten the architect called for. The remaining red is
+R4 (LLM picks `mesh:traceLineage` for `idp:Column` subject despite
+`compatible_verb_iris=[]`), which is the separate substrate-
+violation issue in the backlog.
 
 | Row | Query | Status | Why |
 |-----|-------|--------|-----|
@@ -100,14 +109,82 @@ Every Recipe v2 property holds in this trace:
 6. Fall-through: LLM's guess (`idp:Column`) stands — the system NEVER guessed kind from string shape
 7. Provenance dict carries the full trace for downstream observability
 
-## What blocks the matrix from going green
+## Postscript — the morning-report misdiagnosis, and what it taught the architecture
 
-The 4 red rows need real DataHub assets. The system can't resolve
-`gold.sales.revenue_summary` to Table when DataHub literally doesn't
-have that asset registered. This is a **sandbox-data issue, not a
-Recipe v2 issue.** Either:
-- Seed DataHub with a small fixture set covering R1/R2/R4/R6/R7 — this lets the matrix go green and validates the exact-match + fuzzy + Column paths against authoritative data
-- Defer matrix-greening to whenever the next ingest of real catalog data lands; the architecture is verified by the live trace above
+The initial state-doc (pre-postscript) claimed "DataHub is literally
+empty in the sandbox" and listed seeding as the blocker. That was
+wrong, and the way it was wrong is the most instructive bug of the
+whole arc.
+
+DataHub had 8 datasets the entire time. `gold.sales.revenue_summary`
+existed as a DATASET. `customer_360` existed as a DASHBOARD.
+`customers_gold` was there. Engine D's `_GENERIC_SEARCH_QUERY`
+used the `search(input: SearchInput!)` GraphQL field, which
+**requires** a non-null `type`. Calls without it return HTTP 200
+with `errors: [{... missing required fields '[type]'}]` and
+`data: null`. The previous code's `resp.raise_for_status() +
+data.get("search") or {}` swallowed every one of those, returning
+`candidates: []` to the caller. Engine D wasn't abstaining; it
+was crashing politely.
+
+The first state-doc's "DataHub empty" inference was confident, came
+from one query (`user_query="*"` against /query_metadata), and was
+never falsified by a direct query past Engine D. The abstention
+contract Recipe v2 is built on — "empty list is first-class" — is
+exactly what made the bug invisible. A provider that silently
+returns empty on every input is, by design, indistinguishable
+from a provider facing an empty registry.
+
+This bug is the same genus as Phase 1's "canonical sources that
+exist but were never materialized": catalog assets that exist but
+were never **reachable**. The system kept being more correct than
+our view of it; the work, every time, was fixing the lens.
+
+The postscript landed three pieces:
+
+1. **`searchAcrossEntities` fix** (commit e8beb85). The
+   semantically right endpoint for the phone-book contract: "is
+   this token a known asset of *any* kind?" type-unscoped by
+   definition. Engine D's old `search` query was built for
+   verb-serving ("search datasets matching X" — type known from the
+   verb); reusing it for instance resolution quietly imported an
+   assumption the new capability exists to eliminate.
+
+2. **Loud-error path** (commit d48cc48). GraphQL `errors[]`
+   entries now log with the identifier + search query in the
+   provider's logs even when the provider returns empty to the
+   router. The next protocol mismatch announces itself.
+
+3. **Known-good probes** (`tests/routing/test_resolve_instance_probes.py`).
+   Each `mesh:resolveInstance` provider ships with one
+   (identifier, expected_class) pair it MUST resolve. Tests via
+   `/resolve`'s provenance so it exercises the full discovery +
+   fan-out + decision-table pipeline. If `instance_match=empty`
+   for a probe, the test failure names the broken provider and
+   points at the likely cause (GraphQL errors, gateway
+   registration, sensor materialization). This is the discipline
+   rule promoted to permanent tripwire, alongside
+   predict-before-run:
+
+   > Every abstention path needs a positive control. A component
+   > whose correct failure mode is silence cannot be validated by
+   > observing silence — you must also observe it SPEAK when it
+   > should.
+
+   Adding Engine E as provider #2 is one row in
+   `KNOWN_GOOD_PROBES`. Same shape, same alarm.
+
+## Blast-radius change worth flagging
+
+Recipe v2 moved the integration boundary. The routing matrix used
+to verify only "LLM-picks-the-right-verb-from-query-words" — Engine
+D's actual search correctness was downstream of every assertion.
+The phone-book leg makes a live DataHub call **part of routing
+itself**, which means the matrix now exercises Engine D's query
+correctness for the first time — and immediately found a bug in
+it. The matrix can now go red on an Engine-D defect. That's the
+blast radius growing on purpose; tonight it paid for itself within
+hours.
 
 ## Open follow-ups (in order)
 
