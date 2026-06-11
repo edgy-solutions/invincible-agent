@@ -44,15 +44,21 @@ PLATFORM_MAP = {
 }
 
 # ---------------------------------------------------------------------------
-# Generic GraphQL query — search across ALL entities.
+# Generic GraphQL query — search ACROSS entity types.
 #
-# Extended to fetch ownership, upstream/downstream lineage, tags, and
-# the most recent operation timestamp so the agent can answer
-# ownership / lineage / freshness questions without a second hop.
+# DataHub's `search` field requires a non-null `type` parameter and
+# returns a Validation error otherwise — which the previous query
+# silently masked by raising for_status() that never fired because
+# the HTTP 200 carried `errors[]` in the body, not a 4xx. Switch to
+# `searchAcrossEntities`, which has no type requirement and returns
+# every kind in one round-trip (DATASETs, DASHBOARDs, CHARTs,
+# DATA_FLOWs, DATA_JOBs). This is the only sensible default for the
+# "tell me about <name>" shape of query; per-type narrowing stays
+# available via the original SearchInput for callers that need it.
 # ---------------------------------------------------------------------------
 _GENERIC_SEARCH_QUERY = """
-query SearchDataHub($input: SearchInput!) {
-  search(input: $input) {
+query SearchDataHub($input: SearchAcrossEntitiesInput!) {
+  searchAcrossEntities(input: $input) {
     searchResults {
       entity {
         urn
@@ -425,11 +431,12 @@ async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceRe
                 resp = await client.post(DATAHUB_GMS_URL, json=payload, headers=headers)
                 resp.raise_for_status()
                 data = resp.json() or {}
-                results = (
-                    ((data.get("data") or {}).get("search") or {}).get("searchResults")
-                    or []
-                )
-                all_results.extend(results)
+                data_dict = data.get("data") or {}
+                # Tolerate both shapes — searchAcrossEntities (new) and
+                # search (legacy) — in case the GraphQL schema is rolled
+                # back during ops, the endpoint still returns candidates.
+                hit = data_dict.get("searchAcrossEntities") or data_dict.get("search") or {}
+                all_results.extend(hit.get("searchResults") or [])
     except Exception as exc:  # noqa: BLE001 — empty answer is a first-class result
         logger.warning(
             "resolve_instance: DataHub search failed for %r: %s",
@@ -586,8 +593,10 @@ async def query_metadata(request: MetadataQueryRequest):
     }
     
     if request.entity_type:
-        search_variables["input"]["type"] = request.entity_type.upper()
-    
+        # searchAcrossEntities takes a list of types; legacy callers pass
+        # a single type string, so wrap it.
+        search_variables["input"]["types"] = [request.entity_type.upper()]
+
     if or_filters:
         search_variables["input"]["orFilters"] = or_filters
 
@@ -650,7 +659,7 @@ async def query_metadata(request: MetadataQueryRequest):
     # Parse Results Generically
     data = data or {}
     data_dict = data.get("data") or {}
-    search_dict = data_dict.get("search") or {}
+    search_dict = data_dict.get("searchAcrossEntities") or data_dict.get("search") or {}
     search_results = search_dict.get("searchResults") or []
     matched_assets = []
     referenced_uris = []
