@@ -197,6 +197,23 @@ TEST_CASES: list[RouteCase] = [
         domain="DATA_ENGINEERING",
     ),
 
+    # --- Hierarchy-routing gate (Wave-1, added 2026-06-11) ---
+    # This row gates the subClassOf hierarchy fix: subject MUST resolve to
+    # idp:Table (the more specific class for a named table) AND verb MUST
+    # route to mesh:lookupOwnership via the "compatible via inheritance
+    # (idp:Table ⊆ idp:Dataset)" hint that /classify_predicate now
+    # surfaces. Without the hint the LLM refuses (Contract A: verbs are
+    # typed against idp:Dataset, subject is idp:Table, substrate
+    # mismatch). See abba2d2 + STATE_2026_06_11.md "subClassOf doesn't
+    # reach the LLM" → ADR-0018 amendment.
+    RouteCase(
+        query="Who is the owner of the customer_silver table specifically?",
+        expected_subject_substring="Table",  # idp:Table — leaf class wins
+        expected_verb_iri="mesh:lookupOwnership",  # routed via inheritance
+        min_confidence=0.5,
+        domain="DATA_ENGINEERING",
+    ),
+
     # --- Engine E (Neo4j knowledge graph) ---
     # These are the ones that have been routing wrong because BM25 over
     # verb synonyms can't see substrate context. Subject classification
