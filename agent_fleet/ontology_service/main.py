@@ -873,12 +873,24 @@ async def predicate_hybrid_search(
 # registry (Engine E, the docs pipeline, etc.) is a REGISTRATION, not a
 # router code change — that's the generality acceptance test.
 
-from agent_fleet.ontology_service.instance_resolution import (  # noqa: E402
-    InstanceCandidate as _IRCandidate,
-    decide as _ir_decide,
-    DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
-    DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
-)
+# Dual import for dev (full repo path) vs container (main.py and
+# instance_resolution.py colocated at /app/). The standing guard
+# ``test_engine_o_imports_decision_table_from_pure_module`` still
+# matches against the dev path.
+try:
+    from agent_fleet.ontology_service.instance_resolution import (  # noqa: E402
+        InstanceCandidate as _IRCandidate,
+        decide as _ir_decide,
+        DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
+        DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+    )
+except ImportError:
+    from instance_resolution import (  # noqa: E402
+        InstanceCandidate as _IRCandidate,
+        decide as _ir_decide,
+        DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
+        DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+    )
 
 _INSTANCE_RESOLVERS_CYPHER = """
 MATCH (i:OntologyClass {uri: 'mesh:InstanceIdentifier'})-[r]->(o:OntologyClass)
