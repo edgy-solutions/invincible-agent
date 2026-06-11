@@ -478,10 +478,19 @@ class ResolveRequest(BaseModel):
 
 
 class SemanticResolutionResponse(BaseModel):
-    """Mirrors the BAML SemanticResolution schema for the HTTP response."""
+    """Mirrors the BAML SemanticResolution schema for the HTTP response.
+
+    Carries optional instance-resolution provenance (Recipe v2) when the
+    router's pre-step overrode the LLM's class guess with a phone-book
+    answer. The provenance dict is what makes "LLM guessed Column,
+    DataHub said Table, Table won" come for free in downstream traces;
+    keys include instance_match (exact|fuzzy|mixed|empty), instance_id,
+    instance_label, instance_provider, instance_score, and llm_guess.
+    """
     resolved_uri: str
     confidence_score: float
     reasoning: str | None = None
+    provenance: dict | None = None
 
 class LegacyTableDossier(BaseModel):
     table_name: str
@@ -854,6 +863,140 @@ async def predicate_hybrid_search(
 
 
 # ---------------------------------------------------------------------------
+# Instance-resolution pre-step (Recipe v2) — registry-discovered providers.
+# ---------------------------------------------------------------------------
+# When ClassifyDomainIntent extracts a `instance_identifier`, /resolve fans
+# the token out to every engine that has registered as a mesh:resolveInstance
+# provider and applies the pure decision table from instance_resolution.py.
+# NO backend names live in this code path; providers are discovered from
+# Neo4j like any other capability in the system. Adding a new instance
+# registry (Engine E, the docs pipeline, etc.) is a REGISTRATION, not a
+# router code change — that's the generality acceptance test.
+
+from agent_fleet.ontology_service.instance_resolution import (  # noqa: E402
+    InstanceCandidate as _IRCandidate,
+    decide as _ir_decide,
+    DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
+    DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
+)
+
+_INSTANCE_RESOLVERS_CYPHER = """
+MATCH (i:OntologyClass {uri: 'mesh:InstanceIdentifier'})-[r]->(o:OntologyClass)
+WHERE r.iri = 'mesh:resolveInstance' AND r.endpoint_url IS NOT NULL
+RETURN DISTINCT
+  r.endpoint_url   AS endpoint_url,
+  coalesce(r.provider, type(r)) AS provider,
+  r.domains        AS domains
+"""
+
+_INSTANCE_RESOLVERS_CACHE: list[dict] | None = None
+_INSTANCE_RESOLVER_FANOUT_TIMEOUT_S = float(
+    os.getenv("INSTANCE_RESOLVER_TIMEOUT_S", "2.0")
+)
+_INSTANCE_RESOLVE_EXACT = float(
+    os.getenv("INSTANCE_RESOLVE_EXACT_THRESHOLD", str(_IR_DEFAULT_EXACT))
+)
+_INSTANCE_RESOLVE_MIN_SCORE = float(
+    os.getenv("INSTANCE_RESOLVE_MIN_SCORE", str(_IR_DEFAULT_MIN))
+)
+
+
+def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
+    """Read the registry once for engines registered as mesh:resolveInstance.
+
+    Returns a list of ``{endpoint_url, provider, domains}`` dicts. Cached
+    after first read; pass refresh=True to force a re-read (e.g. via a
+    /admin endpoint when a new provider registers — not built here).
+    """
+    global _INSTANCE_RESOLVERS_CACHE
+    if _INSTANCE_RESOLVERS_CACHE is not None and not refresh:
+        return _INSTANCE_RESOLVERS_CACHE
+    if not _NEO4J_DRIVER:
+        return []
+    with _NEO4J_DRIVER.session() as session:
+        rows = session.run(_INSTANCE_RESOLVERS_CYPHER).data()
+    _INSTANCE_RESOLVERS_CACHE = [
+        {
+            "endpoint_url": r["endpoint_url"],
+            "provider": r.get("provider") or "unknown",
+            "domains": r.get("domains") or [],
+        }
+        for r in rows
+        if r.get("endpoint_url")
+    ]
+    logger.info(
+        "Discovered %d mesh:resolveInstance providers: %s",
+        len(_INSTANCE_RESOLVERS_CACHE),
+        [r["endpoint_url"] for r in _INSTANCE_RESOLVERS_CACHE],
+    )
+    return _INSTANCE_RESOLVERS_CACHE
+
+
+async def _call_resolver(
+    resolver: dict, identifier: str, query: str
+) -> list[_IRCandidate]:
+    """Call one mesh:resolveInstance provider; an exception/timeout
+    becomes an empty list — abstaining is a first-class answer."""
+    try:
+        async with httpx.AsyncClient(timeout=_INSTANCE_RESOLVER_FANOUT_TIMEOUT_S) as client:
+            resp = await client.post(
+                resolver["endpoint_url"],
+                json={"identifier": identifier, "query": query},
+            )
+            resp.raise_for_status()
+            data = resp.json() or {}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "mesh:resolveInstance provider %s timed out or errored on %r: %s",
+            resolver.get("endpoint_url"), identifier, exc,
+        )
+        return []
+    out: list[_IRCandidate] = []
+    for c in data.get("candidates") or []:
+        try:
+            out.append(
+                _IRCandidate(
+                    instance_id=str(c.get("instance_id") or ""),
+                    class_uri=str(c.get("class_uri") or ""),
+                    label=str(c.get("label") or ""),
+                    score=float(c.get("score") or 0.0),
+                    provider=resolver.get("provider") or "",
+                )
+            )
+        except Exception:  # noqa: BLE001 — skip malformed candidate
+            continue
+    return out
+
+
+async def _resolve_instance(
+    identifier: str, query: str
+) -> tuple[str | None, dict]:
+    """Run the instance-resolution pre-step.
+
+    Returns ``(subject_uri or None, provenance)``. ``None`` means
+    abstain → the caller keeps the LLM's class guess.
+    """
+    resolvers = _discover_instance_resolvers()
+    if not resolvers:
+        return None, {
+            "instance_resolved": False,
+            "instance_match": "no_providers",
+            "instance_n": 0,
+        }
+    tasks = [_call_resolver(r, identifier, query) for r in resolvers]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
+    candidates: list[_IRCandidate] = []
+    for r in results:
+        candidates.extend(r)
+    decision = _ir_decide(
+        candidates,
+        exact_threshold=_INSTANCE_RESOLVE_EXACT,
+        min_score=_INSTANCE_RESOLVE_MIN_SCORE,
+    )
+    return decision.subject_uri, decision.provenance
+
+
+# ---------------------------------------------------------------------------
 # POST /resolve
 # ---------------------------------------------------------------------------
 @app.post("/resolve", response_model=SemanticResolutionResponse)
@@ -910,11 +1053,42 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             detail=f"BAML classification failed: {exc}",
         ) from exc
 
-    # Step 4: Return structured response
+    # Step 4: Instance-resolution pre-step (Recipe v2).
+    # If the LLM extracted a named-individual identifier, fan it out to
+    # registered mesh:resolveInstance providers. A unanimous-class
+    # answer OVERRIDES the LLM's guess; mixed/empty → LLM guess stands.
+    identifier = getattr(result, "instance_identifier", None)
+    if identifier:
+        instance_subject, instance_provenance = await _resolve_instance(
+            identifier=identifier,
+            query=request.query,
+        )
+        instance_provenance["instance_identifier"] = identifier
+        instance_provenance["llm_guess"] = str(result.resolved_uri)
+        if instance_subject is not None:
+            return SemanticResolutionResponse(
+                resolved_uri=instance_subject,
+                confidence_score=max(result.confidence_score, 0.9),
+                reasoning=(
+                    f"Routed via mesh:resolveInstance "
+                    f"(match={instance_provenance.get('instance_match')}, "
+                    f"provider={instance_provenance.get('instance_provider')}). "
+                    f"LLM guess: {result.resolved_uri}."
+                ),
+                provenance=instance_provenance,
+            )
+        return SemanticResolutionResponse(
+            resolved_uri=str(result.resolved_uri),
+            confidence_score=result.confidence_score,
+            reasoning=result.reasoning,
+            provenance=instance_provenance,
+        )
+
+    # Step 5: Return structured response (no identifier extracted).
     return SemanticResolutionResponse(
         resolved_uri=str(result.resolved_uri),
         confidence_score=result.confidence_score,
-        reasoning=result.reasoning
+        reasoning=result.reasoning,
     )
 
 

@@ -42,6 +42,8 @@ class SemanticResolution {
     @description("Model confidence in the match, between 0.0 and 1.0.")
   reasoning string?
     @description("1-2 sentence explanation of why this class was chosen.")
+  instance_identifier string?
+    @description("If the query refers to a SPECIFIC NAMED INDIVIDUAL — a catalog asset path like gold.sales.revenue_summary, a procedure or work-order code like TEST-1234 or AFP-2024-001, a data module code (DMC), a tail number, an equipment serial, or a quoted or titled name like 'Customer 360' — copy that exact token here verbatim. Otherwise leave null. This field gates the router's instance-resolution pre-step (Recipe v2): when set, the router fans the token out to registered providers and lets the authoritative phone-book class override resolved_uri. Still always resolve resolved_uri as your best guess either way — the phone book may miss.")
 }
 
 // -----------------------------------------------------------------------------
@@ -92,16 +94,36 @@ function ClassifyDomainIntent(query: string, domain: string) -> SemanticResoluti
   client MainAgent
   prompt #"
     You are a semantic classifier for the {{ domain }} domain.
-    
-    Your job is to map the user's query to exactly ONE ontology URI from the
-    permitted values defined in the output format.
+
+    You do two jobs in one pass:
+
+    JOB A — Classify the KIND.
+    Map the user's query to exactly ONE ontology URI from the permitted
+    values defined in the output format. Pick the single best-matching
+    URI and assign a confidence score between 0.0 and 1.0.
+
+    JOB B — Extract any NAMED INDIVIDUAL.
+    If the query refers to a specific named individual — a catalog asset
+    path like gold.sales.revenue_summary, a code like TEST-1234 or
+    AFP-2024-001, a data module code (DMC), a tail number, an equipment
+    serial, or a quoted or titled name like 'Customer 360' — copy that
+    EXACT token into the instance_identifier field. Otherwise leave it
+    null.
+
+    Be RECALL-BIASED on Job B: when in doubt about whether something is
+    a name vs. a description, extract it. A miss costs more than a
+    spurious extraction — the router can verify with the phone book,
+    but it cannot recover from an extraction the model never made. Even
+    in awkward conversational prose ("so yesterday someone mentioned
+    customers_gold or something"), pull the name out.
+
+    CRITICAL: The shape of an identifier (dots, dashes, capitalization)
+    is NOT evidence about its kind. Resolve resolved_uri from the
+    query's meaning, NOT from the identifier's shape. The phone book
+    decides the kind for named individuals later; your resolved_uri is
+    your best guess if the phone book has no answer.
 
     User query: {{ query }}
-
-    Instructions:
-    1. Analyze the user's query for intent within the {{ domain }} domain.
-    2. Select the single best-matching ontology URI from the permitted list.
-    3. Assign a confidence score between 0.0 and 1.0.
 
     {{ ctx.output_format }}
   "#
