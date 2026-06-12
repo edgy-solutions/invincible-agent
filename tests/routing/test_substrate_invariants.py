@@ -276,6 +276,127 @@ def test_no_compact_form_for_migrated_subjects(driver):
     )
 
 
+def test_mesh_resolve_instance_has_one_edge_per_provider(driver):
+    """Every registered mesh:resolveInstance provider MUST exist as its
+    OWN Neo4j edge — N providers must produce N edges, NOT collapse
+    into one with last-write-wins.
+
+    The doc-tools a44b9fb fix changed the apoc.merge.relationship
+    match-key from ``{iri: verb_iri}`` to ``(verb_iri, _tool_urn)``
+    precisely to make this true. This guard catches a regression on
+    the doc-tools side that re-introduces the collision shape.
+
+    Pre-fix bug: Engine E's registration silently overwrote Engine D's
+    Neo4j edge for mesh:resolveInstance — both shared the same
+    (input_uri, verb_iri, output_uri) triple and collapsed into one
+    edge whose endpoint_url, provider, and timeout_s belonged to
+    whichever had rolled last. Engine O's discovery saw exactly one
+    provider, and the gate-6 generality acceptance test failed
+    silently until the match-key landed in a44b9fb.
+
+    Provider #3 (DMC phone book, queued in the docs phase) is the next
+    occasion this shape recurs. This test turns red BEFORE that ships.
+    """
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH ()-[r]->()
+            WHERE r.iri = 'mesh:resolveInstance'
+              AND r.endpoint_url IS NOT NULL
+            RETURN coalesce(r.provider, '<unset>') AS provider,
+                   r.endpoint_url AS endpoint_url,
+                   r.timeout_s AS timeout_s,
+                   r._tool_urn AS tool_urn
+            ORDER BY provider
+            """
+        )
+        rows = [dict(r) for r in result]
+
+    assert rows, (
+        "No mesh:resolveInstance edges found in Neo4j. Either the "
+        "registration pipeline is broken (engines can't register) or "
+        "the test is running against an empty fixture cluster — in "
+        "either case the routing layer has no phone books and the "
+        "Recipe v2 architecture is non-functional. Check the gateway "
+        "logs for 'Registered urn:...resolveInstance' entries and the "
+        "doc-tools sensor for 'Synced predicate edge: ... resolveInstance'."
+    )
+
+    # Each provider value MUST be distinct. If two registrations share
+    # a provider AND collapse into one edge, that's the multi-provider
+    # collision shape returning under a new shape.
+    providers = [row["provider"] for row in rows]
+    assert len(providers) == len(set(providers)), (
+        f"\n  Duplicate provider in mesh:resolveInstance edges:\n"
+        f"  Providers seen: {providers}\n"
+        f"  Edges:\n" + "\n".join(f"    - {r}" for r in rows) + "\n"
+        f"\n  Two distinct registrations resolved to the same provider "
+        f"value AND were materialized as separate edges — the registry "
+        f"and the materializer disagree on who is who. Pre-a44b9fb the "
+        f"shape was 'two registrations collapse to one edge'; this "
+        f"shape is 'two edges share a provider'. Either way the "
+        f"discovery layer cannot distinguish them, and provenance "
+        f"breaks: traces will report a randomly-chosen one of the two "
+        f"as the answering provider."
+    )
+
+    # Each edge MUST have a non-null, non-empty provider value. The
+    # allowlist-drift bug class (doc-tools 540fbd5) silently dropped
+    # mesh_provider for hours when the gateway started emitting it but
+    # the sensor's hardcoded passthrough list hadn't been updated. This
+    # check pins that the property survives the materialization step.
+    unset_provider = [r for r in rows if r["provider"] in ("<unset>", "", None)]
+    assert not unset_provider, (
+        f"\n  mesh:resolveInstance edges with missing provider field:\n"
+        + "\n".join(f"    - {r}" for r in unset_provider) + "\n"
+        f"\n  This is the allowlist-drift bug class: gateway emits the "
+        f"mesh_provider customProperty, the doc-tools sensor's "
+        f"_build_relationship_properties allowlist must pipe it onto "
+        f"the relationship, AND the discovery Cypher reads "
+        f"coalesce(r.provider, type(r)) — but the chain breaks silently "
+        f"if any link drops it. The v0.2 gateway-as-sole-writer "
+        f"amendment (ADR-0006 §Addendum) eliminates the allowlist hop "
+        f"entirely; until that lands, this test catches the drift at "
+        f"the substrate."
+    )
+
+    # Each edge MUST have a positive timeout_s. The router uses it as
+    # the per-provider fan-out budget; a missing value falls through
+    # to the global floor, which silently absorbs Cypher pathologies
+    # under the budget sized for the slowest provider (the 2s strangle
+    # bug the architect flagged).
+    bad_timeout = [r for r in rows if not (isinstance(r["timeout_s"], (int, float)) and r["timeout_s"] > 0)]
+    assert not bad_timeout, (
+        f"\n  mesh:resolveInstance edges with missing or non-positive "
+        f"timeout_s:\n"
+        + "\n".join(f"    - {r}" for r in bad_timeout) + "\n"
+        f"\n  Per-provider timeout budgets MUST be declared at "
+        f"registration so the router treats Engine D's 8s p95 and "
+        f"Engine E's ms response with the appropriate alarm thresholds. "
+        f"A missing timeout collapses to the global floor and hides "
+        f"real Cypher pathologies — exactly the asymmetry the architect "
+        f"flagged at Gate 6."
+    )
+
+    # Each edge MUST have a tool_urn (the registration identity from
+    # DataHub MCP). Pre-a44b9fb the match-key didn't include _tool_urn,
+    # so multi-provider registrations couldn't be distinguished. This
+    # checks the inverse: every edge knows which registration produced
+    # it. If a future refactor drops the _tool_urn passthrough, the
+    # multi-provider invariant above can still pass by accident — this
+    # guard catches the precondition.
+    no_urn = [r for r in rows if not r["tool_urn"]]
+    assert not no_urn, (
+        f"\n  mesh:resolveInstance edges without _tool_urn:\n"
+        + "\n".join(f"    - {r}" for r in no_urn) + "\n"
+        f"\n  _tool_urn is the registration identity. Without it on "
+        f"the edge, the (verb_iri, _tool_urn) match-key from a44b9fb "
+        f"cannot distinguish providers. This is the precondition for "
+        f"the multi-provider invariant above; missing _tool_urn means "
+        f"the multi-provider check above is passing by accident."
+    )
+
+
 def test_known_verbs_typed_correctly(driver):
     """Every known verb is typed against the expected real subject class
     at canonical (full IRI) form.
