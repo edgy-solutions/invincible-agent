@@ -400,6 +400,116 @@ Both queued as separate small follow-ups; not load-bearing for
 tonight's matrix gate but load-bearing for the *next* arc that
 relies on these guards.
 
+## 2026-06-13 close — orphan DELETE attempt was wrong, restored, real finding banked
+
+Ran the snapshot + DELETE per the architect's authorization. Prediction
+was **no matrix movement** (orphans were "never routable" per my
+read of the conjunctive invariant + endpoint match). The prediction
+**was wrong.** Matrix regressed from 18/18 to 11/18 after the
+24-edge DELETE. Five DATA_ENGINEERING rows + several MAINTENANCE
+rows flipped to UNKNOWN.
+
+Trace through `idp:Table` (the Wave-1 hierarchy row's subject)
+after the DELETE:
+
+```
+compat-walk from idp:Table: 0 verbs
+```
+
+Before the DELETE: 9 catalog verbs reachable. After: zero.
+
+**The orphans were doing real routing work.** They typed engine_a
+(and other engines') verbs against the **full-IRI form**
+``http://invincible-agent/idp#Dataset`` and ``http://invincible-agent/mesh#AgentTask``
+— the subject form the resolver picks for "customer_silver"-style
+queries via the phone book. The v0.2 saga writes type the same
+verbs against the **compact form** ``mesh:CatalogAssetQuery`` (per
+engine_a's SDK-registered ``input_uri``). ``idp:Table`` ⊆ ``idp:Dataset``
+exists in the subClassOf graph; ``idp:Table`` ⊆ ``mesh:CatalogAssetQuery``
+does NOT. So the compat-walk from ``idp:Table`` reaches the orphan
+edge (NULL ``_tool_urn``, against full-IRI) but the v0.2 edge sits
+on an unreachable subject.
+
+Restored from snapshot (24/24, zero errors) via apoc.merge.relationship.
+Matrix back to 18/18.
+
+**The orphans are not orphans.** They're load-bearing routing edges
+the v0.2 saga didn't replace because engine_a's SDK declares its
+``input_uri`` against a different subject than where the resolver
+actually lands. The masks-rule diff harness pointed at them as
+"missing required properties" (no ``_tool_urn``, no ``provider``) —
+which they are, by the v0.2 standard — but the harness can't tell
+which edges are vestigial versus which are filling a real
+inheritance gap.
+
+### What the architect's prediction got right and what it didn't
+
+Right: the matrix moved, so the cleanup IS a finding — exactly the
+disposition the architect named ("if the post-DELETE matrix moves
+at all, that's a finding, not a cleanup"). Documenting it instead
+of patching around it is the discipline.
+
+Wrong (mine): "conjunctive invariant + endpoint match means the
+orphans are unrouted" is necessary but not sufficient. The verbs
+were UNROUTED via the conjunctive invariant *for the v0.2 saga
+edges' paths* — the LLM saw them via Weaviate + Cypher and they
+worked. But the conjunctive invariant also requires Cypher to
+SURFACE the verb in the first place. The orphans were Cypher's
+sole path for full-IRI subjects, and removing them left compat-
+walk dead-ending. Endpoint match doesn't help if the engine never
+gets called.
+
+### Real fix (morning decision)
+
+Three options, in order of architectural cleanliness:
+
+1. **Re-register every engine_a catalog verb against the full-IRI
+   ``http://invincible-agent/idp#Dataset``.** Engine A's
+   ``register_engine_to_mesh`` calls currently use
+   ``input_uri="mesh:CatalogAssetQuery"`` — change to the full IRI.
+   This is the "verbs follow questions" framing applied: the
+   subjects the resolver actually picks (full-IRI idp:*) become
+   the subjects the registrations target. The cleanest fix, and it
+   matches what the orphans were already doing.
+
+2. **Add a subClassOf bridge from ``mesh:CatalogAssetQuery`` to
+   ``http://invincible-agent/idp#Dataset``.** Mechanical, but
+   semantically wrong — ``mesh:CatalogAssetQuery`` is a Request
+   shape, not an asset class. Same category error the architect
+   flagged on the ProcedureStep-under-mesh:GraphQuery option.
+
+3. **Multi-registration pattern** (per the dedup fix's contract
+   clause). Each engine_a verb registers TWICE — once against
+   ``mesh:CatalogAssetQuery``, once against
+   ``http://invincible-agent/idp#Dataset``. The classify dedup
+   from 0b0c33e handles the duplicate-verb-iri-in-enum. This is
+   what we did for ``engine_e_neo4j_expert_procedure_step``;
+   shape generalizes cleanly.
+
+Option 1 is the simplest and most architecturally honest. Option 3
+is the most consistent with the pattern engine_e established.
+Either choice cleanly retires the orphans afterwards. Queued for
+morning decision.
+
+### Standing guard that would have caught this
+
+The cutover diff harness ``test_v02_cutover_diff.py`` flagged the
+orphans but framed them as "missing required properties." That
+framing was wrong — the orphans were doing routing work for full-
+IRI subjects that v0.2 saga writes don't cover. A standing guard
+that would have caught this BEFORE the DELETE:
+
+> For every (subject, verb) pair the matrix successfully routes,
+> assert that the compat-walk from the subject reaches the verb
+> via at least one v0.2 saga edge (non-NULL ``_tool_urn``).
+
+That makes the matrix the standing-guard for v0.2's substrate
+coverage. The same shape the architect's positive-control
+amendment made for /resolve's integration path.
+
+Queued as a follow-up before the orphan cleanup is attempted
+again.
+
 ## Morning queue (final)
 
 ### 1. Authorize the orphan-edge DELETE (with snapshot first)
