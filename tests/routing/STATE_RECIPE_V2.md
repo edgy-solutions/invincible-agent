@@ -186,6 +186,38 @@ it. The matrix can now go red on an Engine-D defect. That's the
 blast radius growing on purpose; tonight it paid for itself within
 hours.
 
+## 2026-06-12 final — matrix 18/18 GREEN
+
+Every row passes. R4 — the only red after Step 1 — is now correctly
+green via Contract B short-circuit (idp:Column has no typed verbs,
+`classify_called=False`, route=UNKNOWN → generalist). The cleanest
+end-state this arc has hit. Two side-quest bugs closed in the run-up:
+
+1. **Multi-provider edge collision** (doc-tools a44b9fb). The
+   aitool_linker's apoc.merge.relationship used `{iri: verb_iri}` as
+   the match-key, so two providers registering the same predicate
+   (Engine D + Engine E both offering mesh:resolveInstance) collapsed
+   into one edge with last-write-wins. Engine O then saw exactly one
+   provider for mesh:resolveInstance, which defeated the whole point of
+   registry-discovered multi-provider routing. Fix: identity is now
+   `(verb_iri, _tool_urn)`, so each registration gets its own edge.
+
+2. **Phone book returned compact URIs Neo4j couldn't find**
+   (engine-d 4c74eee). _DATAHUB_TO_IDP returned `idp:Table` etc. but
+   idp_extension.ttl's canonical ingest expands these to the full
+   IRI form when writing :OntologyClass nodes. Engine O's compat-walk
+   string-matches on uri, so it found no node and returned []. Contract
+   B then correctly short-circuited to UNKNOWN — which is exactly why
+   the matrix went RED 8/18 the moment Contract B started doing its
+   job. **The earlier "16/17 green" was the same Contract B hole
+   giving false positives**: when compat returned empty before
+   dcf9e22, the LLM was picking verbs from the unconstrained Weaviate
+   pool, and many rows were green for the wrong reason. The matrix
+   finally shows the real state.
+
+Beautiful instance of the architecture surfacing a latent bug as soon
+as the safety net was tightened, exactly the way the design intended.
+
 ## 2026-06-12 — Gate 6 closed + Contract B regression caught
 
 Five commits + one doc-tools commit closed the architect's amended
