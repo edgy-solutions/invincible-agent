@@ -143,18 +143,111 @@ Hypotheses worth checking in the morning:
    rather than a routing issue: ProcedureStep is a defensible
    classification for "maintenance steps".
 
-## Outstanding morning items (priority order)
+## Architect correction (2026-06-13 late) — the "stochasticity" framing was wrong
 
-1. **Authorize the orphan-edge DELETE** so the substrate-invariant
-   test can be re-enabled to strict.
-2. **Decide R4 / matrix policy** — accept LLM stochasticity by
-   widening the expected-subject set (WorkInstruction OR RotorAssembly
-   OR ProcedureStep) OR figure out why the LLM picks differently today
-   than yesterday and restore stability.
-3. **Verify the helm chart's `iri` aliased-properties cleanup** — the
-   substrate guards still pass but the orphans count toward total
-   edges; once cleaned up, re-run the cutover diff to confirm clean.
-4. **v0.2.1 Restate VirtualObject wiring** — per the ADR amendment,
-   tonight shipped saga LOGIC but not the Restate durability layer.
-   This is the next planned polish; not urgent because the conjunctive
-   invariant makes the safety class identical with or without Restate.
+The original write-up above said the 4 matrix failures "look like LLM
+stochasticity." That framing missed a contradiction in its own
+evidence: a direct ``/resolve`` curl returned WorkInstruction with
+**full phone-book provenance** (instance leg fired); the matrix's
+calls saw ``provenance=null`` (instance leg did NOT fire) for the
+same query. Those cannot both be stochasticity — if the override
+fires, the LLM's guess is *replaced*; sampling variance in the guess
+is irrelevant. Same-input-different-path means something differs
+between the callers.
+
+Diagnosed by ruling out each candidate:
+
+  - **Replicas:** single Engine O pod, single endpoint. Ruled out.
+  - **Model / env:** SMOLAGENTS_MODEL=gpt-oss-128k:120b on the
+    running pod, same value everywhere. Ruled out.
+  - **HTTP library / payload:** `requests.post(json=...)` 5/5
+    deterministic with full provenance (identical to the matrix's
+    ``_post``). Ruled out.
+  - **Timeout strangle pattern:** ``instance_match=timeout`` would
+    have appeared in provenance; provenance was ``None``, not
+    ``timeout``. Ruled out.
+
+Running ONE failing row in pytest by itself surfaced a much more
+specific reason — a different reasoning string than the matrix's
+full-run output:
+
+> "Conjunctive-read invariant: Neo4j marks
+> ``[mesh:queryKnowledgeGraph]`` as compatible with the resolved
+> subject, but **none of those verbs survived the Weaviate
+> intersection** (registered in Cypher but not in the predicate
+> search index)."
+
+That's the conjunctive invariant firing — and pointing at Weaviate's
+side as the missing half. Direct Weaviate inspection confirmed the
+row EXISTS with correct properties (saga wrote it cleanly).
+``predicate_hybrid_search`` uses BM25 (the sandbox Weaviate has no
+vectorizer enabled), and ``mesh:queryKnowledgeGraph``'s registered
+``verb_synonyms`` were ``[query graph, graph lookup, cypher query,
+find in graph, knowledge graph search]`` — none of which BM25-match
+"procedure", "work instruction", "maintenance steps", "diagram".
+The row was BELOW the limit cutoff in BM25 ranking, so the
+compat-filter intersection was empty, so Contract B fired UNKNOWN.
+
+This is the conjunctive invariant **working as designed**. The
+pre-v0.2 fabrication fallback at ``/classify_predicate`` was
+synthesizing the verb into the LLM's enum when BM25 missed it; that
+was the workaround whose removal the ADR amendment specified. The
+synonym gap was hiding behind the fallback for as long as the
+matrix has existed. Removing the fallback surfaces the real
+registration gap at Engine E.
+
+Fix shipped 3acd985: expand engine_e_neo4j_expert's
+``verb_synonyms`` to cover the standing matrix's MAINTENANCE-domain
+question grammar (procedure, work instruction, maintenance steps,
+diagram, rotor assembly, etc.). Engine E re-rolls and re-registers
+through the v0.2 saga; BM25 will now surface
+``mesh:queryKnowledgeGraph`` for procedure queries; intersection
+includes it; LLM picks it.
+
+## The positive-control amendment
+
+The architect's correction also pointed at a structural gap in the
+standing-guard discipline: the resolve_instance probes hit each
+provider's ``/resolve_instance`` endpoint directly. They proved the
+providers *answer*; they proved nothing about whether Engine O's
+instance leg *consults them* on a real ``/resolve`` call. The four
+red rows were accidentally the only test exercising the router-side
+integration under matrix conditions, and they were red while the
+probe stack was green.
+
+The rule, saved to memory at
+``feedback_abstention_needs_positive_control.md``:
+
+> The positive control must exercise the INTEGRATED PATH, not just
+> the component. A probe that bypasses the consumer can stay green
+> while the consumer is broken.
+
+Standing guard to add as a follow-up: a router-side probe that
+asserts ``instance_resolved=true`` flows through ``/resolve`` itself
+(not through the provider's endpoint). Queued below.
+
+## Outstanding morning items (corrected priority order)
+
+1. **Verify the synonym fix lands**: matrix passes 18/18 again. If
+   it does, the conjunctive invariant + the fix are both correct;
+   if not, dig further. Running now in background bo9ki7m5x.
+2. **Add the router-side integration probe** that exercises
+   ``/resolve``'s phone-book leg end-to-end. The architect's
+   amendment to the positive-control rule says any component-
+   bypassing probe needs a matching integration probe.
+3. **Authorize the orphan-edge DELETE** — only AFTER #1 confirms
+   the synonym fix doesn't depend on edge identity in any
+   unexpected way. Snapshot the matching edges first (5min
+   reversibility insurance). Run matrix before and after; predict
+   no movement.
+4. **v0.2.1 Restate VirtualObject wiring** — polish, conjunctive
+   invariant makes safety class identical with or without.
+
+## What I'd strike from the prior queue
+
+The "widen the expected-subject set" option I had listed at #2 was
+exactly the wrong call: it would have relabeled the suite to accept
+the fallback path's output as correct, hiding the integration gap
+behind a loosened assertion — the literal definition of
+green-for-the-wrong-reason, the thing R6's provenance-tighten
+exists to prevent. The architect was right to strike it.
