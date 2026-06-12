@@ -230,6 +230,12 @@ TEST_CASES: list[RouteCase] = [
         expected_verb_iri="mesh:describeAsset",
         min_confidence=0.5,
         domain="DATA_ENGINEERING",
+        # Step 4 (R6 template promoted): green-via-override means the
+        # phone book spoke. Asserting the provider distinguishes
+        # "DataHub said Table" from "Neo4j said Table" the moment
+        # Engine E joins as a second provider that could plausibly
+        # also resolve the identifier.
+        expect_instance_provider="engine_d",
     ),
     # R2 — typo / fuzzy unanimous: cohort of near-matches all classify the
     # same way; provenance instance_match=fuzzy. Class inference from a
@@ -241,6 +247,7 @@ TEST_CASES: list[RouteCase] = [
         expected_verb_iri="mesh:describeAsset",
         min_confidence=0.5,
         domain="DATA_ENGINEERING",
+        expect_instance_provider="engine_d",
     ),
     # R3 — ghost name: providers all return empty (above their own
     # relevance threshold). Fall through to normal class resolution, which
@@ -282,13 +289,16 @@ TEST_CASES: list[RouteCase] = [
     # R6 — titled name with NO identifier-shape: the win over v1's regex.
     # The LLM must extract "Customer 360" from natural prose into the new
     # instance_identifier output field; the phone book resolves it to a
-    # Dashboard.
+    # Dashboard. Originally GREEN-via-fallback (LLM lucky-guessed Dashboard
+    # from "dashboard" in the query); now asserted GREEN-via-OVERRIDE —
+    # the architecture must be doing the work, not the LLM's luck.
     RouteCase(
         query="Tell me about the Customer 360 dashboard",
         expected_subject_substring="Dashboard",
         expected_verb_iri="mesh:describeAsset",
         min_confidence=0.5,
         domain="DATA_ENGINEERING",
+        expect_instance_provider="engine_d",
     ),
     # R7 — extraction probe: a name buried in awkward conversational
     # phrasing. Gates LLM extraction recall (the new load-bearing property
@@ -301,6 +311,27 @@ TEST_CASES: list[RouteCase] = [
         expected_verb_iri="mesh:describeAsset",
         min_confidence=0.5,
         domain="DATA_ENGINEERING",
+        expect_instance_provider="engine_d",
+    ),
+
+    # R8 — Gate 6 generality acceptance row (Engine E as provider #2).
+    # The query names a SPECIFIC procedure code (TEST-1234) which
+    # exists in Neo4j as a WorkInstruction node. The LLM must extract
+    # the code; the router fans it out; Engine E's /resolve_instance
+    # MUST be the provider that speaks (Engine D's catalog has no
+    # entry for it). provenance.instance_provider="engine_e" is the
+    # load-bearing assertion — it proves the architecture isn't
+    # secretly Engine-D-flavored. expect_classify_called=True because
+    # the verb mesh:queryKnowledgeGraph IS typed against the chosen
+    # subject's ancestor, so the compat-walk has work to do and the
+    # LLM gets called as designed.
+    RouteCase(
+        query="Tell me about procedure TEST-1234 in detail",
+        expected_subject_substring="WorkInstruction",
+        expected_verb_iri="mesh:queryKnowledgeGraph",
+        min_confidence=0.5,
+        domain="MAINTENANCE",
+        expect_instance_provider="engine_e",
     ),
 
     # --- Hierarchy-routing gate (Wave-1, added 2026-06-11) ---

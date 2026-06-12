@@ -83,11 +83,29 @@ KNOWN_GOOD_PROBES: list[ProviderProbe] = [
         identifier="gold.sales.revenue_summary",
         expected_class_uri="idp:Table",
     ),
-    # When Engine E joins as the second provider (generality gate),
-    # add a probe here for a urn:instance:... node that MUST exist in
-    # Neo4j — e.g. a procedure code or equipment instance. Without
-    # this entry, an Engine E silent-search-failure would look
-    # identical to a freshly-empty Neo4j.
+    # Engine E — knowledge graph (Recipe v2 v2 provider, Gate 6
+    # generality acceptance). The sandbox Neo4j has a WorkInstruction
+    # node with procedureId='TEST-1234' (the same code the
+    # MAINTENANCE-domain matrix rows have used for ages). Engine E's
+    # /resolve_instance must classify the code as the canonical IOF-
+    # MRO WorkInstruction class via direct Cypher lookup.
+    ProviderProbe(
+        provider_name="engine_e (Neo4j WorkInstruction)",
+        identifier="TEST-1234",
+        expected_class_uri="https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/WorkInstruction",
+    ),
+    # Engine E — equipment-instance variant. partNumber AFP-2024-001
+    # is the aux fuel pump on tail 42 (urn:instance:c130:tail42:
+    # aux_fuel_pump). The Instance label maps to mro:Equipment in
+    # _LABEL_TO_CLASS_URI. Pair with the WorkInstruction probe so a
+    # regression on Engine E's class mapping (e.g. someone "fixes" a
+    # canonical class URI and breaks one but not the other) turns
+    # red on the right row.
+    ProviderProbe(
+        provider_name="engine_e (Neo4j Equipment)",
+        identifier="AFP-2024-001",
+        expected_class_uri="mro:Equipment",
+    ),
 ]
 
 

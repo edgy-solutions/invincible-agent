@@ -7,16 +7,26 @@ with custom Neo4j Cypher and Schema tools to extract structural data
 from a military technical manual graph database. BAML strictly types
 the output per Persona.
 
+Also exposes `/resolve_instance` — Engine E's Recipe v2 phone-book
+endpoint that resolves named individuals (equipment serials, procedure
+codes, tail numbers) to their canonical class via direct Cypher
+lookup. Registered through the gateway as the second
+mesh:resolveInstance provider; the router discovers it via the
+predicate graph and the architecture's acceptance test is that no
+Engine O code changed to make it work.
+
 Run locally: uvicorn agent_fleet.neo4j_expert.main:app --host 0.0.0.0 --port 8086
 """
 
 import os
 from contextlib import asynccontextmanager
+from typing import List, Optional
 
 import httpx
 import restate
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 # Engine self-registration for the predicate-graph routing layer
 # (iagent ADR-0004 Step D.1). Opt-in via MESH_REGISTER_ON_STARTUP.
@@ -66,6 +76,58 @@ async def lifespan(app: FastAPI):
         domains=["MAINTENANCE", "MANUFACTURING"],
         cost_class="slow",
     )
+
+    # Recipe v2 — second mesh:resolveInstance provider (Gate 6
+    # generality acceptance test). Engine E owns the
+    # urn:instance:* / WorkInstruction / Equipment node side of the
+    # instance layer, parallel to Engine D's catalog side. The router
+    # discovers this registration through the predicate graph alone;
+    # if Engine O had to learn anything Engine-E-specific to make it
+    # work, the architecture would have failed its own test — the
+    # standing-guard ``test_engine_d_url_is_not_hardcoded_in_engine_o``
+    # would turn red on the next CI run.
+    _engine_e_resolve_instance_url = os.getenv(
+        "ENGINE_E_RESOLVE_INSTANCE_URL",
+        "http://iagent-engine-e:8086/resolve_instance",
+    )
+    register_engine_to_mesh(
+        name="engine_e_resolve_instance",
+        description=(
+            "Resolves a named individual (equipment serial, part number, "
+            "tail number, procedure code, work-instruction title, or any "
+            "identifier-shaped token) to its canonical class via direct "
+            "Cypher lookup against the maintenance knowledge graph. "
+            "Returns candidates with class URI (mro:Equipment, "
+            "mro:WorkInstruction, ...), label, the instance's URN, and a "
+            "relevance score. Empty list when nothing in the graph "
+            "matches above the relevance floor — abstention is the "
+            "contract, the LLM's class guess stands on miss."
+        ),
+        verb="mesh:resolveInstance",
+        input_uri="mesh:InstanceIdentifier",
+        output_uri="mesh:InstanceResolution",
+        verb_synonyms=[
+            "look up equipment by serial",
+            "find procedure by code",
+            "identify tail number",
+            "resolve part number",
+            "classify equipment identifier",
+        ],
+        endpoint_url=_engine_e_resolve_instance_url,
+        owner_persona="AUDITOR",
+        domains=["MAINTENANCE", "MANUFACTURING"],
+        cost_class="fast",
+        requires_human_approval=False,
+        provider="engine_e",
+        # Cypher CONTAINS / equality matching against a small instance set
+        # is sub-second; 2s gives 10x headroom over the typical query.
+        # Critically: declaring it here, instead of inheriting Engine D's
+        # 8s ceiling, means an actual Cypher pathology surfaces in the
+        # router's timeout log instead of hiding behind a budget sized
+        # for a different stack.
+        timeout_s=2.0,
+    )
+
     yield
 
 
@@ -122,3 +184,195 @@ async def query_graph_proxy(request: Request) -> JSONResponse:
 def health_check():
     """Liveness probe endoint for Kubernetes."""
     return {"status": "ok", "engine": "E"}
+
+
+# ---------------------------------------------------------------------------
+# Recipe v2 — instance resolution for the maintenance knowledge graph.
+# ---------------------------------------------------------------------------
+class ResolveInstanceRequest(BaseModel):
+    identifier: str
+    query: Optional[str] = None  # full user query, advisory only
+
+
+class InstanceCandidate(BaseModel):
+    instance_id: str   # the node's authoritative URN / IRI / synthetic key
+    class_uri: str     # canonical ontology class — what the router consumes
+    label: str
+    score: float       # provider relevance, 0.0–1.0
+
+
+class ResolveInstanceResponse(BaseModel):
+    candidates: List[InstanceCandidate]
+
+
+# Map Neo4j node labels → canonical ontology class URIs the router knows.
+# WorkInstruction gets the full IOF-MRO IRI (matches the canonical
+# ontology load); Instance covers equipment instances and resolves to
+# mro:Equipment. The mapping is deliberately small and explicit — the
+# class assignment never comes from the identifier's shape, only from
+# the node's authoritative label in the graph. Adding a new instance
+# type means one row here, NOT a new branch anywhere in Engine O.
+_LABEL_TO_CLASS_URI = {
+    "WorkInstruction": "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/WorkInstruction",
+    "Instance":        "mro:Equipment",
+    "Procedure":       "mro:Procedure",
+    "Part":            "mro:Part",
+}
+
+# Fields on the node that PLAUSIBLY carry the kind of identifier a user
+# would type. Order matters for scoring: an exact hit on a serial number
+# beats a fuzzy hit on a free-text title. Adding a new identifier field
+# is one row here.
+_IDENTIFIER_FIELDS_EXACT = [
+    "iri",
+    "uri",
+    "partNumber",
+    "procedureId",
+    "serialNumber",
+    "tailNumber",
+]
+_IDENTIFIER_FIELDS_FUZZY = [
+    "name",
+    "title",
+    "label",
+]
+
+_RESOLVE_INSTANCE_MIN_SCORE = float(
+    os.getenv("RESOLVE_INSTANCE_MIN_SCORE", "0.7")
+)
+_RESOLVE_INSTANCE_LIMIT = int(os.getenv("RESOLVE_INSTANCE_LIMIT", "10"))
+
+
+_INSTANCE_CYPHER = """
+// Exact identifier hits — partNumber, procedureId, serialNumber,
+// tailNumber, iri, uri. Each scored 1.0 (authoritative match) per
+// the architect's note: a hit on a unique field is identity, not
+// proximity.
+CALL {
+    WITH $identifier AS ident
+    MATCH (n)
+    WHERE any(label IN labels(n) WHERE label IN $accepted_labels)
+      AND any(field IN $exact_fields WHERE n[field] = ident)
+    RETURN n, 1.0 AS score, 'exact' AS match_kind
+}
+RETURN labels(n) AS labels, properties(n) AS props, score, match_kind
+UNION
+// Fuzzy hits — case-insensitive CONTAINS on name/title/label.
+// Scored 0.8 (good evidence) so they survive the router's 0.7 floor
+// but lose to exact hits in the unanimous-class branch.
+CALL {
+    WITH $identifier AS ident, toLower($identifier) AS lid
+    MATCH (n)
+    WHERE any(label IN labels(n) WHERE label IN $accepted_labels)
+      AND any(field IN $fuzzy_fields
+              WHERE n[field] IS NOT NULL
+                AND toLower(toString(n[field])) CONTAINS lid)
+      AND NOT any(field IN $exact_fields WHERE n[field] = ident)
+    RETURN n, 0.8 AS score, 'fuzzy' AS match_kind
+}
+RETURN labels(n) AS labels, properties(n) AS props, score, match_kind
+LIMIT $limit
+"""
+
+
+def _pick_instance_id(props: dict) -> str:
+    """Best identity to return downstream — IRI > URN > unique field."""
+    for key in ("iri", "uri", "urn"):
+        if props.get(key):
+            return str(props[key])
+    for key in _IDENTIFIER_FIELDS_EXACT:
+        if props.get(key):
+            return str(props[key])
+    return ""
+
+
+def _pick_label(props: dict, fallback: str) -> str:
+    """Human-readable label to return downstream."""
+    for key in ("name", "title", "label", "iri", "partNumber", "procedureId"):
+        if props.get(key):
+            return str(props[key])
+    return fallback
+
+
+def _pick_class_uri(labels: list[str]) -> Optional[str]:
+    """Map node labels to the canonical ontology class URI."""
+    for lbl in labels:
+        if lbl in _LABEL_TO_CLASS_URI:
+            return _LABEL_TO_CLASS_URI[lbl]
+    return None
+
+
+@app.post("/resolve_instance", response_model=ResolveInstanceResponse)
+async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceResponse:
+    """Instance-resolution endpoint for the mesh:resolveInstance predicate.
+
+    Implementation strategy: a single Cypher query that UNIONs exact
+    hits (identifier matches a unique-field property like partNumber,
+    procedureId, iri) with fuzzy hits (CONTAINS on title/name/label).
+    Per the recipe's contract: empty list is a first-class answer —
+    a Cypher hit below the relevance floor IS suppressed rather than
+    returned as least-bad-match. Same disease prevention as the
+    DataHub side.
+
+    LOUD-ERROR PATH (same family as Engine D's GraphQL errors log):
+    Cypher exceptions are logged with the identifier and the
+    statement excerpt, never silently swallowed into an empty
+    response. A future schema drift in the graph announces itself in
+    Engine E's pod logs instead of riding as a polite miss into a
+    fall-through.
+    """
+    try:
+        from tools import get_neo4j_driver
+    except ImportError:
+        from agent_fleet.neo4j_expert.tools import get_neo4j_driver
+
+    try:
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            records = list(session.run(
+                _INSTANCE_CYPHER,
+                identifier=request.identifier,
+                accepted_labels=list(_LABEL_TO_CLASS_URI.keys()),
+                exact_fields=_IDENTIFIER_FIELDS_EXACT,
+                fuzzy_fields=_IDENTIFIER_FIELDS_FUZZY,
+                limit=_RESOLVE_INSTANCE_LIMIT,
+            ))
+    except Exception as exc:  # noqa: BLE001 — empty answer is first-class, but we LOG it
+        print(
+            f"[Engine E] /resolve_instance Cypher FAILED for identifier="
+            f"{request.identifier!r}: {type(exc).__name__}: {exc}"
+        )
+        return ResolveInstanceResponse(candidates=[])
+
+    candidates: list[InstanceCandidate] = []
+    seen_ids: set[str] = set()
+    for rec in records:
+        labels = rec.get("labels") or []
+        props = dict(rec.get("props") or {})
+        score = float(rec.get("score") or 0.0)
+
+        if score < _RESOLVE_INSTANCE_MIN_SCORE:
+            continue
+
+        class_uri = _pick_class_uri(labels)
+        if not class_uri:
+            # Node matched but its label has no canonical class mapping
+            # yet — skip. The architect's rule: never invent a class.
+            continue
+
+        instance_id = _pick_instance_id(props)
+        if not instance_id:
+            continue
+        if instance_id in seen_ids:
+            continue
+        seen_ids.add(instance_id)
+
+        candidates.append(InstanceCandidate(
+            instance_id=instance_id,
+            class_uri=class_uri,
+            label=_pick_label(props, fallback=instance_id),
+            score=round(score, 3),
+        ))
+
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    return ResolveInstanceResponse(candidates=candidates)
