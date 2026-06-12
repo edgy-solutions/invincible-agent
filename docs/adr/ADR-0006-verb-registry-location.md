@@ -157,10 +157,9 @@ incident motivates it.
 
 ## Addendum — Gateway v0.2: the mesh-registrar becomes sole writer of AITool predicate edges
 
-**Status:** Proposed (2026-06-12) — pending the rollback-vs-quarantine
-fork resolution in the Consequences matrix below. No code lands until
-that paragraph is decided.
-**Date:** 2026-06-12
+**Status:** Accepted
+**Date:** 2026-06-12 (proposed) → 2026-06-13 (accepted with the
+conjunctive-read invariant identified as the deciding fact)
 **Related:**
   - The original v0.1 mesh-registrar gateway (`agent_fleet/mesh_registrar/`)
     that validates Contract D and emits the DataHub MCP — but does NOT
@@ -313,149 +312,288 @@ close. The remaining content of the matrix depends on which
 arm of the fork the user picks. Both arms preserve the working
 priors above.
 
-### Decision needed — rollback vs. quarantine
+### Decision — rollback via Restate saga, bounded forward-retry first
 
-**This is the design fork I'm leaving for the user per the
-assignment's "stop at genuine forks" rule.** Both options
-preserve the working priors. Both have real failure modes.
-I have a leaning (rollback) and the case for the other
-(quarantine) is strong enough that I should not pick alone.
+**Decided 2026-06-13 by the user, after surfacing the conjunctive-read
+invariant that earlier analysis (and the first draft of this
+addendum) had missed.** The decision rests on a routing-layer fact
+that resolves what looked like a distributed-systems tradeoff. Naming
+the invariant is part of the decision — without it, this fork would
+genuinely have been balanced; with it, rollback wins outright and
+quarantine's strongest surviving argument collapses.
 
-#### Option A — Rollback the half-write
+#### The load-bearing safety fact — the conjunctive-read invariant
 
-On case #2 (`N=S, W=F`), DELETE the Neo4j edge before returning
-5xx. Mirror for case #3 (DELETE the Weaviate row). On rollback
-success, the response is "rejected, nothing wrote" and the
-caller's retry hits a clean state.
+**In this system, a half-registered verb is already unroutable by
+construction.** The dispatch path consumes Neo4j AND Weaviate
+*conjunctively* — not as alternatives but as inputs that must agree
+before a verb enters the candidate enum the LLM is allowed to pick
+from. Per ADR-0018's addendum, `/classify_predicate` builds its
+constrained enum from **Weaviate hybrid candidates filtered by the
+compat whitelist that Cypher (Neo4j) produced**. Both stores must
+register the verb for it to reach the LLM at all.
 
-| # | N | W | HTTP | Caller belief        | Retry              | Cleanup obligation                              |
-|---|---|---|------|----------------------|--------------------|-------------------------------------------------|
-| 2 | S | F | 5xx  | "rejected, retry OK" | yes, idempotent    | DELETE the Neo4j edge before returning 5xx      |
-| 3 | F | S | 5xx  | "rejected, retry OK" | yes, idempotent    | DELETE the Weaviate row before returning 5xx    |
+Walking through cases #2 and #3 of the matrix above with this
+property in hand:
 
-**For rollback:**
-- Engine O's discovery Cypher needs no state filter. Existence
-  IS validity. The standing-guard probes stay simple.
-- Recipe v2's two known-good probes (engine_d and engine_e)
-  don't need to learn a quarantine state.
-- The multi-provider edge collision fix from last night
-  (doc-tools a44b9fb) already established that identity =
-  `(verb_iri, _tool_urn)`. Rollback by `_tool_urn` is a clean
-  DELETE-by-key.
-- The dual-store known-good probe — "register fixture → query
-  both → both present → done" — is the postcondition test in
-  the simplest possible form.
+- **Case #2 (`N=S, W=F`):** Cypher's compat walk finds the verb
+  (Neo4j wrote). But Weaviate's hybrid search doesn't return it (no
+  row). The compat-filtered intersection of "Cypher candidates" ∩
+  "Weaviate candidates" excludes it. **The LLM literally cannot
+  pick it.** The verb is silently unrouted — same observable state
+  as "this verb isn't registered yet." Truthful, safe.
 
-**Against rollback:**
-- The rollback CAN fail (Neo4j network blip during the DELETE,
-  transaction timeout, APOC unavailability). When rollback
-  fails, you've leaked a half-write that *looks routable*: the
-  edge or row that did write IS observable, and downstream
-  reads cannot tell it from a clean half of a successful
-  registration. The failure mode is *silent stale state* until
-  someone notices.
-- The mitigation — log loudly, alarm on rollback failure, send
-  the cleanup task to a dead-letter queue — turns rollback's
-  worst case into quarantine-shaped behavior anyway, but with
-  no explicit state marker for queries to see.
+- **Case #3 (`N=F, W=S`):** Weaviate's hybrid search finds the
+  verb. But Cypher's compat walk returns the empty set (or returns
+  it without this verb), so the verb isn't in the compat whitelist
+  passed to `/classify_predicate`. The Weaviate hit is filtered out
+  before the enum is built. **Same outcome.** Unrouted, safe.
 
-#### Option B — Quarantine the half-write
+The two escape hatches that would have made single-store presence
+sufficient to dispatch are both gone, closed by this very soundness
+arc:
 
-On case #2, set a `mesh_registration_state="quarantined"`
-property on the Neo4j edge before returning 5xx. Mirror for
-case #3 on the Weaviate row. A background reconciler retries
-the missing-side write; on success it clears the quarantine
-property; on exhausted retries it alarms. Engine O's reads
-filter `WHERE r.mesh_registration_state IS NULL OR r.mesh_registration_state <> "quarantined"`.
+- **N=1 Cypher-decisive shortcut** removed by ADR-0019 Contract A
+  (`/classify_predicate` no longer returns a candidate just because
+  it's the only one in Neo4j; the LLM still has to validate fit).
+- **Unconstrained classify on empty compat** removed by the
+  Contract B fix two nights ago (dcf9e22) — `/classify_predicate`
+  short-circuits to `UNKNOWN` when the subject was resolved and
+  compat returned `[]`, instead of falling back to the open
+  Weaviate pool.
 
-| # | N | W | HTTP | Caller belief                                      | Retry                | Cleanup obligation                            |
-|---|---|---|------|----------------------------------------------------|----------------------|-----------------------------------------------|
-| 2 | S | F | 5xx  | "rejected, half-write quarantined for reconciliation" | yes, reconciler-driven | mark Neo4j edge quarantined; reconciler retries W |
-| 3 | F | S | 5xx  | "rejected, half-write quarantined for reconciliation" | yes, reconciler-driven | mark Weaviate row quarantined; reconciler retries N |
+This means the "observable half-state window" that quarantine was
+designed to protect against does not, in fact, expose a routable
+verb. **There is no silent leakage to mark.** Quarantine would be
+belt added to suspenders that are already load-bearing — and at
+the price of a state-filter clause in every read path. That clause
+is exactly the bug family this project keeps paying for (allowlist
+drift in `_build_relationship_properties`, the temperature override
+layer in `init_baml_client`, subClassOf not reaching the LLM enum
+before the abba2d2 fix). Adding "every consumer must remember an
+implicit check" *manufactures* a new instance of that family.
+Rollback adds zero read-side surface.
 
-**For quarantine:**
-- *The write actually happened* — quarantine respects that
-  truth rather than trying to un-happen it. Operators can
-  inspect the quarantined record to see exactly what was
-  attempted.
-- Quarantine cannot silently leak. The state marker is
-  explicit; any query that respects the filter behaves
-  correctly; any query that ignores the filter is a bug a
-  standing guard can catch.
-- The reconciler's "exhausted retries → alarm" path is
-  observable, has a runbook, and matches how operators
-  already think about partial failures in the rest of the
-  system.
+#### Caveat — router-support predicates sit outside the invariant
 
-**Against quarantine:**
-- Every read path that consumes Neo4j / Weaviate needs the
-  state filter. Engine O's `_find_compatible_verbs` Cypher,
-  `predicate_hybrid_search`, the discovery cache, the
-  reconciliation asset's drift query — all add a clause and
-  all become a place where the filter could be forgotten.
-  Forgotten filter = quarantined verb routes silently.
-- The reconciler is new infrastructure (background job,
-  retry budget, dead-letter alarm) that doesn't exist yet.
-  Building it well takes the same engineering attention as
-  building rollback well — but quarantine adds the read-path
-  surface area on top.
-- The multi-provider edge identity `(verb_iri, _tool_urn)`
-  doesn't naturally extend to quarantine — does a quarantined
-  edge block a fresh registration for the same `_tool_urn`?
-  Does the reconciler MERGE-update or replace? These are
-  answerable but each answer is a small contract that has
-  to land somewhere.
+The conjunctive property holds for **user-question verbs**, which
+route through both `/find_compatible_verbs` and `/classify_predicate`
+on every request. **Router-support predicates** —
+`mesh:resolveInstance` is the first; future ones will be discovered
+the same way — are read by Cypher *alone* in
+`_discover_instance_resolvers`. A half-write here (case #2: Neo4j
+wrote, Weaviate didn't) IS active: the provider gets discovered, the
+fan-out happens, the candidates flow back. The Weaviate row is
+inert for that predicate class.
 
-#### My leaning (not the decision)
+Traced: it's currently benign. A half-write resolveInstance edge
+points at a real running provider (because the engine's lifespan
+registration succeeded enough to emit the MCP), the provider
+responds correctly, the decision table consumes its candidates.
+The Weaviate row would never have been used anyway because
+`/classify_predicate` isn't called for router-support predicates.
 
-Rollback, because:
-- Query-side complexity is the cost that compounds across
-  Engine O, the SDK, the probes, and the reconciler. Rollback
-  has zero query-side complexity; quarantine adds one filter
-  to every read.
-- Both options have a worst-case mitigation that ends up
-  alarming. Rollback's "rollback failed → dead-letter + alarm"
-  and quarantine's "reconciler exhausted → alarm" are roughly
-  equivalent in operator burden, but rollback's reaches that
-  state less often (because rollback is more likely to succeed
-  than a multi-minute reconciliation queue is to drain).
-- The standing-guard discipline from this arc has been
-  "absences should be observable" — Recipe v2's known-good
-  probes, the abstention-needs-positive-control rule. Rollback
-  fits that shape: a failed registration leaves no trace, and
-  a probe failure means "registration didn't happen, fix it,"
-  not "registration is in a state we need to interpret."
+But the conjunctive property is itself an *implicit invariant a
+future read path could break*. Someone someday builds a consumer
+that routes off Neo4j alone for a user-question verb. The day that
+ships, rollback's safety argument silently weakens. So the
+invariant is **named, written into this amendment as the
+load-bearing safety fact, guarded by a standing test (see Test
+gate §below), and listed as a revisit trigger (§Indicators)**: if
+any future change makes single-store presence sufficient to
+dispatch a user-question verb, this rollback decision reopens.
 
-**The case for the user picking quarantine instead:** if you
-expect frequent transient-network blips between the gateway
-and Neo4j (real possibility given the cluster's history of
-brief Neo4j availability gaps), rollback's worst-case becomes
-non-rare, and quarantine's explicit-state failure mode is
-strictly better than rollback's silent-leakage failure mode.
-This is the call I want you to make.
+That converts the caveat from a lurking assumption into a tripwire
+— the house pattern, applied to the property the architecture
+already depends on.
 
-### Test gate (applies once the fork is resolved)
+#### Implementation — Restate saga with bounded forward-retry, compensate on exhaustion
 
-- The dual-store known-good probe becomes the gateway's own
-  postcondition test in CI: register a fixture verb against
-  a real Neo4j + Weaviate (testcontainers or sandbox), query
-  both stores, assert the verb is present with the expected
-  properties, then DELETE the fixture. Same probe used as the
-  in-request read-back also runs as a CI guard so a regression
-  on either store-write path turns red at PR time, not at
-  next-engine-deploy time.
+The registration handler is a Restate **durable workflow keyed as a
+virtual object on `(verb_iri, _tool_urn)`** — the registration
+identity that doc-tools a44b9fb established as the
+multi-provider-distinguishing key. Restate's virtual-object
+semantics serialize concurrent or duplicate registrations for the
+same identity behind each other natively, which *is* the answer
+to "what happens when a fresh registration arrives mid-failure"
+that quarantine had to invent a contract for.
+
+```
+WorkflowRegisterAITool(manifest):
+  yield ctx.run("contract_d_check",     check_d(manifest))
+  yield ctx.run("merge_neo4j_edge",     merge_n(manifest))   # N
+  yield ctx.run("upsert_weaviate_row",  upsert_w(manifest))  # W
+  yield ctx.run("read_back_probe",      probe_both(manifest))
+  return 200 OK
+on_step_failure(step, exc):
+  # Restate's NATIVE first response: bounded forward-retry within
+  # the request budget (~10-15s). This handles the cluster's
+  # actual failure profile — transient blips. Retry absorbs a
+  # blip invisibly; the caller sees a 3s registration instead
+  # of an instant one, and never sees the half-state (which was
+  # unroutable by the conjunctive invariant anyway).
+  retry_with_backoff(budget=REGISTER_BUDGET_S)
+on_retries_exhausted():
+  # Only sustained outage reaches here. Saga compensates:
+  # durably DELETE whatever wrote, in reverse order. Restate
+  # guarantees the compensation runs to completion — which
+  # deletes rollback's old worst case ("rollback itself fails
+  # and leaks") cleanly.
+  yield ctx.run("compensate_weaviate", delete_w_if_written(manifest))
+  yield ctx.run("compensate_neo4j",    delete_n_if_written(manifest))
+  return 5xx
+```
+
+In practice this means:
+
+- **Transient blip → absorbed.** Forward retry completes within
+  ~3-15s. Caller sees a slightly slow 200. The half-state never
+  becomes externally visible, and even if a read happened during
+  the window it would have been unroutable by the conjunctive
+  property.
+- **Sustained outage → honest 5xx against clean state.** The
+  compensation step durably runs. Caller retries against an empty
+  substrate. No half-state remains; no quarantine record to
+  reconcile.
+
+This is the version of rollback that *bare* rollback couldn't be,
+because Restate's durability replaces the "rollback itself can fail"
+failure mode. It's also the option Restate makes naturally cheap:
+forward retry is Restate's native mode; the compensation step is one
+explicit saga branch, not a separate reconciler service.
+
+The matrix's cases #2 and #3 collapse:
+
+| # | N | W | HTTP | Caller belief | Retry semantics | Cleanup obligation |
+|---|---|---|------|---------------|-----------------|--------------------|
+| 1 | S | S | 200 | "registered" | n/a | none |
+| 2 | S | F | 200 *(after forward-retry)* OR 5xx | "registered" or "rejected, clean retry" | Restate forward-retry on W, then saga compensation | Restate-managed: DELETE N durably on exhaustion |
+| 3 | F | S | 200 *(after forward-retry)* OR 5xx | "registered" or "rejected, clean retry" | Restate forward-retry on N, then saga compensation | Restate-managed: DELETE W durably on exhaustion |
+| 4 | F | F | 5xx | "rejected, no writes landed" | yes, idempotent at handler-entry | none |
+
+#### Concurrency contract — virtual-object keying
+
+Restate virtual objects are single-threaded per key. By keying the
+workflow on `(verb_iri, _tool_urn)`, the gateway gets these
+properties without writing them:
+
+- **A second registration for the same identity** while the first
+  is mid-retry queues behind it. It does NOT race the first into
+  the substrate. No double-write, no interleaved partial states.
+- **A fresh registration arriving mid-compensation** waits for
+  the compensation to complete before starting. The substrate is
+  empty when it begins. No "did the previous quarantine block
+  this?" contract to invent.
+- **Idempotency at handler entry.** Restate's exactly-once
+  semantics for side effects mean a replayed handler doesn't
+  re-execute `merge_neo4j` if the journal shows it already
+  completed.
+
+This is what quarantine had to manually contract for ("does a
+quarantined edge block a fresh registration?" — answerable, but
+each answer a small contract). Restate's virtual-object model
+answers it by construction.
+
+#### SDK side — `register_engine_to_mesh` retry/alarm semantics
+
+The engine-side helper (`agent_fleet/utils/mesh_registration.py`)
+gets matched semantics:
+
+- On 5xx from the gateway: retry with backoff a few times within
+  the lifespan startup budget.
+- On exhausted retries: **log loudly** with the manifest fields
+  and the gateway's reason, then **return** — the engine continues
+  running unregistered. ADR-0006 §Consequences "Neo4j outages do
+  affect runtime routing" applies: the engine serves requests it
+  can serve; routing to its verbs simply doesn't happen until a
+  successful re-registration on next deploy or manual probe.
+- The existing probe discipline (`tests/routing/test_resolve_instance_probes.py`)
+  catches "engine up but unregistered" as a named, runbook'd alarm
+  — exactly the shape the abstention-needs-positive-control rule
+  was promoted to a permanent tripwire for. A future "engine
+  starts but never registers" doesn't masquerade as a routing
+  bug; the probe fails with the right name on it.
+
+The verb simply won't route in the meantime, which the conjunctive
+invariant makes safe — same as before. The system already protects
+this; we're just naming and guarding it.
+
+#### The meta-point worth saying
+
+This fork looked like a distributed-systems tradeoff (rollback vs.
+quarantine for partial substrate failure) and was actually resolved
+by a **routing-layer fact** — the conjunctive read property that the
+enum-whitelist work (ADR-0018 addendum) and the Contract B fix
+(dcf9e22) had already established. The safety came from work already
+done; we just had to name the invariant.
+
+This is the second time in a month the right answer was *"the system
+already protects this; name the invariant and guard it"* rather than
+*"build the protective state."* The first was Recipe v2 / Gate 6,
+where the architecture's discovery-via-registry property meant
+Engine E's join required zero Engine O changes (acceptance test
+passed by structure, not by code). The pattern is worth naming:
+**before designing protective state, check whether the system's
+existing invariants already protect against the failure mode — and
+if they do, the work is to elevate the invariant to a guarded
+named property rather than build the protective state.**
+
+### Test gate
+
+- **Conjunctive-read invariant guard** (load-bearing — the safety
+  argument depends on it). Insert a Neo4j-only edge for a fixture
+  verb (no Weaviate row). Call `/find_compatible_verbs` for that
+  verb's subject + call `/classify_predicate` with the resulting
+  compat list. Assert the LLM did NOT receive the verb in its
+  constrained enum — the compat-filtered Weaviate intersection
+  excluded it. Mirror for the Weaviate-only case (compat-walk
+  doesn't include it, so the Weaviate hit is filtered out before
+  enum construction). This guard pins the property the rollback
+  decision depends on; any future change that makes single-store
+  presence sufficient to dispatch a user-question verb turns this
+  red BEFORE quarantine becomes the right answer. (Router-support
+  predicates like `mesh:resolveInstance` sit outside the
+  invariant by design — see Caveat above; their substrate guard
+  is the multi-provider edge test that already exists in
+  `test_substrate_invariants.py::test_mesh_resolve_instance_has_one_edge_per_provider`.)
+
+- **Gateway saga postcondition test in CI.** Register a fixture
+  verb through the v0.2 Restate workflow against a real Neo4j +
+  Weaviate (testcontainers or sandbox), assert both stores have
+  the expected row with all properties (provider, timeout_s,
+  endpoint_url, mesh_*), then DELETE the fixture. Same probe
+  shape as the in-request read-back, also runs as a CI guard so a
+  regression on either store-write path turns red at PR time, not
+  at next-engine-deploy time.
+
+- **Compensation-runs-to-completion test.** Inject a Weaviate
+  failure mid-saga, force exhausted retries, assert the Neo4j
+  edge is gone after the 5xx returns. Mirror for the inverse.
+  This guards the property that makes Restate's durability
+  load-bearing for rollback's old worst case.
+
+- **Concurrency contract test.** Two concurrent registrations
+  for the same `(verb_iri, _tool_urn)` serialize cleanly via
+  Restate's virtual-object key — no double-write, no interleaved
+  partial states. A registration arriving while a compensation
+  is in flight waits for the compensation to complete.
+
 - The Recipe v2 probes in `tests/routing/test_resolve_instance_probes.py`
   stay as they are; they test the routing-side observable, not
   the registration-side. v0.2 must not break them.
+
 - The matrix run (18/18 today) must hold through cutover. If
   it goes red, v0.2 hasn't shipped; if R8 (Engine E as
   provider #2) flips, the gateway has lost the multi-provider
   edge identity invariant.
-- A new substrate invariant: every materialized AITool predicate
-  edge MUST have non-null `mesh_provider` and a populated
-  `mesh_endpoint_url`. This catches the allowlist-drift bug
-  class from doc-tools 540fbd5 at the substrate layer, where
-  the bug actually lives.
+
+- The substrate invariants in `tests/routing/test_substrate_invariants.py::test_mesh_resolve_instance_has_one_edge_per_provider`
+  (added in ce599d0) stay as they are. v0.2's writes must satisfy
+  them: non-null `mesh_provider`, positive `timeout_s`,
+  populated `endpoint_url`, populated `_tool_urn`. This catches
+  the allowlist-drift bug class at the substrate layer where the
+  bug actually lives — and v0.2 lifts the allowlist hop out of
+  the path entirely by writing the substrate directly.
 
 ### Cutover — predict-before-run with the masks rule
 
@@ -504,14 +642,28 @@ rule's "make sure you looked where the bugs live"). If
 
 ### Indicators for revisiting
 
+- ***Any future change makes single-store presence sufficient to
+  dispatch a user-question verb.*** This is the load-bearing
+  revisit trigger. The rollback decision rests on the conjunctive-
+  read invariant — the LLM only sees verbs that are in both
+  Neo4j AND Weaviate. If a future Engine O endpoint, a refactored
+  `/classify_predicate`, or a new dispatch path consumes only one
+  store, rollback's safety argument silently weakens and
+  quarantine moves back onto the table. The standing-guard test
+  in §Test gate catches this if it ships; this entry is the
+  human-readable backstop saying "if the guard turns red, this
+  amendment is being violated, not just a test."
 - *Gateway becomes the SPOF for a wider class of registrations
   than AITools.* If the Dataset team wants the same atomicity
   guarantees, the gateway path generalizes; the amendment's
   "AITool-only" guardrail relaxes.
-- *Quarantine pressure mounts even under rollback.* If
-  rollback-fails-and-dead-letters accumulates at a non-rare
-  rate, the rollback choice was wrong for this deploy and
-  quarantine becomes the right migration.
+- *Restate forward-retry is exhausted at non-rare frequency.* If
+  saga compensations are running more than a handful per month,
+  the cluster's transient-blip floor is higher than the
+  registration budget assumes. Three responses are then in
+  scope: raise the budget, fix the underlying blip cause, or
+  reconsider whether forward-retry's "absorb the blip silently"
+  is still desirable.
 - *The reconciliation asset starts seeing real drift.* The
   amendment moves a class of drift from "expected daily" to
   "should never happen by construction"; if drift returns,
