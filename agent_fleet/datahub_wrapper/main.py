@@ -165,12 +165,21 @@ class ResolveInstanceResponse(BaseModel):
 # idp_extension.ttl and has verbs typed against it (or against an ancestor
 # reachable via subClassOf). Anything else is dropped — abstaining is the
 # contract.
+#
+# Values MUST be the FULL IRI form. The idp_extension.ttl canonical ingest
+# expands ``idp:Table`` → ``http://invincible-agent/idp#Table`` when it
+# writes :OntologyClass nodes. Returning the compact form would set a
+# subject the compat-walk Cypher cannot find — the matrix went silently
+# RED on 2026-06-12 because of this; before the Contract B fix shipped
+# (dcf9e22) the LLM was masking it by picking verbs from the unconstrained
+# Weaviate pool. The fix is to return the canonical URI form here so
+# Engine O's subClassOf walk can actually reach the typed verbs.
 _DATAHUB_TO_IDP: Dict[str, str] = {
-    "DATASET":   "idp:Table",      # warehouse three-part names land here
-    "DASHBOARD": "idp:Dashboard",
-    "CHART":     "idp:Dashboard",  # charts hang off dashboards in our model
-    "DATA_FLOW": "idp:Pipeline",
-    "DATA_JOB":  "idp:Job",
+    "DATASET":   "http://invincible-agent/idp#Table",      # warehouse three-part names land here
+    "DASHBOARD": "http://invincible-agent/idp#Dashboard",
+    "CHART":     "http://invincible-agent/idp#Dashboard",  # charts hang off dashboards in our model
+    "DATA_FLOW": "http://invincible-agent/idp#Pipeline",
+    "DATA_JOB":  "http://invincible-agent/idp#Job",
 }
 
 # Identifier patterns that suggest a column (last segment after the dataset
@@ -385,7 +394,7 @@ def _column_match(identifier: str, entity: Dict[str, Any]) -> Optional[Dict[str,
         if fp == field_path:
             return {
                 "instance_id": f"{entity.get('urn', '')}.{fp}",
-                "class_uri": "idp:Column",
+                "class_uri": "http://invincible-agent/idp#Column",
                 "label": f"{dataset_name}.{fp}",
                 "score": 0.95,  # exact field match
             }
@@ -395,7 +404,7 @@ def _column_match(identifier: str, entity: Dict[str, Any]) -> Optional[Dict[str,
     # cache is stale.
     return {
         "instance_id": f"{entity.get('urn', '')}.{field_path}",
-        "class_uri": "idp:Column",
+        "class_uri": "http://invincible-agent/idp#Column",
         "label": f"{dataset_name}.{field_path}",
         "score": 0.75,
     }
@@ -488,6 +497,9 @@ async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceRe
                 seen_ids.add(cid)
                 candidates.append(InstanceCandidate(**col))
             continue
+        # column_match also needs the canonical full-IRI form to land
+        # downstream — patched at the call site for the same reason
+        # _DATAHUB_TO_IDP was patched: Neo4j stores idp:* as full IRIs.
 
         class_uri = _DATAHUB_TO_IDP.get(entity_type)
         if not class_uri:
