@@ -138,35 +138,99 @@ def _emit_to_registrar(
         "timeout_s": timeout_s,
     }
 
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(f"{registrar_url}/v1/register", json=manifest)
-        if resp.status_code == 200:
-            logger.info(
-                "✅ Registered engine %s via mesh-registrar (%s -> %s)",
-                urn, input_uri, output_uri,
-            )
-            return
-        if resp.status_code == 422:
-            # Contract D rejection — the gateway tells us exactly which
-            # URI is missing. Surface it so the operator can fix the
-            # ontology rather than guessing.
+    # v0.2 SDK retry semantics per ADR-0006 §Addendum §SDK side:
+    #   - 200 → success, return immediately.
+    #   - 422 (Contract D) → permanent rejection, return without retry
+    #     (the ontology has to be fixed first; retrying won't help).
+    #   - 5xx (saga compensated) → retry-safe; the substrate is clean,
+    #     a fresh attempt will run cleanly. Bounded retry within
+    #     lifespan startup budget.
+    #   - exhausted retries / unreachable → log loudly and return
+    #     without re-raising. The engine keeps serving; the existing
+    #     probe discipline (tests/routing/test_resolve_instance_probes.py)
+    #     catches "engine up but unregistered" as a named alarm so the
+    #     failure mode has a name and a runbook, not a mystery.
+    sdk_max_attempts = int(os.getenv("MESH_REGISTRAR_SDK_MAX_ATTEMPTS", "4"))
+    sdk_initial_backoff = float(os.getenv("MESH_REGISTRAR_SDK_INITIAL_BACKOFF_S", "0.5"))
+    sdk_max_backoff = float(os.getenv("MESH_REGISTRAR_SDK_MAX_BACKOFF_S", "4.0"))
+
+    backoff = sdk_initial_backoff
+    last_exc: Optional[Exception] = None
+    last_status: Optional[int] = None
+    last_body: Optional[str] = None
+    for attempt in range(1, sdk_max_attempts + 1):
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(f"{registrar_url}/v1/register", json=manifest)
+            last_status = resp.status_code
+            last_body = resp.text[:500]
+
+            if resp.status_code == 200:
+                logger.info(
+                    "✅ Registered engine %s via mesh-registrar v0.2 (%s -> %s) "
+                    "attempt=%d",
+                    urn, input_uri, output_uri, attempt,
+                )
+                return
+            if resp.status_code == 422:
+                # Contract D rejection — permanent. No point retrying
+                # against the same ontology state.
+                logger.warning(
+                    "⚠️ mesh-registrar rejected engine %s (Contract D): %s. "
+                    "Engine will keep serving; run the canonical ontology "
+                    "ingest then redeploy to retry.",
+                    urn, last_body,
+                )
+                return
+            if 500 <= resp.status_code < 600:
+                # Saga compensated — retry-safe per v0.2 contract.
+                if attempt < sdk_max_attempts:
+                    logger.warning(
+                        "⚠️ mesh-registrar returned HTTP %d for engine %s "
+                        "(attempt %d/%d); retrying in %.2fs. Body: %s",
+                        resp.status_code, urn, attempt, sdk_max_attempts,
+                        backoff, last_body,
+                    )
+                    import time as _t
+                    _t.sleep(backoff)
+                    backoff = min(backoff * 2, sdk_max_backoff)
+                    continue
+                # Fall through to the post-loop "exhausted" log.
+                break
+            # Other status codes are unexpected (3xx?). Log and stop.
             logger.warning(
-                "⚠️ mesh-registrar rejected engine %s (Contract D): %s. "
-                "Engine will keep serving; run the canonical ontology "
-                "ingest then redeploy to retry.",
-                urn, resp.text[:500],
+                "⚠️ mesh-registrar returned unexpected HTTP %d for engine "
+                "%s: %s. Not retrying.",
+                resp.status_code, urn, last_body,
             )
             return
-        logger.warning(
-            "⚠️ mesh-registrar returned HTTP %d for engine %s: %s",
-            resp.status_code, urn, resp.text[:500],
-        )
-    except Exception as e:  # noqa: BLE001 — ADR-0006: do not crash the engine
-        logger.warning(
-            "⚠️ Failed to register engine %s via mesh-registrar at %s: %s",
-            urn, registrar_url, e,
-        )
+        except Exception as e:  # noqa: BLE001 — ADR-0006: do not crash the engine
+            last_exc = e
+            if attempt < sdk_max_attempts:
+                logger.warning(
+                    "⚠️ mesh-registrar at %s unreachable for engine %s "
+                    "(attempt %d/%d): %s. Retrying in %.2fs.",
+                    registrar_url, urn, attempt, sdk_max_attempts, e, backoff,
+                )
+                import time as _t
+                _t.sleep(backoff)
+                backoff = min(backoff * 2, sdk_max_backoff)
+                continue
+            break
+
+    # Exhausted. Per ADR-0006 §Addendum §SDK side: log loudly and let
+    # the engine run unregistered. The existing probe discipline catches
+    # this as "engine up but unregistered" — a named alarm with a
+    # runbook, not a mystery.
+    logger.error(
+        "❌ mesh-registrar v0.2 retries EXHAUSTED for engine %s (%d attempts). "
+        "Last status=%s, last_body=%s, last_exc=%s. Engine will keep serving "
+        "but its verbs will NOT route until a successful re-registration on "
+        "next deploy or manual probe. This is a named alarm — see "
+        "tests/routing/test_resolve_instance_probes.py for the postcondition "
+        "test that catches 'engine up but unregistered' downstream.",
+        urn, sdk_max_attempts, last_status, last_body, last_exc,
+    )
 
 
 def register_engine_to_mesh(
