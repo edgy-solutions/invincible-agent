@@ -54,7 +54,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from . import v2_substrate as substrate
+# Dual import: container layout has v2_substrate as a sibling module
+# (no package context); dev uses the full package path.
+try:
+    from agent_fleet.mesh_registrar import v2_substrate as substrate
+except ImportError:
+    import v2_substrate as substrate  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 

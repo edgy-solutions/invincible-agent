@@ -442,8 +442,16 @@ def register(manifest: RegistrationManifest) -> RegistrationResult:
 # v0.2 saga wiring — lifts the substrate writers into the request path.
 # ---------------------------------------------------------------------------
 
-from . import v2_saga
-from . import v2_substrate as _v2substrate  # noqa: F401 — used by tests
+# Dual import: dev uses the full package path; the container ships
+# main.py at /app/main.py with v2_saga/v2_substrate as sibling modules
+# (no package context), so the relative form fails on boot. Same shape
+# as engine-o's instance_resolution import (commit 75a8011).
+try:
+    from agent_fleet.mesh_registrar import v2_saga
+    from agent_fleet.mesh_registrar import v2_substrate as _v2substrate  # noqa: F401 — used by tests
+except ImportError:
+    import v2_saga  # type: ignore[no-redef]
+    import v2_substrate as _v2substrate  # type: ignore[no-redef] # noqa: F401
 
 _WEAVIATE_CLIENT_SINGLETON = None  # lazy-init via _get_weaviate_client()
 
