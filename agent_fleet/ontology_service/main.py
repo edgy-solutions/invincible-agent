@@ -2139,29 +2139,34 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         limit=max(request.candidate_limit, 25),  # widen so the filter survives
     )
 
-    # ADR-0018 addendum: when the caller has resolved the subject and
-    # asked /find_compatible_verbs which predicates Neo4j says can
-    # operate on it, filter the Weaviate candidate set to that subset
-    # BEFORE the LLM sees anything. The LLM cannot then pick an
-    # incompatible (subject, verb) pair because the offending verb
-    # never enters the constrained enum. If the intersection is empty
-    # (the subject's compatible verbs aren't in Weaviate at all),
-    # synthesize candidate dicts directly from the supplied IRIs so the
-    # LLM still has them — the predicate-registry-vs-Weaviate sync gap
-    # shouldn't silently swallow a valid route.
+    # ADR-0018 addendum + ADR-0006 §Addendum conjunctive-read invariant
+    # (2026-06-13): when the caller has resolved the subject and asked
+    # /find_compatible_verbs which predicates Neo4j says can operate on
+    # it, filter the Weaviate candidate set to that subset BEFORE the
+    # LLM sees anything. The LLM cannot then pick an incompatible
+    # (subject, verb) pair because the offending verb never enters the
+    # constrained enum.
+    #
+    # If the intersection is empty — the subject's compatible verbs
+    # aren't present in Weaviate — the verb DOES NOT enter the LLM's
+    # enum. The earlier fabrication-fallback that synthesized candidate
+    # dicts from the bare IRIs was removed 2026-06-13 because it broke
+    # the conjunctive-read invariant the rollback decision in ADR-0006
+    # §Addendum rests on: a half-registered verb (Neo4j edge present,
+    # Weaviate row missing) was getting fabricated into the enum and
+    # the LLM could pick it. That defeated the safety argument for
+    # gateway v0.2's rollback path.
+    #
+    # The "predicate-registry-vs-Weaviate sync gap" the fabrication was
+    # working around is what v0.2 closes structurally: the gateway
+    # writes both stores atomically in the request path, so a "Neo4j
+    # has it but Weaviate doesn't" steady state is no longer reachable
+    # through the normal registration path. If it ever IS reachable
+    # (e.g., a partial restore from backup), the routing correctly
+    # treats the verb as unregistered until the substrate is
+    # reconciled — which is the truthful state.
     if compatible:
-        filtered = [c for c in candidates if c.get("verb_iri") in compatible]
-        if not filtered:
-            # Fabricate minimal candidate dicts for the supplied verbs so
-            # the LLM at least sees their IRIs. The predicate dict that
-            # the supervisor needs to dispatch will be None (no Weaviate
-            # record for these) — caller must call /find_tool to
-            # materialize the dispatch info.
-            filtered = [
-                {"verb_iri": v, "description": "", "input_uri": "", "owner_persona": ""}
-                for v in compatible
-            ]
-        candidates = filtered
+        candidates = [c for c in candidates if c.get("verb_iri") in compatible]
 
         # ADR-0019 Contract A — cardinality is not fit. The previous
         # "N=1 Neo4j-decisive shortcut" returned the lone candidate at
@@ -2183,15 +2188,26 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     if not candidates:
         # No registered predicate this caller is entitled to. Caller
         # routes to the generalist fallback (ADR-0008 no_match path).
+        # Two distinct failure paths land here (both are forms of
+        # "no predicate available"); the reason names which.
         reason = (
             f"No registered predicate matched query={request.query!r} "
             f"under entitled_domains={entitled}."
         )
         if compatible:
+            # ADR-0006 §Addendum conjunctive-read invariant: a verb in
+            # the Cypher compat list that's missing from Weaviate is
+            # treated as unregistered until both stores agree. Pre-v0.2
+            # this branch would also fire because of allowlist drift +
+            # sensor dedup leaving stale Weaviate rows; v0.2 closes
+            # those bug classes by writing both stores atomically.
             reason = (
-                f"No predicates that Neo4j marks compatible with the "
-                f"resolved subject ({list(compatible)}) survived the "
-                f"entitled_domains scope filter."
+                f"Conjunctive-read invariant: Neo4j marks "
+                f"{list(compatible)} as compatible with the resolved "
+                f"subject, but none of those verbs survived the "
+                f"Weaviate intersection (registered in Cypher but not "
+                f"in the predicate search index). Routes to generalist "
+                f"until the substrate is reconciled."
             )
         return ClassifyPredicateResponse(
             resolved_verb_iri="UNKNOWN",
