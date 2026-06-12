@@ -2242,6 +2242,54 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         chain_uris = [a["uri"] for a in ancestor_chain if a["hops"] <= h]
         return " ⊆ ".join(chain_uris)
 
+    # Deduplicate candidates by verb_iri before building the enum.
+    # When an engine registers the same verb against multiple input
+    # subjects (engine_e_neo4j_expert + engine_e_neo4j_expert_procedure_step
+    # both ship mesh:queryKnowledgeGraph), Weaviate returns one row per
+    # registration. BAML's TypeBuilder.add_value(name) dedupes by enum
+    # value name, so calling add_value(verb_iri) twice keeps only the
+    # LAST description — and the last description's "operates on X"
+    # clause may be incompatible with the resolved subject. The LLM
+    # then refuses on substrate grounds even though a compatible
+    # registration exists.
+    #
+    # The right pick per (verb_iri) is the candidate whose input_uri is
+    # most-specifically compatible with the resolved subject:
+    #   1. exact match on subject_uri (hops=0)
+    #   2. ancestor in the subClassOf chain (hops > 0, prefer SMALLER
+    #      hops as the more specific compatibility)
+    #   3. fall back to ANY candidate if none are in the ancestor chain
+    #      — preserves the existing behavior of letting the LLM see and
+    #      refuse on substrate (Contract A) when the registration is
+    #      genuinely incompatible.
+    def _pick_best_per_verb(rows: list[dict]) -> list[dict]:
+        # First pass: pick the best candidate per verb_iri (most specific
+        # ancestor match). UNREACHABLE sentinel keeps non-ancestor
+        # candidates as the fallback.
+        best: dict[str, dict] = {}
+        best_hops: dict[str, int] = {}
+        first_seen_index: dict[str, int] = {}
+        UNREACHABLE = 10**6
+        for i, cand in enumerate(rows):
+            v = cand.get("verb_iri") or ""
+            if not v:
+                continue
+            if v not in first_seen_index:
+                first_seen_index[v] = i
+            in_uri = cand.get("input_uri") or ""
+            hops = ancestor_hops.get(in_uri, UNREACHABLE)
+            if v not in best or hops < best_hops[v]:
+                best[v] = cand
+                best_hops[v] = hops
+        # Emit one entry per verb, preserving the order of the
+        # first time the verb was seen in the BM25-ranked input.
+        ordered: list[dict] = []
+        for v in sorted(first_seen_index, key=first_seen_index.get):
+            ordered.append(best[v])
+        return ordered
+
+    candidates = _pick_best_per_verb(candidates)
+
     # Build TypeBuilder dynamic enum from the Weaviate candidates. Each
     # enum value's description is the verb's description string — the LLM
     # sees that when picking, which lets it judge substrate fit
