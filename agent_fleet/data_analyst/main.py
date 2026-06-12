@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
             "analysis engine instead. See ADR-0014."
         ),
         verb="mesh:analyzeDataset",
-        input_uri="mesh:DatasetAnalysisRequest",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:DatasetAnalysisReport",
         verb_synonyms=[
             "execute SQL on", "run SQL against urn",

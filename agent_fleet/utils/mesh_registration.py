@@ -30,7 +30,7 @@ Usage from an engine's FastAPI lifespan::
             name="engine_a_restate_analyst",
             description="Durable analyst engine ...",
             verb="mesh:analyzeWithCodeAgent",
-            input_uri="mesh:AgentTask",
+            input_uri="http://invincible-agent/mesh#AgentTask",
             output_uri="mesh:AgentResponse",
             endpoint_url=os.getenv("ENGINE_A_PUBLIC_URL", "..."),
             owner_persona="DATA_STEWARD",

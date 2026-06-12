@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
             "Restate-durable execution and mem0 long-term memory."
         ),
         verb="mesh:queryKnowledgeGraph",
-        input_uri="mesh:GraphQuery",
+        input_uri="https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/WorkInstruction",
         output_uri="mesh:GraphExpertResponse",
         # Synonyms drive Engine O's BM25 ranking of this verb against the
         # user's query. The pre-v0.2 list ("query graph", "graph lookup",

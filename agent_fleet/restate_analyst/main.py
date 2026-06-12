@@ -1090,7 +1090,7 @@ async def lifespan(fastapi_app: FastAPI):
             "schema — use mesh:traceLineage or mesh:findSchema for those."
         ),
         verb="mesh:lookupOwnership",
-        input_uri="mesh:CatalogAssetQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:OwnershipFact",
         verb_synonyms=[
             "who owns", "owner of", "ownership of",
@@ -1113,7 +1113,7 @@ async def lifespan(fastapi_app: FastAPI):
             "is the source of truth for X' questions."
         ),
         verb="mesh:traceLineage",
-        input_uri="mesh:CatalogAssetQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:LineageTopology",
         verb_synonyms=[
             "what is the lineage", "lineage of",
@@ -1150,7 +1150,7 @@ async def lifespan(fastapi_app: FastAPI):
             "changed schema or broke."
         ),
         verb="mesh:assessImpact",
-        input_uri="mesh:CatalogAssetQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:ImpactSet",
         verb_synonyms=[
             "downstream impact", "what breaks if",
@@ -1173,7 +1173,7 @@ async def lifespan(fastapi_app: FastAPI):
             "questions. Does NOT return row data — that's Engine DA's job."
         ),
         verb="mesh:findSchema",
-        input_uri="mesh:CatalogAssetQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:SchemaDescription",
         verb_synonyms=[
             "what columns", "schema of", "data types",
@@ -1195,7 +1195,7 @@ async def lifespan(fastapi_app: FastAPI):
             "stale', or freshness-SLA questions."
         ),
         verb="mesh:checkFreshness",
-        input_uri="mesh:CatalogAssetQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:FreshnessReport",
         verb_synonyms=[
             "when was last updated", "last updated",
@@ -1220,7 +1220,7 @@ async def lifespan(fastapi_app: FastAPI):
             "feature predicate: tag-match AND optional-condition-check."
         ),
         verb="mesh:filterByTag",
-        input_uri="mesh:CatalogAssetQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:TagFilterResult",
         verb_synonyms=[
             "tagged", "datasets tagged", "assets tagged",
@@ -1248,7 +1248,7 @@ async def lifespan(fastapi_app: FastAPI):
             "only), the more specific verbs rank higher."
         ),
         verb="mesh:describeAsset",
-        input_uri="mesh:CatalogAssetQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:AssetProfile",
         verb_synonyms=[
             "describe", "describe dataset", "describe dashboard",
@@ -1286,7 +1286,7 @@ async def lifespan(fastapi_app: FastAPI):
             "lineage topology graph."
         ),
         verb="mesh:enumerateCatalog",
-        input_uri="mesh:CatalogScopeQuery",
+        input_uri="http://invincible-agent/idp#Dataset",
         output_uri="mesh:CatalogListing",
         verb_synonyms=[
             "what tables do you have",
@@ -1326,7 +1326,7 @@ async def lifespan(fastapi_app: FastAPI):
             "underlying rows of any dataset — that's a separate engine."
         ),
         verb="mesh:analyzeWithCodeAgent",
-        input_uri="mesh:AgentTask",
+        input_uri="http://invincible-agent/mesh#AgentTask",
         output_uri="mesh:AgentResponse",
         verb_synonyms=[
             "catalog question", "metadata question",

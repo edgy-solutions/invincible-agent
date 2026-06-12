@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
             "Markdown summaries and citations from technical manuals."
         ),
         verb="mesh:retrieveKnowledge",
-        input_uri="mesh:KnowledgeQuery",
+        input_uri="https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
         output_uri="mesh:KnowledgeRetrievalResponse",
         verb_synonyms=[
             "search docs", "find in manuals", "semantic search",
