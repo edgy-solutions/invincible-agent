@@ -62,9 +62,29 @@ async def lifespan(app: FastAPI):
         verb="mesh:queryKnowledgeGraph",
         input_uri="mesh:GraphQuery",
         output_uri="mesh:GraphExpertResponse",
+        # Synonyms drive Engine O's BM25 ranking of this verb against the
+        # user's query. The pre-v0.2 list ("query graph", "graph lookup",
+        # ...) covered the verb's own vocabulary but not the natural
+        # vocabulary of the questions users actually ask the maintenance
+        # graph. Cutover surfaced this when the fabrication-fallback
+        # was removed (ADR-0006 §Addendum 2026-06-13): a Neo4j-compat
+        # verb that isn't BM25-surfaced in Weaviate fails the
+        # conjunctive-read invariant by design. Expanded to cover the
+        # standing matrix's MAINTENANCE rows: procedure / work
+        # instruction / maintenance steps / diagram / TEST-N codes. The
+        # routing question grammar drives the synonym set, not the
+        # verb's internal naming.
         verb_synonyms=[
+            # Verb-vocabulary (original)
             "query graph", "graph lookup", "cypher query",
             "find in graph", "knowledge graph search",
+            # Maintenance-domain query vocabulary
+            "procedure", "describe procedure", "find procedure",
+            "tell me about procedure", "look up procedure",
+            "work instruction", "what is the work instruction",
+            "maintenance steps", "maintenance procedure",
+            "diagram", "schematic", "figure", "show me the diagram",
+            "rotor assembly", "equipment", "assembly",
         ],
         endpoint_url=os.getenv(
             "ENGINE_E_PUBLIC_URL",
