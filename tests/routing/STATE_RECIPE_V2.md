@@ -186,6 +186,81 @@ it. The matrix can now go red on an Engine-D defect. That's the
 blast radius growing on purpose; tonight it paid for itself within
 hours.
 
+## 2026-06-12 — Gate 6 closed + Contract B regression caught
+
+Five commits + one doc-tools commit closed the architect's amended
+next-session order. The headline: **Engine E joined as the second
+``mesh:resolveInstance`` provider with ZERO Engine O changes** — the
+architecture's own "not a hack" acceptance test passed cleanly. Git
+diff against the step-2 baseline shows `agent_fleet/ontology_service/`
+untouched; the standing-guard suite stayed 23/23 throughout.
+
+| # | sha | summary |
+|---|-----|---------|
+| 1 | dcf9e22 | Contract B short-circuit — skip `/classify_predicate` when `compat=[]` |
+| 2 | d4ecb44 | per-provider timeouts + distinct timeout/empty provenance + provider field fix |
+| 3 | d4ae98b | Gate 6 — Engine E `/resolve_instance` + probes + R8 row + R1/R2/R6/R7 assertion tighten |
+| 4 | 540fbd5 (doc-tools) | aitool_linker pipes `mesh_provider` + `mesh_timeout_s` onto Neo4j edge |
+
+The architect's three catches all landed and shipped:
+
+1. **Contract B** — R4's red wasn't waiting on Wave-3. Empty
+   ``compatible_verb_iris`` was being treated as "unconstrained" instead
+   of "forbidden" inside ``/classify_predicate``, so the LLM picked
+   ``mesh:traceLineage`` from an open Weaviate pool. The fix is a
+   conjunction (subject_uri != "UNKNOWN" AND compat == []) → return
+   UNKNOWN without invoking the LLM. ``ClassifyPredicateResponse`` gains
+   ``classify_called: bool``; ``RouteCase`` gains
+   ``expect_classify_called``; R4 is promoted to the standing guard
+   that catches this regression class.
+
+2. **Provider field** — ``coalesce(r.provider, type(r))`` was falling
+   back to the relationship type (``resolveInstance``) for every override,
+   because the gateway didn't emit a ``mesh_provider`` customProperty.
+   Three coupled fixes shipped under step 2: gateway adds
+   ``mesh_provider`` (derived from registration ``name`` by stripping
+   the snake_case verb-local suffix; explicit override on the manifest);
+   ``aitool_linker._build_relationship_properties`` pipes it onto the
+   Neo4j edge; the discovery Cypher already used the right field. Traces
+   now read ``provider=engine_d`` / ``provider=engine_e`` instead of
+   ``provider=resolveInstance``.
+
+3. **Timeout vs empty fold** — both failure modes used to collapse to
+   ``instance_match=empty`` in provenance, exactly the asymmetry that
+   masked Engine D's 2s strangle bug last night and would have masked
+   Engine E's ms responses inheriting DataHub's seconds ceiling. The
+   fix: ``_call_resolver`` returns a structured outcome (status:
+   ``ok|timeout|error``, elapsed_s, candidates); ``_resolve_instance``
+   promotes provenance from ``empty`` to ``timeout`` when any provider
+   exceeded its budget; provenance now includes
+   ``instance_provider_outcomes`` with per-provider audit. Per-provider
+   timeouts declared at registration (``timeout_s`` field, defaults to
+   None which means "use the router floor"); Engine D declared 8s,
+   Engine E declared 2s.
+
+The Gate-6 acceptance test in matrix form:
+- New R8 row: ``"Tell me about procedure TEST-1234 in detail"`` →
+  expected ``subject_substring=WorkInstruction``, verb=
+  ``mesh:queryKnowledgeGraph``, ``instance_provider=engine_e``.
+- Engine E's known-good probes: ``"TEST-1234" → IOF-MRO WorkInstruction``
+  and ``"AFP-2024-001" → mro:Equipment``. Both ship day-one as the
+  positive-control discipline.
+- R1/R2/R6/R7 promoted to assert ``instance_provider=engine_d`` per the
+  R6 template (green-via-override has more meaning than green-via-
+  fallback — same color, but the architecture is doing the work).
+
+Side-quest closed under the same arc: the **doc-tools allowlist drift**
+bug class. ``_build_relationship_properties`` is an explicit allowlist
+of ``mesh_*`` customProperties to pipe; new gateway-emitted properties
+get silently dropped unless they're enumerated there. The fix is two
+new entries plus an architectural note that the v0.2 cleanup should
+swap the allowlist for a ``mesh_*``-prefix pass-through, killing the
+class of "new gateway prop silently dropped" entirely.
+
+Step 5's grep came back clean: every ``search(input:)`` GraphQL callsite
+in ``agent_fleet`` is already on ``searchAcrossEntities``. No other
+copies of the old broken-search shape lurking.
+
 ## Open follow-ups (in order)
 
 1. **Generality acceptance test**: register Engine E as the second `mesh:resolveInstance` provider (for `urn:instance:...` nodes) and confirm zero Engine O changes are needed. This is the *real* "not a hack" test.
