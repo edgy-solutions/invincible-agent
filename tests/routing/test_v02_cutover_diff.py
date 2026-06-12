@@ -34,16 +34,23 @@ from typing import Any
 import pytest
 
 
-_REQUIRED_PROPERTIES = [
-    "iri",
-    "_tool_urn",
+# Column names returned by the Cypher RETURN below. Pre-v0.2 edges
+# materialized by the doc-tools sensor lack ``tool_urn`` AND
+# ``provider`` (the allowlist drift + a44b9fb match-key bug both
+# affected them). v0.2 saga writes populate all of these.
+_REQUIRED_RETURNED_COLUMNS = [
+    "verb_iri",
+    "tool_urn",
     "endpoint_url",
     "provider",
     "owner_persona",
     "domains",
     "cost_class",
 ]
-"""Properties every materialized AITool predicate edge MUST have."""
+"""Column names every v0.2-materialized AITool predicate edge MUST have
+populated. Names match the SQL-style aliases in the RETURN clause of
+the Cypher query below — NOT the raw r.* property names — because that's
+what the row dict keys end up as."""
 
 _OPTIONAL_PROPERTIES = [
     "timeout_s",  # only on registrations that declared one (resolveInstance)
@@ -98,7 +105,7 @@ def test_every_aitool_edge_has_required_properties(neo4j_driver):
     missing_by_edge: dict[str, list[str]] = {}
     for row in rows:
         key = f"{row['verb_iri']} / {row['tool_urn'] or '<no-tool_urn>'}"
-        missing = [p for p in _REQUIRED_PROPERTIES if not row.get(p)]
+        missing = [p for p in _REQUIRED_RETURNED_COLUMNS if not row.get(p)]
         if missing:
             missing_by_edge[key] = missing
 
