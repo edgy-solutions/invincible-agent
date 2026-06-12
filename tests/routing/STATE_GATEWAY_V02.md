@@ -251,3 +251,104 @@ the fallback path's output as correct, hiding the integration gap
 behind a loosened assertion — the literal definition of
 green-for-the-wrong-reason, the thing R6's provenance-tighten
 exists to prevent. The architect was right to strike it.
+
+## Final cutover state (2026-06-13) — 18/18 + 6/6
+
+Three further fixes shipped to close the cutover cleanly, each at the
+layer the bug actually lived at:
+
+- **3acd985** — Engine E `verb_synonyms` widened to cover the
+  maintenance query grammar (procedure, work instruction,
+  maintenance steps, diagram, rotor assembly). Closed 3 of 4
+  original failures by giving BM25 something to rank on.
+- **27b647b → 124e469** — Second Engine E registration for
+  `mesh:queryKnowledgeGraph` against `mro:ProcedureStep`. ProcedureStep
+  has no `subClassOf` ancestors in Neo4j so compat-walk dead-ends; the
+  second registration declares it directly. First attempt had a
+  "ProcedureStep variant" description that overwrote the primary's in
+  BAML's TypeBuilder dedup; fixed to identical descriptions.
+- **0b0c33e** — `/classify_predicate` now deduplicates predicate
+  candidates by `verb_iri` before building the BAML enum, picking the
+  candidate whose `input_uri` is most-specifically compatible with the
+  resolved subject (exact match > nearest ancestor > any). Preserves
+  Contract A's "let the LLM refuse on substrate" for genuinely
+  incompatible registrations. The dedup is the routing-layer fix for
+  the duplicate-verb-iri-in-enum ambiguity the multi-registration
+  pattern surfaces.
+
+**Integration probe (architect's amendment) shipped in 124e469 —**
+`test_router_side_resolve_integration[engine_d/engine_e × known-good]`
+asserts `provenance.instance_resolved=true` + correct
+`instance_provider` through `/resolve` end-to-end. The cutover's
+original maintenance failures would have surfaced here immediately
+rather than getting chased through the matrix.
+
+**One false-positive worth flagging:** an intermediate run showed 17/18
+FAILED. Root cause: port-forward died mid-run; every test got a
+connection error in ~5s. Real result is 18/18 when forward is healthy.
+Worth recording because it's exactly the kind of artifact that wastes
+morning keystrokes if not flagged here.
+
+## Pattern banked
+
+Each cutover-discovered bug lived at a different layer of the same
+ambiguity. The fabrication fallback (removed 32d257a) hid synonym
+gaps; removing it surfaced them at the registration site (3acd985).
+The single-registration-per-engine pattern hid multi-input-uri
+ambiguity; declaring the second registration surfaced it in BAML's
+dedup (124e469). The "operates on {input_uri}" description string
+hid which `input_uri` the LLM saw for a duplicated `verb_iri`; the
+router-side dedup (0b0c33e) surfaces it explicitly per subject. At
+each layer the *real shape* of the routing decision is now the
+visible shape — the conjunctive invariant pulling clarity out one
+peeled layer at a time, exactly the shape the architect's
+"name the invariant and guard it" pattern predicted.
+
+## Morning queue (final)
+
+### 1. Authorize the orphan-edge DELETE (with snapshot first)
+
+The diff harness still surfaces the masks-rule discrepancy: pre-v0.2
+edges with NULL `_tool_urn` + NULL `provider` sitting next to fresh
+v0.2 saga writes. They don't degrade routing (conjunctive invariant +
+`DISTINCT` collapses them; their endpoints match v0.2's), but they
+pollute the substrate-invariant test from ce599d0 and the cutover
+diff report.
+
+**Snapshot first (5min reversibility insurance):**
+
+```cypher
+MATCH (s)-[r]->(o)
+WHERE r.iri IS NOT NULL
+  AND r.iri STARTS WITH 'mesh:'
+  AND r._tool_urn IS NULL
+  AND r.endpoint_url IS NOT NULL
+RETURN s.uri AS subject, r.iri AS verb_iri, o.uri AS output,
+       r.endpoint_url AS endpoint, r.domains AS domains,
+       r.owner_persona AS owner_persona, r.cost_class AS cost_class
+ORDER BY r.iri, s.uri
+```
+
+**Cleanup (only after authorization + snapshot):**
+
+```cypher
+MATCH ()-[r]->()
+WHERE r.iri IS NOT NULL
+  AND r.iri STARTS WITH 'mesh:'
+  AND r._tool_urn IS NULL
+  AND r.endpoint_url IS NOT NULL
+DELETE r
+```
+
+**Verification:** matrix before and after; predict no movement
+(orphans never affected routing — conjunctive invariant + endpoint
+match). Diff harness report after; predict zero `<no-tool_urn>` rows.
+
+### 2. v0.2.1 Restate VirtualObject wiring
+
+Saga LOGIC is shipped; v0.2.1 wraps it inside a Restate VirtualObject
+keyed on `(verb_iri, _tool_urn)` for crash recovery + multi-replica
+serialization. Per the ADR amendment, the safety class is identical
+with or without (the conjunctive invariant covers it); this is polish,
+queued behind anything actively broken. Engine A's Restate patterns
+in `agent_fleet/restate_analyst/main.py` are the reference.
