@@ -97,6 +97,53 @@ async def lifespan(app: FastAPI):
         cost_class="slow",
     )
 
+    # Second registration of mesh:queryKnowledgeGraph against
+    # mro:ProcedureStep. The matrix surfaces a real ontology coverage
+    # gap (2026-06-13): "Show me the maintenance steps for the rotor
+    # assembly" → resolver picks mro:ProcedureStep (a defensible
+    # semantic match for "steps"); ProcedureStep has no subClassOf
+    # ancestors in Neo4j, so compat-walk returns empty and Contract B
+    # short-circuits to UNKNOWN. The architect's "verbs follow
+    # questions" framing applied: Engine E *can* answer ProcedureStep
+    # queries (the knowledge graph contains ProcedureStep nodes), so
+    # the engine declares it via a second registration. NOT a TTL
+    # change — that would require subclassing ProcedureStep under
+    # mesh:GraphQuery which is semantically wrong (one is a domain
+    # concept, the other is a Request shape). The clean fix is to
+    # surface the verb against the second subject it serves; identity
+    # via (verb_iri, _tool_urn) keeps it as its own edge from a44b9fb.
+    register_engine_to_mesh(
+        name="engine_e_neo4j_expert_procedure_step",
+        description=(
+            "Knowledge graph expert — ProcedureStep variant. Same engine "
+            "and endpoint as engine_e_neo4j_expert; declares Engine E "
+            "also serves queries whose resolved subject is "
+            "mro:ProcedureStep (e.g. 'show me the maintenance steps for "
+            "X'). Closes the ontology coverage gap surfaced when the v0.2 "
+            "cutover removed /classify_predicate's fabrication fallback."
+        ),
+        verb="mesh:queryKnowledgeGraph",
+        input_uri="mro:ProcedureStep",
+        output_uri="mesh:GraphExpertResponse",
+        verb_synonyms=[
+            "query graph", "graph lookup", "cypher query",
+            "find in graph", "knowledge graph search",
+            "procedure", "describe procedure", "find procedure",
+            "tell me about procedure", "look up procedure",
+            "work instruction", "what is the work instruction",
+            "maintenance steps", "maintenance procedure",
+            "diagram", "schematic", "figure", "show me the diagram",
+            "rotor assembly", "equipment", "assembly",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_E_PUBLIC_URL",
+            "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+        ),
+        owner_persona="AUDITOR",
+        domains=["MAINTENANCE", "MANUFACTURING"],
+        cost_class="slow",
+    )
+
     # Recipe v2 — second mesh:resolveInstance provider (Gate 6
     # generality acceptance test). Engine E owns the
     # urn:instance:* / WorkInstruction / Equipment node side of the
