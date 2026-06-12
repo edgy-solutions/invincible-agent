@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
         ),
         verb="mesh:retrieveKnowledge",
         input_uri="https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
-        output_uri="mesh:KnowledgeRetrievalResponse",
+        output_uri="http://invincible-agent/mesh#KnowledgeRetrievalResponse",
         verb_synonyms=[
             "search docs", "find in manuals", "semantic search",
             "look up policy", "consult manual",

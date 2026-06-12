@@ -207,11 +207,17 @@ def test_no_phantom_output_classes(driver):
 # debt to be migrated when their domain's Layer 1 ontology lands.
 MRO_NS = "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/"
 MESH_NS = "http://invincible-agent/mesh#"
+IDP_NS = "http://invincible-agent/idp#"
 
 WORK_INSTRUCTION = MRO_NS + "WorkInstruction"
 TECHNICAL_MANUAL = MRO_NS + "TechnicalManual"
 GRAPH_EXPERT_RESPONSE = MESH_NS + "GraphExpertResponse"
 KNOWLEDGE_RETRIEVAL_RESPONSE = MESH_NS + "KnowledgeRetrievalResponse"
+IDP_DATASET = IDP_NS + "Dataset"
+IDP_TABLE = IDP_NS + "Table"
+MESH_AGENT_TASK = MESH_NS + "AgentTask"
+INSTANCE_IDENTIFIER = "mesh:InstanceIdentifier"
+PROCEDURE_STEP = "mro:ProcedureStep"
 
 
 def test_known_subjects_exist(driver):
@@ -398,11 +404,20 @@ def test_mesh_resolve_instance_has_one_edge_per_provider(driver):
 
 
 def test_known_verbs_typed_correctly(driver):
-    """Every known verb is typed against the expected real subject class
-    at canonical (full IRI) form.
+    """Every known verb has AT LEAST ONE v0.2-provenanced edge typed against
+    the expected real subject class at canonical (full IRI) form.
 
     Catches the failure mode where a re-registration through the gateway
     accidentally reverts to a pseudo-class typing OR to the compact form.
+
+    Multi-registration safe: a verb may be legitimately typed against
+    several subjects (e.g. mesh:queryKnowledgeGraph against both
+    WorkInstruction and ProcedureStep). This test asserts the expected
+    (input, output) pair EXISTS among the verb's v0.2 saga edges, not
+    that it's the only one. The dict-overwrite race that bit us
+    2026-06-13 — Cypher returning multiple edges per verb and the dict
+    landing on whichever came last — is avoided by collecting a SET of
+    triples per verb instead.
     """
     expected = {
         "mesh:queryKnowledgeGraph": (WORK_INSTRUCTION, GRAPH_EXPERT_RESPONSE),
@@ -412,22 +427,139 @@ def test_known_verbs_typed_correctly(driver):
         result = session.run(
             """
             MATCH (s)-[r]->(o) WHERE r.iri IN $verbs
+              AND r._tool_urn IS NOT NULL
             RETURN r.iri AS verb, s.uri AS input_uri, o.uri AS output_uri,
                    r._input_uri AS recorded_input
             """,
             verbs=list(expected),
         )
-        actual = {
-            rec["verb"]: (rec["input_uri"], rec["output_uri"], rec["recorded_input"])
-            for rec in result
-        }
+        actual: dict[str, set] = {}
+        for rec in result:
+            actual.setdefault(rec["verb"], set()).add(
+                (rec["input_uri"], rec["output_uri"], rec["recorded_input"])
+            )
     for verb, (want_in, want_out) in expected.items():
-        got = actual.get(verb)
-        assert got is not None, f"Verb {verb} not found in substrate"
-        got_in, got_out, recorded_in = got
-        assert got_in == want_in, f"{verb} input edge: want {want_in}, got {got_in}"
-        assert got_out == want_out, f"{verb} output edge: want {want_out}, got {got_out}"
-        assert recorded_in == want_in, (
-            f"{verb} _input_uri property: want {want_in}, got {recorded_in} "
-            f"(edge endpoint and recorded _input_uri must agree)"
+        edges = actual.get(verb, set())
+        assert edges, (
+            f"Verb {verb} has no v0.2 saga edges (non-NULL _tool_urn) in "
+            f"the substrate. Either the engine isn't registered or the "
+            f"saga didn't write the edge — check mesh-registrar logs."
         )
+        # Assert the EXPECTED triple exists among the verb's edges. Other
+        # registrations of the same verb (multi-registration pattern) may
+        # exist alongside it and that's fine.
+        want = (want_in, want_out, want_in)
+        assert want in edges, (
+            f"{verb}: expected (input={want_in!r}, output={want_out!r}, "
+            f"recorded_input={want_in!r}) not found among v0.2 saga edges. "
+            f"Actual edges:\n"
+            + "\n".join(f"    - {e}" for e in sorted(edges))
+        )
+
+
+# -----------------------------------------------------------------------------
+# Coverage guard (ADR-0006 §Addendum 2026-06-13 amendment): for every routing
+# pair the matrix exercises, the substrate must contain at least one v0.2 saga
+# edge (_tool_urn IS NOT NULL) reachable via the compat-walk from the subject.
+#
+# This is the standing guard that would have caught my 2026-06-13 mistake
+# BEFORE the DELETE. The orphan DELETE prediction was "no movement" based on
+# reasoning (conjunctive invariant + endpoint match). The prediction was
+# wrong because the orphans were Phase 5's substrate-direct re-typings that
+# the v0.2 saga never overwrote — they were Cypher's only path to the verbs
+# for the full-IRI subjects the resolver actually lands on.
+#
+# With this guard in place, the same DELETE attempt would fail BEFORE the
+# substrate change: the guard would point at exactly the (subject, verb)
+# pairs that have no v0.2 saga edge — i.e., the orphans are load-bearing
+# and shouldn't be deleted until either (a) the source declarations are
+# corrected and re-registered (the Option 1 fix the architect prescribed)
+# or (b) the matrix's expected routing is intentionally narrowed.
+#
+# Architect's framing of the rule: "for every matrix-successful (subject,
+# verb) pair, assert that the compat-walk from the subject reaches the
+# verb via at least one v0.2 saga edge (non-NULL _tool_urn)."
+COVERAGE_PAIRS = [
+    # Catalog routing via idp:Dataset and its idp:Table/Dashboard subclasses
+    # (the resolver lands on idp:Table or idp:Dashboard for specific assets;
+    # compat-walk goes subClassOf* up to idp:Dataset which carries the
+    # verbs). All 8 engine_a catalog/scope verbs:
+    (IDP_DATASET, "mesh:lookupOwnership"),
+    (IDP_DATASET, "mesh:traceLineage"),
+    (IDP_DATASET, "mesh:assessImpact"),
+    (IDP_DATASET, "mesh:findSchema"),
+    (IDP_DATASET, "mesh:checkFreshness"),
+    (IDP_DATASET, "mesh:filterByTag"),
+    (IDP_DATASET, "mesh:describeAsset"),
+    (IDP_DATASET, "mesh:enumerateCatalog"),
+    # The inheritance case that bit us 2026-06-13: idp:Table queries must
+    # reach catalog verbs via subClassOf to idp:Dataset.
+    (IDP_TABLE, "mesh:describeAsset"),
+    (IDP_TABLE, "mesh:lookupOwnership"),
+    (IDP_TABLE, "mesh:traceLineage"),
+    (IDP_TABLE, "mesh:findSchema"),
+    # Maintenance knowledge graph (engine_e via MRO/WorkInstruction):
+    (WORK_INSTRUCTION, "mesh:queryKnowledgeGraph"),
+    # Maintenance procedure-step (engine_e's second registration):
+    (PROCEDURE_STEP, "mesh:queryKnowledgeGraph"),
+    # Manual retrieval (engine_w via MRO/TechnicalManual):
+    (TECHNICAL_MANUAL, "mesh:retrieveKnowledge"),
+    # Phone book (engine_d + engine_e via mesh:InstanceIdentifier):
+    (INSTANCE_IDENTIFIER, "mesh:resolveInstance"),
+    # Code agent fallback (engine_a via mesh#AgentTask):
+    (MESH_AGENT_TASK, "mesh:analyzeWithCodeAgent"),
+]
+
+
+def test_substrate_covers_routing_via_v02_saga_edges(driver):
+    """Coverage guard: every routing pair the matrix exercises MUST be
+    backed by a v0.2 saga edge (non-NULL _tool_urn) reachable via the
+    compat-walk from the subject. This makes the matrix's routing depend
+    only on source-declared, gateway-materialized edges — NOT on
+    historical substrate-direct fixes or orphan edges left behind by
+    earlier migrations.
+
+    If this test fails for a (subject, verb) pair, it means:
+      a) The orphans (pre-v0.2 substrate-direct migrations) are STILL
+         load-bearing for that pair — deleting them WILL break routing.
+      b) The engine's SDK declaration's input_uri doesn't match the
+         subject class the resolver actually lands on for queries that
+         should route to this verb. The fix is to re-declare against
+         the resolver-target subject (the Option 1 fix shape, 7978260).
+
+    Either failure mode names the cleanup blocker by row.
+
+    The compat-walk direction here mirrors the production resolver in
+    agent_fleet/ontology_service/main.py:
+      MATCH (subject)-[:subClassOf*0..]->(ancestor)
+      MATCH (ancestor)-[verb_edge]->()
+    """
+    missing = []
+    with driver.session() as session:
+        for subject, verb in COVERAGE_PAIRS:
+            n = session.run(
+                """
+                MATCH (s:OntologyClass {uri: $subject})
+                OPTIONAL MATCH (s)-[:subClassOf*0..10]->(ancestor:OntologyClass)
+                WITH collect(DISTINCT coalesce(ancestor, s)) AS ancestors
+                UNWIND ancestors AS a
+                MATCH (a)-[r {iri: $verb}]->()
+                WHERE r._tool_urn IS NOT NULL
+                RETURN count(DISTINCT r) AS n
+                """,
+                subject=subject, verb=verb,
+            ).single()["n"]
+            if n < 1:
+                missing.append((subject, verb))
+    assert not missing, (
+        "Routing pairs not covered by any v0.2 saga edge (non-NULL "
+        "_tool_urn) via subClassOf compat-walk:\n"
+        + "\n".join(f"    - {s} → {v}" for s, v in missing)
+        + "\n\nEither orphans are load-bearing for these pairs (cleanup "
+        "is blocked until the engine's source declaration is corrected "
+        "and re-registered) or the source declaration's input_uri "
+        "doesn't match the resolver's landing class. See ADR-0006 "
+        "§Addendum 2026-06-13: source declarations are the authoritative "
+        "registry post-v0.2; substrate-direct fixes that bypass them are "
+        "regressions waiting to fire."
+    )

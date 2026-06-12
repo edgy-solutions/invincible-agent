@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI):
         ),
         verb="mesh:queryKnowledgeGraph",
         input_uri="https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/WorkInstruction",
-        output_uri="mesh:GraphExpertResponse",
+        output_uri="http://invincible-agent/mesh#GraphExpertResponse",
         # Synonyms drive Engine O's BM25 ranking of this verb against the
         # user's query. The pre-v0.2 list ("query graph", "graph lookup",
         # ...) covered the verb's own vocabulary but not the natural
@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI):
         ),
         verb="mesh:queryKnowledgeGraph",
         input_uri="mro:ProcedureStep",
-        output_uri="mesh:GraphExpertResponse",
+        output_uri="http://invincible-agent/mesh#GraphExpertResponse",
         verb_synonyms=[
             "query graph", "graph lookup", "cypher query",
             "find in graph", "knowledge graph search",
