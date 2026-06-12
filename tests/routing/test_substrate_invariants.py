@@ -404,55 +404,82 @@ def test_mesh_resolve_instance_has_one_edge_per_provider(driver):
 
 
 def test_known_verbs_typed_correctly(driver):
-    """Every known verb has AT LEAST ONE v0.2-provenanced edge typed against
-    the expected real subject class at canonical (full IRI) form.
+    """Every known (verb_iri, _tool_urn) registration has an edge typed
+    against the expected real subject class at canonical (full IRI) form.
 
-    Catches the failure mode where a re-registration through the gateway
-    accidentally reverts to a pseudo-class typing OR to the compact form.
+    Registration identity is the PAIR (verb_iri, _tool_urn), not the bare
+    verb_iri (ADR-0019 §Contract D addendum, 2026-06-12). This test pins
+    one expected (input_uri, output_uri) per (verb_iri, _tool_urn) pair
+    rather than per verb_iri, which is what the multi-registration
+    pattern (Engine E's two registrations of mesh:queryKnowledgeGraph
+    against WorkInstruction + ProcedureStep) actually needs.
 
-    Multi-registration safe: a verb may be legitimately typed against
-    several subjects (e.g. mesh:queryKnowledgeGraph against both
-    WorkInstruction and ProcedureStep). This test asserts the expected
-    (input, output) pair EXISTS among the verb's v0.2 saga edges, not
-    that it's the only one. The dict-overwrite race that bit us
-    2026-06-13 — Cypher returning multiple edges per verb and the dict
-    landing on whichever came last — is avoided by collecting a SET of
-    triples per verb instead.
+    Catches the failure modes:
+      a) Re-registration through the gateway reverts to a pseudo-class
+         OR compact form (per-pair, so a multi-registered verb regressing
+         on ONE of its registrations doesn't hide behind the other one).
+      b) The match-key from a44b9fb regresses — two registrations under
+         distinct _tool_urns collapse onto one edge with last-write-wins.
+         Pinning by pair makes the collapse fail loudly.
+      c) The dict-overwrite race that bit us 2026-06-13 (Cypher returning
+         multiple edges per verb_iri and the dict landing on whichever
+         came last). Keying by pair structurally eliminates it.
     """
-    expected = {
-        "mesh:queryKnowledgeGraph": (WORK_INSTRUCTION, GRAPH_EXPERT_RESPONSE),
-        "mesh:retrieveKnowledge": (TECHNICAL_MANUAL, KNOWLEDGE_RETRIEVAL_RESPONSE),
+    # Tool URN suffix → expected (input_uri, output_uri). Suffix used
+    # because the engine_X_name part is what registrations actually
+    # control; the leading "urn:li:mlModel:(urn:li:dataPlatform:mesh,"
+    # is boilerplate.
+    expected_by_pair = {
+        ("mesh:queryKnowledgeGraph", "engine_e_neo4j_expert"): (
+            WORK_INSTRUCTION, GRAPH_EXPERT_RESPONSE,
+        ),
+        ("mesh:queryKnowledgeGraph", "engine_e_neo4j_expert_procedure_step"): (
+            PROCEDURE_STEP, GRAPH_EXPERT_RESPONSE,
+        ),
+        ("mesh:retrieveKnowledge", "engine_w_weaviate_expert"): (
+            TECHNICAL_MANUAL, KNOWLEDGE_RETRIEVAL_RESPONSE,
+        ),
     }
+    verbs = sorted({verb for verb, _ in expected_by_pair})
     with driver.session() as session:
         result = session.run(
             """
             MATCH (s)-[r]->(o) WHERE r.iri IN $verbs
               AND r._tool_urn IS NOT NULL
-            RETURN r.iri AS verb, s.uri AS input_uri, o.uri AS output_uri,
+            RETURN r.iri AS verb,
+                   r._tool_urn AS tool_urn,
+                   s.uri AS input_uri,
+                   o.uri AS output_uri,
                    r._input_uri AS recorded_input
             """,
-            verbs=list(expected),
+            verbs=verbs,
         )
-        actual: dict[str, set] = {}
+        # Key by (verb_iri, tool_urn_name). Collect a SET of triples per
+        # key so multiple edges under one identity (orphans, leftover
+        # legacy rows) don't mask the expected one.
+        actual_by_pair: dict[tuple[str, str], set] = {}
         for rec in result:
-            actual.setdefault(rec["verb"], set()).add(
+            urn = rec["tool_urn"] or ""
+            # Extract the engine_X_name suffix from the URN.
+            name_part = urn.rsplit(",", 2)[-2] if urn.count(",") >= 2 else urn
+            key = (rec["verb"], name_part)
+            actual_by_pair.setdefault(key, set()).add(
                 (rec["input_uri"], rec["output_uri"], rec["recorded_input"])
             )
-    for verb, (want_in, want_out) in expected.items():
-        edges = actual.get(verb, set())
+    for (verb, urn_suffix), (want_in, want_out) in expected_by_pair.items():
+        edges = actual_by_pair.get((verb, urn_suffix), set())
         assert edges, (
-            f"Verb {verb} has no v0.2 saga edges (non-NULL _tool_urn) in "
-            f"the substrate. Either the engine isn't registered or the "
-            f"saga didn't write the edge — check mesh-registrar logs."
+            f"Registration ({verb}, _tool_urn=…{urn_suffix},…) has no v0.2 "
+            f"saga edge. Either the engine isn't registered or the "
+            f"a44b9fb match-key regressed — check mesh-registrar logs "
+            f"for `Registered {verb}` and gateway saga output."
         )
-        # Assert the EXPECTED triple exists among the verb's edges. Other
-        # registrations of the same verb (multi-registration pattern) may
-        # exist alongside it and that's fine.
         want = (want_in, want_out, want_in)
         assert want in edges, (
-            f"{verb}: expected (input={want_in!r}, output={want_out!r}, "
-            f"recorded_input={want_in!r}) not found among v0.2 saga edges. "
-            f"Actual edges:\n"
+            f"({verb}, _tool_urn=…{urn_suffix},…): expected "
+            f"(input={want_in!r}, output={want_out!r}, "
+            f"recorded_input={want_in!r}) not found among the "
+            f"registration's edges. Actual:\n"
             + "\n".join(f"    - {e}" for e in sorted(edges))
         )
 

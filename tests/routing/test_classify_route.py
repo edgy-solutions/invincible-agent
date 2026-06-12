@@ -133,6 +133,22 @@ class RouteCase:
     # the R6 template (green-via-override has more meaning than green-via-
     # fallback) project-wide for every override row. None = don't assert.
     expect_instance_provider: Optional[str] = None
+    # Frozen-baseline EXTRACTION-RECALL property (added 2026-06-12 per
+    # the architect's A4). Asserts that /resolve's LLM extraction step
+    # pulled the named instance out of conversational / awkward
+    # phrasing, and the phone book matched it. The assertion is a
+    # case-insensitive substring check on provenance.instance_identifier
+    # — what matters is "the LLM found the name," not "the LLM produced
+    # an exact echo of it" (phone-book providers normalize/canonicalize
+    # the label).
+    #
+    # This is a HELD PROPERTY of the frozen routing baseline. A model
+    # swap that regresses extraction-recall turns this red BEFORE the
+    # query-to-verb matrix notices the wrong verb downstream. Joins
+    # `expect_classify_called` (abstention) and `expected_verb_iri`
+    # (correctness) as the three load-bearing properties the baseline
+    # promises. See MODEL_COMPARISON_BENCHMARK.md.
+    expect_extraction_of: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +315,10 @@ TEST_CASES: list[RouteCase] = [
         min_confidence=0.5,
         domain="DATA_ENGINEERING",
         expect_instance_provider="engine_d",
+        # Extraction-recall property: the LLM must pull "Customer 360"
+        # out of "Tell me about the Customer 360 dashboard" — the prose
+        # carries the name + a kind hint, the model has to separate them.
+        expect_extraction_of="Customer 360",
     ),
     # R7 — extraction probe: a name buried in awkward conversational
     # phrasing. Gates LLM extraction recall (the new load-bearing property
@@ -312,6 +332,12 @@ TEST_CASES: list[RouteCase] = [
         min_confidence=0.5,
         domain="DATA_ENGINEERING",
         expect_instance_provider="engine_d",
+        # Extraction-recall property: the LLM must pull "customers_gold"
+        # out of awkward conversational hedging ("someone mentioned ...
+        # or something, what is that?"). This is the harder of the two
+        # R6/R7 probes — recall over phrasings that don't follow the
+        # canonical "describe X" / "tell me about X" template.
+        expect_extraction_of="customers_gold",
     ),
 
     # R8 — Gate 6 generality acceptance row (Engine E as provider #2).
@@ -551,4 +577,39 @@ def test_routing_decision(case: RouteCase) -> None:
             f"Phone-book regression: expected instance_provider="
             f"{case.expect_instance_provider!r}, got "
             f"{actual_provider!r}. provenance={resolve_provenance}"
+        )
+
+    # Frozen-baseline EXTRACTION-RECALL guard (A4, 2026-06-12). The
+    # third held property of the routing baseline, alongside abstention
+    # (expect_classify_called) and correctness (expected_verb_iri).
+    #
+    # The assertion: when the case names an extracted instance, the
+    # resolver's provenance.instance_identifier MUST contain it (case-
+    # insensitive substring). A model swap that regresses extraction
+    # recall turns this red BEFORE the downstream verb pick is wrong —
+    # which is the order the failure actually happens in production
+    # (model misses the name → instance_resolved=False → fall-through
+    # path → wrong verb).
+    #
+    # Why substring not equality: phone-book providers may normalize the
+    # extracted label (case-fold, trim, canonicalize). What the property
+    # guards is "the LLM found the name in the query," not "the LLM
+    # produced an exact byte-for-byte echo." The substring lets the test
+    # survive provider normalization without weakening the property.
+    if case.expect_extraction_of is not None:
+        extracted = (
+            resolve_provenance.get("instance_identifier")
+            or resolve_provenance.get("instance_label")
+            or ""
+        )
+        assert case.expect_extraction_of.lower() in extracted.lower(), (
+            f"Extraction-recall regression: expected to extract "
+            f"{case.expect_extraction_of!r} from query, but provenance's "
+            f"instance_identifier/label was {extracted!r}. "
+            f"This is one of the three held properties of the frozen "
+            f"routing baseline (abstention, correctness, extraction-"
+            f"recall). A red here means a model swap or prompt change "
+            f"regressed the resolver's ability to pull named instances "
+            f"out of conversational phrasing — fix before promoting the "
+            f"model swap. provenance={resolve_provenance}"
         )

@@ -283,6 +283,61 @@ Contract C checks the edge *exists* in both graphs; Contract D checks the
 edge's *endpoints are real*. It is also the hard precondition for ADR-0011
 composition — `/find_path` traversing unvalidated ranges traverses garbage.
 
+**Registration identity is the pair `(verb_iri, _tool_urn)`, not the bare
+`verb_iri`.** A verb may be legitimately registered against more than one
+subject — by more than one engine (the phone-book pattern of ADR-0006's
+v0.2 amendment: Engine D + Engine E both register `mesh:resolveInstance`)
+or by the same engine against multiple resolver-target subjects (the
+multi-registration pattern: Engine E registers `mesh:queryKnowledgeGraph`
+against both `MRO/WorkInstruction` and `mro:ProcedureStep`, with the
+dedup rule below resolving which entry the LLM sees at request time).
+Substrate identity, gateway MERGE match-keys (doc-tools `a44b9fb`), and
+any test that pins "verb X is typed against subject Y" must key on the
+pair; keying on `verb_iri` alone collapses multi-registrations onto
+last-write-wins and silently changes which provider answers.
+
+### 5a. Contract D addendum — the multi-registration dedup rule
+
+When a single `verb_iri` has multiple registrations (multi-provider OR
+multi-input-uri from the same provider), `/classify_predicate` MUST
+present exactly **one enum entry per `verb_iri`** to the LLM. The entry
+shown is the candidate whose `input_uri` is **most-specifically
+compatible** with the resolved subject:
+
+1. **Exact match** — `input_uri == resolved_subject_uri`. Wins
+   unconditionally.
+2. **Nearest ancestor** — `input_uri` is reachable from
+   `resolved_subject_uri` via `subClassOf*` in the fewest hops. Wins
+   over more-distant ancestors.
+3. **Any** — if no ancestor relationship exists, pick the first
+   candidate stably (first-seen-index in the substrate query).
+
+This rule lives in `/classify_predicate` (the routing layer), not in
+the substrate. The substrate stores all valid registrations; the
+routing layer chooses which one the LLM sees for THIS subject. The
+routing layer's choice is not authoritative — the LLM can still refuse
+on substrate grounds (Contract A's "let the LLM refuse on substrate"
+remains the safety floor). The dedup rule is an *ergonomics* fix: it
+prevents the LLM from being asked to choose between
+`verb_iri=mesh:queryKnowledgeGraph (against WorkInstruction)` and
+`verb_iri=mesh:queryKnowledgeGraph (against ProcedureStep)` when both
+were the same capability and the dispatcher will use the same endpoint
+either way.
+
+The incident that named the rule: `0b0c33e` (2026-06-12). Engine E
+shipped a second registration of `mesh:queryKnowledgeGraph` against
+`mro:ProcedureStep` (the resolver lands there for "maintenance steps"
+queries that have no `subClassOf` ancestors). BAML's `TypeBuilder`
+dedupes enum values by name and the second `add_value(verb_iri, ...)`
+silently overwrote the first's `description`; the LLM then refused for
+`WorkInstruction` subjects ("operates on ProcedureStep, but subject is
+WorkInstruction"). Pre-dedup, the fix would have been to dedupe
+descriptions at the BAML layer — which forces the routing decision
+into BAML's prompt-string layer rather than its enum-membership layer.
+Post-dedup, `/classify_predicate` resolves which registration the LLM
+sees BEFORE building the enum, and the BAML layer never sees the
+collision.
+
 ### 6. The `idp`/PROV-O binding is the reference pattern
 
 `idp` uses PROV-O as its conceptual backbone: a thin `idp` extension declares
