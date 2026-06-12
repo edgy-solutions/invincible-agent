@@ -304,6 +304,102 @@ visible shape — the conjunctive invariant pulling clarity out one
 peeled layer at a time, exactly the shape the architect's
 "name the invariant and guard it" pattern predicted.
 
+## Honest answers the architect asked for (2026-06-13 close)
+
+### Which bucket was it?
+
+Neither, as it turned out — and the question matters because the
+green stack doesn't *vindicate* the diagnostic if the diagnostic
+was wrong. Walking it back: my "curl returns full provenance, matrix
+returns provenance=null, same query" framing was the load-bearing
+observation that ruled stochasticity out. It's also wrong, in a way
+that's worth recording. The four "MAINTENANCE failures" were not
+the same phenomenon. I had curled R8 ("Tell me about procedure
+TEST-1234 in detail"), seen it return cleanly with full Engine E
+provenance, and assumed the other three rows would behave the same.
+They didn't, and the actual matrix output showed it: "What is the
+work instruction for procedure 1234?" has BAML extracting "1234"
+(not "TEST-1234"), both providers correctly returning n_candidates=0
+because neither has "1234" as an instance key, and the fall-through
+LLM resolving to WorkInstruction. *That* row's failure path was the
+duplicate-verb-iri-in-enum bug fixed by 0b0c33e, and its provenance
+was *populated*, not null. I let "provenance=null" stand in the
+write-up because that's what some row's pytest -v output showed; it
+was a different row, and I didn't disambiguate.
+
+So the bucket question dissolves into a more uncomfortable one:
+**I conflated four rows' distinct failure paths into one phenomenon
+and built a diagnostic chain around the misread.** The three fixes
+each address one of the four paths' actual root causes (synonym
+gap, multi-input-uri ambiguity, classify-enum dedup), which is why
+they cumulatively land 18/18. But "the fix works" doesn't retroactively
+make the diagnostic correct. The architect's discipline — ask which
+of {extraction-recall, instance_match=empty, instance_match=timeout}
+the row logs — would have surfaced the four-path structure on the
+first cycle instead of the third.
+
+Lesson banked: when N rows fail "the same way," confirm row by row
+that they fail the same way. The check is a one-paragraph trace per
+row; the cost of skipping it is the kind of chase this arc went
+through.
+
+### Scope expansion at 0b0c33e
+
+The v0.2 amendment's scope guardrail said "registration-path only;
+no changes to Engine O reads, no `/resolve` or routing-leg changes,
+no BAML schemas." Commit 0b0c33e changed `/classify_predicate`. Named,
+not silently absorbed: **scope expanded mid-arc to include the
+predicate-enum construction in `/classify_predicate`.** The mechanical
+fix was right (multi-registration creates duplicate `verb_iri` rows
+in Weaviate; BAML's `TypeBuilder.add_value` dedupes by name; without
+router-side dedup the LLM sees a single conflicting description), and
+the matrix + integration probes covered it. But guardrails that bend
+without acknowledgment stop being guardrails; this is the
+acknowledgment.
+
+Two consequences fall out:
+
+1. **The dedup rule is a contract clause that belongs in the
+   ADR-0018 / 0019 lineage,** not just in the code:
+
+   > When one verb is registered against multiple input subjects,
+   > the constrained enum that `/classify_predicate` presents to
+   > the LLM offers exactly one entry per `verb_iri`, choosing the
+   > registration whose `input_uri` is most specifically compatible
+   > with the resolved subject (exact match > nearest `subClassOf`
+   > ancestor > any). The "operates on {input_uri}" description
+   > reflects the chosen registration so the LLM's substrate-fit
+   > reasoning matches the chosen path.
+
+   That deserves an ADR-0019 amendment paragraph (or an ADR-0018
+   second addendum). Queued.
+
+2. **The substrate shape "one verb, multiple input subjects" is
+   new** — nothing this week registered it before the
+   `engine_e_neo4j_expert_procedure_step` commit. Two standing
+   guards need a deliberate review:
+
+   - **Contract D** (gateway): unchanged in mechanism (each
+     registration still requires both URIs to resolve to
+     :OntologyClass nodes), but the implicit assumption "verb_iri
+     identifies a registration" is now wrong — `(verb_iri,
+     _tool_urn)` is. The standing guard
+     `test_mesh_resolve_instance_has_one_edge_per_provider`
+     already pins this for the resolveInstance verb; the new
+     shape extends it to AITool verbs generally.
+   - **Substrate invariants in `test_substrate_invariants.py`** —
+     `test_known_verbs_typed_correctly` was written assuming one
+     edge per verb. The multi-registration shape makes that
+     assertion shape wrong on its face. Re-reading it: it iterates
+     a `verbs=list(expected)` set and looks for one row per verb;
+     under the new shape it would pick up either edge non-
+     deterministically. Queued for a same-shape rewrite that pins
+     each `(verb_iri, _tool_urn)` pair instead of each `verb_iri`.
+
+Both queued as separate small follow-ups; not load-bearing for
+tonight's matrix gate but load-bearing for the *next* arc that
+relies on these guards.
+
 ## Morning queue (final)
 
 ### 1. Authorize the orphan-edge DELETE (with snapshot first)
