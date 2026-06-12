@@ -400,6 +400,149 @@ Both queued as separate small follow-ups; not load-bearing for
 tonight's matrix gate but load-bearing for the *next* arc that
 relies on these guards.
 
+## 2026-06-13 architect close — joint ownership, Phase 5 prophecy, real fix sequencing
+
+### The wrong prediction was jointly owned
+
+The architect authorized the DELETE with "predict no movement,"
+reasoning from the conjunctive invariant and endpoint match — the
+same insufficient logic the agent's report walks through. What
+saved this arc was **not judgment but procedure**: the snapshot-
+first condition turned the failure into a five-minute recovery,
+and matrix-before-and-after made the wrongness visible instantly
+instead of surfacing as next week's mystery. Both architect and
+agent were wrong about the substrate; the discipline was right
+about how to be wrong. **The checks exist for the day the
+architect and the agent agree and are both mistaken, and that
+day was yesterday.**
+
+This is the joint-ownership line the bucket question was meant
+to enable. When two layers of judgment converge on the same
+wrong call, the safety floor has to be procedure, not consensus.
+
+### Diagnosis: this is Phase 5's prophecy firing
+
+The agent's framing ("orphans were doing routing work") is
+correct but incomplete. The bigger diagnosis: **this is the
+Phase 5 execution report's own deviation #2 coming true word for
+word.** That report flagged: *"Tonight's direct-Cypher path
+achieves the same end-state but doesn't prevent the next
+registration from re-introducing a pseudo-class."* That is
+exactly what happened.
+
+Phase 5 fixed the **substrate** (re-typed the 9 catalog verbs
+onto `idp:Dataset` via direct Cypher) but never updated the
+**source** — engine_a's `register_engine_to_mesh` declarations
+still say `input_uri="mesh:CatalogAssetQuery"`. Then v0.2 did
+its job: made registration source-driven, had every engine re-
+declare through the saga, and the saga **faithfully materialized
+the stale declaration**, silently reverting the Phase 5
+migration.
+
+Contract D didn't catch it because `mesh:CatalogAssetQuery`
+legitimately exists as a canonical class (it's in
+`mesh_system.ttl`); the violation was never "phantom class," it
+was **"verb typed against a request-shape instead of a resolver-
+target,"** which is the *debt* guard's job — and the strict
+checking was relaxed during cutover (the standing
+"once we re-enable strict checking" note). **The guard that
+would have flagged the regression at cutover was the one turned
+down for the cutover.**
+
+The orphans, meanwhile, were the Phase-5-era edges carrying the
+**correct** typing. That is why deleting them severed routing.
+
+### The bigger rule v0.2 quietly created
+
+**The moment the gateway became sole writer, engine source
+declarations became the authoritative registry, and every past
+direct-Cypher substrate fix that wasn't mirrored into source is
+now a regression waiting for its next re-registration.**
+
+Phase 5's re-typing is the one that just fired. The MRO re-
+typings, the full-IRI migrations, anything touched by
+`retype_verbs_to_real_subjects.py` or its cousins — same
+exposure class. So the morning's real task is **a source-
+substrate reconciliation audit**: dump every engine's declared
+`(verb_iri, input_uri, output_uri)` from its SDK registration
+code, diff against the intended substrate state, fold every
+divergence into source.
+
+ADR-0006 amendment clause to add: *post-v0.2, substrate fixes
+that bypass engine declarations are forbidden — they do not
+survive re-registration; fix the declaration or you fixed
+nothing.*
+
+### Decision: Option 1, not as "cleanest" but as "completes Phase 5"
+
+**Option 1** (re-register engine_a's catalog verbs against
+canonical full-IRI `http://invincible-agent/idp#Dataset`, and
+`analyzeWithCodeAgent` against canonical full-IRI
+`http://invincible-agent/mesh#AgentTask` — same fix shape, same
+mismatch). The only option that finishes Phase 5.
+
+**Option 3 explicitly rejected.** The engine_e multi-
+registration precedent does NOT transfer. engine_e paired two
+**genuine resolver targets** (`mro:WorkInstruction` and
+`mro:ProcedureStep` — both subjects user queries actually
+resolve to). `mesh:CatalogAssetQuery` is **not** a resolver
+target — no user query lands on a request-shape, ever — so a
+dual registration against it serves zero routing paths and
+permanently enshrines the exact pseudo-class typing Phase 5
+existed to retire, **now blessed by the gateway**.
+
+**Option 2** already ruled out as a category error.
+
+**Mechanical caveat on Option 1:** the matcher is raw string
+equality. The `input_uri` strings in engine_a's source must
+match the OntologyClass nodes' canonical full-IRI form
+**character for character**. Contract D will reject a near-miss
+(which is the gateway protecting you), but check the exact IRI
+against the substrate before the commit, not after the
+rejection.
+
+### Sequencing (inverts the prior queue)
+
+1. **Option 1 + source-substrate audit.** Engines re-register
+   through the saga with corrected declarations. Matrix must
+   hold 18/18. **Prediction now has a mechanism:** new saga
+   edges cover the same full-IRI subjects the orphans covered.
+   (The prior prediction had no mechanism. This one does.)
+
+2. **Re-enable the strict pseudo-class guard** (the debt-guard
+   relaxed for cutover) AND ship the coverage guard: *every
+   matrix-successful (subject, verb) pair must compat-walk to a
+   non-NULL `_tool_urn` edge*. The coverage guard is what makes
+   step 3's prediction provable rather than hoped.
+
+3. **Only after the coverage guard is green:** retire the
+   orphans for real. They are then demonstrably redundant by
+   construction; the DELETE's "no movement" prediction is
+   backed by the guard instead of by reasoning that's now 0-
+   for-2. Snapshot ritual stays anyway.
+
+4. **v0.2.1 + dedup-clause ADR paragraph** ride behind,
+   unchanged.
+
+### Honest paragraphs holding up
+
+The agent's confession that the four matrix rows were **four
+different failure paths conflated into one phenomenon** — and
+that the load-bearing "provenance=null vs full provenance"
+observation belonged to different rows — is exactly the writeup
+the bucket question was meant to force. The banked lesson —
+*"when N rows fail the same way, confirm row by row that they
+fail the same way"* — is the right generalization. The fixes
+were each correct at their layer; the diagnostic narrative
+wasn't, and now the record says so.
+
+Between that, the prediction failure jointly owned, and a
+recovery that took five minutes because the insurance was
+purchased in advance — this arc's close is messier than the
+last one's and **more trustworthy for it**. The system is now
+correcting its operators, which is the final configuration this
+whole project was aiming at.
+
 ## 2026-06-13 close — orphan DELETE attempt was wrong, restored, real finding banked
 
 Ran the snapshot + DELETE per the architect's authorization. Prediction
