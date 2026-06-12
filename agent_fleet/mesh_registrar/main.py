@@ -457,26 +457,31 @@ _WEAVIATE_CLIENT_SINGLETON = None  # lazy-init via _get_weaviate_client()
 
 
 def _get_weaviate_client():
-    """Lazy-init the Weaviate client. Same env vars as the existing
-    doc-tools sensor uses; we share configuration to keep BYO-Weaviate
-    flexibility (work cluster scenario)."""
+    """Lazy-init the Weaviate client via the fleet-shared factory.
+
+    Critically uses ``agent_fleet/utils/weaviate_utils.create_weaviate_client``
+    which parses the ``host:port`` form ``WEAVIATE_HTTP_HOST`` is published
+    as in the configmap (``iagent-weaviate:8080``). A naive
+    ``http_host=os.getenv("WEAVIATE_HTTP_HOST")`` + ``http_port=8080``
+    pair would try to dial ``iagent-weaviate:8080:8080`` — caught at
+    cutover.
+    """
     global _WEAVIATE_CLIENT_SINGLETON
     if _WEAVIATE_CLIENT_SINGLETON is not None:
-        return _WEAVIATE_CLIENT_SINGLETON
+        try:
+            if _WEAVIATE_CLIENT_SINGLETON.is_connected():
+                return _WEAVIATE_CLIENT_SINGLETON
+        except Exception:
+            _WEAVIATE_CLIENT_SINGLETON = None
 
-    import weaviate
-    http_host = os.environ.get("WEAVIATE_HTTP_HOST", "iagent-weaviate")
-    http_port = int(os.environ.get("WEAVIATE_HTTP_PORT", "8080"))
-    grpc_host = os.environ.get("WEAVIATE_GRPC_HOST", http_host)
-    grpc_port = int(os.environ.get("WEAVIATE_GRPC_PORT", "50051"))
-    _WEAVIATE_CLIENT_SINGLETON = weaviate.connect_to_custom(
-        http_host=http_host,
-        http_port=http_port,
-        http_secure=False,
-        grpc_host=grpc_host,
-        grpc_port=grpc_port,
-        grpc_secure=False,
-    )
+    # Dual import — container has utils as a top-level path; dev uses
+    # the full package path.
+    try:
+        from agent_fleet.utils.weaviate_utils import create_weaviate_client
+    except ImportError:
+        from utils.weaviate_utils import create_weaviate_client  # type: ignore[no-redef]
+
+    _WEAVIATE_CLIENT_SINGLETON = create_weaviate_client()
     return _WEAVIATE_CLIENT_SINGLETON
 
 
