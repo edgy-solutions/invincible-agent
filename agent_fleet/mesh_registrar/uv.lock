@@ -604,6 +604,7 @@ dependencies = [
     { name = "neo4j" },
     { name = "pydantic" },
     { name = "python-dotenv" },
+    { name = "restate-sdk" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "weaviate-client" },
 ]
@@ -616,6 +617,7 @@ requires-dist = [
     { name = "neo4j" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "python-dotenv" },
+    { name = "restate-sdk", specifier = "==0.14.0" },
     { name = "uvicorn", extras = ["standard"] },
     { name = "weaviate-client", specifier = ">=4.4,<5.0" },
 ]
@@ -942,6 +944,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3c/f8/5dc70102e4d337063452c82e1f0d95e39abfe67aa222ed8a5ddeb9df8de8/requests_file-3.0.1.tar.gz", hash = "sha256:f14243d7796c588f3521bd423c5dea2ee4cc730e54a3cac9574d78aca1272576", size = 6967, upload-time = "2025-10-20T18:56:42.279Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/d5/de8f089119205a09da657ed4784c584ede8381a0ce6821212a6d4ca47054/requests_file-3.0.1-py2.py3-none-any.whl", hash = "sha256:d0f5eb94353986d998f80ac63c7f146a307728be051d4d1cd390dbdb59c10fa2", size = 4514, upload-time = "2025-10-20T18:56:41.184Z" },
+]
+
+[[package]]
+name = "restate-sdk"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/1b/0eb299c3087ad081c7e989ccd2dae0a38ce8fe9e91af0ab6cfd07db24269/restate_sdk-0.14.0.tar.gz", hash = "sha256:5d2441dc3683563a63eb133783e0dd52a2496f9ca12f02fcda6020910c8c2969", size = 248311, upload-time = "2026-01-08T11:03:39.847Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/01/97/1f749125655ac30423038bc5d807c346f795703f08c5f350ea85cdaba0ef/restate_sdk-0.14.0-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:a5d77d94606013e50eb207acbdc717d0c725c1fb00c18b814e639e5876faa771", size = 1862916, upload-time = "2026-01-08T11:03:11.729Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/3a/a97c1df05d7c89178cdfa923af7cc6a1b2d99f066d703df5a17e945724e3/restate_sdk-0.14.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:b6d2d892150210eb82769f2d2f6b00166b5be953b6525cac193e6ec2b2ef2b52", size = 1806626, upload-time = "2026-01-08T11:03:06.703Z" },
+    { url = "https://files.pythonhosted.org/packages/65/84/78e274d0320213133fe138744d9fd9f8f3c8fd236e8af76c5beedf7051dc/restate_sdk-0.14.0-cp312-cp312-manylinux_2_24_x86_64.whl", hash = "sha256:efb88720d0fce0d6a7766e8bb7de7731dd7abcf1751da4006452a6e6d6a67a2f", size = 2003167, upload-time = "2026-01-08T11:03:00.704Z" },
+    { url = "https://files.pythonhosted.org/packages/21/a0/4c4cea1192d9a8ae8c33acfa3c5475f12b56ada004e7161f563132659ca5/restate_sdk-0.14.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:8287089c9fc78ea99f39eb3ddc3bfcc5035563f40ca3ab7888e603179e854a79", size = 2038761, upload-time = "2026-01-08T11:02:48.731Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/9d/d58dfb7abd77ed59e6d2df24f2406bb9e6257e3055adb701a4845eead376/restate_sdk-0.14.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:64f02ba9ca3d60f7b12bed0689bb543ffbbef0904438cf06ebd0a6b538a83d24", size = 2228781, upload-time = "2026-01-08T11:03:17.96Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/02/e136290bef45218dce1e6c184df41fb910a3c21e80b7f396a27aebb8536b/restate_sdk-0.14.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:53977af2d0fde07a8f846807ce553785df1216a4f8bd652c0591dd69e1c67230", size = 2273939, upload-time = "2026-01-08T11:03:29.891Z" },
 ]
 
 [[package]]
