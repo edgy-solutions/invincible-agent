@@ -551,3 +551,44 @@ def _run_saga(
 @app.get("/v1/healthz")
 def healthz() -> dict:
     return {"status": "ok", "version": REGISTRAR_VERSION}
+
+
+# ---------------------------------------------------------------------------
+# v0.2.1 — Restate VirtualObject mount (architect's A1, 2026-06-12).
+#
+# The VirtualObject wraps the same saga `/v1/register` calls inline. The
+# in-process path stays as the active write path for single-replica
+# deployments (no race window); the VirtualObject is the durability +
+# serialization wire for future multi-replica deployments and crash
+# recovery. Per ADR-0006 §Addendum and v2_restate.py's docstring, the
+# safety class is unchanged — the conjunctive-read invariant covers
+# both paths.
+#
+# The mount is import-protected so the gateway still boots if
+# restate-sdk isn't installed (CI, isolated test clusters), in which
+# case only the in-process path is available.
+# ---------------------------------------------------------------------------
+try:
+    try:
+        from agent_fleet.mesh_registrar import v2_restate
+    except ImportError:
+        import v2_restate  # type: ignore[no-redef]
+    import restate
+
+    app.mount(
+        "/restate",
+        restate.app(services=[v2_restate.registration_saga_object]),
+    )
+    logger.info(
+        "Mounted Restate VirtualObject %r at /restate (handler %r, key shape "
+        "verb_iri::tool_urn)",
+        v2_restate.SAGA_OBJECT_NAME, v2_restate.SAGA_HANDLER_NAME,
+    )
+except Exception as exc:  # noqa: BLE001
+    logger.warning(
+        "Restate mount skipped: %s: %s. The in-process saga path "
+        "(/v1/register) remains the active write path. Install "
+        "restate-sdk and set RESTATE_INGRESS_URL to enable the "
+        "VirtualObject.",
+        type(exc).__name__, exc,
+    )

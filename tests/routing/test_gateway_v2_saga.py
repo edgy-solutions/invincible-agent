@@ -229,3 +229,78 @@ def test_step_retries_until_budget_exhausted(mock_substrate):
     assert mock_substrate["upsert_weaviate"].call_count >= 2
     # And it must have respected the budget.
     assert outcome.elapsed_s <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# v0.2.1 Restate VirtualObject wire contract (architect's A1, 2026-06-12).
+#
+# These tests pin the wire shape — the key contract Restate's per-key
+# serialization guarantee runs on. They don't exercise the live
+# VirtualObject (that requires a Restate cluster); they assert that
+# the wrapping was done with the right identity. If a future refactor
+# changes the key shape or the handler name, these turn red BEFORE the
+# in-cluster serialization silently regresses (because Restate
+# serializes on key STRING; two registrations with subtly different
+# keys race even when the SDK looks fine).
+# ---------------------------------------------------------------------------
+
+
+def test_restate_registration_key_uses_verb_iri_and_tool_urn():
+    """Key shape is the (verb_iri, tool_urn) pair joined by '::'.
+
+    This is the contract Contract D's identity addendum (ADR-0019 §5)
+    rests on. Bare verb_iri keying collapses multi-registrations onto
+    last-write-wins; tool_urn-only collapses cross-verb identities.
+    """
+    from agent_fleet.mesh_registrar.v2_restate import _make_registration_key
+
+    key = _make_registration_key(
+        verb_iri="mesh:queryKnowledgeGraph",
+        tool_urn="urn:li:mlModel:(urn:li:dataPlatform:mesh,engine_e_neo4j_expert,PROD)",
+    )
+    assert key == (
+        "mesh:queryKnowledgeGraph"
+        "::"
+        "urn:li:mlModel:(urn:li:dataPlatform:mesh,engine_e_neo4j_expert,PROD)"
+    )
+
+    # The two halves of the multi-registration must produce distinct
+    # keys so Restate serializes them as distinct identities (each
+    # gets its own serialization domain — the second registration's
+    # writes don't block the first's).
+    key_a = _make_registration_key(
+        "mesh:queryKnowledgeGraph",
+        "urn:li:mlModel:(urn:li:dataPlatform:mesh,engine_e_neo4j_expert,PROD)",
+    )
+    key_b = _make_registration_key(
+        "mesh:queryKnowledgeGraph",
+        "urn:li:mlModel:(urn:li:dataPlatform:mesh,engine_e_neo4j_expert_procedure_step,PROD)",
+    )
+    assert key_a != key_b
+
+
+def test_restate_registration_key_requires_both_halves():
+    """Either half missing is a programming error — the resulting key
+    would serialize against the wrong identity (or against everything).
+    """
+    from agent_fleet.mesh_registrar.v2_restate import _make_registration_key
+
+    with pytest.raises(ValueError, match="verb_iri and tool_urn"):
+        _make_registration_key(verb_iri="", tool_urn="urn:li:...")
+    with pytest.raises(ValueError, match="verb_iri and tool_urn"):
+        _make_registration_key(verb_iri="mesh:x", tool_urn="")
+
+
+def test_restate_wire_contract_constants_pinned():
+    """The VirtualObject's name + handler name + step name are part
+    of the wire contract — Restate's persistent journal stores them.
+    Renaming them silently migrates active workflows into orphan state
+    (the old name's journal entries become unreachable). Pin them so
+    a refactor that changes them turns red here BEFORE the deployment
+    that strands the journal.
+    """
+    from agent_fleet.mesh_registrar import v2_restate
+
+    assert v2_restate.SAGA_OBJECT_NAME == "RegistrationSaga"
+    assert v2_restate.SAGA_HANDLER_NAME == "register"
+    assert v2_restate.SAGA_STEP_NAME == "run_registration_saga"

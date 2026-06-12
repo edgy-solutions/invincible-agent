@@ -16,6 +16,10 @@ dependencies = [
     # doc-tools sensor) so the gateway becomes sole writer for AITool
     # registrations. ADR-0006 §Addendum (2026-06-13).
     "weaviate-client>=4.4,<5.0",
+    # v0.2.1 (architect's A1, 2026-06-12): wrap the saga in a Restate
+    # VirtualObject keyed on (verb_iri, _tool_urn) for crash recovery
+    # and multi-replica serialization. Same SDK engine_a pins.
+    "restate-sdk==0.14.0",
 ]
 
 [build-system]
