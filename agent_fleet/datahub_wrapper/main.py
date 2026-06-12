@@ -289,6 +289,14 @@ async def lifespan(app: FastAPI):
             domains=["DATA_ENGINEERING"],
             cost_class="fast",
             requires_human_approval=False,
+            provider="engine_d",
+            # DataHub's searchAcrossEntities p95 in sandbox is 3-5s
+            # (cold-cache), so the budget needs headroom above that.
+            # 8s is the same value the router was holding as a global
+            # default before per-provider budgets landed; declaring it
+            # at the provider site moves the truth to where the SLO
+            # actually lives.
+            timeout_s=8.0,
         )
     except Exception as e:  # noqa: BLE001
         print(f"[Engine D] mesh:resolveInstance registration failed: {e}")

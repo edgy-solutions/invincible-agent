@@ -122,6 +122,35 @@ class RegistrationManifest(BaseModel):
     requires_human_approval: bool = Field(default=False)
     version: str = Field(default="0.1.0")
     openapi_schema: Optional[str] = Field(default=None)
+    # Symbolic provider name used by the router's provenance — e.g.
+    # 'engine_d' or 'engine_e'. The field exists so /resolve's
+    # provenance can answer "which phone book said this?" with the
+    # registration's identity instead of the verb's relationship-type
+    # (which is what coalesce(r.provider, type(r)) was falling back to
+    # before this field landed — and which would make every override
+    # say provider=resolveInstance regardless of source the moment a
+    # second provider joins). When omitted, the gateway derives it
+    # from `name` by stripping the trailing snake_case verb local
+    # name (e.g. 'engine_d_resolve_instance' → 'engine_d').
+    provider: Optional[str] = Field(
+        default=None,
+        description=(
+            "Symbolic provider name shown in /resolve provenance "
+            "(e.g. 'engine_d'). Auto-derived from `name` if omitted."
+        ),
+    )
+    # Per-provider fan-out timeout budget in seconds, advertised to the
+    # router so providers can declare their own SLO instead of inheriting
+    # the slowest provider's ceiling. Engine D (DataHub GraphQL) is
+    # multi-second; Engine E (Neo4j Cypher) is sub-second. When omitted,
+    # the router uses its global default (INSTANCE_RESOLVER_TIMEOUT_S).
+    timeout_s: Optional[float] = Field(
+        default=None,
+        description=(
+            "Provider-declared fan-out budget in seconds. Defaults to "
+            "Engine O's INSTANCE_RESOLVER_TIMEOUT_S when omitted."
+        ),
+    )
 
     @field_validator("verb_iri", "input_uri", "output_uri")
     @classmethod
@@ -142,6 +171,34 @@ class RegistrationResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Contract D — validate input/output URIs resolve to real OntologyClass nodes
 # ---------------------------------------------------------------------------
+
+def _derive_provider(name: str, verb_iri: str) -> str:
+    """Derive a symbolic provider name from a registration ``name`` by
+    stripping the verb's snake_case local-name suffix.
+
+    Examples:
+      ('engine_d_resolve_instance',  'mesh:resolveInstance') -> 'engine_d'
+      ('engine_e_neo4j_expert',       'mesh:queryKnowledgeGraph') -> 'engine_e_neo4j_expert'
+      ('engine_a_lookup_ownership',   'mesh:lookupOwnership')    -> 'engine_a'
+
+    Falls back to ``name`` unchanged when the suffix doesn't match — at
+    worst the provenance shows the full registration name, which is
+    still more diagnostic than the relationship-type fallback the
+    discovery Cypher would otherwise hit.
+    """
+    import re
+
+    if ":" in verb_iri:
+        verb_local = verb_iri.split(":", 1)[1]
+    else:
+        verb_local = verb_iri.rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+    # camelCase → snake_case
+    verb_snake = re.sub(r"(?<!^)(?=[A-Z])", "_", verb_local).lower()
+    suffix = f"_{verb_snake}"
+    if name.endswith(suffix):
+        return name[: -len(suffix)] or name
+    return name
+
 
 def _contract_d_check(input_uri: str, output_uri: str) -> dict:
     """Verify both URIs exist as :OntologyClass nodes in Neo4j.
@@ -188,6 +245,7 @@ def _emit_to_datahub(manifest: RegistrationManifest, tool_urn: str) -> dict:
     # when engine-d/e/w opted in and silently failed materialization.
     # Mirror exactly the legacy direct-emit path in
     # ``agent_fleet/utils/mesh_registration.py``.
+    provider = manifest.provider or _derive_provider(manifest.name, manifest.verb_iri)
     custom_props = {
         "mesh_is_registration":         "true",
         "mesh_verb_iri":                manifest.verb_iri,
@@ -202,7 +260,10 @@ def _emit_to_datahub(manifest: RegistrationManifest, tool_urn: str) -> dict:
         "mesh_verb_anti_synonyms":      ",".join(manifest.verb_anti_synonyms),
         "mesh_version":                 manifest.version,
         "mesh_registrar_version":       REGISTRAR_VERSION,
+        "mesh_provider":                provider,
     }
+    if manifest.timeout_s is not None:
+        custom_props["mesh_timeout_s"] = str(manifest.timeout_s)
     if manifest.openapi_schema:
         custom_props["mesh_openapi_schema"] = manifest.openapi_schema
 

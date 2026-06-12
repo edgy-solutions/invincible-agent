@@ -87,6 +87,8 @@ def _emit_to_registrar(
     requires_human_approval: bool,
     version: str,
     openapi_schema: Optional[dict],
+    provider: Optional[str] = None,
+    timeout_s: Optional[float] = None,
 ) -> None:
     """POST a structured manifest to the mesh-registrar gateway.
 
@@ -132,6 +134,8 @@ def _emit_to_registrar(
         "requires_human_approval": requires_human_approval,
         "version": version,
         "openapi_schema": json.dumps(openapi_schema) if openapi_schema else None,
+        "provider": provider,
+        "timeout_s": timeout_s,
     }
 
     try:
@@ -181,6 +185,8 @@ def register_engine_to_mesh(
     requires_human_approval: bool = False,
     version: str = "0.1.0",
     openapi_schema: Optional[dict] = None,
+    provider: Optional[str] = None,
+    timeout_s: Optional[float] = None,
 ) -> None:
     """Emit a DataHub MCP describing this engine as a predicate edge.
 
@@ -223,6 +229,7 @@ def register_engine_to_mesh(
             cost_class=cost_class,
             requires_human_approval=requires_human_approval,
             version=version, openapi_schema=openapi_schema,
+            provider=provider, timeout_s=timeout_s,
         )
         return
 

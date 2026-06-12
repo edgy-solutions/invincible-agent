@@ -898,19 +898,22 @@ WHERE r.iri = 'mesh:resolveInstance' AND r.endpoint_url IS NOT NULL
 RETURN DISTINCT
   r.endpoint_url   AS endpoint_url,
   coalesce(r.provider, type(r)) AS provider,
+  r.timeout_s      AS timeout_s,
   r.domains        AS domains
 """
 
 _INSTANCE_RESOLVERS_CACHE: list[dict] | None = None
+# Router-level FLOOR for the fan-out budget — used when a provider
+# hasn't declared its own ``timeout_s`` at registration time. The recipe's
+# "~2s" was sized for an in-memory phone book; real catalog providers
+# (Engine D → DataHub GraphQL) routinely take 3-5s. A timeout below the
+# provider's p95 silently kills lookups and the abstention contract
+# masks the kill as a miss — so the default has to clear the slowest
+# UNDECLARED provider. Once every provider declares its own budget,
+# this floor stops being load-bearing.
 _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S = float(
     os.getenv("INSTANCE_RESOLVER_TIMEOUT_S", "8.0")
 )
-# 8s default — the recipe's "~2s" was sized for an in-memory phone
-# book; real catalog providers (Engine D → DataHub GraphQL) routinely
-# take 3-5s for the first uncached search. A timeout below the
-# provider's p95 silently kills lookups and the abstention contract
-# masks the kill as a miss. Override via env when adding a provider
-# with tighter SLO; never set below the slowest provider's p95.
 _INSTANCE_RESOLVE_EXACT = float(
     os.getenv("INSTANCE_RESOLVE_EXACT_THRESHOLD", str(_IR_DEFAULT_EXACT))
 )
@@ -918,13 +921,30 @@ _INSTANCE_RESOLVE_MIN_SCORE = float(
     os.getenv("INSTANCE_RESOLVE_MIN_SCORE", str(_IR_DEFAULT_MIN))
 )
 
+# Per-provider call outcome. Carrying this through the fan-out is what
+# lets the router distinguish "provider declined" (empty) from
+# "provider exceeded its budget" (timeout) at the provenance layer —
+# the fold that hid Engine D's 2s strangle bug last night.
+class _ResolverOutcome:
+    __slots__ = ("status", "candidates", "provider", "endpoint_url", "elapsed_s")
+    def __init__(self, *, status: str, candidates: list, provider: str,
+                 endpoint_url: str, elapsed_s: float) -> None:
+        self.status = status              # "ok" | "timeout" | "error"
+        self.candidates = candidates
+        self.provider = provider
+        self.endpoint_url = endpoint_url
+        self.elapsed_s = elapsed_s
+
 
 def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
     """Read the registry once for engines registered as mesh:resolveInstance.
 
-    Returns a list of ``{endpoint_url, provider, domains}`` dicts. Cached
-    after first read; pass refresh=True to force a re-read (e.g. via a
-    /admin endpoint when a new provider registers — not built here).
+    Returns a list of ``{endpoint_url, provider, timeout_s, domains}``
+    dicts. ``timeout_s`` is the provider's declared SLO from registration
+    when present, else None (falls back to the router floor in
+    ``_call_resolver``). Cached after first read; pass refresh=True to
+    force a re-read (e.g. via a /admin endpoint when a new provider
+    registers — not built here).
     """
     global _INSTANCE_RESOLVERS_CACHE
     if _INSTANCE_RESOLVERS_CACHE is not None and not refresh:
@@ -933,41 +953,82 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
         return []
     with _NEO4J_DRIVER.session() as session:
         rows = session.run(_INSTANCE_RESOLVERS_CYPHER).data()
-    _INSTANCE_RESOLVERS_CACHE = [
-        {
+    discovered = []
+    for r in rows:
+        if not r.get("endpoint_url"):
+            continue
+        # timeout_s comes through as either a Cypher number, a stringified
+        # float (the sensor pipes everything through as strings), or None.
+        raw_timeout = r.get("timeout_s")
+        try:
+            timeout_s = float(raw_timeout) if raw_timeout not in (None, "") else None
+        except (TypeError, ValueError):
+            timeout_s = None
+        discovered.append({
             "endpoint_url": r["endpoint_url"],
             "provider": r.get("provider") or "unknown",
+            "timeout_s": timeout_s,
             "domains": r.get("domains") or [],
-        }
-        for r in rows
-        if r.get("endpoint_url")
-    ]
+        })
+    _INSTANCE_RESOLVERS_CACHE = discovered
     print(
-        f"Discovered {len(_INSTANCE_RESOLVERS_CACHE)} mesh:resolveInstance providers: "
-        f"{[r['endpoint_url'] for r in _INSTANCE_RESOLVERS_CACHE]}"
+        f"Discovered {len(_INSTANCE_RESOLVERS_CACHE)} mesh:resolveInstance "
+        f"providers: "
+        f"{[(r['provider'], r['endpoint_url'], r['timeout_s']) for r in _INSTANCE_RESOLVERS_CACHE]}"
     )
     return _INSTANCE_RESOLVERS_CACHE
 
 
 async def _call_resolver(
     resolver: dict, identifier: str, query: str
-) -> list[_IRCandidate]:
-    """Call one mesh:resolveInstance provider; an exception/timeout
-    becomes an empty list — abstaining is a first-class answer."""
+) -> _ResolverOutcome:
+    """Call one mesh:resolveInstance provider with the provider's own
+    declared timeout budget (falling back to the router floor).
+
+    Returns a ``_ResolverOutcome`` whose ``status`` distinguishes
+    ``ok`` from ``timeout`` from ``error`` — the fold that hid the
+    2s-strangle bug. Candidates are always returned (possibly empty);
+    the caller decides whether the empty list represents abstention
+    or a kill upstream.
+    """
+    import time
+    provider = resolver.get("provider") or ""
+    endpoint_url = resolver.get("endpoint_url", "")
+    # Provider-declared budget wins. Router floor only applies when the
+    # provider hasn't told us its SLO.
+    budget_s = resolver.get("timeout_s") or _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S
+    started = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=_INSTANCE_RESOLVER_FANOUT_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=budget_s) as client:
             resp = await client.post(
-                resolver["endpoint_url"],
+                endpoint_url,
                 json={"identifier": identifier, "query": query},
             )
             resp.raise_for_status()
             data = resp.json() or {}
-    except Exception as exc:  # noqa: BLE001
+    except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+        elapsed = time.monotonic() - started
         print(
-            f"mesh:resolveInstance provider {resolver.get('endpoint_url')!r} "
-            f"timed out or errored on identifier={identifier!r}: {exc}"
+            f"mesh:resolveInstance provider {provider!r} ({endpoint_url}) "
+            f"EXCEEDED its budget of {budget_s}s on identifier="
+            f"{identifier!r}: {type(exc).__name__} after {elapsed:.2f}s"
         )
-        return []
+        return _ResolverOutcome(
+            status="timeout", candidates=[], provider=provider,
+            endpoint_url=endpoint_url, elapsed_s=elapsed,
+        )
+    except Exception as exc:  # noqa: BLE001 — non-timeout failures stay distinct from kept-empty
+        elapsed = time.monotonic() - started
+        print(
+            f"mesh:resolveInstance provider {provider!r} ({endpoint_url}) "
+            f"ERRORED on identifier={identifier!r}: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return _ResolverOutcome(
+            status="error", candidates=[], provider=provider,
+            endpoint_url=endpoint_url, elapsed_s=elapsed,
+        )
+    elapsed = time.monotonic() - started
     out: list[_IRCandidate] = []
     for c in data.get("candidates") or []:
         try:
@@ -977,12 +1038,15 @@ async def _call_resolver(
                     class_uri=str(c.get("class_uri") or ""),
                     label=str(c.get("label") or ""),
                     score=float(c.get("score") or 0.0),
-                    provider=resolver.get("provider") or "",
+                    provider=provider,
                 )
             )
         except Exception:  # noqa: BLE001 — skip malformed candidate
             continue
-    return out
+    return _ResolverOutcome(
+        status="ok", candidates=out, provider=provider,
+        endpoint_url=endpoint_url, elapsed_s=elapsed,
+    )
 
 
 async def _resolve_instance(
@@ -991,7 +1055,11 @@ async def _resolve_instance(
     """Run the instance-resolution pre-step.
 
     Returns ``(subject_uri or None, provenance)``. ``None`` means
-    abstain → the caller keeps the LLM's class guess.
+    abstain → the caller keeps the LLM's class guess. Provenance
+    distinguishes ``empty`` (every provider returned ok with zero
+    candidates — registry genuinely doesn't know) from ``timeout``
+    (one or more providers ran out of budget — the failure mode that
+    used to hide as ``empty`` until the 2s strangle bug was caught).
     """
     resolvers = _discover_instance_resolvers()
     if not resolvers:
@@ -1001,16 +1069,47 @@ async def _resolve_instance(
             "instance_n": 0,
         }
     tasks = [_call_resolver(r, identifier, query) for r in resolvers]
-    results = await asyncio.gather(*tasks, return_exceptions=False)
+    outcomes: list[_ResolverOutcome] = await asyncio.gather(
+        *tasks, return_exceptions=False
+    )
+
     candidates: list[_IRCandidate] = []
-    for r in results:
-        candidates.extend(r)
+    for o in outcomes:
+        candidates.extend(o.candidates)
+
     decision = _ir_decide(
         candidates,
         exact_threshold=_INSTANCE_RESOLVE_EXACT,
         min_score=_INSTANCE_RESOLVE_MIN_SCORE,
     )
-    return decision.subject_uri, decision.provenance
+    provenance = dict(decision.provenance)
+
+    # Per-provider audit so the trace shows which phone book said what.
+    provenance["instance_provider_outcomes"] = [
+        {
+            "provider": o.provider,
+            "status": o.status,
+            "n_candidates": len(o.candidates),
+            "elapsed_s": round(o.elapsed_s, 3),
+        }
+        for o in outcomes
+    ]
+
+    # If the decision was abstain-via-empty AND any provider actually
+    # timed out, promote the provenance marker to ``timeout`` so the
+    # router operator can tell "we don't know" from "we didn't ask in
+    # time." The architect's note on the 2s-strangle bug: a folded
+    # timeout/empty log is exactly the ambiguity you don't want with
+    # Engine E's millisecond budget sitting next to DataHub's seconds.
+    if decision.subject_uri is None and provenance.get("instance_match") == "empty":
+        any_timeout = any(o.status == "timeout" for o in outcomes)
+        any_error = any(o.status == "error" for o in outcomes)
+        if any_timeout:
+            provenance["instance_match"] = "timeout"
+        elif any_error:
+            provenance["instance_match"] = "error"
+
+    return decision.subject_uri, provenance
 
 
 # ---------------------------------------------------------------------------
