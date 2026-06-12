@@ -109,6 +109,113 @@ KNOWN_GOOD_PROBES: list[ProviderProbe] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Router-side integration probes (architect amendment, 2026-06-13)
+# ---------------------------------------------------------------------------
+#
+# The provider-side probes below (test_provenance_proves_provider_spoke)
+# call each provider's /resolve_instance directly. They verify the
+# provider *answers*. They verify nothing about whether Engine O's
+# instance leg in /resolve *consults them* on a real routing call.
+#
+# The four matrix failures during the v0.2 cutover were the only test
+# we had of the router-side integration under matrix conditions, and
+# they were red while this provider-side probe stack was green. That
+# pattern is the failure mode the architect's positive-control rule
+# was extended to catch:
+#
+#   The positive control must exercise the INTEGRATED PATH, not just
+#   the component. A probe that bypasses the consumer can stay green
+#   while the consumer is broken.
+#
+# So: a matching integration probe per known-good provider, exercising
+# /resolve end-to-end and asserting that the response shows the
+# provider spoke (instance_resolved=true with the expected provider
+# attribution). If Engine O's discovery cache goes cold, if the
+# fan-out misroutes, if the provider's URL gets dropped on a future
+# registration refactor — any of those breaks turn red BEFORE the
+# matrix discovers them as a routing regression.
+
+
+@pytest.mark.parametrize(
+    "probe", KNOWN_GOOD_PROBES,
+    ids=[p.provider_name for p in KNOWN_GOOD_PROBES],
+)
+def test_router_side_resolve_integration(probe: ProviderProbe) -> None:
+    """The architect-amendment guard: assert each provider's known-good
+    identifier flows through ``/resolve`` end-to-end with
+    ``instance_resolved=true`` and the right ``instance_provider``
+    attributed in the provenance.
+
+    This is the router-side companion to
+    ``test_provenance_proves_provider_spoke`` (which only hits the
+    provider directly). The two together cover both the component
+    and the integrated path; the integrated probe is what would have
+    caught the synonym-gap and the cutover's BM25-ranking failures
+    BEFORE they masqueraded as matrix flakes.
+    """
+    try:
+        resp = httpx.post(
+            f"{_BASE}/resolve",
+            json={
+                "query": f"Tell me about {probe.identifier}",
+                "domain": "MAINTENANCE" if "engine_e" in probe.provider_name else "DATA_ENGINEERING",
+            },
+            timeout=_TIMEOUT_SEC,
+        )
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"Engine O /resolve not reachable: {exc}")
+
+    body = resp.json()
+    provenance = body.get("provenance") or {}
+
+    # The architect's diagnostic: provenance=null means the leg never
+    # engaged. That's the symptom we're guarding against.
+    assert provenance, (
+        f"\n  ROUTER-SIDE INTEGRATION FAILED for {probe.provider_name}.\n"
+        f"  /resolve returned an empty provenance dict for a known-good "
+        f"identifier — the instance-resolution leg did NOT engage.\n"
+        f"  Body: {body}\n"
+        f"\n  Possible causes the integrated path could be broken:\n"
+        f"    - BAML didn't extract instance_identifier (recall regression; "
+        f"      check the prompt and model env on the Engine O pod).\n"
+        f"    - The discovery cache is cold/stale and returned no providers.\n"
+        f"    - The leg early-returned (look for Discovery / Cypher errors\n"
+        f"      in engine-o logs).\n"
+        f"\n  This guard exists precisely because the provider-side probe\n"
+        f"  passes — proving the provider answers means nothing if the\n"
+        f"  router doesn't consult it. The positive control must exercise\n"
+        f"  the INTEGRATED PATH (architect amendment, 2026-06-13)."
+    )
+
+    assert provenance.get("instance_resolved") is True, (
+        f"\n  Router-side integration: /resolve provenance shows "
+        f"instance_resolved=False for {probe.provider_name}.\n"
+        f"  Provenance: {provenance}\n"
+        f"\n  The leg engaged but the decision table abstained. Check "
+        f"provenance.instance_match — if it's 'timeout', tune the per-"
+        f"provider budget; if 'empty', the provider returned no candidates; "
+        f"if 'mixed', two providers disagreed on the class.\n"
+    )
+
+    # Provider attribution — the trace shows WHICH phone book answered.
+    expected_provider_key = (
+        "engine_e" if "engine_e" in probe.provider_name else "engine_d"
+    )
+    assert provenance.get("instance_provider") == expected_provider_key, (
+        f"\n  Router-side integration: wrong provider attributed.\n"
+        f"  Expected: {expected_provider_key}\n"
+        f"  Got: {provenance.get('instance_provider')}\n"
+        f"  Provenance: {provenance}\n"
+        f"\n  This means the leg engaged AND resolved AND attributed — but "
+        f"to a different provider than the one that owns the identifier. "
+        f"Either two providers claimed the same identifier (mixed-class "
+        f"case should have abstained) OR the discovery cache returned "
+        f"providers in an order that picked the wrong winner."
+    )
+
+
 @pytest.mark.parametrize(
     "probe", KNOWN_GOOD_PROBES,
     ids=[p.provider_name for p in KNOWN_GOOD_PROBES],

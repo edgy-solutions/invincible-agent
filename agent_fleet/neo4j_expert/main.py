@@ -113,14 +113,23 @@ async def lifespan(app: FastAPI):
     # surface the verb against the second subject it serves; identity
     # via (verb_iri, _tool_urn) keeps it as its own edge from a44b9fb.
     register_engine_to_mesh(
+        # IMPORTANT: same description as the primary registration above.
+        # BAML's TypeBuilder dedupes enum values by name; when two
+        # candidate rows share verb_iri but disagree on description, the
+        # last add_value's description wins and the others are silently
+        # lost. The first attempt at this registration used a
+        # ProcedureStep-specific description and the LLM then refused
+        # for WorkInstruction subjects ("operates on ProcedureStep, but
+        # subject is WorkInstruction"). The fix is the same description
+        # on every registration of the same verb — they're the same
+        # capability typed against different subjects; the description
+        # is about WHAT the verb does, not which subject path reached
+        # it.
         name="engine_e_neo4j_expert_procedure_step",
         description=(
-            "Knowledge graph expert — ProcedureStep variant. Same engine "
-            "and endpoint as engine_e_neo4j_expert; declares Engine E "
-            "also serves queries whose resolved subject is "
-            "mro:ProcedureStep (e.g. 'show me the maintenance steps for "
-            "X'). Closes the ontology coverage gap surfaced when the v0.2 "
-            "cutover removed /classify_predicate's fabrication fallback."
+            "Knowledge graph expert. Runs a smolagents CodeAgent over Neo4j "
+            "(execute_cypher, get_graph_schema, search_manual_text) with "
+            "Restate-durable execution and mem0 long-term memory."
         ),
         verb="mesh:queryKnowledgeGraph",
         input_uri="mro:ProcedureStep",
