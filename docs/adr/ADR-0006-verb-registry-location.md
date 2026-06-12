@@ -714,3 +714,155 @@ rule's "make sure you looked where the bugs live"). If
   something downstream of the gateway is writing without
   going through it. That's an ADR-0006 violation worth
   investigating.
+
+## Addendum (2026-06-13) — engine source declarations are the authoritative registry post-v0.2
+
+### The rule
+
+> **Substrate fixes that bypass engine source declarations are
+> forbidden. They do not survive re-registration; fix the
+> declaration, or you fixed nothing.**
+
+The corollary, stated positively: every property of every
+predicate edge in Neo4j and Weaviate — `_input_uri`,
+`_output_uri`, `endpoint_url`, `owner_persona`, `domains`,
+`cost_class`, `timeout_s`, `verb_synonyms`,
+`verb_anti_synonyms` — must trace back to a value the engine
+declares in its `register_engine_to_mesh()` call. If the value
+appears in the substrate but not in source, the next saga run
+will either overwrite it (when the engine re-registers
+through the gateway) or preserve it as dead weight (when the
+engine never re-registers at all). Either way the substrate
+value is at the mercy of the next registration and cannot be
+trusted as the system's intent.
+
+### Why this is a new rule and not an obvious one
+
+Pre-v0.2, the substrate had three live writers: the engines
+(via DataHub MCPs the doc-tools sensor materialized), Phase 5–
+style direct-Cypher migration scripts, and manual `apoc.merge`
+sessions for hot fixes. Each one wrote its own slice of edge
+properties; the substrate at any moment was the union of those
+writes, with last-writer-wins on collisions. This worked
+because no writer was authoritative — each one had its own
+trust domain.
+
+The v0.2 amendment above made the mesh-registrar gateway the
+sole writer of AITool predicate edges. The gateway reads its
+inputs entirely from the engine's `register_engine_to_mesh()`
+declaration. **Source is now the only input to the substrate's
+truth function.** Direct-Cypher substrate fixes — entirely
+correct in their immediate effect — become tickets to a
+deferred regression: the next time the engine re-registers,
+the saga MERGE materializes the engine's stale source value
+and silently reverts the fix. The fix appears to hold for
+days, weeks, or months, until a redeploy triggers the
+regression.
+
+### The incident that named the rule
+
+2026-06-13 evening, this incident happened to engine_a's 9
+catalog/scope/agent verbs, engine_o's `mesh:analyzeDataset`,
+engine_e's `mesh:queryKnowledgeGraph` (1st registration), and
+engine_w's `mesh:retrieveKnowledge` — 12 verbs across 4 engines.
+Phase 5 (2026-06-10) had re-typed all of them onto canonical
+full-IRI subjects (`http://invincible-agent/idp#Dataset`,
+`http://invincible-agent/mesh#AgentTask`,
+MRO/WorkInstruction, MRO/TechnicalManual) via direct Cypher,
+because the canonical TTL ingest landed after the engines
+were already in production with request-shape (pseudo-class)
+input_uri declarations. The Phase 5 execution report
+(`STEP1_2_EXECUTION_REPORT.md`) explicitly flagged the
+deferred regression: *"Tonight's direct-Cypher path achieves
+the same end-state but doesn't prevent the next registration
+from re-introducing a pseudo-class."*
+
+The v0.2 cutover triggered the next re-registration. Every
+engine re-declared through the saga, the saga faithfully
+materialized the stale request-shape input_uri values, and
+the substrate split: Phase 5 orphans (NULL `_tool_urn`, on
+canonical IRIs) sat next to the new v0.2 saga edges (with
+`_tool_urn`, on pseudo-classes). Routing kept working only
+because the Phase 5 orphans were Cypher's only path to the
+verbs for the full-IRI subjects the resolver actually lands
+on. Identifying them as "redundant pre-v0.2 artifacts" and
+deleting them dropped the matrix from 18/18 to 11/18 within
+seconds.
+
+The recovery (snapshot-first procedure made it a 5-minute
+restore) and the diagnosis put the rule in writing.
+
+### What this rule changes operationally
+
+**Forbidden after v0.2:**
+- Direct Cypher edits to AITool predicate edge properties in
+  Neo4j (e.g. `MATCH ()-[r {iri: 'mesh:X'}]->() SET r.endpoint_url = ...`).
+- Direct Weaviate Predicate row mutations via the Weaviate
+  client.
+- `retype_verbs_to_real_subjects.py`-style migration scripts
+  that re-type without an accompanying engine source change.
+- Per-edge property hot fixes via `apoc.merge.relationship`.
+
+**Required instead:**
+- Change the engine's `register_engine_to_mesh()` declaration
+  in the engine's `main.py`.
+- Roll the engine deployment (which re-invokes the saga
+  through the gateway).
+- Verify the saga wrote what was declared; the substrate
+  matches source by construction.
+
+**Allowed pre-v0.2 only:** the direct-Cypher migration class.
+Phase 5 was the last legitimate use of it. Future migrations
+that need to change predicate edges must instead orchestrate
+the engine source change + redeploy + re-registration. There
+is no analog for the "I just need to fix the edge directly"
+operation anymore.
+
+### Standing guards that enforce the rule
+
+The substrate-coverage assertion shipped 2026-06-13
+(`test_substrate_covers_routing_via_v02_saga_edges` in
+`tests/routing/test_substrate_invariants.py`) makes the rule
+operational at the test layer. Restated:
+
+> For every (subject, verb) pair the routing matrix exercises,
+> the compat-walk from the subject MUST reach the verb via at
+> least one v0.2 saga edge (non-NULL `_tool_urn`).
+
+If this test fails, either an orphan edge is load-bearing
+(a substrate-direct fix the saga can't reach) or the engine's
+source declaration's input_uri doesn't match the resolver's
+landing class. Either failure mode names the rule's violation
+by row.
+
+Pair this with the existing pseudo-class guards
+(`test_no_verb_inputs_against_fixed_pseudo_class`,
+`test_no_compact_form_for_migrated_subjects`,
+`test_known_verbs_typed_correctly`) and the registration
+identity guards
+(`test_mesh_resolve_instance_has_one_edge_per_provider`,
+`test_no_phantom_input_classes`,
+`test_no_phantom_output_classes`).
+
+### Reconciliation: when an engine ships unfixable source
+
+If an engine cannot be patched (vendor code, frozen image,
+external team owns it), the proper escape hatch is to change
+its **declared** input_uri to a canonical class that the
+resolver will land on — even if that requires creating a new
+canonical class. The escape hatch is NOT a substrate-direct
+patch around the engine's declaration; that path is closed
+post-v0.2.
+
+### Indicators for revisiting
+
+- *A direct-Cypher fix turns out to be the only viable option
+  because some property is needed but not exposed through the
+  registration shape.* Then the registration shape's
+  vocabulary needs to grow, not the source-substrate
+  invariant to weaken.
+- *The substrate-coverage guard's runtime grows beyond
+  budget.* The guard runs one Cypher per (subject, verb)
+  pair; with 50+ verbs the per-CI cost may need batching. The
+  rule still stands; the test implementation may need
+  refactoring.
