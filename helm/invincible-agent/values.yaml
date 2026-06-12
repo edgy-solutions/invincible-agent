@@ -319,6 +319,14 @@ meshRegistrar:
     name: mesh-registrar
     tag: "latest"
   port: 8090
+  # v0.2 saga budget: how long bounded forward-retry runs before the
+  # saga gives up and compensates. Sized to absorb transient-blip
+  # registration latency without alarming, while still failing fast
+  # enough that a sustained outage produces a 5xx within request
+  # budget. See ADR-0006 §Addendum §Indicators-for-revisiting: raise
+  # this if forward-retry exhaustion becomes non-rare without an
+  # underlying-blip root cause being available.
+  registerSagaBudgetSeconds: 15
   resources:
     requests:
       cpu: 100m

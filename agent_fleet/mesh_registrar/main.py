@@ -312,32 +312,35 @@ def health() -> dict:
 
 @app.post("/v1/register", response_model=RegistrationResult)
 def register(manifest: RegistrationManifest) -> RegistrationResult:
-    """Register a verb in the mesh.
+    """Register a verb in the mesh (v0.2 atomic-saga path).
 
-    Steps:
-      1. Contract D validation — input/output URIs exist as :OntologyClass
-         nodes in Neo4j. **If not, reject with 422** (the gateway's central
-         purpose vs the SDK shipping its own validation).
-      2. Derive the DataHub tool_urn from manifest.name.
-      3. Emit the MCP to DataHub. doc-tools' aitool_registration_sensor
-         materializes it into the Neo4j predicate edge + Weaviate
-         Predicate collection on its next tick (sub-30s).
-      4. Return the result. v0.1 doesn't wait for Contract C
-         dual-store verification — that's v0.2 + a webhook from the
-         sensor.
+    Per ADR-0006 §Addendum (2026-06-13):
+
+      1. Contract D validation — input/output URIs MUST exist as
+         :OntologyClass nodes in Neo4j. Rejected with 422 if not.
+      2. v0.2 saga: bounded forward-retry on Neo4j MERGE → Weaviate
+         upsert → dual-store read-back probe. On exhausted retries,
+         compensate (DELETE whatever wrote) and return 503 against
+         clean substrate. The conjunctive-read invariant
+         (``/classify_predicate`` only sees verbs present in BOTH
+         stores) makes any benignly-orphan'd half-write unrouted;
+         compensation failure logs loudly but doesn't fail-the-fail.
+      3. DataHub MCP emit is governance history, queued out-of-band
+         AFTER the saga succeeds. Emit failure does NOT block the 200
+         (per the priors: substrate writes are the gate; DataHub is
+         the audit log). A failed emit logs loudly and the gateway
+         continues; a future reconciler closes the gap.
     """
     tool_urn = (
         f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{manifest.name},PROD)"
     )
 
-    # Step 1: Contract D
+    # Step 1: Contract D (unchanged — read-only check, runs before any write).
     cd = _contract_d_check(manifest.input_uri, manifest.output_uri)
     if not cd["ok"]:
         logger.warning(
             "Contract D rejection for %s: missing %s", tool_urn, cd["missing"]
         )
-        # 422 Unprocessable Entity — the manifest is syntactically valid
-        # but the URIs it references don't exist in the substrate.
         raise HTTPException(
             status_code=422,
             detail={
@@ -352,27 +355,183 @@ def register(manifest: RegistrationManifest) -> RegistrationResult:
             },
         )
 
-    # Step 2 + 3: emit
+    # Step 2: v0.2 atomic-saga path.
+    # Derive provider here so it lands on the substrate edge, not just
+    # the DataHub MCP — Engine O's discovery Cypher reads `r.provider`.
+    provider = manifest.provider or _derive_provider(manifest.name, manifest.verb_iri)
+    rel_props = _build_rel_props_for_saga(
+        manifest=manifest,
+        provider=provider,
+        tool_urn=tool_urn,
+    )
     try:
-        datahub_resp = _emit_to_datahub(manifest, tool_urn)
+        saga_outcome = _run_saga(
+            manifest=manifest,
+            tool_urn=tool_urn,
+            provider=provider,
+            rel_props=rel_props,
+        )
     except Exception as e:
-        logger.exception("DataHub emit failed for %s", tool_urn)
+        # Last-resort: saga itself crashed (not a step failure). Treat
+        # as 503 with no compensation guaranteed.
+        logger.exception("v0.2 saga crashed for %s", tool_urn)
         raise HTTPException(
-            status_code=502,
+            status_code=503,
             detail={
                 "status": "rejected",
                 "tool_urn": tool_urn,
                 "contract_d_check": cd,
-                "reason": f"DataHub emit failed: {type(e).__name__}: {str(e)[:200]}",
+                "reason": (
+                    f"v0.2 saga crashed (not a step failure): "
+                    f"{type(e).__name__}: {str(e)[:200]}. "
+                    f"Substrate state is undefined; retry will converge."
+                ),
             },
         )
 
-    logger.info("Registered %s (verb=%s)", tool_urn, manifest.verb_iri)
+    if saga_outcome.http_code != 200:
+        # Saga ran but compensated. The conjunctive-read invariant
+        # guarantees the half-write (if any survived compensation) is
+        # unroutable; caller can retry safely.
+        raise HTTPException(
+            status_code=saga_outcome.http_code,
+            detail={
+                "status": saga_outcome.status,
+                "tool_urn": tool_urn,
+                "contract_d_check": cd,
+                "reason": saga_outcome.reason,
+                "saga": {
+                    "neo4j_written": saga_outcome.neo4j_written,
+                    "weaviate_written": saga_outcome.weaviate_written,
+                    "forward_retry_attempts": saga_outcome.forward_retry_attempts,
+                    "elapsed_s": round(saga_outcome.elapsed_s, 3),
+                },
+            },
+        )
+
+    # Step 3: DataHub MCP emit (governance history, out-of-band — failure
+    # does NOT block the 200 because the substrate is already consistent
+    # via the saga). v0.2.1 will move this into a background queue with
+    # retry + dead-letter; for now we attempt it inline and log on
+    # failure.
+    datahub_resp: Optional[dict] = None
+    try:
+        datahub_resp = _emit_to_datahub(manifest, tool_urn)
+    except Exception as e:
+        logger.warning(
+            "DataHub emit failed AFTER saga succeeded for %s: %s. "
+            "Substrate is consistent; governance record will be "
+            "reconciled by a future tick. Not blocking the 200.",
+            tool_urn, e,
+        )
+
+    logger.info(
+        "Registered %s (verb=%s) via v0.2 saga: retries=%d elapsed=%.2fs",
+        tool_urn, manifest.verb_iri,
+        saga_outcome.forward_retry_attempts, saga_outcome.elapsed_s,
+    )
     return RegistrationResult(
         status="registered",
         tool_urn=tool_urn,
         contract_d_check=cd,
         datahub_response=datahub_resp,
+    )
+
+
+# ---------------------------------------------------------------------------
+# v0.2 saga wiring — lifts the substrate writers into the request path.
+# ---------------------------------------------------------------------------
+
+from . import v2_saga
+from . import v2_substrate as _v2substrate  # noqa: F401 — used by tests
+
+_WEAVIATE_CLIENT_SINGLETON = None  # lazy-init via _get_weaviate_client()
+
+
+def _get_weaviate_client():
+    """Lazy-init the Weaviate client. Same env vars as the existing
+    doc-tools sensor uses; we share configuration to keep BYO-Weaviate
+    flexibility (work cluster scenario)."""
+    global _WEAVIATE_CLIENT_SINGLETON
+    if _WEAVIATE_CLIENT_SINGLETON is not None:
+        return _WEAVIATE_CLIENT_SINGLETON
+
+    import weaviate
+    http_host = os.environ.get("WEAVIATE_HTTP_HOST", "iagent-weaviate")
+    http_port = int(os.environ.get("WEAVIATE_HTTP_PORT", "8080"))
+    grpc_host = os.environ.get("WEAVIATE_GRPC_HOST", http_host)
+    grpc_port = int(os.environ.get("WEAVIATE_GRPC_PORT", "50051"))
+    _WEAVIATE_CLIENT_SINGLETON = weaviate.connect_to_custom(
+        http_host=http_host,
+        http_port=http_port,
+        http_secure=False,
+        grpc_host=grpc_host,
+        grpc_port=grpc_port,
+        grpc_secure=False,
+    )
+    return _WEAVIATE_CLIENT_SINGLETON
+
+
+def _build_rel_props_for_saga(
+    *, manifest: RegistrationManifest, provider: str, tool_urn: str
+) -> dict:
+    """Build the property bag that lands on the Neo4j relationship.
+
+    Mirrors what ``aitool_linker._build_relationship_properties`` produced
+    from the customProperties — but constructed directly from the
+    manifest so v0.2's path doesn't pass through the sensor's allowlist
+    drift bug class (doc-tools 540fbd5 family).
+    """
+    return {
+        # Identity is also set inside merge_neo4j_predicate_edge via
+        # the match_key; we duplicate it here so a CREATE has the props.
+        "iri": manifest.verb_iri,
+        "_tool_urn": tool_urn,
+        # Discoverable properties Engine O reads.
+        "endpoint_url": manifest.endpoint_url,
+        "owner_persona": manifest.owner_persona or "",
+        "domains": list(manifest.domains or []),
+        "cost_class": manifest.cost_class,
+        "requires_human_approval": bool(manifest.requires_human_approval),
+        "synonyms": list(manifest.verb_synonyms or []),
+        "anti_synonyms": list(manifest.verb_anti_synonyms or []),
+        "version": manifest.version,
+        "provider": provider,
+        # timeout_s is optional — only set when the engine declared it.
+        **(
+            {"timeout_s": float(manifest.timeout_s)}
+            if manifest.timeout_s is not None
+            else {}
+        ),
+    }
+
+
+def _run_saga(
+    *,
+    manifest: RegistrationManifest,
+    tool_urn: str,
+    provider: str,
+    rel_props: dict,
+) -> "v2_saga.SagaOutcome":
+    """Invoke the v0.2 saga with the shared driver + weaviate client."""
+    driver = _get_neo4j_driver()
+    weaviate_client = _get_weaviate_client()
+    return v2_saga.run_registration_saga(
+        driver=driver,
+        weaviate_client=weaviate_client,
+        verb_iri=manifest.verb_iri,
+        input_uri=manifest.input_uri,
+        output_uri=manifest.output_uri,
+        tool_urn=tool_urn,
+        rel_props=rel_props,
+        description=manifest.description or "",
+        endpoint_url=manifest.endpoint_url,
+        owner_persona=manifest.owner_persona or "",
+        domains=list(manifest.domains or []),
+        cost_class=manifest.cost_class,
+        requires_human_approval=bool(manifest.requires_human_approval),
+        synonyms=list(manifest.verb_synonyms or []),
+        anti_synonyms=list(manifest.verb_anti_synonyms or []),
     )
 
 

@@ -374,6 +374,50 @@ before the abba2d2 fix). Adding "every consumer must remember an
 implicit check" *manufactures* a new instance of that family.
 Rollback adds zero read-side surface.
 
+#### Caveat — one current workaround the invariant requires us to remove
+
+The `/classify_predicate` body at
+`agent_fleet/ontology_service/main.py:2152-2164` has a **fabrication
+fallback** that synthesizes minimal candidate dicts from the
+compat list when the Weaviate intersection comes back empty. Its
+comment explicitly identifies what it's working around:
+
+> If the intersection is empty (the subject's compatible verbs aren't
+> in Weaviate at all), synthesize candidate dicts directly from the
+> supplied IRIs so the LLM still has them — the predicate-registry-
+> vs-Weaviate sync gap shouldn't silently swallow a valid route.
+
+This fabrication **breaks the conjunctive-read invariant for case #2**
+of the partial-failure matrix (`N=S, W=F`). The verb is in compat
+(Cypher returned it), the Weaviate intersection is empty (no row),
+the fabrication path fires, and the verb lands in the LLM's enum.
+Today the invariant only holds because the sync gap is rare; under
+v0.2 it becomes structurally impossible, which removes the
+fabrication's reason to exist.
+
+**The fabrication's removal is part of v0.2's scope, sequenced after
+cutover.** Order:
+
+1. Restate saga ships (writes Neo4j + Weaviate atomically from any
+   reader's perspective once the saga completes).
+2. Cutover re-registers every existing verb through the saga,
+   refreshing any pre-v0.2 edges that lost their Weaviate row in
+   the sensor's allowlist-drift / run-key dedup history.
+3. Conjunctive-read invariant test added to CI.
+4. Fabrication fallback removed in the same commit as #3 — the test
+   is the property; the removal makes the property true; landing
+   them together prevents a window where one exists without the
+   other.
+5. Matrix run gates: still 18/18.
+
+Until this sequence completes, the rollback decision's safety
+argument *depends on the saga + the removal landing together*. A
+v0.2 implementation that ships the saga without removing the
+fabrication leaves the invariant unenforced — same risk as if the
+invariant had never been named. The §Test gate item below pins this
+in CI; the §Indicators-for-revisiting "single-store sufficient to
+dispatch" trigger covers any future re-introduction.
+
 #### Caveat — router-support predicates sit outside the invariant
 
 The conjunctive property holds for **user-question verbs**, which

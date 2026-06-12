@@ -12,6 +12,10 @@ dependencies = [
     # acryl-datahub ships here ONCE so engines don't each pay the ~150MB cost.
     "acryl-datahub",
     "python-dotenv",
+    # v0.2 saga writes the Weaviate Predicate row directly (lifted from the
+    # doc-tools sensor) so the gateway becomes sole writer for AITool
+    # registrations. ADR-0006 §Addendum (2026-06-13).
+    "weaviate-client>=4.4,<5.0",
 ]
 
 [build-system]

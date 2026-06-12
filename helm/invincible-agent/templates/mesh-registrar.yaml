@@ -40,6 +40,30 @@ spec:
                   name: {{ .Release.Name }}-secrets
                   key: DATAHUB_TOKEN
                   optional: true
+            # Restate ingress URL — used by the v0.2 saga registration
+            # workflow. Resolves to the chart-managed Restate service
+            # when `restate.enabled=true`, or to `externalRestate.ingressUrl`
+            # when the cluster is BYO-Restate (work cluster scenario).
+            # Falls back to empty string so the legacy non-saga path still
+            # serves /v1/register on clusters that haven't enabled v0.2.
+            - name: RESTATE_INGRESS_URL
+              value: {{ if .Values.restate.enabled -}}
+                "http://{{ .Release.Name }}-restate:{{ .Values.restate.ingressPort | default 8080 }}"
+              {{- else -}}
+                {{ .Values.externalRestate.ingressUrl | quote }}
+              {{- end }}
+            - name: RESTATE_ADMIN_URL
+              value: {{ if .Values.restate.enabled -}}
+                "http://{{ .Release.Name }}-restate:{{ .Values.restate.adminPort | default 9070 }}"
+              {{- else -}}
+                {{ .Values.externalRestate.adminUrl | quote }}
+              {{- end }}
+            # Saga register total budget (forward-retry deadline). Past
+            # this point the saga compensates (durable DELETE) and the
+            # caller gets 5xx against clean state. Tuned per the cluster's
+            # observed transient-blip floor.
+            - name: REGISTER_SAGA_BUDGET_S
+              value: {{ .Values.meshRegistrar.registerSagaBudgetSeconds | default "15" | quote }}
           livenessProbe:
             httpGet:
               path: /v1/healthz
