@@ -120,6 +120,19 @@ class RouteCase:
     min_confidence: float = 0.5
     domain: str = "MAINTENANCE"
     entitled_domains: tuple[str, ...] = ()
+    # ADR-0019 Contract B observability. When the matrix author KNOWS a
+    # row resolves to a zero-verb subject (verb-typing gap, e.g. idp:Column
+    # before Wave-3), set this to False to assert that /classify_predicate
+    # short-circuited without invoking the LLM. None = don't assert.
+    # The standing-guard shape: a regression that re-introduces "LLM picks
+    # from unconstrained pool when compat-walk returned []" turns this red
+    # before the confidently-wrong verb leaks into dispatch.
+    expect_classify_called: Optional[bool] = None
+    # Phone-book provenance: when set, asserts that /resolve's response
+    # had instance_resolved=True AND instance_provider matched. Promotes
+    # the R6 template (green-via-override has more meaning than green-via-
+    # fallback) project-wide for every override row. None = don't assert.
+    expect_instance_provider: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -240,16 +253,29 @@ TEST_CASES: list[RouteCase] = [
         min_confidence=0.0,
         domain="DATA_ENGINEERING",
     ),
-    # R4 — four-segment column path. Phone book classifies as idp:Column
-    # (not a Table, despite the dot count). No Column verbs are registered
-    # until Wave-3, so compat-walk returns empty and the verb is UNKNOWN.
-    # This row is the proof that we did NOT build a dot-counter — if the
-    # router were dot-counting, three-segments-table-vs-four-segments-
-    # column logic would have to live somewhere, and it doesn't.
+    # R4 — four-segment column path. Doubles as the Contract B
+    # regression row (2026-06-12). Phone book classifies as idp:Column
+    # (not a Table, despite the dot count). No Column verbs are
+    # registered until Wave-3, so /find_compatible_verbs returns [],
+    # and /classify_predicate MUST short-circuit to UNKNOWN WITHOUT
+    # invoking the LLM (ADR-0019 Contract B: "subject valid + zero
+    # compatible verbs → hard NO_MATCH without burning an LLM call").
+    # Before the Contract B fix landed, the LLM was being called with
+    # the unconstrained Weaviate pool and picking mesh:traceLineage
+    # from open vocabulary — exactly the confidently-wrong dispatch
+    # the contract was specified to prevent. This row stays as the
+    # standing guard so a future regression that re-introduces the
+    # "empty compat = unconstrained" semantics turns red here before
+    # the LLM bill or the wrong verb leak downstream.
+    #
+    # Doubles as proof we did NOT build a dot-counter — if the router
+    # were dot-counting, three-segments-table-vs-four-segments-column
+    # logic would have to live somewhere, and it doesn't.
     RouteCase(
         query="What feeds gold.sales.revenue_summary.amount?",
         expected_subject_substring="Column",
         expected_verb_iri="UNKNOWN",
+        expect_classify_called=False,  # Contract B: skip the LLM entirely
         min_confidence=0.0,
         domain="DATA_ENGINEERING",
     ),
@@ -416,6 +442,8 @@ def test_routing_decision(case: RouteCase) -> None:
     verb_conf = classify_resp.get("confidence_score", 0.0)
     verb_reason = classify_resp.get("reasoning", "")
     candidates = classify_resp.get("candidate_verb_iris", [])
+    classify_called = classify_resp.get("classify_called", True)
+    resolve_provenance = resolve_resp.get("provenance") or {}
 
     # Report — pytest -v surfaces these as the assertion failure context
     # if anything below fails.
@@ -428,6 +456,8 @@ def test_routing_decision(case: RouteCase) -> None:
         f"  verb_confidence        = {verb_conf:.2f}\n"
         f"  candidate_verbs        = {candidates}\n"
         f"  verb_reasoning         = {verb_reason!r}\n"
+        f"  classify_called        = {classify_called}\n"
+        f"  resolve_provenance     = {resolve_provenance}\n"
         f"  resolve_latency_s      = {resolve_latency:.2f}\n"
         f"  compat_latency_s       = {compat_latency:.2f}\n"
         f"  classify_latency_s     = {classify_latency:.2f}\n"
@@ -445,4 +475,49 @@ def test_routing_decision(case: RouteCase) -> None:
             f"verb chosen correctly ({verb_iri!r}) but confidence "
             f"{verb_conf} < min {case.min_confidence}. Routing is "
             f"unstable; check the LLM prompt / verb descriptions."
+        )
+
+    # ADR-0019 Contract B regression guard. Pinned per-row by
+    # expect_classify_called. False means the row's subject is a
+    # known zero-verb kind (e.g. idp:Column before Wave-3 ships its
+    # verbs) and /classify_predicate MUST short-circuit without
+    # invoking the LLM. classify_called=True here is the symptom
+    # the architect's R4 reanalysis exposed: empty compat list was
+    # being treated as "unconstrained" inside /classify_predicate
+    # instead of "forbidden," and the LLM was picking from open
+    # vocabulary. The guard turns red BEFORE the cost or the
+    # confidently-wrong dispatch leaks downstream.
+    if case.expect_classify_called is not None:
+        assert classify_called == case.expect_classify_called, (
+            f"Contract B regression: expected classify_called="
+            f"{case.expect_classify_called}, got {classify_called}. "
+            f"subject={subject_uri!r}, compat={compatible_verb_iris}, "
+            f"verb={verb_iri!r}, reasoning={verb_reason!r}.\n"
+            f"  When subject is resolved AND /find_compatible_verbs "
+            f"returns [], /classify_predicate MUST short-circuit "
+            f"without invoking the LLM (ADR-0019 Contract B). The "
+            f"verb chosen here came from an unconstrained Weaviate "
+            f"pool — that's the failure class this entire arc exists "
+            f"to kill."
+        )
+
+    # Phone-book provenance guard (R6 template, promoted project-wide
+    # 2026-06-12). Override rows must show instance_resolved=True AND
+    # the right provider — same color as fallback, but the architecture
+    # is doing the work. Once provider #2 (Engine E) lands, this
+    # assertion is what distinguishes "DataHub said Table" from
+    # "Neo4j said Table" on a query that both could plausibly resolve.
+    if case.expect_instance_provider is not None:
+        assert resolve_provenance.get("instance_resolved") is True, (
+            f"Phone-book regression: row was supposed to resolve via "
+            f"override, but provenance says instance_resolved=False. "
+            f"Likely cause: provider's search path returned empty (run "
+            f"the probe in test_resolve_instance_probes.py to name the "
+            f"broken provider). provenance={resolve_provenance}"
+        )
+        actual_provider = resolve_provenance.get("instance_provider", "")
+        assert actual_provider == case.expect_instance_provider, (
+            f"Phone-book regression: expected instance_provider="
+            f"{case.expect_instance_provider!r}, got "
+            f"{actual_provider!r}. provenance={resolve_provenance}"
         )

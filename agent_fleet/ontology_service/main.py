@@ -1928,6 +1928,14 @@ class ClassifyPredicateResponse(BaseModel):
     predicate: dict | None = None
     # For audit: the candidate verbs the LLM was permitted to choose from.
     candidate_verb_iris: list[str] = Field(default_factory=list)
+    # Contract B observability: True when the LLM was actually invoked,
+    # False when /classify_predicate short-circuited (subject resolved +
+    # zero compatible verbs → NO_MATCH without burning an LLM call). The
+    # standing-guard tests assert classify_called=False for known
+    # zero-verb subjects so a future regression where the LLM gets
+    # invoked anyway turns red immediately, before the cost or
+    # confidently-wrong dispatch leaks downstream.
+    classify_called: bool = True
 
 
 _SUBJECT_ANCESTOR_CHAIN_CYPHER = """
@@ -1985,6 +1993,46 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
     """
     entitled = [d.upper() for d in (request.entitled_domains or [])]
     compatible = set(request.compatible_verb_iris or [])
+
+    # ADR-0019 Contract B — subject valid + zero compatible verbs →
+    # hard NO_MATCH → generalist, WITHOUT burning an LLM call. The
+    # caller resolved a real subject (not "UNKNOWN") and queried
+    # /find_compatible_verbs, which returned []. That means Neo4j
+    # already authoritatively answered "no verb in the predicate
+    # graph operates on this subject (or any ancestor)." Calling the
+    # LLM at this point lets it pick anything from the open
+    # vocabulary — exactly the confidently-wrong dispatch this
+    # contract was specified to prevent. R4 (2026-06-12) was the
+    # first matrix row to surface this hole: idp:Column has zero
+    # verbs typed against it until Wave-3, and "what feeds X.amount"
+    # was getting routed to mesh:traceLineage from the unconstrained
+    # Weaviate pool.
+    #
+    # The conjunction is load-bearing: an UNKNOWN subject + empty
+    # compat list is the LEGACY unconstrained path (the resolver
+    # couldn't place the subject so the LLM judges the predicate
+    # against the raw query alone). Only "subject resolved AND zero
+    # compatible verbs" short-circuits.
+    if (
+        request.subject_uri
+        and request.subject_uri != "UNKNOWN"
+        and request.compatible_verb_iris is not None
+        and len(request.compatible_verb_iris) == 0
+    ):
+        return ClassifyPredicateResponse(
+            resolved_verb_iri="UNKNOWN",
+            confidence_score=0.0,
+            reasoning=(
+                f"Contract B short-circuit: subject {request.subject_uri!r} "
+                f"resolved but Neo4j's compat-walk returned zero verbs "
+                f"typed against it (or any ancestor via subClassOf). "
+                f"Routing to generalist fallback without invoking the "
+                f"LLM — the predicate graph already authoritatively "
+                f"said no registered verb operates on this kind."
+            ),
+            candidate_verb_iris=[],
+            classify_called=False,
+        )
 
     candidates = await predicate_hybrid_search(
         query=request.query,
@@ -2051,6 +2099,7 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
             confidence_score=0.0,
             reasoning=reason,
             candidate_verb_iris=[],
+            classify_called=False,
         )
 
     # Walk the subject's subClassOf chain from Neo4j so the LLM can see
