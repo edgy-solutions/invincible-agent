@@ -286,8 +286,8 @@ async def lifespan(app: FastAPI):
                 "type does."
             ),
             verb="mesh:resolveInstance",
-            input_uri="mesh:InstanceIdentifier",
-            output_uri="mesh:InstanceResolution",
+            input_uri="http://invincible-agent/mesh#InstanceIdentifier",
+            output_uri="http://invincible-agent/mesh#InstanceResolution",
             verb_synonyms=[
                 "resolve instance", "look up named asset",
                 "what kind of asset", "identify catalog path",

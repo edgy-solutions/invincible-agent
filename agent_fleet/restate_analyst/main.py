@@ -1091,7 +1091,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:lookupOwnership",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:OwnershipFact",
+        output_uri="http://invincible-agent/mesh#OwnershipFact",
         verb_synonyms=[
             "who owns", "owner of", "ownership of",
             "list assets owned by", "who is responsible for",
@@ -1114,7 +1114,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:traceLineage",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:LineageTopology",
+        output_uri="http://invincible-agent/mesh#LineageTopology",
         verb_synonyms=[
             "what is the lineage", "lineage of",
             "source of truth", "raw source of",
@@ -1151,7 +1151,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:assessImpact",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:ImpactSet",
+        output_uri="http://invincible-agent/mesh#ImpactSet",
         verb_synonyms=[
             "downstream impact", "what breaks if",
             "what is impacted by", "blast radius",
@@ -1174,7 +1174,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:findSchema",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:SchemaDescription",
+        output_uri="http://invincible-agent/mesh#SchemaDescription",
         verb_synonyms=[
             "what columns", "schema of", "data types",
             "fields of", "column descriptions",
@@ -1196,7 +1196,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:checkFreshness",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:FreshnessReport",
+        output_uri="http://invincible-agent/mesh#FreshnessReport",
         verb_synonyms=[
             "when was last updated", "last updated",
             "freshness", "is it stale", "data freshness",
@@ -1221,7 +1221,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:filterByTag",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:TagFilterResult",
+        output_uri="http://invincible-agent/mesh#TagFilterResult",
         verb_synonyms=[
             "tagged", "datasets tagged", "assets tagged",
             "filter by tag", "find assets with tag",
@@ -1249,7 +1249,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:describeAsset",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:AssetProfile",
+        output_uri="http://invincible-agent/mesh#AssetProfile",
         verb_synonyms=[
             "describe", "describe dataset", "describe dashboard",
             "tell me about", "profile of", "summarize",
@@ -1287,7 +1287,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:enumerateCatalog",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:CatalogListing",
+        output_uri="http://invincible-agent/mesh#CatalogListing",
         verb_synonyms=[
             "what tables do you have",
             "what datasets do you have",
@@ -1327,7 +1327,7 @@ async def lifespan(fastapi_app: FastAPI):
         ),
         verb="mesh:analyzeWithCodeAgent",
         input_uri="http://invincible-agent/mesh#AgentTask",
-        output_uri="mesh:AgentResponse",
+        output_uri="http://invincible-agent/mesh#AgentResponse",
         verb_synonyms=[
             "catalog question", "metadata question",
             "who owns", "list assets owned by",

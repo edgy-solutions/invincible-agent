@@ -180,8 +180,8 @@ async def lifespan(app: FastAPI):
             "contract, the LLM's class guess stands on miss."
         ),
         verb="mesh:resolveInstance",
-        input_uri="mesh:InstanceIdentifier",
-        output_uri="mesh:InstanceResolution",
+        input_uri="http://invincible-agent/mesh#InstanceIdentifier",
+        output_uri="http://invincible-agent/mesh#InstanceResolution",
         verb_synonyms=[
             "look up equipment by serial",
             "find procedure by code",

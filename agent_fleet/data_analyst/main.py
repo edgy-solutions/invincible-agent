@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
         ),
         verb="mesh:analyzeDataset",
         input_uri="http://invincible-agent/idp#Dataset",
-        output_uri="mesh:DatasetAnalysisReport",
+        output_uri="http://invincible-agent/mesh#DatasetAnalysisReport",
         verb_synonyms=[
             "execute SQL on", "run SQL against urn",
             "aggregate rows", "sum revenue from",
