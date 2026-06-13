@@ -301,7 +301,7 @@ _VERB_PROMPT_BLOCKS = {
             "fields, apply both reasoning patterns below as needed."
         ),
         "reasoning_patterns": _REASONING_RECURSIVE_LINEAGE + _REASONING_CROSS_FEATURE,
-        "output_uri": "mesh:AgentResponse",
+        "output_uri": "http://invincible-agent/mesh#AgentResponse",
     },
 }
 

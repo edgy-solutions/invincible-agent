@@ -892,8 +892,20 @@ except ImportError:
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
     )
 
+# Canonical full-IRI form for the InstanceIdentifier subject. Session 2's
+# A3 sweep migrated every resolveInstance edge from the compact form
+# (`mesh:InstanceIdentifier`) to the canonical full IRI; this query
+# missed that migration and survived only because the in-memory
+# _INSTANCE_RESOLVERS_CACHE held provider entries discovered pre-A3.
+# B3 (third resolveInstance provider) restarted Engine O and exposed
+# the stale URI — third Phase-5-prophecy occurrence (the masks rule
+# one more time: cache was the mask, restart closed it, latent
+# A3-miss surfaced where it actually lived).
+# Provider-agnostic by construction — walks ALL edges from this node,
+# names no specific provider. The B3 guard pin
+# (test_b3_engine_o_provider_agnostic) asserts this property.
 _INSTANCE_RESOLVERS_CYPHER = """
-MATCH (i:OntologyClass {uri: 'mesh:InstanceIdentifier'})-[r]->(o:OntologyClass)
+MATCH (i:OntologyClass {uri: 'http://invincible-agent/mesh#InstanceIdentifier'})-[r]->(o:OntologyClass)
 WHERE r.iri = 'mesh:resolveInstance' AND r.endpoint_url IS NOT NULL
 RETURN DISTINCT
   r.endpoint_url   AS endpoint_url,
