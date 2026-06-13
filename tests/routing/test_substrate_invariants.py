@@ -216,7 +216,7 @@ KNOWLEDGE_RETRIEVAL_RESPONSE = MESH_NS + "KnowledgeRetrievalResponse"
 IDP_DATASET = IDP_NS + "Dataset"
 IDP_TABLE = IDP_NS + "Table"
 MESH_AGENT_TASK = MESH_NS + "AgentTask"
-INSTANCE_IDENTIFIER = "mesh:InstanceIdentifier"
+INSTANCE_IDENTIFIER = MESH_NS + "InstanceIdentifier"  # canonical full-IRI; engine_d + engine_e both registered against this after Session 2 A3 fold
 PROCEDURE_STEP = "mro:ProcedureStep"
 
 
