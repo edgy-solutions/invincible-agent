@@ -3,6 +3,151 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-13 late close — A3 sweep halted at step 1; DAG-wiring break is the Session-2 prereq
+
+Tonight ran the architect's Session-1 batch: A1 (Restate VirtualObject
+wiring) + A2 (dedup ADR + `(verb_iri, _tool_urn)` identity pin) + A4
+(extraction-recall as held baseline property) + A6 (R4 column-path
+provenance read — Wave-3 confirmed servable). All four pushed,
+committed, matrix held 18/18 after each.
+
+Then attempted A3 — the verb-referenced `mesh:*` canonical sweep,
+promoted from cleanup to **deploy prerequisite** per the architect's
+work-cluster framing (asymmetric source declarations Contract-D-reject
+on a fresh cluster, first-hour wall, no engines register, demo dies).
+
+**Halted at step 1** — the dagster asset DAG has a wiring break that
+makes the canonical pipeline's TTL-ingest path NOT reach Neo4j.
+Specifically:
+
+```
+  ingest_ontology_to_jena  (mesh_system.ttl from MinIO)
+        ↓
+      Jena (graph http://internal/mesh)  ✓
+      Weaviate (via in-asset dual-write)  ✓
+      Neo4j  ✗  ← NO WIRING
+```
+
+```
+  sync_jena_to_neo4j  (the N10S sync that creates OntologyClass nodes)
+        ↑
+  upload_to_jena  (XML pipeline only, depends on extract_rdf_from_xml)
+```
+
+The N10S sync to Neo4j is wired to the **XML pipeline** (depends on
+`upload_to_jena` which depends on `extract_rdf_from_xml`), not to
+TTL ingests. So `mesh_system.ttl` lands in Jena + Weaviate, but the
+`http://invincible-agent/mesh#OwnershipFact` (and the other 10
+response-class) OntologyClass nodes never get materialized in Neo4j.
+
+Sandbox proof: `mesh#AgentTask`, `mesh#GraphExpertResponse`,
+`mesh#KnowledgeRetrievalResponse` exist in Neo4j (3 nodes, all
+historical — from the mystery notebook and Phase 5's direct-Cypher
+migrations). The other 11 mesh:* response-class nodes
+(`OwnershipFact`, `LineageTopology`, `ImpactSet`, `SchemaDescription`,
+`FreshnessReport`, `TagFilterResult`, `AssetProfile`, `CatalogListing`,
+`AgentResponse`, `DatasetAnalysisReport`, `InstanceResolution`) DO
+NOT exist in the canonical full-IRI form. They're compact-form only,
+which is why the audit had to leave the `output_uri` declarations as
+band-aid compact form in the first place.
+
+### Why halt instead of work around
+
+The classifier blocked the direct-Cypher N10S import workaround
+("user explicitly chose Dagster GraphQL; this direct MERGE bypasses
+the pipeline the user picked"). That was the correct call. Working
+around the DAG break tonight would have:
+
+1. Completed A3 cosmetically (matrix green, source canonical) but
+2. Hidden the deploy-blocker the work-cluster will hit on day one
+   (the fresh-bootstrap reproduces only the pieces the DAG knows
+   how to reproduce — the broken half is silent until something
+   needs it).
+3. Built A3's completion on a band-aid the architect's new ADR-0006
+   rule was written to retire.
+
+**The halt IS the finding.** The architect's Bite-1 prediction
+landed in advance: *"the question isn't 'will the debt hurt me there'
+— it's 'does my bootstrap path recreate the debt, or worse, recreate
+only half of it?'"* The answer: half of it, exactly. TTL → Jena +
+Weaviate is whole. TTL → Neo4j is broken. The half that's missing
+is the one Contract D depends on.
+
+### What this changes for Session 2
+
+The prime-script modernization was already queued for Session 2
+("add the four extension TTLs, the path→domain mapping, pinned
+fetches, guarded `--wipe`"). What changes:
+
+**The DAG-wiring fix is PROMOTED to a hard Session-2 prerequisite,
+NOT a Session-2 follow-up.** Without it, the prime-and-matrix
+rehearsal will reproduce only Jena + Weaviate and the matrix will
+fail loudly on missing Neo4j OntologyClass nodes — which is
+correct test feedback, but it means Session 2's first task is
+fixing the DAG before priming.
+
+Concretely, doc-tools needs either:
+
+- Add `ingest_ontology_to_jena` as an upstream dependency of
+  `sync_jena_to_neo4j` (the cleanest fix — the TTL path joins the
+  XML path's downstream Neo4j sync); OR
+- Add an in-asset N10S call to `ingest_ontology_to_jena` that
+  mirrors the Weaviate dual-write but for Neo4j (avoids the asset
+  DAG change but duplicates sync logic); OR
+- A new asset (`sync_jena_ontologies_to_neo4j`) that depends only
+  on `ingest_ontology_to_jena` and runs N10S import on the
+  named-graph the TTL ingest just wrote.
+
+Decision belongs in Session 2 when the broader prime-script
+modernization is the umbrella.
+
+### What's safe to leave in current sandbox state
+
+Nothing was changed in the substrate by tonight's A3 attempt:
+
+- The mesh_system.ttl re-ingest (run 30380528) updated Jena's
+  `<http://internal/mesh>` graph and Weaviate's `OntologyClass`
+  collection. Both are idempotent overwrites; no harm done.
+- The failed `sync_jena_to_neo4j` run (c2d7fb73) crashed before
+  touching Neo4j — input load failed for `extract_rdf_from_xml`
+  (the missing XML-pipeline upstream).
+- No source declarations folded; no engines redeployed; no edges
+  cleaned up. Matrix still 18/18 from the A1 verification.
+
+The asymmetric `output_uri` compact form stays in engine source as
+explicit Session-2-dependent debt with a now-named root cause.
+
+### Architect's prediction discipline holding (again)
+
+Two predictions, two cheap-venue catches, both before the work
+cluster could find them:
+
+1. **Last night** (orphan DELETE): "no movement" prediction backed
+   by reasoning — wrong. Snapshot-first procedure made it a
+   5-minute restore; coverage guard now makes future predictions
+   provable.
+2. **Tonight** (A3 sweep): "bootstrap reproduces the substrate"
+   — partially wrong. The DAG wiring break would have made the
+   work-cluster deploy fail at the first-hour Contract D wall.
+   Halting in sandbox costs an evening; finding it at work would
+   cost the demo.
+
+The architect's reframe stands: the sandbox didn't fail to de-risk
+deploy; it just finished de-risking runtime first, and is now
+finishing de-risking bootstrap. Two predictions wrong from clean
+reasoning; two predictions provable from automated checks. The
+shift from #1 to #2 is the project's actual progress arc.
+
+### Session-1 final commit list
+
+| Commit | Scope |
+|---|---|
+| 9033d82 | A2 + A4: ADR-0019 §5 Contract D addendum (dedup rule + (verb_iri, _tool_urn) identity) + extraction-recall property |
+| fb638d0 | A1: Restate VirtualObject `RegistrationSaga` + wire-contract tests |
+| e3dccf1 | A1: uv.lock regen so the container build picks up restate-sdk |
+
+Session 2 begins with the DAG-wiring fix in doc-tools.
+
 ## What shipped
 
 | # | sha | scope |
