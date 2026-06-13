@@ -59,6 +59,8 @@ dev = [
     "dagster-dg-cli",
     "pytest",
     "pytest-asyncio",
+    "weaviate-client>=4.4,<5.0",
+    "lxml>=6.1.1",
 ]
 
 [build-system]

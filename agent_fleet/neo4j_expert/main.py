@@ -35,6 +35,16 @@ try:
 except ImportError:
     from agent_fleet.utils.mesh_registration import register_engine_to_mesh
 
+# B3 — shared DMC canonicalizer. Same code as the B2 ingest writer
+# (doc-tools' doc_tools/parsers/dmc_canonicalizer.py); a
+# test_b3_canonicalizer_drift.py asserts SHA256 equality between the
+# two copies. A canonicalizer bug fails the B2 ingest tests AND
+# Engine E's /resolve_dmc probe identically.
+try:
+    from utils.dmc_canonicalizer import canonicalize_dmc
+except ImportError:
+    from agent_fleet.utils.dmc_canonicalizer import canonicalize_dmc
+
 try:
     # Standalone microservice mode (Workspace Root)
     from service import service as expert_service
@@ -201,6 +211,58 @@ async def lifespan(app: FastAPI):
         # 8s ceiling, means an actual Cypher pathology surfaces in the
         # router's timeout log instead of hiding behind a budget sized
         # for a different stack.
+        timeout_s=2.0,
+    )
+
+    # B3 — DMC resolution capability. Per the architect's
+    # "phone book lives where its data lives" framing (2026-06-13):
+    # B2's ingest writes :DataModule instances into THIS engine's
+    # Neo4j graph (indexed by `dmc_uri_unique`), so DMC resolution
+    # is a second capability of Engine E, not a separate service.
+    # Three registrations, two engines:
+    #   - engine_d (catalog, in DataHub wrapper)
+    #   - engine_e (above: equipment, here on Engine E)
+    #   - engine_e_dmc (this: DMC, also on Engine E)
+    # The router fans out to all three providers under the same
+    # canonical mesh#InstanceIdentifier subject; each provider does
+    # its own narrow lookup; each abstains honestly when its
+    # identifier shape doesn't match.
+    _engine_e_resolve_dmc_url = os.getenv(
+        "ENGINE_E_RESOLVE_DMC_URL",
+        "http://iagent-engine-e:8086/resolve_dmc",
+    )
+    register_engine_to_mesh(
+        name="engine_e_dmc_resolve_instance",
+        description=(
+            "Resolves a Data Module Code (DMC) — the S1000D identity "
+            "of a technical-manual data module — to its canonical "
+            "mil:* content kind (ProcedureDataModule, "
+            "FaultIsolationDataModule, IllustratedPartsDataModule, "
+            "DescriptiveDataModule, Diagram). Looks up the canonical "
+            "DMC string form against the same maintenance knowledge "
+            "graph Engine E's equipment resolver uses; returns the "
+            "matching content kind with provenance. Empty list when "
+            "the input isn't a DMC or no module matches — abstention "
+            "is the contract. Same engine, second capability."
+        ),
+        verb="mesh:resolveInstance",
+        input_uri="http://invincible-agent/mesh#InstanceIdentifier",
+        output_uri="http://invincible-agent/mesh#InstanceResolution",
+        verb_synonyms=[
+            "resolve dmc",
+            "look up data module",
+            "what kind of data module",
+            "classify dmc",
+            "identify data module code",
+        ],
+        endpoint_url=_engine_e_resolve_dmc_url,
+        owner_persona="TECH_WRITER",
+        domains=["MAINTENANCE"],
+        cost_class="fast",
+        requires_human_approval=False,
+        provider="engine_e_dmc",
+        # Direct primary-key Cypher lookup via dmc_uri_unique index.
+        # Sub-millisecond; 2s is plenty.
         timeout_s=2.0,
     )
 
@@ -451,4 +513,88 @@ async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceRe
         ))
 
     candidates.sort(key=lambda c: c.score, reverse=True)
+    return ResolveInstanceResponse(candidates=candidates)
+
+
+# ---------------------------------------------------------------------------
+# B3 — DMC resolution capability (Engine E's second resolveInstance entry).
+#
+# Per the architect's "capability lives with data owner" framing
+# (2026-06-13): B2's ingest writes :DataModule instances into this
+# engine's Neo4j graph indexed by `dmc_uri_unique`. The DMC phone book
+# is therefore a second capability of Engine E, not a separate service.
+# Same engine, same Neo4j driver, separate endpoint + separate
+# registration so the router fans out cleanly and provenance names
+# exactly which capability resolved.
+#
+# Architectural invariants:
+#   - The canonicalizer is the SHARED `dmc_canonicalizer` module —
+#     same code as B2's ingest writer; SHA256 drift detector
+#     (test_b3_canonicalizer_drift) catches divergence in CI.
+#   - The lookup is a direct primary-key MATCH on `dm.dmc = $canonical`
+#     against B2's `:DataModule` substrate — NO LLM, NO fuzziness.
+#     DMCs are precise identifiers; either the canonical form exists
+#     in the graph or it doesn't.
+#   - Score is 1.0 on exact match, no candidates emitted otherwise.
+#     Empty list is a first-class answer (ADR-0019 Contract A) —
+#     abstain honestly when the input isn't a DMC or no module matches.
+# ---------------------------------------------------------------------------
+
+_DMC_CYPHER = """
+MATCH (dm:DataModule {dmc: $canonical})-[:INSTANCE_OF]->(kind:OntologyClass)
+RETURN dm.dmc AS dmc,
+       kind.uri AS class_uri,
+       coalesce(dm.techName, dm.dmc) AS label
+LIMIT 5
+"""
+
+
+@app.post("/resolve_dmc", response_model=ResolveInstanceResponse)
+async def resolve_dmc(request: ResolveInstanceRequest) -> ResolveInstanceResponse:
+    """DMC instance-resolution endpoint (Engine E's second capability).
+
+    Normalize the incoming identifier via the shared canonicalizer,
+    look up the matching :DataModule in Neo4j by `dmc_uri_unique`,
+    return the canonical mil:* content kind the substrate's
+    INSTANCE_OF edge points at. Abstain honestly on non-DMC input
+    (canonicalizer returns None) and on lookup miss.
+
+    Per Recipe v2 + ADR-0019 Contract A: empty list is a first-class
+    answer; the router will fall through to the other providers
+    (engine_d, engine_e equipment) and ultimately to the LLM's guess
+    if none of them speak.
+    """
+    raw = (request.identifier or "").strip()
+    canonical = canonicalize_dmc(raw)
+    if canonical is None:
+        # Not a DMC shape — Engine E's equipment resolver (above) or
+        # Engine D may speak. Honest abstain.
+        return ResolveInstanceResponse(candidates=[])
+
+    try:
+        try:
+            from tools import get_neo4j_driver
+        except ImportError:
+            from agent_fleet.neo4j_expert.tools import get_neo4j_driver
+
+        driver = get_neo4j_driver()
+        with driver.session() as session:
+            records = list(session.run(_DMC_CYPHER, canonical=canonical))
+    except Exception as exc:  # noqa: BLE001 — LOG, return empty
+        print(
+            f"[Engine E] /resolve_dmc Cypher FAILED for canonical="
+            f"{canonical!r}: {type(exc).__name__}: {exc}"
+        )
+        return ResolveInstanceResponse(candidates=[])
+
+    candidates = [
+        InstanceCandidate(
+            instance_id=rec["dmc"],
+            class_uri=rec["class_uri"],
+            label=rec["label"] or rec["dmc"],
+            score=1.0,
+        )
+        for rec in records
+        if rec.get("dmc") and rec.get("class_uri")
+    ]
     return ResolveInstanceResponse(candidates=candidates)

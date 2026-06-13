@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?xml-stylesheet href="xslfo-main-v5_0.xsl" type="text/xsl" media="print,pdf" alternate="yes"?>
+<!--Arbortext, Inc., 1988-2012, v.4002-->
+<!DOCTYPE tswp PUBLIC "-//USA-DOD//DTD MIL-STD-2361 TM Assembly REV E 5.0 20131101//EN" "40051E_5_0.dtd">
+<tswp chngno="0" wpno="t0003-1-1680-TNG"><wpidinfo>
+<maintlvl level="maintainer"/>
+<title>TROUBLESHOOTING PROCEDURES</title>
+</wpidinfo><initial_setup><null/></initial_setup><tsproc><faultproc>
+<title id="unit_tsp">HELMET TROUBLESHOOTING PROCEDURES</title>
+<symptom>UNABLE TO ADJUST NAPE STRAP</symptom>
+<malfunc label="malfunction">Defective hardware or webbing.</malfunc>
+<action>
+<step1>
+<para>Inspect retention assembly for defective hardware or webbing.</para></step1>
+<step1>
+<para>Replace retention assembly in accordance with Retention Assembly.</para></step1>
+</action>
+<symptom id="mic_pos">UNABLE TO KEEP MICROPHONE IN POSITION.</symptom>
+<malfunc label="malfunction">Loose screw</malfunc>
+<action>
+<step1>
+<para>Inspect boom, microphone assembly for loose screw</para></step1>
+<step1>
+<para>If unable to tighten screw, replace in accordance with <xref wpid="m0004-1-1680-TNG"/>.</para></step1>
+</action>
+</faultproc><faultproc>
+<title>COMMUNICATIONS</title>
+<symptom>UNABLE TO COMMUNICATE</symptom><?Pub Caret -2?>
+<malfunc label="malfunction">Communications cord unplugged or communication unit not working.</malfunc>
+<action>
+<step1>
+<para>Ensure that communications cord is plugged into communication unit and that unit is working. Ensure helmet connector on left rear side of helmet is secured.</para></step1>
+<step1>
+<para>If still unable to hear, perform continuity check as follows:</para><step2>
+<para>Disconnect microphone cable from microphone.</para></step2><step2>
+<para>Remove receivers.</para></step2><step2>
+<para>Using a multimeter (AN/URM-105 C or equivalent), perform <xref stepstart="t0003_s3_1"/> in accordance with the appropriate action for your communication system (standard or TEMPEST).</para><step3 id="t0003_s3_1">
+<para>If no failure detected, proceed to <xref stepstart="t0003_s3_2"/>.</para></step3><step3 id="t0003_s3_2">
+<para>If a failure is detected, replace the communication cord in accordance with Communications System. Proceed to <xref stepstart="t0003_s2_d"/>.</para></step3></step2><step2 id="t0003_s2_d"><specpara>
+<note>
+<trim.para>Numbers in test charts correspond to callouts in illustrations.</trim.para>
+</note>
+<para>Replace in accordance with <xref wpid="m0004-1-1680-TNG"/>.</para></specpara></step2></step1>
+</action>
+</faultproc></tsproc></tswp>

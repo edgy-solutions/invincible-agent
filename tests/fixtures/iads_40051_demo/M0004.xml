@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--Arbortext, Inc., 1988-2012, v.4002-->
+<!DOCTYPE maintwp PUBLIC "-//USA-DOD//DTD MIL-STD-2361 TM Assembly REV E 5.0 20131101//EN" "40051E_5_0.dtd" [
+<!ENTITY MS098897A SYSTEM "..\graphics\MS098897A.cgm" NDATA CGM>
+<!ENTITY HGU-56P_eic SYSTEM "HGU-56P_eic.ent">
+]>
+<maintwp chngno="0" wpno="m0004-1-1680-TNG"><wpidinfo>
+<maintlvl level="maintainer"/>
+<title>MICROPHONE BOOM REMOVAL/INSTALLATION</title>
+</wpidinfo><initial_setup>
+<tools>
+<tools-setup-item><name>SCREWDRIVER, CROSS-TIP</name><itemref><xref itemid="S0002_cross_tip_screw" wpid="s0002-1-1680-TNG"/></itemref></tools-setup-item>
+</tools>
+</initial_setup>
+<maintsk><remove><proc>
+<title>MICROPHONE BOOM REMOVAL</title>
+<step1>
+<para>Using a cross-tip screwdriver, remove swivel assembly screw <callout assocfig="M00016_MS098897A" label="1"/>.</para></step1>
+<step1 inschlvl="1">
+<para>Remove the flat washer <callout assocfig="M00016_MS098897A" label="3"/> from boom support washer <callout assocfig="M00016_MS098897A" label="9"/>.</para></step1>
+<step1>
+<para>Remove special washer <callout assocfig="M00016_MS098897A" label="5"/> from boom support washer.</para></step1>
+<step1>
+<para>Remove boom <callout assocfig="M00016_MS098897A" label="8"/> and other grooved washer <callout assocfig="M00016_MS098897A" label="4"/>.</para><step2>
+<para>Remove microphone cord from clip attached to boom assembly.</para></step2><step2><specpara>
+<warning>
+<trim.para>Unplug microphone cord from communications jack to prevent electrical shock.</trim.para>
+</warning>
+<para>Remove thumbscrew from boom and remove microphone from boom.</para></specpara></step2></step1>
+</proc></remove></maintsk>
+<maintsk><install><proc>
+<title>MICROPHONE BOOM INSTALLATION</title>
+<step1>
+<para>Using a cross-tip screwdriver, attach screw <callout assocfig="M00016_MS098897A" label="6"/> to knurled knob <callout assocfig="M00016_MS098897A" label="7"/>.</para></step1>
+<step1>
+<para>Attach the flat washer <callout assocfig="M00016_MS098897A" label="3"/> to boom support washer <callout assocfig="M00016_MS098897A" label="9"/>.</para></step1>
+<step1 inschlvl="1">
+<para>Using a cross-tip screwdriver, attach swivel assembly screw <callout assocfig="M00016_MS098897A" label="1"/> and washer <callout assocfig="M00016_MS098897A" label="2"/>.</para></step1>
+<step1>
+<para>Plug microphone cord into communications jack on rear of helmet.  <figure id="M00016_MS098897A"><title>Boom and Microphone</title>
+<graphic boardno="MS098897A"></graphic>
+</figure></para></step1>
+</proc></install></maintsk>
+</maintwp>
