@@ -14,6 +14,7 @@
   (dict "key" "engineW" "component" "engine-w" "values" .Values.engineW)
   (dict "key" "dataAnalyst" "component" "data-analyst" "values" .Values.dataAnalyst)
   (dict "key" "centralGateway" "component" "central-gateway" "values" .Values.centralGateway)
+  (dict "key" "dmcPhoneBook" "component" "dmc-phone-book" "values" .Values.dmcPhoneBook)
 }}
 
 {{- range $engines }}

@@ -3,6 +3,85 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-13 architect reframe of B2's close — three observations worth banking
+
+The architect's reading of B2's three live `/resolve` probes turned the
+close from "21/21 green" into "the architectural thesis validated in
+one shot, accidentally." Reproducing the framing here so future
+sessions don't lose it:
+
+### 1. The B2 instance-lookup probe was graceful degradation captured live
+
+The probe ("Tell me about DMC-SANDBOXRTX-B-72-30-10-00A-520A-A")
+returned `instance_resolved=false`, both phone-book providers
+returned `n_candidates=0`, LLM fell through to `mro:Equipment`. That
+is **not** a gap — it's the system reporting honestly that it
+couldn't ground the query, with the right flag set. The architecture
+didn't confabulate a DMC resolution it can't perform; it set
+`instance_resolved=false` and fell back to the LLM's best guess.
+
+And it simultaneously drew B3's before/after picture with precision:
+the providers returned zero *because no DMC provider is registered
+yet*; `instance_resolved=false` is the literal pre-B3 state that B3
+flips to `true`. Same query, run before and after B3, with the only
+difference being that flag flipping and the provenance naming the new
+provider. **That's the third generality-gate proof made visible to a
+non-technical audience in a single diff** — the cleanest before/after
+in the project's history.
+
+### 2. The Q2 pool-hold probe is the quiet hero — a passing NEGATIVE result
+
+The Q2 probe ("Show me the fault isolation procedure for the APU")
+resolved to the EXISTING `MRO/WorkInstruction` baseline and NOT to
+the freshly-ingested `mil:FaultIsolationDataModule`. The Wave-3
+discipline held under real instance load: the new content kind has
+INSTANCES in the graph but stays OUT of the resolver pool because no
+verb is typed against it.
+
+This is the exact failure mode that's bitten this project before —
+subject resolves, zero compat verbs, silent generalist — **NOT**
+happening, verified live rather than assumed. Worth flagging in this
+doc because the next person reading "we ingested fault-isolation
+modules but fault-isolation queries route to the old baseline" might
+mistake correct discipline for a bug. It isn't. **It's B4's job to
+release the pool-hold, one verb at a time, only when a real question
+demands it.**
+
+### 3. The DMC canonical-string-form fix (49a3fdb) is the ABox echo of Session 2's TBox work
+
+Same disease — two string representations of one identity, raw-equality
+matcher can't tell them apart — at the instance layer this time, on
+DMC strings. The fix was cheap because the ingest test exercised the
+REAL constraint (`dmc_uri_unique`) rather than a mock; the same
+lesson Session 2 learned at the class layer (test against the
+canonical pipeline, not against an imagined substrate).
+
+**This rule rides into B3 explicitly:** the phone book looks DMCs up
+by the same canonical string form the writer produces. B3's provider
+must use the same canonicalizer code path as `s1000d_ingest` — not a
+parallel reimplementation. Same-canonicalizer-both-sides, the
+instance-level version of the rule that's governed the class layer
+all along.
+
+### What B3 inherits
+
+- Substrate populated (B2's ingest wrote canonical-form DMCs indexed
+  by `dmc_uri_unique`).
+- Acceptance test pre-captured: today's `/resolve` of
+  `DMC-SANDBOXRTX-B-72-30-10-00A-520A-A` returned
+  `instance_resolved=false`, provider outcomes `[engine_e: ok n=0,
+  engine_d: ok n=0]`, fallback `mro:Equipment`. B3's after-state must
+  flip exactly that — `instance_resolved=true`, a new outcome with
+  `provider=engine_dmc` (or whatever it's named) returning
+  `n_candidates>=1`, and the resolved subject the matching `mil:*
+  ProcedureDataModule`. Predict before run.
+- Shared canonicalizer (same code, both sides). Bug in the
+  canonicalizer must be caught by EITHER the ingest tests OR the
+  phone-book probes — same code path means same surface.
+- Zero Engine O changes — third application of the generality gate.
+  Prove with `git diff agent_fleet/ontology_service/` returning
+  empty, the way Gate 6 proved it. NOT by inspection.
+
 ## 2026-06-13 overnight — B2 done end-to-end against the SANDBOXRTX synthetic corpus
 
 The architect's B2 recipe ran clean: Step 0 verified Session-2's three

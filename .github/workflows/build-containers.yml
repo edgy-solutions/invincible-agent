@@ -66,6 +66,9 @@ jobs:
           - service: data-analyst
             path: agent_fleet/data_analyst
             port: "8089"
+          - service: dmc-phone-book
+            path: agent_fleet/dmc_phone_book
+            port: "8091"
           - service: cortex-bff
             path: .
             # Port aligned with the helm chart's cortexBff.port (8090).

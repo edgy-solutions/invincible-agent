@@ -1,0 +1,16 @@
+[project]
+name = "dmc-phone-book"
+version = "0.1.0"
+description = "B3 — DMC instance-resolution provider for mesh:resolveInstance."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2.0",
+    "neo4j",
+    "python-dotenv",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

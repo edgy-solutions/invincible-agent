@@ -247,6 +247,21 @@ engineW:
   resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
   env: {}
 
+# B3 — DMC phone book. Third instance-resolution provider for
+# mesh:resolveInstance. Looks up Data Module Codes against the B2
+# substrate (Neo4j :DataModule instances with dmc_uri_unique index).
+# Boundary: this service READS from Neo4j; the sandbox cluster's
+# substrate may include SANDBOXRTX test instances, but neither this
+# values block nor the service's main.py reference the marker (it's
+# a guard-asserted invariant — see test_b2_ingest_sandboxrtx.py).
+dmcPhoneBook:
+  enabled: true
+  replicas: 1
+  image: { name: "dmc-phone-book", tag: "latest" }
+  port: 8091
+  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  env: {}
+
 engineF:
   enabled: true
   replicas: 1
