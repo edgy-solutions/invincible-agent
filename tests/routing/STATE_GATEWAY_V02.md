@@ -3,6 +3,133 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-13 overnight — B2 done end-to-end against the SANDBOXRTX synthetic corpus
+
+The architect's B2 recipe ran clean: Step 0 verified Session-2's three
+loose threads still hold (8 G1 historical-debt unchanged; substrate
+9/10 green; matrix 18/18 genuine post-A3). Then B2 proper:
+
+### Step 1 — synthetic RTX corpus (sandbox/CI fixture only)
+
+Built `s1kd-tools` (kibook/s1kd-tools, GPL-3.0) from source inside the
+doc-tools sandbox pod. Generated 8 schema-valid module references
+(7 distinct XML files + row 8 as a re-ingest of row 3 for G3) per
+the architect's coverage table, themed to SPY-6 / LTAMDS / NASAMS /
+Patriot in metadata only (generic placeholder body text). Each
+validated against the S1000D Issue 4.2 schema via `s1kd-validate --net`.
+
+Every module carries MIC=`SANDBOXRTX` — the deliberate detectable
+boundary marker. Fixture committed at
+`tests/fixtures/s1000d_sandbox_rtx/` (commit 9b1f24e).
+
+### Step 2 — deterministic ingest implementation (doc-tools)
+
+`doc_tools/parsers/s1000d_ingest.py` (701d542): pure-parse layer
+(`extract_facts(xml_bytes) → S1000dFacts`), substrate-write layer
+(`merge_data_module_instance` — MATCH the canonical kind class first,
+raise on missing; MERGE the instance + INSTANCE_OF edge; MERGE Tool/
+Part artifacts with REQUIRES_TOOL/HAS_PART cross-links), top-level
+orchestrator (`process_s1000d_data_module`). Wraps cleanly into a
+dagster asset later; the function-level seam is the right granularity
+for direct testing against the synthetic corpus.
+
+Architectural invariants encoded:
+- **G1**: this module NEVER MERGEs `:OntologyClass`. Kind classes
+  are MATCH-only; if missing, RAISES with the explicit G1 contract
+  message. Auto-MERGE of a missing kind would silently violate the
+  rule Session 2 made operationally true.
+- **G2**: every successful ingest writes exactly one INSTANCE_OF
+  edge. Fallback for missing info code is `mil:DataModule` root —
+  never an absent edge.
+- **G3**: MERGE by deterministic instance URI + MERGE on the
+  relationship pattern. Same XML re-ingested → same substrate state.
+
+A DMC string-form bug surfaced on the first B2 run (the field-
+separated parse produced `SANDBOXRTX-B-72-3-0-10-00-A-520-A-A`
+while the canonical concatenation produces
+`SANDBOXRTX-B-72-30-10-00A-520A-A`). Fixed in 49a3fdb to use the
+canonical form — the field groups subSystemCode+subSubSystemCode,
+disassyCode+variant, infoCode+variant concatenate without separator.
+
+### Step 3 — predict-then-verify, all assertions GREEN
+
+`tests/routing/test_b2_ingest_sandboxrtx.py` (9a96751) — 21 assertions:
+
+| Assertion class | Count | Result |
+|---|---|---|
+| Classification correctness (info code → mil:* kind) | 7 (parametrized) | ✓ |
+| G1 positive control: OntologyClass count unchanged | 1 | ✓ |
+| G1 corollary: v0.2 saga edge count unchanged | 1 | ✓ |
+| G2 per-row INSTANCE_OF edge | 7 (parametrized) | ✓ |
+| G3 idempotency: re-ingest produces 1 node + 1 edge | 1 | ✓ |
+| Composition probe: tool + spare edges materialize | 1 | ✓ |
+| SANDBOXRTX present in test substrate | 1 | ✓ |
+| **NEGATIVE BOUNDARY**: SANDBOXRTX absent from all deploy-path artifacts | 1 | ✓ |
+| Pool-hold: kind classes have no v0.2 saga edges | 1 | ✓ |
+
+**21/21 PASSED** after the DMC fix.
+
+### Step 4 — live end-to-end pool-hold verification
+
+Three live `/resolve` probes confirm B2's instance writes did not
+disturb the running matrix's routing:
+
+1. **Q1 control** ("Search the technical manuals for fuel system
+   diagnostics") → still resolves to `MRO/TechnicalManual` with the
+   existing `retrieveKnowledge` baseline. Confidence 0.97.
+
+2. **Q2 pool-hold probe** ("Show me the fault isolation procedure
+   for the APU") → resolves to `MRO/WorkInstruction` with the
+   existing baseline, NOT to the brand-new
+   `mil:FaultIsolationDataModule`. The new kind class is in the
+   TBox + has instances, but is correctly pool-held (no verbs).
+
+3. **B2 instance lookup probe** ("Tell me about DMC-SANDBOXRTX-...")
+   → both phone-book providers (engine_d, engine_e) returned
+   `n_candidates=0` (DMC phone book is B3, not yet shipped). The
+   LLM fallback guessed `mro:Equipment` and `instance_resolved=false`.
+   This is the architect's "graceful degradation" landing — when
+   B3 ships as provider #3 of `mesh:resolveInstance`, this query
+   resolves to the matching `mil:ProcedureDataModule` instance the
+   B2 ingest just wrote.
+
+The third probe also previews what B3 has to do exactly: register as
+the third `mesh:resolveInstance` provider, look up DMCs in Neo4j's
+DataModule index, return the matching `mil:* kind` as the
+instance class. The B2 substrate is the data B3 reads.
+
+### What this proves about the boundary rule
+
+The architect's load-bearing distinction — synthetic test corpus
+NEVER reaches the work cluster — is now mechanical, not aspirational.
+The **negative boundary guard** asserts `SANDBOXRTX` appears in the
+test graph AND is absent from every deploy-path file
+(`setup/`, `helm/`, `agent_fleet/`, `scripts/`, `src/`, `baml_shared/`,
+`Procfile`, `pyproject.toml`). The fabrication is designed to be
+detected if it ever escapes. If a single synthetic DMC slips into a
+deployable artifact, the guard fires with the exact path it leaked
+into.
+
+This is the same TBox/ABox separation Session 2 made true at the
+canonical pipeline level (mil_extension.ttl is canonical TBox →
+deploys; instances are ingest output → don't deploy), now extended
+to ABox-level fixtures with a mechanical absence guard.
+
+### What's now possible (deferred B-track items)
+
+- **B3**: DMC phone book as `mesh:resolveInstance` provider #3.
+  The substrate B3 needs (B2-ingested mil:* instances) is here. B3
+  ships the routing layer's third application of the
+  zero-Engine-O-changes generality gate.
+- **B4**: kind verbs typed against the content-kind classes on
+  demand. The first verb a real question would type against:
+  probably `mesh:retrieveFaultIsolation` against
+  `mil:FaultIsolationDataModule` (Q2's diagnostic lane).
+- **B5**: matrix expansion with the §2 question rows + Q5
+  composition canary.
+
+The next sprint's question after B0's §2 inventory is filled in.
+
 ## 2026-06-13 Session-2 close — keystone delivered, A3 done end-to-end, deployability proven
 
 ### The keystone shipped

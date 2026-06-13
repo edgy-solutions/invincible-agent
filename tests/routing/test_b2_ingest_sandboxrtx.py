@@ -134,16 +134,54 @@ def neo4j_client(driver):
 
 @pytest.fixture(scope="module")
 def ingest_module():
-    """Import doc_tools.parsers.s1000d_ingest; skip if not on PYTHONPATH."""
-    try:
-        from doc_tools.parsers import s1000d_ingest
-        return s1000d_ingest
-    except ImportError:
+    """Load doc_tools.parsers.s1000d_ingest via direct file path.
+
+    The doc_tools package's __init__.py drags in dagster_aws (and a
+    Dagster Definitions tree), which is heavyweight and not needed for
+    the pure-parse + Cypher-MERGE path B2 tests. We sidestep by
+    importing the two parser modules (mil_info_code_map +
+    s1000d_ingest) directly via importlib.util.spec_from_file_location,
+    making the package init irrelevant.
+
+    Override DOC_TOOLS_REPO env var if doc-tools lives elsewhere; the
+    default targets a sibling-repo layout (your-workspace/doc-tools/).
+    """
+    import importlib.util
+    import sys
+
+    doc_tools_root = Path(os.getenv(
+        "DOC_TOOLS_REPO",
+        Path(__file__).parent.parent.parent.parent / "doc-tools",
+    ))
+    parsers_dir = doc_tools_root / "doc_tools" / "parsers"
+    if not parsers_dir.exists():
         pytest.skip(
-            "doc_tools.parsers.s1000d_ingest not importable. This test runs in "
-            "the doc-tools-aware environment (CI guard build, or local with "
-            "doc-tools on PYTHONPATH)."
+            f"doc-tools parsers dir not found at {parsers_dir}. Set "
+            f"DOC_TOOLS_REPO=/path/to/doc-tools to point at the right place."
         )
+
+    # Synthesize a doc_tools.parsers namespace package so the
+    # `from doc_tools.parsers.mil_info_code_map import ...` line in
+    # s1000d_ingest resolves without running doc_tools/__init__.py.
+    import types
+    pkg_root = types.ModuleType("doc_tools")
+    pkg_root.__path__ = [str(doc_tools_root / "doc_tools")]
+    pkg_parsers = types.ModuleType("doc_tools.parsers")
+    pkg_parsers.__path__ = [str(parsers_dir)]
+    sys.modules.setdefault("doc_tools", pkg_root)
+    sys.modules.setdefault("doc_tools.parsers", pkg_parsers)
+
+    def _load(modname: str, filename: str):
+        spec = importlib.util.spec_from_file_location(
+            modname, parsers_dir / filename,
+        )
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    _load("doc_tools.parsers.mil_info_code_map", "mil_info_code_map.py")
+    return _load("doc_tools.parsers.s1000d_ingest", "s1000d_ingest.py")
 
 
 # ---------------------------------------------------------------------------
