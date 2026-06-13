@@ -117,6 +117,88 @@ Nothing was changed in the substrate by tonight's A3 attempt:
 The asymmetric `output_uri` compact form stays in engine source as
 explicit Session-2-dependent debt with a now-named root cause.
 
+### Post-A1 18/18 confirmed real (architect's soft-claim firmup)
+
+The A1 close noted "matrix still 18/18; sync c2d7fb73 crashed before
+Neo4j" — a sync crashing alongside a green matrix is the precise
+shape that becomes next week's "wait, was that green ever true?"
+Single-Cypher verification:
+
+```
+provider                                 n_edges  with_tool_urn
+engine_a                                       8              8
+engine_a_restate_analyst                       1              1
+engine_d                                       1              1
+engine_da_data_analyst                         1              1
+engine_e                                       1              1
+engine_e_neo4j_expert                          1              1
+engine_e_neo4j_expert_procedure_step           1              1
+engine_w_weaviate_expert                       1              1
+```
+
+15 saga edges across 8 distinct providers, every one carrying
+`_tool_urn`. The matrix's compat-walk reaches all of them. The
+failed Dagster `sync_jena_to_neo4j` run (c2d7fb73) crashed at the
+input-load step — it never touched Neo4j. The VirtualObject saga
+writes Neo4j+Weaviate **directly** (that's its whole point and
+that path works); the Dagster sync assets are the *separate*
+unwired path. The matrix is genuinely the post-A1 state.
+
+### DAG-fix decision: Option 3 (sharpened from architect's review)
+
+The architect rejected the agent's "cleanest" framing of Option 1
+and made the case for Option 3 explicitly. Recording so it sticks:
+
+- **Option 1** (make `sync_jena_to_neo4j` depend on
+  `ingest_ontology_to_jena`): overloads one sync asset with two
+  upstream sources that have **different shapes and failure modes**
+  (XML extraction vs TTL parse). A failure in either now reads as
+  a failure in the shared sync. Couples two paths that should be
+  observable independently.
+- **Option 2** (in-asset N10S call inside `ingest_ontology_to_jena`):
+  collapses two distinct operations (semantic store write +
+  runtime graph write) into one asset, removing the seam where a
+  partial failure would be visible. **Same anti-pattern as the
+  pre-v0.2 gateway** that hid the substrate write — exactly what
+  the architecture spent this month retiring.
+- **Option 3** (new `sync_jena_ontologies_to_neo4j` asset depending
+  ONLY on `ingest_ontology_to_jena`): TTL→Neo4j becomes a
+  **first-class observable pipeline stage** with a single, clear
+  upstream. The docs phase's `mil_extension.ttl`, the eventual 614
+  TTLs, and every future domain all flow through one
+  testable asset whose only job is "TTL classes reach the runtime
+  graph." Modular AND honest — the modularity here means "the fix
+  generalizes and stays observable," which is the property every
+  other architectural decision this month optimized for.
+
+**Decision: Option 3.** Locked. The doc-tools edit lands in
+Session 2.
+
+### Concrete acceptance test for the bootstrap rehearsal
+
+The Session-2 fresh-bootstrap rehearsal had a vague form ("run the
+matrix on a fresh cluster"); tonight's finding sharpens it to a
+single falsifiable assertion that's the real definition of
+deployable:
+
+> **Ingest a TTL with a class that has NO historical N10S artifact
+> and NO Phase 5 Cypher provenance — a class that has only ever
+> existed in a TTL — and assert it materializes in Neo4j at
+> full-IRI form where the resolver looks.**
+
+Nothing has ever verified this. The 3 mesh:* full-IRI nodes that
+DO exist in Neo4j today are historical (mystery notebook + Phase 5).
+If TTL→Neo4j works for a class with no other provenance, then it
+works for all of them, and the work-cluster deploy is de-risked at
+its deepest gap. If it fails, the next layer of the same problem
+is named — still in the cheap venue.
+
+`mil_extension.ttl` is the natural carrier for this test: brand-new
+TTL, never ingested anywhere, full-IRI from day one. Its first
+ingest is **both** the start of the docs phase (B1) AND the
+sharpest possible bootstrap-test for the Option-3 fix. Two
+deliverables, one ingest.
+
 ### Architect's prediction discipline holding (again)
 
 Two predictions, two cheap-venue catches, both before the work
