@@ -3,6 +3,131 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-13 Session-2 close — keystone delivered, A3 done end-to-end, deployability proven
+
+### The keystone shipped
+
+The Option-3 DAG fix landed and the architect's sharp acceptance test
+passed exactly as named:
+
+> *"Ingest a TTL with a class that has NO historical N10S artifact
+> and NO Phase 5 Cypher provenance — a class that has only ever
+> existed in a TTL — and assert it materializes in Neo4j at full-IRI
+> form where the resolver looks."*
+
+The new `sync_jena_ontologies_to_neo4j` asset (doc-tools `5c185fb`,
+after a `00d0f2c` first attempt revealed three layered bugs in n10s)
+took `mil_extension.ttl` and emitted all 10 declared classes into Neo4j
+at canonical full-IRI form with `domain='MIL'` and
+`synced_by='sync_jena_ontologies_to_neo4j'`. Of those 10, **5 had no
+historical artifact** (`mesh#DescriptiveDataModule`,
+`mesh#ProcedureDataModule`, `mesh#FaultIsolationDataModule`,
+`mesh#IllustratedPartsDataModule`, `mesh#Diagram`) — the sharp form
+satisfied.
+
+### The Session-2 first attempt is itself the lesson
+
+The first attempt at the asset used `n10s.rdf.import.fetch` and
+"succeeded" while importing **zero** new classes. The forensic dig
+exposed three layered failures:
+
+1. **Wrong Fuseki SPARQL endpoint path.** Asset used
+   `{jena_base}/{jena_ds}/query`; Fuseki returns 404 there. The
+   actual endpoint is `/{ds}/sparql` (or the default `/{ds}` root).
+   The existing `sync_jena_to_neo4j` (XML pipeline) has the SAME bug
+   in the SAME line — separate finding, separate ticket.
+2. **n10s silent-zero failure mode.** `n10s.rdf.import.fetch` returns
+   `terminationStatus=OK` with `triplesLoaded=0` when the fetch
+   HTTP-errors. Dagster reports green. Substrate is untouched. The
+   exact failure shape the standing-guard discipline names as
+   "green means nothing."
+3. **:Resource vs :OntologyClass label collision.** Even with the
+   URL fixed, n10s would have MERGE'd `:Resource` nodes whose URIs
+   collide with the historical direct-load `:OntologyClass` nodes —
+   no shared label, so MERGE creates duplicates and identity-by-URI
+   is split across two labels.
+
+The rewrite drops n10s entirely. Extract classes via rdflib from
+the same MinIO source `ingest_ontology_to_jena` already parses;
+emit direct MERGEs by URI. Idempotent. Preserves any rich
+properties the historical direct-load shape established
+(`ingest_run_id`, `source_ontology`, `provenance`, `ingested_at`).
+Three discipline gates added:
+- Zero-classes check before MERGE.
+- Read-back verification after MERGE.
+- Loud raise on any of: S3 fetch fail, RDF parse fail, MERGE fail,
+  readback mismatch.
+
+This is the architect's "first-class observable seam" point made
+operational. The seam isn't just architecturally named — its
+contract is now verified by the asset itself at every run.
+
+### A3 resume — mechanical, as predicted
+
+With the keystone done, A3 proceeded exactly as the architect's
+clean path promised — fold, redeploy, validate via Contract D +
+read-back, cleanup:
+
+| Step | Result |
+|---|---|
+| 1. Re-ingest `mesh_system.ttl` via new asset | 22 canonical `mesh#*` OntologyClass nodes materialized |
+| 2. Fold 13 source declarations | engine_a × 9 (8 catalog outputs + analyzeWithCodeAgent), engine_o × 1 (analyzeDataset), engine_d × 2 (resolveInstance input + output), engine_e × 2 (resolveInstance input + output) — all to `http://invincible-agent/mesh#*` canonical form (`a3ad843`) |
+| 3. Redeploy 5 engines | 14 v0.2 saga registrations, each through Contract D + read-back; zero rejects |
+| 4. Matrix verify | **18/18 in 358s** |
+| 5. Snapshot + DELETE OLD compact-output edges | 12 edges removed; snapshot at `c:/tmp/a3_compact_cleanup_snapshot_20260612.txt` |
+| 6. Substrate guards | **9/10 green** (1 pre-existing red: compact-spine subClassOf debt) |
+| 7. Matrix re-verify post-cleanup | **18/18 in 360s** |
+
+### What this means for the work-cluster deploy
+
+The architect's "Bite 2" prediction (asymmetric source declarations
+Contract-D-reject on fresh cluster) is now retired. Every engine
+source declaration references a canonical full-IRI class that the
+canonical pipeline can reproduce on any cluster the pipeline runs
+against. The asymmetric compact-output debt the Session-1 audit
+deliberately left behind is gone.
+
+The remaining work-cluster considerations the architect named:
+
+| Bite | Status |
+|---|---|
+| 1. Prime script stale (DAG path) | **CLOSED**: TTL→Neo4j wired; mil + mesh proven |
+| 2. Asymmetric declarations Contract-D-reject | **CLOSED**: 13 folded + 22 canonical classes materialized |
+| 3. Cluster-state stragglers | Still on the list: prime-script modernization (next), env knobs verification (Session 3), DataHub asset names (work-cluster-specific) |
+
+### Source-substrate reconciliation — the standing rule fully operational
+
+ADR-0006 §Addendum's post-v0.2 rule ("substrate fixes that bypass
+engine declarations are forbidden") is now operationally true for
+ontology classes too: the canonical pipeline owns the
+:OntologyClass MERGE seam, source declares the engine's input/output
+URIs, the saga binds verbs through Contract D + read-back. No
+direct-Cypher path remains as either a legitimate option or a
+silent failure mode.
+
+The Session-1 prediction discipline holds: every "wrong" prediction
+or attempt this arc caught a real defect in the cheap venue. The
+first n10s attempt's silent zero was the sandbox doing its
+risk-mitigation job — finding the gap before the work-cluster
+deploy would have.
+
+### Architect's standing list — Session-2 disposition
+
+- ✅ Keystone DAG fix (Option 3)
+- ✅ Bootstrap acceptance test
+- ✅ A3 resume end-to-end
+- ✅ Substrate guards back to 9/10 (1 pre-existing)
+- ⏳ Prime-script modernization (next)
+- ⏳ Fresh-bootstrap rehearsal (next)
+- ⏳ B-track scaffolding (B2 with bicycle S1000D test corpus)
+- ⏳ Session 3 prep + deploy
+
+The work-cluster deploy is now de-risked on what the architect named
+as its deepest gap. The remaining items are mechanical (prime-script
+modernization), demonstrational (fresh-bootstrap rehearsal), or
+forward-track (B2's docs ingest pipeline, ready to consume the
+now-whole canonical pipeline).
+
 ## 2026-06-13 late close — A3 sweep halted at step 1; DAG-wiring break is the Session-2 prereq
 
 Tonight ran the architect's Session-1 batch: A1 (Restate VirtualObject
