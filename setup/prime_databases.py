@@ -156,15 +156,22 @@ CANONICAL_TTL_MANIFEST = [
         "url": "https://www.semanticstep.org/sites/default/files/2018-01/s3kl_0.ttl",
     },
 
-    # ----- LAYER 3: IDP (data-engineering catalog / lineage) -----
+    # ----- LAYER 3: DATA_ENGINEERING (idp catalog / lineage) -----
+    # The semantic domain is DATA_ENGINEERING, not IDP.
+    # The resolver queries with semantic domain names (the architect's
+    # Step-1 explicit_domain lesson, validated by a fresh-bootstrap
+    # rehearsal that surfaced this exact bug shape — "domain matches
+    # path, not what the resolver actually queries with" gives
+    # silent UNKNOWN cascades). idp:* classes are the canonical
+    # catalog/lineage vocabulary for data-engineering questions.
     {
-        "domain": "IDP",
+        "domain": "DATA_ENGINEERING",
         "name": "PROV-O",
         "s3_key": "idp/PROV-O.ttl",
         "url": "https://www.w3.org/ns/prov-o.ttl",
     },
     {
-        "domain": "IDP",
+        "domain": "DATA_ENGINEERING",
         "name": "idp_extension",
         "s3_key": "idp/idp_extension.ttl",
         "url": "https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/idp_extension.ttl",
@@ -559,7 +566,7 @@ def main() -> None:
         "  - If you did NOT pass --trigger-ingest, fire ingest_ontology_job from the "
         "Dagster UI (or wait for the sensor to auto-detect uploads).\n"
         "  - After ingest, verify with: cypher MATCH (c:OntologyClass) WHERE c.domain "
-        "IN ['MAINTENANCE','MIL','MESH','IDP','SUSTAINMENT'] RETURN c.domain, count(c)\n"
+        "IN ['MAINTENANCE','MIL','MESH','DATA_ENGINEERING','SUSTAINMENT'] RETURN c.domain, count(c)\n"
         "  - Then deploy engines (Helm) and run the routing matrix to confirm "
         "deployability."
     )
