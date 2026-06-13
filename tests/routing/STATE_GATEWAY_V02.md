@@ -3,6 +3,136 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-13 B3 close — generality gate certified, Phase-5-prophecy third occurrence banked
+
+### What landed
+
+DMC resolution capability shipped as a SECOND registration on
+Engine E (not a standalone service). Three registrations, two
+engines — engine_d (DataHub catalog), engine_e (Neo4j equipment),
+engine_e_dmc (Neo4j DMCs). The architect's "capability lives with
+data owner" principle made concrete: the phone book for instances
+in Neo4j is a second endpoint on the engine that already owns the
+graph, not a new pod that reaches back into it.
+
+### The before/after — the cleanest in the project's history
+
+Same query, sandbox cluster, pre→post B3:
+
+| Field | BEFORE (pre-B3) | AFTER (B3 + Engine O fix) |
+|---|---|---|
+| `instance_resolved` | false | **true** |
+| `instance_match` | empty | **exact** |
+| `instance_n` | 0 | **1** |
+| `instance_provider` | (unset) | **engine_e_dmc** |
+| `instance_score` | (unset) | **1.0** |
+| `instance_label` | (unset) | **NASAMS Launcher Canister** |
+| `resolved_uri` | `MRO/WorkInstruction` (LLM guess) | `mil#ProcedureDataModule` (substrate) |
+| `confidence_score` | 0.42 | 0.9 |
+| `instance_provider_outcomes` | 2 (engine_d:0, engine_e:0) | **3** (engine_d:0, engine_e:0, **engine_e_dmc:1**) |
+
+The query was `"Tell me about DMC-SANDBOXRTX-B-72-30-10-00A-520A-A"`.
+B3 flipped `instance_resolved=false→true` against the LANDED
+architecture (Engine E's second capability, not the throwaway
+standalone service the agent built first then refactored away on the
+user's instinct).
+
+Prediction was written into the commit message BEFORE the probe ran;
+every field of the actual response matched. Predict-before-run
+discipline holding for the third arc in a row (orphan night, DAG
+break, this).
+
+### Phase-5-prophecy third occurrence (banked)
+
+The B3 probe initially returned `no_providers` after the Engine O
+restart that should have refreshed the provider cache. Diagnosis:
+Engine O's discovery Cypher hardcoded `mesh:InstanceIdentifier`
+(compact, pre-A3 form); Session 2's A3 migrated every edge to the
+canonical full IRI but missed this one URI; the in-memory
+`_INSTANCE_RESOLVERS_CACHE` had been populated PRE-A3 with the
+compact node when it still had edges; the bug survived A3 because
+nothing invalidated the cache; **it died the moment B3 forced a
+fresh discovery query against the now-empty compact node.**
+
+Same shape as the previous two Phase-5-prophecy occurrences:
+- 1st (Session 2): A3 migrated edges but missed engine_a's source
+  declarations; v0.2 saga then faithfully materialized the stale
+  declarations. Detected when the matrix flipped 18/18 → 11/18
+  after orphan DELETE.
+- 2nd (Session 2): A3 migrated outputs for engine_e/engine_w but
+  source declarations still pointed at compact form. Detected by
+  the substrate guard.
+- 3rd (B3, this): A3 migrated edges but missed Engine O's
+  hardcoded discovery URI. Detected when the cache invalidated.
+
+### The cache was the mask, the restart closed it, the latent bug surfaced where it lived
+
+Masks rule one more time. The architect's framing: "a thing that
+looked load-bearing (the cache) was actually stale, and a thing that
+looked broken (B3) was actually the agent that exposed the real
+defect."
+
+B3 isn't a bug. B3 is the agent that closed the cache that was
+masking A3's miss. Identical disposition to the orphan-edge night
+(B3 was the "DELETE that fired the matrix regression" — except this
+time the regression was a pre-existing one we were finally seeing).
+
+### The guard that earned its existence
+
+The original `test_b3_engine_o_unchanged.py` checked byte-identity
+between B2-baseline (68fc77e) and HEAD. The Engine O fix would have
+failed it. The architect's reframe (article's distinction between a
+guard's literal trigger and its intent):
+
+  Old (byte-identity proxy):
+    "agent_fleet/ontology_service/ has zero file changes between
+    baseline and HEAD"
+
+  New (intent-direct):
+    1. Discovery Cypher walks all edges from the CANONICAL InstanceIdentifier
+       node, naming no specific provider (provider-agnostic by structure)
+    2. Fan-out is loop-shaped over discovered providers, no
+       if-provider==X branching
+    3. No file under agent_fleet/ontology_service/ contains a hardcoded
+       resolveInstance provider name (engine_d / engine_e / engine_e_dmc / …)
+    4. NEW class guard — generalizes the lesson: no engine source contains a
+       hardcoded COMPACT-form URI for a class that has a canonical full-IRI
+       form in the substrate. Migration scripts + state docs allowlisted.
+
+### Class guard caught 4th and 5th occurrences on first run
+
+The new class guard immediately found two more A3-miss occurrences
+in source — `restate_analyst/main.py:304` and
+`utils/mesh_registration.py:34` (both `"mesh:AgentResponse"`
+hardcoded as compact, while the substrate has the canonical full-IRI
+form post-A3). Fixed in the same commit. These would have
+reproduced the same cache-invalidates-and-routing-dies failure mode
+on the next restart.
+
+Same shape as the coverage guard generalizing the orphan-edge fix:
+**a guard that catches the CLASS, not just the instance.**
+
+### What this proves about the generality claim
+
+Three registrations, two engines, zero provider-specific Engine O
+logic. New providers plug in via the substrate edge alone — Engine O
+iterates the cache, fans out, returns whichever provider speaks.
+
+The git-diff for B3 ISN'T empty (we changed Engine O for the
+A3-omission fix). But the architect's reframed gate asks the right
+question and gets the right answer: **no provider-specific change
+was required to onboard engine_e_dmc.** The fix was a Session-2
+cleanup that was load-bearing for ANY cache invalidation, not
+specific to B3.
+
+The instance-resolution design certified general by construction
+under the right gate.
+
+### Auto-memory updated
+
+- [B3 DMC capability shipped on Engine E](C:/Users/cnogr/.claude/projects/c--Users-cnogr-git-iagent-mesh-sdk/memory/project_b3_done.md) — instance-resolution generality gate's third proof.
+- [Phase-5-prophecy third occurrence](C:/Users/cnogr/.claude/projects/c--Users-cnogr-git-iagent-mesh-sdk/memory/project_phase5_third_occurrence.md) — A3-miss in Engine O's discovery Cypher, masked by cache, surfaced by B3 restart.
+
 ## 2026-06-13 architect reframe of B2's close — three observations worth banking
 
 The architect's reading of B2's three live `/resolve` probes turned the
