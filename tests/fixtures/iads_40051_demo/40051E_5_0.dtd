@@ -1,0 +1,3848 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<!--DOCUMENTATION
+*******************************************************************************
+**       F O R M A L   P U B L I C   I D E N T I F I E R   ( F P I )
+**
+** <!DOCTYPE production PUBLIC "-//USA-DOD//DTD MIL-STD-2361 TM 
+**   Assembly REV E 5.0 20131101//EN" SYSTEM "production.dtd">
+*******************************************************************************
+-->
+<!--  P A R S E   C E R T I F I C A T I O N
+*******************************************************************************
+** This DTD was sucessfully parsed with the following parsers
+** Oxygen 14.1
+** XMLSpy 2011 
+** Epic version 5.4
+** Epic version 6.0
+*******************************************************************************
+-->
+<!--CHANGE HISTORY 
+*******************************************************************************
+** Version 5.0 of this DTD coincides with Revision B to MIL-STD-40051-1 and
+** MIL-STD-40051-2 dated 30 November 2012   This is DTD incorporates all changes made in the version 
+** 4.12 DTD.  All comments of prior changes have been deleted.
+*******************************************************************************
+-->
+
+<!--
+*******************************************************************************
+** Revision E 5.0 for MIL STD 40051-1B/2B
+****************************************************************************
+CHANGE E.00
+ 
+** 001. Per LOGSA attribute CORRECTED added to Element MALFUNC to allow for troubleshooting
+** to indicate that the task or problem are completed and corrected.
+** <!ELEMENT malfunc (%text_ent;)*>
+** <!ATTLIST malfunc
+**   label (symptom | malfunction | corrected) #REQUIRED
+**   faultcode CDATA #IMPLIED
+**   %applidatt; >   [30 OCT 2013 - TOG]
+**
+** 002. Per LOGSA direction added applicable IDREFS  #IMPLIED to ELEMENT pi.item  [30 OCT 2013 - TOG]
+
+** 003. Per Mil-STD 40051-1B/2B 4.9.21.2 ICON-SET changed to add an ID attribute that would allow linking. [30 OCT 2013 - TOG]
+
+** 004. Per Mil-STD 40051-1B/2B 4.9.21.2 SYMBOL changed to add an ID attribute that would allow linking. [30 OCT 2013 - TOG]
+
+** 005. Per LOGSA and MIL-STD 40051-1B direction, hand receipt manual is included in the
+** IETM it must appear in the supporting information chapter (<sim>). Created WP for handreceipt [30 OCT 2013 - TOG]
+
+** 006. Updated ENTITY % titldtextproc "((proc)+ to allow one or more PROC [30 OCT 2013 - TOG]
+
+** 007. Updated ELEMENT FLYABLE and INITIAL to allow one or more PROC [30 OCT 2013 - TOG]
+
+** 008. Updated ELEMENT bdar-repair-proc; bdar-manuitem; bdar-repair; to allow one or more PROC [30 OCT 2013 - TOG]
+
+** 009. Updated ELEMENT ENTRY; to allow one or more PROC [30 OCT 2013 - TOG]
+
+** 010. Updated ELEMENT <intermediate> updated to allow one or more PROC   [30 OCT 2013 - TOG]
+
+** 011. Updated ELEMENT <pmiwp> updated to allow one or more PROC   [30 OCT 2013 - TOG]
+
+** 012. Updated ELEMENT <loopaction> updated to allow one or more PROC   [30 OCT 2013 - TOG]
+
+** 013. Updated ELEMENT <manuitem> updated to allow one or more PROC   [30 OCT 2013 - TOG]
+
+** 014. Updated ELEMENT <inspect> to allow one or more PROC followed by defect.tab to 
+** keep the procedure  together with the associated table  [30 OCT 2013 - TOG]
+
+** 015. Per LOGSA direction, ELEMENT <ppmgeninfowp> updated create a geninfo type work package with no 
+** procedures or tasks. [30 OCT 2013 - TOG]
+
+** 016. Per LOGSA and MIL STD direction, ELEMENT <overallsystem> updated to include pmcsintrowp followed by 
+** pmcswp and they are optional [30 OCT 2013 - TOG]
+
+** 017. Per LOGSA and MIL STD direction, ELEMENT <supitemwp> updated to include coei followed by 
+** bii and they are optional [30 OCT 2013 - TOG]
+
+** 018. Per LOGSA and MIL STD direction, ELEMENT <blank_form> removed [30 OCT 2013 - TOG]
+
+** 019. Per LOGSA and MIL STD direction, ELEMENT <opusualwp> to allow one or more <opertsk> task per WP [25 NOV 2013 - TOG]
+
+** 020. Per LOGSA and MIL STD direction, ELEMENT <opunuwp > to allow one or more <opunutsk> task per WP [25 NOV 2013 - TOG]
+
+** 021. Per LOGSA and AMCOM  The attribute origin - branchto was changed to IMPLIED [25 NOV 2013 - TOG]
+
+** 022. Per LOGSA and MIL STD direction Changed ELEMENT <(pmcsstep1> by adding (pmcsstep3|pmcsstep3-alt)*  [25 NOV 2013 - TOG]
+
+** 023. Per LOGSA and MIL STD direction Changed teref-group ELEMENT and added teref-group attribute with appliatt entity  [25 NOV 2013 - TOG]
+
+** 024. Per LOGSA and MIL STD direction Changed test ELEMENT and added test attribute with appliatt entity  [25 NOV 2013 - TOG]
+
+** 025. Per LOGSA and MIL STD direction added RANDLIST to the warning, caution and note as an option to display multiple WCNs under one heading  [25 NOV 2013 - TOG]
+
+** 026. Per LOGSA and MIL STD direction ELEMENT <wtloadwp > to allow one or more task per WP by allowing weighinst to follow formchart 25 NOV 2013 - TOG]
+
+** 027.  Per LOGSA and MIL STD Updated ELEMENT <emergencywp> updated to allow one or more <emergency> per work package   [25 NOV 2013 - TOG]
+
+** 028.  Per LOGSA direction, updated ELEMENT maintwp to allow more then one task (maintsk) per work package. [25 NOV 2013 - TOG]
+
+** 029.  Per LOGSA, ARDEC and AMCOM Changed initial setup in <genwp> to OPTIONAL to work better with DMWR and AMMO [6 DEC 2013 - TOG]
+
+** 030.  Per LOGSA, ARDEC and AMCOM Updated ELEMENT <dmwr_ammo> to allow ppmgeninfowp to be OPTIONAL. [6 DEC 2013 - TOG]
+
+** 031.  Per LOGSA, ARDEC and AMCOM Updated ELEMENT <dmwr_qarwp> to allow initial_setup to be OPTIONAL. [6 DEC 2013 - TOG]
+
+** 032.  Per LOGSA, ARDEC and AMCOM Updated ELEMENT <dmwr_introwp> to add <intro> to allow general information before work_planning [6 DEC 2013 - TOG]
+
+** 033.  Per LOGSA, AMCOM Updated ENTITY % data; to add graphic as an optional element to allow placing figures in ctrlind [10 DEC 2013 - TOG]
+
+** 034. Updated ENTITY % changelevel to change attributes INSCHLVL values to (0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 )  '0'  and 
+            delchlvl (0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 )  '0'. This gives the write the opportunity to place the change number in any 
+			element and the stylesheet can key in one the value and display proper CHANGE BARS where needed.[10 DEC 2013 - TOG]
+
+** 035. Per LOGSA and MIL-STD 40051-1B direction, Updated element <hookup> to allow for either a <para or multiple <proc> [16 DEC 2013 - TOG]
+
+** 036. Per LOGSA and MIL-STD 40051-1B direction, The -1B that now allows <ammo> to be in the framed manual.  [16 DEC 2013 - TOG]
+
+** 037. Per LOGSA and MIL STD 40051-1B/2B The standard only allows a single ?initial setup? 
+			and follow on maintenance should be undoing any intial setup and thus only be allowed once. So followon.maintsk 
+			is removed from maintsk and placed in maintwp. [30 DEC 2013 - TOG]
+
+** 038   Per LOGSA direction, ELEMENT <rear> removed blank_form as it is no longer authorized [30 DEC 2013 - TOG]
+-->
+
+
+
+
+
+<!-- ENTITY DECLARATIONS
+*******************************************************************************
+**             E X T E R N A L   E N T I T Y   I N C L U S I O N 
+**
+**     Graphic and Multimedia non-XML Notation types
+**     ISO Character sets
+*******************************************************************************
+-->
+<!ENTITY % notationset PUBLIC "-//DOD-USA//ENTITIES MIL-STD-2361 Notation 
+Definitions REV E 5.0 20131101//EN" "charent/notation.ent">
+%notationset;
+
+<!ENTITY % characterset PUBLIC "-//DOD-USA//ENTITIES MIL-STD-2361 Unicode 
+Character Sets REV E 5.0 20131101//EN" "charent/character.ent">
+%characterset;
+
+<!ENTITY % selection_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 Selection Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/selectboil.ent">
+%selection_boilerplate;
+
+<!ENTITY % editable_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 Editable Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/editboil.ent">
+%editable_boilerplate;
+
+<!ENTITY % prod_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 PRODUCTION Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/prodboil.ent">
+%prod_boilerplate;
+
+<!ENTITY % gim_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 GIM Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/gimboil.ent">
+%gim_boilerplate;
+
+<!ENTITY % mim_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 MIM Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/mimboil.ent">
+%mim_boilerplate;
+
+<!ENTITY % pim_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 PIM Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/pimboil.ent">
+%pim_boilerplate;
+
+<!ENTITY % sim_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 SIM Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/simboil.ent">
+%sim_boilerplate;
+
+<!ENTITY % dim_boilerplate PUBLIC "-//USA-DOD//ENTITIES MIL-STD-2361 DIM Boilerplate REV E 5.0 20131101//EN" "boilerplate1B/dimboil.ent">
+%dim_boilerplate;   
+
+<!--DOCUMENTATION
+*******************************************************************************
+**              E N T I T Y   A T T R I B U T E    D E F I N I T I O N S
+**
+**   Common attribute type groups used in the DTD
+*******************************************************************************
+-->
+<!ENTITY % secur " security  (uc | fouo | c | s | ts )  #IMPLIED">
+
+<!ENTITY % graphicunit " unitmeasure  (mm | cm | px | in | pt | pi )  'in'">
+
+<!ENTITY % maintlevel "crew | operator | maintainer | below_depot | asb | amc | tasmg 
+        | depot" >
+        
+<!ENTITY % referencetype "tm | sc | wp | test | task | step1 | paragraph | 
+        figure | table | part | document | setup.item | frame.help | program | 
+        multimedia | hotspot | pageno">
+
+<!ENTITY % yesorno "(yes | no) #IMPLIED">
+
+<!ENTITY % yes_att "(yes | no)  'yes'">
+
+<!ENTITY % no_att "(yes | no)  'no'">
+
+<!ENTITY % graphicatt " boardno     ENTITY  #REQUIRED
+             reprowid    CDATA   #IMPLIED
+             reprodep    CDATA   #IMPLIED
+             %graphicunit;
+             hscale      CDATA   #IMPLIED
+             vscale      CDATA   #IMPLIED
+             scalefit     (yes | no )  #IMPLIED
+             alt         CDATA   #IMPLIED">
+
+<!--DOCUMENTATION
+*******************************************************************************
+**                         E N T I T Y   A T T R I B U T E S
+**
+**   Common attribute groups used in the DTD
+*******************************************************************************
+-->
+<!ENTITY % idrefs " id       ID      #IMPLIED
+           idref    IDREFS  #IMPLIED
+           assocfig IDREFS  #IMPLIED">
+
+<!ENTITY % refs " idref    IDREFS  #IMPLIED
+            assocfig IDREFS  #IMPLIED">
+
+<!-- CHANGE E 00 - 10 DEC 2013 TOG
+*******************************************************************************
+ ** Updated ENTITY % changelevel to change attributes INSCHLVL values to (0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 )  '0'  and 
+ ** delchlvl (0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 )  '0'. This gives the write the opportunity to place the change 
+ ** number in any element and the stylesheet can key in one the value and display proper CHANGE BARS where needed.
+*******************************************************************************
+-->
+<!ENTITY % changelevel " inschlvl  (0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 )  '0' 
+                delchlvl (0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 )  '0'
+                comment   CDATA   #IMPLIED
+                changeref IDREFS  #IMPLIED">
+
+<!ENTITY % bodyidatt " %changelevel;
+                    %idrefs;
+                    skilltrk    CDATA  #IMPLIED
+                    %secur;">
+
+<!ENTITY % bodyatt " %changelevel;
+                 %refs;
+                 skilltrk    CDATA  #IMPLIED
+                 %secur;">
+
+<!ENTITY % frameatt " frame      (yes | no )  'no'
+                  %bodyidatt;">
+
+<!ENTITY % stdinfoatt " applicable IDREFS  #IMPLIED
+                    %bodyidatt;
+                     tocentry    (0 | 1 | 2 | 3 | 4 | 5 )  '1'">
+
+<!ENTITY % applidatt " applicable IDREFS  #IMPLIED
+   %bodyidatt;">
+
+<!ENTITY % setupatt " id          ID      #IMPLIED
+   applicable  IDREFS  #IMPLIED
+   %changelevel;">
+
+<!ENTITY % hcpesd " hcp  (yes | no )  'no'
+   esd  (yes | no )  'no'">
+
+<!ENTITY % qa " qa  (yes | no )  'no'">
+
+<!ENTITY % imatt " chap-toc   (yes | no )  'yes'
+   revno     CDATA  #REQUIRED
+   frame      (yes | no )  'yes'
+   chngno    CDATA  #REQUIRED
+   tocentry   (0 | 1 | 2 )  '1'
+   %bodyidatt;">
+
+<!ENTITY % taskatt " %hcpesd;
+   frame            (yes | no )  'yes'
+   tocentry         (0 | 3 | 4 | 5 )  '0'
+   date-time-stamp  (date | time | date-time )  #IMPLIED
+   %applidatt;">
+
+<!ENTITY % wpatt " wpno            ID     #REQUIRED
+   crewmember      CDATA  #IMPLIED
+   tocentry         (2 | 3 | 4 | 5 )  '2'
+   date-time-stamp  (date | time | date-time )  #IMPLIED
+   frame            (yes | no )  'yes'
+   army      (yes | no )  'no'
+   airforce  (yes | no )  'no'
+   navy      (yes | no )  'no'
+   marines   (yes | no )  'no'
+    fgc      CDATA  #IMPLIED
+   lsa-id   CDATA  #IMPLIED
+   wpseq    CDATA  #IMPLIED
+   insertwp CDATA  #IMPLIED
+   deletewp  (yes | no )  'no'
+   chngno   CDATA  #REQUIRED
+   changelvl   (0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 )  '0'
+   %bodyatt;">
+
+<!ENTITY % wplevel " level  (%maintlevel; )  #REQUIRED">
+
+<!--DOCUMENTATION
+*******************************************************************************
+**                   E N T I T Y   E L E M E N T 
+**
+**   Common element model groups used in the DTD
+*******************************************************************************
+-->
+<!ENTITY % partid "(partno, cageno)">
+
+<!ENTITY % alert "(warning*, csi.alert*, caution*, note*)">
+
+<!ENTITY % diagnostic-test_ent "comp-locator | diagnostic_initial | 
+        diagnostic_initial-alt | diagnostic_group | interaction">
+
+<!ENTITY % format "#PCDATA | emphasis | subscrpt | supscrpt">
+
+<!ENTITY % linkref "xref | extref | link">
+
+<!ENTITY % linkdata "%format; | %linkref; | help.info | indxref | term | 
+            term.def">
+
+<!-- CHANGE E 00 - 10 DEC 2013 TOG
+*******************************************************************************
+** As per AMCOM request Changed entity to add graphic as an option. This allows adding a small graphic in the ctrlind which will be helpful
+*******************************************************************************
+  --> 
+<!ENTITY % data "%linkdata; | callout | ftnote | ftnref | graphic">
+
+<!ENTITY % misc "ctrlind | ctrlind-val | dodac | lubricant | symbol | torque | 
+       voltage | null">
+
+<!ENTITY % text_ent "%data; | %misc; | change">
+
+<!ENTITY % list "seqlist | randlist | deflist">
+
+<!ENTITY % trimcontent "%text_ent; | internet | proponent | phone">
+
+<!ENTITY % p "para | specpara">
+
+<!ENTITY % para0_ent "para0 | para0-alt+">
+
+<!ENTITY % figtab "figure | figure-alt | table | table-alt">
+
+<!ENTITY % step "((%figtab;) | step1 | step1-alt)">
+
+<!--DOCUMENTATION
+*******************************************************************************
+**                         E N T I T Y   A T T R I B U T E S
+**
+**   Common attributes groups used in the DTD
+*******************************************************************************
+-->
+<!ENTITY % wpsetup "wpidinfo, initial_setup, %alert;, geninfo?">
+
+<!ENTITY % mixparagraph "(((note*, para)+, (%para0_ent;)*) | (%para0_ent;)+)">
+
+<!ENTITY % titldtext "(title, (%figtab;)*, %mixparagraph;)">
+
+<!ENTITY % extref_ent "extref | link">
+
+<!ENTITY % localref "xref | link">
+
+<!-- CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per request by AMCOM and LOGSA to allow one or more PROC 
+*******************************************************************************
+-->
+<!ENTITY % titldtextproc "((proc)+ | (%para0_ent;))">
+
+<!ENTITY % volumegroup "(volume | (vol-rear, volume?))?">
+
+<!-- CHANGE E 00 - 25 NOV 2013 TOG
+*******************************************************************************
+** Per request by AMCOM and LOGSA to allow random list in Warning, Caution, and
+** notes. 
+*******************************************************************************
+-->
+<!ENTITY % warning_ent "((icon-set+, signalword?)?, ((trim.para, (seqlist | randlist)?)+ | seqlist | randlist))">
+
+<!ENTITY % mimsupport "(manu_items_introwp, manuwp+)?, torquewp?, wiringwp*">
+
+<!ENTITY % optdwgreq "time.to.comp*">
+
+<!ENTITY % optspecenv "dwgreq?, %optdwgreq;">
+
+<!ENTITY % opteqpconds "specenv?, %optspecenv;">
+
+<!ENTITY % optref "eqpconds?, %opteqpconds;">
+
+<!ENTITY % optpersnreq "ref?, %optref;">
+
+<!ENTITY % optmtrlpart "persnreq?, %optpersnreq;">
+
+<!ENTITY % opttools "mtrlpart?, %optmtrlpart;">
+
+<!ENTITY % opttesteqp "tools?, %opttools;">
+
+<!ENTITY % statemanipulation_ent "statemanipulation | statemanipulation-alt">
+
+<!ENTITY % value "boolean | string | real | integer | fault">
+
+<!ENTITY % variable_ent "expression | variableref | %value; | nil">
+
+<!ENTITY % binop "eq | ne | lt | gt | le | ge | and | or | xor | concat | 
+     substring | plus | minus | times | divide | exponent | exp | idivide 
+     | modulus">
+
+<!ENTITY % unop "not | empty | factorial | sqrt | neg | trunc | float | 
+       index | defined | size">
+
+<!ENTITY % trigop "arccos | arcsin | arctan | cos | cosh | csc | csch | log 
+   | ln | sec | sech | sin | sinh | tan | tanh">
+
+<!ENTITY % variablescope "global | local">
+
+<!ENTITY % dialog_ent "dialog | dialog-alt">
+
+<!ENTITY % tsdata "(sysdesc?, (interconnect | testflow | funcdepend | 
+     schematic | comp-locator | harness-indx)*)">
+
+<!ENTITY % hookup_ent "hookup | hookup-alt+">
+
+<!ENTITY % disconnect_ent "disconnect | disconnect-alt+">
+
+<!ENTITY % chkeqpstdinfo "(crit.insp.tab | pecul.insp.tab)">
+
+<!ENTITY % paper.size " fit.paper.size  (pocket | logbook | standard | 
+      double )  'standard'">
+
+<!ENTITY % commondistreason "frgngvt | softwaredoc | crittech | adminops 
+    | specauth">
+
+<!ENTITY % ammo_ent "(wp.metadata?, wpidinfo, initial_setup, %alert;, geninfo?, 
+               (mark | ammo.handling | ammotype)+)">
+
+
+<!--DOCUMENTATION
+*******************************************************************************
+**                   E L E M E N T   C O N T E N T   M O D E L
+**
+**   Element content model definition 
+*******************************************************************************
+-->
+
+<!ELEMENT a.statement EMPTY>
+
+<!ELEMENT aal (title, (aal-category+ | aal-entry+))>
+<!ATTLIST aal  %frameatt; >
+
+<!ELEMENT aal-category (title, aal-entry+)>
+<!ATTLIST aal-category  %frameatt; >
+
+<!ELEMENT aal-entry (nsn+, dcpno, ui, qty)>
+<!ATTLIST aal-entry  %bodyidatt; >
+
+<!ELEMENT aalwp (wp.metadata?, wpidinfo, intro, aal)>
+<!ATTLIST aalwp  %wpatt; >
+
+<!ELEMENT abbrev (%titldtext;)>
+<!ATTLIST abbrev  %bodyidatt; >
+
+<!ELEMENT accept (%data;)*>
+<!ATTLIST accept  %bodyidatt; >
+
+<!ELEMENT acceptance (%titldtext;)>
+<!ATTLIST acceptance  %changelevel; >
+
+<!ELEMENT acceptqual (%text_ent;)*>
+
+<!ELEMENT accpt-rpbl-nonrpbl-entry (accept, repairable, nonrepairable)>
+<!ATTLIST accpt-rpbl-nonrpbl-entry  %applidatt; >
+
+<!ELEMENT action (%alert;, ((%step;)+ | %p;))>
+<!ATTLIST action  %bodyidatt; >
+
+<!ELEMENT actionreq (%text_ent;)*>
+<!ATTLIST actionreq  %applidatt; >
+
+<!ELEMENT address (servnomen?, street*, city, state, zip?, country?, phone*, 
+         internet*)>
+<!ATTLIST address  %bodyatt; >
+
+<!ELEMENT adjust (proc)+>
+<!ATTLIST adjust  %taskatt; >
+
+<!ELEMENT adminops EMPTY>
+<!ATTLIST adminops  distreason CDATA  #FIXED 'Administrative-Operational Use' >
+
+<!ELEMENT aftermessage (link)>
+
+<!ELEMENT aindx (title, trim.para?, col.title, col.title?, (alphaindx?, 
+       indexentry)*)?>
+<!ATTLIST aindx  %stdinfoatt; >
+
+<!ELEMENT align (proc)+>
+<!ATTLIST align  %taskatt; >
+
+<!ELEMENT alignproc (proc)+>
+<!ATTLIST alignproc  %taskatt; >
+
+<!ELEMENT alphaindx (#PCDATA)>
+
+<!--CHANGE E 00 16 DEC 2013 - TOG
+*******************************************************************************
+** the -1B that now allows <ammo> to be in the framed manual. 
+*******************************************************************************
+-->
+
+<!ELEMENT ammo ((paper.frnt, gim, %volumegroup;, (opim, %volumegroup;)*,
+			 (mim, %volumegroup;)+, dim, sim, rear) | (framed.frnt, gim, opim*, mim+, dim, sim, (da2028+, authent)))>            
+<!ATTLIST ammo  pubno       CDATA  #IMPLIED
+          maintitl    CDATA  #REQUIRED
+          maintlvls    (10 | 13 | 14 | 23 | 24 | 40 )  #REQUIRED
+          rpstl  (yes | no | only)   "no"
+          revno       CDATA  #REQUIRED
+          multivolume %no_att;    >
+
+<!ELEMENT ammo.defect (proc)+>
+<!ATTLIST ammo.defect  %taskatt; >
+
+<!ELEMENT ammo.handling (unpack | pack)>
+
+<!ELEMENT ammo.markingwp (%ammo_ent;)>
+<!ATTLIST ammo.markingwp  %wpatt; >
+
+<!ELEMENT ammomarkingcategory (ammo.markingwp+)>
+
+<!ELEMENT ammotype (name, (%p;)+)>
+
+<!ELEMENT ammowp (wp.metadata?, wpidinfo, initial_setup, (mark | ammo.defect | 
+                  ammo.handling | clean | paint)+)>
+<!ATTLIST ammowp  %wpatt; >
+
+<!ELEMENT ammunitioncategory (ammowp | ammo.markingwp | natowp)+>
+
+<!ELEMENT and EMPTY>
+
+<!ELEMENT answer (%text_ent; | para)*>
+<!ATTLIST answer  answerval  (yes | no | pass | fail |  true |  nottrue | 
+                                value | unantic )  #REQUIRED
+                    value     CDATA  #IMPLIED
+                    %bodyidatt; >
+
+<!ELEMENT applic_ref_list (applic+)>
+
+<!ELEMENT applic (name, (nsn?, (%partid;)?, (not?, (set | range | single))+))>
+<!ATTLIST applic  id         ID     #REQUIRED
+                    abbrevcode CDATA  #REQUIRED >
+
+<!ELEMENT applicability (#PCDATA)>
+
+<!ELEMENT arccos EMPTY>
+
+<!ELEMENT arcsin EMPTY>
+
+<!ELEMENT arctan EMPTY>
+
+<!ELEMENT areano (#PCDATA)>
+
+<!ELEMENT arm (proc)+>
+<!ATTLIST arm  %taskatt; >
+
+<!ELEMENT assem (proc)+>
+<!ATTLIST assem  %taskatt; >
+
+<!ELEMENT authent EMPTY>
+<!ATTLIST authent  %graphicatt; >
+
+<!ELEMENT author (name, proponent)>
+
+<!ELEMENT authorize_to_destroy (title, para)>
+<!ATTLIST authorize_to_destroy  %bodyidatt; >
+
+<!ELEMENT auxeqpwp (wp.metadata?, wpidinfo, initial_setup, (maintsk+ | proc+))>
+<!ATTLIST auxeqpwp  %wpatt; >
+
+<!ELEMENT auxiliarycategory (auxeqpwp+, %mimsupport;)>
+
+<!ELEMENT avail (title?, text, proponent, text)>
+
+<!ELEMENT avcompassem-group-2lvl (compassem, avqualify-2lvl+)>
+
+<!ELEMENT aviationcategory (surwp*, perseqpwp*, (pmiwp | lubewp | maintwp | 
+       gen.maintwp)+, orschwp, (manu_items_introwp, manuwp+)?, torquewp?, 
+       inventorywp?, storagewp*, wtloadwp+, wiringwp*)>
+
+<!ELEMENT avmac (title, avmac-group-2lvl+)>
+<!ATTLIST avmac  %bodyidatt; >  
+
+<!ELEMENT avmac-group-2lvl (groupno, ((compassem, avqualify-2lvl+) | 
+        avcompassem-group-2lvl+))>
+<!ATTLIST avmac-group-2lvl  %bodyidatt; >
+
+
+<!ELEMENT avmaintclass-2lvl ((o, f?, l?, d?) | (f, l?, d?) | (l, d?) | d)>
+
+<!ELEMENT avqualify-2lvl (maintfunc, avmaintclass-2lvl, terefs?, remarkrefs?)>
+
+<!ELEMENT b.statement ((%commondistreason; | proprietary | testeval | 
+                 cntrctperform | premature), reasondate, releaseagent)>
+
+<!ELEMENT back EMPTY>
+<!ATTLIST back  boardno     ENTITY  #IMPLIED
+                  reprowid    CDATA   #IMPLIED
+                  reprodep    CDATA   #IMPLIED
+                  %graphicunit;
+                  hscale      CDATA   #IMPLIED
+                  vscale      CDATA   #IMPLIED
+                  scalefit     (yes | no )  #IMPLIED
+                  alt         CDATA   #IMPLIED >
+
+<!ELEMENT baim (titlepg, damage-assesswp+)>
+<!ATTLIST baim  %imatt; >
+
+<!ELEMENT badtext (%text_ent;)*>
+
+
+<!ELEMENT bdar ((framed.frnt | paper.frnt), gim, baim, brim+, sim, rear?)>
+<!ATTLIST bdar  pubno      CDATA  #IMPLIED
+                  maintitl   CDATA  #REQUIRED
+                  revno      CDATA  #REQUIRED
+                  %paper.size;
+                  %secur; >
+
+<!ELEMENT bdarcategory (bdartoolswp?, explistwp, substitute-matwp)>
+
+
+<!ELEMENT bdartoolswp (wp.metadata?, wpidinfo, initial_setup?, intro, 
+       ((toolidlist, (intro, manuindx, bdar-manuitem+)?) | (manuindx, 
+       bdar-manuitem+)))>
+<!ATTLIST bdartoolswp  %wpatt; >
+
+<!ELEMENT bdar-combat-threat (%titldtext;)>
+<!ATTLIST bdar-combat-threat  %bodyidatt; >
+
+<!ELEMENT bdar-geninfowp (wp.metadata?, wpidinfo, bdar-std-practices,
+            bdar-task-resp, bdar-combat-threat?)>
+<!ATTLIST bdar-geninfowp  %wpatt; >
+
+<!ELEMENT bdar-limitation (title, text)>
+<!ATTLIST bdar-limitation  %bodyidatt; >
+
+<!ELEMENT bdar-manuitem (title, initial_setup, %alert;, (proc+ | (graphic | %p;
+      | step1 | figure | table | material-list | partdesc)+))>
+<!ATTLIST bdar-manuitem %bodyidatt;>
+ 
+ <!ELEMENT bdar-mtrl-tools (title, ((mtrlpart-setup-item+, tools-setup-item*) 
+     | tools-setup-item+))>
+<!ATTLIST bdar-mtrl-tools  %bodyidatt; >
+
+<!ELEMENT bdar-persn (title, bdar-persn-item+)>
+<!ATTLIST bdar-persn  %bodyidatt; >
+
+<!ELEMENT bdar-persn-item (persnreq-setup-item, time.to.comp)>
+<!ATTLIST bdar-persn-item  %bodyidatt; >
+
+<!--CHANGE E 00 30 OCT 2013 - TOG
+*******************************************************************************
+** updated element <bdar-repair > to support one or more <bdar-repair-proc>  requirements. 
+*******************************************************************************
+-->
+<!ELEMENT bdar-repair (title, geninfo, (bdar-repair-proc+ | bdar-repair-option))>
+<!ATTLIST bdar-repair  %bodyidatt; >
+
+<!--CHANGE E 00 30 OCT 2013 - TOG
+*******************************************************************************
+** updated element <bdar-repair-option > to support one or more <bdar-repair-proc>  requirements. 
+*******************************************************************************
+-->
+<!ELEMENT bdar-repair-option (title, para?, bdar-repair-proc+)>
+<!ATTLIST bdar-repair-option  %bodyidatt; >
+
+<!--CHANGE E 00 30 OCT 2013 - TOG
+*******************************************************************************
+** updated element <bdar-repair-proc > to support one or more <proc>  requirements. 
+*******************************************************************************
+-->
+<!ELEMENT bdar-repair-proc (bdar-limitation+, bdar-persn?, bdar-mtrl-tools?, 
+        proc+)>
+<!ATTLIST bdar-repair-proc  %bodyidatt; >
+
+<!ELEMENT bdar-std-practices (%titldtext;)>
+<!ATTLIST bdar-std-practices  %bodyidatt; >
+
+<!ELEMENT bdar-task-resp (%titldtext;)>
+<!ATTLIST bdar-task-resp  %bodyidatt; >
+
+<!ELEMENT bii ((figure+ | graphic+), biitab+)+>
+<!ATTLIST bii  %bodyidatt; 
+applicable IDREFS  #IMPLIED >
+
+<!ELEMENT bii-category (title, bii-entry+)>
+<!ATTLIST bii-category  %bodyidatt; >
+
+<!ELEMENT bii-entry (illno, (nsn, dcpno, ui, qty)+)>
+<!ATTLIST bii-entry
+  %bodyidatt; 
+   applicable IDREFS  #IMPLIED
+   >
+
+<!ELEMENT bii-opt (title, (bii-opt-category+ | bii-opt-entry+), 
+          on-board-spares-opt?)>
+
+<!ATTLIST bii-opt
+  %bodyidatt; >
+  
+<!ELEMENT bii-opt-category (title, bii-opt-entry+)>
+
+<!ATTLIST bii-opt-category
+  %bodyidatt; >
+  
+<!ELEMENT bii-opt-entry (itemno, nsn, graphic, dcpno, ui, qty)>
+<!ATTLIST bii-opt-entry
+  %bodyidatt; 
+   applicable IDREFS  #IMPLIED
+   >
+
+<!ELEMENT biitab (title, (bii-category+ | bii-entry+))>
+<!ATTLIST biitab  %bodyidatt; >
+
+<!ELEMENT bim (titlepg, bdar-geninfowp, damage-assesswp+, genrepairwp+, 
+       bdartoolswp?, substitute-matwp)>
+<!ATTLIST bim  %imatt; >
+
+<!ELEMENT binarymenu (precond?, enable?, prompt, yesstate, nostate)>
+<!ATTLIST binarymenu  %applidatt;
+                        answer     (yesno | truefalse | passfail )  'yesno'
+                        default    %yesorno;
+                        type       (radio | button | pulldown )  'radio'
+                        select     (single )  'single'
+                        flow       (list | inline )  'list'
+                        mandatory %yes_att;    >
+
+<!ELEMENT boi (%text_ent;)*>
+<!ATTLIST boi  %bodyatt; >
+
+<!ELEMENT boolean (true | false)>
+
+<!ELEMENT branchref EMPTY>
+<!ATTLIST branchref  textblockid IDREF   #REQUIRED
+                       branch      ID      #REQUIRED
+                       branchlabel CDATA   #IMPLIED
+                       branchfrom  IDREFS  #REQUIRED
+                       branchto    IDREFS  #REQUIRED >
+
+<!ELEMENT brim (titlepg, genrepairwp+)>
+<!ATTLIST brim  %imatt; >
+
+<!ELEMENT brk EMPTY>
+
+<!ELEMENT bulk_itemswp (wp.metadata?, wpidinfo, fncgrp, pi.item+)>
+<!ATTLIST bulk_itemswp  %wpatt; >
+
+<!ELEMENT button (prompt, (link | dialog))>
+
+<!ELEMENT c (#PCDATA)>
+
+<!ELEMENT c.statement ((%commondistreason;), reasondate, releaseagent)>
+
+<!ELEMENT cageno (#PCDATA)>
+
+<!ELEMENT calibration (proc+)>
+<!ATTLIST calibration  %taskatt; >
+
+<!ELEMENT calign (extconn | setconn | alignproc)>
+
+<!ELEMENT callout EMPTY>
+<!ATTLIST callout  id       ID     #IMPLIED
+                     numref   IDREF  #IMPLIED
+                     partref  IDREF  #IMPLIED
+                     assocfig IDREF  #REQUIRED
+                     label    CDATA  #IMPLIED >
+
+<!ELEMENT calref (%titldtext;)>
+<!ATTLIST calref  %bodyidatt; >
+
+
+<!-- CHANGE E 00 - 25 NOV 2013 TOG
+*******************************************************************************
+** Per request by AMCOM and LOGSA to allow random list in Warning, Caution, and
+** notes. 
+*******************************************************************************
+-->
+
+<!ELEMENT caution ((caution.group, caution.group+) | (icon-set*, ((trim.para, 
+       (seqlist | randlist)?)+ | seqlist | randlist)))>
+<!ATTLIST caution
+					  %bodyidatt; 
+					  applicable IDREFS  #IMPLIED >
+
+<!ELEMENT caution.group (icon-set*, ((trim.para, seqlist?)+ | seqlist))>
+<!ATTLIST caution.group  %bodyidatt; >
+
+<!ELEMENT certreq (%titldtext;)>
+<!ATTLIST certreq  %changelevel; >
+
+<!ELEMENT change (%data; | %misc;)*>
+<!ATTLIST change  %changelevel; >
+
+<!ELEMENT change.history (author, date, wp.status, reason, qualityassurance?)> 
+<!ATTLIST change.history id ID #IMPLIED >
+
+<!ELEMENT checked (%format;)*>
+
+<!ELEMENT checklistcategory (pmi-cklistwp+)>
+
+<!ELEMENT checkstep ((%step;)+, (indication, ((malfunc, (action | xref))+ 
+     | (action | xref)))+)>
+<!ATTLIST checkstep  %bodyidatt; >
+
+<!ELEMENT chgdate (#PCDATA)>
+<!ATTLIST chgdate  julian CDATA  #IMPLIED >
+
+<!ELEMENT chghistory (((pageno, pageno?) | (title, totnum.pages) | (wpno, 
+    wppages)), chgno)>
+<!ATTLIST chghistory  modified  (added | deleted | blank | none | changed )
+                      'changed' >
+
+<!ELEMENT chglist (trim.para, (chgpagelist | chgwplist)?)>
+<!ATTLIST chglist  label CDATA  #IMPLIED >
+
+<!ELEMENT chgno (#PCDATA)>
+
+<!ELEMENT chgpage (removepg, insertpg)>
+
+<!ELEMENT chgpagelist (title, title, chgpage+)>
+
+<!ELEMENT chgsheet (chgno, (title?, servnomen)+, city, state, chgdate, prtitle, 
+          (stitle, weapons_system?)?, notices, trim.para, chglist+, authent)>
+<!ATTLIST chgsheet  date      CDATA  #IMPLIED
+                      %bodyidatt; >
+
+<!ELEMENT chgvol (#PCDATA)>
+
+<!ELEMENT chgwplist (title, wpno+)>
+
+<!ELEMENT chkeqp (title, %alert;, geninfo?, figure*, (((%p;)+, ((%chkeqpstdinfo;)* | 
+      (proc+, %chkeqpstdinfo;)*)) | (%chkeqpstdinfo;)+ | (proc+, %chkeqpstdinfo;)+))>
+<!ATTLIST chkeqp  %taskatt; >
+
+<!ELEMENT chklist (coverpage, intro?, pshopchk.tab)>
+<!ATTLIST chklist  %bodyidatt; >
+
+<!ELEMENT choice (precond?, enable?, text, ((link | dialog)? | button*), 
+      (%statemanipulation_ent;)+)>
+<!ATTLIST choice  %applidatt;
+                    default %yesorno;    >
+
+<!ELEMENT city (#PCDATA)>
+<!ATTLIST city  %changelevel; >
+
+<!ELEMENT ckremarks (%text_ent;)*>
+<!ATTLIST ckremarks  %bodyidatt; >
+
+<!ELEMENT clean (proc+)>
+<!ATTLIST clean  %taskatt; >
+
+<!ELEMENT cntrctperform EMPTY>
+<!ATTLIST cntrctperform  distreason CDATA  #FIXED 'Contractor Performance 
+               Evaluation' >
+
+<!ELEMENT coei ((figure+ | graphic+), coeitab+)+>
+<!ATTLIST coei  %bodyidatt; >
+
+<!ELEMENT coeibiiwp (wp.metadata?, wpidinfo, intro, (coei | coei-opt), (bii | bii-opt))>
+<!ATTLIST coeibiiwp  %wpatt; >
+
+<!ELEMENT coei-category (title, coei-entry+)>
+<!ATTLIST coei-category  %bodyidatt; >
+
+<!ELEMENT coei-entry (illno, (nsn, dcpno, ui, qty)+)>
+<!ATTLIST coei-entry
+  %bodyidatt; 
+   applicable IDREFS  #IMPLIED
+   >
+
+<!ELEMENT coei-opt (title, (coei-opt-category+ | coei-opt-entry+), 
+          on-board-spares-opt?)>
+
+<!ATTLIST coei-opt
+  %bodyidatt; >
+
+<!ELEMENT coei-opt-category (title, coei-opt-entry+)>
+
+<!ATTLIST coei-opt-category
+  %bodyidatt; >
+ 
+<!ELEMENT coei-opt-entry (itemno, nsn, graphic, dcpno, ui, qty)>
+<!ATTLIST coei-opt-entry
+  %bodyidatt; 
+   applicable IDREFS  #IMPLIED
+   >
+
+<!ELEMENT coeitab (title, (coei-category+ | coei-entry+), on-board-spares?)>
+<!ATTLIST coeitab  %bodyidatt; >
+
+<!ELEMENT col.title (#PCDATA)>
+<!ATTLIST col.title  newline  (yes | no )  #IMPLIED >
+
+<!ELEMENT colspec EMPTY>
+<!ATTLIST colspec  colnum   CDATA    #IMPLIED
+                     colname  NMTOKEN  #IMPLIED
+                     align  (left | right | center | justify | char )  #IMPLIED
+                     charoff  CDATA    #IMPLIED
+                     char     CDATA    #IMPLIED
+                     colwidth CDATA    #IMPLIED
+                     colsep    (0 | 1 )  #IMPLIED
+                     rowsep    (0 | 1 )  #IMPLIED >
+
+<!ELEMENT common_part_ref EMPTY>
+<!ATTLIST common_part_ref  idref IDREF  #REQUIRED >
+
+<!ELEMENT compassem (name, typedes?)>
+<!ATTLIST compassem  %bodyidatt; >
+
+<!ELEMENT compassemgroup-2lvl (compassem, qualify-2lvl+)>
+
+<!ELEMENT compchklist (name, serialno?, daterec?, recfrom?, compname?, nsn?, 
+        (partno, cageno)* ,
+               qty?, qtyrec?, damage?)>
+<!ATTLIST compchklist  %bodyidatt; >
+
+<!ELEMENT compchklistwp (wp.metadata?, wpidinfo, initial_setup, intro, 
+           compchklist)>
+<!ATTLIST compchklistwp  %wpatt; >
+
+<!ELEMENT comp-item (title?, figure*, %mixparagraph;)>
+<!ATTLIST comp-item
+  applicable IDREFS  #IMPLIED
+  %bodyidatt; 
+>
+
+<!ELEMENT comp-locator (graphic)>
+<!ATTLIST comp-locator  %bodyidatt; >
+
+<!ELEMENT completed_test (%step;)*>
+
+<!ELEMENT compname (%text_ent;)*>
+
+<!ELEMENT compnt-assem-entry (eqpitem, accpt-rpbl-nonrpbl-entry+)>
+<!ATTLIST compnt-assem-entry  %applidatt; >
+
+<!ELEMENT component_spares (%para0_ent;)>
+<!ATTLIST component_spares  %bodyidatt; >
+
+<!ELEMENT concat EMPTY>
+
+<!ELEMENT condition (%data;)*>
+<!ATTLIST condition  %bodyatt; >
+
+<!ELEMENT config (trim.para?, config-setup-item+)>
+
+<!ELEMENT config-setup-item (name)>
+<!ATTLIST config-setup-item  applicable IDREFS  #REQUIRED >
+
+<!ELEMENT contententry (title, link?, sub-contententry?)>
+<!ATTLIST contententry  %idrefs;
+                          %secur; >
+
+<!ELEMENT contents (title, col.title, col.title, contententry+)?>
+<!ATTLIST contents  applicable IDREFS  #IMPLIED >
+
+<!ELEMENT contents-alt (contents)>
+
+<!ELEMENT copyrt (%titldtext;)>
+<!ATTLIST copyrt  %bodyidatt; >
+
+<!ELEMENT cos EMPTY>
+
+<!ELEMENT cosh EMPTY>
+
+<!ELEMENT cost (%titldtext;)>
+<!ATTLIST cost  %bodyidatt; >
+
+<!ELEMENT country (#PCDATA)>
+<!ATTLIST country  %changelevel; >
+
+<!ELEMENT cover (proc+)>
+<!ATTLIST cover  %taskatt; >
+
+<!ELEMENT coverpage (partno, serialno, nsn, modreq, reason, secitem, revtag, 
+       revform, name, sig, date)>
+<!ATTLIST coverpage  %bodyidatt; >
+
+<!ELEMENT cpcdata (%titldtext;)>
+<!ATTLIST cpcdata  %bodyidatt; >
+
+<!ELEMENT crit.insp.tab (title, crit.insp-group+)>
+<!ATTLIST crit.insp.tab  %stdinfoatt; >
+
+<!ELEMENT crit.insp-group (eqpitem, compnt-assem-entry+)>
+<!ATTLIST crit.insp-group  %applidatt; >
+
+<!ELEMENT criteria (%text_ent;)*>
+<!ATTLIST criteria  type       (pass | fail )  #REQUIRED
+                      %bodyidatt; >
+
+<!ELEMENT crittech EMPTY>
+<!ATTLIST crittech  distreason CDATA  #FIXED 'Critical Technology' >
+
+<!ELEMENT csc EMPTY>
+
+<!ELEMENT csch EMPTY>
+
+<!ELEMENT a (intro?, (csi.tab))>
+<!ELEMENT csi (intro?, (csi.tab))>
+<!ATTLIST csi  %bodyidatt; 
+					applicable IDREFS  #IMPLIED  >
+
+<!ELEMENT csi.alert (trim.para+)>
+<!ATTLIST csi.alert id         ID  #IMPLIED >
+
+<!ELEMENT csi.tab (title, csi-entry+)>
+<!ATTLIST csi.tab  %bodyidatt; >
+
+<!ELEMENT csi-entry (name, partno, cageno, desc)>
+<!ATTLIST csi-entry  %bodyidatt; >
+
+<!ELEMENT csi.wp (wp.metadata?, wpidinfo, csi+)>
+<!ATTLIST csi.wp  %wpatt; >
+
+<!ELEMENT csireq (%titldtext;)>
+<!ATTLIST csireq  %bodyidatt; >
+
+<!ELEMENT ctrlind (%data;)*>
+<!ATTLIST ctrlind  %bodyidatt; >
+
+<!ELEMENT ctrlinddesc (title, (subtitle?, note*, trim.para+)+)>
+<!ATTLIST ctrlinddesc  %applidatt; >
+
+<!ELEMENT ctrlindproc ((intro, ctrlindtab+) | (figure, ctrlinddesc)+ | (title, para))>
+<!ATTLIST ctrlindproc  %bodyidatt; >
+
+<!ELEMENT ctrlindrow (key, ctrlind, (note*, function))>
+<!ATTLIST ctrlindrow  %applidatt; >
+
+<!ELEMENT ctrlindtab (title, (figure | figure-alt), ctrlindrow, (figure?, ctrlindrow)+)>
+<!ATTLIST ctrlindtab  %stdinfoatt; >
+
+<!ELEMENT ctrlindtab-alt (ctrlindtab+)>
+<!ATTLIST ctrlindtab-alt
+  id ID #IMPLIED >
+
+
+<!ELEMENT ctrlind-val (#PCDATA)>
+<!ATTLIST ctrlind-val  %bodyatt;
+                         measurement CDATA  #IMPLIED >
+
+<!ELEMENT ctrlindwp (wp.metadata?, wpidinfo, %alert;, geninfo?, ((intro, (ctrlindtab | ctrlindtab-alt)+) | (figure, ctrlinddesc)+))>
+<!ATTLIST ctrlindwp  %wpatt; >
+
+<!ELEMENT d (#PCDATA)>
+
+<!ELEMENT d.statement ((%commondistreason;), reasondate, releaseagent)>
+
+<!ELEMENT da2028 ((link, proponent) | graphic)>
+<!ATTLIST da2028  application  (frame | page | both )  'both' >
+
+<!ELEMENT damage (%text_ent;)*>
+
+<!ELEMENT dataitem (memloc, memdata, condition, sigfunc)>
+<!ATTLIST dataitem  %bodyidatt; >
+
+<!ELEMENT damage-assesswp (wp.metadata?, wpidinfo, intro, (table | figure 
+        | logicproc)+)>
+<!ATTLIST damage-assesswp  %wpatt; >
+
+<!ELEMENT date-time_stamp EMPTY>
+<!ATTLIST date-time_stamp  date-time  (date | time | date-time )  'date-time' >
+
+<!ELEMENT date (#PCDATA)>
+<!ATTLIST date  julian CDATA  #IMPLIED >
+
+<!ELEMENT daterec (#PCDATA)>
+
+<!ELEMENT dcpno (name, desc?, ((partno, cageno), uoc+)+)>
+<!ATTLIST dcpno  %bodyidatt; >
+
+<!ELEMENT decalinfo (title, %mixparagraph;, iuid*, figure+)>
+<!ATTLIST decalinfo  %applidatt; >
+
+<!ELEMENT decon (proc+)>
+<!ATTLIST decon  %taskatt; >
+
+<!ELEMENT def (para)>
+
+<!ELEMENT default (expression | text | variableref)>
+
+<!ELEMENT defect.tab (title, defect-row+)>
+<!ATTLIST defect.tab  %stdinfoatt; >
+
+<!ELEMENT defect-group (condition, (%localref; | actionreq), insp-method, 
+     acceptqual)>
+<!ATTLIST defect-group  %applidatt; >
+
+<!ELEMENT defect-row (defecttype, defect-group+)>
+<!ATTLIST defect-row  %applidatt; >
+
+<!ELEMENT defecttype EMPTY>
+<!ATTLIST defecttype  type  (critical | major | minor )  #REQUIRED >
+
+<!ELEMENT defined EMPTY>
+
+<!ELEMENT definitions (title, (para+ | term.def+))>
+<!ATTLIST definitions  %changelevel; >
+
+<!ELEMENT deflist (title?, title.term.def?, term.def+)>
+<!ATTLIST deflist  %bodyidatt; >
+
+<!ELEMENT degraded (proc+)>
+<!ATTLIST degraded  %taskatt; >
+
+<!ELEMENT demil_qar (para0)>
+<!ATTLIST demil_qar %bodyidatt;>
+
+<!ELEMENT depotcategory (ppmgeninfowp, perseqpwp?, (lubewp | maintwp | gen.maintwp)+, facilwp?, oipwp*, 
+        mobilwp?, qawp, (manu_items_introwp, manuwp+)?, torquewp?, 
+        (inventorywp?, storagewp* , wtloadwp+)?, wiringwp*)>
+
+<!ELEMENT desc (%text_ent;)*>
+<!ATTLIST desc  %bodyidatt; >
+
+<!ELEMENT descproc (eqpinfo+, locdesc*, eqpdiff?, eqpdata?)>
+<!ATTLIST descproc  %bodyidatt; >
+
+<!ELEMENT descwp (wp.metadata?, wpidinfo, eqpinfo+, locdesc*, eqpdiff?, eqpdata)>
+<!ATTLIST descwp  %wpatt; >
+
+<!ELEMENT destr (para?)>
+
+<!ELEMENT destruct-introwp (wp.metadata?, wpidinfo, authorize_to_destroy,
+          report_destruct, general_destruct_info, component_spares?)>
+<!ATTLIST destruct-introwp  %wpatt; >
+
+<!ELEMENT destruction_manual (paper.frnt, ginfowp, destruct-introwp, 
+     destruct-materialwp+, rear)>
+<!ATTLIST destruction_manual  pubno CDATA  #IMPLIED
+                              revno CDATA  #REQUIRED
+                               %secur; >
+
+<!ELEMENT destruct-materialwp (wp.metadata?, wpidinfo, initial_setup, 
+        essential_spares?, proc+)>
+<!ATTLIST destruct-materialwp  %wpatt; >
+
+<!ELEMENT destructmat (%titldtext;)>
+<!ATTLIST destructmat  %bodyidatt; >
+
+<!ELEMENT deviation (%titldtext;)>
+<!ATTLIST deviation  %bodyidatt; >
+
+<!ELEMENT diagnostic (desc, sendparameter*, receiveparameter*)>
+<!ATTLIST diagnostic  %applidatt;
+                        protocol    CDATA   #IMPLIED
+                        mfr         CDATA   #IMPLIED
+                        model       CDATA   #IMPLIED
+                        application ENTITY  #IMPLIED
+                        testname    CDATA   #REQUIRED >
+
+<!ELEMENT diagnostic_group (message?, (sendparameter*, diagnostic)+)>
+<!ATTLIST diagnostic_group  action  (prompt | immediate )  #REQUIRED >
+
+<!ELEMENT diagnostic_initial-alt (diagnostic_initial+)>
+<!ATTLIST diagnostic_initial-alt  id ID  #IMPLIED >
+
+<!ELEMENT diagnostic_initial (precond?, message?, sendparameter*, 
+                  receiveparameter*, (%statemanipulation_ent;)*)>
+<!ATTLIST diagnostic_initial  protocol    CDATA   #IMPLIED
+                                action       (prompt | immediate )  #REQUIRED
+                                mfr         CDATA   #IMPLIED
+                                model       CDATA   #IMPLIED
+                                application ENTITY  #IMPLIED
+                                %applidatt; >
+
+<!ELEMENT diagnosticwp (wp.metadata?, %wpsetup;, %tsdata;, (((%statemanipulation_ent;)*, 
+                   (testwithstate | testwithstate-alt)+) | testwithoutstate+))>
+<!ATTLIST diagnosticwp  %wpatt; >
+
+<!ELEMENT dialog (precond?, title?, (fillin | menu | binarymenu | dialog-group 
+       | dialog-message)+ ,
+            help.info?, (%statemanipulation_ent;)*)>
+<!ATTLIST dialog  popup %yesorno;
+                    %applidatt;
+                    cancel_button %yes_att;
+                    reset_button %yesorno;    >
+
+<!ELEMENT dialog-alt (dialog+)>
+<!ATTLIST dialog-alt  %applidatt;
+                        name      CDATA  #IMPLIED >
+
+<!ELEMENT dialog-group (precond?, enable?, title?, (fillin | menu | binarymenu
+           | dialog-message | dialog-group)+)>
+<!ATTLIST dialog-group  %applidatt;
+                          separator %no_att;    >
+
+<!ELEMENT dialog-message (precond?, messageline)>
+<!ATTLIST dialog-message  %applidatt; >
+
+<!ELEMENT dim (titlepg, destruct-introwp, destruct-materialwp+)>
+<!ATTLIST dim  %imatt; >
+
+<!ELEMENT disassem (proc+)>
+<!ATTLIST disassem  %taskatt; >
+
+<!ELEMENT disconnect (precond?, proc+)>
+<!ATTLIST disconnect  %taskatt; >
+
+<!ELEMENT disconnect-alt (disconnect+)>
+<!ATTLIST disconnect-alt  id ID  #IMPLIED >
+
+<!ELEMENT disposition (para0)>
+<!ATTLIST disposition %bodyidatt;>
+
+<!ELEMENT dist (a.statement | b.statement | c.statement | d.statement | 
+               e.statement | f.statement | x.statement)>
+
+<!ELEMENT divide EMPTY>
+
+<!-- CHANGE E 00 - 6 DEC 2013 TOG
+*******************************************************************************
+** Updated ELEMENT <dmwr_ammo> to allow ppmgeninfowp to be OPTIONAL
+*******************************************************************************
+-->
+<!ELEMENT dmwr_ammo ((paper.frnt | framed.frnt), ginfowp, dmwr_introwp, 
+             dmwr_operationalreqwp+, dmwr_qarwp+, ppmgeninfowp?, refwp, explistwp, 
+             facilwp, genwp+, (da2028 | rear))>
+<!ATTLIST dmwr_ammo  chnglevel CDATA  #IMPLIED
+                       chngdate  CDATA  #IMPLIED>
+
+<!-- CHANGE E 00 - 6 DEC 2013 TOG
+*******************************************************************************
+** Updated ELEMENT <dmwr_introwp> to add <intro> to allow general information before work_planning
+*******************************************************************************
+-->
+<!ELEMENT dmwr_introwp (wp.metadata?, wpidinfo, intro, work_planning, disposition, 
+        equipment, sfty_req, gen_hazards, spec_hazards, haz_analysis, erc, rcrr, 
+        resource_recovery, reporting_req, tabdata, flowchart*)>
+<!ATTLIST dmwr_introwp  %wpatt; >
+
+<!ELEMENT dmwr_operationalreqwp (wp.metadata?, wpidinfo, initial_setup, 
+       special_sfty, op_steps, flowchart*)>
+<!ATTLIST dmwr_operationalreqwp  %wpatt; >
+
+<!-- CHANGE E 00 - 6 DEC 2013 TOG
+*******************************************************************************
+** Updated ELEMENT <dmwr_qarwp> to allow initial_setup to be OPTIONAL
+*******************************************************************************
+-->
+<!ELEMENT dmwr_qarwp (wp.metadata?, wpidinfo, initial_setup?, (demil_qar | 
+         maintenance_qar), definitions)>
+<!ATTLIST dmwr_qarwp  %wpatt; >
+
+<!ELEMENT dodac (#PCDATA)>
+
+<!ELEMENT double-bound (low-bound, high-bound)>
+
+<!ELEMENT dwgname (%format; | %linkref;)*>
+<!ATTLIST dwgname  %bodyatt; >
+
+<!ELEMENT dwgno (#PCDATA)>
+<!ATTLIST dwgno  %bodyatt; >
+
+<!ELEMENT dwgreq (dwgreq-setup-item+)>
+
+<!ELEMENT dwgreq-setup-item (dwgname, dwgno)>
+<!ATTLIST dwgreq-setup-item  %setupatt; >
+
+<!ELEMENT e.statement ((%commondistreason; | proprietary | 
+        testeval | cntrctperform | premature | milsprt), reasondate, 
+        releaseagent)>
+
+<!ELEMENT ecm (proc+)>
+<!ATTLIST ecm  %taskatt; >
+
+<!ELEMENT ecp (%titldtext;)>
+<!ATTLIST ecp  mwo %yesorno;
+                 %bodyidatt; >
+
+<!ELEMENT eic (#PCDATA)>
+
+<!ELEMENT eir (%titldtext;)>
+<!ATTLIST eir  service    (multi | army | marines )  'army'
+                 %bodyidatt; >
+
+<!ELEMENT else ((resultwithstate, evaluate?) | evaluate)>
+
+<!ELEMENT elseif (expression, then)>
+
+<!ELEMENT email EMPTY>
+<!ATTLIST email  address     CDATA  #REQUIRED
+                   %changelevel; >
+
+<!ELEMENT emergency (proc+)>
+<!ATTLIST emergency  %taskatt; >
+
+<!-- CHANGE E 00 - 25 NOV 2013 TOG
+*******************************************************************************
+** Updated ELEMENT <emergencywp> updated to allow one or more <emergency> per work package
+*******************************************************************************
+-->
+<!ELEMENT emergencywp (wp.metadata?, wpidinfo, initial_setup, emergency+)>
+<!ATTLIST emergencywp  %wpatt; >
+
+<!ELEMENT emphasis (%text_ent;)*>
+<!ATTLIST emphasis  emph   (caps | bold | italic | bolditalic | uline | strikeout | 
+                        2line | smallcaps | overline | reverse )  #REQUIRED
+                      color CDATA  #IMPLIED >
+
+<!ELEMENT empty EMPTY>
+
+<!ELEMENT enable (expression)>
+
+<!ELEMENT endblock (malfunc, action)>
+<!ATTLIST endblock  type   (yes | no | pass | fail | true | nottrue )  #REQUIRED
+                    branch      ID      #REQUIRED
+                    branchlabel CDATA   #IMPLIED
+                    branchfrom  IDREFS  #REQUIRED >
+
+<!ELEMENT endcondition (expression)>
+<!ATTLIST endcondition  id ID  #IMPLIED >
+
+<!-- CHANGE E 00 - 25 NOV 2013 TOG
+*******************************************************************************
+** Updated ELEMENT <entry> updated to allow one or more <proc> per work package
+*******************************************************************************
+-->
+<!ELEMENT entry (%text_ent; | %list; | trim.para | step1 | step1-alt 
+        | figure | proc | note | brk)*>
+<!ATTLIST entry  colname  NMTOKEN  #IMPLIED
+                   spanname CDATA    #IMPLIED
+                   namest   NMTOKEN  #IMPLIED
+                   nameend  NMTOKEN  #IMPLIED
+                   morerows CDATA    '0'
+                   colsep    (0 | 1 )  #IMPLIED
+                   rowsep    (0 | 1 )  #IMPLIED
+                   rotate %no_att;
+                   valign    (top | bottom | middle )  'top'
+                   align     (left | right | center | justify | char )  #IMPLIED
+                   charoff  CDATA    #IMPLIED
+                   char     CDATA    #IMPLIED
+                   %bodyidatt; >
+
+<!ELEMENT eq EMPTY>
+
+<!ELEMENT eqp_id (#PCDATA)>
+
+<!ELEMENT eqpconds (eqpconds-setup-item | eqpconds-setup-item-alt)+>
+
+<!ELEMENT eqpconds-setup-item (precond?, condition, itemref?)>
+<!ATTLIST eqpconds-setup-item  %setupatt; >
+
+<!ELEMENT eqpconds-setup-item-alt (eqpconds-setup-item+)>
+
+<!ELEMENT eqpdata (title?, figure*, %mixparagraph;)>
+<!ATTLIST eqpdata  %bodyidatt; >
+
+<!ELEMENT eqpdesc (title?, figure*, %mixparagraph;)>
+<!ATTLIST eqpdesc  %bodyidatt; >
+
+<!ELEMENT eqpdiff (%titldtext;)>
+<!ATTLIST eqpdiff  %bodyidatt; >
+
+<!ELEMENT eqpinfo (title, eqpdesc+)>
+<!ATTLIST eqpinfo  %bodyidatt; >
+
+<!ELEMENT eqpitem (%data;)*>
+<!ATTLIST eqpitem  %bodyidatt; >
+
+<!ELEMENT eqploadwp (wp.metadata?, wpidinfo, intro, loaddesc+)>
+<!ATTLIST eqploadwp  %wpatt; >
+
+<!ELEMENT eqpnotavail (trim.para+)>
+<!ATTLIST eqpnotavail  %changelevel; >
+
+<!ELEMENT equipment (para0)>
+<!ATTLIST equipment  %bodyidatt; >
+
+<!ELEMENT erc (para0+)>
+<!ATTLIST erc  %bodyidatt; >
+
+<!ELEMENT essential_spares (%para0_ent;)>
+<!ATTLIST essential_spares  %bodyidatt; >
+
+<!ELEMENT evaluate (if | loopfor | loop)>
+<!ATTLIST evaluate  %applidatt; >
+
+<!ELEMENT exp EMPTY>
+
+<!ELEMENT expdur-category  (title, (expdur-entry | expdur-entry-alt)+)>
+<!ATTLIST expdur-category  %bodyidatt; >
+
+<!ELEMENT expdur-entry (itemno, maintenance, nsn, name, desc, partno, cageno,
+                   ui)>
+<!ATTLIST expdur-entry
+  %bodyidatt; 
+  applicable IDREFS  #IMPLIED >
+
+<!ELEMENT expdur-entry-alt   (expdur-entry+)>
+<!ATTLIST expdur-entry-alt 
+  %bodyidatt; >
+
+<!ELEMENT explist (title, (expdur-category+ | expdur-entry+))>
+<!ATTLIST explist  %bodyidatt; >
+
+<!ELEMENT explistwp (wp.metadata?, wpidinfo, intro, (explist | para))>
+<!ATTLIST explistwp  %wpatt; >
+
+<!ELEMENT exponent EMPTY>
+
+<!ELEMENT export EMPTY>
+
+<!ELEMENT expression (((%variable_ent;), ((%binop;), (%variable_ent;))?) | 
+            ((%unop; | %trigop;), (%variable_ent;)))>
+<!ATTLIST expression  id         ID     #IMPLIED
+                        print-form CDATA  #IMPLIED >
+
+<!ELEMENT extconn (proc+)>
+<!ATTLIST extconn  %taskatt; >
+
+<!ELEMENT extpwr (proc+)>
+<!ATTLIST extpwr  %taskatt; >
+
+<!ELEMENT extref EMPTY>
+<!ATTLIST extref
+  docno CDATA #IMPLIED
+  revno CDATA #IMPLIED
+  pretext CDATA #IMPLIED
+  posttext CDATA #IMPLIED
+  wpid CDATA #IMPLIED
+  taskid CDATA #IMPLIED
+  figid CDATA #IMPLIED
+  tableid CDATA #IMPLIED
+  partid CDATA #IMPLIED
+  applicable IDREFS  #IMPLIED 
+  %secur; >
+
+<!ELEMENT f (#PCDATA)>
+
+<!ELEMENT f.statement (releaseagent, reasondate)>
+
+<!ELEMENT facilwp (wp.metadata?, wpidinfo, initial_setup, (%para0_ent;)+)>
+<!ATTLIST facilwp  %wpatt; >
+
+<!ELEMENT factorial EMPTY>
+
+<!ELEMENT false EMPTY>
+
+<!ELEMENT fault (oktext, badtext, possibletext)?>
+<!ATTLIST fault  fault-code  CDATA  #REQUIRED
+                   fault-ref   IDREF  #IMPLIED
+                   fault-state  (ok | bad | possible )  #REQUIRED
+                   weight      CDATA  #IMPLIED
+                   test        CDATA  #IMPLIED
+                   dependency  CDATA  #IMPLIED >
+
+<!ELEMENT faultcode (messageword, (action | %localref;), follow-on?)>
+<!ATTLIST faultcode  %bodyidatt; >
+
+<!ELEMENT faultproc (title, %alert;, (symptom, (malfunc, 
+          (action | %localref;))+)+)>
+<!ATTLIST faultproc  %bodyidatt; >
+
+<!ELEMENT faultreports (title?, geninfo?, %alert;, (table | faultcode+))>
+<!ATTLIST faultreports  indxcols   (2 | 3 )  #REQUIRED
+                      reftype    (wp | page | tsloc )  'wp'
+                      %bodyidatt; >
+
+<!ELEMENT figure (precond?, title, (subfig+ | (graphic, legend?) | table | 
+            verbatim))>
+<!ATTLIST figure  application  (page | frame | both )  'both'
+                    figtype      (normal-page | fo-rear )  'normal-page'
+                    fo-size      (25x11 | 35x11 | 45x11 )  #IMPLIED
+                    tocentry     (0 | 1 | 2 | 3 | 4 | 5 )  '1'
+                    pane %no_att;
+                    label       CDATA   #IMPLIED
+                    applicable  IDREFS  #IMPLIED
+                    %bodyidatt; >
+
+<!ELEMENT figure-alt (figure+)>
+<!ATTLIST figure-alt  id    ID  #IMPLIED
+                        %secur; >
+
+<!ELEMENT fillin (precond?, enable?, prompt?, variableref, default?, (numrange 
+          | validate)?)>
+<!ATTLIST fillin  %applidatt;
+                    mandatory %yes_att;
+                    fieldsize CDATA  '20' >
+
+<!ELEMENT first (%titldtext;)>
+<!ATTLIST first  %changelevel; >
+
+<!ELEMENT first_aid (%titldtext;)>
+<!ATTLIST first_aid  %bodyidatt; >
+
+<!ELEMENT float EMPTY>
+
+<!ELEMENT flowchart (title, graphic)>
+<!ATTLIST flowchart %bodyidatt;>
+
+<!ELEMENT fluid.leakage (title, (%p;)+)>
+<!ATTLIST fluid.leakage  %bodyidatt; >
+
+<!--CHANGE E.00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, flyable updated to allow one or more PROC 
+*******************************************************************************
+-->
+<!ELEMENT flyable (geninfo, proc+)>
+<!ATTLIST flyable  %applidatt;
+                     %hcpesd; >
+
+<!ELEMENT fnccode (#PCDATA)>
+<!ATTLIST fnccode  %bodyidatt; >
+
+<!ELEMENT fncgrp (fnccode, fnctitle, (partno, uoc?, smr*)*)>
+<!ATTLIST fncgrp  %bodyidatt; >
+
+<!ELEMENT fnctitle (%text_ent;)*>
+<!ATTLIST fnctitle  %bodyidatt; >
+
+<!ELEMENT foldsect EMPTY>
+<!ATTLIST foldsect  %stdinfoatt; >
+
+<!ELEMENT follow-on (para | (%step;)+ | %localref;)>
+<!ATTLIST follow-on  id    ID  #REQUIRED
+                       %secur; >
+
+<!ELEMENT followon.maintsk (proc)+>
+<!ATTLIST followon.maintsk  %taskatt; >
+
+<!ELEMENT fording (proc)+>
+<!ATTLIST fording  %taskatt; >
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <formchart> updated to allow one or more PROC 
+*******************************************************************************
+-->
+<!ELEMENT formchart (proc+ | (%para0_ent;)+ | figure*)>
+<!ATTLIST formchart  %applidatt;
+                       %hcpesd; >
+
+<!ELEMENT framed.frnt ((revisionsummary | revisionsummary-alt+)?, (frntcover | 
+      frntcover-alt+), (promulgation | promulgation-alt+)*, (warnsum | 
+      warnsum-alt+)?, (contents | contents-alt+), (howtouse | howtouse-alt+))>
+
+<!ELEMENT framed.manual (functionhierarchy | systemhierarchy)>
+<!ATTLIST framed.manual  revno     CDATA  #REQUIRED
+                    maintlvls  (10 |  13 |  14 |  23 |  24 |  40 | 
+                             avum-avim | dmwr | nmwr | dmwr-nmwr )  #REQUIRED
+                    pubno     CDATA  #IMPLIED
+                   %secur; >
+
+<!ELEMENT frgngvt EMPTY>
+<!ATTLIST frgngvt  distreason CDATA  #FIXED 'Foreign Government Information' >
+
+<!ELEMENT frntcover (tmtitle, graphic?, reporting?, notices, servnomen, date)>
+<!ATTLIST frntcover  %changelevel;
+                       applicable  IDREFS  #IMPLIED
+                       %secur; >
+
+<!ELEMENT frntcover_abbreviated (tmtitle, lube-refs?, reporting, notices, 
+               servnomen, date, pcn?)>
+<!ATTLIST frntcover_abbreviated  %changelevel;
+                       applicable  IDREFS  #IMPLIED
+                       %secur; >
+
+<!ELEMENT frntcover-alt (frntcover)>
+
+<!ELEMENT fsc (#PCDATA)>
+
+<!ELEMENT ftnote (ftnpara+)>
+<!ATTLIST ftnote  id    ID     #REQUIRED
+                    mark   (ctr | mark )  'ctr'
+                    label CDATA  #IMPLIED >
+
+<!ELEMENT ftnpara (%linkdata; | %list; | internet | proponent | phone)*>
+<!ATTLIST ftnpara  %changelevel; >
+
+<!ELEMENT ftnref EMPTY>
+<!ATTLIST ftnref  xrefid IDREF  #REQUIRED >
+
+<!ELEMENT funcdepend (%titldtext;)>
+<!ATTLIST funcdepend  %bodyidatt; >
+
+<!ELEMENT function (%text_ent; | %list;)*>
+<!ATTLIST function  %bodyatt; >
+
+<!ELEMENT functionhierarchy (framed.frnt, gim, opim*, (tim?, mim?)+, pim?, 
+         dim?, bim?, sim, (da2028+, authent))>
+
+<!ELEMENT ge EMPTY>
+
+<!ELEMENT gen.maintwp (wp.metadata?, wpidinfo, initial_setup, (proc+ | para))>
+<!ATTLIST gen.maintwp  %wpatt; >
+
+<!ELEMENT gen_hazards (para0+)>
+
+<!ELEMENT general_destruct_info (%para0_ent;)+>
+<!ATTLIST general_destruct_info  %bodyidatt; >
+
+<!ELEMENT general_purpose_notices (title, text)>
+
+<!ELEMENT geninfo (title?, figure*, %mixparagraph;)>
+<!ATTLIST geninfo  %frameatt; >
+
+<!ELEMENT genrepairwp (wp.metadata?, wpidinfo, initial_setup, bdar-repair)>
+<!ATTLIST genrepairwp  %wpatt; >
+
+<!--CHANGE E.29 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA, ARDEC and AMCOM Changed initial setup in this WP to OPTIONAL to work better with DMWR and AMMO 
+*******************************************************************************
+-->
+<!ELEMENT genwp (wp.metadata?, wpidinfo, initial_setup*, (%titldtextproc;))>
+<!ATTLIST genwp  %wpatt; >
+
+<!ELEMENT gim (titlepg, ginfowp, (bdar-geninfowp | (descwp+, thrywp*)))>
+<!ATTLIST gim  %imatt; >
+
+<!ELEMENT ginfowp (wp.metadata?, wpidinfo, scope, mfrr?, eir?, handreceipt?, 
+          cpcdata?, odsdata?, destructmat?, pssref?, wrntyref?, nomenreflist?, 
+          loa?, qainfo?, qual.mat.info?, sftyinfo?, hcp?, calref?, iuid?, ecp?, 
+          modification?,  deviation?, mobreq?, csireq?, cost?, supdata?, 
+          copyrt?)>
+<!ATTLIST ginfowp  %wpatt; >
+
+<!ELEMENT glossary (title, trim.para?, deflist)>
+<!ATTLIST glossary  %stdinfoatt; >
+
+<!ELEMENT graphic (mapref*)>
+<!ATTLIST graphic  %graphicatt;
+		  hplace      (left | right | center | none )  #IMPLIED
+		  graphsty   NMTOKEN  #IMPLIED
+		  applicable IDREFS #IMPLIED
+		  %bodyatt; >
+
+<!ELEMENT groupno (#PCDATA)>
+<!ATTLIST groupno  %bodyidatt; >
+
+<!ELEMENT gt EMPTY>
+
+<!ELEMENT h (#PCDATA)>
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA and MIL-STD 40051-1B direction, hand receipt manual is included in the
+** IETM it must appear in the supporting information chapter (<sim>). Created WP for handreceipt 
+*******************************************************************************
+-->
+<!ELEMENT handreceiptwp (wp.metadata?, wpidinfo, intro, %titldtext;)>
+<!ATTLIST handreceiptwp %wpatt; >
+
+
+<!ELEMENT handreceipt (%titldtext;)>
+<!ATTLIST handreceipt  %bodyidatt; >
+
+<!ELEMENT harness-indx (%titldtext;)>
+<!ATTLIST harness-indx  %bodyidatt; >
+
+<!ELEMENT haz_analysis (para0+)>
+
+<!ELEMENT hazard (hazid, symbol+, title?, para+)>
+<!ATTLIST hazard  %bodyidatt; >
+
+<!ELEMENT hazdesc (title, text)>
+<!ATTLIST hazdesc  %bodyidatt; >
+
+<!ELEMENT haz-icons (symbol, hazdesc)>
+<!ATTLIST haz-icons  %bodyidatt; >
+
+<!ELEMENT hazid (%text_ent;)*>
+<!ATTLIST hazid  %bodyidatt; >
+
+<!ELEMENT hazmat (title, haz-icons+, title, hazard+)>
+<!ATTLIST hazmat  %bodyidatt; >
+
+<!ELEMENT hcp (%titldtext;)>
+<!ATTLIST hcp  %bodyidatt; >
+
+<!ELEMENT help.info ((%para0_ent;)+ | para+ | %localref;)>
+<!ATTLIST help.info  %bodyidatt; >
+
+<!ELEMENT high-bound (integer | real | variableref | expression)>
+
+<!ELEMENT hoist (proc)+>
+<!ATTLIST hoist  %taskatt; >
+
+<!ELEMENT homepage EMPTY>
+<!ATTLIST homepage  protocol     (http | https | ftp )  'http'
+                      uri         CDATA  #REQUIRED
+                      %changelevel; >
+
+
+<!--CHANGE E.00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA and MIL-STD 40051-1B direction, Updated element <hookup> to 
+** allow for eith a <para or multiple <proc>
+*******************************************************************************
+-->
+<!ELEMENT hookup (precond?, (para | proc+))>
+<!ATTLIST hookup  %taskatt; >
+  
+<!ELEMENT hookup-alt (hookup+)>
+<!ATTLIST hookup-alt  id ID  #IMPLIED >
+
+<!ELEMENT howtouse (title, (%p;)*, (%para0_ent;)+)>
+<!ATTLIST howtouse  frame %yes_att;
+                      %stdinfoatt; >
+
+<!ELEMENT howtouse-alt (howtouse)>
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ICON-SET changed to add an ID attribute that would allow linking. 
+*******************************************************************************
+-->
+
+<!ELEMENT icon-set EMPTY>
+<!ATTLIST icon-set  %graphicatt;
+                      %bodyatt; 
+					 id ID  #IMPLIED
+                      >
+
+<!ELEMENT idivide EMPTY>
+
+<!ELEMENT if (expression, then, elseif*, else?)>
+<!ATTLIST if  id ID  #IMPLIED >
+
+<!ELEMENT illno (#PCDATA)>
+<!ATTLIST illno  %bodyidatt; >
+
+<!ELEMENT increment (expression)>
+
+<!ELEMENT index (indexvalue, indexvalue?)>
+
+<!ELEMENT indexentry (title, ((wpno, pageno) | pageno)*, indexentry*)>
+<!ATTLIST indexentry  %idrefs;
+                        %secur; >
+
+<!ELEMENT indexvalue (#PCDATA)>
+
+<!ELEMENT indication (((title?, (%p;))+) | %list; | (%step;)+)>
+<!ATTLIST indication  status     (normal | abnormal )  #IMPLIED
+                        %bodyidatt; >
+
+<!ELEMENT indxref EMPTY>
+<!ATTLIST indxref  ref1    CDATA  #IMPLIED
+                     ref2    CDATA  #IMPLIED
+                     ref3    CDATA  #IMPLIED
+                     ref4    CDATA  #IMPLIED
+                     id      ID     #IMPLIED
+                     indxref IDREF  #IMPLIED >
+
+<!ELEMENT initial_setup (((testeqp, %opttesteqp;) | (tools, %opttools;) | 
+         (mtrlpart, %optmtrlpart;) | (persnreq, %optpersnreq;) | (ref, 
+         %optref;) | (eqpconds, %opteqpconds;) | (specenv, %optspecenv;) 
+         | (dwgreq, %optdwgreq;) | time.to.comp | (title?, null)))>
+<!ATTLIST initial_setup  %bodyatt; > 
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, initial updated to allow one or more PROC 
+*******************************************************************************
+-->
+<!ELEMENT initial (proc)+>
+<!ATTLIST initial  %taskatt; >
+
+<!ELEMENT initialize (expression | fault)>
+
+<!ELEMENT initialcount (%statemanipulation_ent;)>
+
+<!ELEMENT inlinegraphic EMPTY>
+<!ATTLIST inlinegraphic  %graphicatt;
+                           %bodyidatt; >
+
+<!ELEMENT inprocess (%titldtext;)>
+<!ATTLIST inprocess  %changelevel; >
+
+<!ELEMENT insertpg (#PCDATA)>
+
+<!ELEMENT insp-method (#PCDATA)>
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <inspect> updated to allow one or more PROC followed by defect.tab to 
+** keep the procedure  together with the associated table
+*******************************************************************************
+-->
+<!ELEMENT inspect (proc, defect.tab?)+>
+<!ATTLIST inspect %taskatt;>
+
+<!ELEMENT install (proc+)>
+<!ATTLIST install  %taskatt; >
+
+<!ELEMENT instructplt ((title, para)?, iuid*, figure)>
+<!ATTLIST instructplt  %bodyidatt; >
+
+<!ELEMENT integer (#PCDATA)>
+
+<!ELEMENT interaction (%statemanipulation_ent; | %dialog_ent; | message)+>
+<!ATTLIST interaction  %bodyidatt; >
+
+<!ELEMENT interconnect (%titldtext;)>
+<!ATTLIST interconnect  %bodyidatt; >
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <intermediate> updated to allow one or more PROC 
+*******************************************************************************
+-->
+<!ELEMENT intermediate (geninfo, proc+)>
+<!ATTLIST intermediate  %applidatt;
+                          %hcpesd; >
+
+<!ELEMENT internet (email | homepage)>
+<!ATTLIST internet  narrative    CDATA  #IMPLIED
+                      show.address %yes_att;
+                      %changelevel; >
+
+<!ELEMENT interval (#PCDATA)>
+
+<!ELEMENT interval.hours (#PCDATA)>
+
+<!ELEMENT interval.notes (%text_ent;)*>
+
+<!ELEMENT intro (para0 | para0-alt)>
+<!ATTLIST intro  %bodyidatt;
+                   frame      (yes | no )  'no' >
+
+<!ELEMENT introwp (wp.metadata?, wpidinfo, indxref*, (%titldtext; | howtouse)+, 
+           figure*)>
+<!ATTLIST introwp  %wpatt; >
+
+<!ELEMENT inventoriable (%titldtext;)>
+<!ATTLIST inventoriable  %applidatt; >
+
+<!ELEMENT inventorywp (wp.metadata?, wpidinfo, initial_setup, intro, 
+      security, inventoriable, prdinv)>
+<!ATTLIST inventorywp %wpatt; >
+
+<!ELEMENT issuechg (trim.para, issued+)>
+
+<!ELEMENT issued (chgno, chgdate)>
+
+<!ELEMENT item (%trimcontent; | note | seqlist | randlist | inlinegraphic | 
+         figure | figure-alt | table)*>
+   <!ATTLIST item
+		  %bodyidatt;
+		  %hcpesd;
+		  label      CDATA   #IMPLIED
+		  applicable IDREFS  #IMPLIED >
+
+
+<!ELEMENT itemno (#PCDATA)>
+<!ATTLIST itemno  id   ID  #IMPLIED
+                    %refs; >
+
+<!ELEMENT itemref (%linkref;)+>
+
+<!ELEMENT iuid (%titldtext;)>
+<!ATTLIST iuid  %bodyidatt; >
+
+<!ELEMENT jack (proc)+>
+<!ATTLIST jack  %taskatt; >
+
+<!ELEMENT key (#PCDATA)>
+
+<!ELEMENT keyword.search (#PCDATA)>
+
+<!ELEMENT kititem (name, qty, callout)>
+<!ATTLIST kititem  %bodyidatt; >
+
+<!ELEMENT kitswp (wp.metadata?, wpidinfo, pi.category+)>
+<!ATTLIST kitswp  %wpatt; >
+
+<!ELEMENT l (#PCDATA)>
+
+<!ELEMENT lcn (#PCDATA)>
+
+<!ELEMENT le EMPTY>
+
+<!ELEMENT legend (title, legend.item+)>
+<!ATTLIST legend  %changelevel; >
+
+<!ELEMENT legend.item ((term | callout), def, xref?)>
+<!ATTLIST legend.item  %changelevel; >
+
+<!ELEMENT link (title?, (pretext?, (symbol | ref.generate | prompt), posttext?)?, 
+            (returnlink | interaction)?)>
+<!ATTLIST link  xmlns:xlink CDATA  #FIXED 'http://www.w3.org/1999/xlink'
+                  application  (page | frame | both )  'frame'
+                  local       IDREF  #IMPLIED
+                  localrange  IDREF  #IMPLIED
+                  xlink:href  CDATA  #IMPLIED
+                  xlink:type   (simple | complex )  #FIXED 'simple'
+                  linkobject   (%notation.class; )  #IMPLIED
+                  linktype     (goto | return | undefined )  'goto'
+                  linkaction   (prompt | immediate )  'prompt'
+                  xreftype     (%referencetype; )  #IMPLIED
+                  popup %no_att;
+                  parameter   CDATA  #IMPLIED
+                  alt         CDATA  #IMPLIED
+                  %applidatt; >
+
+<!ELEMENT ln EMPTY>
+
+<!ELEMENT loa (%titldtext;)>
+<!ATTLIST loa  %bodyidatt; >
+
+<!ELEMENT load (proc)+>
+<!ATTLIST load %taskatt;>
+
+<!ELEMENT loaddesc (title, (figure, (table | loadlist))+)>
+<!ATTLIST loaddesc  %applidatt;
+                    type       (tac | notac )  #REQUIRED >
+
+<!ELEMENT loadlist (callout, item)+>
+<!ATTLIST loadlist  %changelevel;
+                      %secur; >
+
+<!ELEMENT locdesc (title, (%mixparagraph;)?, comp-item+)>
+<!ATTLIST locdesc  %bodyidatt; >
+
+<!ELEMENT loepwp (wp.metadata?, trim.para?, title, note?, issuechg, 
+    totalnumberof+ , col.title, col.title, (chgvol?, chghistory)+)>
+	
+<!ELEMENT log EMPTY>
+
+<!ELEMENT logicproc (title, %alert;, origin, (testblock | endblock | branchref)+)>
+<!ATTLIST logicproc
+		  %bodyidatt; 
+		   applicable IDREFS  #IMPLIED >
+
+<!ELEMENT loop ((%statemanipulation_ent;)*, ((endcondition, loopaction) 
+          | (loopaction, endcondition)), then)>
+<!ATTLIST loop  id ID  #IMPLIED >
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <loopaction> updated to allow one or more PROC 
+*******************************************************************************
+-->
+
+<!ELEMENT loopaction (proc+, (%statemanipulation_ent; | diagnostic_group | 
+                      %dialog_ent;)+)>
+
+<!ELEMENT loopfor ((%statemanipulation_ent;)*, initialcount, increment, 
+        endcondition, loopaction, then)>
+<!ATTLIST loopfor  id ID  #IMPLIED >
+
+<!ELEMENT low-bound (integer | real | variableref | expression)>
+
+<!ELEMENT lruthry (%titldtext;)>
+<!ATTLIST lruthry  nomen     CDATA  #IMPLIED
+                     nsn       CDATA  #IMPLIED
+                     %bodyidatt;
+                     frame      (yes | no )  'no' >
+
+<!ELEMENT lt EMPTY>
+
+<!ELEMENT lube (proc+)>
+<!ATTLIST lube  %taskatt; >
+
+<!ELEMENT lubeorder (frntcover_abbreviated, loepwp?, %alert;, intro, lubewp+, 
+                lubeorder_rear)>
+<!ATTLIST lubeorder  chnglevel CDATA  #IMPLIED
+                       chngdate  CDATA  #IMPLIED>
+
+<!ELEMENT lubeorder_rear (authent, back)>
+
+<!ELEMENT lubewp (wp.metadata?, wpidinfo, initial_setup, proc+)>
+<!ATTLIST lubewp  %wpatt; >
+
+<!ELEMENT lube-refs (%extref_ent;)+>
+
+<!ELEMENT lubricant (#PCDATA)>
+<!ATTLIST lubricant  %bodyatt; >
+
+<!ELEMENT mac (title, mac-group-2lvl+)>
+<!ATTLIST mac %bodyidatt; 
+				applicable IDREFS  #IMPLIED>
+
+<!ELEMENT mac-group-2lvl (groupno, ((compassem, qualify-2lvl+) | 
+         compassemgroup-2lvl+))>
+<!ATTLIST mac-group-2lvl  %bodyidatt; >
+
+<!ELEMENT macintrowp (wp.metadata?, wpidinfo, intro)>
+<!ATTLIST macintrowp  %wpatt; >
+
+<!ELEMENT macwp (wp.metadata?, wpidinfo,( ( (mac | avmac), tereqtab, remarktab) | (mac-alt+) ) )>
+<!ATTLIST macwp  %wpatt; >
+
+<!ELEMENT mac-alt  ((mac | avmac), tereqtab, remarktab) >
+<!ATTLIST mac-alt
+			  %bodyidatt; 
+			   applicable IDREFS  #IMPLIED >
+   
+<!ELEMENT maintclass-2lvl ((c, f?, h?, d?) | (f, h?, d?) | (h, d?) | d)>
+
+<!ELEMENT maintenance_qar (para0+)>
+<!ATTLIST maintenance_qar %bodyidatt;>
+
+<!ELEMENT maintenance EMPTY>
+<!ATTLIST maintenance  lvl  (c | o | f | h | d | l )  #REQUIRED >
+
+<!ELEMENT maintenancecategory (surwp*, perseqpwp*, (maintwp | lubewp | 
+           gen.maintwp)+, %mimsupport;)>
+
+<!ELEMENT maintenancepmcscategory (surwp*, perseqpwp*, pmcsintrowp, pmcswp+, 
+            (maintwp | lubewp | gen.maintwp)+, %mimsupport;)>
+
+<!ELEMENT maintfunc EMPTY>
+<!ATTLIST maintfunc  func  (prepforuse | service |remove | disassem | 
+       clean | ndi | repair | replace | align | paint | lube | assem | inspect 
+       | install | adjust | calibration | ris | pis | test | pss | mark | arm 
+       | other.maintsk | overhaul | rebuild | pack | load | unpack | unload 
+       | preserv | tow | jack | park | moor | cover | hoist | sling | extpwr |
+       softwaremaint | none)  #REQUIRED>
+
+<!ELEMENT maintlvl EMPTY>
+<!ATTLIST maintlvl  %wplevel; >
+
+<!--CHANGE E 00 - 30 DEC 2013 - TOG
+*******************************************************************************
+** Per LOGSA and MIL STD 40051-1B/2B The standard only allows a single ?initial setup? 
+and follow on maintenance should be undoing any intial setup and thus only be allowed once. So followon.maintsk 
+is removed from maintsk and placed in maintwp.
+******************************************************************************
+-->
+
+<!ELEMENT maintsk (adjust | align | arm | assem | calibration | clean | 
+                    cover | disassem | extpwr | hoist | inspect | 
+                    install | jack | load | lube | mark | moor | ndi | 
+                    other.maintsk | overhaul | pack | paint | park | pis | 
+                    prepforuse | preserv | pss | rebuild | remove | repair | 
+                    replace | ris | service | sling | softwaremaint | test | 
+                    tow | unload | unpack)>
+
+ <!--CHANGE E 00 - 25 NOV 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <maintwp> updated to allow one or more maintsk 
+*******************************************************************************
+-->                   
+<!ELEMENT maintwp (wp.metadata?, wpidinfo, initial_setup, maintsk+,
+                  followon.maintsk?)> 
+<!ATTLIST maintwp  %wpatt; >
+
+<!--CHANGE E 00 - 30 Oct 2013 - TOG
+*******************************************************************************
+** Per LOGSA attribute CORRECTED added to Element MALFUNC to allow for troubleshooting
+** to indicate that the task or problem are completed and corrected.
+** <!ELEMENT malfunc (%text_ent;)*>
+** <!ATTLIST malfunc
+**   label (symptom | malfunction | corrected) #REQUIRED
+**   faultcode CDATA #IMPLIED
+**   %applidatt; >   
+******************************************************************************
+-->
+<!ELEMENT malfunc (%text_ent;)*>
+<!ATTLIST malfunc
+  label (symptom | malfunction | corrected) #REQUIRED
+  faultcode CDATA #IMPLIED
+  %applidatt; > 
+
+<!ELEMENT manhours (#PCDATA)>
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <manuitem> updated to allow one or more PROC 
+*******************************************************************************
+-->
+<!ELEMENT manuitem  (proc+ | (title?, %alert;, (graphic | %p; | step1 | figure | 
+        table | material-list | partdesc)+))>
+<!ATTLIST manuitem %bodyidatt; >
+
+<!ELEMENT manuindx (title?, (partdesc, wpref?)+)>
+<!ATTLIST manuindx  %applidatt; >
+
+
+<!ELEMENT manuwp (wp.metadata?, wpidinfo, initial_setup,  manuitem)>
+<!ATTLIST manuwp  %wpatt; >
+
+<!ELEMENT manu_items_introwp (wp.metadata?, wpidinfo, intro, manuindx)>
+<!ATTLIST manu_items_introwp  %wpatt; >
+
+<!ELEMENT map.circle (map.coord)>
+<!ATTLIST map.circle  radius      CDATA  #REQUIRED
+                        %graphicunit; >
+
+<!ELEMENT map.coord EMPTY>
+<!ATTLIST map.coord  x           CDATA  #REQUIRED
+                       y           CDATA  #REQUIRED
+                       %graphicunit; >
+
+<!ELEMENT map.polygon (map.coord, map.coord+)>
+
+<!ELEMENT map.rectangle (map.coord, map.coord)>
+
+<!ELEMENT mapref (map.circle | map.rectangle | map.polygon)>
+<!ATTLIST mapref  id      ID     #REQUIRED
+                    label   CDATA  #IMPLIED
+                    refdes  CDATA  #IMPLIED
+                    partref IDREF  #IMPLIED >
+
+<!ELEMENT mark (proc+)>
+<!ATTLIST mark %taskatt;>
+
+<!ELEMENT masterindexcategory (tsindxwp)>
+
+<!ELEMENT material-list (title?, (name, ((partno, cageno, nsn?) | (extref 
+             | link)), qty?, itemref?)+)>
+<!ATTLIST material-list  %bodyidatt; >
+
+<!ELEMENT mdc (mdc.system, mdc.hierarchy)>
+
+<!ELEMENT mdc.system (#PCDATA)>
+
+<!ELEMENT mdc.hierarchy (mdc.element, mdc.hierarchy?)>
+
+<!ELEMENT mdc.element (#PCDATA)>
+
+<!ELEMENT memdata (#PCDATA)>
+<!ATTLIST memdata  %bodyidatt; >
+
+<!ELEMENT memloc (#PCDATA)>
+<!ATTLIST memloc  %bodyidatt; >
+
+<!ELEMENT menu (precond?, enable?, prompt, choice+)>
+<!ATTLIST menu  %applidatt;
+                  select     (single | multiple )  'single'
+                  type       (radio | button | pulldown )  #REQUIRED
+                  mandatory %yes_att;
+                  flow       (list | inline )  'list' >
+
+<!ELEMENT message (title?, messageline+, help.info?, aftermessage?)>
+<!ATTLIST message  id           ID     #IMPLIED
+                     popup %yesorno;
+                     button_title CDATA  'OK' >
+
+<!ELEMENT messageindx (title, geninfo?, %alert;, (table | messageitem+))>
+<!ATTLIST messageindx  %bodyidatt; >
+
+<!ELEMENT messageitem (messageword, para+, (%localref; | action))>
+<!ATTLIST messageitem  %bodyidatt; >
+
+<!ELEMENT messageline (%format; | variableref)*>
+
+<!ELEMENT messageword (#PCDATA)>
+<!ATTLIST messageword  id    ID  #REQUIRED
+                         %secur; >
+
+<!ELEMENT mfrr (title, (para | mfrr.para+))>
+<!ATTLIST mfrr  frame      (yes | no )  'no'
+                  %bodyidatt; >
+
+<!ELEMENT mfrr.para (%trimcontent; | para0 | para0-alt)*  >
+<!ATTLIST mfrr.para  service    (army | af | navy | marines )  #REQUIRED
+                       %bodyidatt; 
+                        applicable IDREFS  #IMPLIED >
+
+<!ELEMENT milsprt EMPTY>
+<!ATTLIST milsprt  distreason CDATA  #FIXED 'Direct Military Support' >
+
+<!ELEMENT mim (titlepg, (pmcscategory | maintenancepmcscategory | 
+           maintenancecategory | depotcategory | aviationcategory | 
+           ammunitioncategory | auxiliarycategory | pmscategory | 
+           checklistcategory | testinspectioncategory | ammomarkingcategory | 
+           shipmentmovementstoragecategory))>
+<!ATTLIST mim  %imatt; >
+
+<!ELEMENT minus EMPTY>
+
+<!ELEMENT mobil-entry ((%localref;), actionreq)>
+<!ATTLIST mobil-entry  %applidatt; >
+
+<!ELEMENT mobilreq (title, para, mobiltab?)>
+<!ATTLIST mobilreq  %applidatt; >
+
+<!ELEMENT mobiltab (title, mobil-entry+)>
+<!ATTLIST mobiltab  %stdinfoatt; >
+
+<!ELEMENT mobilwp (wp.metadata?, wpidinfo, initial_setup,  %alert;, intro, mobilreq?)>
+<!ATTLIST mobilwp  %wpatt; >
+
+<!ELEMENT mobreq (%titldtext;)>
+<!ATTLIST mobreq  %bodyidatt; >
+
+<!ELEMENT modelno (#PCDATA)>
+
+<!ELEMENT modification (%titldtext;)>
+<!ATTLIST modification  %bodyatt; >
+
+<!ELEMENT modreq (#PCDATA)>
+
+<!ELEMENT modulus EMPTY>
+
+<!ELEMENT moor (proc+)>
+<!ATTLIST moor  %taskatt; >
+
+<!ELEMENT mos (#PCDATA)>
+<!ATTLIST mos  %bodyatt; >
+
+<!ELEMENT mrpl (title, (mrpl-category+ | mrpl-entry+))>
+<!ATTLIST mrpl  %stdinfoatt; >
+
+<!ELEMENT mrpl-category (title, mrpl-entry+)>
+
+<!ELEMENT mrpl-entry (itemno, partno, cageno, nsn, name, qty)>
+<!ATTLIST mrpl-entry  %applidatt; >
+
+<!ELEMENT mrplpart (title, para+, mrpl?)>
+<!ATTLIST mrplpart  %bodyidatt; >
+
+<!ELEMENT mrplwp (wp.metadata?, wpidinfo, intro, mrpl)>
+<!ATTLIST mrplwp  %wpatt; >
+
+<!ELEMENT mtrlpart (mtrlpart-setup-item+)>
+
+<!ELEMENT mtrlpart-setup-item (name, qty?, itemref?)>
+<!ATTLIST mtrlpart-setup-item  %setupatt; >
+
+<!ELEMENT multioption (title?, prompt, option, option+)>
+<!ATTLIST multioption  id ID  #IMPLIED >
+
+<!ELEMENT muxproc (%alert;, (symptom?, signal-item)+)>
+<!ATTLIST muxproc  %bodyidatt; >
+
+<!ELEMENT mwo (#PCDATA)>
+
+<!ELEMENT name (%data; | brk)*>
+<!ATTLIST name  %bodyatt; >
+
+<!ELEMENT natowp (%ammo_ent;)>
+<!ATTLIST natowp  %wpatt; >
+
+<!ELEMENT ndi (proc+)>
+<!ATTLIST ndi  %taskatt; >
+
+<!ELEMENT ne EMPTY>
+
+<!ELEMENT neg EMPTY>
+
+<!ELEMENT nha_item EMPTY>
+<!ATTLIST nha_item  nha.ref IDREF  #REQUIRED >
+
+<!ELEMENT niin (#PCDATA)>
+
+<!ELEMENT nil EMPTY>
+
+<!ELEMENT no (resultwithoutstate)>
+
+<!ELEMENT nomenreflist (%titldtext;)>
+<!ATTLIST nomenreflist  %bodyidatt; >
+
+<!ELEMENT nonrepairable (%text_ent;)*>
+<!ATTLIST nonrepairable  %changelevel; >
+
+<!ELEMENT nostate (%statemanipulation_ent;)+>
+<!ATTLIST nostate  default %no_att;    >
+
+<!ELEMENT not EMPTY>
+
+<!-- CHANGE E 00 - 25 NOV 2013 TOG
+*******************************************************************************
+** Per request by AMCOM and LOGSA to allow random list in Warning, Caution, and
+** notes. 
+*******************************************************************************
+-->
+
+<!ELEMENT note ((note.group, note.group+) | ((trim.para, (seqlist | randlist)?)+ | seqlist | randlist))>
+<!ATTLIST note
+					  acknowledge %no_att;
+					  %bodyidatt; 
+					  applicable IDREFS  #IMPLIED >
+
+<!ELEMENT note.group ((trim.para, seqlist?)+ | seqlist)>
+<!ATTLIST note.group  acknowledge %no_att;
+                        %bodyidatt; >
+
+<!ELEMENT notices (avail?, super?, dist, export?, destr?,  
+         general_purpose_notices*)>
+
+<!ELEMENT nsn (fsc, niin)>
+
+<!ELEMENT nsnindx (nsnindxrow+)>
+<!ATTLIST nsnindx  %bodyidatt; >
+
+<!ELEMENT nsnindxrow (nsn, callout+)>
+<!ATTLIST nsnindxrow  %bodyidatt; >
+
+<!ELEMENT nsnindxwp (wp.metadata?, wpidinfo, nsnindx)>
+<!ATTLIST nsnindxwp  %wpatt; >
+
+<!ELEMENT null EMPTY>
+<!ATTLIST null  insert  (na | nr | dash | secure | none )  'none' >
+
+<!ELEMENT numrange (low-bound | double-bound | high-bound)>
+
+<!ELEMENT o (#PCDATA)>
+
+<!ELEMENT odsdata (%titldtext;)>
+<!ATTLIST odsdata  %bodyidatt; >
+
+<!ELEMENT oipitem (itemno, callout?, desc, insp-method, actionreq)>
+<!ATTLIST oipitem  %applidatt;
+                     %qa; >
+
+<!ELEMENT oiptab (title, (%alert;, oipitem)+)>
+<!ATTLIST oiptab  %stdinfoatt; >
+
+<!ELEMENT oipwp (wp.metadata?, wpidinfo, initial_setup, %alert;, (geninfo?, 
+       ((oiptab | table), figure*)+)+)>
+<!ATTLIST oipwp  %wpatt; >
+
+<!ELEMENT oktext (%text_ent;)*>
+
+<!ELEMENT on-board-spares (title, coei-entry+)>
+
+<!ELEMENT on-board-spares-opt (title, coei-opt-entry+)>
+
+<!ELEMENT opcheck (title?, %alert;, testproc+)>
+<!ATTLIST opcheck  %bodyidatt; >
+
+<!ELEMENT opcheckproc (opcheck | messageindx | faultreports)>
+<!ATTLIST opcheckproc  %bodyidatt; >
+
+<!ELEMENT opcheck-tsproc (title?, %alert;, testproc+)>
+<!ATTLIST opcheck-tsproc  %bodyidatt; >
+
+<!ELEMENT opcheck-tswp (wp.metadata?, wpidinfo, initial_setup, intro?, 
+            (%tsdata; | para)*, (hookup?, opcheck-tsproc+, disconnect?), 
+						followon.maintsk?)>
+<!ATTLIST opcheck-tswp  %wpatt; >
+
+<!ELEMENT opcheckwp (wp.metadata?, wpidinfo, initial_setup, intro?, (%tsdata; | para)*, 
+            (hookup?, opcheckproc+, disconnect?), followon.maintsk?)>
+<!ATTLIST opcheckwp  %wpatt; >
+
+<!ELEMENT oper (proc+)>
+<!ATTLIST oper  %taskatt; >
+
+<!ELEMENT operaux (proc+)>
+<!ATTLIST operaux  %taskatt; >
+
+<!ELEMENT opertsk ((initial | oper | operaux | prepforuse | prepmove | 
+                    secref | shelter | site), instructplt*)>
+<!ATTLIST opertsk  %applidatt; >
+
+<!ELEMENT opim (titlepg, ctrlindwp+, opusualwp+, opunuwp+, emergencywp*,
+          stowagewp*, eqploadwp*)>
+<!ATTLIST opim  %imatt; >
+
+<!ELEMENT op_steps (proc+)>
+<!ATTLIST op_steps %taskatt;>
+
+<!ELEMENT option (text, resultwithoutstate)>
+
+<!ELEMENT opunutsk ((decon | degraded | ecm | fording | secref | unusualenv), 
+                   instructplt*)>
+<!ATTLIST opunutsk  %applidatt; >
+
+<!--CHANGE E.00 - 25 Nov 2013 - TOG
+*******************************************************************************
+** The element <opunuwp> was changed to allow multiple <opunutsk>
+*******************************************************************************
+-->
+<!ELEMENT opunuwp (wp.metadata?, wpidinfo, initial_setup, opunutsk+)>
+<!ATTLIST opunuwp  %wpatt; >
+
+<!--CHANGE E.00 - 25 Nov 2013 - TOG
+*******************************************************************************
+** The element <opusualwp> was changed to allow multiple <opertsk>
+*******************************************************************************
+-->
+<!ELEMENT opusualwp (wp.metadata?, wpidinfo, initial_setup, opertsk+)>
+<!ATTLIST opusualwp  %wpatt; >
+
+<!ELEMENT or EMPTY>
+
+<!--CHANGE E.00 - 25 Nov 2013 - TOG
+*******************************************************************************
+** The attribute origin - branchto was changed to IMPLIED
+*******************************************************************************
+-->
+<!ELEMENT origin (%alert;, test+, indication, answer, answer+)>
+<!ATTLIST origin  type  (yes | no | pass | fail | true | nottrue | value | 
+                          unantic )  #IMPLIED
+                  valueloc    NMTOKENS  #IMPLIED
+                  valuetype (boolean | string | sequence | set | real | integer
+                   | float | nil | input |  outcome )  #IMPLIED
+                  value       CDATA     #IMPLIED
+                  origin      ID        #REQUIRED
+                  branchto    IDREFS    #IMPLIED
+                  branchlabel CDATA     #IMPLIED >
+
+<!ELEMENT orsch (title, intro, orsch.tab)>
+<!ATTLIST orsch  %taskatt; >
+
+<!ELEMENT orschwp (wp.metadata?, wpidinfo, orsch)>
+<!ATTLIST orschwp %wpatt;>
+
+<!ELEMENT orsch.entry (name, orsch.interval.entry+)>
+<!ATTLIST orsch.entry  %applidatt; >
+
+<!ELEMENT orsch.interval.entry (%partid;, overhaul.interval, 
+           retirement.interval)>
+<!ATTLIST orsch.interval.entry  %applidatt; >
+
+<!ELEMENT orsch.tab (title, orsch.entry+)>
+<!ATTLIST orsch.tab  %stdinfoatt; >
+
+<!ELEMENT other.maintsk (proc+)>
+<!ATTLIST other.maintsk  %taskatt; >
+
+<!ELEMENT other.surtsk (proc+)>
+<!ATTLIST other.surtsk  %taskatt; >
+
+<!ELEMENT overhaul (proc+)>
+<!ATTLIST overhaul %taskatt;>
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <overallsystem> updated to include pmcsintrowp followed by pmcswp and they are optional
+*******************************************************************************
+-->
+<!ELEMENT overallsystem (title, (promulgation | promulgation-alt+)*, 
+        (warnsum | warnsum-alt+)?, (howtouse | howtouse-alt+), ginfowp, 
+        (pmcsintrowp, pmcswp)?, descwp*, thrywp*, ctrlindwp*, tsintrowp?, 
+        tsindxwp?)>
+
+<!ELEMENT overhaul.interval (interval.hours, interval.notes?)>
+
+<!ELEMENT pack (proc+)>
+<!ATTLIST pack %taskatt;>
+
+<!ELEMENT pageno (#PCDATA)>
+<!ATTLIST pageno  %idrefs; >
+
+<!ELEMENT paint (proc+)>
+<!ATTLIST paint  %taskatt; >
+
+<!ELEMENT paper.frnt (frntcover, promulgation*, warnsum?, chgsheet?, 
+            loepwp, titleblk, contents?, howtouse?)>
+
+<!ELEMENT paper.manual (paper.frnt, ((gim, %volumegroup;, (opim, 
+            %volumegroup;)*, ((tim, %volumegroup;)?, (mim, %volumegroup;)?)+, 
+            (pim, %volumegroup;)?, (dim, %volumegroup;)?, sim) | pim), rear)>
+<!ATTLIST paper.manual  pubno       CDATA  #IMPLIED
+                   maintitl    CDATA  #REQUIRED
+                   maintlvls    (10 | 13 | 14 | 23 | 24 | 40 
+                        | dmwr | dmwr-nmwr | nmwr | NA )  #REQUIRED
+                   rpstl  (yes | no | only)   "no"
+                   dmwr-inclus  (parts | parts-tools )  #IMPLIED
+                   revno       CDATA  #REQUIRED
+                   multivolume %no_att;
+                   %paper.size;
+                   %secur; >
+
+<!ELEMENT para (%trimcontent; | %list; | figure | figure-alt | inlinegraphic 
+        | table | table-alt | verbatim | interaction | %statemanipulation_ent;)*>
+<!ATTLIST para  %hcpesd;
+                  %bodyidatt; >
+
+<!ELEMENT para0 (precond?, title, ((subpara1 | subpara1-alt)+ | (( csi.alert*, 
+       note*, para)+, (subpara1 | subpara1-alt)*)))>
+<!ATTLIST para0  %applidatt;
+                   %hcpesd;
+                   crewmember CDATA  #IMPLIED >
+
+<!ELEMENT para0-alt (para0+)>
+<!ATTLIST para0-alt  id ID  #IMPLIED >
+
+<!ELEMENT park (proc+)>
+<!ATTLIST park  %taskatt; >
+
+<!ELEMENT part.breakdown.ref EMPTY>
+<!ATTLIST part.breakdown.ref  idref IDREF  #REQUIRED >
+
+<!ELEMENT partcage (partno, cageno)>
+<!ATTLIST partcage  %refs; >
+
+<!ELEMENT partdesc (((partno, cageno, dwgno?) | dwgno), name)>
+
+<!ELEMENT partno (#PCDATA)>
+<!ATTLIST partno  %refs; >
+
+<!ELEMENT pcn (#PCDATA)>
+<!ATTLIST pcn  %refs; >
+
+<!ELEMENT pecul.insp.tab (title, pecul.insp-group+)>
+<!ATTLIST pecul.insp.tab  %stdinfoatt; >
+
+<!ELEMENT pecul.insp-entry (eqpitem, pecul.step-entry+)>
+<!ATTLIST pecul.insp-entry  %applidatt; >
+
+<!ELEMENT pecul.insp-group (compassem, pecul.insp-entry+)>
+<!ATTLIST pecul.insp-group  %applidatt; >
+
+<!ELEMENT pecul.step-entry (%step;, remarks)>
+<!ATTLIST pecul.step-entry  %bodyidatt; >
+
+<!ELEMENT perseqpwp (wp.metadata?, wpidinfo, initial_setup, proc+)>
+<!ATTLIST perseqpwp  %wpatt; >
+
+<!ELEMENT persnreq (persnreq-setup-item+)>
+
+<!ELEMENT persnreq-setup-item (name, mos?, qty?)>
+<!ATTLIST persnreq-setup-item  %setupatt; >
+
+<!ELEMENT phone (#PCDATA)>
+<!ATTLIST phone  type         (dsn | coml | cell | other )  #REQUIRED
+                   receive      (voice | fax )  'voice'
+                   other       CDATA  #IMPLIED
+                   %changelevel; >
+
+<!ELEMENT pi.category (figure, fncgrp, pi.item+)>
+<!ATTLIST pi.category  %bodyidatt; >
+
+<!--CHANGE E 00 - 30 Oct 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction added applicable IDREFS  #IMPLIED to ELEMENT pi.item 
+*******************************************************************************
+-->
+<!ELEMENT pi.item ((nha_item?, callout?, (uoc+ | boi | usbefserno+)?, qty)+, 
+            ((smr+, nsn?, partno, cageno, name, desc, qty_per_end_item?, ui?, 
+            (%extref_ent;)?, refdes?, maintenance?) | common_part_ref), 
+            (pi.item+ | kititem+ | pi.category | part.breakdown.ref)?)>
+<!ATTLIST pi.item  indent CDATA  '0'
+                            type (part | exp | coei | bii | aal | tool | special.tool) 'part'
+							hci (yes | no) 'no'
+							esd (yes | no) 'no'
+							mrp (yes | no) 'no'
+							csi (yes | no) 'no'
+							tereq (yes | no) 'no'
+							 %applidatt;  >
+
+<!ELEMENT pim (titlepg, (introwp, (plwp, %volumegroup;)+, (stl_partswp, 
+      %volumegroup;)?, (kitswp, %volumegroup;)*, (bulk_itemswp, %volumegroup;)*, 
+      (stlwp, %volumegroup;)*, ((nsnindxwp, pnindxwp), refdesindxwp?,
+       vol-rear?)?))>
+<!ATTLIST pim  %imatt;
+                 dmwr-inclus  (parts | parts-tools | none )  #REQUIRED >
+
+<!ELEMENT pis (proc+)>
+<!ATTLIST pis  %taskatt; >
+
+<!ELEMENT plus EMPTY>
+
+<!ELEMENT plwp (wp.metadata?, wpidinfo, pi.category+)>
+<!ATTLIST plwp  %wpatt; >
+
+<!ELEMENT pm.warning.data (warning, note)>
+
+<!ELEMENT pmcs-entry (itemno, interval+, manhours?, checked, pmcsproc+)>
+<!ATTLIST pmcs-entry  %applidatt; >
+
+<!ELEMENT pmcs-intervals (interval+)>
+
+<!ELEMENT pmcscategory (pmcsintrowp, pmcswp+)>
+
+<!ELEMENT pmcsintrowp (wp.metadata?, wpidinfo, intro, ((%para0_ent;)+, 
+          fluid.leakage?))>
+<!ATTLIST pmcsintrowp  %wpatt; >
+
+<!ELEMENT pmcspara ((%p;), eqpnotavail?)>
+<!ATTLIST pmcspara  %bodyidatt; >
+
+<!ELEMENT pmcsproc (title?, (pmcspara | (pmcsstep1 | pmcsstep1-alt)+))>
+<!ATTLIST pmcsproc  %applidatt;
+                      %hcpesd;
+                      crewmember CDATA  #IMPLIED >
+
+<!--CHANGE E 00 - 30 Oct 2013 - TOG
+*******************************************************************************
+** Per LOGSA ELEMENT <(pmcsstep1> by adding (pmcsstep3|pmcsstep3-alt)*  25 NOV 2013  
+*******************************************************************************
+-->
+
+<!ELEMENT pmcsstep1 ((%p;), eqpnotavail?, (pmcsstep2|pmcsstep2-alt)*)>
+<!ATTLIST pmcsstep1  %applidatt;
+                       %hcpesd;
+                       %qa;
+                       crewmember CDATA  #IMPLIED >
+
+<!ELEMENT pmcsstep1-alt (pmcsstep1+)>
+<!ATTLIST pmcsstep1-alt
+  id ID #IMPLIED >
+
+<!ELEMENT pmcsstep2 ((%p;), eqpnotavail?, (pmcsstep3|pmcsstep3-alt)*)>
+
+<!ATTLIST pmcsstep2
+  %applidatt;
+                       %hcpesd;
+                       %qa;
+                       crewmember CDATA  #IMPLIED >
+
+<!ELEMENT pmcsstep2-alt (pmcsstep2+)>
+<!ATTLIST pmcsstep2-alt
+  id ID #IMPLIED >
+
+<!ELEMENT pmcsstep3 ((%p;), eqpnotavail?, (pmcsstep4|pmcsstep4-alt)*)>
+
+<!ATTLIST pmcsstep3
+  %applidatt;
+                       %hcpesd;
+                       %qa;
+                       crewmember CDATA  #IMPLIED >
+
+<!ELEMENT pmcsstep3-alt (pmcsstep3+)>
+<!ATTLIST pmcsstep3-alt
+  id ID #IMPLIED >
+
+<!ELEMENT pmcsstep4 ((%p;), eqpnotavail?)>
+<!ATTLIST pmcsstep4  %applidatt;
+                       %hcpesd;
+                       %qa;
+                       crewmember CDATA  #IMPLIED >
+
+<!ELEMENT pmcsstep4-alt (pmcsstep4+)>
+<!ATTLIST pmcsstep4-alt
+  id ID #IMPLIED >
+
+<!ELEMENT pmcstable (title, pmcs-intervals?, %alert;, pmcs-entry+)>
+<!ATTLIST pmcstable  %stdinfoatt;
+                       use-manhours %no_att;    >
+
+<!ELEMENT pmcswp (wp.metadata?, wpidinfo, initial_setup, pmcstable+, mrplpart)>
+<!ATTLIST pmcswp  %wpatt; >
+
+
+<!ELEMENT pmc (frntcover_abbreviated, pmcstable)>
+<!ATTLIST pmc pubno     CDATA  #IMPLIED
+              revno     CDATA  #REQUIRED
+              maintitl  CDATA  #REQUIRED
+              maintlvls  (PMC )  #REQUIRED
+              %secur; >
+
+<!ELEMENT pm-ginfowp (wp.metadata?, wpidinfo, geninfo)>
+<!ATTLIST pm-ginfowp  %wpatt; >
+
+<!ELEMENT pmi (paper.frnt, pm-ginfowp, mim+, rear)>
+<!ATTLIST pmi  pubno     CDATA  #IMPLIED
+                 revno     CDATA  #REQUIRED
+                 maintitl  CDATA  #REQUIRED
+                 maintlvls  (PMI )  #REQUIRED
+                 %secur; >
+
+<!ELEMENT pmi.pecul.tab (title, pmi.pecul-row)+>
+<!ATTLIST pmi.pecul.tab  %stdinfoatt; >
+
+<!ELEMENT pmi.pecul-entry (areano, itemno, interval, compname, (proc | 
+       (%step;)+))>
+<!ATTLIST pmi.pecul-entry  %applidatt; >
+
+<!ELEMENT pmi.pecul-row (serialno, date, pmi.pecul-entry+)>
+<!ATTLIST pmi.pecul-row  %applidatt; >
+
+<!ELEMENT pmi-cklistwp (wp.metadata?, wpidinfo, initial_setup, %alert;, figure+, 
+       note, (figure?, table)*)>
+<!ATTLIST pmi-cklistwp  %wpatt; >
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <pmiwp> updated to allow one or more PROC 
+*******************************************************************************
+-->
+<!ELEMENT pmiwp (wp.metadata?, wpidinfo, initial_setup, ((proc)+ | 
+           (%alert;, geninfo, (figure, pmi.pecul.tab)+)))>
+<!ATTLIST pmiwp %wpatt; >
+
+<!ELEMENT pms (paper.frnt, pms-ginfowp, mim+, rear)>
+<!ATTLIST pms  pubno     CDATA  #IMPLIED
+               revno     CDATA  #REQUIRED
+               maintitl  CDATA  #REQUIRED
+               maintlvls  (PMS | PMD )  #REQUIRED
+               %secur; >
+
+<!ELEMENT pmscategory (pms-inspecwp+)>
+
+<!ELEMENT pms-geninfo (pms-para+)>
+<!ATTLIST pms-geninfo  %frameatt; >
+
+<!ELEMENT pms-ginfowp (wp.metadata?, wpidinfo, scope, pms-geninfo)>
+<!ATTLIST pms-ginfowp  %wpatt; >
+
+<!ELEMENT pms-inspecwp (wp.metadata?, wpidinfo, initial_setup, %alert;, (figure*, 
+        table)+)>
+<!ATTLIST pms-inspecwp  %wpatt; >
+
+<!ELEMENT pms-para (title, warning?, para+)>
+
+<!ELEMENT pnindx (pnindxrow+)>
+<!ATTLIST pnindx  %bodyidatt; >
+
+<!ELEMENT pnindxrow (partno, cageno, callout+)>
+<!ATTLIST pnindxrow  %bodyidatt; >
+
+<!ELEMENT pnindxwp (wp.metadata?, wpidinfo, pnindx)>
+<!ATTLIST pnindxwp  %wpatt; >
+
+<!ELEMENT portionmark EMPTY>
+<!ATTLIST portionmark  country CDATA  'US'
+                         %secur; >
+
+<!ELEMENT possibletext (%text_ent;)*>
+
+<!ELEMENT posttext (%format;)*>
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <ppmgeninfowp> updated create a geninfo type work package with no procedures or tasks.
+*******************************************************************************
+-->
+
+<!ELEMENT ppmgeninfowp (wp.metadata?, wpidinfo, geninfo)>
+<!ATTLIST ppmgeninfowp  %wpatt; >
+
+<!ELEMENT prdinv (%titldtext;)>
+<!ATTLIST prdinv  %applidatt; >
+
+<!ELEMENT precal (proc+)>
+<!ATTLIST precal  %taskatt; >
+
+<!ELEMENT prechkadj (proc+)>
+<!ATTLIST prechkadj  %taskatt; >
+
+<!ELEMENT precond (expression)>
+<!ATTLIST precond  id ID  #IMPLIED >
+
+<!ELEMENT premature EMPTY>
+<!ATTLIST premature  distreason CDATA  #FIXED 'Premature Dissemination' >
+
+<!ELEMENT prepforuse (proc+)>
+<!ATTLIST prepforuse  %taskatt; >
+
+<!ELEMENT prepmove (proc+)>
+<!ATTLIST prepmove  %taskatt; >
+
+<!ELEMENT preserv (proc+)>
+<!ATTLIST preserv  %taskatt; >
+
+<!ELEMENT pretext (%format;)*>
+
+<!ELEMENT proc (title?, %alert;, geninfo?, (para | (%step;, (%step;)+)))>
+<!ATTLIST proc  %applidatt;
+                  %hcpesd;
+                  %qa;
+                  crewmember      CDATA  #IMPLIED
+                  tocentry         (0 | 3 | 4 | 5 )  '0'
+                  date-time-stamp  (date | time | date-time )  #IMPLIED
+                  frame            (yes | no )  'yes' >
+  
+<!ELEMENT processeqp (proc+)>
+<!ATTLIST processeqp  %taskatt; >
+
+<!ELEMENT production (applic_ref_list?, (framed.manual | paper.manual | 
+        ammo | pmi | pms | sys-ts | destruction_manual | bdar | lubeorder | pmc
+        | dmwr_ammo))>
+<!ATTLIST production  date         CDATA  #REQUIRED
+                        chnglevel    CDATA  #REQUIRED
+                        chngdate     CDATA  #REQUIRED
+                        pin          CDATA  #REQUIRED >
+
+<!ELEMENT prompt (%format; | variableref)*>
+<!ATTLIST prompt  id       ID  #IMPLIED
+                    position  (left | right | top | bottom )  #IMPLIED >
+
+<!ELEMENT promulgation (graphic)>
+<!ATTLIST promulgation  %bodyatt;
+                          applicable IDREFS  #IMPLIED >
+
+<!ELEMENT promulgation-alt (promulgation)>
+
+<!ELEMENT proponent (name, address)>
+<!ATTLIST proponent  %bodyidatt; >
+
+<!ELEMENT proprietary EMPTY>
+<!ATTLIST proprietary  distreason CDATA  #FIXED 'Proprietary Information' >
+
+<!ELEMENT prtitle (sysnomen+, subject?)+>
+<!ATTLIST prtitle  %changelevel;
+                     %secur; >
+                     
+
+<!ELEMENT pshopanal (proc+ | chklist)>
+<!ATTLIST pshopanal  %bodyidatt; >
+
+<!ELEMENT pshopanalwp (wp.metadata?, wpidinfo, initial_setup, %alert;, scope, proc+,
+            pshopanal+)>
+<!ATTLIST pshopanalwp  %wpatt; >
+
+<!ELEMENT pshopchk.tab (table)>
+<!ATTLIST pshopchk.tab  %stdinfoatt; >
+
+<!ELEMENT pss (proc+)>
+<!ATTLIST pss  %taskatt; >
+
+<!ELEMENT pssref (%titldtext;)>
+<!ATTLIST pssref  %bodyidatt; >
+
+<!ELEMENT pubident ((name | %extref_ent;), title)>
+<!ATTLIST pubident  %bodyidatt; 
+					 applicable IDREFS  #IMPLIED >
+
+<!ELEMENT publist (title, trim.para*, pubident+)>
+<!ATTLIST publist  %bodyidatt; >
+
+<!ELEMENT qainfo (%titldtext;)>
+<!ATTLIST qainfo  %bodyidatt; >
+
+<!ELEMENT qawp (wp.metadata?, wpidinfo, initial_setup?, responsibility, 
+      definitions, specialreq?, certreq?, quality_program?, inprocess, 
+      acceptance, first?)>
+<!ATTLIST qawp  %wpatt; >
+
+<!ELEMENT qty (#PCDATA)>
+<!ATTLIST qty  %bodyatt; >
+
+<!ELEMENT qty_per_end_item (#PCDATA)>
+<!ATTLIST qty_per_end_item  %bodyatt; >
+
+<!ELEMENT qtyrec (#PCDATA)>
+
+<!ELEMENT qual.mat.info (%titldtext;)>
+<!ATTLIST qual.mat.info  %bodyidatt; >
+
+<!ELEMENT qualify-2lvl (maintfunc, maintclass-2lvl, terefs?, remarkrefs?)>
+
+<!ELEMENT quality_program (%titldtext;)>
+<!ATTLIST quality_program  %changelevel; >
+
+<!ELEMENT qualityassurance (unverified | (validation, verification?))>
+
+<!ELEMENT randlist (title?, item+)>
+<!ATTLIST randlist  bullet %no_att;
+                      prefix    CDATA  #IMPLIED
+                      %bodyidatt; >
+
+<!ELEMENT range ((serialno, serialno) | (mwo, mwo) | (uoc, uoc) | (modelno, 
+      modelno) | (software_version, software_version) | (eqp_id, eqp_id))>
+
+<!ELEMENT rcrr (para0+)>
+<!ATTLIST rcrr %bodyidatt;>
+
+<!ELEMENT real (#PCDATA)>
+
+<!--CHANGE E 00 - 30 DEC 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <rear> removed blank_form as it is no longer authorized
+*******************************************************************************
+-->
+<!ELEMENT rear (glossary?, aindx?, da2028+, authent, foldsect?, 
+               back)>
+<!ATTLIST rear  %idrefs; >
+
+<!ELEMENT reason (%text_ent;)*>
+<!ATTLIST reason  %bodyatt; >
+
+<!ELEMENT reasondate (#PCDATA)>
+
+<!ELEMENT reasonfortest (%titldtext;)>
+<!ATTLIST reasonfortest  %bodyidatt; >
+
+<!ELEMENT rebuild (proc+)>
+<!ATTLIST rebuild %taskatt;>
+
+<!ELEMENT receiveparameter (variableref)>
+
+<!ELEMENT recfrom (%text_ent;)*>
+
+<!ELEMENT ref (ref-setup-item+)>
+
+<!ELEMENT refdes (%format; | %linkref;)*>
+<!ATTLIST refdes  nsn       CDATA  #IMPLIED
+                    eic       CDATA  #IMPLIED
+                    %bodyidatt; >
+
+<!ELEMENT refdesindx (refdesindxrow+)>
+<!ATTLIST refdesindx  %bodyidatt; >
+
+<!ELEMENT refdesindxrow (refdes, callout+)>
+<!ATTLIST refdesindxrow  %bodyidatt; >
+
+<!ELEMENT refdesindxwp (wp.metadata?, wpidinfo, indxref*, refdesindx)>
+<!ATTLIST refdesindxwp  %wpatt; >
+
+<!ELEMENT ref.generate EMPTY>
+
+<!ELEMENT ref-setup-item (%linkref;)>
+<!ATTLIST ref-setup-item  %setupatt; >
+
+<!ELEMENT refwp (wp.metadata?, wpidinfo, scope, publist+)>
+<!ATTLIST refwp  %wpatt; >
+
+<!ELEMENT releaseagent (#PCDATA)>
+
+<!ELEMENT remarkcode (#PCDATA)>
+<!ATTLIST remarkcode  id ID  #REQUIRED >
+
+<!ELEMENT remark-group (remarkcode, remarks)>
+
+<!ELEMENT remarkref EMPTY>
+<!ATTLIST remarkref  refs IDREF  #REQUIRED >
+
+<!ELEMENT remarkrefs (remarkref+)>
+
+<!ELEMENT remarks (%text_ent;)*>
+<!ATTLIST remarks  %bodyidatt; >
+
+<!ELEMENT remarktab (title, remark-group+)>
+<!ATTLIST remarktab  %bodyidatt; >
+
+<!ELEMENT remove (proc+)>
+<!ATTLIST remove  %taskatt; >
+
+<!ELEMENT removepg (#PCDATA)>
+
+<!ELEMENT repairable (%text_ent;)*>
+<!ATTLIST repairable  %changelevel; >
+
+<!ELEMENT repair (proc+)>
+<!ATTLIST repair %taskatt;>
+
+<!ELEMENT replace (proc+)>
+<!ATTLIST replace %taskatt;>
+
+<!ELEMENT report_destruct (title, para)>
+<!ATTLIST report_destruct  %bodyidatt; >
+
+<!ELEMENT reporting (title, para, (reporting.para+, para)?)>
+<!ATTLIST reporting  %bodyidatt; >
+
+<!ELEMENT reporting_req (para0+)>
+<!ATTLIST reporting_req %bodyidatt;>
+
+<!ELEMENT reporting.para (%trimcontent;)*>
+<!ATTLIST reporting.para  service    (army | af | navy | marines )  #REQUIRED
+                            %bodyidatt; >
+
+<!ELEMENT resource_recovery (para0+)>
+<!ATTLIST resource_recovery %bodyidatt;>
+
+<!ELEMENT responsibility (%titldtext;)>
+<!ATTLIST responsibility  %changelevel; >
+
+<!ELEMENT resultwithoutstate (fault*, (%disconnect_ent;)*, (link | (para, 
+          (link | completed_test)?)))>
+
+<!ELEMENT resultwithstate (fault*, (%disconnect_ent;)*, (%statemanipulation_ent; 
+   | interaction | link | para)+, completed_test?)>
+
+<!ELEMENT retirement.interval (interval.hours, interval.notes?)>
+
+<!ELEMENT returnlink (link)>
+
+<!ELEMENT revform (#PCDATA)>
+
+<!ELEMENT revisionsummary (title, para, para?, (wpno, desc)+)>
+<!ATTLIST revisionsummary  frame       (yes | no )  'yes'
+                             applicable IDREFS  #IMPLIED >
+
+<!ELEMENT revisionsummary-alt (revisionsummary)>
+
+<!ELEMENT revtag (#PCDATA)>
+
+<!ELEMENT ris (proc+)>
+<!ATTLIST ris  %taskatt; >
+
+<!ELEMENT row (entry+)>
+<!ATTLIST row  rowsep      (0 | 1 )  #IMPLIED
+                 applicable IDREFS  #IMPLIED
+                 %bodyidatt; >
+
+<!ELEMENT safety (title, sfty-icons+)>
+<!ATTLIST safety  %bodyidatt; >
+
+<!ELEMENT schematic (%titldtext;)>
+<!ATTLIST schematic  %bodyidatt; >
+
+<!ELEMENT scope (%titldtext;)>
+<!ATTLIST scope  %bodyidatt;
+  frame      (yes | no )  "no">
+
+<!ELEMENT sec EMPTY>
+
+<!ELEMENT sech EMPTY>
+
+<!ELEMENT secitem (#PCDATA)>
+
+<!ELEMENT secref (proc+)>
+<!ATTLIST secref  %taskatt; >
+
+<!ELEMENT security (%titldtext;)>
+<!ATTLIST security  %applidatt; >
+
+<!ELEMENT sendparameter (name?, (variableref | string))>
+<!ATTLIST sendparameter  mode CDATA  #IMPLIED >
+
+<!ELEMENT seqlist (title?, item+)>
+<!ATTLIST seqlist  %bodyidatt; >
+
+<!ELEMENT serialno (#PCDATA)>
+
+<!ELEMENT servbranch EMPTY>
+<!ATTLIST servbranch  service      (army | af | navy | marines )  #REQUIRED
+                        qualify     CDATA  #IMPLIED
+                        procuring %no_att;
+                        %changelevel;
+                        %secur; >
+
+<!ELEMENT service (proc+)>
+<!ATTLIST service  %taskatt; >
+
+<!ELEMENT servnomen (%format;)*>
+
+<!ELEMENT set (serialno+ | mwo+ | uoc+ | modelno+ | software_version+ | eqp_id+)>
+
+<!ELEMENT setconn (proc+)>
+<!ATTLIST setconn  %taskatt; >
+
+<!ELEMENT sftydesc (title, text)>
+<!ATTLIST sftydesc  %bodyidatt; >
+
+<!ELEMENT sfty-icons (symbol, sftydesc)>
+<!ATTLIST sfty-icons  %bodyatt; >
+
+<!ELEMENT sftyinfo (%titldtext;)>
+<!ATTLIST sftyinfo  %bodyidatt; >
+
+<!ELEMENT sfty_req (para0+)>
+<!ATTLIST sfty_req %bodyidatt;>
+
+<!ELEMENT shelter (proc+)>
+<!ATTLIST shelter  %taskatt; >
+
+<!ELEMENT shipmentmovementstoragecategory (maintwp+)>
+
+<!ELEMENT shltr (proc+)>
+<!ATTLIST shltr  %taskatt; >
+
+
+<!ELEMENT short (geninfo, proc+)>
+<!ATTLIST short  %applidatt;
+                   %hcpesd; >
+
+<!ELEMENT sig (%format;)*>
+
+<!ELEMENT sigfunc (#PCDATA)>
+<!ATTLIST sigfunc  %bodyidatt; >
+
+<!ELEMENT signal-item (signame, dataitem, ckremarks, criteria, criteria)>
+<!ATTLIST signal-item  type       (part | signal | process | other )  #IMPLIED
+                         %bodyidatt; >
+
+<!ELEMENT signalword (#PCDATA)>
+
+<!ELEMENT signame (#PCDATA)>
+<!ATTLIST signame  %bodyidatt; >
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA and MIL-STD 40051-1B direction, hand receipt manual is included in the
+** IETM it must appear in the supporting information chapter (<sim>). Created WP for handreceipt 
+*******************************************************************************
+-->
+
+<!ELEMENT sim (titlepg, (refwp, (bdarcategory | ((macintrowp, macwp)?, 
+       ((coeibiiwp*, aalwp?,  explistwp?, toolidwp?, mrplwp?, csi.wp?, handreceiptwp?) | 
+       supitemwp))), genwp*))>
+<!ATTLIST sim  %imatt; >
+
+<!ELEMENT simple (title?, prompt, yes, no)>
+<!ATTLIST simple  id     ID  #IMPLIED
+                  answer  (yesno | truefalse | passfail )  'yesno' >
+
+<!ELEMENT sin EMPTY>
+
+<!ELEMENT single (serialno | mwo | uoc | modelno | software_version | eqp_id)>
+
+<!ELEMENT sinh EMPTY>
+
+<!ELEMENT site (proc+)>
+<!ATTLIST site  %taskatt; >
+
+<!ELEMENT siting (proc+)>
+<!ATTLIST siting  %taskatt; >
+
+<!ELEMENT size EMPTY>
+
+<!ELEMENT sling (proc+)>
+<!ATTLIST sling  %taskatt; >
+
+<!ELEMENT smr EMPTY>
+<!ATTLIST smr  service (army | navy | AF | marine | CG )  'army'
+                 sourcecode CDATA  #REQUIRED
+                 maintcode CDATA  #REQUIRED
+                 recovercode CDATA  #REQUIRED
+                 eic CDATA  #IMPLIED
+                 demil CDATA  #IMPLIED
+                 %bodyatt; >
+
+<!ELEMENT softwaredoc EMPTY>
+<!ATTLIST softwaredoc  distreason CDATA  #FIXED 'Software Documentation' >
+
+<!ELEMENT softwaremaint (proc+)>
+<!ATTLIST softwaremaint %taskatt;>
+
+<!ELEMENT software_version (#PCDATA)>
+
+<!ELEMENT spanspec EMPTY>
+<!ATTLIST spanspec  namest   CDATA  #REQUIRED
+               nameend  CDATA  #REQUIRED
+               spanname CDATA  #REQUIRED
+               align     (left | right | center | justify | char )  'center'
+               charoff  CDATA  #IMPLIED
+               char     CDATA  #IMPLIED
+               colsep    (0 | 1 )  #IMPLIED
+               rowsep    (0 | 1 )  #IMPLIED >
+
+<!ELEMENT specauth (#PCDATA)>
+<!ATTLIST specauth  distreason CDATA  #FIXED 'Specific Authority' >
+
+<!ELEMENT specenv (specenv-setup-item+)>
+
+<!ELEMENT specenv-setup-item (condition, reason)>
+<!ATTLIST specenv-setup-item  %setupatt; >
+
+<!ELEMENT specialreq (%titldtext;)>
+<!ATTLIST specialreq  %changelevel; >
+
+<!ELEMENT special_sfty (para0+)>
+<!ATTLIST special_sfty %bodyidatt;>
+
+<!ELEMENT specpara (((warning+, csi.alert*, caution*, note*) | (csi.alert+, 
+             caution*, note*) | (caution+, note*) | note+), para)>
+<!ATTLIST specpara  %hcpesd;
+                      %bodyidatt; >
+
+<!ELEMENT spec_hazards (para0+)>
+
+<!ELEMENT sqrt EMPTY>
+
+<!ELEMENT sruthry (%titldtext;)>
+<!ATTLIST sruthry  nomen     CDATA  #IMPLIED
+                     nsn       CDATA  #IMPLIED
+                     %bodyidatt;
+                     frame      (yes | no )  'no' >
+
+<!ELEMENT ssysthry (%titldtext;, (lruthry*, sruthry*))>
+<!ATTLIST ssysthry  nomen     CDATA  #IMPLIED
+                      nsn       CDATA  #IMPLIED
+                      %bodyidatt;
+                      frame      (yes | no )  'no' >
+
+<!ELEMENT state (#PCDATA)>
+<!ATTLIST state  %changelevel; >
+
+<!ELEMENT statemanipulation (precond?, (variable | (variableref, (fault 
+        | date-time_stamp | expression))))>
+<!ATTLIST statemanipulation  %applidatt; >
+
+<!ELEMENT statemanipulation-alt (statemanipulation+)>
+<!ATTLIST statemanipulation-alt  id ID  #IMPLIED >
+
+<!ELEMENT step1 (precond?, (%p;), (%figtab; | step2 | step2-alt)*)>
+<!ATTLIST step1  %applidatt;
+                   skilllevel       (novice_expert )  'novice_expert'
+                   label           CDATA   #IMPLIED
+                   %hcpesd;
+                   %qa;
+                   safeflght %yesorno;
+                   crewmember      CDATA   #IMPLIED
+                   frame            (yes | no )  #IMPLIED
+                   date-time-stamp  (date | time | date-time )  #IMPLIED
+                   warningref      IDREFS  #IMPLIED
+                   cautionref      IDREFS  #IMPLIED
+                   noteref         IDREFS  #IMPLIED >
+
+<!ELEMENT step1-alt (step1+)>
+<!ATTLIST step1-alt  id ID  #IMPLIED >
+
+<!ELEMENT step2 (precond?, (%p;), (%figtab; | step3 | step3-alt)*)>
+
+<!ATTLIST step2  %applidatt;
+                   skilllevel  (novice | novice_expert )  'novice_expert'
+                   label      CDATA   #IMPLIED
+                   %hcpesd;
+                   %qa;
+                   safeflght %yesorno;
+                   crewmember CDATA   #IMPLIED
+                   warningref IDREFS  #IMPLIED
+                   cautionref IDREFS  #IMPLIED
+                   noteref    IDREFS  #IMPLIED >
+<!ELEMENT step2-alt (step2+)>
+<!ATTLIST step2-alt  id ID  #IMPLIED >
+
+<!ELEMENT step3 (precond?, (%p;), (%figtab; | step4 | step4-alt)*)>
+<!ATTLIST step3  %applidatt;
+                   skilllevel  (novice | novice_expert )  'novice_expert'
+                   label      CDATA   #IMPLIED
+                   %hcpesd;
+                   %qa;
+                   safeflght %yesorno;
+                   crewmember CDATA   #IMPLIED
+                   warningref IDREFS  #IMPLIED
+                   cautionref IDREFS  #IMPLIED
+                   noteref    IDREFS  #IMPLIED >
+
+<!ELEMENT step3-alt (step3+)>
+<!ATTLIST step3-alt  id ID  #IMPLIED >
+
+<!ELEMENT step4 (precond?, (%p;), (%figtab; | step5 | step5-alt)*)>
+<!ATTLIST step4  %applidatt;
+                   skilllevel  (novice | novice_expert )  'novice_expert'
+                   label      CDATA   #IMPLIED
+                   %hcpesd;
+                   %qa;
+                   safeflght %yesorno;
+                   crewmember CDATA   #IMPLIED
+                   warningref IDREFS  #IMPLIED
+                   cautionref IDREFS  #IMPLIED
+                   noteref    IDREFS  #IMPLIED >
+
+<!ELEMENT step4-alt (step4+)>
+<!ATTLIST step4-alt  id ID  #IMPLIED >
+
+<!ELEMENT step5 (precond?, (%p;), (%figtab; | step6 | step6-alt)*)>
+<!ATTLIST step5  %applidatt;
+                   skilllevel  (novice | novice_expert )  'novice_expert'
+                   label      CDATA   #IMPLIED
+                   %hcpesd;
+                   %qa;
+                   safeflght %yesorno;
+                   crewmember CDATA   #IMPLIED
+                   warningref IDREFS  #IMPLIED
+                   cautionref IDREFS  #IMPLIED
+                   noteref    IDREFS  #IMPLIED >
+
+<!ELEMENT step5-alt (step5+)>
+<!ATTLIST step5-alt  id ID  #IMPLIED >
+
+<!ELEMENT step6 (precond?, (%p;), (%figtab;)*)>
+<!ATTLIST step6  %applidatt;
+                   skilllevel  (novice | novice_expert )  'novice_expert'
+                   label      CDATA   #IMPLIED
+                   %hcpesd;
+                   %qa;
+                   safeflght %yesorno;
+                   crewmember CDATA   #IMPLIED
+                   warningref IDREFS  #IMPLIED
+                   cautionref IDREFS  #IMPLIED
+                   noteref    IDREFS  #IMPLIED >
+
+<!ELEMENT step6-alt (step6+)>
+<!ATTLIST step6-alt  id ID  #IMPLIED >
+
+<!ELEMENT stitle (%format; | brk)*>
+<!ATTLIST stitle  %changelevel;
+                    %secur; >
+
+<!ELEMENT stl_partswp (wp.metadata?, wpidinfo, pi.category+)>
+<!ATTLIST stl_partswp  %wpatt; >
+
+<!ELEMENT stlwp (wp.metadata?, wpidinfo, pi.category+)>
+<!ATTLIST stlwp  %wpatt; >
+
+<!ELEMENT storagewp (wp.metadata?, wpidinfo, initial_setup, %alert;, geninfo, flyable, 
+          short, intermediate)>
+<!ATTLIST storagewp %wpatt; >
+
+<!ELEMENT stowagewp (wp.metadata?, wpidinfo, intro, stowinfo+, decalinfo*)>
+<!ATTLIST stowagewp  %wpatt; >
+
+<!ELEMENT stowinfo (intro, figure+)>
+<!ATTLIST stowinfo  %applidatt; >
+
+<!ELEMENT street (#PCDATA)>
+<!ATTLIST street  %changelevel; >
+
+<!ELEMENT string (#PCDATA)>
+
+<!ELEMENT sub-contententry (contententry+)>
+<!ATTLIST sub-contententry  figuretable  (yes | no )  #IMPLIED >
+
+<!ELEMENT subfig (subtitle?, ((graphic, legend?) | table | verbatim))>
+<!ATTLIST subfig  id          ID      #IMPLIED
+                    IDREFS      IDREFS  #IMPLIED
+                    sheet       CDATA   #IMPLIED
+                    totalsheets CDATA   #IMPLIED
+                    %changelevel; >
+
+<!ELEMENT subject (%format; | brk)*>
+<!ATTLIST subject  %changelevel;
+                     %secur; >
+
+<!ELEMENT subpara1 (precond?, title, ((subpara2 | subpara2-alt)+ | 
+          ((csi.alert*, note*, para)+, (subpara2 | subpara2-alt)*)))>
+<!ATTLIST subpara1  %applidatt;
+                      %hcpesd;
+                      crewmember CDATA  #IMPLIED >
+
+<!ELEMENT subpara1-alt (subpara1+)>
+<!ATTLIST subpara1-alt  id ID  #IMPLIED >
+
+<!ELEMENT subpara2 (precond?, title, ((subpara3 | subpara3-alt)+ | 
+            ((csi.alert*, note*, para)+, (subpara3 | subpara3-alt)*)))>
+<!ATTLIST subpara2  %applidatt;
+                      %hcpesd;
+                      crewmember CDATA  #IMPLIED >
+
+<!ELEMENT subpara2-alt (subpara2+)>
+<!ATTLIST subpara2-alt  id ID  #IMPLIED >
+
+<!ELEMENT subpara3 (precond?, title, ((subpara4 | subpara4-alt)+ | 
+           ((csi.alert*, note*, para)+, (subpara4 | subpara4-alt)*)))>
+<!ATTLIST subpara3  %applidatt;
+                      %hcpesd;
+                      crewmember CDATA  #IMPLIED >
+
+<!ELEMENT subpara3-alt (subpara3+)>
+<!ATTLIST subpara3-alt  id ID  #IMPLIED >
+
+<!ELEMENT subpara4 (precond?, title, ((csi.alert*, note*, para)+))>
+<!ATTLIST subpara4  %applidatt;
+                      %hcpesd;
+                      crewmember CDATA  #IMPLIED >
+
+<!ELEMENT subpara4-alt (subpara4+)>
+<!ATTLIST subpara4-alt  id ID  #IMPLIED >
+
+<!ELEMENT subscrpt (#PCDATA)>
+
+<!ELEMENT substring EMPTY>
+
+<!ELEMENT substitute-matwp (wp.metadata?, wpidinfo, ((intro, %titldtext;) | 
+                para+))>
+<!ATTLIST substitute-matwp  %wpatt; >
+
+<!ELEMENT subsystem-system (systemnomen, subsystem-system*)>
+<!ATTLIST subsystem-system  %applidatt; >
+
+<!ELEMENT subtitle (%format;)*>
+<!ATTLIST subtitle  %bodyatt; >
+
+<!ELEMENT supdata (%titldtext;)+>
+<!ATTLIST supdata  %bodyidatt; >
+
+<!ELEMENT super (title?, para)>
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, ELEMENT <supitemwp> updated keep coei and bii when included, both are required
+*******************************************************************************
+-->
+<!ELEMENT supitemwp (wp.metadata?, wpidinfo, intro?, (coei, bii)?, aal?, 
+            explist?, toolidlist?, mrpl?, csi?)>
+<!ATTLIST supitemwp  %wpatt; >
+
+<!ELEMENT supscrpt (#PCDATA)>
+
+<!ELEMENT surmat (unpack | chkeqp | processeqp)+>
+
+<!--CHANGE E.28 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, Added + to allow more then one task per work package. 
+*******************************************************************************
+-->
+<!ELEMENT surtsk ((ammo.defect | ammo.handling | arm | calign | install | 
+                   mark | other.surtsk | precal | prechkadj | preserv | 
+									 shltr | siting | surmat)+, followon.maintsk?)>
+
+<!ELEMENT surwp (wp.metadata?, wpidinfo, initial_setup, surtsk+)>
+<!ATTLIST surwp %wpatt; >
+
+<!--CHANGE E 00 - 30 OCT 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, SYMBOL changed to add an ID attribute that would allow linking. 
+*******************************************************************************
+-->
+
+<!ELEMENT symbol EMPTY>
+<!ATTLIST symbol  %graphicatt;
+                    %bodyidatt; 
+                     >
+
+<!ELEMENT symptom (%text_ent;)*>
+<!ATTLIST symptom  %bodyidatt; >
+
+<!ELEMENT sysdesc (%titldtext;)>
+<!ATTLIST sysdesc  %bodyidatt; >
+
+
+<!ELEMENT sysnomen (name, (modelno?, nsn?, partno?, eic?)+)>
+<!ATTLIST sysnomen  pretext     CDATA  #IMPLIED
+                      %applidatt; >
+
+<!ELEMENT systembreakdown (systemnomen, (descwp, thrywp*)+, ctrlindwp*, 
+       opusualwp*, opunuwp*, emergencywp*, stowagewp*, eqploadwp*, ((tsindxwp*,
+       pshopanalwp?, compchklistwp?) | (tsintrowp, techdescwp*, tsindxwp*)), 
+       ((tswp | opcheckwp | opcheck-tswp)+ | diagnosticwp+)?, surwp*, 
+       perseqpwp*, pmcswp*, (auxeqpwp | pmiwp | lubewp | maintwp | 
+       gen.maintwp)*, facilwp*, oipwp*, mobilwp*, qawp*, (ammowp | 
+       ammo.markingwp | natowp | torquewp | inventorywp | (manu_items_introwp, 
+       manuwp+) | storagewp | wtloadwp | wiringwp)*, systembreakdown*)>
+
+<!ELEMENT systemhierarchy ((revisionsummary | revisionsummary-alt+)?, (frntcover 
+    | frntcover-alt+), overallsystem, systembreakdown+, systemref, (introwp, 
+    plwp+, stl_partswp?,  kitswp*, bulk_itemswp*, stlwp*, (nsnindxwp, 
+    pnindxwp)?, refdesindxwp?)?, dim?, bim?, (da2028+, authent))>
+
+<!ELEMENT systemnomen (name, (nsn | %partid; | modelno | refdes | lcn | 
+       taskcode)*)>
+
+<!ELEMENT systemref (title, (stowagewp | eqploadwp | torquewp | inventorywp 
+     | storagewp | (manu_items_introwp, manuwp+) | wtloadwp | wiringwp)*, 
+     refwp, (macintrowp, macwp)?, ((coeibiiwp?, aalwp?, explistwp?, toolidwp?, 
+     mrplwp?, csi.wp?) | supitemwp), genwp*, glossary?)>
+
+<!ELEMENT systhry (%titldtext;, (ssysthry* | (lruthry*, sruthry*)))>
+<!ATTLIST systhry  %bodyidatt;
+                     frame      (yes | no )  'yes' >
+
+<!ELEMENT sys-ts (paper.frnt, tim, rear)>
+<!ATTLIST sys-ts  pubno       CDATA  #IMPLIED
+                    revno       CDATA  #REQUIRED
+                    multivolume %no_att;
+                    %secur; >
+
+<!ELEMENT table (precond?, title?, tgroup+)>
+<!ATTLIST table  tabstyle   NMTOKEN  #IMPLIED
+         %stdinfoatt;
+         frame       (top | bottom | topbot | all | sides | none )  #IMPLIED
+         colsep      (0 | 1 )  #IMPLIED
+         rowsep      (0 | 1 )  #IMPLIED
+         orient      (port | land )  #IMPLIED
+         label      CDATA    #IMPLIED >
+
+<!ELEMENT table-alt (table+)>
+<!ATTLIST table-alt  id    ID  #IMPLIED
+                       %secur; >
+
+<!ELEMENT tabdata (para0+)>
+<!ATTLIST tabdata %bodyidatt;>
+
+<!ELEMENT tan EMPTY>
+
+<!ELEMENT tanh EMPTY>
+
+<!ELEMENT taskcode (#PCDATA)>
+
+<!ELEMENT tbody (row+)>
+<!ATTLIST tbody  valign  (top | middle | bottom )  'top' >
+
+<!ELEMENT techdescwp (wp.metadata?, %wpsetup;, ((descproc, ctrlindproc?, 
+     thryproc?) | (ctrlindproc, thryproc?) | thryproc))>
+<!ATTLIST techdescwp  %wpatt; >
+
+<!ELEMENT teref EMPTY>
+<!ATTLIST teref  refs IDREF  #REQUIRED >
+
+<!ELEMENT terefcode (#PCDATA)>
+<!ATTLIST terefcode  id ID  #REQUIRED >
+
+<!--CHANGE E 00 - 25 NOV 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, Changed teref-group ELEMENT and added teref-group attribute with appliatt entity
+*******************************************************************************
+-->
+
+<!ELEMENT teref-group (terefcode, maintenance, name, nsn, toolno)>
+<!ATTLIST teref-group  %applidatt; >
+
+<!ELEMENT terefs (teref+)>
+
+<!ELEMENT tereqtab (title, teref-group+)>
+<!ATTLIST tereqtab  %bodyidatt; >
+
+<!ELEMENT term (%format; | %linkref;)*>
+<!ATTLIST term  idref IDREF  #IMPLIED >
+
+<!ELEMENT term.def (term, def)>
+<!ATTLIST term.def  id ID  #IMPLIED >
+
+<!--CHANGE E 00 - 25 NOV 2013 - TOG
+*******************************************************************************
+** Per LOGSA direction, Added attribute to ELEMENT test and added test attribute with appliatt entity
+*******************************************************************************
+-->
+
+<!ELEMENT test (proc+)>
+<!ATTLIST test %taskatt; >
+
+<!ELEMENT testblock (%alert;, test+, indication, answer, answer+)>
+<!ATTLIST testblock  type (yes | no | pass | fail | true | nottrue | value | 
+                          unantic )  #REQUIRED
+                     valueloc    NMTOKENS  #IMPLIED
+                     valuetype  (boolean | string | sequence | set | real | 
+                            integer | float | nil | input | outcome )  #IMPLIED
+                     value       CDATA     #IMPLIED
+                     branch      ID        #REQUIRED
+                     branchlabel CDATA     #IMPLIED
+                     branchfrom  IDREFS    #IMPLIED
+                     branchto    IDREFS    #IMPLIED >
+
+<!ELEMENT testeqp (testeqp-setup-item+)>
+
+<!ELEMENT testeqp-setup-item (name, itemref?)>
+<!ATTLIST testeqp-setup-item  %setupatt; >
+
+<!ELEMENT testeval EMPTY>
+<!ATTLIST testeval  distreason CDATA  #FIXED 'Test and Evaluation' >
+
+<!ELEMENT testflow (%titldtext;)>
+<!ATTLIST testflow  %bodyidatt; >
+
+<!ELEMENT testinspectioncategory (maintwp+)>
+
+<!ELEMENT testproc (checkstep+)>
+<!ATTLIST testproc  %bodyidatt; >
+
+<!ELEMENT testwithoutstate (title?, reasonfortest?, %alert;, %tsdata;, hookup?,  
+             (%step;)*, (simple | multioption)+, disconnect?)>
+<!ATTLIST testwithoutstate %applidatt; >
+
+<!ELEMENT testwithstate (precond?, title?, reasonfortest?, 
+       (%statemanipulation_ent;)*, %alert;, (%hookup_ent;)?, 
+			 (%diagnostic-test_ent;)*, ((%step;, (%step; | evaluate | 
+			 %diagnostic-test_ent;)*, followon.maintsk?) | (evaluate, (evaluate | 
+			 %diagnostic-test_ent;)*)), (%disconnect_ent;)?)>
+<!ATTLIST testwithstate %applidatt; >
+
+<!ELEMENT testwithstate-alt (testwithstate+)>
+<!ATTLIST testwithstate-alt  %applidatt; >
+
+<!ELEMENT text (%format; | %linkref;)*>
+
+<!ELEMENT tgroup (colspec*, spanspec*, thead?, tbody)>
+<!ATTLIST tgroup  cols        CDATA    #REQUIRED
+             tgroupstyle NMTOKEN  #IMPLIED
+             colsep       (0 | 1 )  #IMPLIED
+             rowsep       (0 | 1 )  #IMPLIED
+             align        (left | right | center | justify | char )  'left'
+             charoff     CDATA    '50'
+             char        CDATA    ' ' >
+
+<!ELEMENT thead (colspec*, row+)>
+<!ATTLIST thead  valign  (top | middle | bottom )  'bottom' >
+
+<!ELEMENT then ((resultwithstate, evaluate?) | evaluate)>
+
+<!ELEMENT thryproc (systhry+)>
+<!ATTLIST thryproc  %bodyidatt; >
+
+<!ELEMENT thrywp (wp.metadata?, wpidinfo, intro?, systhry+)>
+<!ATTLIST thrywp  %wpatt; >
+
+<!ELEMENT tim (titlepg, (masterindexcategory | troublecategory | 
+           troubleaviationcategory | troubledmwrnmwrcategory))>
+<!ATTLIST tim  %imatt; >
+
+<!ELEMENT time.to.comp EMPTY>
+<!ATTLIST time.to.comp  hrs        CDATA   #REQUIRED
+                          applicable IDREFS  #IMPLIED >
+
+<!ELEMENT times EMPTY>
+
+<!ELEMENT title (%text_ent; | brk)*>
+<!ATTLIST title  %bodyidatt; >
+
+<!ELEMENT title.term.def (title, title)>
+
+<!ELEMENT titleblk (chgno?, (title?, servnomen)+, city, state, date, prtitle, 
+            (stitle, weapons_system?)?, reporting+, pm.warning.data?, notices)>
+<!ATTLIST titleblk  %bodyidatt; 
+                    currentasofdate  CDATA   #IMPLIED>
+
+<!ELEMENT titlepg ((name, (partno | modelno | nsn)*)+, contents?)>
+<!ATTLIST titlepg  maintlvl     (%maintlevel; )  #REQUIRED
+                     %changelevel; >
+
+<!ELEMENT tminfono (servbranch, tmno)>
+<!ATTLIST tminfono  %changelevel;
+                      %secur; >
+
+<!ELEMENT tmno (#PCDATA)>
+<!ATTLIST tmno  %changelevel;
+                  %secur; >
+
+<!ELEMENT tmtitle (((tminfono, tminfono+) | tmno), prtitle, (stitle, 
+          weapons_system?)?)>
+<!ATTLIST tmtitle  %changelevel;
+                     %secur; >
+
+<!ELEMENT tool-category (title, tool-entry+)>
+<!ATTLIST tool-category  %bodyidatt; 
+					applicable IDREFS  #IMPLIED >
+
+<!ELEMENT tool-entry (itemno, name, nsn, ((partno, cageno) | partcage+), 
+            (%extref_ent;)?)>
+<!ATTLIST tool-entry  %bodyidatt; 
+					 applicable IDREFS  #IMPLIED>
+
+<!ELEMENT toolidlist (title, (tool-category+ | tool-entry+))>
+<!ATTLIST toolidlist  %bodyidatt; 
+					applicable IDREFS  #IMPLIED >
+
+<!ELEMENT toolidwp (wp.metadata?, wpidinfo, intro, toolidlist)>
+<!ATTLIST toolidwp  %wpatt; >
+
+<!ELEMENT toolno (#PCDATA)>
+<!ATTLIST toolno  %bodyidatt; >
+
+<!ELEMENT tools (tools-setup-item+)>
+
+<!ELEMENT tools-setup-item (name, itemref?)>
+<!ATTLIST tools-setup-item  %setupatt; >
+
+<!ELEMENT torque (#PCDATA)>
+<!ATTLIST torque  %bodyatt;
+                    measurement CDATA  #IMPLIED >
+
+<!ELEMENT torqueval (proc+)>
+<!ATTLIST torqueval  %applidatt; >
+
+<!ELEMENT torquewp (wp.metadata?, wpidinfo, intro, torqueval)>
+<!ATTLIST torquewp  %wpatt; >
+
+<!ELEMENT totalnumberof (text, ((totnum.volumes?, text?, totnum.frnt-rear-pages, 
+        text, totnum.wps) | (totnum.pages, text, totnum.figures, text, 
+        totnum.wps)), text)>
+
+<!ELEMENT totnum.figures (#PCDATA)>
+
+<!ELEMENT totnum.frnt-rear-pages (#PCDATA)>
+
+<!ELEMENT totnum.pages (#PCDATA)>
+
+<!ELEMENT totnum.volumes (#PCDATA)>
+
+<!ELEMENT totnum.wps (#PCDATA)>
+
+<!ELEMENT tow (proc+)>
+<!ATTLIST tow  %taskatt; >
+
+<!ELEMENT tracking (change.history+)>
+
+<!ELEMENT trim.para (%trimcontent;)*>
+<!ATTLIST trim.para  %hcpesd;
+                       %bodyidatt; >
+
+<!ELEMENT troubleaviationcategory (tsintrowp?, techdescwp*, tsindxwp*, ((tswp 
+      | opcheckwp | opcheck-tswp)+ | diagnosticwp+))>
+
+<!ELEMENT troublecategory (tsintrowp?, tsindxwp*, ((tswp | opcheckwp | 
+      opcheck-tswp)+ | diagnosticwp+))>
+
+<!ELEMENT troubledmwrnmwrcategory (tsintrowp?, tsindxwp*, pshopanalwp, 
+     compchklistwp?, ((tswp | opcheckwp | opcheck-tswp)* | diagnosticwp*))>
+
+<!ELEMENT true EMPTY>
+
+<!ELEMENT trunc EMPTY>
+
+<!ELEMENT tsindx.messageword (title, (tsindx.messageword-category+ |
+                tsindx.messageword-entry+))>
+<!ATTLIST tsindx.messageword  %stdinfoatt; >
+
+<!ELEMENT tsindx.messageword-category (title, tsindx.messageword-entry+)>
+<!ATTLIST tsindx.messageword-category  %applidatt; >
+
+<!ELEMENT tsindx.messageword-entry (messageword+, (action | %linkref;))>
+<!ATTLIST tsindx.messageword-entry  %applidatt; >
+
+<!ELEMENT tsindx.symptom (title, (tsindx.symptom-category+ | tsindx.symptom-entry+))>
+<!ATTLIST tsindx.symptom  %stdinfoatt; >
+
+<!ELEMENT tsindx.symptom-category (title, tsindx.symptom-entry+)>
+<!ATTLIST tsindx.symptom-category  %applidatt; >
+
+<!ELEMENT tsindx.symptom-entry (malfunc+, (action | %linkref;))>
+<!ATTLIST tsindx.symptom-entry  %applidatt; >
+
+<!ELEMENT tsindx.system (title, (tsindx.system-category+ | tsindx.system-entry+))>
+<!ATTLIST tsindx.system  %stdinfoatt; >
+
+<!ELEMENT tsindx.system-category (title, ((tsindx.system-entry+, 
+         tsindx.system-category*) | tsindx.system-category+))>
+<!ATTLIST tsindx.system-category  %applidatt; >
+
+<!ELEMENT tsindx.system-entry (name, (action | %linkref;))>
+<!ATTLIST tsindx.system-entry  %applidatt; >
+
+<!ELEMENT tsindxwp (wp.metadata?, wpidinfo, geninfo?, (tsindx.system | 
+          tsindx.symptom | tsindx.messageword))>
+<!ATTLIST tsindxwp  %wpatt; >
+
+<!ELEMENT tsintrowp (wp.metadata?, wpidinfo, geninfo?, ((%para0_ent;)+ 
+         | para | howtouse))>
+<!ATTLIST tsintrowp  %wpatt; >
+
+<!ELEMENT tsproc (logicproc+ | faultproc+ | muxproc)>
+<!ATTLIST tsproc  %bodyidatt; >
+
+<!ELEMENT tswp (wp.metadata?, wpidinfo, initial_setup, intro?, (%tsdata; | para)*, 
+               (hookup?, tsproc+, disconnect?), followon.maintsk?)>
+<!ATTLIST tswp  %wpatt; >
+
+<!ELEMENT typedes (#PCDATA)>
+
+<!ELEMENT ui (#PCDATA)>
+<!ATTLIST ui  um CDATA  #IMPLIED >
+
+<!ELEMENT unload (proc+)>
+<!ATTLIST unload %taskatt;>
+
+<!ELEMENT unpack (proc+)>
+<!ATTLIST unpack  %taskatt; >
+
+<!ELEMENT unusualenv (proc+)>
+<!ATTLIST unusualenv  %taskatt; >
+
+<!ELEMENT unverified EMPTY> 
+
+<!ELEMENT uoc (#PCDATA)>
+
+<!ELEMENT usbefserno EMPTY>
+<!ATTLIST usbefserno  beginserno CDATA  #REQUIRED
+                        endserno   CDATA  #IMPLIED >
+
+<!ELEMENT validate (expression)>
+<!ATTLIST validate  errormsg CDATA  #REQUIRED >
+
+<!ELEMENT validation EMPTY> 
+<!ATTLIST validation type (equipment | tabletop | both) #REQUIRED > 
+
+<!ELEMENT variable (initialize?, (%dialog_ent;)?, mdc*)>
+<!ATTLIST variable  name        CDATA  #REQUIRED
+                      description CDATA  #IMPLIED
+                      config %yesorno;
+                      value-type   (%value; )  #REQUIRED
+                      precision   CDATA  #IMPLIED
+                      scope        (%variablescope; )  'global' >
+
+<!ELEMENT variableref EMPTY>
+<!ATTLIST variableref  name CDATA  #REQUIRED >
+
+<!ELEMENT verbatim (#PCDATA)>
+<!ATTLIST verbatim  xml:space    (preserve )  #FIXED 'preserve'
+                      %changelevel; >
+
+<!ELEMENT verification EMPTY> 
+<!ATTLIST verification type (equipment | tabletop | both) #REQUIRED > 
+
+<!ELEMENT vol-rear (rear)>
+
+<!ELEMENT voltage (#PCDATA)>
+<!ATTLIST voltage  %bodyatt;
+                     measurement CDATA  #IMPLIED >
+
+<!ELEMENT volume (frntcover, promulgation*, warnsum?, chgsheet*, loepwp, 
+                  titleblk, contents)>
+<!ATTLIST volume  tocentry  (0 | 1 | 2 | 3 | 4 | 5 )  '1'
+                    label    CDATA  #IMPLIED
+                    id       ID     #IMPLIED >
+
+<!ELEMENT warninfo (title?, para?, warning+)>
+<!ATTLIST warninfo  %bodyidatt; >
+
+<!ELEMENT warning ((warning.group, warning.group+) | %warning_ent;)>
+<!ATTLIST warning  keyword   CDATA   #IMPLIED
+                   haz-abbrev %no_att;
+                   %bodyidatt; 
+                   applicable IDREFS  #IMPLIED >
+
+<!ELEMENT warning.group (%warning_ent;)>
+<!ATTLIST warning.group  haz-abbrev %no_att;
+                           %bodyidatt; >
+
+<!ELEMENT warnsum (para, first_aid, safety?, warninfo, hazmat?)>
+<!ATTLIST warnsum  %stdinfoatt; >
+
+<!ELEMENT warnsum-alt (warnsum)>
+
+<!ELEMENT weapons_system (%format; | brk)*>
+
+<!ELEMENT weightinst (%titldtextproc;)>
+<!ATTLIST weightinst  %bodyidatt; >
+
+<!ELEMENT wireid (%titldtext;)>
+<!ATTLIST wireid  %bodyidatt; >
+
+<!ELEMENT wiringdiag (title, trim.para?, figure+)>
+<!ATTLIST wiringdiag  %bodyidatt; 
+							applicable IDREFS  #IMPLIED >
+
+<!ELEMENT wiringwp (wp.metadata?, wpidinfo, initial_setup, intro, wireid, abbrev, 
+         wiringdiag+)>
+<!ATTLIST wiringwp  %wpatt; >
+
+<!ELEMENT work_planning (para0+)>
+<!ATTLIST work_planning %bodyidatt;>
+
+<!ELEMENT wp.metadata (portionmark+, proponent, tracking, tminfono+, 
+     applicability*, subsystem-system*, keyword.search*, subject*)>
+
+<!ELEMENT wp.status EMPTY>
+<!ATTLIST wp.status type (new | changed | draft | deleted | reinstated) #REQUIRED >
+
+<!ELEMENT wpidinfo (maintlvl, title, config?)>
+
+<!ELEMENT wpno EMPTY>
+<!ATTLIST wpno  wpref IDREF  #REQUIRED
+                  %secur; >
+
+<!ELEMENT wppages (#PCDATA)>
+
+<!ELEMENT wpref EMPTY>
+<!ATTLIST wpref  idref IDREF  #REQUIRED >
+
+<!ELEMENT wrntyref (%titldtext;)>
+<!ATTLIST wrntyref  %bodyidatt; >
+
+<!--CHANGE E.00 - 25 Nov 2013 - TOG
+*******************************************************************************
+** The element <wtloadwp> was changed to allow multiple tasks. Changed to formchart, weightinst
+*******************************************************************************
+-->
+<!ELEMENT wtloadwp (wp.metadata?, wpidinfo, initial_setup, geninfo, formchart, weightinst)>
+<!ATTLIST wtloadwp %wpatt; >
+
+<!ELEMENT x.statement (reasondate, releaseagent)>
+
+<!ELEMENT xor EMPTY>
+
+<!ELEMENT xref EMPTY>
+<!ATTLIST xref  taskid    IDREF  #IMPLIED
+                wpid      IDREF  #IMPLIED
+                stepstart IDREF  #IMPLIED
+                stepend   IDREF  #IMPLIED
+                figid     IDREF  #IMPLIED
+                itemno    CDATA  #IMPLIED
+                itemid    IDREF  #IMPLIED
+                callout   CDATA  #IMPLIED
+                tableid   IDREF  #IMPLIED
+                tslocid   IDREF  #IMPLIED
+                pagelocid IDREF  #IMPLIED
+                pretext   CDATA  #IMPLIED
+                posttext  CDATA  #IMPLIED
+                termdefid IDREF  #IMPLIED
+                applicable IDREFS #IMPLIED
+                %secur; >
+
+<!ELEMENT yes (resultwithoutstate)>
+
+<!ELEMENT yesstate (%statemanipulation_ent;)+>
+<!ATTLIST yesstate  default %no_att;    >
+
+<!ELEMENT zip (#PCDATA)>
+<!ATTLIST zip  %changelevel; >

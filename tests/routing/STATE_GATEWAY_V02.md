@@ -3,6 +3,122 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-13 B3a close — MIL-STD-40051 ingest adapter shipped end-to-end
+
+### What landed
+
+The 40051 (US Army TM) format track is now plumbed parallel to S1000D:
+
+- **`iads_extract`** (tool-specific): parses the IADS container
+  (`Package` manifest + concatenated gzip blobs) into
+  `(relative_path, xml_bytes)` tuples. Kept isolated so an EAGLE
+  adapter later swaps just this front-end.
+- **`read_40051_wp`** (format-general): the WP XML reader. Extracts
+  wpno + maintlvl + title + tool refs + inter-WP xrefs. Skips
+  non-WP front-matter (toc/frntcover/titleblk) cleanly via
+  `NON_WP_ROOT_TAGS`.
+- **`classify_40051_work_package(root_tag)`** (format-general): the
+  DTD-derived classifier. The map was built by enumerating every
+  `<!ELEMENT *wp*>` in `40051E_5_0.dtd` (80 WP root types),
+  NOT by inferring from the two demo exemplars. 65 map cleanly to
+  existing `mil:*` kinds; 15 fall through to `mil:DataModule` and
+  increment `FALLTHROUGH_COUNT[root_tag]` — the morning-decision
+  visibility for the reference/index/admin cluster.
+- **Shared canonicalizer extension**: `canonicalize_wpno` lives next
+  to `canonicalize_dmc` in the same file so the existing byte-identity
+  drift guard between `agent_fleet/utils/` and `doc-tools/` covers
+  BOTH identifier shapes. wpno canonicalization is a normalizer
+  (not a structure validator) because the DTD declares `wpno` as
+  CDATA — observed forms include `m0004-1-1680-TNG`, `P0005`, and
+  `rpstl_introwp`. Normalize lowercase + underscore→hyphen +
+  whitespace-strip.
+
+### The B3a probe — predict-then-ingest discipline
+
+The architect's "predictions in the commit message BEFORE running"
+discipline was met by baking the coverage table directly into the
+test source (`COVERAGE_TABLE` in `test_b3a_ingest_helmet_40051.py`).
+The classifier dry-run produced the prediction; the test re-runs
+the pipeline and asserts each row. Helmet TM contents:
+
+| File | Root | wpno (canonical) | Predicted kind | Verified |
+|---|---|---|---|---|
+| G0001.xml | `ginfowp` | `g0001-1-1680-tng` | DescriptiveDataModule | ✓ |
+| M0004.xml | `maintwp` | `m0004-1-1680-tng` | **ProcedureDataModule** | ✓ |
+| M0008.xml | `gen.maintwp` | `m0008-1-1680-tng` | ProcedureDataModule | ✓ |
+| O0002.xml | `opusualwp` | `o0002-1-1680-tng` | ProcedureDataModule | ✓ |
+| p0005-p0007.xml | `plwp` | `p0005`/`p0006`/`p0007` | IllustratedPartsDataModule | ✓ |
+| RPSTLCover.xml | `introwp` | `rpstl-introwp` | DescriptiveDataModule | ✓ |
+| S0002.xml | `toolidwp` | `s0002-1-1680-tng` | **DataModule (FALLTHROUGH)** | ✓ |
+| T0003.xml | `tswp` | `t0003-1-1680-tng` | **FaultIsolationDataModule** | ✓ |
+| t0008.xml | `tswp` | `t0008-1-1680-tng` | FaultIsolationDataModule | ✓ |
+
+11 WPs ingested, 5 front-matter skipped (Dataset/toc/frntcover/howtouse/
+titleblk), 0 unknown roots. FALLTHROUGH_COUNT = `{toolidwp: 1}` — the
+positive control on the "no silent absorption" rule fires.
+
+### Cross-link materialization
+
+- `m0004-1-1680-tng` —[REQUIRES_TOOL]→ `s0002-1-1680-tng` (the
+  cross-tip screwdriver tool WP from M0004's `<tools-setup-item>`).
+- `t0003-1-1680-tng` —[REFERENCES]→ `m0004-1-1680-tng` (T0003's
+  `<xref wpid="m0004-1-1680-TNG"/>` cross-WP reference).
+
+### Guards green
+
+All 31 assertions in `test_b3a_ingest_helmet_40051.py` pass:
+classification (11), G1 positive control (1), G1 v0.2 saga
+invariant (1), G2 per-row (11), G3 idempotency (1), tool edge (1),
+xref edge (1), fallthrough counter (1), helmet-marker present (1),
+helmet-marker absent from deploy paths (1), pool-hold (1).
+
+### Bugs caught DURING the build
+
+1. **wpno canonicalizer too strict**: my first regex required
+   `[a-z][0-9]+-` followed by dash-tail, rejecting valid forms like
+   `P0005` and `rpstl_introwp`. Fixed to be a normalizer (lowercase +
+   strip + replace whitespace/underscore with hyphen) rather than a
+   structure validator. The DTD declares `wpno` as CDATA, so any
+   non-empty identifier is valid.
+
+2. **Cross-link placeholder INSTANCE_OF race**: my initial code
+   wrote `INSTANCE_OF → mil:DataModule` on every cross-link
+   placeholder. When T0003 was ingested AFTER M0004, the
+   xref-to-m0004 path appended a SECOND INSTANCE_OF edge to the
+   already-fully-ingested m0004 node (Procedure + DataModule
+   root). Fixed by dropping placeholder INSTANCE_OF entirely — a
+   placeholder is explicitly an orphan-by-design (`placeholder=true`
+   property), and the real INSTANCE_OF edge lands when that WP gets
+   its own ingest.
+
+3. **My own canonicalizer docstring leaked a `1-1680-TNG`** —
+   negative-boundary guard caught it on first run. Replaced with
+   generic `EXAMPLE-X-XXXX-VAR` shape. Same pattern as B2's
+   SANDBOXRTX boundary discipline — examples in shared code must
+   not carry real-fixture identifiers.
+
+### Banked for morning TBox decision
+
+The reference/index/admin cluster (15 WP roots: `aalwp`, `macwp`,
+`nsnindxwp`, `orschwp`, `pnindxwp`, `refdesindxwp`, `refwp`,
+`substitute-matwp`, `toolidwp`, `torquewp`, `tsindxwp`, `wtloadwp`,
+`chgwplist`, `loepwp`, `genwp`) currently falls through to
+`mil:DataModule`. The architect's hard limit: "new content kinds
+are a TBox change and those go through you." Candidate additions
+when this is revisited: `mil:ReferenceDataModule` (lists of standard
+items: tools, NSNs, torques, refs), `mil:IndexDataModule` (lookup
+indexes: pnindxwp, refdesindxwp, tsindxwp), `mil:AdminDataModule`
+(chgwplist, loepwp). Until then `FALLTHROUGH_COUNT` keeps the cost
+visible: every fallthrough hit increments the counter.
+
+### Hard scope held
+
+- ✗ NO verbs added (B4 territory).
+- ✗ NO new matrix rows (B5 territory).
+- ✗ NO work-cluster deploy.
+- ✗ NO EAGLE work — the format-general layers are written so EAGLE
+  becomes a sibling of `iads_extract`, no changes to the rest.
+
 ## 2026-06-13 B3 close — generality gate certified, Phase-5-prophecy third occurrence banked
 
 ### What landed

@@ -17,6 +17,13 @@ reference exemplar.
 |---|---|---|---|---|
 | `M0004.xml` | 2623 | `<maintwp>` | `m0004-1-1680-TNG` | `mil:ProcedureDataModule` |
 | `T0003.xml` | 2638 | `<tswp>` | `t0003-1-1680-TNG` | `mil:FaultIsolationDataModule` |
+| `40051E_5_0.dtd` | 132855 | (DTD — schema) | n/a | The authoritative WP-root enumeration |
+
+The `.dtd` file is the MIL-STD-40051E REV E 5.0 DTD (USA-DOD), public
+spec. It is the source the classifier's `WP_ROOT_TO_KIND` map is
+derived from — per the architect's Step 0: "build the classifier
+map from the DTD, not the samples." Committed alongside the
+exemplars so the map's provenance is self-contained in the fixture.
 
 ## Why these two specifically
 
@@ -35,23 +42,34 @@ minimum exemplar for authoring the 40051 reader:
 
 ## What the 40051 reader does with these
 
-1. Parse root element name → look up `mil:*` content kind via
-   `classify_40051_work_package(root_tag)` (analog of B2's
-   `classify_data_module(info_code)` for S1000D).
-2. Read `wpno` attribute → that's the canonical instance identifier.
-   Goes into the `mil:DataModule.wpno` property (or the same `.dmc`
-   property if the architect decides to unify the identifier slot).
-3. Read `<wpidinfo><title>` for the human-readable label.
-4. Read `<tools-setup-item><name>` (M-type WPs) for tool cross-links.
-   Note: 40051 doesn't have a clean equivalent of S1000D's
-   `<spareDescr>` — parts are referenced via `<xref>` to RPSTL
-   modules. The composition cross-links (`mil:hasPart`,
-   `mil:requiresTool`) edges should be written when those refs are
-   present, same shape as B2's S1000D path.
-5. Each `<symptom>`/`<malfunc>`/`<action>` triple in a `<tswp>` could
-   eventually become its own structure if the docs phase decides to
-   surface fault-trees as graph data. B2-level minimum: ingest as a
-   single instance with the full text as a chunk.
+Shipped 2026-06-13. Three layers:
+
+- `doc_tools.parsers.iads_extract.iter_iads_xml_entries(path)` — the
+  IADS-container-specific layer. Unpacks the manifest + concatenated
+  gzip blobs into `(relative_path, xml_bytes)`. An EAGLE adapter
+  later would be a sibling module feeding into the same downstream
+  reader.
+- `doc_tools.parsers.mil_40051_ingest.read_40051_wp(xml_bytes)` — the
+  format-general WP reader. Returns `WP40051Facts` (root_tag, wpno,
+  maintlvl, title, tools, xrefs, kind_iri) or None for non-WP
+  front-matter.
+- `doc_tools.parsers.mil_40051_classifier.classify_40051_work_package(root_tag)`
+  — the DTD-derived classifier. 80 WP root types enumerated from
+  `40051E_5_0.dtd`; 65 map to existing `mil:*` kinds, 15 (reference/
+  index/admin cluster) fall through to `mil:DataModule` and
+  increment `FALLTHROUGH_COUNT[root_tag]` (positive control on the
+  "no silent absorption" rule). Banked as a morning TBox decision:
+  is `mil:ReferenceDataModule` or `mil:IndexDataModule` worth
+  declaring?
+
+The B3a end-to-end test (`tests/routing/test_b3a_ingest_helmet_40051.py`)
+ingests the helmet TM via this stack and asserts: classification
+matches the coverage table (11 rows), G1 stays green (positive
+control on substrate OntologyClass count), G2 (every instance gets
+INSTANCE_OF), G3 (idempotent re-ingest), composition (REQUIRES_TOOL
++ REFERENCES edges materialize), pool-hold, negative-boundary
+(the helmet TM identifier `1-1680-tng` is in the substrate but
+ABSENT from every deploy-path artifact).
 
 ## Boundary rule
 
