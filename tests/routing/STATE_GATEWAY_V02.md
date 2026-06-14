@@ -119,6 +119,140 @@ visible: every fallthrough hit increments the counter.
 - ✗ NO EAGLE work — the format-general layers are written so EAGLE
   becomes a sibling of `iads_extract`, no changes to the rest.
 
+### Routing probe — the cap that turns "ingested" into "answerable"
+
+Per architect's framing: "ingesting the instances proves they're
+*in the graph*. It does not prove they're *reachable through
+routing*." Three probes against Engine O `/resolve` (this is the
+first ai1/Ollama touch tonight — the LLM-subject-pick path is on
+the routing side, correctly absent from the ingest path).
+
+**Predictions written FIRST** (before port-forward / before
+hitting ai1), recorded at `c:\tmp\b3a_routing_probe_predictions.md`.
+Read-by-inspection of `agent_fleet/neo4j_expert/main.py:543-572`
+told me what to expect: phone book uses `canonicalize_dmc` (line
+568) — wpno shapes fail the DMC regex; even if they didn't, the
+Cypher queries `MATCH (dm:DataModule {dmc: $canonical})` and my
+40051 instances have `wp.wpno`, not `wp.dmc`. Two layers of miss.
+Prediction: **fall-through to LLM-guess**.
+
+| Probe | Query | Predicted | Actual |
+|---|---|---|---|
+| A | "tell me about work package m0004-1-1680-TNG" | resolved=false, n=0×3, LLM guess | resolved=false, **n=0×3**, **LLM guess: mro:MaintenanceWorkOrderRecord** (conf 0.9) |
+| B | "show me the troubleshooting procedure for the helmet microphone" | resolved=false (no identifier), LLM-subject-pick path intact | resolved=false, instance_id=`helmet microphone`, **LLM guess: mro:WorkInstruction** (conf 0.97) |
+| C | "what is in wpno m0004-1-1680-TNG" | same as A | resolved=false, instance_id=`m0004-1-1680-TNG`, **LLM guess: mro:WorkInstruction** (conf 0.93) |
+
+**Per-provider outcomes** (Probe A — representative):
+- `engine_e_dmc`: ok, **n_candidates=0**, 1.149s (DMC regex rejected the wpno)
+- `engine_e`: ok, n_candidates=0, 0.934s (equipment serial, not WP)
+- `engine_d`: ok, n_candidates=0, 1.761s (DataHub catalog, not WP)
+
+### Honest two-state picture for B3a
+
+- **Ingest half: CLOSED.** 11 helmet TM WPs in Neo4j as canonical
+  `mil:*`-kind instances; 31/31 guards green; deterministic +
+  idempotent + boundary-clean.
+- **Routing half: GAP IDENTIFIED + BANKED.** Engine O can find the
+  identifier in the query (`instance_identifier=m0004-1-1680-TNG`
+  comes back populated) but no provider knows how to resolve it.
+  The data is present and unreachable through routing.
+
+### Banked: the genuine next build (architect decision)
+
+Pick one of:
+
+1. **Widen `/resolve_dmc` contract** — try `canonicalize_dmc`
+   first, then `canonicalize_wpno`; Cypher MATCH on either
+   `dmc:$canonical` OR `wpno:$canonical`. Same endpoint, dispatches
+   on identifier shape. Minimal new surface area.
+2. **Add a third Engine E capability `engine_e_wpno`** — register a
+   fourth `mesh:resolveInstance` provider with `/resolve_wpno`.
+   Parallel to engine_e_dmc, clearer separation, more registry
+   entries. Same "capability lives where data lives" principle B3
+   established.
+
+Either restores the same-canonicalizer-both-sides rule for wpno.
+Probe A then flips to `instance_resolved=true`, n=1,
+provider=engine_e_dmc or engine_e_wpno, resolved_uri=mil#ProcedureDataModule
+(not LLM guess). Second before/after capture alongside NASAMS.
+
+Until the architect's pick lands: B3a is honest about its surface.
+The 40051 ingest *adapter* is complete; the 40051 *demo*
+("tell me about this WP") is not yet answerable end-to-end.
+
+### Regression gate — frozen base matrix re-run after the ingest
+
+Per the architect's standing rule (banked tonight): "add more" means
+"confirm baseline holds, THEN add — never add and assume the
+baseline holds because the new tests passed." The earlier
+"36/36 green" was a green-for-the-wrong-reason: it measured the
+new B3a adapter without re-clearing the regression floor.
+
+**Prediction (written before the run):** the base matrix is unchanged
+by the 40051 ingest because pool-hold + the conjunctive invariant
+keep the 11 new mil:* instances unroutable. No verbs typed against
+any mil:* kind class. The new instances have INSTANCE_OF edges but
+no Saga v0.2 routing edges. Engine O's discovery Cypher walks
+resolveInstance subjects; the new instances are NOT instance
+identifiers for any verb.
+
+**Result:** `tests/routing/test_classify_route.py` — **18/18 PASS**
+on a healthy Engine O forward. Includes both the data-engineering
+matrix (catalog/lineage/ownership/dataset) and the
+maintenance/tech-manual matrix (procedure, work instruction,
+maintenance steps, technical manuals, diagnostics) — the latter
+being the exact subset that could have been perturbed by 40051
+ingest. Was not.
+
+**Verdict:** pool-hold + conjunctive invariant are empirically
+confirmed to keep new 40051 instances inert. The architecture's
+"by construction" claim is now backed by a passing check, not
+reasoning. The pattern from B2's pool-hold probe repeats: the
+test layer is what makes "shouldn't be reachable" land as "isn't
+reachable." Same architectural invariant, same empirical
+confirmation method.
+
+**Other failures observed in the wider suite (not regressions, banked separately):**
+
+- `test_adr0019_engine_o_contract_a::test_n1_*` (2 tests) — Engine O
+  classify_predicate unit tests with monkeypatched BAML. Don't
+  touch substrate; can't be 40051-caused. Pre-existing code drift
+  in classify_predicate (returns UNKNOWN where the test expected
+  the stubbed verb). Was masked by Engine O being down in the
+  earlier suite run.
+- `test_adr0019_pipeline_integrity::test_D_phantom_scan_returns_zero` —
+  phantom node scan lists ~30 nodes; ALL are `mesh:*`, `mro:*`,
+  or blank nodes (n9f1da64...). NONE are `mil:*` or 40051-shaped.
+  Pre-existing substrate state from earlier sessions.
+- `test_substrate_invariants::test_no_compact_form_for_migrated_subjects`
+  — `mesh:GraphExpertResponse` + `mesh:KnowledgeRetrievalResponse`
+  compact forms reappeared (likely from a re-seed). Pre-existing
+  Phase-5-prophecy class-guard surface for the mesh:* migration.
+
+None of these implicate the 40051 ingest. The standing class guard
+(`test_no_engine_hardcodes_a_migrated_compact_uri_in_a_query`) is
+still green; the three above are seed/state issues, not source code
+violations.
+
+### Standing rule banked
+
+**Definition of done for any ingest or substrate-touching session:**
+
+1. New work's tests green.
+2. Frozen base matrix re-run against a HEALTHY Engine O port-forward.
+3. Matrix at its frozen pass rate (or above).
+4. Predictions about pool-hold / conjunctive invariant written
+   BEFORE the matrix run, confirmed against the result.
+
+Transport failures on the matrix don't count as green — they count
+as untested. A session that grew the system without re-clearing the
+regression floor hasn't finished; it's deferred its confirmation.
+"By construction" + the confirming check, not "by construction"
+alone. Three prior incidents (engine-per-phonebook, orphan-edge
+catch, phase-5-prophecy) all share the same root: predictions about
+the substrate that weren't backed by a passing test. This rule
+makes the check standing instead of remembered.
+
 ## 2026-06-13 B3 close — generality gate certified, Phase-5-prophecy third occurrence banked
 
 ### What landed
