@@ -210,10 +210,32 @@ async def test_n1_calls_baml_with_two_value_enum(ontology_main, monkeypatch):
     constrained enum that contains both the verb AND ``UNKNOWN`` — so the
     LLM can decline if the lone verb does not fit the query.
 
-    Currently RED on the codebase. The N=1 branch at
-    ``agent_fleet/ontology_service/main.py`` (~lines 1803-1825) returns
-    immediately with confidence 0.99 and never invokes BAML. Replacing
-    that shortcut with a two-value-enum BAML call turns this test green.
+    **History — read before editing this test.** This test was authored
+    when an N=1 cardinality shortcut existed at
+    ``agent_fleet/ontology_service/main.py:1803-1825``, which returned
+    the lone verb at confidence 0.99 without invoking BAML. The
+    original setup stubbed ``predicate_hybrid_search`` to return ``[]``
+    and relied on a "synthesize-stub-from-bare-IRIs" fallback so the
+    BAML call still happened — that's what made the assertion teeth
+    bite the shortcut.
+
+    The shortcut WAS removed (see the post-fix comment at
+    ``main.py:2183-2198``). Separately, the synthesize-stub fallback
+    was removed 2026-06-13 in service of ADR-0006 §Addendum's
+    conjunctive-read invariant (no Weaviate match → unregistered →
+    UNKNOWN without LLM). That second change invalidated the original
+    setup: empty-Weaviate now short-circuits to UNKNOWN at
+    ``main.py:2200-2230`` *before* reaching BAML, so the test was
+    failing on a stale setup path rather than on a contract violation.
+
+    The setup below makes ``predicate_hybrid_search`` RETURN the verb
+    as a real Weaviate candidate — that's the production path for an
+    N=1 query whose verb is registered in both stores. The assertion
+    teeth are unchanged because the contract is unchanged: BAML must
+    be called with ``{verb, UNKNOWN}``. The test now catches a
+    re-introduction of the N=1 shortcut INDEPENDENTLY of the
+    conjunctive-read tightening, restoring a safety assertion that
+    was inert from 2026-06-13 until this rewrite (2026-06-13 late).
     """
     # Recorder injected as the module-level ``b`` (BAML client). Real
     # production binds ``b.ClassifyPredicate`` to the LLM; we swap it
@@ -221,13 +243,21 @@ async def test_n1_calls_baml_with_two_value_enum(ontology_main, monkeypatch):
     recorder = _BAMLRecorder(response_iri="UNKNOWN", response_confidence=0.05)
     monkeypatch.setattr(ontology_main, "b", recorder)
 
-    # Force the Weaviate hybrid step to return no candidates, so the
-    # compatibility filter falls through to the synthesized-stub path
-    # (this matches what happens in production today: the supplied IRI
-    # may not be in the Weaviate Predicate corpus).
-    async def _empty_hybrid(*_args, **_kwargs):
-        return []
-    monkeypatch.setattr(ontology_main, "predicate_hybrid_search", _empty_hybrid)
+    # Stub predicate_hybrid_search to RETURN the verb as a Weaviate
+    # candidate (production path for an N=1 query whose verb is
+    # registered in both Cypher AND Weaviate — the conjunctive-read
+    # invariant requires both for the verb to enter the enum). The
+    # candidate dict shape matches what real predicate_hybrid_search
+    # returns; see main.py:2286-2337 for the field accesses.
+    async def _hybrid_returns_verb(*_args, **_kwargs):
+        return [{
+            "verb_iri": "mesh:queryKnowledgeGraph",
+            "input_uri": "mro:WorkInstruction",
+            "description": "Knowledge graph expert (test stub).",
+            "verb_type": "ObjectProperty",
+            "owner_persona": "AUDITOR",
+        }]
+    monkeypatch.setattr(ontology_main, "predicate_hybrid_search", _hybrid_returns_verb)
 
     request = ontology_main.ClassifyPredicateRequest(
         query="what color was Napoleon's horse?",  # off-topic by design
@@ -243,10 +273,11 @@ async def test_n1_calls_baml_with_two_value_enum(ontology_main, monkeypatch):
     # ----- Teeth (1): BAML MUST have been called. -----
     assert len(recorder.calls) >= 1, (
         "Contract A: at N=1, /classify_predicate must call BAML with a "
-        "constrained two-value enum ({verb, UNKNOWN}). Today it short-"
-        "circuits at agent_fleet/ontology_service/main.py:1803-1825 and "
-        "returns the lone verb at 0.99 without LLM validation. Replace "
-        "the shortcut with a real BAML call to turn this assertion green."
+        "constrained two-value enum ({verb, UNKNOWN}). If this fails, "
+        "either an N=1 cardinality shortcut has been re-introduced "
+        "(the original bug this test was written to catch) or the "
+        "setup short-circuited before BAML — read the docstring for "
+        "the conjunctive-read trace before assuming the latter."
     )
 
     # ----- Teeth (2): the enum must contain BOTH the verb AND UNKNOWN. -----
@@ -288,11 +319,20 @@ async def test_n1_on_topic_still_dispatches(ontology_main, monkeypatch):
     """The Contract-A fix must not over-correct. When BAML confirms the
     lone verb at N=1 (on-topic query), the endpoint dispatches it.
 
-    This test passes today because the N=1 shortcut returns the verb
-    regardless of fit. It should also pass after the fix: the LLM
-    confirms within the two-value enum, and the endpoint returns the
-    confirmed verb. The point of including it is to prove the fix
-    doesn't break valid N=1 routes.
+    Companion to ``test_n1_calls_baml_with_two_value_enum`` — that one
+    asserts BAML is *called* and *can decline*; this one asserts the
+    happy path (LLM confirms within the two-value enum → endpoint
+    returns the confirmed verb). Both share the same conjunctive-read
+    pre-condition: the verb must be present in BOTH Cypher AND
+    Weaviate for execution to reach BAML at all (ADR-0006 §Addendum,
+    2026-06-13). Same setup-rewrite history as the sibling test —
+    see its docstring for the trace.
+
+    Now load-bearing in both directions: it confirms the LLM was
+    actually invoked AND that its verb verdict propagates. Before the
+    rewrite this was vacuously green when the shortcut existed AND
+    silently red after the conjunctive-read tightening removed the
+    setup's reach to BAML.
     """
     recorder = _BAMLRecorder(
         response_iri="mesh:queryKnowledgeGraph",
@@ -301,9 +341,15 @@ async def test_n1_on_topic_still_dispatches(ontology_main, monkeypatch):
     )
     monkeypatch.setattr(ontology_main, "b", recorder)
 
-    async def _empty_hybrid(*_args, **_kwargs):
-        return []
-    monkeypatch.setattr(ontology_main, "predicate_hybrid_search", _empty_hybrid)
+    async def _hybrid_returns_verb(*_args, **_kwargs):
+        return [{
+            "verb_iri": "mesh:queryKnowledgeGraph",
+            "input_uri": "mro:WorkInstruction",
+            "description": "Knowledge graph expert (test stub).",
+            "verb_type": "ObjectProperty",
+            "owner_persona": "AUDITOR",
+        }]
+    monkeypatch.setattr(ontology_main, "predicate_hybrid_search", _hybrid_returns_verb)
 
     request = ontology_main.ClassifyPredicateRequest(
         query="What is the work instruction for procedure 1234?",
@@ -316,8 +362,14 @@ async def test_n1_on_topic_still_dispatches(ontology_main, monkeypatch):
 
     response = await ontology_main.classify_predicate(request)
 
-    # When the fix lands, this assertion will be load-bearing: the LLM
-    # was called and confirmed. Today it passes vacuously because the
-    # shortcut returns the verb without consulting the LLM. Either way
-    # the contract holds: on-topic N=1 dispatches.
+    # Teeth (1): BAML was actually called (no over-correction skipping
+    # the LLM on cardinality alone).
+    assert len(recorder.calls) >= 1, (
+        "Contract A: even on the on-topic happy path, /classify_predicate "
+        "must call BAML at N=1 — the LLM validates fit, the graph just "
+        "supplies the candidate set. If this fails the shortcut was "
+        "re-introduced as a 'fast path for confident routes' or similar."
+    )
+
+    # Teeth (2): the confirmed verb propagates back.
     assert response.resolved_verb_iri == "mesh:queryKnowledgeGraph"

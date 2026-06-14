@@ -3,6 +3,184 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-13 pre-B4 gate — Contract A restored, compact-form cleanup proved Weaviate-coordinated
+
+The architect's pre-B4 gate after B3a's regression-gate revealed two
+guards that were green while what they guard was broken. Diagnoses
+named the source location for both. Tonight executes both fixes plus
+the architect's prescribed a→b→c→d sequence on compact-form, with one
+finding the predict-then-snapshot discipline correctly surfaced.
+
+### Contract A — safety assertion restored (Phase 1)
+
+`tests/routing/test_adr0019_engine_o_contract_a.py` was failing on a
+stale setup, NOT on a contract violation. The N=1 shortcut was
+already removed; the test failed because the synthesize-stub
+fallback was removed 2026-06-13 in service of ADR-0006 §Addendum's
+conjunctive-read invariant. The test's original setup (stub
+`predicate_hybrid_search` to return `[]`) no longer reached BAML —
+it now short-circuits to UNKNOWN at `main.py:2200-2230` via
+conjunctive-read.
+
+**Rewrite:** both tests now stub `predicate_hybrid_search` to RETURN
+the verb as a real Weaviate candidate — the production path for an
+N=1 query whose verb is in both stores. Assertion teeth unchanged
+(BAML must be called, enum must be `{verb, UNKNOWN}`, LLM verdict
+must propagate). Contract A is now test-guarded again
+INDEPENDENTLY of the conjunctive-read tightening — a re-introduction
+of the N=1 shortcut would turn the test red even if conjunctive-read
+were rolled back. **The safety assertion was inert from 2026-06-13
+(when the fabrication-fallback was removed) until this rewrite.**
+
+Both tests pass: 2/2.
+
+### Compact-form cleanup — writer fixed, guards widened, Weaviate-coordination found needed (Phase 2)
+
+#### (a) Writer fixed — `scripts/seed_sandbox_predicates.py`
+
+The seed script was hardcoding compact-form URIs in `input_uri` /
+`output_uri` fields (lines 58-59, 73-74, 89-90, 104-105 pre-fix),
+MERGEing `OntologyClass {uri: mesh:GraphExpertResponse}` etc. on
+every sandbox seed. Every re-seed re-created duplicate compact-form
+OntologyClass nodes alongside the canonicals materialized by
+`sync_jena_ontologies_to_neo4j`. **The architect's framing**: this
+is a seed script (re-runnable bootstrap), not a one-time migration
+script; it must use canonical full-IRI like any other source.
+
+Fix: `input_uri`/`output_uri` now use `_MESH + "AgentTask"` etc.
+(`http://invincible-agent/mesh#*` form). `verb_iri` stays compact
+because verbs were not Phase-5-migrated (separate scope decision;
+substrate-canonical for verbs is compact form on the edge `iri`
+property).
+
+#### (b) Class guard widened — `test_no_engine_hardcodes_a_migrated_compact_uri_in_a_query`
+
+Two findings on the existing guard:
+
+1. The guard only scanned `agent_fleet/*.py`. It NEVER visited
+   `scripts/` at all. The allowlist entries for `scripts/seed_*`
+   were vestigial — they exempted nothing because the guard
+   never traversed those files.
+2. The allowlist conflated TWO categorically different things
+   under "Migration scripts/seeds intentionally reference compact
+   forms": ONE-TIME migration scripts (legitimately reference
+   compact in their MATCH-and-redirect logic, ran once historically)
+   versus RE-RUNNABLE seed scripts (bootstrap state every cluster
+   init; must use canonical form). The conflation is the bug.
+
+Fix: guard widened to scan `scripts/seed_*.py`. Allowlist split
+into `ONE_TIME_MIGRATION_SCRIPTS` (exempt) and
+`RE_RUNNABLE_SEED_SCRIPTS_NOT_EXEMPT` (the four seeds, now held to
+canonical-form). The widened guard passes against the fixed
+`seed_sandbox_predicates.py`. `seed_mro_extension_runtime.py` is
+flagged separately as needing the same fix (banked).
+
+#### (c) Substrate guard widened — `test_no_compact_form_ontology_classes`
+
+The existing `test_no_compact_form_for_migrated_subjects` only
+checked 4 specific URIs. There were 26 other compact-form
+:OntologyClass nodes the guard never looked at — guard scope
+strictly smaller than the regression class. Widened to flag EVERY
+compact-form OntologyClass URI (`mesh:`, `mro:`, `idp:`, `data:`,
+`mil:` prefixes). Structured failure message distinguishes
+CLEANUP-ABLE (canonical equivalent exists in substrate) from
+NEEDS TBOX DECLARATION (no canonical yet).
+
+#### (d) Cleanup attempt + Weaviate-coordination finding
+
+Predict-and-snapshot discipline: pre-cleanup snapshot captured to
+`c:/tmp/b3a_compact_snapshot_pre.json`. Predictions written:
+- 27 of 30 compact nodes have canonical equivalents (cleanup-able)
+- 3 do NOT (`data:Dashboard`, `data:Dataset`, `mesh:Thing` —
+  banked as TBox-decision items; widened guard correctly stays
+  red on them)
+- Cleanup migration `scripts/merge_compact_into_canonical.py`
+  handles the "compact AND canonical both exist" case that
+  `migrate_compact_to_full_iri.py:73-75` aborts on (the
+  seed-script regression class). Uses idempotent
+  `apoc.merge.relationship` to avoid duplicating against 851
+  existing canonical→canonical subClassOf edges.
+
+**Pre vs post Neo4j-side cleanup:**
+
+| Metric | Pre | Post | Delta | Predicted |
+|---|---|---|---|---|
+| total_ontologyclass | 2217 | 2190 | -27 | -27 ✓ |
+| compact_ontologyclass | 30 | 3 | -27 | -27 ✓ |
+| canonical_ontologyclass | 994 | 994 | 0 | 0 ✓ |
+| subClassOf_total | 1749 | 1747 | -2 | small delta ✓ |
+| v02_saga_edges | 16 | 16 | 0 | 0 ✓ |
+| **user-visible matrix** | **18/18** | **17/18** | **-1** | **0 (WRONG)** |
+
+**The matrix moved. Prediction wrong. Architect's orphan-edge-night
+discipline correctly named this risk.** Diagnosis:
+
+- Failing question: `"Show me the maintenance steps for the rotor assembly"`
+- LLM resolved subject to `mro:ProcedureStep` (compact form)
+- Engine O's compat-walk MATCH `(s:OntologyClass {uri: 'mro:ProcedureStep'})`
+  returned empty (node deleted by Neo4j cleanup)
+- Conjunctive-read short-circuit → UNKNOWN
+
+The migration moved the verb edge correctly to
+`canonical:ProcedureStep`. But the LLM still picked the compact
+form because **Weaviate's Class corpus still has compact entries**.
+Engine O's `/resolve` hybrid-searches the Class corpus; Weaviate
+returned the compact URI; Engine O's substrate-side compat-walk
+used the LLM-output URI verbatim and found nothing.
+
+**The cleanup is genuinely a coordinated two-store migration:**
+Neo4j-side delete + Weaviate-side delete must happen together, OR
+Engine O must canonicalize the LLM-output subject URI before
+compat-walk. **Neither was anticipated; both are real follow-up work.**
+
+#### Restoration: 27 compact stubs re-created with subClassOf → canonical
+
+Tonight's safety move: re-MERGE the 27 deleted compact nodes as
+STUBS with `subClassOf` → canonical aliases. Engine O's compat-walk
+traverses subClassOf; from compact:ProcedureStep it walks to
+canonical:ProcedureStep and finds the verb edge. Matrix restored
+to 18/18. Widened substrate guard correctly fires RED on 30
+(the 27 stubs + 3 banked TBox items) — that redness IS the
+punch-list. The architect's "test layer makes 'shouldn't be
+reachable' land as 'isn't reachable'" pattern holds.
+
+### Banked for next session (before B4)
+
+1. **Weaviate Class corpus cleanup** — coordinate with Neo4j-side
+   migration so the LLM stops picking compact form. Once Weaviate
+   no longer has compact entries, the Neo4j stubs become unused
+   and can be safely deleted (re-run `merge_compact_into_canonical.py`,
+   widened guard goes from 30→3).
+2. **Three TBox-decision items**: `data:Dashboard`, `data:Dataset`,
+   `mesh:Thing` need canonical full-IRI declarations in TTL +
+   ingest. Until declared, widened guard stays red on them. (Note:
+   `mesh:Thing` has 548 incoming subClassOf edges; declaring its
+   canonical is high-impact.)
+3. **`seed_mro_extension_runtime.py`** — same compact-form
+   regression pattern as seed_sandbox_predicates. Widened class
+   guard will catch it on next run.
+4. **Or alternative path**: Engine O canonicalizes subject URI
+   pre-compat-walk via a URI alias table. Less elegant but
+   single-store; might be the right move if Weaviate cleanup is
+   blocked.
+
+### Standing rules confirmed under stress
+
+- **Predict-and-snapshot before deleting** — surfaced exactly the
+  orphan-edge night risk the architect named. Without the prediction
+  written first, the matrix-moved-by-1 result would have been
+  noisy; with the prediction, it's a precise unknown unknown
+  ("LLM-via-Weaviate depends on a store I didn't touch").
+- **Guard red is the signal, not the failure** — widened substrate
+  guard correctly fires on 30. Cleanup pending. B4 blocked. The
+  architect's framing: a guard that catches the class is doing its
+  job when it's red on the unhandled cases.
+- **Add more = confirm baseline holds THEN add** — this session
+  added cleanup, baseline moved, baseline restored before close.
+  The session-done definition holds: new work green AND base matrix
+  18/18 AND predictions confirmed (or, in this case, predictions
+  shown wrong with a captured finding).
+
 ## 2026-06-13 B3a close — MIL-STD-40051 ingest adapter shipped end-to-end
 
 ### What landed

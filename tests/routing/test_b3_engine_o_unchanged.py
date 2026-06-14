@@ -204,6 +204,22 @@ COMPACT_PREFIXES_WITH_CANONICAL_FULL_IRI = [
     ("idp:Dataset",             "http://invincible-agent/idp#Dataset"),
 ]
 
+# The allowlist is split into TWO categories — same exempt status, but
+# the distinction matters semantically and is enforced by the
+# scripts/-scanning guard below. The architect's framing
+# (2026-06-13): a one-time migration script that intentionally
+# references compact forms in its DELETE/MERGE-and-redirect logic is
+# CATEGORICALLY DIFFERENT from a re-runnable seed that bootstraps a
+# sandbox — the former is a tool that runs once and stops; the latter
+# is a writer that runs every cluster init.
+#
+# The original allowlist conflated them under "scripts intentionally
+# reference compact forms." That over-broad allowlist licensed
+# seed_sandbox_predicates.py to keep reintroducing compact-form
+# OntologyClass nodes on every sandbox seed (caught 2026-06-13 late
+# when the substrate-level test_no_compact_form_for_migrated_subjects
+# guard fired red on mesh:GraphExpertResponse + mesh:KnowledgeRetrievalResponse,
+# and the trace led back to ENGINES in seed_sandbox_predicates.py).
 FILES_THAT_LEGITIMATELY_DOCUMENT_MIGRATION = {
     # State/ADR docs explain the migration AND name the pre-A3 forms.
     # That's the documentation, not a runtime path.
@@ -217,12 +233,22 @@ FILES_THAT_LEGITIMATELY_DOCUMENT_MIGRATION = {
     "docs/adr/ADR-0019-ontology-routing-substrate.md",
     "tests/routing/test_substrate_invariants.py",  # uses constants
     "tests/routing/test_b3_engine_o_unchanged.py", # this file, naming the rule
-    # Migration scripts/seeds intentionally reference compact forms
+}
+
+# ONE-TIME migration scripts: legitimately reference compact forms in
+# their MATCH-and-redirect logic, ran once historically. Exempt.
+ONE_TIME_MIGRATION_SCRIPTS = {
     "scripts/migrate_compact_to_full_iri.py",
     "scripts/retype_verbs_to_real_subjects.py",
     "scripts/phase5_catalog_verb_migration.py",
     "scripts/recreate_verb_edges.py",
     "scripts/sync_predicate_to_typed_inputs.py",
+}
+
+# RE-RUNNABLE seed scripts: bootstrap state every time they run. MUST
+# use canonical full-IRI forms. NOT exempt — held to the same
+# canonical-form discipline as engine source.
+RE_RUNNABLE_SEED_SCRIPTS_NOT_EXEMPT = {
     "scripts/seed_sandbox_predicates.py",
     "scripts/seed_datahub_catalog.py",
     "scripts/seed_mro_extension_runtime.py",
@@ -231,39 +257,47 @@ FILES_THAT_LEGITIMATELY_DOCUMENT_MIGRATION = {
 
 
 def test_no_engine_hardcodes_a_migrated_compact_uri_in_a_query():
-    """No engine source (agent_fleet/*) hardcodes a compact-form URI
-    for a class that has a canonical full-IRI form in the substrate.
+    """No engine source (agent_fleet/*) NOR re-runnable seed script
+    (scripts/seed_*) hardcodes a compact-form URI for a class that has
+    a canonical full-IRI form in the substrate.
 
     A hardcoded compact URI in a Cypher query / SDK declaration /
     config will reproduce the third Phase-5-prophecy occurrence the
     next time a cache invalidates: pre-A3 shape works while the cache
     holds, dies when the cache rebuilds against the post-A3 substrate.
 
-    Exempt: state docs, ADRs, migration scripts (legitimate references
-    to the historical form).
+    Re-runnable seeds (scripts/seed_*.py) get extra scrutiny because
+    a compact-form URI there doesn't just risk a cache miss — it
+    actively re-creates duplicate OntologyClass nodes on every
+    cluster init, defeating prior migrations by overwriting the
+    substrate's canonical state with shadow compact forms. The
+    architect's framing (2026-06-13): "seeds are re-runnable; they
+    must use canonical form like any other source." Seeds are
+    explicitly held to the canonical-form contract.
+
+    Exempt: state docs, ADRs, ONE-TIME migration scripts
+    (FILES_THAT_LEGITIMATELY_DOCUMENT_MIGRATION +
+    ONE_TIME_MIGRATION_SCRIPTS).
     """
+    EXEMPT = FILES_THAT_LEGITIMATELY_DOCUMENT_MIGRATION | ONE_TIME_MIGRATION_SCRIPTS
+    # Scan agent_fleet/*.py (the original scope) PLUS scripts/seed_*.py
+    # (the architect's widening — re-runnable seeds were the blind spot
+    # the old allowlist created).
+    paths = list((REPO_ROOT / "agent_fleet").rglob("*.py"))
+    paths += list((REPO_ROOT / "scripts").glob("seed_*.py"))
+
     violations = []
-    for fp in (REPO_ROOT / "agent_fleet").rglob("*.py"):
+    for fp in paths:
         if "__pycache__" in str(fp):
             continue
         rel = fp.relative_to(REPO_ROOT).as_posix()
-        if rel in FILES_THAT_LEGITIMATELY_DOCUMENT_MIGRATION:
+        if rel in EXEMPT:
             continue
         try:
             text = fp.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
-        # Check for compact-form references INSIDE Cypher / SDK
-        # declarations / configs.
         for compact, full in COMPACT_PREFIXES_WITH_CANONICAL_FULL_IRI:
-            # We grep for the compact form in a way that won't fire
-            # on the full form (which contains the compact's class
-            # name as a suffix). The compact form's prefix-and-colon
-            # is distinctive (`mesh:` / `idp:` / `mro:`); the full
-            # form uses `mesh#` / `idp#` / `mro#`.
-            # Use a single-quoted-string match — Cypher literals are
-            # single-quoted; Python string literals matching the same
-            # form are the natural false-positive carrier.
             for delim in ("'", '"'):
                 lit = f"{delim}{compact}{delim}"
                 if lit in text:
@@ -272,11 +306,12 @@ def test_no_engine_hardcodes_a_migrated_compact_uri_in_a_query():
                         f"(canonical: {full})"
                     )
     assert not violations, (
-        f"Hardcoded compact-form URIs detected in engine source. These "
-        f"reproduce the third Phase-5-prophecy occurrence "
-        f"(A3-migration miss masked by an in-memory cache, surfaces on "
-        f"next cache invalidation). Migrate to the canonical full-IRI "
-        f"form:\n"
+        f"Hardcoded compact-form URIs detected. These reproduce the "
+        f"third Phase-5-prophecy occurrence (A3-migration miss masked "
+        f"by an in-memory cache, surfaces on next cache invalidation). "
+        f"For seed scripts the failure mode is worse: every re-seed "
+        f"re-creates duplicate OntologyClass nodes alongside the "
+        f"canonicals. Migrate to the canonical full-IRI form:\n"
         + "".join(f"  - {v}\n" for v in violations[:15])
         + (f"  ... and {len(violations) - 15} more\n"
            if len(violations) > 15 else "")

@@ -13,6 +13,20 @@ Run via port-forwards from your local machine:
     py scripts/seed_sandbox_predicates.py
 
 Idempotent: re-running upserts. Safe to re-seed after a code change.
+
+CANONICAL-FORM DISCIPLINE (2026-06-13). Subject + object URIs (the
+`input_uri` / `output_uri` fields below) MUST be canonical full-IRI
+(`http://invincible-agent/mesh#*`) — the form `sync_jena_ontologies_to_neo4j`
+materializes from `mesh_system.ttl`. Using compact-form (`mesh:*`)
+creates DUPLICATE :OntologyClass nodes alongside the canonical ones,
+which is the regression class the substrate-level
+`test_no_compact_form_for_*` guards catch. This is a SEED script (it
+re-runs every sandbox bootstrap), not a one-time migration, so the
+class guard's allowlist intentionally does NOT cover this file —
+canonical-form is enforced. Verb IRIs (`verb_iri` field) remain
+compact-form: the verb relationship `.iri` property is still
+substrate-canonical-compact (verbs were NOT migrated by Session 2;
+that's a separate scope decision).
 """
 
 from __future__ import annotations
@@ -51,12 +65,19 @@ WEAVIATE_GRPC_PORT = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
 # `register_engine_to_mesh()` would have emitted to DataHub (and what
 # doc-tools' sensor would have synced).
 # ---------------------------------------------------------------------------
+# Canonical full-IRI namespace for mesh:* subjects — same form
+# `sync_jena_ontologies_to_neo4j` writes from `mesh_system.ttl`. Using
+# compact form here creates duplicate OntologyClass nodes (see this
+# script's module docstring).
+_MESH = "http://invincible-agent/mesh#"
+
+
 ENGINES = [
     {
         "name": "engine_a_restate_analyst",
-        "verb_iri": "mesh:analyzeWithCodeAgent",
-        "input_uri": "mesh:AgentTask",
-        "output_uri": "mesh:AgentResponse",
+        "verb_iri": "mesh:analyzeWithCodeAgent",   # verbs stay compact (substrate-canonical for verbs)
+        "input_uri": _MESH + "AgentTask",
+        "output_uri": _MESH + "AgentResponse",
         "endpoint_url": "http://iagent-engine-a:8081/analyze",
         "owner_persona": "DATA_STEWARD",
         "domains": ["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT"],
@@ -70,8 +91,8 @@ ENGINES = [
     {
         "name": "engine_e_neo4j_expert",
         "verb_iri": "mesh:queryKnowledgeGraph",
-        "input_uri": "mesh:GraphQuery",
-        "output_uri": "mesh:GraphExpertResponse",
+        "input_uri": _MESH + "GraphQuery",
+        "output_uri": _MESH + "GraphExpertResponse",
         "endpoint_url": "http://iagent-engine-e:8086/query_graph",
         "owner_persona": "AUDITOR",
         "domains": ["MAINTENANCE", "MANUFACTURING"],
@@ -86,8 +107,8 @@ ENGINES = [
     {
         "name": "engine_da_data_analyst",
         "verb_iri": "mesh:analyzeDataset",
-        "input_uri": "mesh:DatasetAnalysisRequest",
-        "output_uri": "mesh:DatasetAnalysisReport",
+        "input_uri": _MESH + "DatasetAnalysisRequest",
+        "output_uri": _MESH + "DatasetAnalysisReport",
         "endpoint_url": "http://iagent-data-analyst:8089/analyze_data",
         "owner_persona": "DATA_STEWARD",
         "domains": ["DATA_ENGINEERING"],
@@ -101,8 +122,8 @@ ENGINES = [
     {
         "name": "engine_w_weaviate_expert",
         "verb_iri": "mesh:retrieveKnowledge",
-        "input_uri": "mesh:KnowledgeQuery",
-        "output_uri": "mesh:KnowledgeRetrievalResponse",
+        "input_uri": _MESH + "KnowledgeQuery",
+        "output_uri": _MESH + "KnowledgeRetrievalResponse",
         "endpoint_url": "http://iagent-engine-w:8088/query_knowledge",
         "owner_persona": "TECH_WRITER",
         "domains": ["MAINTENANCE", "MANUFACTURING"],

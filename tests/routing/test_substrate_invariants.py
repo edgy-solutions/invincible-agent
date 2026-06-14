@@ -254,9 +254,8 @@ def test_no_compact_form_for_migrated_subjects(driver):
     full-IRI. If the compact form reappears, something re-introduced the
     band-aid — most likely a manual MERGE or an unfixed seed script.
 
-    This is the per-node version of the identity-duplication guard scoped
-    to just the nodes we migrated tonight. Once more of the substrate is
-    migrated, expand this set.
+    Subset of the broader test_no_compact_form_ontology_classes below.
+    Retained as a focused signal for the Phase-5-migrated subjects.
     """
     migrated_compact = [
         "mro:WorkInstruction",
@@ -280,6 +279,87 @@ def test_no_compact_form_for_migrated_subjects(driver):
         f"and must not return. Likely cause: a seed script or manual MERGE "
         f"using the band-aid compact form."
     )
+
+
+# Compact-form prefixes the widened substrate guard catches. The
+# corresponding canonical full-IRI is constructed from a known map for
+# the failure message; if a prefix isn't in this map the guard still
+# fires (the prefix-form itself is the violation).
+_COMPACT_PREFIXES_NAMESPACE_MAP = {
+    "mesh:": "http://invincible-agent/mesh#",
+    "mro:":  "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/",
+    "idp:":  "http://invincible-agent/idp#",
+    "data:": "http://invincible-agent/data#",
+    "mil:":  "http://edgy-solutions.com/ontology/mil#",
+}
+
+
+def test_no_compact_form_ontology_classes(driver):
+    """**The widened class guard (2026-06-13 late).** Every
+    :OntologyClass node MUST have a canonical full-IRI URI. Compact-form
+    URIs (mesh:Foo, mro:Bar, idp:Baz, data:Qux, mil:Quux) are a
+    regression — they create duplicate nodes alongside the canonicals
+    that the canonical ingest pipeline materialized, and split edges
+    between two identity-but-not-uri-equal nodes.
+
+    Architect's framing (2026-06-13): the original
+    test_no_compact_form_for_migrated_subjects only checked 4 specific
+    names. There were ~30 OTHER compact-form OntologyClass nodes the
+    test never looked at — a guard whose scope was strictly smaller
+    than the regression class it was meant to catch. This test widens
+    the scope to the class itself: ANY compact-form OntologyClass URI
+    is a violation.
+
+    Caveat documented in tests/routing/STATE_GATEWAY_V02.md
+    "2026-06-13 compact-form cleanup": a SMALL set of compact-form
+    OntologyClass nodes don't yet have canonical full-IRI counterparts
+    declared (e.g. data:Dashboard, data:Dataset, mesh:Thing).
+    Those are banked as TBox-decision items. This guard correctly
+    stays red on them — that redness is the punch-list, not a flaw
+    in the guard. When the TBox declarations land, the canonical
+    pipeline ingests them, the migrate-into-canonical cleanup runs,
+    and this guard goes green.
+    """
+    with driver.session() as session:
+        result = session.run(
+            """
+            MATCH (c:OntologyClass)
+            WHERE any(p IN $prefixes WHERE c.uri STARTS WITH p)
+            RETURN c.uri AS uri ORDER BY uri
+            """,
+            prefixes=list(_COMPACT_PREFIXES_NAMESPACE_MAP),
+        )
+        violations = [r["uri"] for r in result]
+
+    if violations:
+        # Distinguish "has known canonical equivalent" (cleanup-able)
+        # from "needs TBox declaration" (banked).
+        canonical_check_rows = session.run if False else None  # placeholder
+        with driver.session() as session2:
+            details = []
+            for compact in violations:
+                prefix = compact.split(":", 1)[0] + ":"
+                local = compact.split(":", 1)[1]
+                expected_full = _COMPACT_PREFIXES_NAMESPACE_MAP[prefix] + local
+                has_canonical = session2.run(
+                    "MATCH (c:OntologyClass {uri: $u}) RETURN c.uri AS u",
+                    u=expected_full,
+                ).single()
+                details.append((compact, expected_full, has_canonical is not None))
+
+        cleanup_able = [d for d in details if d[2]]
+        needs_tbox = [d for d in details if not d[2]]
+        lines = [f"{len(violations)} compact-form OntologyClass nodes detected."]
+        if cleanup_able:
+            lines.append(f"  CLEANUP-ABLE ({len(cleanup_able)}): canonical exists, merge-into-canonical + delete compact:")
+            for c, f, _ in cleanup_able[:30]:
+                lines.append(f"    {c!r} -> {f!r}")
+        if needs_tbox:
+            lines.append(f"  NEEDS TBOX DECLARATION ({len(needs_tbox)}): no canonical full-IRI in substrate yet:")
+            for c, f, _ in needs_tbox:
+                lines.append(f"    {c!r} (expected canonical: {f!r})")
+        lines.append("See STATE_GATEWAY_V02.md '2026-06-13 compact-form cleanup' for the merge-into-canonical migration design.")
+        raise AssertionError("\n".join(lines))
 
 
 def test_mesh_resolve_instance_has_one_edge_per_provider(driver):
