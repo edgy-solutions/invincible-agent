@@ -142,7 +142,13 @@ async def lifespan(app: FastAPI):
             "Restate-durable execution and mem0 long-term memory."
         ),
         verb="mesh:queryKnowledgeGraph",
-        input_uri="mro:ProcedureStep",
+        # 2026-06-15: canonicalized from compact mro:ProcedureStep to full-IRI.
+        # Source-resident regression caught by widened class guard during the
+        # mesh:Thing investigation's writer-hunt. Same form sync_jena_ontologies_to_neo4j
+        # materializes from mro_extension.ttl; using compact-form here would create
+        # duplicate :OntologyClass nodes alongside the canonical and reproduce the
+        # Phase-5-prophecy class on next substrate cache invalidation.
+        input_uri="https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/ProcedureStep",
         output_uri="http://invincible-agent/mesh#GraphExpertResponse",
         verb_synonyms=[
             "query graph", "graph lookup", "cypher query",
@@ -344,17 +350,24 @@ class ResolveInstanceResponse(BaseModel):
 
 
 # Map Neo4j node labels → canonical ontology class URIs the router knows.
-# WorkInstruction gets the full IOF-MRO IRI (matches the canonical
-# ontology load); Instance covers equipment instances and resolves to
-# mro:Equipment. The mapping is deliberately small and explicit — the
-# class assignment never comes from the identifier's shape, only from
-# the node's authoritative label in the graph. Adding a new instance
-# type means one row here, NOT a new branch anywhere in Engine O.
+# All entries MUST be canonical full-IRI to match what
+# sync_jena_ontologies_to_neo4j materializes; compact-form here would
+# emit duplicate :OntologyClass references at runtime via
+# /resolve_instance responses (same Phase-5-prophecy class the widened
+# class guard catches).
+# 2026-06-15: canonicalized Instance/Procedure entries during the
+# mesh:Thing writer-hunt's source scan. Part is BANKED — mro:Part has
+# no canonical declaration in mro_extension.ttl yet; sandbox substrate
+# does not contain the full-IRI form. Until the TBox declaration lands
+# (or the row is removed if Engine E no longer emits Part candidates),
+# Part stays compact and the widened substrate guard correctly flags
+# it for resolution. See STATE_GATEWAY_V02.md "2026-06-15 Step-2
+# source-side regressions" for the trace.
 _LABEL_TO_CLASS_URI = {
     "WorkInstruction": "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/WorkInstruction",
-    "Instance":        "mro:Equipment",
-    "Procedure":       "mro:Procedure",
-    "Part":            "mro:Part",
+    "Instance":        "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/Equipment",
+    "Procedure":       "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/Procedure",
+    "Part":            "mro:Part",  # banked TBox-decision item, see docstring above
 }
 
 # Fields on the node that PLAUSIBLY carry the kind of identifier a user

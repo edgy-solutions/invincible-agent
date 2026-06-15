@@ -202,6 +202,28 @@ COMPACT_PREFIXES_WITH_CANONICAL_FULL_IRI = [
     ("mesh:AgentTask",          "http://invincible-agent/mesh#AgentTask"),
     ("mesh:AgentResponse",      "http://invincible-agent/mesh#AgentResponse"),
     ("idp:Dataset",             "http://invincible-agent/idp#Dataset"),
+    # Added 2026-06-15: source-resident regressions surfaced by the
+    # mesh:Thing investigation's writer-hunt expansion. Three source
+    # locations carried hardcoded compact mro:* URIs (seed_mro_extension_runtime.py
+    # CLASSES list + agent_fleet/neo4j_expert/main.py line 145 input_uri +
+    # lines 355-356 _LABEL_TO_CLASS_URI mapping). All five mro:* classes
+    # below have canonical full-IRI counterparts materialized by
+    # sync_jena_ontologies_to_neo4j from mro_extension.ttl.
+    #
+    # mro:Part is INTENTIONALLY OMITTED from this list — it has no
+    # canonical full-IRI declaration in the substrate (would need a
+    # TTL update + canonical ingest). Engine E's _LABEL_TO_CLASS_URI
+    # keeps mro:Part compact and the widened substrate guard
+    # correctly flags it as a TBox-decision item alongside
+    # data:Dashboard and data:Dataset. Adding mro:Part here would
+    # spuriously block Engine E's source until the TBox declaration
+    # lands; the substrate guard is the right surface for that wait.
+    ("mro:TechnicalManual",     "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual"),
+    ("mro:Diagram",             "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/Diagram"),
+    ("mro:ProcedureStep",       "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/ProcedureStep"),
+    ("mro:Equipment",           "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/Equipment"),
+    ("mro:Procedure",           "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/Procedure"),
+    ("mro:Symptom",             "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/Symptom"),
 ]
 
 # The allowlist is split into TWO categories — same exempt status, but

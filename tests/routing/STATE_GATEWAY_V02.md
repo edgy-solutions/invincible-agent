@@ -3,6 +3,70 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-15 (late) — substrate guard driven to GREEN, B4 unblocks
+
+The linear punch-list session against the 29 reds: provenance-group gate → source fixes (including a 4th writer the gate surfaced) → two-store coordinated retirement of the 27 alias-stubs → two-store coordinated retirement of the 2 stale `data:*` duplicates. **Matrix held 18/18 through every tier (6+ runs). Final state: widened compact-form guard 29 → 0; all three substrate guards GREEN; B4 unblocks.**
+
+### Step 1 — provenance gate surfaced a fourth writer
+
+The cheap query (`MATCH compact-form RETURN c.synced_by, c.ingest_run_id, count(*)`) on the 29 reds returned two signatures:
+- 27 had property-signature `alias_for + label + rollback_note + uri` — my own 2026-06-13 alias-stubs from the matrix-18→17 incident
+- 2 had `definition + domain + label + uri` — the `data:Dashboard` / `data:Dataset` items the architect had queued as TBox-decision candidates
+
+The widened class guard, after adding the 3 mro:* URIs the seed_mro_extension_runtime.py file hardcoded, surfaced **two source locations**: `seed_mro_extension_runtime.py` (expected) AND `agent_fleet/neo4j_expert/main.py` (the fourth writer). Engine E was hardcoding `input_uri="mro:ProcedureStep"` on line 145 AND emitting compact mro:* URIs at runtime via `_LABEL_TO_CLASS_URI` lines 355-357. **The provenance gate worked exactly as the standing rule designed it to** — caught a source-resident regression that source-grep alone would have missed.
+
+### Step 2 — source-side fixes (the 4th writer included)
+
+- `scripts/seed_mro_extension_runtime.py`: 3 `mro:*` URIs canonicalized via `_MRO` constant pointing at the canonical IOF MaintenanceReferenceOntology base.
+- `agent_fleet/neo4j_expert/main.py:145`: `input_uri` canonicalized.
+- `agent_fleet/neo4j_expert/main.py:353-358`: `_LABEL_TO_CLASS_URI` canonicalized for `Instance` (Equipment) and `Procedure`. `Part` BANKED with docstring — `mro:Part` has no canonical declaration yet; stays compact and the substrate guard correctly flags it for the next TBox session.
+- Class guard's `COMPACT_PREFIXES_WITH_CANONICAL_FULL_IRI` widened from 5 to 11 named URIs (added `mro:TechnicalManual`, `mro:Diagram`, `mro:ProcedureStep`, `mro:Equipment`, `mro:Procedure`, `mro:Symptom`) so future regressions of any of these names trip CI red.
+- Class guard 4/4 GREEN; matrix 18/18.
+
+### Step 3 — two-store coordinated alias-stub retirement (27)
+
+Tier A (Weaviate first — clean the LLM's resolution source):
+- 23 of 27 alias-stub URIs were in Weaviate; deleted. (4 were Neo4j-only — bridges never written to Weaviate.)
+- Matrix 18/18 PASS.
+
+Tier B (Neo4j second — remove the unused forwarders):
+- 27 alias-stubs DETACH DELETE'd. Each had exactly 1 outgoing `subClassOf` (the alias bridge to canonical) and 0 incoming — pure forwarders, no routing dependencies.
+- Verb edges live exclusively on canonicals (16 incoming + 5 outgoing across the 27 canonical equivalents), confirming the architect's "they were band-aids, not architecture" framing was structurally true.
+- Matrix 18/18 PASS.
+
+### Step 4 — `data:Dataset` / `data:Dashboard` were pre-migration residue, not pending declarations
+
+Pre-flight surfaced that `idp_extension.ttl` lines 9 + 23-36 already declared `idp:Dataset` and `idp:Dashboard` as canonical migration targets — with `rdfs:comment` "Dataset and Dashboard definitions are VERBATIM-TRANSCRIBED from the existing hand-curated data:* classes." The 2 compact nodes weren't items pending declaration; they were **stale leftovers from a migration that already happened**.
+
+Halt-and-re-ask per the Writer-C pattern (action shape changed from "declare" to "delete"; re-asked the architect before autonomous action). Architect authorized delete with the **two-store + writer-grep discipline** the alias-stub work proved necessary:
+
+- **Writer-grep:** clean. Only 3 source mentions of `data:Dataset`/`data:Dashboard` exist; all are documentation (my own merge_compact_into_canonical.py docstring, migrate_compact_to_full_iri.py historical comment, the TTL migration note). Zero active source emits these URIs at runtime.
+- **Weaviate presence:** ZERO entries for either URI. The LLM literally cannot resolve to compact form (no candidates in the search index). The previous best-case across the architect's three outcomes — and the safest.
+- **Canonical presence in Weaviate:** `idp:Dataset` + `idp:Dashboard` both present with `domain='DATA_ENGINEERING'` and full definitions, ranking for catalog queries.
+- **Execute:** Neo4j DETACH DELETE; 2 nodes + 5 outgoing subClassOf edges removed. v0.2 saga edges unchanged.
+- **Matrix:** 18/18 PASS.
+
+### Final guard state
+
+| Guard | Pre-session | Post-session |
+|---|---|---|
+| `test_no_compact_form_ontology_classes` | RED on 29 | **GREEN** |
+| `test_no_compact_form_for_migrated_subjects` | (was already green) | GREEN |
+| `test_no_blank_node_ontology_classes` | GREEN | GREEN |
+| `test_no_engine_hardcodes_a_migrated_compact_uri_in_a_query` | GREEN (narrower scope) | GREEN (wider scope after URI list expansion) |
+| `tests/routing/test_classify_route.py` | 18/18 | **18/18** (6+ matrix runs through tiers) |
+
+### Standing rules confirmed under stress (again)
+
+- **Writer-hunt by provenance, not recall** ([[writer-hunt-by-provenance]]) — surfaced the 4th writer (Engine E source) that the previous narrow source-grep scope had missed. The expansion of the class guard's URI list IS the recall-not-data trap fixed in advance.
+- **Predict-snapshot-matrix per tier** — six matrix runs through the session, every prediction confirmed before the next tier. The architect's correction on Step 4 ("two-store discipline, not bare DETACH") avoided the trap of treating "0 edges" as a single-store claim about a two-store system.
+- **Halt-and-re-ask when the action shape changes** — the Step 4 disposition flip ("declare" → "delete") was caught by the agent and surfaced to the architect rather than executed autonomously. Same pattern as the Writer-C halt earlier in the arc.
+- **Fix-the-writer-first** — Engine E's compact-form leak was fixed in source BEFORE the substrate cleanup proceeded. The class guard's expanded URI list provides the watchman.
+
+### B4 status
+
+**Unblocked.** Substrate is fully canonical-form. The widened guard catches any future regression at the URI-list level for sources, and the substrate-side guards catch material regressions in either store. Next session's work types verbs against content classes (the canonical `mil:*` / `mfg:*` / `mro:*` / `idp:*` subjects) standing on substrate that's known clean rather than 29-reds short.
+
 ## 2026-06-15 mesh:Thing investigation — synthetic catch-all retired, phantom-scan backlog closed, Writer C fixed
 
 ### What this session resolved

@@ -13,6 +13,16 @@ CANONICAL PIPELINE GAP (filed as Step-1 follow-up):
 
 This runs INSIDE the doc-tools pod via stdin so it has Weaviate/Neo4j credentials
 already.
+
+CANONICAL-FORM DISCIPLINE (2026-06-15). Subject URIs MUST be canonical
+full-IRI (`https://spec.industrialontologies.org/.../`) — the form
+`sync_jena_ontologies_to_neo4j` materializes from `mro_extension.ttl`.
+Using compact-form (`mro:*`) creates DUPLICATE :OntologyClass nodes
+alongside the canonicals, which is the regression class the substrate-
+level test_no_compact_form_* guards catch. This is a RE-RUNNABLE seed
+(class guard's RE_RUNNABLE_SEED_SCRIPTS_NOT_EXEMPT set), not a one-time
+migration, so canonical-form is enforced. Same fix pattern as
+`seed_sandbox_predicates.py` 2026-06-13.
 """
 import os
 import weaviate
@@ -20,9 +30,14 @@ from weaviate.classes.init import Auth
 from weaviate.util import generate_uuid5
 from neo4j import GraphDatabase
 
+# Canonical full-IRI namespace for mro:* subjects per IOF / MaintenanceReferenceOntology.
+# Same form `sync_jena_ontologies_to_neo4j` writes from `mro_extension.ttl`.
+_MRO = "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/"
+
+
 CLASSES = [
     {
-        "uri": "mro:TechnicalManual",
+        "uri": _MRO + "TechnicalManual",
         "label": "Technical Manual",
         "definition": (
             "A document conveying descriptive technical information about a "
@@ -35,7 +50,7 @@ CLASSES = [
         "domain": "MAINTENANCE",
     },
     {
-        "uri": "mro:Diagram",
+        "uri": _MRO + "Diagram",
         "label": "Diagram",
         "definition": (
             "A visual representation attached to a work instruction or technical "
@@ -46,7 +61,7 @@ CLASSES = [
         "domain": "MAINTENANCE",
     },
     {
-        "uri": "mro:ProcedureStep",
+        "uri": _MRO + "ProcedureStep",
         "label": "Procedure Step",
         "definition": (
             "A single ordered action within a maintenance procedure or work "
