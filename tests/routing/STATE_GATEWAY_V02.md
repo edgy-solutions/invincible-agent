@@ -3,6 +3,77 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-15 (late late) — B4 verb 1 shipped end-to-end (`mesh:retrieveKnowledge` against `mil:FaultIsolationDataModule`, Engine W)
+
+First verb-typing of B4, scoped to ONE verb per the architect's "one at a time, predict-then-prove, stop after" discipline.
+
+### What landed
+
+- **Engine W source updated** (`agent_fleet/weaviate_expert/main.py`): second `register_engine_to_mesh(...)` call for `mesh:retrieveKnowledge` against `mil:FaultIsolationDataModule` (canonical full-IRI). Mirrors Engine E's dual-registration pattern (queryKnowledgeGraph against WorkInstruction + ProcedureStep). Synonyms include the FaultIsolation semantic surface (`fault isolation`, `troubleshoot`, `diagnose`, `why is it broken`, `find the fault`).
+- **Substrate edge created via mesh-registrar saga** (Contract D + read-back probe path). Engine W rebuild deferred to next deploy; tonight invoked `register_engine_to_mesh` directly with Engine-W's identity to fire the same saga. On next Engine W pod restart, MERGE-by-URI is idempotent — no double edge.
+- **Test corpus row added** (`test_classify_route.py` 18 → 19): `"How do I find the fault in the helmet microphone?"` → expects `FaultIsolationDataModule` + `mesh:retrieveKnowledge`.
+
+### Gap-1 fired one domain over — banked
+
+Step 1 surfaced the path-vs-semantic-domain bug ([[path-vs-semantic-domain]] standing memory) on `mil:*`. Source TTL at `mil/mil_extension.ttl` → path-derived `domain='MIL'`; resolver queries `MAINTENANCE`; invisible. Same root cause as manufacturing's Gap-1 finding (mfg:* at the wrong domain or absent) and the historical mro:* incident. Tonight applied the substrate patch (UPDATE 10 mil:* entries' domain from `'MIL'` to `'MAINTENANCE'` in both stores — in-place, not a seed). Banked the proper-pipeline fix (sensor config + manifest + standing guard) as next-session work the standing memory already specified.
+
+### For-the-right-reason check (the masks rule applied to additive work)
+
+All five gates GREEN:
+- Subject resolves to `mil:FaultIsolationDataModule` (canonical full-IRI), confidence **0.97**
+- Cypher compat-walk produces constrained set `[mesh:retrieveKnowledge]`
+- `classify_called=True` (Contract A teeth fired; not Contract B short-circuit)
+- Verb picked FROM constrained set (`candidate_verbs=['mesh:retrieveKnowledge']` only — Contract A two-value enum `{retrieveKnowledge, UNKNOWN}`, LLM confirmed fit at 0.92)
+- Pre-conditions all canonical: subject confidence ≥ 0.85, verb in both stores
+
+Route is green BECAUSE the constraint did the work, not in spite of it.
+
+### Matrix
+
+- Pre-session: 18/18 PASS
+- Domain patch only (no verb registered): 18/18 PASS (existing routes unmoved)
+- **Post-session with new row added: 19/19 PASS** — new B4-V1 row green; existing 18 unchanged
+- Over-routing check: no existing maintenance row migrated to FaultIsolationDataModule. The verb's semantic surface is sufficiently distinct from WorkInstruction / TechnicalManual that the LLM's hybrid search correctly keeps the existing rows on their original subjects.
+
+### Demo before/after capture
+
+Captured at `c:/tmp/b4_v1_demo_before_after.md`. Demo script row 11
+flips from ⛔ wrong-semantic-match (resolves to WorkInstruction at
+0.95) to ✅ right-semantic-match-dispatched-to-Engine-W (resolves
+to FaultIsolationDataModule at 0.97, dispatches to Engine W's
+manual-search endpoint).
+
+### Hard scope held
+
+One verb proven end to end. NOT batched with:
+- `mil:ProcedureDataModule` (maintwp content kind — pool-held)
+- `mil:IllustratedPartsDataModule` (plwp content kind — pool-held)
+- `mil:DescriptiveDataModule` (descwp content kind — pool-held)
+- `mfg:*` classes (manufacturing — separate Gap-1-shape work needed first)
+- Other Engine W verb-typings
+
+Each gets its own session. Same attributability discipline that
+made the tiered cleanups safe — if the matrix moves with each new
+verb individually, the cause is one verb's change, not a batch.
+
+### Standing rules confirmed under additive load
+
+- **Predict-then-type-then-prove**: predictions written before any
+  source/substrate touch (`c:/tmp/b4_v1_predictions.md`); the
+  "matrix unmoved" prediction held empirically through every step.
+- **Gap-1-shape proactive**: Step 1's "check Weaviate Class corpus
+  presence" caught the domain mismatch BEFORE typing the verb, so
+  the verb didn't land on an invisible subject (would have been a
+  green-tagged dead verb).
+- **For-the-right-reason check**: explicit verification that the
+  route is constrained-set-picked, not LLM-guess-coincidence. The
+  masks rule applied to additive work: a route that's right by
+  luck rather than by substrate is the thing to catch.
+- **Halt-and-bank when a finding exceeds scope**: the proper-pipeline
+  fix for the path-vs-semantic-domain bug is its own session, not
+  in-line work. Substrate patch is the minimum-viable conjunctive-
+  read fix tonight.
+
 ## 2026-06-15 (late) — substrate guard driven to GREEN, B4 unblocks
 
 The linear punch-list session against the 29 reds: provenance-group gate → source fixes (including a 4th writer the gate surfaced) → two-store coordinated retirement of the 27 alias-stubs → two-store coordinated retirement of the 2 stale `data:*` duplicates. **Matrix held 18/18 through every tier (6+ runs). Final state: widened compact-form guard 29 → 0; all three substrate guards GREEN; B4 unblocks.**

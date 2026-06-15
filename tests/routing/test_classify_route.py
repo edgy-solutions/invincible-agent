@@ -414,6 +414,34 @@ TEST_CASES: list[RouteCase] = [
         domain="MAINTENANCE",
     ),
 
+    # --- B4 verb 1 (2026-06-15): fault-isolation routing ---
+    # mesh:retrieveKnowledge typed against mil:FaultIsolationDataModule,
+    # owned by Engine W. The B3a helmet TM ingest materialized 3 tswp
+    # instances as INSTANCE_OF mil:FaultIsolationDataModule; this row is
+    # the routing layer's release-from-pool-hold for that content kind.
+    #
+    # Pre-B4 (no verb typed): the resolver picks mro:WorkInstruction
+    # at ~0.95 confidence (wrong semantic match for diagnostic queries;
+    # the only routable MAINTENANCE-domain class for "procedure"-shaped
+    # queries was WorkInstruction, FaultIsolationDataModule was held
+    # out of the resolver pool). Post-B4: resolver picks
+    # FaultIsolationDataModule (the right kind), compat-walk finds
+    # retrieveKnowledge, dispatch lands at Engine W.
+    #
+    # The phrasing uses "fault isolation" + "diagnose" rather than
+    # "troubleshooting procedure" — the latter ranks WorkInstruction
+    # higher because WorkInstruction's hint-primed definition includes
+    # the word "procedure." The semantic-match-by-definition is the
+    # right contract: FaultIsolationDataModule's definition explicitly
+    # owns "diagnostic / why is it broken / how do I find the fault."
+    RouteCase(
+        query="How do I find the fault in the helmet microphone?",
+        expected_subject_substring="FaultIsolationDataModule",
+        expected_verb_iri="mesh:retrieveKnowledge",
+        min_confidence=0.5,
+        domain="MAINTENANCE",
+    ),
+
     # --- Out of registry / should fall back ---
     RouteCase(
         query="What's the weather like today?",

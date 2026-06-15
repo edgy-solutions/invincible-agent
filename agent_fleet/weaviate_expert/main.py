@@ -66,6 +66,43 @@ async def lifespan(app: FastAPI):
         domains=["MAINTENANCE", "MANUFACTURING"],
         cost_class="medium",  # Weaviate is fast; embedding + smolagents = medium overall
     )
+
+    # Second registration: mesh:retrieveKnowledge against
+    # mil:FaultIsolationDataModule (B4 verb 1, 2026-06-15).
+    # IMPORTANT: same description as the primary registration above —
+    # BAML's TypeBuilder dedupes enum values by name and the last
+    # add_value's description wins (see Engine E's note at line 126).
+    # Engine W is the right owner for fault-isolation queries: tswp
+    # content (helmet TM and future 40051 troubleshooting work-packages)
+    # is text-search-shaped, not graph-traversal-shaped, so manual
+    # search is the action verb. Pairs with the existing
+    # retrieveKnowledge-against-TechnicalManual registration; the same
+    # capability typed against a different subject path.
+    register_engine_to_mesh(
+        name="engine_w_weaviate_expert_fault_isolation",
+        description=(
+            "Knowledge retrieval engine. Weaviate v4 hybrid search "
+            "(near_text + BM25) with strict domain segregation; returns "
+            "Markdown summaries and citations from technical manuals."
+        ),
+        verb="mesh:retrieveKnowledge",
+        input_uri="http://edgy-solutions.com/ontology/mil#FaultIsolationDataModule",
+        output_uri="http://invincible-agent/mesh#KnowledgeRetrievalResponse",
+        verb_synonyms=[
+            "search docs", "find in manuals", "semantic search",
+            "look up policy", "consult manual",
+            "fault isolation", "troubleshoot", "diagnose",
+            "why is it broken", "find the fault",
+            "diagnostic procedure", "troubleshooting procedure",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_W_PUBLIC_URL",
+            "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+        ),
+        owner_persona="TECH_WRITER",
+        domains=["MAINTENANCE", "MANUFACTURING"],
+        cost_class="medium",
+    )
     yield
 
 
