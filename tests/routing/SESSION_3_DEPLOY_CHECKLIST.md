@@ -30,6 +30,28 @@ and the matrix passed 18/18 against the result.
 
 ## §1. Pre-deploy checklist (do these before the work-cluster Helm install)
 
+### §1.0 Source-side fixes that ride into every fresh canonical ingest
+
+These are bug fixes already merged that must be in the deployed image
+because the canonical pipeline runs on first bootstrap and reproduces
+the bug's residue on the work cluster otherwise.
+
+- [ ] **Writer C blank-node filter** — `sync_jena_ontologies_to_neo4j`
+      in `doc-tools/doc_tools/assets/ontology_assets.py`. Pre-fix, the
+      blank-node filter checked `uri.startswith("Bnode_")`/`"_:"` —
+      neither matches rdflib's `BNode.__str__` output (`N[a-f0-9]{32}`),
+      so every imported ontology with anonymous owl:Class restrictions
+      (PROV-O, IOF_Core, S3000L, DINEN62264, IOF_MRO) leaked
+      ~441 blank-node `:OntologyClass` phantoms into the sandbox
+      substrate. Fixed 2026-06-15: SPARQL `FILTER(!isBlank(?uri))`
+      primary, Python `isinstance(row.uri, rdflib.term.BNode)` defensive.
+      Acceptance test: `doc-tools/tests/test_ontology_assets_blank_node_filter.py`.
+      Substrate watchman: `tests/routing/test_substrate_invariants.py::test_no_blank_node_ontology_classes`.
+      Without this fix in the deployed image, the work cluster's first
+      canonical ingest reproduces the phantoms. Cosmetic (no routing
+      impact — they're inert), but the deploy stops being "clean
+      from source" until the fix lands.
+
 ### §1.1 Verify the work cluster has the infrastructure dependencies
 
 The Helm chart deploys the iagent stack; these must exist already (or

@@ -3,6 +3,139 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-15 mesh:Thing investigation — synthetic catch-all retired, phantom-scan backlog closed, Writer C fixed
+
+### What this session resolved
+
+The mesh:Thing investigation collapsed two banked items (mesh:Thing
+canonicalization decision, phantom-scan backlog) into one root cause
+and one durable fix. Three findings established what mesh:Thing
+actually was; one writer-hunt discovered the active-source culprit;
+a tiered cleanup retired the catch-all + 1,191 blank-node phantoms
+across two stores; the matrix held 18/18 through 6 consecutive runs.
+
+### Findings (in order)
+
+1. **mesh:Thing is not declared in any TTL** — zero references across
+   eight ontology files (no `mesh:Thing`, no `owl:Thing`). It is a
+   synthetic catch-all, not a legitimate root. Possibility 1
+   (canonicalize-as-class) ruled out.
+2. **Of mesh:Thing's 548 children**, 442 were blank-node phantoms,
+   105 were external W3C/IOF imports (98 with canonical-pipeline
+   provenance + 7 without), 1 was an mro/iof child. NONE had any
+   other parent — mesh:Thing was the sole subClassOf target for all
+   548. The catch-all collected orphans.
+3. **Zero verb edges touched mesh:Thing** — not present in the
+   routing pool. The over-routing-leak risk the widened guard was
+   designed to surface was inactive.
+
+### Writer-hunt (with the lesson banked)
+
+Initial source-grep showed no Python in either repo hardcodes
+`mesh:Thing` / `owl:Thing` / "Thing" — so the writer is indirect.
+Substrate provenance grouping identified three writers:
+
+| Writer | Identity | What it wrote | Source status |
+|---|---|---|---|
+| A | `source_ontology='mesh-platform-baseline'` | `mesh:Thing` itself (1 node) | Gone from source, never committed |
+| B | `ingest_run_id='direct-load-20260609T043550Z'` | 442 phantom edges + 7 unparented + 750 of 1,191 total blank-node nodes | Gone from source, never committed |
+| **C** | **`synced_by='sync_jena_ontologies_to_neo4j'`** | **441 of the unparented blank-node nodes** | **ACTIVE source — current canonical pipeline** |
+
+Writer C was the load-bearing finding. The blank-node filter in
+`ontology_assets.py:390` checked `uri.startswith("Bnode_")` /
+`"_:"` — neither matches rdflib's `BNode.__str__` output
+(`N[a-f0-9]{32}`). The filter has been a no-op since Session 2's
+keystone. Every imported ontology with anonymous owl:Class
+restrictions (PROV-O, IOF_Core, S3000L, DINEN62264, IOF_MRO)
+leaked its blank-node restrictions as bogus :OntologyClass nodes.
+
+**Pre-flight provenance grouping caught Writer C** — the agent
+halted on its existing authorization (the architect had authorized
+cleanup against the original 442 scope) and re-asked, because
+grouping the 749 unparented orphans by `synced_by` revealed
+sync_jena_ontologies_to_neo4j hiding among them. Without the halt,
+cleanup would have proceeded while the active source kept producing
+the same shape. **The standing rule "writer-hunt by provenance, not
+recall" is now banked at
+[[writer-hunt-by-provenance]] — provenance grouping is the first
+step of any future writer-hunt; source-grep is a confirmation step,
+not a discovery step.**
+
+### Writer C fix — two-layer with positive-control acceptance test
+
+- **Source fix** at `doc-tools/doc_tools/assets/ontology_assets.py:386-413`:
+  primary `FILTER(!isBlank(?uri))` in SPARQL, secondary
+  `isinstance(row.uri, rdflib.term.BNode)` in Python (belt-and-braces
+  for any future rdflib SPARQL-evaluation change).
+- **Acceptance test** at
+  `doc-tools/tests/test_ontology_assets_blank_node_filter.py`: 3
+  assertions — filter drops blank nodes, filter does NOT drop named
+  classes (positive control catching an over-aggressive filter),
+  drift guard ensures the test's extract_query stays synced with
+  source. 3/3 PASS.
+- **Watchman substrate guard** at
+  `tests/routing/test_substrate_invariants.py::test_no_blank_node_ontology_classes`:
+  scans `:OntologyClass.uri =~ '^[nN][a-f0-9A-F]{16,}.*'`, fires with
+  writer-fingerprint breakdown if any reappears. Catches the regression
+  at the substrate layer (the writer might be replaced or get a new
+  bug; substrate-side check is the catch-net regardless of source path).
+- **Deploy pre-flight** at `SESSION_3_DEPLOY_CHECKLIST.md §1.0`: the
+  Writer C fix must ride into the work-cluster image, otherwise the
+  first canonical ingest reproduces ~441 phantoms.
+
+### Tiered cleanup — 1,191 + mesh:Thing across two stores
+
+Per the architect's "predict-and-snapshot per tier so a matrix move
+is attributable, not bundled" discipline:
+
+| Tier | Scope | Approach | Matrix |
+|---|---|---|---|
+| Pre-flight | Intermediary-dependency Cypher query | Found 9 blank-node bridges between real classes and mesh:Thing — refined Tier 1 split | n/a |
+| **1a** | 1,182 safe-core blank-node phantoms (not intermediaries) | Two-store DETACH DELETE | **18/18** |
+| **1b** | 9 intermediary bridges | Bypass: 5 distinct `real_child → mesh:Thing` edges MERGEd first, then bridges DETACH DELETE'd | **18/18** |
+| **1c** | 441 Weaviate-only blank-node orphans (not in Neo4j) | Weaviate delete | (matrix at Tier 4) |
+| **2** | 104 canonical-provenance children's `subClassOf → mesh:Thing` edges | Edge DELETE (keep nodes — federated tops per architect's Q2) | **18/18** |
+| **3** | 7 external orphans (PCN / ISA95 / manufacturing) | Inspect first (real classes, no other parents, zero verb edges → confirmed safe), edge DELETE | **18/18** |
+| **4** | `mesh:Thing` itself | Two-store DETACH DELETE | **18/18** |
+
+**6/6 matrix runs at 18/18**, ~6 minutes each (≈37 minutes total matrix
+time across the cleanup). The architect's two-store predict-and-snapshot
+discipline turned the load-bearing prediction ("inert") into a tested
+claim, per tier. No movement at any boundary.
+
+### Final substrate delta
+
+| Metric | Pre | Final | Delta |
+|---|---|---|---|
+| Neo4j total `:OntologyClass` | 2,217 | 1,025 | **-1,192** |
+| Neo4j blank-node `:OntologyClass` | 1,191 | **0** | -1,191 |
+| Neo4j `subClassOf` edges | 1,774 | 909 | -865 |
+| Neo4j v0.2 saga edges (`_tool_urn`) | 16 | 16 | 0 |
+| `mesh:Thing` in Neo4j | 1 | **0** | -1 |
+| Weaviate `OntologyClass` | 2,210 | 1,018 | -1,192 |
+| Weaviate blank-node `OntologyClass` | 1,191 | **0** | -1,191 |
+| `mesh:Thing` in Weaviate | yes | **no** | -1 |
+| user-visible matrix | 18/18 | **18/18** | 0 |
+
+### Banked items closed by this session
+
+- **Phantom-scan backlog** (was a ~30-node concern, actually was 1,191): CLOSED. Watchman guard green; Writer C fixed; both stores clean.
+- **mesh:Thing canonicalization decision**: REPLACED by deletion. Was not a real class to canonicalize.
+- **Widened substrate guard count**: 30 → 29 (mesh:Thing removed from NEEDS TBOX DECLARATION; the remaining 2 are `data:Dashboard` + `data:Dataset` which DO need real TBox declarations).
+
+### Still banked (separate from this work)
+
+- **27 compact-form mesh:* stubs** from 2026-06-13's matrix-18→17 incident (Weaviate cross-store dependency). Widened guard's CLEANUP-ABLE list. Needs Weaviate Class-corpus coordination before re-running the merge-into-canonical migration.
+- **2 TBox-decision items**: `data:Dashboard`, `data:Dataset` — need canonical full-IRI declarations in TTL + ingest. Until declared, widened compact-form guard stays red on them.
+- **`seed_mro_extension_runtime.py`**: separate compact-form regression in source (same pattern as the seed_sandbox_predicates.py fix from 2026-06-13). Widened class guard will catch the next time someone re-runs it.
+
+### Standing rules confirmed under stress
+
+- **Writer-hunt by provenance, not recall** ([[writer-hunt-by-provenance]]) — caught Writer C exactly where source-grep would have missed it. New standing rule.
+- **Predict-and-snapshot per tier** — turned "the prediction was wrong about the system" risk into "the matrix held at each boundary." 6/6 matrix runs proved the prediction was structural, not hopeful.
+- **Fix-the-writer-first** — applied in its strong form (Writer C in active source); the agent halted on existing authorization, re-asked, and got the prescribed Option 1 sequence (fix Writer C → guard shape → corrected-scope tiered cleanup).
+- **Transport failures don't count as green** — Engine O port-forward dropped during Tier 1a's matrix run; agent caught the connection-refused fingerprint, restarted PF, re-ran. The matrix run that "moved 18→0" via transport was correctly treated as untested, not as a regression.
+
 ## 2026-06-13 pre-B4 gate — Contract A restored, compact-form cleanup proved Weaviate-coordinated
 
 The architect's pre-B4 gate after B3a's regression-gate revealed two

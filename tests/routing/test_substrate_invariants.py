@@ -313,12 +313,19 @@ def test_no_compact_form_ontology_classes(driver):
     Caveat documented in tests/routing/STATE_GATEWAY_V02.md
     "2026-06-13 compact-form cleanup": a SMALL set of compact-form
     OntologyClass nodes don't yet have canonical full-IRI counterparts
-    declared (e.g. data:Dashboard, data:Dataset, mesh:Thing).
-    Those are banked as TBox-decision items. This guard correctly
-    stays red on them — that redness is the punch-list, not a flaw
-    in the guard. When the TBox declarations land, the canonical
-    pipeline ingests them, the migrate-into-canonical cleanup runs,
-    and this guard goes green.
+    declared (e.g. data:Dashboard, data:Dataset). Those are banked as
+    TBox-decision items. This guard correctly stays red on them —
+    that redness is the punch-list, not a flaw in the guard. When the
+    TBox declarations land, the canonical pipeline ingests them, the
+    migrate-into-canonical cleanup runs, and this guard goes green.
+
+    2026-06-15 update: mesh:Thing — previously banked as a TBox
+    declaration item — was traced via pre-flight provenance grouping
+    to a synthetic catch-all built by a vanished ad-hoc loader. It is
+    NOT a legitimate class needing declaration; it's a deletion target.
+    Cleanup pending; see STATE_GATEWAY_V02.md "2026-06-15 mesh:Thing
+    investigation" for the writer-hunt trace and the tiered cleanup
+    plan.
     """
     with driver.session() as session:
         result = session.run(
@@ -359,6 +366,120 @@ def test_no_compact_form_ontology_classes(driver):
             for c, f, _ in needs_tbox:
                 lines.append(f"    {c!r} (expected canonical: {f!r})")
         lines.append("See STATE_GATEWAY_V02.md '2026-06-13 compact-form cleanup' for the merge-into-canonical migration design.")
+        raise AssertionError("\n".join(lines))
+
+
+def test_no_blank_node_ontology_classes(driver):
+    """**The blank-node phantom guard (2026-06-15).** :OntologyClass
+    nodes whose URI matches the rdflib BNode shape (`N[a-f0-9]{16,}`,
+    e.g. `N026ed32773d9479cbe31277701541cc1`) are RDF authoring
+    artifacts that leaked through a broken blank-node filter in the
+    canonical pipeline (sync_jena_ontologies_to_neo4j) between
+    Session 2 and 2026-06-15.
+
+    Architect's framing (2026-06-15): the original blank-node filter
+    in ontology_assets.py:390 checked `uri.startswith("Bnode_")` and
+    `"_:"` — neither matches rdflib's `BNode.__str__` output
+    (`N[a-f0-9]{32}`). The filter was a no-op for the entire lifetime
+    of the canonical pipeline; every imported ontology with anonymous
+    owl:Class restrictions (PROV-O, IOF_Core, S3000L, DINEN62264,
+    IOF_MRO) leaked its blank-node restrictions into Neo4j as bogus
+    :OntologyClass nodes.
+
+    Discovery: the mesh:Thing investigation's pre-flight provenance
+    grouping. Counting blank-node :OntologyClass by `synced_by`
+    revealed 441 nodes with `synced_by='sync_jena_ontologies_to_neo4j'`
+    — Writer C, the current canonical pipeline, in active source.
+    The "fix-the-writer-first" rule applied in its strong form: the
+    SPARQL extract_query in ontology_assets.py was fixed (FILTER
+    `!isBlank(?uri)` primary, Python isinstance defensive) BEFORE
+    cleanup proceeded. See doc-tools'
+    test_ontology_assets_blank_node_filter.py for the source-side
+    acceptance test.
+
+    This guard is the substrate-side watchman that catches any future
+    regression in the writer: a re-introduction of the broken filter
+    (or a new pipeline emitting blank-node :OntologyClass) trips this
+    test red on the next CI run. Pairs with the source-side test in
+    doc-tools so both layers must be intact for the cleanup to stay
+    durable.
+
+    Blank-node :OntologyClass nodes are categorically distinct from
+    compact-form ones — they have no canonical equivalent to migrate
+    TO (they're not real concepts), so the cleanup is delete, not
+    canonicalize. The widened compact-form guard
+    (test_no_compact_form_ontology_classes) covers the compact-form
+    regression class; this guard covers the blank-node regression
+    class. Same architectural shape, different shape detection.
+    """
+    with driver.session() as session:
+        result = session.run(
+            r"""
+            MATCH (c:OntologyClass)
+            WHERE c.uri =~ '^[nN][a-f0-9A-F]{16,}.*'
+            RETURN c.uri AS uri, c.synced_by AS synced_by,
+                   c.ingest_run_id AS run_id,
+                   c.source_ontology AS src
+            ORDER BY synced_by, src
+            LIMIT 50
+            """,
+        )
+        violations = [(r["uri"], r["synced_by"], r["run_id"], r["src"]) for r in result]
+        total = session.run(
+            r"""
+            MATCH (c:OntologyClass) WHERE c.uri =~ '^[nN][a-f0-9A-F]{16,}.*'
+            RETURN count(c) AS n
+            """,
+        ).single()["n"]
+
+    if total:
+        # Group by writer fingerprint so the failure message points
+        # directly at which pipeline created the regression — the
+        # same provenance-grouping pattern that uncovered Writer C
+        # during the mesh:Thing investigation.
+        with driver.session() as s2:
+            by_writer = s2.run(
+                r"""
+                MATCH (c:OntologyClass) WHERE c.uri =~ '^[nN][a-f0-9A-F]{16,}.*'
+                RETURN coalesce(c.synced_by, '<none>') AS synced_by,
+                       coalesce(c.ingest_run_id, '<none>') AS run_id,
+                       coalesce(c.source_ontology, '<none>') AS src,
+                       count(*) AS n
+                ORDER BY n DESC
+                """,
+            ).data()
+
+        lines = [
+            f"{total} blank-node :OntologyClass nodes detected "
+            f"(uri matches rdflib BNode shape N[a-f0-9]{{16,}}). "
+            f"These are RDF authoring artifacts (typically owl:Class "
+            f"restrictions from anonymous unionOf/intersectionOf/"
+            f"Restriction expressions in imported ontologies), not "
+            f"resolver targets. They should be filtered at ingest, "
+            f"not materialized.",
+            "",
+            "By writer fingerprint:",
+        ]
+        for row in by_writer:
+            lines.append(
+                f"  n={row['n']:5d}  synced_by={row['synced_by']!r}  "
+                f"run_id={row['run_id']!r}  src={row['src']!r}"
+            )
+        lines.append("")
+        lines.append("Likely cause (if synced_by='sync_jena_ontologies_to_neo4j'):")
+        lines.append(
+            "  the canonical-pipeline blank-node filter regressed. "
+            "Check doc_tools/assets/ontology_assets.py for the "
+            "`FILTER(!isBlank(?uri))` SPARQL clause and the "
+            "`isinstance(row.uri, rdflib.term.BNode)` Python check. "
+            "The acceptance test in "
+            "doc-tools/tests/test_ontology_assets_blank_node_filter.py "
+            "covers both layers."
+        )
+        lines.append("")
+        lines.append("Sample violations (up to 10):")
+        for uri, synced_by, run_id, src in violations[:10]:
+            lines.append(f"  {uri!r}")
         raise AssertionError("\n".join(lines))
 
 
