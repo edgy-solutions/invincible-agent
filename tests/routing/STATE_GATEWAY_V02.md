@@ -3,6 +3,60 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-15 — B4 verb 3 shipped end to end (`mesh:retrieveKnowledge` against `mil:IllustratedPartsDataModule`, Engine W) + lexical-cue observation gate adopted
+
+Third verb-typing of B4. First verb shipped under the new **multi-phrasing probe** acceptance gate (per architect 2026-06-15: every new mil:* content-kind verb-typing records 3–5 probe phrasings + the lexical cues that drive subject resolution, building the evidence base for the widened procedural-content-disambiguation ADR).
+
+### Verb
+
+`mesh:retrieveKnowledge` typed against `mil:IllustratedPartsDataModule`, owned by Engine W. Engine W's third source-level registration (`TechnicalManual` + `FaultIsolationDataModule` + now IPD) — additive "same capability typed against another mil:* content kind" pattern. IPD (DMC info code 9xx, exploded parts views + part lists) is text-search-shaped in practice, so `retrieveKnowledge` is the natural verb-typing.
+
+### Multi-phrasing probe — the new acceptance gate in action
+
+Five phrasings probed BEFORE picking the matrix-row phrasing. Resolution + reasoning recorded:
+
+| # | Phrasing | `/resolve` → | Conf | Lexical cue identified |
+|---|---|---|---|---|
+| P1 | "What parts make up the microphone boom?" | `mil:IllustratedPartsDataModule` | 0.97 | "parts compose" → parts breakdown |
+| P2 | "Show me the illustrated parts breakdown for the boom assembly" | `mil:IllustratedPartsDataModule` | 0.98 | "illustrated parts" — exact class trigger |
+| P3 | "What is the part number for the boom cable?" | **`mil:Part`** | 0.92 | "part number" → instance class, not document class |
+| P4 | "Describe the parts data module for the boom" | `mil:IllustratedPartsDataModule` | 0.96 | "parts data module" multi-word beats "describe" cue |
+| P5 | "What is the IPD for part number 12345?" | `mil:IllustratedPartsDataModule` | 0.97 | acronym match + instance-resolution layer fired & abstained |
+
+**Findings worth banking for the ADR design pass:**
+
+1. **Kind-vs-instance at the surface vocabulary** — P3 routes to `mil:Part`, not IPD. "part number" pulls to the Part-instance layer; "parts breakdown" pulls to the IPD-document layer. Defensible (a part-number question asks about a Part instance, not the parts-breakdown document) but worth ADR-noting: not every "parts"-vocabulary query lands on IPD.
+2. **Asymmetric "describe" behavior** — P4 was the predicted collision case (replicate verb 2's probe 1 finding "describe the procedure data module" → DescriptiveDataModule). It DID NOT replicate. "Describe the parts data module" stays on IPD at 0.96. **The boundary between IPD and DescriptiveDataModule is sharper than between ProcedureDataModule and DDM.** Likely because IPD's class definition has a stronger "parts"-anchored vocabulary than ProcedureDataModule has "procedure"-anchored vocabulary. ADR tuning target: weaker boundaries first (PDM ↔ DDM, WorkInstruction ↔ PDM container/content), not the already-sharp ones (IPD ↔ DDM, IPD ↔ Part instance layer).
+3. **Instance-resolution layer composes correctly** — P5's numeric token "12345" triggered the instance-resolution fan-out. All three providers (engine_e_dmc, engine_e, engine_d) abstained cleanly (n_candidates=0); class-fallback held to IPD. The catalog content gap notwithstanding, the abstention contract works.
+
+**Matrix-row pick: P2** — cleanest single discriminator (0.98, exact "illustrated parts breakdown" trigger, no instance-resolution noise, no cross-class collision).
+
+### Five-gate verification on P2
+
+| Gate | Result |
+|---|---|
+| `/resolve` → subject | `mil:IllustratedPartsDataModule` at 0.98 |
+| `/find_compatible_verbs` → constrained set | `[mesh:retrieveKnowledge]` (verb 3's edge) |
+| `/classify_predicate` → verb | `mesh:retrieveKnowledge` at 0.92, `classify_called=True` |
+| `candidate_verbs` (the enum the LLM saw) | `[mesh:retrieveKnowledge]` only — Contract A two-value enum |
+| Subject confidence ≥ 0.85 | 0.98 ✓ |
+
+All five for-the-right-reason gates green + the new sixth gate (multi-phrasing observation) recorded.
+
+### Matrix: 21/21 in 6:54
+
+20 existing rows + new B4-V3 row, all green. Existing matrix unchanged — verb 2's "What procedure data module covers microphone boom removal and installation?" still routes to `mil:ProcedureDataModule` via `mesh:queryKnowledgeGraph`; verb 1's "How do I find the fault in the helmet microphone?" still routes to `mil:FaultIsolationDataModule` via `mesh:retrieveKnowledge`; "Search the technical manuals for fuel system diagnostics" still on its TechnicalManual route. No over-routing — Engine W's three retrieveKnowledge subjects (TechnicalManual + FaultIsolation + IPD) maintain orthogonal lexical territory.
+
+### What this verb proves about the discipline
+
+- **The additive pattern keeps working.** Three verbs in (verb 1, 2, 3), the substrate machinery (mesh-registrar saga + Contract D + read-back probe) ships each one cleanly.
+- **The multi-phrasing probe earned its keep on its first use** — P3's kind-vs-instance finding and P4's asymmetric-"describe" finding both surface evidence the matrix-row alone would have hidden. Standing rule: every new mil:* content-kind verb-typing runs the 3–5 probe scan.
+- **Verb 4 (`mil:DescriptiveDataModule`) is the test the architect predicted will be messy.** Per the addendum: *"`describe` is a common word that'll pull lots of queries to DescriptiveDataModule."* Verb 4's multi-phrasing scan will surface exactly that — and with verbs 1, 2, 3 in place, the full four-class lexical-boundary picture comes into view for the ADR's design pass.
+
+### Standing rule banked
+
+**From verb 3 forward, every new mil:* content-kind verb-typing runs a 3–5 probe phrasing scan as a standard acceptance gate** — not just to pick the matrix row, but to record the lexical-cue behavior that the widened procedural-content disambiguation ADR will reason from. The matrix-row phrasing is picked from the probe set, not authored in isolation.
+
 ## 2026-06-16 — B4 verb 2 shipped end to end (`mesh:queryKnowledgeGraph` against `mil:ProcedureDataModule`, Engine E) + containment-modeling ADR banked
 
 Second verb-typing of B4, with a halt-and-reframe arc that surfaced a real structural insight before the test passed.
@@ -48,6 +102,26 @@ All five for-the-right-reason gates green. Route is right because of constraint,
 This is an ADR-shaped decision because it changes how procedural queries route. It deserves daylight and its own design pass. The current verb-2 implementation works fine for both query shapes today; the ADR is for *when both maintainer and tech-writer audiences are actually using the system simultaneously and the question-framing-disambiguation needs to be structural rather than incidental*.
 
 Bank as next ADR work; B4 verbs 3+ can proceed in the meantime per the architect's "ship verb 2 demo-ready honestly NOW, bank the containment-modeling as the proper disambiguation work" framing.
+
+### Addendum (2026-06-15, after architect's re-read of probe output) — the ADR is wider than two classes
+
+Architect re-read the probe trace and surfaced a finding I had moved past. **Probe 1** — *"Describe the procedure data module for the microphone boom installation"* — resolved to **`mil:DescriptiveDataModule` at 0.86**, with the LLM noting *"this is a 'what is' style query → DescriptiveDataModule."* I noted it "didn't win" and moved to probe 2; the architect read it as the actual signal. The word *"describe"* pulled the resolution to `mil:DescriptiveDataModule`; *"procedure data module"* in the same sentence didn't override it.
+
+So the underlying problem is **not** a two-class container/content question. It's **three procedural-content classes** — `mro:WorkInstruction`, `mil:ProcedureDataModule`, `mil:DescriptiveDataModule` — whose boundaries the resolver draws **by surface-word cues** ("steps" → WorkInstruction, "describe" → DescriptiveDataModule, "what procedure data module covers" → ProcedureDataModule). Probe 3 won not because it found the *right* subject but because its phrasing happened to hit ProcedureDataModule's exact words and miss the trigger words for the other two. **The disambiguation that "works" today works by lexical coincidence, not by structure** — the green-for-the-right-reason concern, one level up from where the agent's five-gate check landed.
+
+The five-gate check verified the **verb** was picked correctly from the compat set. It did not verify the **subject** resolution was robust. Probes 1, 2, 3 returning three different classes for three phrasings of the same underlying question is the evidence that subject resolution is fragile, even though the matrix passes.
+
+**Widened ADR scope** — the banked design pass covers the full procedural-content subject model: how `mil:DescriptiveDataModule` (what it is), `mil:ProcedureDataModule` (how-to-do-it as a document), `mro:WorkInstruction` (the steps as content), and `mil:IllustratedPartsDataModule` (parts breakdown) relate, and how queries disambiguate among them structurally rather than lexically. Containment (`ProcedureDataModule` contains `WorkInstruction`) is part of it, but `DescriptiveDataModule` and `IllustratedPartsDataModule` are *sibling kinds* under `mil:DataModule`, not parts of the containment chain — the model is "a hierarchy of document kinds, one of which contains a content type that also exists as a separate maintenance concept." Three-plus-class problem, not two.
+
+**Why not design it now** — two of the four classes (`DescriptiveDataModule`, `IllustratedPartsDataModule`) are still pool-held (no verbs typed). Their routing behavior under real queries has not been observed. Designing the disambiguation structure before verbs 3 and 4 exist means designing against classes we haven't watched compete — and probe 1 already hints verb 4 will be messy because *"describe"* is a common lexical trigger. Want the data first, design the model second, with the full picture.
+
+**Sequence (architect's call)** — finish observing the system before designing it:
+
+1. **Verb 3** (`mil:IllustratedPartsDataModule`) with multi-phrasing probe added to acceptance: alongside the for-the-right-reason verb check, probe each new content-kind verb with 3–4 phrasings and record which lexical cues move the subject resolution. Make this multi-probe a standard part of each verb's acceptance from here forward.
+2. **Verb 4** (`mil:DescriptiveDataModule`) with the same multi-phrasing observation.
+3. With all four classes' routing behavior observed, the structural-disambiguation ADR gets its design pass in daylight with the full picture.
+
+The fix isn't urgent (demo works on framed questions); it isn't a 1am call (multi-class modeling decision); it shouldn't be designed until verbs 3 and 4 have been observed. So the right move now is **finish observing the system, not fix it blind**.
 
 ### Tier-3 readiness — verified architecture LIVE, catalog content gap
 

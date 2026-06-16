@@ -484,6 +484,60 @@ TEST_CASES: list[RouteCase] = [
         domain="MAINTENANCE",
     ),
 
+    # --- B4 verb 3 (2026-06-15): IllustratedPartsDataModule routing ---
+    # mesh:retrieveKnowledge typed against mil:IllustratedPartsDataModule,
+    # owned by Engine W. Third source-level registration on Engine W
+    # (after TechnicalManual and FaultIsolationDataModule); IPD content
+    # (DMC info code 9xx, exploded parts views + part lists) is
+    # text-search-shaped in practice, so retrieveKnowledge is the
+    # natural verb-typing.
+    #
+    # **Multi-phrasing probe observation** (the new acceptance gate
+    # introduced from this verb, per architect 2026-06-15: every new
+    # mil:* content-kind verb-typing records 3-5 probe phrasings and
+    # the lexical cues that drive subject resolution, building the
+    # evidence base for the widened procedural-content-disambiguation
+    # ADR):
+    #
+    #   P1 "What parts make up the microphone boom?" -> IPD @ 0.97
+    #   P2 "Show me the illustrated parts breakdown ..."  -> IPD @ 0.98
+    #   P3 "What is the part number for the boom cable?"  -> mil:Part @ 0.92
+    #     (kind-vs-instance distinction at the surface vocabulary —
+    #      "part number" pulls to the Part class, not to the IPD
+    #      document. Defensible: a part-number question asks about an
+    #      instance of Part, not about the parts-breakdown document.)
+    #   P4 "Describe the parts data module for the boom"  -> IPD @ 0.96
+    #     (asymmetric with verb 2's probe 1: there, "describe the
+    #      procedure data module" pulled to mil:DescriptiveDataModule;
+    #      here, "describe the parts data module" stays on IPD. The
+    #      "parts" multi-word anchor in IPD's class definition is
+    #      strong enough to beat "describe"'s generic descriptive cue.
+    #      The boundary between IPD and DescriptiveDataModule is
+    #      sharper than between ProcedureDataModule and DDM.)
+    #   P5 "What is the IPD for part number 12345?" -> IPD @ 0.97
+    #     (acronym match + instance-resolution layer also fired on
+    #      "12345"; all three providers abstained cleanly, class
+    #      fallback held.)
+    #
+    # Matrix row uses P2 — cleanest discriminator: exact "illustrated
+    # parts breakdown" trigger, highest confidence (0.98), zero
+    # instance-resolution noise, and the class definition's strongest
+    # multi-word anchor.
+    #
+    # Banked observation for the widened ADR design pass:
+    # IPD's "parts" vocabulary holds against "describe"; PDM's
+    # "procedure" vocabulary does NOT. The ADR's class-definition
+    # tuning should target the weaker boundaries (PDM <-> DDM,
+    # WorkInstruction <-> PDM container/content) rather than the
+    # already-sharp ones (IPD <-> DDM, IPD <-> Part instance layer).
+    RouteCase(
+        query="Show me the illustrated parts breakdown for the boom assembly",
+        expected_subject_substring="IllustratedPartsDataModule",
+        expected_verb_iri="mesh:retrieveKnowledge",
+        min_confidence=0.5,
+        domain="MAINTENANCE",
+    ),
+
     # --- Out of registry / should fall back ---
     RouteCase(
         query="What's the weather like today?",

@@ -103,6 +103,72 @@ async def lifespan(app: FastAPI):
         domains=["MAINTENANCE", "MANUFACTURING"],
         cost_class="medium",
     )
+
+    # Third registration: mesh:retrieveKnowledge against
+    # mil:IllustratedPartsDataModule (B4 verb 3, 2026-06-15).
+    # Engine W is the right owner for IPD queries: parts catalogs
+    # (DMC info code 9xx, exploded views + part lists) are
+    # text-search-shaped in practice — "what parts make up X",
+    # "show me the parts breakdown" land in Weaviate's hybrid
+    # search over the IPD chunks rather than a graph walk.
+    #
+    # Multi-phrasing probe observation (the new acceptance gate
+    # introduced this verb, per architect 2026-06-15):
+    #   P1 "What parts make up the microphone boom?" -> IPD @ 0.97
+    #   P2 "Show me the illustrated parts breakdown ..."  -> IPD @ 0.98
+    #   P3 "What is the part number for the boom cable?"  -> mil:Part @ 0.92
+    #     (kind-vs-instance distinction: part NUMBER asks about a
+    #      Part instance, not the parts breakdown DOCUMENT)
+    #   P4 "Describe the parts data module for the boom"  -> IPD @ 0.96
+    #     (the verb-2 "describe -> DescriptiveDataModule" cue did NOT
+    #      replicate here — "parts data module" is a strong enough
+    #      cohesive trigger to override the generic "describe" cue.
+    #      Asymmetric with verb 2's probe 1, where "procedure data
+    #      module" did NOT beat "describe".)
+    #   P5 "What is the IPD for part number 12345?" -> IPD @ 0.97
+    #     (instance-resolution layer also fired on "12345" -> all
+    #      three providers abstained cleanly; class fallback held.)
+    #
+    # Matrix row picks P2 — exact "illustrated parts breakdown"
+    # trigger, highest confidence, no instance-resolution noise.
+    #
+    # Lexical-boundary observation banked for the widened ADR
+    # (the full procedural-content disambiguation design pass):
+    # IPD's "parts"-anchored vocabulary is strong enough that
+    # "describe" doesn't poach to DescriptiveDataModule the way
+    # it does for "procedure" — the boundary between IPD and DDM
+    # is sharper than between ProcedureDataModule and DDM. Worth
+    # recording so the ADR's class-definition tuning targets the
+    # weak boundaries.
+    register_engine_to_mesh(
+        # Same description as the primary registrations above —
+        # BAML TypeBuilder dedupes enum values by name; last
+        # add_value's description wins. Same capability, different
+        # subject path.
+        name="engine_w_weaviate_expert_illustrated_parts",
+        description=(
+            "Knowledge retrieval engine. Weaviate v4 hybrid search "
+            "(near_text + BM25) with strict domain segregation; returns "
+            "Markdown summaries and citations from technical manuals."
+        ),
+        verb="mesh:retrieveKnowledge",
+        input_uri="http://edgy-solutions.com/ontology/mil#IllustratedPartsDataModule",
+        output_uri="http://invincible-agent/mesh#KnowledgeRetrievalResponse",
+        verb_synonyms=[
+            "search docs", "find in manuals", "semantic search",
+            "look up policy", "consult manual",
+            "parts breakdown", "illustrated parts", "IPD",
+            "what parts", "part number", "parts catalog",
+            "parts list", "part lookup",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_W_PUBLIC_URL",
+            "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+        ),
+        owner_persona="TECH_WRITER",
+        domains=["MAINTENANCE", "MANUFACTURING"],
+        cost_class="medium",
+    )
     yield
 
 
