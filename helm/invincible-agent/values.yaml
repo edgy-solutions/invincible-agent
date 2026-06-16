@@ -237,7 +237,14 @@ engineE:
   image: { name: "neo4j-expert", tag: "latest" }
   port: 8086
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
-  env: {}
+  # ENGINE_E_PUBLIC_URL pins the endpoint Engine E registers into the mesh
+  # against its actual K8s service (iagent-engine-e). Belt-and-suspenders
+  # with the source default in agent_fleet/neo4j_expert/main.py: the default
+  # is now correct, and this env var makes the deployment's intent explicit
+  # so a future drift between source default and cluster reality surfaces
+  # at config-review time rather than at pod-restart time.
+  env:
+    ENGINE_E_PUBLIC_URL: "http://iagent-engine-e:8086/query_graph"
 
 engineW:
   enabled: true
@@ -245,7 +252,11 @@ engineW:
   image: { name: "weaviate-expert", tag: "latest" }
   port: 8088
   resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-  env: {}
+  # ENGINE_W_PUBLIC_URL pins the endpoint Engine W registers into the mesh
+  # against its actual K8s service (iagent-engine-w). See ENGINE_E note above
+  # for the belt-and-suspenders rationale.
+  env:
+    ENGINE_W_PUBLIC_URL: "http://iagent-engine-w:8088/query_knowledge"
 
 engineF:
   enabled: true

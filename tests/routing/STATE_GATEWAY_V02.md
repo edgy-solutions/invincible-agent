@@ -3,6 +3,104 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-16 — Consolidation session: demo-prep + durability check + Tier-3 reframe
+
+B4 verb arc complete + ADR-0020 shelved → mode shifted to consolidation-and-demo-prep per architect 2026-06-16. Three deliverables landed:
+
+### 1. Demo script template committed — [docs/demo-script.md](docs/demo-script.md)
+
+Placeholder-only artifact (zero proprietary data). 14 rows across Tier 1
+(catalog/lineage), Tier 1b (failure-demo trust-builder), Tier 2 (needle-in-
+haystack retrieval-ready / join-plan roadmap), Tier 3 (data-path), Tier 4
+(manuals — now LIVE across all four B4 content kinds). Real-name substitution
+table for local-only fill at demo time; never committed filled.
+
+### 2. Durability check — drift found, source-level fix shipped
+
+The "all four B4 verbs replay on pod restart" gate surfaced a drift:
+
+- **Substrate endpoint URLs were mixed.** Three pre-B4 edges (Engine W
+  `TechnicalManual`, Engine E `WorkInstruction`, Engine E `ProcedureStep`)
+  registered with legacy DNS `weaviate-expert-svc.default.svc.cluster.local` /
+  `neo4j-expert-svc.default.svc.cluster.local` — services that don't exist in
+  the current cluster (actual services: `iagent-engine-w` / `iagent-engine-e`,
+  per the helm chart's `{Release.Name}-{component}` naming). The four B4 edges
+  (FI, IPD, DDM, PDM) were registered through the recent mesh-registrar curl
+  saga with the correct `iagent-engine-w/e:port` URLs.
+- **Source defaults were wrong.** Engine W's
+  `agent_fleet/weaviate_expert/main.py` and Engine E's
+  `agent_fleet/neo4j_expert/main.py` both defaulted their `endpoint_url` to
+  the legacy DNS when `ENGINE_W_PUBLIC_URL` / `ENGINE_E_PUBLIC_URL` env vars
+  were unset (which they were — helm values had `env: {}` for both engines).
+  **On the next pod restart with the current image**, source-level
+  `register_engine_to_mesh()` would have *regressed* the working B4 edges to
+  the broken legacy DNS — the exact session-2 pattern.
+
+**Fix** (in three layers, defense in depth):
+
+1. **Source defaults updated** to `http://iagent-engine-{w,e}:{8088,8086}/{query_knowledge,query_graph}`. Future image builds carry the correct default.
+2. **Helm values pinned** the env vars explicitly so the deployment manifest is the SOT for the URL; future drift between source default and cluster reality surfaces at config-review time, not at pod-restart time.
+3. **Substrate guard repaired** — `tests/routing/test_substrate_invariants.py`'s `PROCEDURE_STEP` constant was still on compact form `"mro:ProcedureStep"` after the 2026-06-15 canonicalization to full IRI; two guards (`test_known_verbs_typed_correctly`, `test_substrate_covers_routing_via_v02_saga_edges`) had been red since then. Canonicalized the constant; both guards now green.
+
+**Reconciliation path**: substrate updates automatically on next image rebuild
++ pod restart. Until then, dispatch for the three legacy-DNS edges fails to
+reach the engine pods. The matrix (routing layer) is unaffected — was 22/22
+throughout, still is.
+
+### 3. Tier-3 reframe — not a catalog sync, a tool-roster question
+
+Earlier framing of the Tier-3 demo row 8 ("Fetch a sample of rows...") was
+"the demo URNs Engine D returns aren't in DataHub's catalog search — a
+~5-minute ops sync." Investigation overturned that:
+
+- Engine D's `/query_metadata` returns demo URNs cleanly with full metadata
+  (description, lineage, columns). **DataHub's catalog is correct.**
+- The actual failure path is *inside* Engine DA's smolagent. Engine DA has
+  `tools=[query_datahub_asset]` only. Its augmented prompt instructs the
+  agent to "call `search_datahub` first to discover the URN" — but
+  `search_datahub` is **not in its tool roster** (that tool lives in
+  Engine A's smolagent).
+
+Two paths reconcile this:
+
+- **(a)** Confirm the central gateway forwards Engine D's resolveInstance
+  URN into Engine DA's invocation context (then `query_datahub_asset` works
+  directly without `search_datahub`).
+- **(b)** Add `search_datahub` to Engine DA's tools.
+
+Either path is "bigger than 5 minutes" but smaller than a sprint —
+investigation with a known exit. **Banked precisely** per architect's
+escape clause; not fixed in this session.
+
+Row 8 retagged from ⚙ READY-PENDING-SYNC to ⚙ READY-PENDING-INVESTIGATION
+with the two-path reconciliation noted. Demo-day fallback: show routing
+step live, present URN/SQL execution as screenshot if path-(a) or path-(b)
+hasn't shipped.
+
+### 4. Systemic finding banked — Engine A, Engine DA, DataHub wrapper
+
+Same legacy-DNS pattern affects Engine A
+(`restate-agent-svc.default.svc.cluster.local`), Engine DA
+(`data-analyst-svc.default.svc.cluster.local`), and the
+DataHub-wrapper URL in `search_datahub`
+(`datahub-wrapper-svc.default.svc.cluster.local`). Out of B4 scope;
+identical fix shape (source default + helm values pin). Separate session.
+
+### Consolidation gate state
+
+| Gate | Result |
+|---|---|
+| Matrix | 22/22 in 7:44 |
+| Substrate invariants | 13/13 PASS |
+| Source↔substrate reconciliation (Engine W) | Source fixed; substrate reconciles on next image rebuild + restart |
+| Source↔substrate reconciliation (Engine E) | Source fixed; substrate reconciles on next image rebuild + restart |
+| Demo script | Committed, placeholder-only, 14 rows tagged honestly |
+| Tier-3 row 8 | Re-investigated, reframed, banked precisely |
+
+The substrate-without-source warning from the v0.2 arc is preserved:
+substrate-reconciliation here was deferred to source-driven re-registration
+on next pod restart, not hand-patched.
+
 ## 2026-06-16 — B4 verb 4 shipped end to end (`mesh:retrieveKnowledge` against `mil:DescriptiveDataModule`, Engine W) + four-class lexical map complete + ADR design pass unblocked
 
 Fourth and final verb-typing of the mil:* procedural-content set. With verbs 1–4 in place, the four-class lexical-boundary map is complete and the widened structural-disambiguation ADR has its full evidence base.

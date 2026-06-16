@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_E_PUBLIC_URL",
-            "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+            "http://iagent-engine-e:8086/query_graph",
         ),
         owner_persona="AUDITOR",
         # Per ADR-0009: Engine E queries the maintenance-manual knowledge
@@ -162,7 +162,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_E_PUBLIC_URL",
-            "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+            "http://iagent-engine-e:8086/query_graph",
         ),
         owner_persona="AUDITOR",
         domains=["MAINTENANCE", "MANUFACTURING"],
@@ -220,7 +220,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_E_PUBLIC_URL",
-            "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+            "http://iagent-engine-e:8086/query_graph",
         ),
         owner_persona="AUDITOR",
         domains=["MAINTENANCE", "MANUFACTURING"],

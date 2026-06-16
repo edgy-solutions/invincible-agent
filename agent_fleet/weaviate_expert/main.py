@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_W_PUBLIC_URL",
-            "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+            "http://iagent-engine-w:8088/query_knowledge",
         ),
         owner_persona="TECH_WRITER",
         # Per ADR-0009: Engine W's strict per-collection segregation
@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_W_PUBLIC_URL",
-            "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+            "http://iagent-engine-w:8088/query_knowledge",
         ),
         owner_persona="TECH_WRITER",
         domains=["MAINTENANCE", "MANUFACTURING"],
@@ -163,7 +163,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_W_PUBLIC_URL",
-            "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+            "http://iagent-engine-w:8088/query_knowledge",
         ),
         owner_persona="TECH_WRITER",
         domains=["MAINTENANCE", "MANUFACTURING"],
@@ -264,7 +264,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_W_PUBLIC_URL",
-            "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+            "http://iagent-engine-w:8088/query_knowledge",
         ),
         owner_persona="TECH_WRITER",
         domains=["MAINTENANCE", "MANUFACTURING"],

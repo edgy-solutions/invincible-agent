@@ -217,7 +217,11 @@ IDP_DATASET = IDP_NS + "Dataset"
 IDP_TABLE = IDP_NS + "Table"
 MESH_AGENT_TASK = MESH_NS + "AgentTask"
 INSTANCE_IDENTIFIER = MESH_NS + "InstanceIdentifier"  # canonical full-IRI; engine_d + engine_e both registered against this after Session 2 A3 fold
-PROCEDURE_STEP = "mro:ProcedureStep"
+# 2026-06-15: canonicalized from compact "mro:ProcedureStep" to full-IRI
+# alongside the source-side canonicalization in agent_fleet/neo4j_expert/main.py.
+# The compact form here predated that fix; substrate has the full IRI and the
+# resolver lands on the full IRI, so the guard's expected value must match.
+PROCEDURE_STEP = MRO_NS + "ProcedureStep"
 
 
 def test_known_subjects_exist(driver):
