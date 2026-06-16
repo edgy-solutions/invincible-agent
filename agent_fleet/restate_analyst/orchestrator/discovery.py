@@ -11,7 +11,7 @@ from orchestrator.auth import current_user_token, current_trace_id
 
 logger = logging.getLogger("RestateAnalyst")
 
-DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
+DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
 
 async def fetch_tools_from_wrapper() -> list[dict]:
     """Legacy: Fetch all active tools."""

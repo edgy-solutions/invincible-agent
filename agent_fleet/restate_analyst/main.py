@@ -117,7 +117,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 ONTOLOGY_RESOLVE_URL = os.getenv(
     "ONTOLOGY_RESOLVE_URL",
-    "http://ontology-agent-svc.default.svc.cluster.local:8084/resolve",
+    "http://iagent-engine-o:8084/resolve",
 )
 ONTOLOGY_TIMEOUT = 30  # seconds — ontology resolution is fast
 AGENT_HTTP_TIMEOUT = int(os.getenv("AGENT_HTTP_TIMEOUT", "120"))
@@ -451,7 +451,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
             """
             import requests
             import os
-            DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://datahub-wrapper-svc.default.svc.cluster.local:8085")
+            DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
             try:
                 payload = {"user_query": query, "persona": "DATA_STEWARD", "domain": task_domain}
                 if entity_type:
@@ -1077,7 +1077,7 @@ async def lifespan(fastapi_app: FastAPI):
     # §1 open item).
     _engine_a_endpoint = os.getenv(
         "ENGINE_A_PUBLIC_URL",
-        "http://restate-agent-svc.default.svc.cluster.local:8081/analyze",
+        "http://iagent-engine-a:8081/analyze",
     )
     _engine_a_domains = ["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT", "DATA_ENGINEERING"]
 

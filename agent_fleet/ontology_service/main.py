@@ -173,7 +173,7 @@ _LOCAL_GRAPH = None
 _WEAVIATE_CLIENT = None
 
 # Neo4j Configuration
-_NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j.default.svc.cluster.local:7687")
+_NEO4J_URI = os.getenv("NEO4J_URI", "bolt://iagent-neo4j:7687")
 _NEO4J_USER = os.getenv("NEO4J_USERNAME", "neo4j")
 _NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 _NEO4J_DRIVER = None

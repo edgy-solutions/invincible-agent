@@ -3,6 +3,63 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-16 — Legacy-DNS class-fix + CI guard + Tier-3 banked precisely (deploy-blocker-class consolidation)
+
+Architect 2026-06-16: the systemic legacy-DNS finding from the previous consolidation entry is **deploy-blocker-class** (a fresh work-cluster bootstrap would hit stale DNS the same way the sandbox would on pod restart). Discipline named explicitly: *don't fix the three you found, find whether there's a fourth, and fix the class.* This entry completes the class-fix and adds the CI guard.
+
+### Writer-hunt sweep
+
+| File | Refs | Maps to |
+|---|---|---|
+| `agent_fleet/data_analyst/main.py` | 1 | `iagent-data-analyst:8089` |
+| `agent_fleet/ontology_service/main.py` | 1 (Neo4j data plane) | `iagent-neo4j:7687` |
+| `agent_fleet/restate_analyst/main.py` | 3 | `iagent-engine-{o,d,a}:port` |
+| `agent_fleet/restate_analyst/orchestrator/discovery.py` | 1 | `iagent-engine-d:8085` |
+| `scripts/recreate_verb_edges.py` | 2 (hibernated; updated + flagged) | `iagent-engine-{e,w}:port` |
+| `src/iagent/defs/agent_routers.py` | 8 | one per engine |
+| `src/iagent/defs/dynamic_supervisor.py` | 7 | duplicates of above |
+
+14 live refs across 6 files. All fixed in one pass.
+
+### CI guard: `tests/routing/test_no_legacy_dns_references.py`
+
+Substrate-invariants-style scan: every text source file under `agent_fleet/`, `src/`, `scripts/`, `helm/`, `doc-tools/`, `tests/`, `setup/` is checked for the literal `.default.svc.cluster.local` substring. A narrow allowlist exempts documentary references (this state doc, the demo script, the hibernated recovery script's docstring, the helm values' example comment). Any new live reference trips the guard at CI before it can reach a fresh-cluster bootstrap. **The fourth-occurrence-tripwire the architect prescribed.**
+
+### Tier-3 path (a) investigation — bigger than "prompt fix"
+
+Direct code reading of Engine DA's handler at `agent_fleet/data_analyst/main.py:108-113`:
+
+```
+user_query = request.get("user_query") or request.get("query") or ...
+dynamic_schema_map = request.get("dynamic_schema_map", "")
+originator_sub = request.get("user_id") or None
+```
+
+**Engine DA's handler does NOT extract `resolved_uri` or `instance_id` or `semantic_ctx` from the request payload.** Even if the central gateway passes the URN from upstream, Engine DA silently drops it. The augmented_prompt then has no URN to give the smolagent — and the smolagent has no `search_datahub` tool to discover one.
+
+Live evidence: Engine DA's recent log shows the smolagent produced a URN `urn:li:dataset:(urn:li:dataPlatform:postgres,prod.sales.orders_raw,PROD)` (likely from `dynamic_schema_map`, supervisor-baked into `user_query`, or model hallucination) and then returned "not found in DataHub catalog." So the agent runs end-to-end *but doesn't reach a usable result*.
+
+The architect's "(a)-first because it's a prompt fix" assumption was based on incomplete diagnosis. **Even path (a) requires a handler change** (extract URN from request) plus the prompt change (use the URN it was given, drop the `search_datahub` instruction). Path (b) — add `search_datahub` to DA's tools — is comparable scope, with the capability-duplication concern.
+
+Banked in the deploy checklist's §4 for the deploy-day investigation. Demo-day fallback: show the routing step live (Engine DA dispatch is real and latency-evident); present URN/SQL execution as a screenshot if neither path has shipped.
+
+### Gate state
+
+| Gate | Result |
+|---|---|
+| Matrix (routing layer) | 22/22 (last green: 7:40, no changes since) |
+| Substrate invariants | 13/13 PASS |
+| Legacy-DNS CI guard | 1/1 PASS |
+| Tier-3 path (a) | Banked precisely — bigger than prompt fix, two-path investigation queued for deploy-day |
+| Deploy checklist §1.0 | Updated with class-fix entry |
+| Deploy checklist §4 | Updated with Tier-3 path (a) finding |
+
+### Why the consolidation discipline is paying off
+
+This is the second consolidation entry in two sessions where the durability check found "a regression that hadn't happened yet but was loaded in the chamber." The first entry caught it on B4 verbs (E + W); this entry caught the same shape at full repository scope. The CI guard converts the discipline from "remember to check" into "structurally cannot regress." That's what the writer-hunt framing exists to produce — class-fixes, not three-fixes.
+
+The deploy is now genuinely closer to trustworthy: the durability hole at fresh-bootstrap is closed (source defaults correct + CI guard prevents a fourth), and the Tier-3 row 8 honest readiness is named (demo can survive without it via the screenshot fallback; the actual fix is queued for a small deploy-day session).
+
 ## 2026-06-16 — Consolidation session: demo-prep + durability check + Tier-3 reframe
 
 B4 verb arc complete + ADR-0020 shelved → mode shifted to consolidation-and-demo-prep per architect 2026-06-16. Three deliverables landed:

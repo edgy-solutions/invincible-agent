@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "ENGINE_DA_PUBLIC_URL",
-            "http://data-analyst-svc.default.svc.cluster.local:8089/analyze_data",
+            "http://iagent-data-analyst:8089/analyze_data",
         ),
         owner_persona="DATA_STEWARD",
         # Per ADR-0009: DA is no longer a special case routed by an

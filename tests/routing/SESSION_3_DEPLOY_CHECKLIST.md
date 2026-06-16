@@ -36,6 +36,33 @@ These are bug fixes already merged that must be in the deployed image
 because the canonical pipeline runs on first bootstrap and reproduces
 the bug's residue on the work cluster otherwise.
 
+- [ ] **Legacy-DNS class-fix (2026-06-16 consolidation).** The B4
+      durability check surfaced that source defaults across multiple
+      engines pointed to a stale K8s service-naming convention
+      (`*-svc.default.svc.cluster.local`) that doesn't resolve in the
+      current cluster. Engine W's `TechnicalManual` registration and
+      Engine E's `WorkInstruction` / `ProcedureStep` registrations had
+      already drifted onto this legacy DNS in the sandbox substrate;
+      next pod restart with the unfixed image would have *regressed*
+      the working B4 edges (FaultIsolation, IPD, DDM, ProcedureDataModule)
+      onto the same broken DNS. The class-fix updates source defaults
+      in **every engine** to the current `iagent-<component>:<port>`
+      naming the helm chart's `{{ .Release.Name }}-{{ .component }}`
+      template renders. Files touched in the sweep:
+      `agent_fleet/{data_analyst,restate_analyst,ontology_service,
+      neo4j_expert,weaviate_expert}/main.py`,
+      `agent_fleet/restate_analyst/orchestrator/discovery.py`,
+      `src/iagent/defs/{agent_routers,dynamic_supervisor}.py`,
+      `scripts/recreate_verb_edges.py`. CI guard added:
+      `tests/routing/test_no_legacy_dns_references.py` — catches any
+      new file defaulting to the legacy pattern at CI before it can
+      reach a fresh cluster. **This is a deploy-blocker-class fix**:
+      fresh-bootstrap on the work cluster would have failed silently
+      without it, the same way the sandbox would have on pod restart.
+      Acceptance: `test_no_live_legacy_dns_references` passes; substrate
+      matrix passes after engine pod restart on the work cluster
+      (source-driven re-registration reconciles all edges to current DNS).
+
 - [ ] **Writer C blank-node filter** — `sync_jena_ontologies_to_neo4j`
       in `doc-tools/doc_tools/assets/ontology_assets.py`. Pre-fix, the
       blank-node filter checked `uri.startswith("Bnode_")`/`"_:"` —
@@ -220,6 +247,30 @@ before running, name the gap if anything moves outside prediction.
 ## §4. Banked findings — bring up if asked
 
 These are real cleanup items the work cluster may or may not encounter:
+
+- **Tier-3 demo row 8 — bigger than the "5-minute catalog sync" the
+  earlier framing suggested** (consolidation session 2026-06-16).
+  Engine D's `/query_metadata` returns demo URNs cleanly at score 1.0
+  (DataHub catalog is correct). The actual gap is *inside* Engine DA:
+  the smolagent has `tools=[query_datahub_asset]` only, but the
+  augmented prompt instructs the agent to "call `search_datahub`
+  first" — and `search_datahub` is not in DA's tool roster (it lives
+  in Engine A's smolagent). Engine DA's `analyze_data` handler does
+  NOT extract `resolved_uri` from the request payload, so the URN
+  Engine D's resolveInstance returns is silently dropped even if the
+  supervisor passes it. Two paths reconcile this, both bigger than
+  five minutes:
+    (a) handler change to extract `resolved_uri` from request +
+        prompt update to use the URN it was given (drop the
+        `search_datahub` instruction). Predicates on supervisor
+        actually passing the URN; needs to be verified.
+    (b) add `search_datahub` as a registered tool on Engine DA
+        (duplicates a capability that lives in Engine A's smolagent;
+        watch for "every engine gets every tool" sprawl).
+  Row 8 retagged from ⚙ READY-PENDING-SYNC to ⚙ READY-PENDING-
+  INVESTIGATION. Demo-day fallback: show routing step live (latency-
+  evident dispatch to Engine DA); present URN/SQL execution as
+  screenshot if neither path has shipped.
 
 - **The 8 historical OntologyClass nodes without canonical provenance**
   (G1 guard flagged tonight). Pre-canonical-era debt: `mro:Equipment`,

@@ -1,5 +1,15 @@
 """Emergency: recreate the 2 verb edges that were lost during the migration's
-ordering bug (target node didn't exist yet when edge was being recreated)."""
+ordering bug (target node didn't exist yet when edge was being recreated).
+
+HIBERNATED — do not run unless the originating incident recurs. The
+endpoint_url values below were updated 2026-06-16 from the legacy
+`*-svc.default.svc.cluster.local` DNS pattern to the current actual
+K8s service names (`iagent-engine-{e,w}`); legacy DNS is unresolvable in
+the current cluster. If you're considering running this script, also
+revisit whether mesh-registrar's saga is the right path now (it has
+been since v0.2, ADR-0006 §Addendum) and prefer that over direct edge
+creation.
+"""
 import os
 from neo4j import GraphDatabase
 
@@ -16,7 +26,7 @@ EDGES = [
             "anti_synonyms": [],
             "cost_class": "slow",
             "domains": ["MAINTENANCE", "MANUFACTURING"],
-            "endpoint_url": "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+            "endpoint_url": "http://iagent-engine-e:8086/query_graph",
             "iri": "mesh:queryKnowledgeGraph",
             "namespace_authority": "platform",
             "openapi_schema": "{}",
@@ -39,7 +49,7 @@ EDGES = [
             "anti_synonyms": [],
             "cost_class": "medium",
             "domains": ["MAINTENANCE", "MANUFACTURING"],
-            "endpoint_url": "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+            "endpoint_url": "http://iagent-engine-w:8088/query_knowledge",
             "iri": "mesh:retrieveKnowledge",
             "namespace_authority": "platform",
             "openapi_schema": "{}",
