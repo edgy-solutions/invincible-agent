@@ -50,11 +50,23 @@ Live verification deferred for the same reason every source-only fix in this arc
 
 After the image deploy: trace one happy-path query end-to-end through `/orchestrate` → cortex_bff → dagster `supervisor_query_job` → Engine DA, confirm `query_datahub_asset` is called with `provenance.instance_id` verbatim. Then run an absent-URN query and confirm DA returns honest not-found, not a fabricated-substitute query.
 
-### Step-2 general-gap finding (banked, not fixed)
+### Step-2 general-gap finding — elevated (banked architectural observation, not just a one-line bank)
 
-Engine A's `/analyze` handler at `agent_fleet/restate_analyst/main.py:354` reads `dataset_id` from request — analogous URN-need. The supervisor doesn't pass it. Engine A papers over by calling `search_datahub` (the tool DA lacks). **The dispatch-payload URN omission is general, not DA-specific.** DA's lack-of-search-datahub is what makes the bug surface as fabrication; Engine A's mitigation is "go-search-then-paper-over," which is architecturally weaker than the URN-passing fix this thread closes.
+The dispatch payload at `src/iagent/defs/dynamic_supervisor.py:670` drops the resolved `instance_id` **generally**. Engine A's `/analyze` handler at `agent_fleet/restate_analyst/main.py:354` reads `request["dataset_id"]` analogously; the supervisor doesn't pass that either. **Both engines are in the same architectural shape: the supervisor resolves an identifier and then drops it on the dispatch boundary, and engines compensate by re-discovering it.**
 
-Per hard scope: recorded, not fixed this session. A future session can extend `resolved_instance_id` consumption to Engine A, retiring `search_datahub` from Engine A's smolagent and giving Engine A's verbs the same URN-equality contract DA's now has.
+- **Engine A re-discovers via `search_datahub`** — wasted work at best (re-resolving something resolution already produced); at worst a path where A's search lands on a *different* asset than the one resolution picked.
+- **Engine DA re-discovers via fabrication** — DA had no search fallback so the re-discovery pattern collapsed into invention.
+
+So Engine A wasn't fabricating only because it has `search_datahub` to paper over the dropped URN. The bug class is the same. **DA was the sharp edge that failed loudly; A is in the same shape with a less-loud mitigation.**
+
+**The general fix is to propagate the resolved identifier to all instance-consuming engines and stop the re-discovery pattern.** This Tier-3 fix is the **first instance of that class-fix** — the same way the first legacy-DNS source default fix was the first instance of the DNS class-fix that the writer-hunt sweep eventually closed; the same way the first compact-form canonicalization was the first instance of the compact→full-IRI class-fix.
+
+The next-session class-fix would:
+1. Extend `resolved_instance_id` consumption to Engine A (and any future instance-consuming engine).
+2. Retire `search_datahub` from Engine A's smolagent (or downgrade it from primary-discovery to fallback-only), the same way DA's `search_datahub` instruction was removed in this Tier-3 fix.
+3. Add a CI guard that flags engines whose handlers read identifier-shaped fields from `request` that the supervisor's dispatch payload doesn't pass. Same shape as `test_no_legacy_dns_references.py` — catches the next occurrence at CI before it bakes a re-discovery dependency.
+
+Per hard scope, none of that is in the Tier-3 scope. Banked here with the elevated framing so the architectural observation isn't lost as a one-line note.
 
 ### Why this fix is structurally correct
 

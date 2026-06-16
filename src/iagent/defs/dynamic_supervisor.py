@@ -723,15 +723,37 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # field must treat empty string as "no URN was resolved —
         # honestly admit not-found rather than invent one."
         #
-        # Step-2 general-gap finding (banked, not fixed this session):
-        # the omission is GENERAL — Engine A's /analyze handler also
-        # reads request["dataset_id"] which the supervisor does not
-        # pass. Engine A's smolagent papers over the missing URN by
-        # calling `search_datahub` (the tool DA lacks), so it doesn't
-        # surface as fabrication; the underlying gap is the same. A
-        # future session should extend this payload field's
-        # consumption to Engine A, retiring the search-then-paper-over
-        # pattern there too. See deploy checklist §4 Tier-3 entry.
+        # **General observation (banked architectural finding, not
+        # fixed in the Tier-3 scope):** the dispatch payload drops
+        # the resolved instance_id GENERALLY — Engine A's /analyze
+        # handler also reads `request["dataset_id"]`, which the
+        # supervisor does not pass. **Engines compensate by
+        # re-discovery: Engine A via `search_datahub`, Engine DA via
+        # fabrication.** DA was the sharp edge because DA had no
+        # search fallback so the re-discovery became invention; A is
+        # in the same architectural shape, just with a less-loud
+        # mitigation — A *re-resolves* something that was already
+        # resolved upstream (wasted work at best; at worst a path
+        # where A's search lands on a DIFFERENT asset than
+        # resolution picked).
+        #
+        # **The general fix is to propagate the resolved identifier
+        # to all instance-consuming engines and stop the re-discovery
+        # pattern.** This Tier-3 fix is the FIRST INSTANCE of that
+        # class-fix — the same way the first legacy-DNS source
+        # default fix was the first instance of the DNS class-fix
+        # closed by the writer-hunt sweep, and the way the first
+        # compact-form canonicalization was the first instance of
+        # the compact→full-IRI class-fix. The next-session class-fix
+        # extends this `resolved_instance_id` consumption to Engine
+        # A (and any future instance-consuming engine), retires the
+        # search-then-paper-over pattern, and bakes a guard that
+        # catches an engine handler reading an identifier-shaped
+        # field from request that the supervisor doesn't pass.
+        # Banked here so a future engineer reads the elevated
+        # framing in the same place they read the dispatch payload
+        # code. See state doc 2026-06-16 "Tier-3 four-layer fix" and
+        # deploy checklist §4 Tier-3 entry for the full trace.
         "resolved_instance_id": telemetry.get("subject_instance_id", ""),
     }
 

@@ -324,6 +324,29 @@ These are real cleanup items the work cluster may or may not encounter:
   the execution path** — exactly the failure mode the demo's
   failure-row celebrates the system *not* doing elsewhere.
 
+  **Architectural observation worth more than the one-line bank**
+  (elevated 2026-06-16): the dispatch payload drops the resolved
+  `instance_id` GENERALLY. Engine A reads `dataset_id` analogously
+  and the supervisor doesn't pass it either; Engine A papers over
+  by calling `search_datahub`. **Both engines are in the same
+  architectural shape: the supervisor resolves an identifier and
+  drops it on the dispatch boundary; engines compensate by
+  re-discovering it.** Engine A re-discovers (wasted work; risk of
+  landing on a different asset than resolution picked); DA
+  re-discovered as fabrication (because DA had no search fallback).
+  The general fix is to propagate the resolved identifier to all
+  instance-consuming engines and stop the re-discovery pattern.
+  The Tier-3 fix shipped in this arc is **the first instance of
+  that class-fix** — same shape as the first legacy-DNS source
+  default fix that the writer-hunt sweep eventually closed as a
+  class. A future-session class-fix would: (1) extend
+  `resolved_instance_id` consumption to Engine A; (2) retire or
+  downgrade `search_datahub` from Engine A's smolagent the same
+  way it was removed from DA's prompt; (3) add a CI guard that
+  flags engines whose handlers read identifier-shaped fields the
+  supervisor's dispatch payload doesn't pass. Banked separately
+  for a future session; the Tier-3 fix's scope was DA-only.
+
   **Two paths to fix, with the four-layer characterization in hand:**
 
     (a) **Wire URN passing end-to-end.** Touches four layers:
