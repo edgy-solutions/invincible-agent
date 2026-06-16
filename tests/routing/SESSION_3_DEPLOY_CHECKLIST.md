@@ -36,6 +36,22 @@ These are bug fixes already merged that must be in the deployed image
 because the canonical pipeline runs on first bootstrap and reproduces
 the bug's residue on the work cluster otherwise.
 
+- [ ] **`meshRegistrar.enabled: true` MUST be set in the work-cluster
+      values file** (rehearsal finding 2026-06-16). The chart's
+      `helm/invincible-agent/values.yaml` default is `false`, with a
+      stale comment from before the SDK migration to the gateway path.
+      The sandbox rehearsal's `helm upgrade` reconciled cluster-to-chart
+      and removed the manually-deployed mesh-registrar, blocking all
+      engine registration. Without this override, a fresh work-cluster
+      bootstrap deploys engines that can't register; the routing layer
+      sees no verbs and every query falls to the generalist. **This is
+      a deploy-blocker.** Sandbox fix already committed in
+      `helm/invincible-agent/values-sandbox.yaml`; the work-cluster
+      values file (deployment time, not in this repo) needs the same
+      flip. Acceptance: after `helm upgrade`, `kubectl get pod -n <ns>`
+      shows `iagent-mesh-registrar-*` Running; engine pods' first-startup
+      logs contain `Registered engine ... via mesh-registrar v0.2`.
+
 - [ ] **Legacy-DNS class-fix (2026-06-16 consolidation).** The B4
       durability check surfaced that source defaults across multiple
       engines pointed to a stale K8s service-naming convention

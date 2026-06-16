@@ -37,6 +37,21 @@ engineE:
 engineW:
   enabled: true   # Weaviate semantic expert — exercised by the DataHub regression suite tonight; aligned with cluster reality
 
+# 2026-06-16 fresh-bootstrap rehearsal finding: the chart's default has
+# meshRegistrar.enabled=false (a stale comment in values.yaml says
+# "Disabled by default until the SDK in registering engines is updated
+# to use the gateway path" — that migration happened long ago;
+# agentFleet env already pins MESH_REGISTRAR_URL=http://iagent-mesh-registrar:8090
+# via configmap.yaml, and all engines have been registering through it
+# for weeks). The mesh-registrar pod that was running was deployed
+# out-of-band by an earlier session; the rehearsal's helm upgrade
+# reconciled cluster-to-chart and removed it, surfacing the
+# inconsistency. Enabling it here (sandbox-scoped) so a fresh-bootstrap
+# rebuilds the system with engine registration actually working. Work
+# cluster needs the same flip in its values file (separate ops decision).
+meshRegistrar:
+  enabled: true
+
 # --------------------------------------------------------------------------
 # Agent fleet env overrides.
 #

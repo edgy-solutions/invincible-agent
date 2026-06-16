@@ -3,6 +3,97 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-16 — Fresh-bootstrap rehearsal: caught a second loaded regression; substrate fully reconciled; 36/36 green
+
+Architect 2026-06-16 authorized the rehearsal: "we are good to start." The rehearsal's job in their framing is the cheap-venue proof that everything the durability-and-class-fix sessions just shipped actually reproduces — not "tidy up," but "find what would break the deploy and fix it in the cheap venue." It did exactly that, surfacing a deploy-blocker the source-only sweep didn't see.
+
+### Phase A — non-destructive baseline (took ~10 min)
+
+**Inventory:**
+- All engine pods running (ages 2–7d, no recent restarts).
+- Substrate state: 996 OntologyClass nodes (DATA_ENGINEERING=37, MAINTENANCE=71, MESH=22, SUSTAINMENT=866), 20 v0.2 saga verb edges, 0 orphans.
+- B4 verb-DNS state visibly mixed: FI/PDM/IPD/DDM on `iagent-engine-w/e` (the new B4 registrations), WI + TechnicalManual on legacy `*-svc.default.svc.cluster.local` (drift the durability check had named).
+
+**Helm-source DNS alignment (the architect's narrow proof):**
+- Rendered helm services: `iagent-engine-{a,d,e,f,o,w}`, `iagent-data-analyst`, `iagent-mesh-registrar`, etc. (20 services total).
+- Rendered `ENGINE_W_PUBLIC_URL` = `http://iagent-engine-w:8088/query_knowledge` — exact match to source default.
+- Rendered `ENGINE_E_PUBLIC_URL` = `http://iagent-engine-e:8086/query_graph` — exact match.
+- **Helm and source agree when rendered, not just when read in the files.**
+
+**Baseline matrix + guards:** 22/22 routing + 13/13 substrate invariants + 1/1 DNS-class guard = **36/36 green**.
+
+### Phase B — the rehearsal's loaded-regression find
+
+`helm upgrade iagent helm/invincible-agent -n sandbox -f values-sandbox.yaml` (revision 22). Engine W + E rolled over with the new env var pins (`ENGINE_W_PUBLIC_URL` / `ENGINE_E_PUBLIC_URL` now present in pod env).
+
+**Then the rehearsal earned its keep.** Engines came up and tried to register, but every attempt hit:
+
+```
+[Errno -2] Name or service not known
+mesh-registrar at http://iagent-mesh-registrar:8090 unreachable
+v0.2 retries EXHAUSTED ... Engine will keep serving but its verbs will NOT route
+until a successful re-registration on next deploy or manual probe. This is a
+named alarm — see tests/routing/test_resolve_instance_probes.py for the
+postcondition test that catches 'engine up but unregistered' downstream.
+```
+
+DNS resolution worked for `iagent-engine-o` (`socket.gethostbyname` from inside the pod returned `10.43.215.240`) but **NOT** for `iagent-mesh-registrar`. Root cause: `kubectl get svc -n sandbox iagent-mesh-registrar` returned `NotFound`. **The helm upgrade had reconciled the cluster to match the chart and removed the mesh-registrar deployment entirely.**
+
+Root-cause-of-root-cause: `helm/invincible-agent/values.yaml` has `meshRegistrar.enabled: false` as the chart default, with a stale comment ("Disabled by default until the SDK in registering engines is updated to use the gateway path") that the migration to the gateway path obsoleted weeks ago. `values-sandbox.yaml` didn't override it. The mesh-registrar pod that had been running for 5 days was deployed **out of band by an earlier session** — never reconciled into the chart. A fresh-cluster bootstrap from chart-only would never come up correctly.
+
+**This is exactly the class of bug the architect's framing predicted the rehearsal would find** — "the loaded regression that hadn't fired yet." Source-only sweeps don't catch helm-chart-defaults drift; only running the chart against a cluster does. The rehearsal converts "the checklist says it'll work" into "it demonstrably does or doesn't."
+
+### Phase B continued — chart-fix + verification
+
+Added `meshRegistrar.enabled: true` to `values-sandbox.yaml` (sandbox-scoped — work cluster needs the same flip in its own values file). Re-ran `helm upgrade`. mesh-registrar pod + service re-created within 30s; `kubectl rollout restart` on engine W + E triggered re-registration.
+
+**Substrate fully reconciled** — every B4 verb edge now has correct DNS:
+
+| Subject | Verb | Endpoint URL |
+|---|---|---|
+| FaultIsolationDataModule | retrieveKnowledge | `http://iagent-engine-w:8088/query_knowledge` |
+| ProcedureDataModule | queryKnowledgeGraph | `http://iagent-engine-e:8086/query_graph` |
+| IllustratedPartsDataModule | retrieveKnowledge | `http://iagent-engine-w:8088/query_knowledge` |
+| DescriptiveDataModule | retrieveKnowledge | `http://iagent-engine-w:8088/query_knowledge` |
+| WorkInstruction | queryKnowledgeGraph | `http://iagent-engine-e:8086/query_graph` ← reconciled from legacy |
+| TechnicalManual | retrieveKnowledge | `http://iagent-engine-w:8088/query_knowledge` ← reconciled from legacy |
+
+The MERGE in mesh-registrar's atomic-saga overwrote the two legacy-DNS edges with the correct iagent-engine-* URLs. **No hand-patch; source-driven reconciliation through the deployable path.** This is what the v0.2 saga discipline was always for.
+
+### Phase B verification — matrix + guards
+
+```
+tests/routing/test_classify_route.py            22 PASSED  (7:44 wall)
+tests/routing/test_substrate_invariants.py      13 PASSED
+tests/routing/test_no_legacy_dns_references.py   1 PASSED
+==============================================================
+                                                36 PASSED
+```
+
+Every gate the architect named is met:
+- DNS resolves (rendered services match source defaults ✓; substrate edges all on iagent-engine-* ✓)
+- B4 verbs replay (the source-driven re-registration was the proof — all 6 B4 edges have correct DNS ✓)
+- Domains land correct (`test_no_path_derived_domains` green ✓)
+- No phantoms (`test_no_blank_node_ontology_classes` green ✓)
+- Guards green (36/36 ✓)
+
+### What the rehearsal converted
+
+| Before | After |
+|---|---|
+| Substrate has mixed DNS (2 edges on legacy DNS would break dispatch). | All 6 B4 edges on correct DNS. |
+| Helm chart's `meshRegistrar.enabled=false` is a fresh-bootstrap deploy-blocker, but nobody knows because the running cluster has a manually-deployed mesh-registrar. | `meshRegistrar.enabled=true` in `values-sandbox.yaml`; fresh-bootstrap from chart works. |
+| Source defaults fixed, but the source-fix's effectiveness was unproven until the deploy. | The deploy action (`helm upgrade` + pod restart) proven to reconcile substrate cleanly via the env-var-pinned URL + mesh-registrar's idempotent MERGE. |
+| Deploy was "trust the checklist." | Deploy is "the rehearsal demonstrated it." |
+
+### Work cluster bring-up — what this changes
+
+The Session 3 deploy checklist's §1.0 needs one addition: when populating the work-cluster's values file, **`meshRegistrar.enabled: true` is mandatory** (the chart default is wrong; the rehearsal proved it). Without this, a fresh work-cluster bootstrap will deploy engines that can't reach mesh-registrar and serve verbs the routing layer can't see.
+
+### Standing rule earned
+
+**The fresh-bootstrap rehearsal is not optional before any cluster deploy.** Helm-chart-defaults drift is invisible to source-only sweeps and to running-cluster inspection. The only way to catch it is to apply the chart to a cluster and watch what reconciles. This is now a documented gate for the work-cluster deploy and for any future fresh-cluster work.
+
 ## 2026-06-16 — Legacy-DNS class-fix + CI guard + Tier-3 banked precisely (deploy-blocker-class consolidation)
 
 Architect 2026-06-16: the systemic legacy-DNS finding from the previous consolidation entry is **deploy-blocker-class** (a fresh work-cluster bootstrap would hit stale DNS the same way the sandbox would on pod restart). Discipline named explicitly: *don't fix the three you found, find whether there's a fourth, and fix the class.* This entry completes the class-fix and adds the CI guard.
