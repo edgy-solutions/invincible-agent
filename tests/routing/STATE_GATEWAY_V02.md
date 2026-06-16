@@ -3,6 +3,70 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-16 — path-vs-semantic-domain durability fix shipped end to end
+
+Fix-only session per the architect's hard scope. B4 verb 2 stays parked until correct-by-construction substrate. **The patch-as-non-durable hack from verb 1 is now actually durable — manifest correct, writer correct, standing guard certifies consistency.**
+
+### Provenance gate result (the data overturned my locked spec)
+
+The architect locked "two-layer fix (per-prefix + per-file override), forced by the Munitions case." Pre-flight provenance grouping on the corrected key (`synced_from`, not `source_ontology` — that was legacy direct-load residue I'd keyed on by mistake) showed three findings the data forced:
+
+1. **One writer**: `sync_jena_ontologies_to_neo4j`. Mesh-registrar's saga uses `MATCH` not `MERGE` on `:OntologyClass` (Contract D: registration rejected with 422 if classes don't pre-exist) — gates the registration path from being a class-writer. Writer-completeness genuinely satisfied by data.
+2. **Per-prefix grouping is clean** on `synced_from`: every active ingest prefix maps 1:1 to a domain. The bug is specifically `mil/` → `MIL` where it should be `mil/` → `MAINTENANCE`. Scatter rate zero.
+3. **Munitions is residue, not active writer issue**: `mro/Munitions.ttl` has `synced_by=<none>` (deprecated direct-load), so per-prefix-only doesn't "lock in MAINTENANCE for manufacturing content" because the current writer never sees Munitions.
+
+**Locked spec rebuilt from corrected data**: explicit-per-file `extra_metadata['domain']` mechanism (already existed in source via `CANONICAL_TTL_MANIFEST` + `prime_databases.py`); the manifest just declared the wrong value for `mil_extension.ttl`. Path-derivation in the writer was a SILENT fallback — removed in this session so any future ingest path missing an explicit declaration fails loud.
+
+### Three concrete edits
+
+1. **`setup/prime_databases.py:103-187`** — `CANONICAL_TTL_MANIFEST` entry for `mil_extension.ttl` corrected from `domain='MIL'` to `domain='MAINTENANCE'`. Comment names the trace and references the standing guard.
+2. **`doc-tools/doc_tools/assets/ontology_assets.py:102-200`** — `ingest_ontology_to_jena`:
+   - Priority 1: `config.extra_metadata['domain']` (explicit dagster config; `prime_databases.py:trigger_ingest_jobs` path)
+   - Priority 2: S3 object metadata `x-amz-meta-domain` (auto-fixes sensor-fired path; `prime_databases.py:339-343` sets this on every upload)
+   - Priority 3: **ERROR** — silent path-derivation removed
+3. **`doc-tools/doc_tools/assets/ontology_assets.py:355-395`** — `sync_jena_ontologies_to_neo4j` same precedence (identical structure).
+
+### Standing guard: `test_no_path_derived_domains`
+
+New substrate-side invariant at `tests/routing/test_substrate_invariants.py`. Asserts every `:OntologyClass` node's `domain` matches the explicit declaration in `CANONICAL_TTL_MANIFEST` for its `synced_from` s3_key. Two failure modes:
+
+- `DECLARED_MISMATCH`: substrate says one thing, manifest says another (e.g., the original mil_extension.ttl bug — substrate at `MIL`, manifest now says `MAINTENANCE`; this guard would fire red on the broken state)
+- `UNDECLARED`: substrate entry has `synced_from` matching a path NOT in the manifest, indicating an ingestion route that bypassed the explicit-declaration mechanism
+
+Known direct-load residue (Munitions, mro/MIL_Unified.ttl, etc.) is allowlisted in `KNOWN_RESIDUE_EXEMPT` — banked-as-separate-cleanup, not blocking the durability fix.
+
+### Acceptance test — predictions confirmed exactly
+
+| Step | Predicted | Actual |
+|---|---|---|
+| Revert mil:* → `MIL` in both stores | Guard fires red with specific `(s3_key, declared, observed)` triple | ✓ `DECLARED_MISMATCH n=10 s3_key='mil/mil_extension.ttl' declared='MAINTENANCE' observed='MIL'` |
+| Verb-1 row at revert | **Empty-Weaviate-candidates → UNKNOWN**, NOT WorkInstruction-at-0.95 (the specific shape of the conjunctive-read break) | ✓ exactly: `"resolved_uri": "UNKNOWN", "reasoning": "No ontology classes found in Weaviate OR the RDF graph for domain MAINTENANCE"` |
+| 18 existing rows at revert | Unmoved — the bug is scoped to the verb-1 row | ✓ Other MAINTENANCE rows resolve at 0.98 confidence to their normal subjects |
+| Re-apply mil:* → `MAINTENANCE` | Substrate state matches what corrected pipeline would produce | ✓ Identical end-state |
+| Guard after re-apply | PASS (substrate-manifest consistency) | ✓ Green |
+| Matrix after re-apply | **19/19** — verb-1 row green via constrained-enum, existing 18 unmoved | ✓ 19/19 PASS in 6:17 |
+
+**The "no patch propping it up" framing is satisfied by:**
+- Manifest declares the right value
+- Writer reads it (via `extra_metadata` or `x-amz-meta-domain`) and ERRORS on missing
+- Guard certifies substrate-matches-manifest consistency
+
+Re-running the actual dagster pipeline tonight against the corrected manifest + writer would produce identical substrate state. The substrate UPDATE I applied is the SIMULATION of that pipeline output, not a hand-patch over the bug.
+
+### Sharper finding than predicted (banked)
+
+The verb-1 row's broken-state failure mode was the architect's predicted "empty-Weaviate-candidates → UNKNOWN" — but it was MORE complete than I expected. With `mil:FaultIsolationDataModule` invisible at `domain='MAINTENANCE'`, Weaviate's hybrid search returned **zero candidates** for the fault-isolation question shape (not "LLM picks WorkInstruction-or-similar from the constrained enum because the right subject isn't in it"). The `/resolve` returned `UNKNOWN` BEFORE the LLM was even consulted — empty candidate set, no constraint mechanism even fires. That's the pure form of the conjunctive-read precondition failure: not "LLM picks wrong because right is invisible," but "no candidates make the threshold without the right one anchoring." The constraint mechanism's correctness depends on the candidate set being non-empty, which depends on the conjunctive-read precondition holding, which depends on the explicit-per-file domain declaration being correct. Three layers of dependency, all proven by the acceptance test.
+
+### Tier-3 readiness one-liner (banked separately)
+
+Engine DA (data_analyst) has DuckDB + CortexDataClient imports — architecture for end-to-end backend data fetch exists. Routing dispatches; whether dispatch returns rows or stubs/errors is a five-minute sandbox test, not a code investigation. Demo-script tag: ⚠ VERIFY-BY-RUNNING-IT.
+
+### Standing rules confirmed under stress (again)
+
+- **Provenance-grouping-as-gate** caught my own field error (keying on `source_ontology` instead of `synced_from`) before letting a wrong locked spec drive code. The architect's "let the data say, be skeptical of the satisfying unified story" applied to me self-correcting on the architect's own prescription.
+- **Predict-the-specific-red** worked exactly as designed. The conjunctive-read failure shape was named precisely; the broken state landed in that shape (and even more cleanly than predicted). The architect's framing: "if it lands at WorkInstruction instead, that's still a finding" — it didn't, and the cleaner failure mode is itself the finding banked.
+- **Halt-and-re-ask when action shape changes** fired against the architect's own prescription this time. The "two-layer fix forced by Munitions" was correct in principle but based on a residue-vs-active misread; I surfaced the corrected picture, the architect ratified the collapse to one mechanism.
+
 ## 2026-06-15 (late late) — B4 verb 1 shipped end-to-end (`mesh:retrieveKnowledge` against `mil:FaultIsolationDataModule`, Engine W)
 
 First verb-typing of B4, scoped to ONE verb per the architect's "one at a time, predict-then-prove, stop after" discipline.

@@ -483,6 +483,149 @@ def test_no_blank_node_ontology_classes(driver):
         raise AssertionError("\n".join(lines))
 
 
+def test_no_path_derived_domains(driver):
+    """**The explicit-per-file domain guard (2026-06-16).** Every
+    :OntologyClass node MUST have a `domain` that matches the explicit
+    declaration in `setup/prime_databases.py:CANONICAL_TTL_MANIFEST`
+    for its `synced_from` s3 path. No domain may come from the
+    writer's path-derivation fallback (legacy mechanism removed
+    2026-06-16 after producing confidently-wrong routing for the B4-V1
+    fault-isolation question).
+
+    Architect's framing (2026-06-15 late late): "path-derivation
+    demoted to flagged-fallback-or-removed. Every domain is asserted,
+    none derived. The guard catches the next mil/-shaped bug at CI
+    — a new TTL added without an explicit domain declaration trips
+    it, instead of silently landing wherever its path happens to
+    derive."
+
+    What this guard catches:
+    1. A future ingest path bypassing the explicit-declaration
+       mechanism (e.g., a one-off seed that doesn't pass
+       extra_metadata.domain AND lands in a bucket without
+       x-amz-meta-domain).
+    2. A drift in CANONICAL_TTL_MANIFEST where an entry's declared
+       domain doesn't match what's in the substrate (e.g., someone
+       updates the manifest but doesn't re-run the pipeline).
+    3. The original mil_extension.ttl bug: the manifest had
+       domain='MIL' (path-name-derived) while the resolver queries
+       with semantic domain 'MAINTENANCE'.
+
+    Read the failure message for the specific mismatched (synced_from,
+    expected_domain, observed_domain) triple. The fix is one of:
+    - Update CANONICAL_TTL_MANIFEST's entry for that path to the
+      correct semantic domain
+    - Re-run the canonical pipeline so the substrate picks up the
+      manifest's declaration
+    - Delete substrate entries from a deprecated/residue write path
+      that no longer goes through the canonical pipeline (e.g., the
+      pre-existing Munitions residue at MAINTENANCE — banked as
+      separate cleanup, exempt below)
+    """
+    # CANONICAL_TTL_MANIFEST source-of-truth. Each entry maps a
+    # synced_from s3 key to its declared semantic domain. Copied here
+    # to avoid cross-repo import (the manifest lives in
+    # invincible-agent/setup/prime_databases.py but this test is in
+    # tests/routing/). If the manifest there changes, this map must
+    # be updated — drift between them is a regression this guard
+    # catches indirectly (manifest disagreement → substrate mismatch
+    # → this test fires).
+    DECLARED_DOMAINS_BY_S3_KEY = {
+        # MAINTENANCE
+        "maintenance/IOF_Core.rdf":                 "MAINTENANCE",
+        "maintenance/IOF_MRO.rdf":                  "MAINTENANCE",
+        "maintenance/DINEN62264.owl":               "MAINTENANCE",
+        "maintenance/mro_extension.ttl":            "MAINTENANCE",
+        "maintenance/maintenance_extension.ttl":    "MAINTENANCE",
+        "mil/mil_extension.ttl":                    "MAINTENANCE",   # CORRECTED 2026-06-16 from 'MIL'
+        # SUSTAINMENT
+        "sustainment/IOF_Core.rdf":                 "SUSTAINMENT",
+        "sustainment/S3000L.ttl":                   "SUSTAINMENT",
+        # DATA_ENGINEERING
+        "idp/PROV-O.ttl":                           "DATA_ENGINEERING",
+        "idp/idp_extension.ttl":                    "DATA_ENGINEERING",
+        # MESH (system ontology)
+        "mesh/mesh_system.ttl":                     "MESH",
+    }
+
+    # Entries that are KNOWN deprecated/residue (not currently in the
+    # canonical pipeline) — exempt from this guard until they're
+    # either retired or re-ingested with correct domain. The mesh:Thing
+    # arc retired 1,191 phantom blank nodes; Munitions follows the
+    # same shape (deprecated direct-load residue, sitting at the
+    # wrong domain because the writer that wrote it is gone). Listing
+    # them here is a banked-not-blocked declaration.
+    KNOWN_RESIDUE_EXEMPT = {
+        "mro/IOF_Core.rdf",
+        "mro/MIL_Unified.ttl",
+        "mro/Munitions.ttl",
+        "sustainment/PCN_PDN_Extension.ttl",
+    }
+
+    with driver.session() as session:
+        rows = session.run(
+            r"""
+            MATCH (c:OntologyClass)
+            WHERE c.synced_from IS NOT NULL
+            WITH replace(c.synced_from, 's3://ontologies/', '') AS s3_key,
+                 c.domain AS observed_domain,
+                 count(*) AS n
+            RETURN s3_key, observed_domain, n
+            ORDER BY s3_key
+            """
+        ).data()
+
+    violations = []
+    for row in rows:
+        s3_key = row["s3_key"]
+        observed = row["observed_domain"]
+        if s3_key in KNOWN_RESIDUE_EXEMPT:
+            continue
+        declared = DECLARED_DOMAINS_BY_S3_KEY.get(s3_key)
+        if declared is None:
+            violations.append((
+                s3_key, "<not in manifest>", observed, row["n"],
+                "UNDECLARED",
+            ))
+        elif observed != declared:
+            violations.append((
+                s3_key, declared, observed, row["n"],
+                "DECLARED_MISMATCH",
+            ))
+
+    if violations:
+        lines = [
+            f"{sum(v[3] for v in violations)} :OntologyClass nodes "
+            f"across {len(violations)} ingest paths have a domain that "
+            f"does not match the explicit declaration in "
+            f"setup/prime_databases.py:CANONICAL_TTL_MANIFEST. "
+            f"Domain-by-derivation-instead-of-declaration is the "
+            f"regression class this guard catches.",
+            "",
+            "Violations:",
+        ]
+        for s3_key, declared, observed, n, kind in violations:
+            lines.append(
+                f"  [{kind}] n={n:4d}  s3_key={s3_key!r:42s}  "
+                f"declared={declared!r}  observed={observed!r}"
+            )
+        lines.append("")
+        lines.append("Remediation paths:")
+        lines.append(
+            "  - DECLARED_MISMATCH: re-run the canonical pipeline for "
+            "this s3_key (manifest is the source of truth; substrate "
+            "should reflect it after re-ingest)."
+        )
+        lines.append(
+            "  - UNDECLARED: either (a) add the s3_key to "
+            "CANONICAL_TTL_MANIFEST with its semantic domain, then "
+            "re-ingest, OR (b) add to KNOWN_RESIDUE_EXEMPT in this "
+            "test if it's deprecated direct-load residue that's banked "
+            "for separate cleanup."
+        )
+        raise AssertionError("\n".join(lines))
+
+
 def test_mesh_resolve_instance_has_one_edge_per_provider(driver):
     """Every registered mesh:resolveInstance provider MUST exist as its
     OWN Neo4j edge — N providers must produce N edges, NOT collapse

@@ -135,8 +135,19 @@ CANONICAL_TTL_MANIFEST = [
     },
 
     # ----- LAYER 1b: MIL (B0 docs-phase TBox; Session-2 acceptance-test carrier) -----
+    # 2026-06-16: domain CORRECTED from 'MIL' to 'MAINTENANCE'. The resolver
+    # queries with semantic domain names; 'MIL' was a path-NAME derivation
+    # (the s3 path's first segment is `mil/`) but mil_extension.ttl's
+    # SEMANTIC domain is maintenance (mil:* classes are S1000D/40051 work-
+    # package kinds: ProcedureDataModule, FaultIsolationDataModule, etc.).
+    # The mismatch produced confidently-wrong routing for the B4-V1 fault-
+    # isolation question (resolved to mro:WorkInstruction at 0.95 because
+    # mil:* was invisible to the MAINTENANCE-domain resolver query). See
+    # STATE_GATEWAY_V02.md "2026-06-16 explicit-per-file domain fix" for
+    # the full trace; the standing guard
+    # `test_no_path_derived_domains` keeps this from regressing silently.
     {
-        "domain": "MIL",
+        "domain": "MAINTENANCE",
         "name": "mil_extension",
         "s3_key": "mil/mil_extension.ttl",
         "url": "https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/mil_extension.ttl",
