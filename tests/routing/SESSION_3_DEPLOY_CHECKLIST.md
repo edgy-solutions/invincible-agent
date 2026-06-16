@@ -248,29 +248,72 @@ before running, name the gap if anything moves outside prediction.
 
 These are real cleanup items the work cluster may or may not encounter:
 
-- **Tier-3 demo row 8 — bigger than the "5-minute catalog sync" the
-  earlier framing suggested** (consolidation session 2026-06-16).
-  Engine D's `/query_metadata` returns demo URNs cleanly at score 1.0
-  (DataHub catalog is correct). The actual gap is *inside* Engine DA:
-  the smolagent has `tools=[query_datahub_asset]` only, but the
-  augmented prompt instructs the agent to "call `search_datahub`
-  first" — and `search_datahub` is not in DA's tool roster (it lives
-  in Engine A's smolagent). Engine DA's `analyze_data` handler does
-  NOT extract `resolved_uri` from the request payload, so the URN
-  Engine D's resolveInstance returns is silently dropped even if the
-  supervisor passes it. Two paths reconcile this, both bigger than
-  five minutes:
-    (a) handler change to extract `resolved_uri` from request +
-        prompt update to use the URN it was given (drop the
-        `search_datahub` instruction). Predicates on supervisor
-        actually passing the URN; needs to be verified.
-    (b) add `search_datahub` as a registered tool on Engine DA
-        (duplicates a capability that lives in Engine A's smolagent;
-        watch for "every engine gets every tool" sprawl).
-  Row 8 retagged from ⚙ READY-PENDING-SYNC to ⚙ READY-PENDING-
-  INVESTIGATION. Demo-day fallback: show routing step live (latency-
-  evident dispatch to Engine DA); present URN/SQL execution as
-  screenshot if neither path has shipped.
+- **Tier-3 demo row 8 — sharpened from "bigger than 5 min" to a
+  *four-layer* path (a) plus a confirmed fabrication finding**
+  (sharpened 2026-06-16 by direct code reading of the supervisor's
+  dispatch path).
+
+  **Engine D's catalog is correct** — `/query_metadata` returns the
+  demo URNs cleanly at score 1.0 with full lineage.
+
+  **The URN-passing wiring is not implemented end-to-end.** Tracing
+  every layer:
+
+  1. `/resolve` returns `resolved_uri` (the class, e.g.
+     `idp:Table`) AND `provenance.instance_id` (the actual URN, e.g.
+     `urn:li:dataset:(urn:li:dataPlatform:snowflake,gold.sales.revenue_summary,PROD)`).
+  2. **Supervisor `_resolve_subject`** at
+     `src/iagent/defs/dynamic_supervisor.py:227-231` extracts only
+     `resolved_uri`. The `provenance.instance_id` URN is **discarded
+     at the supervisor layer.**
+  3. **Supervisor dispatch payload** at
+     `src/iagent/defs/dynamic_supervisor.py:670-690` constructs the
+     POST body with `user_query`, `user_persona`, `answerer_persona`,
+     `persona`, `domain`, `dynamic_schema_map`, `user_id`,
+     `predicate_verb_iri`, `routed_verb_iri` — **no URN field.**
+  4. **Engine DA handler** at
+     `agent_fleet/data_analyst/main.py:108-113` extracts `user_query`,
+     `dynamic_schema_map`, `user_id`. Even if the supervisor passed a
+     URN, the handler would silently drop it.
+  5. **Engine DA augmented_prompt** says "if you don't already have a
+     URN from upstream context, call `search_datahub`" — but
+     `search_datahub` is not in DA's tool roster (it lives in
+     Engine A). Agent has no source for the URN except fabrication.
+
+  **The architect's question — "receiving and dropping, or
+  fabricating?" — answered: fabricating.** Live evidence: Engine DA's
+  recent log shows the smolagent produced URN
+  `urn:li:dataset:(urn:li:dataPlatform:postgres,prod.sales.orders_raw,PROD)`
+  for a "revenue_summary" query, and returned "not found in catalog."
+  The URN didn't come from the supervisor (which doesn't pass it); it
+  came from `dynamic_schema_map` context (the DataHub schema-map
+  injection at line 668), training data, or model hallucination.
+  **This is the confidently-wrong pattern showing up one layer down in
+  the execution path** — exactly the failure mode the demo's
+  failure-row celebrates the system *not* doing elsewhere.
+
+  **Two paths to fix, with the four-layer characterization in hand:**
+
+    (a) **Wire URN passing end-to-end.** Touches four layers:
+        - Supervisor `_resolve_subject` returns `instance_id` from
+          `provenance`.
+        - Supervisor dispatch payload includes the URN.
+        - Engine DA handler extracts it from the request.
+        - Engine DA prompt presents it to the smolagent and drops the
+          `search_datahub` instruction.
+        Architecturally clean; gives DA the *real* URN. Multi-layer
+        change but each layer's change is small.
+    (b) **Add `search_datahub` to Engine DA's tool roster.** Single-
+        engine change. Gives DA a way to *discover* the URN itself.
+        Duplicates a capability already in Engine A's smolagent
+        (the "every engine gets every tool" sprawl concern).
+
+  Row 8 stays at ⚙ READY-PENDING-INVESTIGATION. Recommendation:
+  (a) is the right structural fix — it kills the fabrication pattern
+  (which (b) only papers over by letting the agent re-search after
+  fabricating). Demo-day fallback: show routing step live (Engine DA
+  dispatch is real and latency-evident); present URN/SQL execution
+  as a screenshot if path (a) hasn't shipped.
 
 - **The 8 historical OntologyClass nodes without canonical provenance**
   (G1 guard flagged tonight). Pre-canonical-era debt: `mro:Equipment`,
