@@ -169,6 +169,64 @@ async def lifespan(app: FastAPI):
         cost_class="slow",
     )
 
+    # B4 verb 2 (2026-06-16): third queryKnowledgeGraph registration
+    # for the document-side of procedural content. mil:ProcedureDataModule
+    # is the DOCUMENT (S1000D/40051 data module — what tech writers
+    # author and manage), while mro:WorkInstruction is the CONTENT
+    # (the actual steps maintainers execute). The two layers are
+    # container/content, not flat siblings: maintainer-framed queries
+    # ("steps to install X") correctly resolve to WorkInstruction;
+    # tech-writer-framed queries ("describe the procedure data module
+    # for X") correctly resolve to ProcedureDataModule. Both route to
+    # Engine E's knowledge-graph endpoint via queryKnowledgeGraph
+    # because both questions are answered by the same graph traversal
+    # (find procedure → steps → tool refs → diagrams).
+    #
+    # The containment relationship between ProcedureDataModule and
+    # WorkInstruction is currently UNMODELED in mil_extension.ttl —
+    # they live in different namespaces with no declared connection.
+    # Banked as an ADR-shaped design decision: model the
+    # contains/hasContent relationship so the two layers disambiguate
+    # by question framing structurally rather than via hint-priming
+    # similarity contest. See STATE_GATEWAY_V02.md "2026-06-16 verb 2
+    # halt + reframe" for the trace.
+    register_engine_to_mesh(
+        # Same description as the primary queryKnowledgeGraph
+        # registration above — BAML TypeBuilder dedupes enum values by
+        # name; last add_value's description wins. Same capability typed
+        # against different subjects; the description is about WHAT the
+        # verb does, not which subject path reached it.
+        name="engine_e_neo4j_expert_procedure_data_module",
+        description=(
+            "Knowledge graph expert. Runs a smolagents CodeAgent over Neo4j "
+            "(execute_cypher, get_graph_schema, search_manual_text) with "
+            "Restate-durable execution and mem0 long-term memory."
+        ),
+        verb="mesh:queryKnowledgeGraph",
+        input_uri="http://edgy-solutions.com/ontology/mil#ProcedureDataModule",
+        output_uri="http://invincible-agent/mesh#GraphExpertResponse",
+        verb_synonyms=[
+            "query graph", "graph lookup", "cypher query",
+            "find in graph", "knowledge graph search",
+            "procedure", "describe procedure", "find procedure",
+            "tell me about procedure", "look up procedure",
+            "work instruction", "what is the work instruction",
+            "maintenance steps", "maintenance procedure",
+            "how do I", "steps to install", "install procedure",
+            "removal installation", "removal and installation",
+            "data module", "procedure data module",
+            "S1000D", "TM procedure", "data module covers",
+            "diagram", "schematic", "figure",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_E_PUBLIC_URL",
+            "http://neo4j-expert-svc.default.svc.cluster.local:8086/query_graph",
+        ),
+        owner_persona="AUDITOR",
+        domains=["MAINTENANCE", "MANUFACTURING"],
+        cost_class="slow",
+    )
+
     # Recipe v2 — second mesh:resolveInstance provider (Gate 6
     # generality acceptance test). Engine E owns the
     # urn:instance:* / WorkInstruction / Equipment node side of the

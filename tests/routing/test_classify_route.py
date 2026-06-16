@@ -414,6 +414,48 @@ TEST_CASES: list[RouteCase] = [
         domain="MAINTENANCE",
     ),
 
+    # --- B4 verb 2 (2026-06-16): maintwp ProcedureDataModule routing ---
+    # mesh:queryKnowledgeGraph typed against mil:ProcedureDataModule,
+    # owned by Engine E. Extends Engine E's existing dual registration
+    # (queryKnowledgeGraph against WorkInstruction + ProcedureStep) to
+    # cover the mil:* family of procedural content kinds. The B3a
+    # helmet TM ingest materialized 4 maintwp instances as
+    # INSTANCE_OF mil:ProcedureDataModule (M0004 "MICROPHONE BOOM
+    # REMOVAL/INSTALLATION", M0008 general maintenance, gen.maintwp,
+    # opusualwp).
+    #
+    # **Phrasing is document-framed, not content-framed.** The architect's
+    # 2026-06-16 finding: mil:ProcedureDataModule is the DOCUMENT (the
+    # S1000D/40051 data module — what tech writers author and manage),
+    # while mro:WorkInstruction is the CONTENT (the actual procedural
+    # steps — what maintainers execute). They're container/content,
+    # not flat siblings, so a query asking for STEPS (maintainer
+    # framing) correctly resolves to WorkInstruction, and a query
+    # asking for the MODULE (tech-writer framing) correctly resolves
+    # to ProcedureDataModule. The overnight halt surfaced this
+    # distinction — original phrasing "What are the steps to install
+    # the microphone boom on the helmet?" was a maintainer's question
+    # and resolved to WorkInstruction at 0.95 (correctly, per the
+    # container/content semantics). This row uses the tech-writer
+    # framing to exercise what ProcedureDataModule uniquely owns.
+    #
+    # Banked: the containment relationship itself is currently
+    # UNMODELED in mil_extension.ttl (mil:ProcedureDataModule and
+    # mro:WorkInstruction are in different namespaces with no declared
+    # relationship between them). The structural fix — model the
+    # contains/hasContent relationship so the two layers disambiguate
+    # by question framing rather than by hint-priming similarity
+    # contest — is an ADR-shaped decision banked for a separate
+    # design session. See STATE_GATEWAY_V02.md "2026-06-16 verb 2
+    # halt + reframe" for the trace.
+    RouteCase(
+        query="What procedure data module covers microphone boom removal and installation?",
+        expected_subject_substring="ProcedureDataModule",
+        expected_verb_iri="mesh:queryKnowledgeGraph",
+        min_confidence=0.5,
+        domain="MAINTENANCE",
+    ),
+
     # --- B4 verb 1 (2026-06-15): fault-isolation routing ---
     # mesh:retrieveKnowledge typed against mil:FaultIsolationDataModule,
     # owned by Engine W. The B3a helmet TM ingest materialized 3 tswp

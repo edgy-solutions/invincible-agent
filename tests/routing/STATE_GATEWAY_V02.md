@@ -3,6 +3,69 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-16 — B4 verb 2 shipped end to end (`mesh:queryKnowledgeGraph` against `mil:ProcedureDataModule`, Engine E) + containment-modeling ADR banked
+
+Second verb-typing of B4, with a halt-and-reframe arc that surfaced a real structural insight before the test passed.
+
+### The halt that surfaced the finding
+
+Overnight run halted at the original verb 2 test row: `"What are the steps to install the microphone boom on the helmet?"` resolved to `mro:WorkInstruction` at 0.95 instead of `mil:ProcedureDataModule`. Existing 19 rows held (no over-routing). Halted per the "one-at-a-time, stop at any matrix issue" discipline rather than tuning to force the row green.
+
+### The reframe — container/content, not flat siblings
+
+`mil:ProcedureDataModule` is the **document** (the S1000D/40051 data module — the authored unit with its DMC/wpno, what tech writers manage). `mro:WorkInstruction` is the **content** (the actual procedural steps maintainers execute). The data module *contains* the work instruction: two layers of the same procedure at different granularities.
+
+So the original failure wasn't "the resolver picked the wrong subject." It was **"the test asked a maintainer's question and expected a tech-writer's answer."** WorkInstruction won the semantic match at 0.95 because the maintainer phrasing ("steps to install") genuinely matched WorkInstruction's content layer, not because hint-priming stole the answer.
+
+### The fix — test the layer verb 2 owns
+
+Reframed test row to a tech-writer-framed (document) question: `"What procedure data module covers microphone boom removal and installation?"`. Verified by direct probe before re-running matrix:
+
+| Gate | Result |
+|---|---|
+| `/resolve` → subject | `mil:ProcedureDataModule` at 0.98 |
+| `/find_compatible_verbs` → constrained set | `[mesh:queryKnowledgeGraph]` (verb 2's edge) |
+| `/classify_predicate` → verb | `mesh:queryKnowledgeGraph` at 0.92, `classify_called=True` |
+| `candidate_verbs` (the enum the LLM saw) | `[mesh:queryKnowledgeGraph]` only — Contract A two-value enum |
+| Subject confidence ≥ 0.85 | 0.98 ✓ |
+
+All five for-the-right-reason gates green. Route is right because of constraint, not luck.
+
+### Matrix: 20/20
+
+19 existing rows + new B4-V2 row, all green. Existing matrix unchanged — "Show me the maintenance steps for the rotor assembly" still routes to mro:WorkInstruction at 0.98 (maintainer framing → content layer); "Tell me about procedure TEST-1234 in detail" still on its WorkInstruction route; "What is the work instruction for procedure 1234?" still on its WorkInstruction route. The container/content split holds in practice: maintainer questions → WorkInstruction, tech-writer questions → ProcedureDataModule.
+
+### Banked ADR: model the containment
+
+`mil_extension.ttl` currently has `mil:ProcedureDataModule` and `mro:WorkInstruction` in different namespaces with **no declared relationship**. The container/content semantics are TRUE but UNMODELED — the resolver lucks into picking the right layer based on question framing similarity, not on a declared structural relationship.
+
+**The structural fix** — model a `contains` / `hasContent` (or `mil:carriesWorkInstruction` / similar) relationship between `mil:ProcedureDataModule` and `mro:WorkInstruction` (and analogously for other mil:* data module kinds and their mro:* content kinds). With the relationship declared:
+
+- Tech-writer questions ("describe the data module") naturally route to `mil:ProcedureDataModule`
+- Maintainer questions ("steps to install") naturally route to `mro:WorkInstruction`
+- A query that asks for both ("the procedure module that covers the install steps") could route via the relationship — the resolver can pick the appropriate layer based on what's being asked for
+
+This is an ADR-shaped decision because it changes how procedural queries route. It deserves daylight and its own design pass. The current verb-2 implementation works fine for both query shapes today; the ADR is for *when both maintainer and tech-writer audiences are actually using the system simultaneously and the question-framing-disambiguation needs to be structural rather than incidental*.
+
+Bank as next ADR work; B4 verbs 3+ can proceed in the meantime per the architect's "ship verb 2 demo-ready honestly NOW, bank the containment-modeling as the proper disambiguation work" framing.
+
+### Tier-3 readiness — verified architecture LIVE, catalog content gap
+
+Engine DA's analyze loop dispatches end-to-end through Engine O's routing:
+- `/resolve` → `idp:Table` via Engine D's resolveInstance
+- `/classify_predicate` picks `mesh:analyzeDataset` from a constrained set of 9 catalog verbs (confidence 0.92)
+- Engine DA's smolagent loop runs (40-70s/query), reaches DataHub via search_datahub
+- Returns coherent responses, not stubs or connection errors
+
+**The catalog content gap** — URNs Engine D's `resolveInstance` returns (e.g., `urn:li:dataset:(urn:li:dataPlatform:postgres,prod.sales.orders_raw,PROD)`) aren't found by Engine DA's `search_datahub` against the actual catalog state. **This is content/sync, not architecture.** Tag for demo deck: ⚠ ARCHITECTURE-LIVE, CATALOG-STATE-INCONSISTENT — ops can sync demo URNs into DataHub as a 5-minute setup task to flip this to ✅.
+
+### Standing rules confirmed (again)
+
+- **Halt-and-bank when a finding surfaces** — the overnight queue stopped at verb 2 instead of plowing through with autonomous "fixes." That stop is what surfaced the container/content reframe.
+- **Halt-and-re-ask when the action shape changes** — the verb-2 finding wasn't an over-routing bug or a green-for-wrong-reason; it was a fourth shape (subject-discrimination via competing hint-priming). The discipline named it cleanly.
+- **Verify before declaring a fix clean** — the architect's "run one document-framed probe first" gate proved C-done-right was correct before the test row was rewritten. The reframe survived the probe; the row update followed.
+- **Bank structural work for daylight, ship pragmatic for now** — the containment ADR is real but the test-fix unblocks verb 2's demo readiness without committing to anything you'd want to reconsider.
+
 ## 2026-06-16 — path-vs-semantic-domain durability fix shipped end to end
 
 Fix-only session per the architect's hard scope. B4 verb 2 stays parked until correct-by-construction substrate. **The patch-as-non-durable hack from verb 1 is now actually durable — manifest correct, writer correct, standing guard certifies consistency.**
