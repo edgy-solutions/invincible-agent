@@ -3,6 +3,87 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-16 — B4 verb 4 shipped end to end (`mesh:retrieveKnowledge` against `mil:DescriptiveDataModule`, Engine W) + four-class lexical map complete + ADR design pass unblocked
+
+Fourth and final verb-typing of the mil:* procedural-content set. With verbs 1–4 in place, the four-class lexical-boundary map is complete and the widened structural-disambiguation ADR has its full evidence base.
+
+### Verb
+
+`mesh:retrieveKnowledge` typed against `mil:DescriptiveDataModule`, owned by Engine W. Engine W's fourth source-level registration. DDM (DMC info code 0xx, "what it is") is narrative descriptive text — system overviews, equipment descriptions, theory of operation. retrieveKnowledge is the natural verb-typing per the spec.
+
+### The two-purpose probe scan — measuring over-attraction, not just clean routing
+
+Per architect 2026-06-15: DDM was predicted as the messy keystone. "Describe" is the most common query verb in English; DDM's anchor is weak-and-over-broad in a way IPD's wasn't. So verb 4's probe scan was deliberately constructed to **measure over-attraction**: at least three probes were queries whose *correct* target is another content kind but that use "describe" framing. That data is the keystone sizing input for the ADR.
+
+**Genuine-DDM probes (matrix-row candidates):**
+
+| # | Phrasing | `/resolve` → | Conf |
+|---|---|---|---|
+| D1 | "What is the helmet display unit?" | `mil:DescriptiveDataModule` | 0.86 |
+| D2 | "Tell me about the helmet HMD architecture" | `mil:DescriptiveDataModule` | 0.86–0.95 (variance) |
+
+**Leak-test probes (correct target is NOT DDM):**
+
+| # | Phrasing | Correct target | `/resolve` → | Verdict |
+|---|---|---|---|---|
+| L3 | "Describe how to install the boom" | WorkInstruction or PDM | `mro:WorkInstruction` @ 0.85 | **HELD** — WI's "describe procedure" + "install" + "steps" hand-tuning beats DDM's generic "describe" |
+| L4 | "Describe the parts of the boom assembly" | IPD | `mil:IllustratedPartsDataModule` @ 0.95 | **HELD** — IPD's "parts" anchor is strong enough to win on "describe + parts" framing |
+| L5 | "Describe the troubleshooting procedure for the helmet" | FaultIsolation or WI | `mro:WorkInstruction` @ 0.85 | **HELD against DDM**, but leaked *across* FI↔WI boundary (separate finding, not DDM's fault) |
+
+**Key result: DDM over-attraction is BOUNDED.** All three leak probes held against DDM. Strong-anchor classes (IPD with "parts", WorkInstruction with hand-tuned hints) defeat "describe" alone. **The structural ADR is NOT urgent for DDM-vs-others.** The lexical-anchor approach holds where the anchors are strong; the structural model only needs to address weak boundaries.
+
+### Five-gate verification on D1 (the matrix row)
+
+| Gate | Result |
+|---|---|
+| `/resolve` → subject | `mil:DescriptiveDataModule` at 0.85 (at floor — legitimate; short pure-"what is" query) |
+| `/find_compatible_verbs` → constrained set | `[mesh:retrieveKnowledge]` (verb 4's edge) |
+| `/classify_predicate` → verb | `mesh:retrieveKnowledge` at 0.86, `classify_called=True` |
+| `candidate_verbs` (enum LLM saw) | `[mesh:retrieveKnowledge]` only — Contract A |
+| Subject confidence ≥ 0.85 | 0.85 ✓ (right at threshold; legitimate for a generic-shaped descriptive query) |
+
+All five for-the-right-reason gates green + sixth gate (multi-phrasing observation table recorded).
+
+### Matrix: 22/22 in 7:40
+
+21 existing rows + new B4-V4 row, all green. **The keystone over-attraction risk was the existing "Describe procedure TEST-1234 and show me its diagram" row** — predicted 50/50 in the predictions doc. It held cleanly because **instance resolution preempts the class-vocabulary contest**: engine_e finds TEST-1234 as an exact-match Test Procedure 1234 instance at score 1.0, and the route uses `mesh:resolveInstance` before any class contest happens. Named-identifier queries are structurally insulated from DDM's "describe" pull.
+
+### The completed four-class lexical map
+
+After four verbs:
+
+| Class | Verb | Engine | Anchor strength | Over-attraction risk |
+|---|---|---|---|---|
+| `mil:FaultIsolationDataModule` | retrieveKnowledge | W | Medium — "fault", "diagnose", "find the fault" works; "troubleshooting procedure" leaks to WI | Routes correctly with "fault" phrasings; FI↔WI boundary needs ADR attention |
+| `mil:ProcedureDataModule` | queryKnowledgeGraph | E | Weak — "procedure" alone competes with WorkInstruction; "data module" multi-word saved verb 2 | Container/content split with WorkInstruction is real and unmodeled; ADR target |
+| `mil:IllustratedPartsDataModule` | retrieveKnowledge | W | Strong — "parts", "illustrated", "breakdown" are distinctive; "part number" → mil:Part instance (correct kind-vs-instance behavior) | NONE within the document layer; the Part instance crossing is structurally correct |
+| `mil:DescriptiveDataModule` | retrieveKnowledge | W | Medium — "what is", "tell me about" cleanly own DDM; "describe" alone doesn't steal from strong-anchor competitors | NONE proven by L3/L4/L5; bounded over-attraction |
+
+### The document↔content/instance duality — confirmed as a general pattern
+
+Three pieces of evidence across verbs 2, 3, 4 confirm the architect's hypothesis (after verb 3) that the document↔content/instance duality is a **general pattern across the manuals ontology**, not a one-off PDM↔WorkInstruction quirk:
+
+1. **Verb 2** — PDM↔WorkInstruction container/content (the original finding).
+2. **Verb 3 P3** — "What is the part number for the boom cable?" → `mil:Part` instance, not IPD document. Kind-vs-instance routing at the surface vocabulary layer.
+3. **Verb 4** — "Describe procedure TEST-1234 ..." routes via `mesh:resolveInstance` (engine_e exact-match to Test Procedure 1234 instance), not via DDM's "describe" pull. Instance resolution preempts class contest.
+
+Generalized: **every document kind has its instance-layer counterpart, and queries naturally route to whichever layer they ask about.** The disambiguation between document and instance is already structurally encoded via the instance-resolution layer's fan-out (engine_e + engine_e_dmc + engine_d). The disambiguation *among document kinds* (the ADR's remaining work) is the part that today rests on lexical anchors and partly needs structural help.
+
+### What the ADR can now design against (its sharpened scope)
+
+With four verbs of probe data, the ADR's design pass has:
+
+- **Confirmed general pattern**: document↔content/instance duality is encoded structurally via instance resolution. Build the ADR's design around this principle, not a per-class containment fix.
+- **Identified weak boundaries** (need structural disambiguation): `ProcedureDataModule` ↔ `WorkInstruction` (container/content unmodeled), `FaultIsolation` ↔ `WorkInstruction` (L5 evidence: "describe the troubleshooting procedure" leaks across this), `ProcedureDataModule` ↔ `DescriptiveDataModule` (verb 2 probe 1 evidence: "describe the procedure data module" → DDM).
+- **Identified strong boundaries** (lexical disambiguation suffices): `IllustratedPartsDataModule` ↔ anything (IPD's "parts" anchor wins everywhere), `DescriptiveDataModule` ↔ instance-resolved queries (instance layer preempts), `IllustratedPartsDataModule` ↔ `Part` instance (correct kind-vs-instance routing).
+- **Sized urgency**: BOUNDED. No leak probe drove DDM over-attraction; no existing matrix row moved; instance resolution insulates named queries. The ADR's structural fix unblocks the *eventual* tech-writer + maintainer dual-audience scenario, not a today problem.
+
+### Standing rules updated (final form for the mil:* content-kind set)
+
+- **Multi-phrasing probe gate** — Now codified: every new mil:* content-kind verb-typing runs the 3–5 probe scan. For high-leak-risk classes (DDM was the canonical case), the scan is two-purpose — pick the matrix row from genuine probes, measure over-attraction from leak probes.
+- **BEFORE-state lock on the matrix's at-risk rows** — Verb 4 introduced this as standard: before registering a high-leak-risk verb, run `/resolve` on existing matrix rows whose vocabulary overlaps with the new class's anchor. Lock the BEFORE-state confidence levels; predict AFTER-state explicitly. This catches the keystone over-attraction *before* the matrix run, not as a surprise.
+- **Instance resolution as load-bearing disambiguator** — Now demonstrated in three places (verb 3 P3, verb 4 D1 instance fan-out, verb 4 TEST-1234 insulation). The instance-resolution fan-out is structural disambiguation between document and instance layers and should be preserved through any ADR redesign.
+
 ## 2026-06-15 — B4 verb 3 shipped end to end (`mesh:retrieveKnowledge` against `mil:IllustratedPartsDataModule`, Engine W) + lexical-cue observation gate adopted
 
 Third verb-typing of B4. First verb shipped under the new **multi-phrasing probe** acceptance gate (per architect 2026-06-15: every new mil:* content-kind verb-typing records 3–5 probe phrasings + the lexical cues that drive subject resolution, building the evidence base for the widened procedural-content-disambiguation ADR).

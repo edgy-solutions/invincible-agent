@@ -538,6 +538,63 @@ TEST_CASES: list[RouteCase] = [
         domain="MAINTENANCE",
     ),
 
+    # --- B4 verb 4 (2026-06-16): DescriptiveDataModule routing ---
+    # mesh:retrieveKnowledge typed against mil:DescriptiveDataModule,
+    # owned by Engine W. Fourth source-level registration on Engine W
+    # (TechnicalManual + FaultIsolationDataModule + IPD + DDM); closes
+    # the four-class mil:* procedural-content set with verb edges.
+    #
+    # **The two-purpose probe scan** (architect's sharpened gate for
+    # verb 4): the multi-phrasing scan deliberately included three
+    # leak-test probes designed to measure DDM over-attraction --
+    # queries whose correct target is another content kind but that
+    # use "describe" framing. "Describe" is the most common query verb
+    # and DDM's anchor is weak-and-over-broad, so the prediction was
+    # that DDM would steal queries that belong to PDM/WI/IPD/FI.
+    #
+    # Result: **DDM over-attraction is BOUNDED**. All three leak
+    # probes held their correct boundaries:
+    #   L3 "Describe how to install the boom"           -> WI @ 0.85
+    #   L4 "Describe the parts of the boom assembly"   -> IPD @ 0.95
+    #   L5 "Describe the troubleshooting procedure ..."-> WI @ 0.85
+    # Strong-anchor classes (IPD's "parts", WorkInstruction's hand-
+    # tuned hints) hold against "describe" alone. The structural ADR
+    # is NOT urgent for DDM-vs-others; the weak boundary the ADR still
+    # needs to address is FaultIsolation <-> WorkInstruction (L5 leaked
+    # across that boundary, not from DDM).
+    #
+    # Genuine-DDM probes (matrix-row candidates):
+    #   D1 "What is the helmet display unit?"             -> DDM @ 0.86
+    #   D2 "Tell me about the helmet HMD architecture"   -> DDM @ 0.86-0.95
+    #
+    # Matrix row picks D1 -- pure "what is" framing, cleanest DDM
+    # ownership, stable at confidence floor.
+    #
+    # **Instance-resolution insulates named-identifier queries**: the
+    # at-risk row "Describe procedure TEST-1234 and show me its diagram"
+    # routes via mesh:resolveInstance (engine_e finds TEST-1234 as an
+    # exact-match instance at score 1.0); instance resolution preempts
+    # the class-vocabulary contest. This is the document<->content/
+    # instance duality the architect identified -- structurally
+    # encoded via the instance-resolution layer's fan-out, the same
+    # pattern verb 3 P3 showed for "part number" -> mil:Part. Worth
+    # banking for the ADR.
+    #
+    # Four-class lexical map now complete: FaultIsolation +
+    # ProcedureDataModule + IllustratedParts + Descriptive all have
+    # verb edges, multi-phrasing probe data on file, lexical-cue
+    # boundaries identified. The widened ADR (model document<->content/
+    # instance duality as a general pattern + add structural
+    # disambiguation only at weak-anchor boundaries) gets its design
+    # pass with full evidence.
+    RouteCase(
+        query="What is the helmet display unit?",
+        expected_subject_substring="DescriptiveDataModule",
+        expected_verb_iri="mesh:retrieveKnowledge",
+        min_confidence=0.5,
+        domain="MAINTENANCE",
+    ),
+
     # --- Out of registry / should fall back ---
     RouteCase(
         query="What's the weather like today?",

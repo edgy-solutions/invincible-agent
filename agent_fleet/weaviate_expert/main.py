@@ -169,6 +169,107 @@ async def lifespan(app: FastAPI):
         domains=["MAINTENANCE", "MANUFACTURING"],
         cost_class="medium",
     )
+
+    # Fourth registration: mesh:retrieveKnowledge against
+    # mil:DescriptiveDataModule (B4 verb 4, 2026-06-16).
+    # Engine W is the right owner for descriptive-content queries:
+    # DDM (DMC info code 0xx, "what it is") modules are narrative
+    # text — system overviews, equipment descriptions, theory of
+    # operation. Hybrid search over the DDM chunks is the natural
+    # capability; same retrieveKnowledge verb as TechnicalManual /
+    # FaultIsolation / IPD.
+    #
+    # **Two-purpose probe scan** (the new acceptance gate's
+    # sharpened form per architect 2026-06-15: this verb's scan
+    # was designed to also measure DDM over-attraction, because
+    # "describe" is the most common query verb and DDM's anchor is
+    # weak-and-over-broad in a way IPD's wasn't):
+    #
+    # Genuine-DDM probes (matrix-row candidates):
+    #   D1 "What is the helmet display unit?"
+    #        -> DDM @ 0.86  (pure "what is" + named system)
+    #   D2 "Tell me about the helmet HMD architecture"
+    #        -> DDM @ 0.86-0.95 (descriptive framing; some variance)
+    #
+    # Leak-test probes (correct target is NOT DDM; measure
+    # whether "describe" steals to DDM):
+    #   L3 "Describe how to install the boom"
+    #        -> mro:WorkInstruction @ 0.85  (HELD — WorkInstruction's
+    #         "describe" + "install" + "steps" hand-tuning beats
+    #         DDM's generic "describe" cue)
+    #   L4 "Describe the parts of the boom assembly"
+    #        -> mil:IllustratedPartsDataModule @ 0.95  (HELD —
+    #         IPD's "parts" anchor is so strong it wins even
+    #         on "describe" framing; tighter version of verb 3 P4)
+    #   L5 "Describe the troubleshooting procedure for the helmet"
+    #        -> mro:WorkInstruction @ 0.85  (HELD against DDM, but
+    #         "leaked" *across* WorkInstruction <-> FaultIsolation
+    #         boundary — should arguably be FaultIsolation;
+    #         WorkInstruction's "procedure" hand-tuning catches it.
+    #         Separate finding, not DDM's fault.)
+    #
+    # **DDM over-attraction sizing — BOUNDED.** All three leak
+    # probes held their correct boundaries against DDM. DDM wins
+    # only on genuinely-descriptive queries. The pre-registered
+    # BEFORE/AFTER comparison also confirmed: /resolve is verb-
+    # edge-independent, so adding the DDM edge didn't move any
+    # other class's resolution.
+    #
+    # **Existing matrix row safety** (the keystone over-attraction
+    # risk pre-registration): "Describe procedure TEST-1234 and
+    # show me its diagram" resolves via mesh:resolveInstance
+    # (engine_e finds TEST-1234 as a Test Procedure 1234 instance
+    # exact-match at score 1.0). Instance resolution PREEMPTS the
+    # class-vocabulary contest entirely. Named-identifier queries
+    # are insulated from DDM's "describe" pull — a structural
+    # observation worth banking for the ADR.
+    #
+    # Matrix row picks D1 -- pure "what is" framing, stable
+    # 0.85 confidence, cleanest DDM ownership.
+    #
+    # Banked findings for the widened ADR design pass (the
+    # procedural-content disambiguation):
+    #   1. DDM's over-attraction is BOUNDED. Strong-anchor classes
+    #      (IPD with "parts", WorkInstruction with hand-tuned
+    #      "procedure" hints) hold against "describe" cue alone.
+    #      The structural fix is not URGENT for DDM-vs-others.
+    #   2. The remaining weak boundary is FaultIsolation <-> WorkInstruction
+    #      (L5's leak across this boundary, not DDM's fault). Verb 1
+    #      ships demo-clean for "fault" + "diagnose" phrasings; if
+    #      "describe the troubleshooting procedure" became a real
+    #      user query, the FI/WI boundary would need either FI hand-
+    #      tuning or structural disambiguation.
+    #   3. Instance resolution is a load-bearing disambiguator —
+    #      it preempts class-vocabulary contests for any query with
+    #      a named identifier. This is a general pattern across the
+    #      manuals ontology (P3's mil:Part finding from verb 3 +
+    #      TEST-1234 instance routing here): the document<->content/
+    #      instance duality is structurally encoded via the instance-
+    #      resolution layer's fan-out, not just via class definitions.
+    register_engine_to_mesh(
+        name="engine_w_weaviate_expert_descriptive",
+        description=(
+            "Knowledge retrieval engine. Weaviate v4 hybrid search "
+            "(near_text + BM25) with strict domain segregation; returns "
+            "Markdown summaries and citations from technical manuals."
+        ),
+        verb="mesh:retrieveKnowledge",
+        input_uri="http://edgy-solutions.com/ontology/mil#DescriptiveDataModule",
+        output_uri="http://invincible-agent/mesh#KnowledgeRetrievalResponse",
+        verb_synonyms=[
+            "search docs", "find in manuals", "semantic search",
+            "look up policy", "consult manual",
+            "what is", "tell me about", "describe",
+            "description of", "overview of", "explanation of",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_W_PUBLIC_URL",
+            "http://weaviate-expert-svc.default.svc.cluster.local:8088/query_knowledge",
+        ),
+        owner_persona="TECH_WRITER",
+        domains=["MAINTENANCE", "MANUFACTURING"],
+        cost_class="medium",
+    )
     yield
 
 
