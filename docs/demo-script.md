@@ -97,44 +97,62 @@ necessary" the team named; treat it accordingly.
 
 | # | Question (template) | Capability | Expected behavior | Tag |
 |---|---------------------|------------|-------------------|-----|
-| 8 | "Fetch a sample of rows from `<SNOWFLAKE_TABLE_1>`." | routing → **live backend execution** (Engine DA) | route to Engine DA → Engine DA's smolagent uses URN to execute via `query_datahub_asset` → return rows | ⚙ READY-PENDING-INVESTIGATION |
+| 8 | "Fetch a sample of rows from `<SNOWFLAKE_TABLE_1>`." | routing → **live backend execution** (Engine DA) | route to Engine DA → DA uses supervisor-passed URN to execute via `query_datahub_asset` → return rows | ⚙ READY-PENDING-IMAGE-DEPLOY |
 
-**Routing layer LIVE.** Engine D's `/query_metadata` returns the demo URNs cleanly
-(confirmed 2026-06-16: `urn:li:dataset:(urn:li:dataPlatform:snowflake,gold.sales.revenue_summary,PROD)`
-returns description, lineage, columns at score 1.0). Engine D's
-`mesh:resolveInstance` against `idp:Table` resolves the dataset and routes to
-Engine DA via `mesh:analyzeDataset`. The architecture path is real.
+**Tier-3 fix landed (2026-06-16) — fabrication eliminated structurally.** The
+earlier "tool-roster investigation" finding (DA fabricating URNs instead of
+querying real resolved ones) was the actual bug. The four-layer fix was shipped
+through path (a) — wire URN passing end-to-end, do NOT add `search_datahub` to
+DA (which would only paper over fabrication with a re-search after the fact).
 
-**The reframe from "catalog sync" to "tool-roster investigation."** The earlier
-characterization of this as a ~5-minute catalog sync was based on an incomplete
-diagnosis. Direct probe of Engine D shows the catalog is correct — the URNs ARE
-in DataHub, with full metadata. **The actual question is what happens *inside*
-Engine DA's smolagent loop.** Engine DA's agent has `tools=[query_datahub_asset]`
-only; its augmented prompt instructs the agent to "call `search_datahub` first
-to discover the URN" — but `search_datahub` is not in its tool roster (that tool
-lives in Engine A). Two paths reconcile this:
+Four-layer fix (committed):
 
-  - **Path (a) — supervisor passes the URN.** If the central gateway forwards
-    Engine D's resolveInstance result (the URN at score 1.0) into Engine DA's
-    invocation context, the agent has the URN from upstream and `query_datahub_asset`
-    works directly. Demo row 8 lives or dies on whether this passing happens.
-  - **Path (b) — add `search_datahub` to Engine DA's tools.** Small code change
-    in `agent_fleet/data_analyst/main.py`: add the same `search_datahub` tool
-    Engine A defines. Removes the dependency on the supervisor-URN-passing
-    behavior.
+1. **Supervisor `_resolve_subject`** ([src/iagent/defs/dynamic_supervisor.py](../src/iagent/defs/dynamic_supervisor.py))
+   extracts `provenance.instance_id` as the 4th return value
+   (was: 3-tuple, discarding instance_id).
+2. **Supervisor dispatch payload** includes `resolved_instance_id`
+   (was: omitted entirely from the engine-bound JSON).
+3. **Engine DA handler** ([agent_fleet/data_analyst/main.py](../agent_fleet/data_analyst/main.py))
+   extracts `resolved_instance_id` from the request payload (was: the
+   field had no extraction point even if upstream passed it).
+4. **Engine DA prompt** branches on the URN:
+   - URN present → instruct agent to use the EXACT URN with `query_datahub_asset`,
+     forbid modification/substitution/invention.
+   - URN absent → instruct agent to return honest not-found, explicitly
+     forbid inventing a URN or calling `query_datahub_asset` with a
+     fabricated one. The pre-fix instruction "call `search_datahub`
+     first to discover the URN" — which had no tool in DA's roster
+     and forced the fabrication fallback — is removed entirely.
 
-**Until path (a) is confirmed or path (b) is shipped, treat row 8 as
-demo-uncertain.** A separately scoped session pulls one query end-to-end through
-the central gateway, captures whether the URN is passed into Engine DA's
-context, and either confirms ✅ or ships path (b). That session is "bigger than
-5 minutes" but smaller than a sprint — it's an investigation with a known
-exit on either side.
+The structural correctness gate (Acceptance B): on a catalog-miss query,
+DA returns honest not-found rather than fabricating a substitute URN.
+This is the "stop being confidently wrong" thesis applied to the
+execution layer. The bug wasn't "DA reached for a missing tool"; it was
+"DA fabricated the thing it looked up." The fix doesn't paper over by
+giving the agent another way to discover a URN; it gives the agent no
+path that requires inventing one.
 
-**Demo-day fallback if row 8 remains uncertain:** show the *routing* step live
-(question → Engine DA dispatch, latency-evident), and present the URN/SQL
-generation as a screenshot/walkthrough rather than running it cold. The routing
-+ tool-roster discipline is the demonstrable capability; the live row execution
-is the polish atop it.
+**Status tag explanation.** Tagged ⚙ READY-PENDING-IMAGE-DEPLOY (not ✅
+READY) because the dagster-user-code pod runs an image-based deployment;
+the four-layer source fix takes effect on the next image rebuild + pod
+rollout. Unit tests in [tests/test_tier3_urn_propagation.py](../tests/test_tier3_urn_propagation.py)
+(8/8 GREEN) structurally enforce the contract at the prompt + handler +
+supervisor layers. Live e2e verification (URN-equality through-line on
+the happy path; honest not-found on the absent-URN test) requires the
+image deploy. After deploy, this flips to ✅ READY.
+
+**Demo-day note.** If the image deploy lands before the demo, run row 8
+live; the latency-evident dispatch is the showpiece. If not, fall back to
+showing the routing step live and presenting the URN/SQL execution as a
+screenshot.
+
+**Banked Step-2 general-gap finding** (recorded, not fixed): Engine A's
+`/analyze` handler also reads `dataset_id` from its request payload; the
+supervisor doesn't pass it either. Engine A papers over by calling
+`search_datahub` (the tool DA lacks). The underlying gap is the same;
+Engine A's mitigation path is just different. A future session can
+extend `resolved_instance_id` consumption to Engine A, retiring the
+search-then-paper-over pattern there too. Not in this session's scope.
 
 ---
 

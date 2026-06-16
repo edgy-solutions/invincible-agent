@@ -112,6 +112,27 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # even though we're using a service-account JWT for the actual call.
     originator_sub = request.get("user_id") or None
 
+    # Tier-3 fix (2026-06-16): the supervisor now threads the resolved
+    # instance URN through to this handler so DA queries the SAME URN
+    # that /resolve produced rather than fabricating one from training
+    # data or schema-map context.
+    #
+    # The fabrication bug this closes: previously the supervisor's
+    # dispatch payload OMITTED the URN, DA's handler had no field to
+    # extract it from, and the prompt told the agent to "call
+    # search_datahub" — a tool not in DA's roster. The agent fell back
+    # to inventing a URN from training-data plausibility, then queried
+    # it, then returned "not found" for a fabricated identifier that
+    # never had a chance of matching.
+    #
+    # The new contract: the supervisor passes the real URN as
+    # `resolved_instance_id`. DA presents it explicitly to the agent
+    # and instructs query_datahub_asset to use exactly that URN. When
+    # no URN was resolved upstream (provenance.instance_resolved=false
+    # or /resolve unreachable), DA tells the agent to return honest
+    # not-found — NOT to invent one.
+    resolved_instance_id = request.get("resolved_instance_id", "")
+
     # Engine DA's prompt deliberately does NOT inject hardcoded URN hints.
     # Earlier versions had a `sandbox_urn_hints` block enumerating 6 specific
     # URNs (postgres / clickhouse / s3 sales_customers variants) so the
@@ -127,21 +148,40 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # and weren't owned by alice). The agent had no way to know the
     # hint block was sandbox scaffolding rather than ground truth.
     #
-    # New contract: Engine DA discovers asset URNs the same way every
-    # other engine does — through search_datahub. The prompt below
-    # tells the agent to do that explicitly when it doesn't already
-    # have a URN from upstream context (semantic_ctx.resolved_uri or
-    # the supervisor-provided dataset_id).
+    # New contract (Tier-3 fix, 2026-06-16): present the resolved URN
+    # to the agent and instruct it to use that exact URN, OR — when no
+    # URN was resolved upstream — instruct it to return honest
+    # not-found. The agent has no path that requires inventing a URN
+    # because it has no tool to discover-or-invent identifiers (the
+    # search_datahub tool was deliberately not added; see ADR-0014 and
+    # the deploy checklist §4 Tier-3 entry).
+    if resolved_instance_id:
+        asset_discovery_block = (
+            f"### Resolved DataHub URN\n"
+            f"The DataHub URN for this query has been resolved upstream:\n"
+            f"    {resolved_instance_id}\n"
+            f"\n"
+            f"Call `query_datahub_asset` with this EXACT URN. Do NOT modify, "
+            f"substitute, abbreviate, or invent any URN. If this URN is "
+            f"unreachable or returns no data, return an honest message "
+            f"explaining that — do not try a different URN.\n"
+        )
+    else:
+        asset_discovery_block = (
+            f"### No DataHub URN resolved\n"
+            f"No DataHub URN was resolved upstream for this query. The "
+            f"catalog either does not contain this asset, or the query "
+            f"was too ambiguous to ground to a single asset. Return an "
+            f"honest message explaining that you cannot ground this "
+            f"query to a specific dataset. Do NOT invent or guess a URN. "
+            f"Do NOT call `query_datahub_asset` with a fabricated "
+            f"identifier.\n"
+        )
+
     augmented_prompt = (
         f"{user_query}\n\n"
         f"### DataHub schema map\n{dynamic_schema_map or '(empty)'}\n\n"
-        f"### Asset discovery\n"
-        f"If you do not already have a DataHub URN from upstream context, "
-        f"call search_datahub first to discover the URN that matches what "
-        f"the user is asking about. Only pass URNs you have *seen* in a "
-        f"search_datahub or other tool response to query_datahub_asset. "
-        f"Do NOT invent or recall URNs from prior context. If no matching "
-        f"asset is in the catalog, say so explicitly rather than guessing.\n"
+        f"{asset_discovery_block}"
     )
 
     @tool

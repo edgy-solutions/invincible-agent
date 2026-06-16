@@ -3,6 +3,69 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-16 — Tier-3 four-layer fix: URN threaded end-to-end, fabrication structurally eliminated
+
+Architect 2026-06-16 framing: **"this is a correctness fix, not a feature."** The system was fabricating URNs at the execution layer — confidently-wrong behavior the whole architecture forbids everywhere else. The fix is "stop discarding the real resolved identifier and stop letting DA invent one," threaded through four layers, with one keystone gate: the acceptance test must prove DA *uses the real URN* AND *can't fabricate when it misses*, not just that the happy path works.
+
+### The bug, traced
+
+`/resolve` returns the real URN in `provenance.instance_id`. Every downstream layer **discarded it**:
+
+1. Supervisor `_resolve_subject` extracted only `(resolved_uri, confidence, reasoning)` — instance_id dropped.
+2. Dispatch payload omitted any URN field.
+3. Engine DA handler read `user_query`, `dynamic_schema_map`, `user_id` — no URN extraction point.
+4. DA prompt instructed agent to "call `search_datahub` first" — a tool not in DA's roster. Agent fell back to **fabricating** a URN from `dynamic_schema_map` or training data.
+
+Pre-fix live evidence: DA log showed the smolagent produced `urn:li:dataset:(urn:li:dataPlatform:postgres,prod.sales.orders_raw,PROD)` for a `revenue_summary` query, then returned "not found in catalog." The URN didn't come from the supervisor (which didn't pass URNs); it was constructed.
+
+### Acceptance criteria (locked Step 0, before any code touched)
+
+**Acceptance A — URN-equality through-line (happy path).** The URN at `/resolve.provenance.instance_id` must appear unchanged at every layer through DA's `query_datahub_asset` call.
+
+**Acceptance B — Absent-URN honest not-found (correctness assertion, the keystone).** For a query whose resolved URN is absent from the catalog or where `provenance.instance_resolved=false`: DA must return honest not-found, must NOT invent a substitute, must NOT call `query_datahub_asset` with a fabricated URN. This is what proves fabrication is *eliminated*, not bypassed on the happy path.
+
+**Acceptance C — Matrix unmoved.** Execution-layer change; routing untouched. Matrix stays 22/22.
+
+### Four-layer fix
+
+1. **`src/iagent/defs/dynamic_supervisor.py:_resolve_subject`** — returns 4-tuple including `instance_id` extracted from `provenance.instance_id` (empty string when no instance matched). Caller updated.
+2. **`dynamic_supervisor.py:_classify_route`** — telemetry dict now includes `subject_instance_id`.
+3. **`dynamic_supervisor.py` dispatch payload** — adds `resolved_instance_id` field (empty string when no URN).
+4. **`agent_fleet/data_analyst/main.py:analyze_data`** — extracts `resolved_instance_id` from request; prompt branches:
+   - **URN present**: instruct agent to use that EXACT URN with `query_datahub_asset`; forbid modification/substitution/invention.
+   - **URN absent**: instruct agent to return honest not-found; explicitly forbid inventing a URN OR calling `query_datahub_asset` with a fabricated one.
+   - **The `search_datahub` instruction is removed entirely** — the agent has no path that requires inventing an identifier because it has no tool to discover-or-invent one.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| Acceptance C (matrix) | **22/22 routing + 13/13 substrate invariants + 1/1 DNS guard = 36/36 GREEN** |
+| Tier-3 propagation unit tests (`tests/test_tier3_urn_propagation.py`) | **8/8 GREEN** (4 supervisor-layer tests + 4 DA-handler/prompt-shape tests) |
+| Existing dynamic_supervisor tests (`tests/test_routing_fallback.py`, `tests/routing/test_adr0019_contracts.py`) | **20/20 GREEN** (no regression from `_resolve_subject` tuple-shape change) |
+| Acceptance A (URN-equality live) | **Pending image rebuild + pod rollout** |
+| Acceptance B (absent-URN honest not-found live) | **Pending image rebuild + pod rollout** |
+
+Live verification deferred for the same reason every source-only fix in this arc has been: the dagster-user-code pod runs an image-based deployment; the four-layer source fix takes effect on the next image rebuild. Until then, the structural contract is pinned by unit tests, and the runtime path will exercise old code.
+
+After the image deploy: trace one happy-path query end-to-end through `/orchestrate` → cortex_bff → dagster `supervisor_query_job` → Engine DA, confirm `query_datahub_asset` is called with `provenance.instance_id` verbatim. Then run an absent-URN query and confirm DA returns honest not-found, not a fabricated-substitute query.
+
+### Step-2 general-gap finding (banked, not fixed)
+
+Engine A's `/analyze` handler at `agent_fleet/restate_analyst/main.py:354` reads `dataset_id` from request — analogous URN-need. The supervisor doesn't pass it. Engine A papers over by calling `search_datahub` (the tool DA lacks). **The dispatch-payload URN omission is general, not DA-specific.** DA's lack-of-search-datahub is what makes the bug surface as fabrication; Engine A's mitigation is "go-search-then-paper-over," which is architecturally weaker than the URN-passing fix this thread closes.
+
+Per hard scope: recorded, not fixed this session. A future session can extend `resolved_instance_id` consumption to Engine A, retiring `search_datahub` from Engine A's smolagent and giving Engine A's verbs the same URN-equality contract DA's now has.
+
+### Why this fix is structurally correct
+
+The fabrication pathway is closed at the prompt layer, not at the tool layer. DA still has only `query_datahub_asset`; the only URN it can use comes from upstream. When upstream provides one, the agent uses it verbatim. When upstream doesn't, the agent is instructed to return honest not-found — and has no tool path to discover-or-invent an identifier. **The agent literally cannot fabricate** because the path that previously fed fabrication (the `search_datahub` instruction) is gone.
+
+This is the same shape as the failure-row in the demo script (the abstention/honest-not-found row): the safety property is enforced structurally, not behaviorally. The agent's correctness on this path isn't "the model behaved well"; it's "the model had no other path to take."
+
+### Standing rule earned
+
+**For any execution-layer fix that closes a fabrication-class bug**, the acceptance test must include both the positive control (happy path works) AND the negative control (the absent/missing case returns honest abstention, NOT a fabricated substitute). The positive control alone is insufficient — it only proves the happy path; the bug was the failure-path behavior. This is the same discipline as every abstention test in the project, applied to execution-layer correctness.
+
 ## 2026-06-16 — Fresh-bootstrap rehearsal: caught a second loaded regression; substrate fully reconciled; 36/36 green
 
 Architect 2026-06-16 authorized the rehearsal: "we are good to start." The rehearsal's job in their framing is the cheap-venue proof that everything the durability-and-class-fix sessions just shipped actually reproduces — not "tidy up," but "find what would break the deploy and fix it in the cheap venue." It did exactly that, surfacing a deploy-blocker the source-only sweep didn't see.

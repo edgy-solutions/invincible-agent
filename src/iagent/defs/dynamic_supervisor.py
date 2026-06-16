@@ -196,9 +196,9 @@ def _resolve_subject(
 
     /resolve does vector-recall (Weaviate hybrid over OntologyClass) +
     LLM-precision (ClassifyDomainIntent via TypeBuilder dynamic enum).
-    Returns ``(subject_uri, confidence, reasoning)``. On failure or
-    UNKNOWN return ``("UNKNOWN", 0.0, "<reason>")`` so the downstream
-    predicate classifier still runs against the raw query.
+    Returns ``(subject_uri, confidence, reasoning, instance_id)``. On
+    failure or UNKNOWN return ``("UNKNOWN", 0.0, "<reason>", "")`` so
+    the downstream predicate classifier still runs against the raw query.
 
     Subject classification was the missing leg of SPO routing for years
     (ADR-0004 proposed it; ADR-0009 Step F'.6 simplified it away). With
@@ -207,6 +207,20 @@ def _resolve_subject(
     classifier real SPO context — it picks a verb that's a sensible
     operation ON THE RESOLVED SUBJECT, not just lexically adjacent to
     the query text.
+
+    The 4th return value, ``instance_id``, is the URN of the resolved
+    instance when /resolve's provenance fan-out succeeded (e.g. Engine D
+    matched a catalog dataset, Engine E matched a maintenance instance,
+    Engine E's DMC capability matched a data module). Empty string when
+    no instance matched (``provenance.instance_resolved=false``) or
+    when /resolve was unreachable.
+
+    The instance_id is propagated downstream in the dispatch payload so
+    execution-layer engines (specifically Engine DA's data fetch) query
+    the SAME URN that /resolve produced, rather than fabricating one
+    from training data or `dynamic_schema_map` context. The fabrication
+    pathway was the bug this thread closes (see deploy checklist §4 and
+    state doc 2026-06-16 Tier-3 fix entry).
     """
     try:
         resp = requests.post(
@@ -222,12 +236,14 @@ def _resolve_subject(
             "will see subject_uri=UNKNOWN",
             user_query, exc,
         )
-        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}")
+        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "")
 
+    provenance = data.get("provenance") or {}
     return (
         str(data.get("resolved_uri") or "UNKNOWN"),
         float(data.get("confidence_score") or 0.0),
         str(data.get("reasoning") or ""),
+        str(provenance.get("instance_id") or ""),
     )
 
 
@@ -298,7 +314,7 @@ def _classify_route(
 
     Returns ``(status, predicate_or_none, telemetry_dict)``.
     """
-    subject_uri, subject_conf, subject_reason = _resolve_subject(
+    subject_uri, subject_conf, subject_reason, subject_instance_id = _resolve_subject(
         context, user_query, routing_domain,
     )
 
@@ -422,6 +438,14 @@ def _classify_route(
         "subject_uri": subject_uri,
         "subject_confidence": subject_conf,
         "subject_reasoning": subject_reason,
+        # Resolved instance URN (e.g. urn:li:dataset:... for catalog
+        # assets, urn:instance:... for maintenance instances) from
+        # /resolve.provenance.instance_id. Empty string when no
+        # instance matched. Propagated to dispatch payload as
+        # `resolved_instance_id` so execution-layer engines (Engine DA)
+        # query the SAME URN that /resolve produced rather than
+        # fabricating one. See Tier-3 fix (state doc 2026-06-16).
+        "subject_instance_id": subject_instance_id,
         "compatible_verb_iris": compatible_verb_iris,
         "neo4j_find_error": find_err,
         "verb_iri": verb_iri,
@@ -687,6 +711,28 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # predicate_verb_iri; surfaced under the name the engine's
         # handler reads. Engines that don't read it ignore it.
         "routed_verb_iri": predicate.get("verb_iri"),
+        # Tier-3 fix (2026-06-16): the resolved instance URN from
+        # /resolve.provenance.instance_id. Threaded through so
+        # execution-layer engines (specifically Engine DA's data
+        # fetch) query the SAME URN that /resolve produced rather
+        # than fabricating one from training data or
+        # `dynamic_schema_map` context.
+        #
+        # Empty string when no instance matched upstream
+        # (provenance.instance_resolved=false). Engines reading this
+        # field must treat empty string as "no URN was resolved —
+        # honestly admit not-found rather than invent one."
+        #
+        # Step-2 general-gap finding (banked, not fixed this session):
+        # the omission is GENERAL — Engine A's /analyze handler also
+        # reads request["dataset_id"] which the supervisor does not
+        # pass. Engine A's smolagent papers over the missing URN by
+        # calling `search_datahub` (the tool DA lacks), so it doesn't
+        # surface as fabrication; the underlying gap is the same. A
+        # future session should extend this payload field's
+        # consumption to Engine A, retiring the search-then-paper-over
+        # pattern there too. See deploy checklist §4 Tier-3 entry.
+        "resolved_instance_id": telemetry.get("subject_instance_id", ""),
     }
 
     context.log.info(

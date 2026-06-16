@@ -264,6 +264,22 @@ before running, name the gap if anything moves outside prediction.
 
 These are real cleanup items the work cluster may or may not encounter:
 
+- **Tier-3 fix landed (2026-06-16) — fabrication structurally eliminated
+  via four-layer path (a); live e2e gate pending image deploy.**
+  Source committed; unit tests pin the contract (8/8 GREEN); structural
+  correctness gate (DA can't fabricate when URN is absent) enforced at
+  the prompt-shape layer. Live URN-equality and absent-URN-honest-not-found
+  acceptance assertions require the dagster-user-code image to rebuild
+  with the new supervisor + DA source and the pod to roll over. After
+  deploy: trace one happy-path query through `/orchestrate` → cortex_bff
+  → dagster supervisor_query_job → Engine DA, confirm DA's
+  `query_datahub_asset` call uses `provenance.instance_id` verbatim;
+  then run one absent-URN query and confirm DA returns honest not-found.
+
+  See the long-form banked entry below for the four-layer trace, the
+  bug's mechanism, and the Step-2 general-gap finding (Engine A also
+  needs the URN; not fixed in this scope).
+
 - **Tier-3 demo row 8 — sharpened from "bigger than 5 min" to a
   *four-layer* path (a) plus a confirmed fabrication finding**
   (sharpened 2026-06-16 by direct code reading of the supervisor's
