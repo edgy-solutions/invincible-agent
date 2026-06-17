@@ -49,6 +49,77 @@ Per the architect's "morning-scope decisions" framing — these are explicitly N
 2. **Run the canonical pipeline against the manifest entry** so the 7 classes get re-materialized with full provenance (`synced_from='s3://ontologies/manufacturing/Munitions.ttl'`, `synced_by='sync_jena_ontologies_to_neo4j'`). At that point the residue can be retired and the `KNOWN_RESIDUE_EXEMPT` allowlist entry for `mro/Munitions.ttl` removed.
 3. **Optional**: stop using the `http://example.com/manufacturing#` URI namespace (a placeholder); migrate to a stable `http://edgy-solutions.com/ontology/mfg#` namespace at the next canonical-pipeline pass. This is a TBox decision — not in the overnight scope.
 
+### Step 2 — mfg verb 1 shipped clean (mesh:retrieveKnowledge against mil:MunitionsAssemblyStep, Engine W)
+
+First manufacturing verb in the routing matrix. Multi-phrasing probe scan (5 phrasings) showed:
+- P1 "What are the assembly steps for the M67 grenade?" → MunitionsAssemblyStep @ 0.98 (instance-resolution layer also fired; cleanly abstained)
+- P2 "Show me the munitions assembly procedure for the warhead" → MunitionsAssemblyStep @ 0.95
+- P3 "What is the explosive material classification..." → ExplosiveMaterial @ 0.99 (cross-class clean)
+- P4 "What are the safety hazards in munitions assembly?" → ExplosivesSafetyHazard @ 0.96 (ambiguous; "safety hazards" anchor won over "munitions assembly" — first mfg lexical-boundary observation, analog of verb 4's "describe + parts" tension)
+- P5 "Standard industrial process for warhead fill" → StandardIndustrialProcess @ 0.98 (cross-class clean)
+
+Matrix row picks P1. **23/23 PASS in 7:58.** Existing 22 rows unmoved (the MANUFACTURING domain filter prevents cross-domain leak from existing MAINTENANCE rows).
+
+Five-gate verification all green; commit [c7ce01b](../../c7ce01b).
+
+### Step 3 HALT — ManufacturingPlugin substrate emission is OntologyClass-disconnected
+
+The architect's Step-3 revised recipe (Path B fast loop-closer + Path A characterize) was scoped to:
+1. Inspect the plugin's schema — decision-free.
+2. Generate SANDBOXMFG JSON conforming to plugin's output → feed through post-plugin ingest → confirm the mfg verb routes to real content.
+3. Halt only if Path A needs a real-PDF template or schema is ambiguous.
+
+**Inspection findings (output schema IS clear, but the ingestion path has a structural mismatch):**
+
+Plugin source at `doc-tools/doc_tools/plugins/manufacturing.py`. Output is `MatAugmentation`:
+- `steps: List[ManufacturingStep]` — well-defined Pydantic schema with procedure_id, step_id, instruction_text, action_verb, tooling, consumables, hazard_class, etc. (32 fields including overlay-extensible)
+- `assessment: StrategicAssessment` (proprietary_score, outsourceable)
+- Plus document-level overlay fields
+
+**The plugin's classification is LLM-driven, not deterministic.** Lines 100-108: it calls BAML's `ExtractWorkInstructions` with TypeBuilder-injected enums (PersonnelRole, HazardClass, ProcessCategory) to produce the `ManufacturingStep` instances. The architect's framing "the plugin's schema is the deterministic-classification source, same role as S1000D's info-code" applies to the OUTPUT SHAPE (deterministic) but NOT to the CLASSIFICATION DECISION (LLM call). This is a meaningful difference from S1000D, where info-code → kind is a pure mapping with no LLM.
+
+**The substrate emission (`to_graph_queries`, lines 257-394) creates `:ManufacturingStep:{dom}` instance-label nodes — NOT INSTANCE_OF edges to OntologyClass nodes.** The Cypher emitted is:
+
+```cypher
+MERGE (s:ManufacturingStep:MANUFACTURING {id: $step_node_id})
+SET s.step_id = ..., s.raw_text = ..., s.action = ...
+MERGE (proc:Procedure:MANUFACTURING {id: ...})
+MERGE (proc)-[:CONTAINS_STEP]->(s)
+```
+
+There is no edge of the form `(s)-[:INSTANCE_OF]->(:OntologyClass {uri: 'http://example.com/manufacturing#MunitionsAssemblyStep'})`. The instance label `:ManufacturingStep` is plain Cypher labeling, not connected to the OntologyClass mfg-V1 routes on.
+
+**Why this matters for Path B:**
+
+The Step-2 mfg-V1 verb dispatches when the routing layer lands on the OntologyClass `mfg:MunitionsAssemblyStep`. Engine W's `retrieveKnowledge` is supposed to retrieve content connected to that class — typically via INSTANCE_OF or a chunk-search keyed on the class's domain + label. The plugin emits `:ManufacturingStep` instances at `:MANUFACTURING` domain label, but those instances have no traversal path back to `OntologyClass mfg:MunitionsAssemblyStep`. So even if I generate SANDBOXMFG JSON tonight and ingest it via `to_graph_queries`, the mfg-V1 verb's dispatch would not retrieve those instances — the routing layer would find a class with no connected content.
+
+**Comparison to the working B4 manuals path:** the B4 ingest (B2/B3a SANDBOXRTX + helmet IADS) creates `:Procedure` / `:ManufacturingStep` instance nodes AND adds INSTANCE_OF edges to the matching `mil:* OntologyClass` based on the info-code. That's what wires content to the routing layer. ManufacturingPlugin doesn't have an analog step.
+
+### What's banked for daylight (the design judgment)
+
+Per the architect's "halt on design judgment, do not autonomously decide TBox/ingest architecture":
+
+1. **The ManufacturingPlugin's substrate emission needs an INSTANCE_OF augmentation** — or a TBox change that makes `:ManufacturingStep` plain-label-nodes routable. Three shapes the morning could pick from:
+   - **(a) Add INSTANCE_OF edges in the plugin's `to_graph_queries`** based on a deterministic rule (e.g., `process_category=='Critical Safety Hold'` → INSTANCE_OF `mfg:ExplosivesSafetyHazard`; default → INSTANCE_OF `mfg:MunitionsAssemblyStep`). This is the analog of S1000D's info-code → kind map but on extracted field values rather than document metadata.
+   - **(b) Re-type the substrate emission's primary node label to use the OntologyClass URI directly** (i.e., emit `:MunitionsAssemblyStep:MANUFACTURING` instead of `:ManufacturingStep:MANUFACTURING`). The routing layer would then find content via class-label match instead of INSTANCE_OF traversal. Simpler structurally but couples plugin emission to TBox naming.
+   - **(c) Adapt the routing layer** to walk a non-OntologyClass path for manufacturing content (find `:ManufacturingStep` nodes via domain+label, regardless of OntologyClass connection). Architecturally weakest — breaks the routing-substrate uniformity.
+
+2. **Path B not executed tonight.** Generating SANDBOXMFG JSON conforming to the schema is mechanical, but ingesting it via `to_graph_queries` would produce instances that the mfg-V1 verb can't reach. The loop doesn't close until (a)/(b)/(c) is decided. Generating JSON without closing the loop would produce dead substrate state — banked, not built.
+
+3. **Path A characterization:** the plugin EXPECTS Markdown chunks (line 64: `convert_element_to_markdown`) extracted from documents via `process_fulltext`. So Path A needs either a real PDF the document_parser can chunk, OR a synthetic Markdown corpus fed through `execute_global_pass` directly. The latter is more tractable than a synthetic PDF — but still hits the same INSTANCE_OF-disconnect problem in `to_graph_queries`. **Path A's higher-fidelity test (real plugin extraction) doesn't help close the loop until the OntologyClass-connection question is decided.**
+
+### Morning deliverables (the agent's overnight handoff)
+
+1. **Step 0** — guard-sibling audit done. 3 real gaps banked: B-1 info-code determinism, B-2 DMC canonicalizer (highest priority, next-session before deploy), B-3 lexical mapping (low priority).
+
+2. **Step 1** — manufacturing Gap-1 closed via substrate patch (mil:* pattern). 7 mfg classes now at domain=MANUFACTURING in both Neo4j + Weaviate. `/resolve` on a manufacturing query finds candidates. Banked: add Munitions.ttl to CANONICAL_TTL_MANIFEST (URL not verified); run canonical pipeline; retire residue.
+
+3. **Step 2** — mfg V1 (mesh:retrieveKnowledge against MunitionsAssemblyStep) typed and proven. Matrix 23/23 PASS in 7:58. Cross-class lexical boundaries probed; P4 ambiguity observation banked.
+
+4. **Step 3** — plugin inspection done; **HALT** banked precisely. The plugin's substrate emission is OntologyClass-disconnected — `:ManufacturingStep` instance labels are not linked to `mfg:MunitionsAssemblyStep` OntologyClass via INSTANCE_OF or any traversal. **Path B and Path A both blocked on the same design judgment.** Three shapes (a)/(b)/(c) banked for morning decision.
+
+The honest morning state: substrate has working mfg routing (V1 verb dispatches correctly at the gate layer); manufacturing content ingestion is a TBox/plugin-architecture decision that's analogous to S1000D's info-code → kind decision but for LLM-extracted content. The cheap venue surfaced this sharply — the mechanical work is complete and the design question is well-framed.
+
 ### Why substrate-patch was the right scope tonight
 
 The architect's recipe explicitly said "the same mechanism the path→domain fix established" — and that fix (mil:* incident 2026-06-16) used the substrate-direct UPDATE pattern with the proper-pipeline fix banked. The Munitions case is identical in shape:
