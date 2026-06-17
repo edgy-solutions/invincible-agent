@@ -3,7 +3,62 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
-## 2026-06-17 — UI query incident → source-guard masked substrate-dirty class-fix → new standing rule (substrate-sibling guards)
+## 2026-06-17 evening — overnight Step 0 (guard-sibling audit) + Step 1 (manufacturing Gap-1 closed via substrate patch)
+
+Architect-prescribed overnight per their 10:40 PM recipe. Scoped to mechanical, decision-free work; explicit halt at design-judgment thresholds; local sandbox only.
+
+### Step 0 — guard-sibling audit complete (no new guards built)
+
+Per the standing rule banked at the close of the 2026-06-17 UI-incident session (every source-level guard needs a substrate-level sibling). Enumerated all `tests/routing/` guards; classified by layer + property; produced [GUARD_SIBLING_AUDIT.md](GUARD_SIBLING_AUDIT.md).
+
+Findings:
+
+- **6 properties** at full source+substrate coverage (good): legacy DNS (closed today by the substrate sibling), provider-agnostic resolveInstance fan-out, compact-form URIs, no path-derived domains, v0.2-saga verb-edge coverage, pseudo-class governance.
+- **3 real gaps** (banked, not built):
+  - B-1: info-code → kind classification substrate sibling (medium risk — defensive future-proofing).
+  - B-2: DMC canonicalizer substrate sibling (**highest priority — closest legacy-DNS-shaped gap; next-session work before the deploy**).
+  - B-3: lexical class-mapping substrate sibling (low risk — defer until architecture materializes the metadata).
+- 2 single-layer architectural properties where no sibling is conceptually possible.
+
+Deliverable IS the punch list; the architect explicitly framed Step 0 as decision-free enumeration ("do NOT build missing siblings tonight").
+
+### Step 1 — manufacturing Gap-1 closed via substrate patch (mil:* pattern)
+
+**Pre-patch state:** 7 manufacturing classes (`http://example.com/manufacturing#*` — MunitionsAssemblyStep, StandardIndustrialProcess, ExplosiveMaterial, ExplosivesSafetyHazard, ComplianceRule, Class_1_1, Class_1_3) existed in substrate at `domain='MAINTENANCE'`. `/resolve` on a manufacturing query returned UNKNOWN — "no classes found in domain MANUFACTURING."
+
+**Provenance** (the discovery): all 7 are **pre-canonical direct-load residue** — `source_ontology='mro/Munitions.ttl'` (legacy field name), `synced_from=None` (no canonical-pipeline provenance), `synced_by=None`. The `test_no_path_derived_domains` guard's `WHERE c.synced_from IS NOT NULL` filter structurally excludes them, so the wrong domain was silently present and the guard could not see it.
+
+**Patch applied** (same shape as the 2026-06-16 mil:* incident — substrate-direct UPDATE in both stores, proper-pipeline fix banked):
+
+- **Neo4j**: `MATCH (c:OntologyClass) WHERE c.uri IN [the 7 manufacturing URIs] AND c.domain = 'MAINTENANCE' SET c.domain = 'MANUFACTURING'` → 7 nodes updated.
+- **Weaviate**: same UPDATE applied to the matching `OntologyClass` objects → 7 objects updated (1 duplicate found and updated for the same URI, residue noted; not blocking).
+
+**Post-patch verification:**
+
+| Gate | Result |
+|---|---|
+| `/resolve` on "munitions assembly step procedure" with domain=MANUFACTURING | `mil:MunitionsAssemblyStep` @ 0.95 (was: UNKNOWN before patch) |
+| `test_no_path_derived_domains` | GREEN (residue still ignored by the synced_from filter, regardless of domain) |
+| All 14 substrate invariants | GREEN |
+
+### What's banked for daylight (the proper-pipeline fix)
+
+Per the architect's "morning-scope decisions" framing — these are explicitly NOT closed tonight:
+
+1. **Add `Munitions.ttl` to `setup/prime_databases.py:CANONICAL_TTL_MANIFEST`** with explicit `domain='MANUFACTURING'`. **Blocker:** the upstream source URL hasn't been verified to exist. Likely candidate: `https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/Munitions.ttl` (mirrors the `mil_extension.ttl` URL pattern). Requires URL verification + a test re-ingest before committing the manifest entry.
+2. **Run the canonical pipeline against the manifest entry** so the 7 classes get re-materialized with full provenance (`synced_from='s3://ontologies/manufacturing/Munitions.ttl'`, `synced_by='sync_jena_ontologies_to_neo4j'`). At that point the residue can be retired and the `KNOWN_RESIDUE_EXEMPT` allowlist entry for `mro/Munitions.ttl` removed.
+3. **Optional**: stop using the `http://example.com/manufacturing#` URI namespace (a placeholder); migrate to a stable `http://edgy-solutions.com/ontology/mfg#` namespace at the next canonical-pipeline pass. This is a TBox decision — not in the overnight scope.
+
+### Why substrate-patch was the right scope tonight
+
+The architect's recipe explicitly said "the same mechanism the path→domain fix established" — and that fix (mil:* incident 2026-06-16) used the substrate-direct UPDATE pattern with the proper-pipeline fix banked. The Munitions case is identical in shape:
+
+- Pre-canonical residue (synced_from=None) at the wrong domain.
+- Source TTL not in this repo; upstream URL not verified.
+- Substrate UPDATE closes the immediate routing gap; proper-pipeline ingest properly retires the residue.
+- The standing guard is unaffected (residue is structurally invisible to it).
+
+The "ship the substrate fix tonight, bank the manifest update for daylight" framing matches the mil:* precedent exactly and respects the overnight's hard scope.
 
 User reported "Timeout or failed to fetch UI payload" on a "what tables do you have?" query through the sandbox UI (dagster run `c9cd1db9`).
 
