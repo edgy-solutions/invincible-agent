@@ -169,6 +169,19 @@ dataAnalyst:
     limits:
       cpu: "1"
       memory: 2Gi  # DuckDB query memory can spike — give headroom
+  # 2026-06-17 incident: user-reported UI failure on "what tables do you
+  # have?" traced to substrate edge for mesh:analyzeDataset registered
+  # with legacy DNS data-analyst-svc.default.svc.cluster.local:8089 (the
+  # source default the OLD image bakes in; my source fix in the legacy-
+  # DNS class-sweep hasn't reached this pod via image rebuild yet).
+  # Belt-and-suspenders env var pin reproduces the rehearsal-W/E fix
+  # pattern: on pod restart, register_engine_to_mesh reads the env var
+  # (correct DNS), MERGE in mesh-registrar's atomic saga updates the
+  # substrate edge endpoint URL to iagent-data-analyst:8089. Source fix
+  # is committed; the env var pin makes the deployment NOT depend on
+  # the image being rebuilt first.
+  env:
+    ENGINE_DA_PUBLIC_URL: "http://iagent-data-analyst:8089/analyze_data"
 
 engineA:
   enabled: true
@@ -180,6 +193,26 @@ engineA:
     limits:
       cpu: "1"
       memory: 2Gi  # smolagents loop can hold context
+  # 2026-06-17 incident: same pattern as dataAnalyst above. Engine A's
+  # 9 catalog-verb substrate edges (lookupOwnership, traceLineage,
+  # describeAsset, enumerateCatalog, findSchema, checkFreshness,
+  # filterByTag, assessImpact, analyzeWithCodeAgent) ALL register
+  # against the legacy DNS restate-agent-svc.default.svc.cluster.local:8081
+  # because the OLD deployed image bakes in that source default. User's
+  # query "what tables do you have?" hit mesh:enumerateCatalog and
+  # dispatched to the broken URL, killing the run before
+  # generate_ui_payload could fire. ENGINE_A_PUBLIC_URL pinned here so
+  # the new pod registers with correct iagent-engine-a:8081 DNS even
+  # while the image bake-in remains stale.
+  #
+  # DATAHUB_WRAPPER_URL also pinned: Engine A's smolagent calls
+  # search_datahub which targets DATAHUB_WRAPPER_URL, and the OLD image
+  # has it defaulting to datahub-wrapper-svc.default.svc.cluster.local
+  # (also non-resolvable). Without this pin, even successful dispatch
+  # to Engine A would fail at the search_datahub tool call.
+  env:
+    ENGINE_A_PUBLIC_URL: "http://iagent-engine-a:8081/analyze"
+    DATAHUB_WRAPPER_URL: "http://iagent-engine-d:8085"
 
 engineO:
   enabled: true

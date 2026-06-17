@@ -85,6 +85,14 @@ ALLOWLIST: list[tuple[str, str]] = [
     ("tests/routing/STATE_GATEWAY_V02.md", "default.svc.cluster.local"),
     ("docs/demo-script.md", "default.svc.cluster.local"),
     ("tests/routing/SESSION_3_DEPLOY_CHECKLIST.md", "default.svc.cluster.local"),
+    # 2026-06-17 incident commentary: helm values-sandbox.yaml comments
+    # name the legacy DNS pattern when explaining what the env-var pins
+    # are reproducing-around (the OLD image's source default that
+    # would re-register the broken URL on pod restart). Documentary
+    # references to the pattern in a comment block, not live defaults.
+    ("helm/invincible-agent/values-sandbox.yaml", "data-analyst-svc.default.svc.cluster.local"),
+    ("helm/invincible-agent/values-sandbox.yaml", "restate-agent-svc.default.svc.cluster.local"),
+    ("helm/invincible-agent/values-sandbox.yaml", "datahub-wrapper-svc.default.svc.cluster.local"),
 ]
 
 
