@@ -148,7 +148,10 @@ agentFleet:
     BAML_LOG_LEVEL: "info"
     
     # 🔗 Network & Service Discovery
-    KEYCLOAK_REALM_URL: "https://keycloak/realms/d4"
+    # Default realm matches the chart name; operators override in their
+    # per-cluster values file when their Keycloak instance uses a
+    # different realm name.
+    KEYCLOAK_REALM_URL: "https://keycloak/realms/invincible-agent"
     JENA_SPARQL_ENDPOINT: "http://jena:3030/ds/query"
     DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
     DATAHUB_MOCK_MODE: "false"
@@ -362,7 +365,7 @@ meshRegistrar:
 # That works but is operator-friction-heavy and assumes the cluster's
 # rendered service shapes match what the operator port-forwards. For
 # clusters with external Neo4j/Weaviate/Jena (work cluster, multi-tenant
-# d4-prod), the port-forward shape diverges from chart defaults entirely.
+# environments), the port-forward shape diverges from chart defaults entirely.
 # This Job sidesteps all of that — it runs in-cluster against whatever
 # endpoints the ConfigMap declares.
 #

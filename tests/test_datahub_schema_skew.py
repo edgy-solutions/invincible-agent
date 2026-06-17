@@ -9,7 +9,8 @@ reset hook. The full introspection path that hits the GMS is exercised
 end-to-end at deploy time against whichever DataHub version is wired
 up.
 
-The bug this thread closes: d4-sandbox runs DataHub 1.1.0; the prior
+The bug this thread closes: when a sandbox cluster runs an older
+DataHub version (the case observed: GMS 1.1.0), the prior
 `_FIND_TOOLS_QUERY` selected `customProperties` at the top level of
 Dataset (the newer-version shape), which trips
 `FieldUndefined@[searchAcrossEntities/searchResults/entity/customProperties]`

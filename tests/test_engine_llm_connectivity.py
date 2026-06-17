@@ -13,7 +13,7 @@ builds the model object exactly as the engines do, sends a trivial prompt,
 and asserts a real completion comes back. This is the smallest e2e slice
 that exercises the LLM path without needing Restate / Weaviate / Engine O.
 
-Configuration (env vars, with defaults for the d4 dev LAN):
+Configuration (env vars, with defaults for the dev LAN):
     OLLAMA_TEST_BASE_URL   default: http://ai1:11434/v1
     OLLAMA_TEST_HOST_IP    default: 192.168.1.119   (for --add-host; the
                            container can't resolve a bare LAN hostname)

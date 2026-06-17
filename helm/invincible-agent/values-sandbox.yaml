@@ -110,12 +110,13 @@ agentFleet:
     DATAHUB_MOCK_MODE: "false"
 
     # Work-around for chart bug: values.yaml's agentFleet.env has stale
-    # legacy URLs (`https://keycloak/realms/d4`, `http://jena:3030`) that
-    # render AFTER the configmap template's explicit lines and therefore
-    # win the "last-key-wins" race in the rendered ConfigMap. We re-declare
-    # the correct values here so OUR override is last. Fix in the chart
-    # itself is to remove these two keys from values.yaml's agentFleet.env
-    # since they duplicate the template-rendered values.
+    # legacy URLs (a default keycloak realm + a bare `http://jena:3030`)
+    # that render AFTER the configmap template's explicit lines and
+    # therefore win the "last-key-wins" race in the rendered ConfigMap.
+    # We re-declare the correct values here so OUR override is last.
+    # Fix in the chart itself is to remove these two keys from
+    # values.yaml's agentFleet.env since they duplicate the
+    # template-rendered values.
     KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
     JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/query"
     # Same race: values.yaml's agentFleet.env defaults NEO4J_URI to bare

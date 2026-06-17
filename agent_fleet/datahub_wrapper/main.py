@@ -126,7 +126,8 @@ query SearchDataHub($input: SearchAcrossEntitiesInput!) {
 # Querying the wrong shape returns
 # `FieldUndefined@[searchAcrossEntities/searchResults/entity/customProperties]`
 # from the deployed GMS and Engine D logs an error + returns an empty
-# tool list (which broke JIT tool discovery in d4-sandbox running 1.1.0).
+# tool list (which broke JIT tool discovery on the sandbox cluster that
+# was running DataHub 1.1.0).
 #
 # The clean fix is GraphQL introspection: ask the GMS what fields its
 # Dataset type actually exposes, once, at first use, then build the

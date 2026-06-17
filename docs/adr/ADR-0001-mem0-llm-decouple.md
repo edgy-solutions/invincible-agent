@@ -17,7 +17,7 @@ and for query rewriting during `m.search()` — also used the same
 `agent_fleet/utils/mem0_utils._build_mem0_memory()`.
 
 Three things forced a re-evaluation when we tried the full /analyze
-flow end-to-end against the d4-dev Ollama (ai1, gpt-oss-128k:120b):
+flow end-to-end against the dev Ollama (ai1, gpt-oss-128k:120b):
 
 1. **Latency on the hot path.** `m.add()` is called after every agent
    response (to persist the turn into memory); `m.search()` is called
@@ -76,7 +76,7 @@ identically to before.
 
 **Costs:**
 - Two models must be available to each engine pod (or to the Ollama
-  service it talks to). On the d4-dev unified-memory box (94 GB) both
+  service it talks to). On the dev unified-memory box (94 GB) both
   models can stay resident simultaneously. On larger production hosts
   this is trivial; on smaller dev rigs operators need to either accept
   swap latency or pre-pull both.
