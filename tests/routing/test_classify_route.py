@@ -595,6 +595,69 @@ TEST_CASES: list[RouteCase] = [
         domain="MAINTENANCE",
     ),
 
+    # --- MFG verb 1 (2026-06-17 overnight): MunitionsAssemblyStep routing ---
+    # mesh:retrieveKnowledge typed against
+    # http://example.com/manufacturing#MunitionsAssemblyStep,
+    # owned by Engine W. This is the FIRST mfg verb in the matrix.
+    #
+    # Why MunitionsAssemblyStep: of the 7 manufacturing classes Gap-1
+    # released (Step 1 overnight), MunitionsAssemblyStep is the most
+    # content-shaped (procedural assembly steps for munitions —
+    # narrative + step lists — exactly what retrieveKnowledge over
+    # manuals search handles). The other 6 (ExplosiveMaterial,
+    # ExplosivesSafetyHazard, ComplianceRule, StandardIndustrialProcess,
+    # Class_1_1, Class_1_3) are mostly classifier categories rather
+    # than content kinds.
+    #
+    # **Multi-phrasing probe scan** (the standing gate per the B4 verb
+    # discipline) ran 5 probes — recorded findings:
+    #   P1 "What are the assembly steps for the M67 grenade?"
+    #        -> MunitionsAssemblyStep @ 0.98 (instance-resolution layer
+    #         also fired on 'M67 grenade'; providers abstained cleanly)
+    #   P2 "Show me the munitions assembly procedure for the warhead"
+    #        -> MunitionsAssemblyStep @ 0.95
+    #   P3 "What is the explosive material classification..."
+    #        -> ExplosiveMaterial @ 0.99 (cross-class boundary clean)
+    #   P4 "What are the safety hazards in munitions assembly?"
+    #        -> ExplosivesSafetyHazard @ 0.96 (ambiguous case;
+    #         'safety hazards' anchor won over 'munitions assembly')
+    #   P5 "Standard industrial process for warhead fill"
+    #        -> StandardIndustrialProcess @ 0.98 (cross-class clean)
+    #
+    # **Lexical-cue findings worth banking** (analogous to the B4
+    # documents↔content/instance duality):
+    #   - MunitionsAssemblyStep has strong "assembly steps" /
+    #     "assembly procedure" anchors — clean discriminator.
+    #   - Cross-class boundaries P3/P5 are sharp.
+    #   - The P4 ambiguity ("safety hazards in munitions assembly") is
+    #     the analog of the verb 4 "describe + parts" tension: when two
+    #     anchors compete, the more specific class wins (ExplosivesSafetyHazard
+    #     beats MunitionsAssemblyStep on a mixed query). Bank as next-
+    #     session observation; not blocking the mfg-V1 ship.
+    #
+    # Matrix row picks P1 — highest confidence (0.98), strong "assembly
+    # steps" trigger, bonus instance-resolution layer engagement.
+    #
+    # **Important banked items** for daylight:
+    #   1. URI namespace is `http://example.com/manufacturing#` —
+    #      placeholder, not a stable identifier. When the canonical-
+    #      pipeline ingest of Munitions.ttl lands (Gap-1 banked work),
+    #      migrating to `http://edgy-solutions.com/ontology/mfg#`
+    #      would stabilize the URIs. The mfg verb works on whatever
+    #      URI is in substrate; not blocking.
+    #   2. The 7 mfg classes are pre-canonical residue
+    #      (synced_from=None). The canonical-pipeline re-ingest will
+    #      need to MERGE on URI (preserves identity + this verb's
+    #      registration) vs. re-create. MERGE is the safer call.
+    RouteCase(
+        query="What are the assembly steps for the M67 grenade?",
+        expected_subject_substring="MunitionsAssemblyStep",
+        expected_verb_iri="mesh:retrieveKnowledge",
+        min_confidence=0.5,
+        domain="MANUFACTURING",
+        entitled_domains=("MANUFACTURING",),
+    ),
+
     # --- Out of registry / should fall back ---
     RouteCase(
         query="What's the weather like today?",
