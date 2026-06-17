@@ -347,6 +347,88 @@ meshRegistrar:
       memory: 512Mi
 
 # ==========================================================================
+# primeSubstrate — Helm-managed bootstrap Job for the canonical ontology
+# pipeline.
+#
+# Runs `setup/prime_databases.py` as a post-install / post-upgrade Helm hook
+# inside the dagster-server image (which has the script + all required
+# Python deps + the canonical TTL list baked in). Inherits the chart's
+# {{ Release.Name }}-config ConfigMap, so it automatically picks up the
+# right Neo4j / Weaviate / Jena / MinIO endpoints for your cluster —
+# whether those services are chart-internal or external (BYO Neo4j etc.).
+#
+# Why this exists: the script's prior invocation pattern was "operator
+# clones the repo, sets up 5 port-forwards, sets env vars, runs script."
+# That works but is operator-friction-heavy and assumes the cluster's
+# rendered service shapes match what the operator port-forwards. For
+# clusters with external Neo4j/Weaviate/Jena (work cluster, multi-tenant
+# d4-prod), the port-forward shape diverges from chart defaults entirely.
+# This Job sidesteps all of that — it runs in-cluster against whatever
+# endpoints the ConfigMap declares.
+#
+# Usage modes:
+#   1. First-time install: leave `enabled: true` to prime substrate as
+#      part of `helm install`.
+#   2. Fresh-start re-prime (the "month-old substrate" recovery case):
+#      `helm upgrade ... --set primeSubstrate.enabled=true \
+#        --set primeSubstrate.wipe=true`. The Job triple-guards the wipe
+#      with the script's own --i-mean-it + --namespace gate; the wipe
+#      flag also requires `enabled: true` to fire.
+#   3. Idempotent re-run on every upgrade: leave `enabled: true` and
+#      `wipe: false`. Safe because the canonical pipeline MERGE on URI.
+#      The cost is a small Job runtime on every upgrade; the benefit is
+#      substrate drift is corrected automatically if it accumulates.
+#
+# After a successful first-prime, most installations flip
+# `enabled: false` for routine upgrades to skip the Job. The default
+# below is `false` so charts upgraded from older versions don't
+# unexpectedly trigger priming.
+# ==========================================================================
+
+primeSubstrate:
+  enabled: false
+  # When true, the Job invokes the script with
+  # `--wipe --i-mean-it --namespace=<release-ns>`. Triple-guarded by the
+  # script itself; one mis-set boolean cannot wipe the wrong cluster.
+  # ABSOLUTELY DESTRUCTIVE — drops every Neo4j node, every Weaviate
+  # collection, every Jena graph in the cluster the Job runs against.
+  # Use only when you want a fresh-start re-prime; flip back to false
+  # after the wipe has run.
+  wipe: false
+  # When true, the Job invokes `--trigger-ingest`, which fires the
+  # dagster ingest_ontology_job for each partition. Typically true —
+  # without it, the canonical pipeline only uploads TTLs to MinIO and
+  # waits for the dagster sensor / manual UI trigger to ingest.
+  triggerIngest: true
+  # Image reuse: the dagster-server image (used by dagster-user-code)
+  # has the invincible-agent source COPY'd in, which includes
+  # setup/prime_databases.py and the full CANONICAL_TTL_MANIFEST.
+  # Override here if you need to point at a different image (e.g. a
+  # dedicated bootstrap image, a pinned SHA for reproducibility).
+  image:
+    repository: "edgy-solutions/invincible-agent/dagster-server"
+    tag: "latest"
+    pullPolicy: "Always"
+  # Resource budget. The script is mostly I/O (downloads TTLs, uploads
+  # to MinIO, triggers dagster), so CPU/memory are modest. The dagster
+  # ingest itself runs in dagster-user-code, not here.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  # Helm hook configuration. post-install fires on initial deploy;
+  # post-upgrade fires on every `helm upgrade` when enabled=true.
+  # hook-delete-policy ensures a failed previous Job is cleaned up
+  # before retrying, so re-runs don't pile up old Jobs in the
+  # namespace.
+  hook:
+    weight: "10"
+    deletePolicy: "before-hook-creation"
+
+# ==========================================================================
 # Frontend Services
 # ==========================================================================
 

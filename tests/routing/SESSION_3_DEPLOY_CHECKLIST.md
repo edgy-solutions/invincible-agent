@@ -160,35 +160,94 @@ real work data IS the first demo.
 
 ### §2.1 Order of operations
 
+**Recommended (Helm-managed priming, added 2026-06-17):**
+
+```
+1. Helm install with primeSubstrate.enabled=true:
+     helm install invincible-agent helm/invincible-agent \
+       -n <ns> -f path/to/values-<env>.yaml \
+       --set primeSubstrate.enabled=true \
+       --set primeSubstrate.triggerIngest=true
+   This runs the prime-substrate Job as a post-install hook. The Job
+   uses the dagster-server image (has setup/prime_databases.py +
+   canonical TTL list + Python deps baked in) and inherits Neo4j/
+   Weaviate/Jena/MinIO endpoints from the chart's ConfigMap —
+   automatically targets external stores when the values declare them.
+   See `primeSubstrate` block in values.yaml for the full options.
+
+2. For the "month-old substrate" fresh-start case (you've been deployed
+   before; you want a clean re-prime against current canonical sources):
+     helm upgrade invincible-agent helm/invincible-agent \
+       -n <ns> -f path/to/values-<env>.yaml \
+       --set primeSubstrate.enabled=true \
+       --set primeSubstrate.wipe=true \
+       --set primeSubstrate.triggerIngest=true
+   The Job invokes `--wipe --i-mean-it --namespace=<release-ns>
+   --trigger-ingest`. The script's --i-mean-it gate is honored
+   structurally; the --namespace arg prevents a typo from wiping the
+   wrong cluster. ABSOLUTELY DESTRUCTIVE — drops every Neo4j node,
+   every Weaviate collection, every Jena graph in the connected
+   stores. Confirm via §6.5 reversibility discipline before running
+   against work data.
+
+3. Wait for the Job to complete (watch via
+   `kubectl logs -n <ns> job/<release>-prime-substrate -f`).
+   Typically ~5min for 11 partitions; Sustainment is the heavy lifter.
+
+4. After successful prime, flip primeSubstrate.enabled=false (or
+   leave at true for idempotent re-priming on subsequent
+   `helm upgrade` calls — safe because the canonical pipeline
+   MERGE on URI; just costs a small Job runtime per upgrade).
+   With wipe=false, re-priming is non-destructive: it overwrites
+   same-URI classes with current canonical values; doesn't delete
+   residue from removed/renamed sources. Use wipe=true for a clean
+   slate when the substrate has accumulated stale state (the
+   2026-06-17 lesson: month-old substrate from doc-tools/setup_env.py
+   doesn't reconcile cleanly to current via additive priming).
+
+5. Restart engine pods so they re-register against the now-correct
+   substrate:
+     kubectl rollout restart -n <ns> deployment -l 'app.kubernetes.io/component in (engine-a,engine-d,engine-e,engine-f,engine-o,engine-w,data-analyst)'
+   (Engines call register_engine_to_mesh() in their lifespan hook;
+   it only fires at startup. If they started before substrate was
+   primed, registration failed Contract D — restart re-runs
+   registration against the populated substrate.)
+
+6. Substrate verification:
+     ROUTING_TEST_BASE_URL=http://localhost:8084 \
+     NEO4J_PASSWORD=<...> \
+     pytest tests/routing/test_substrate_invariants.py \
+            tests/routing/test_no_legacy_dns_references.py
+   Expected: 14/14 substrate + 1/1 source DNS guard = 15/15 green.
+
+7. Matrix run: pytest tests/routing/test_classify_route.py.
+   Expected: 22/22 modulo §1.3 real-name substitution against work's
+   actual DataHub catalog and §6.1 work-cluster-specific deltas
+   (manuals rows depend on what manuals are ingested into work).
+```
+
+**Fallback (local script invocation):**
+
+The historical procedure still works for clusters where Helm hooks
+aren't available, the dagster-server image isn't reachable, or the
+operator wants direct interactive feedback. Per §6.3:
+
 ```
 1. Helm install — brings up infra + dagster + mesh-registrar (engines
-   not yet up)
-2. Run prime_databases.py (setup/) — Neo4j constraints + Jena dataset
-   + MinIO TTL upload
-   Decision flag: --trigger-ingest fires the dagster ingest_ontology_job
-   for each partition; without it, manually fire from Dagster UI or
-   wait for the sensor to auto-detect uploads.
-3. Wait for the canonical pipeline to complete (typically ~5min for
-   11 partitions; Sustainment is the heavy lifter).
-4. Verify substrate: cypher `MATCH (c:OntologyClass) WHERE c.domain IN
-   ['MAINTENANCE','MIL','MESH','DATA_ENGINEERING','SUSTAINMENT'] RETURN
-   c.domain, count(c)`. Expect: MAINTENANCE~261, MIL=10, MESH=22,
-   DATA_ENGINEERING=45, SUSTAINMENT~1068 (counts may vary slightly with
-   upstream TTL versions).
-5. Deploy engines (engine_a / engine_d / engine_e / engine_w /
-   data_analyst). Each registers through the gateway saga on startup;
-   verify mesh-registrar logs show 14 `Registered ...` lines.
-6. Substrate verification: run substrate invariants
-   (pytest test_substrate_invariants.py). Expected: 9/10 green; the
-   1 red is the pre-existing mesh:GraphExpertResponse compact-spine
-   debt unless that's been migrated.
-7. Matrix run: pytest test_classify_route.py. Expected: 18/18 (replace
-   sandbox asset names with work-cluster ones per §1.3 first).
-8. Bonus: substrate-coverage guard:
-   pytest test_substrate_invariants.py::test_substrate_covers_routing_via_v02_saga_edges
-   — proves every matrix-successful (subject, verb) pair is backed by
-   a v0.2 saga edge.
+   not yet up; primeSubstrate.enabled left at false).
+2. Operator port-forwards Neo4j (7687), Weaviate (8080), Weaviate-gRPC
+   (50051), Fuseki (3030), MinIO (9000), Dagster-webserver (3000) from
+   the deploy namespace.
+3. Operator runs `python setup/prime_databases.py --trigger-ingest`
+   from a local invincible-agent venv with NEO4J_PASSWORD,
+   FUSEKI_PASSWORD, AWS_*/MINIO_* env vars set.
+4. Wait, then continue from step 5 above (rollout-restart engines).
 ```
+
+The fallback works but requires 6+ port-forwards and assumes the
+local venv has the script's deps. The Helm-managed path is generally
+faster + works against external (BYO) Neo4j/Weaviate/Jena automatically
+because the Job inherits the ConfigMap.
 
 ### §2.2 Predictable failures + their meanings
 

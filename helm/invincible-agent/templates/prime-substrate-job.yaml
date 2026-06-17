@@ -1,0 +1,155 @@
+{{- if .Values.primeSubstrate.enabled }}
+# ============================================================================
+# prime-substrate Job — Helm-managed canonical-pipeline bootstrap.
+#
+# Runs `setup/prime_databases.py` as a post-install / post-upgrade Helm hook
+# inside the dagster-server image (the script + canonical TTL list + python
+# deps are all baked in). Inherits the cluster's {{ .Release.Name }}-config
+# ConfigMap and {{ .Release.Name }}-secrets so the script connects to
+# whatever Neo4j / Weaviate / Jena / MinIO endpoints the chart declares —
+# internal services for sandbox, external services for clusters that BYO
+# their own stores.
+#
+# Gate: this Job only renders when `primeSubstrate.enabled=true`. The
+# script's own --i-mean-it + --namespace guards still apply to wipe.
+# ============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-prime-substrate
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "prime-substrate" "root" .) | nindent 4 }}
+  annotations:
+    # Helm hook: fires on initial install AND every subsequent upgrade
+    # (when enabled=true). For "prime once" semantics, the operator sets
+    # enabled=true for the install/upgrade that should prime, then flips
+    # back to false for routine upgrades.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": {{ .Values.primeSubstrate.hook.weight | quote }}
+    # before-hook-creation: any previous prime-substrate Job (succeeded or
+    # failed) is deleted before this hook runs. Re-runs don't accumulate
+    # stale Jobs in the namespace; a failed prior attempt doesn't block
+    # the next try.
+    "helm.sh/hook-delete-policy": {{ .Values.primeSubstrate.hook.deletePolicy | quote }}
+spec:
+  # Don't restart on failure — the operator should investigate before
+  # re-running. If the failure is transient (e.g., dagster webserver
+  # not yet ready), the operator re-runs `helm upgrade` to re-fire the hook.
+  backoffLimit: 0
+  # Job lingers for 1 hour after completion so logs are inspectable. After
+  # that, k8s reaps it. before-hook-creation on the next run also reaps it.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "prime-substrate" "root" .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Job pods don't restart on container exit; failure is reported to
+      # the Job, which then either retries (backoffLimit > 0) or fails
+      # outright (our backoffLimit: 0).
+      restartPolicy: Never
+      containers:
+        - name: prime-substrate
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-server" "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.primeSubstrate.image.pullPolicy }}
+          # The dagster-server image WORKDIR is /app and has the
+          # invincible-agent repo COPY'd in. Run the script from there.
+          workingDir: /app
+          command:
+            - python
+            - setup/prime_databases.py
+          args:
+            {{- if .Values.primeSubstrate.wipe }}
+            # ABSOLUTELY DESTRUCTIVE — drops every Neo4j node, every
+            # Weaviate collection, every Jena graph in the connected
+            # cluster. The script's --i-mean-it gate is honored; the
+            # --namespace=<release-ns> argument prevents a typo from
+            # wiping the wrong cluster.
+            - "--wipe"
+            - "--i-mean-it"
+            - "--namespace={{ .Release.Namespace }}"
+            {{- end }}
+            {{- if .Values.primeSubstrate.triggerIngest }}
+            # Fire the dagster ingest_ontology_job per partition once
+            # the canonical TTLs have been uploaded. Without this, only
+            # the upload happens; ingestion waits for the dagster
+            # sensor or a manual UI trigger.
+            - "--trigger-ingest"
+            {{- end }}
+          # Pull cluster-wide config (Neo4j/Weaviate/Jena URLs) from the
+          # ConfigMap. The same ConfigMap engines envFrom so the priming
+          # Job automatically targets the same backends — whether
+          # internal or external (BYO Neo4j/Weaviate/Jena scenario).
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            # ------------------------------------------------------------
+            # Env-var name bridges. The chart's ConfigMap publishes some
+            # values under names the script doesn't read by default;
+            # rewrite them here so the script picks them up. This keeps
+            # the ConfigMap aligned with what engines expect (the
+            # engineering convention) and avoids changing the script's
+            # CLI surface.
+            # ------------------------------------------------------------
+            # JENA_URL: the script wants the BASE URL of the Fuseki server
+            # (e.g., http://fuseki:3030). The ConfigMap publishes
+            # JENA_SPARQL_ENDPOINT which is the full query URL
+            # (.../ds/query) — strip the dataset path.
+            - name: JENA_URL
+              value: "{{ include "invincible-agent.fusekiUrl" . }}"
+            # S3_ENDPOINT_URL / AWS_*: the canonical pipeline talks to
+            # MinIO via S3-compatible API. ConfigMap/values use the
+            # MINIO_* names; the script + dagster use AWS_* + S3_*
+            # names. Bridge them here. The fallback keys make this safe
+            # even when MinIO env vars aren't declared in values (chart
+            # falls through to the script's defaults).
+            - name: S3_ENDPOINT_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: MINIO_ENDPOINT_URL
+                  optional: true
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: MINIO_ACCESS_KEY
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: MINIO_SECRET_KEY
+                  optional: true
+            # ONTOLOGY_BUCKET: where canonical TTLs go in MinIO. Defaults
+            # to "ontologies" in the script; override here if your bucket
+            # naming differs.
+            - name: ONTOLOGY_BUCKET
+              value: "ontologies"
+            # DAGSTER_HOST: --trigger-ingest hits dagster's GraphQL to
+            # launch ingest_ontology_job. Use the in-cluster webserver
+            # endpoint.
+            - name: DAGSTER_HOST
+              value: "http://{{ .Release.Name }}-dagster-webserver:80"
+            # NEO4J_USER alias: the script reads NEO4J_USERNAME (from
+            # ConfigMap) AND falls back to NEO4J_USER. Both work; this
+            # alias is defensive against older script versions in old
+            # images.
+            - name: NEO4J_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: NEO4J_USERNAME
+                  optional: true
+          resources:
+            {{- toYaml .Values.primeSubstrate.resources | nindent 12 }}
+{{- end }}
