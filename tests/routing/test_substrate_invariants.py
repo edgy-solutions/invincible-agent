@@ -938,3 +938,105 @@ def test_substrate_covers_routing_via_v02_saga_edges(driver):
         "registry post-v0.2; substrate-direct fixes that bypass them are "
         "regressions waiting to fire."
     )
+
+
+# -----------------------------------------------------------------------------
+# Substrate DNS guard — the sibling of `tests/routing/test_no_legacy_dns_references.py`
+#
+# The 2026-06-17 incident that motivated this guard: a user's UI query
+# ("what tables do you have?") timed out because the supervisor dispatched
+# to a legacy-DNS endpoint (`restate-agent-svc.default.svc.cluster.local:8081`).
+# The SOURCE-side guard (`test_no_live_legacy_dns_references`) was GREEN —
+# every source file's default URL had been class-fixed in the
+# legacy-DNS sweep. But TEN substrate verb edges still carried the
+# legacy URL, because they had been registered by OLDER images (pre-fix
+# source defaults), and nothing had re-registered them after the source
+# fix landed. The class-fix at the source layer didn't propagate to
+# the materialized substrate edges until the engine pods rolled over
+# with a corrected env var or rebuilt image.
+#
+# **The architectural lesson (third instance of the pattern):**
+# source-clean does NOT imply runtime-clean. Registration materializes
+# source-time defaults into substrate edges; edges materialized BEFORE
+# a source fix retain the old value until something re-registers.
+#
+# Prior instances of the same pattern:
+#   - compact-form classes: source guard green while compact-form
+#     :OntologyClass nodes sat in Neo4j (closed by adding the substrate
+#     `test_no_compact_form_ontology_classes` guard).
+#   - mesh-registrar chart-vs-cluster gap: chart's `meshRegistrar.enabled`
+#     default was false while a manually-deployed pod ran; source-side
+#     inspection couldn't see the inconsistency; the rehearsal caught it.
+#
+# **Standing rule earned:** every source-level guard needs a substrate-
+# level sibling, because registration is what crosses the layer boundary
+# and substrate edges outlive the source-time defaults they were minted
+# from. When you add a source guard, ask: "what's the substrate version
+# of this property, and is it guarded too?"
+#
+# This guard is the substrate sibling of `test_no_live_legacy_dns_references`.
+# It runs the same scan in Neo4j, asserting zero verb edges with the legacy
+# DNS pattern in their `endpoint_url`. Together the source + substrate
+# guards close the class: source-clean stays source-clean (source guard);
+# any past or future materialization of legacy DNS into substrate trips
+# at CI (substrate guard) before it can break dispatch.
+LEGACY_DNS_FRAGMENT = ".default.svc.cluster.local"
+
+
+def test_no_legacy_dns_in_substrate_verb_edges(driver):
+    """No verb edge in Neo4j may carry a `*-svc.default.svc.cluster.local`
+    URL in its endpoint_url. Substrate-side sibling of the source-level
+    `tests/routing/test_no_legacy_dns_references.py` guard.
+
+    If this fails: the substrate contains verb edges whose endpoint URLs
+    point to non-resolvable legacy K8s service names. Dispatch will fail
+    on these — supervisor → engine fails at DNS, the dagster run dies,
+    cortex_bff times out. The fix is the same shape as the 2026-06-17
+    Engine A + DA incident: pin the relevant engine's `ENGINE_*_PUBLIC_URL`
+    in the deployment's env (helm values), restart the engine pod, and
+    let mesh-registrar's idempotent v0.2 saga MERGE update the edges via
+    re-registration.
+
+    The pre-fix incident: user's query routed to mesh:enumerateCatalog →
+    dispatched to `http://restate-agent-svc.default.svc.cluster.local:8081/analyze`
+    → DNS failure → dagster run failed in 17s. Substrate had 10 verb edges
+    with legacy DNS that the source guard couldn't see.
+    """
+    with driver.session() as session:
+        offenders = session.run(
+            """
+            MATCH (s:OntologyClass)-[r]->(o:OntologyClass)
+            WHERE r.iri IS NOT NULL
+              AND r.endpoint_url CONTAINS $fragment
+            RETURN
+                r.iri          AS verb_iri,
+                s.uri          AS subject_uri,
+                r.endpoint_url AS endpoint_url,
+                r._tool_urn    AS tool_urn
+            ORDER BY r.iri, s.uri
+            """,
+            fragment=LEGACY_DNS_FRAGMENT,
+        ).data()
+    assert not offenders, (
+        f"Found {len(offenders)} substrate verb edge(s) with legacy DNS "
+        f"pattern '{LEGACY_DNS_FRAGMENT}' in endpoint_url. These edges "
+        f"will FAIL DISPATCH (legacy service names don't resolve in "
+        f"current cluster). Fix shape (per the 2026-06-17 Engine A + DA "
+        f"incident):\n"
+        f"  1. Identify which engine owns each edge (group by tool_urn "
+        f"     or subject_uri).\n"
+        f"  2. Pin that engine's ENGINE_*_PUBLIC_URL in helm values "
+        f"     pointing at the actual K8s service "
+        f"     (`iagent-<component>:<port>`).\n"
+        f"  3. helm upgrade + kubectl rollout restart the engine pod.\n"
+        f"  4. Engine re-registers via mesh-registrar's idempotent v0.2 "
+        f"     saga; MERGE updates the edge endpoint_url in place.\n"
+        f"  5. Re-run this guard; verify zero offenders.\n"
+        f"\n"
+        f"Offending edges:\n"
+        + "\n".join(
+            f"    - {e['verb_iri']} from {e['subject_uri']} "
+            f"-> {e['endpoint_url']} (tool_urn={e['tool_urn']})"
+            for e in offenders
+        )
+    )

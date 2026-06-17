@@ -479,7 +479,31 @@ confirm the work equivalent is set:
 - [ ] `engineE`, `engineW`, `meshRegistrar` — **enabled: true** (the rehearsal-finding fix)
 - [ ] `agentFleet.env` — LLM endpoints (work-specific IPs), `MEM0_*` settings, BAML config
 - [ ] `agentFleet.secrets` — NEO4J_PASSWORD (work value), SUPERSET_ACCESS_TOKEN (work)
-- [ ] Per-engine `env:` blocks — `ENGINE_W_PUBLIC_URL`, `ENGINE_E_PUBLIC_URL` belt-and-suspenders pins
+- [ ] Per-engine `env:` blocks — **all four** engine PUBLIC_URL pins
+      (`ENGINE_A_PUBLIC_URL`, `ENGINE_DA_PUBLIC_URL`,
+      `ENGINE_W_PUBLIC_URL`, `ENGINE_E_PUBLIC_URL`) + Engine A's
+      `DATAHUB_WRAPPER_URL` pin. The 2026-06-17 incident (user UI
+      query → dispatch to legacy DNS → dagster run failure → UI
+      timeout) was Engine A + DA *not* being pinned — the rehearsal
+      closed W + E but A + DA were correctly tagged out-of-scope and
+      then needed to be closed by the incident itself. **For the work
+      cluster, pin all four up front.** The pins are:
+      ```yaml
+      engineA:
+        env:
+          ENGINE_A_PUBLIC_URL: "http://iagent-engine-a:8081/analyze"
+          DATAHUB_WRAPPER_URL: "http://iagent-engine-d:8085"
+      dataAnalyst:
+        env:
+          ENGINE_DA_PUBLIC_URL: "http://iagent-data-analyst:8089/analyze_data"
+      engineE:
+        env:
+          ENGINE_E_PUBLIC_URL: "http://iagent-engine-e:8086/query_graph"
+      engineW:
+        env:
+          ENGINE_W_PUBLIC_URL: "http://iagent-engine-w:8088/query_knowledge"
+      ```
+      (Adjust host portions if work uses a non-`iagent` Release.Name.)
 - [ ] `dataAnalyst`, `engineA`, `engineO`, `engineD`, `engineF` — replicas, resources, work-specific overrides
 - [ ] `postgresql`, `neo4j`, `weaviate`, `fuseki`, `keycloak`, `topaz` — admin passwords (NO `changeme-*-sandbox` allowed)
 - [ ] `dagster` — image repository + ingress hostnames (work DNS)
@@ -540,9 +564,25 @@ pytest tests/routing/test_classify_route.py \
 
 | Suite | Expected | Notes |
 |---|---|---|
-| `test_no_legacy_dns_references.py` | 1/1 (CI guard; pure source-scan) | Independent of cluster; deterministic |
-| `test_substrate_invariants.py` | 13/13 | Substrate counts may differ from sandbox; the GUARDS work against logical invariants, not counts |
+| `test_no_legacy_dns_references.py` | 1/1 (source-scan; deterministic) | Independent of cluster; would have been green pre-2026-06-17 incident |
+| `test_substrate_invariants.py` | **14/14** including the new substrate-DNS guard (`test_no_legacy_dns_in_substrate_verb_edges`) | The 2026-06-17 incident showed the source guard alone wasn't enough; the substrate-side sibling is what proves the env-var pins actually cleaned the materialized edges. Hard required green on post-rollout — if it's red, the pins didn't take. |
 | `test_classify_route.py` matrix | **Conditional** — see below |
+
+**The substrate-DNS guard is the post-rollout proof that the env-var
+pins worked.** Run it explicitly against the bootstrapped work cluster:
+
+```bash
+# After helm install + canonical ingest + engine registrations complete:
+kubectl port-forward -n <work-ns> svc/iagent-neo4j 7687:7687 &
+NEO4J_PASSWORD="<work-neo4j-password>" \
+  pytest tests/routing/test_substrate_invariants.py::test_no_legacy_dns_in_substrate_verb_edges -v
+```
+
+If this fails after a fresh bootstrap, the §6.2 env-var pins didn't
+translate to substrate. Most likely cause: an engine's pin is missing
+from work-values, OR the engine image is so old its env var isn't read.
+**Halt and reconcile per the §6.6 hard-stop discipline.** Do NOT proceed
+to dispatch / Tier-3 acceptance until this is clean.
 
 **Matrix conditional predictions** (the work-cluster-specific deltas):
 

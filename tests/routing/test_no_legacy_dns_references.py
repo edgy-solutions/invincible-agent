@@ -93,6 +93,11 @@ ALLOWLIST: list[tuple[str, str]] = [
     ("helm/invincible-agent/values-sandbox.yaml", "data-analyst-svc.default.svc.cluster.local"),
     ("helm/invincible-agent/values-sandbox.yaml", "restate-agent-svc.default.svc.cluster.local"),
     ("helm/invincible-agent/values-sandbox.yaml", "datahub-wrapper-svc.default.svc.cluster.local"),
+    # The new substrate-DNS guard's own docstring + LEGACY_DNS_FRAGMENT
+    # constant name the pattern textually so the guard knows what
+    # substring to look for in Neo4j edges. Self-reference, not a live
+    # default.
+    ("tests/routing/test_substrate_invariants.py", "default.svc.cluster.local"),
 ]
 
 

@@ -3,6 +3,64 @@
 **Date:** 2026-06-13 overnight
 **Decision:** ADR-0006 §Addendum rollback via Restate saga, conjunctive-read invariant as the load-bearing safety fact.
 
+## 2026-06-17 — UI query incident → source-guard masked substrate-dirty class-fix → new standing rule (substrate-sibling guards)
+
+User reported "Timeout or failed to fetch UI payload" on a "what tables do you have?" query through the sandbox UI (dagster run `c9cd1db9`).
+
+### The diagnosis (technical)
+
+Engine O routed correctly (`/resolve` → `idp:Dataset` @ 0.98; `/classify_predicate` → `mesh:enumerateCatalog` @ 0.95). The dagster supervisor then dispatched to:
+
+```
+http://restate-agent-svc.default.svc.cluster.local:8081/analyze
+```
+
+**Legacy DNS.** The service doesn't exist in the current cluster (Engine A's actual service is `iagent-engine-a`). DNS failure → `execute_subtask[task_0]` failed in 17s → `generate_ui_payload` never fired → cortex_bff polled until the keepalive deadline expired.
+
+Substrate inspection showed **10 verb edges across Engine A + Engine DA** still on legacy DNS — 9 Engine A catalog verbs + 1 Engine DA `mesh:analyzeDataset` verb. The 2026-06-16 legacy-DNS class-sweep had fixed every source default, but Engine A and Engine DA pods hadn't been restarted (correctly out of B4 / rehearsal scope), so their substrate edges retained the old URL from their original pre-fix registration.
+
+### Immediate fix (same shape as the rehearsal closure)
+
+Added helm env-var pins to `values-sandbox.yaml`:
+- `engineA.env.ENGINE_A_PUBLIC_URL: "http://iagent-engine-a:8081/analyze"`
+- `engineA.env.DATAHUB_WRAPPER_URL: "http://iagent-engine-d:8085"` (so Engine A's smolagent's `search_datahub` call doesn't itself hit legacy DNS one layer in)
+- `dataAnalyst.env.ENGINE_DA_PUBLIC_URL: "http://iagent-data-analyst:8089/analyze_data"`
+
+`helm upgrade` → Engine A + DA pods rolled over → `register_engine_to_mesh` read the pinned env vars → mesh-registrar's idempotent v0.2 saga MERGE updated all 10 substrate edges in place. **Substrate has zero legacy-DNS edges now.** Commit: [af8dc3d](../../af8dc3d).
+
+### The architectural finding — third instance of the class-of-class-fixes pattern
+
+The architect's reframe is the actual lesson: **the source-level DNS guard was GREEN while the substrate had 10 legacy-DNS edges.** The guard scans source files for `.default.svc.cluster.local`; every source file was clean. Yet dispatch hit `restate-agent-svc.default.svc.cluster.local` live. **The legacy DNS wasn't in source — it was baked into substrate edges from a prior registration**, and the guard checks source, not substrate.
+
+This is the same structural pattern that has surfaced three times now:
+
+| Instance | Source-layer state | Substrate-layer state | What closed the gap |
+|---|---|---|---|
+| Compact-form classes (2026-06-15) | Source guard green (canonical full-IRI everywhere in source) | Compact-form `:OntologyClass` nodes still in Neo4j from older ingests | Added substrate-side `test_no_compact_form_ontology_classes` guard |
+| `meshRegistrar` chart-vs-cluster (2026-06-16 rehearsal) | Source has chart default of `enabled: false` | Cluster had mesh-registrar pod running from out-of-band deployment | The rehearsal itself (running the chart against a clean cluster) |
+| Legacy DNS in substrate (2026-06-17, this incident) | Source guard green (all defaults `iagent-*`) | 10 verb edges materialized with legacy DNS from pre-fix registrations | This incident; added substrate-side `test_no_legacy_dns_in_substrate_verb_edges` guard |
+
+**Standing rule earned (capital-S Standing — applies forward across the whole project):**
+
+> **Every source-level guard needs a substrate-level sibling, because source-clean does NOT imply runtime-clean.** Registration is what crosses the layer boundary — source defaults become substrate edges at registration time, and substrate edges outlive the source defaults they were minted from. When you add a source guard, ask: **"what's the substrate version of this property, and is it guarded too?"** Source guard + substrate guard together; either alone has a blind spot the other covers.
+
+The unifying observation: the project's guard stack has been **source-heavy**, and the runtime-divergence class keeps slipping through to the cheap venue. The fix for the *class of class-fixes* is the question above, asked routinely whenever a new source guard is added.
+
+### The substrate-sibling guard shipped
+
+[tests/routing/test_substrate_invariants.py::test_no_legacy_dns_in_substrate_verb_edges](test_substrate_invariants.py) added — queries Neo4j for any verb edge whose `endpoint_url` contains `.default.svc.cluster.local`, asserts zero. Sibling of [tests/routing/test_no_legacy_dns_references.py](test_no_legacy_dns_references.py)'s source-scan guard. Together they close the legacy-DNS class at both layers; the next occurrence (a fresh engine added with a stale URL bake-in, or a registration race that minted an old default) trips at CI before it can break dispatch.
+
+Substrate invariants count: was 13, now **14**. Total guards: 22/22 routing + 14/14 substrate + 1/1 source DNS = 37/37 going forward.
+
+### Deploy checklist updates
+
+- §6.2 expanded: pin **all four** engine PUBLIC_URLs (A, DA, W, E) + Engine A's `DATAHUB_WRAPPER_URL`. The 2026-06-17 incident showed pinning W/E only isn't enough.
+- §6.4.1 expanded: substrate-DNS guard is now part of the post-rollout matrix. **Hard required green** — if it's red after fresh bootstrap, the pins didn't translate to substrate (most likely an engine's pin is missing or its image is so stale the env var isn't read). Halt-and-reconcile per §6.6 before proceeding to dispatch / Tier-3 acceptance.
+
+### Why the cheap venue paid for itself one more time
+
+The architect's framing: the user's UI query was the *separate session* the durability arc's systemic finding had predicted ("Engine A and Engine DA have the same legacy-DNS pattern, separate session, same fix shape"). The prediction held; the incident was the foretold one; the fix was the known shape. **The finding came due in the venue where coming-due is free** — locally, on your own try, before a work-cluster deploy in front of an audience. The cheap venue worked exactly as designed, one venue earlier than expected.
+
 ## 2026-06-16 — Tier-3 four-layer fix: URN threaded end-to-end, fabrication structurally eliminated
 
 Architect 2026-06-16 framing: **"this is a correctness fix, not a feature."** The system was fabricating URNs at the execution layer — confidently-wrong behavior the whole architecture forbids everywhere else. The fix is "stop discarding the real resolved identifier and stop letting DA invent one," threaded through four layers, with one keystone gate: the acceptance test must prove DA *uses the real URN* AND *can't fabricate when it misses*, not just that the happy path works.
