@@ -408,3 +408,369 @@ different infrastructure.
 Run the procedure. Don't skip §1.3 (work-cluster asset names) — the
 architect's "two birds" framing made this both a deploy prerequisite
 AND B0's question inventory seed.
+
+---
+
+## §6. Deploy session execution playbook (work-cluster pre-flight)
+
+**Date added:** 2026-06-16. **Status:** ready to execute when the
+work-cluster deploy is scheduled.
+
+### §6.0 Mode change — read this first
+
+Every prior session has been in the **cheap venue** (sandbox), where the
+discipline (predict, snapshot, matrix-before-after, halt-on-surprise)
+made mistakes recoverable in minutes. The work-cluster deploy is the
+**first time the venue isn't cheap.** The operation isn't riskier — it's
+a re-run of a bootstrap that just passed 36/36 clean in the rehearsal —
+but the *recovery properties* differ. The discipline that's been
+reflexive needs to be **more deliberate, not less**, precisely because
+the safety net is thinner.
+
+The fresh-bootstrap rehearsal made the deploy defensible by proving the
+chart works against a clean cluster. But "proven in the cheap venue" and
+"executed in the expensive venue" are different acts — the gap is where
+the three loaded regressions lived in the sandbox arc (chart-vs-cluster
+drift that only showed when the chart was run against a clean cluster).
+**The work cluster is *another* clean cluster the chart hasn't been run
+against**, which means it can have its own accretion gaps: work-cluster-
+specific out-of-band state, work-values that differ from sandbox in
+unrecorded ways, a work DataHub catalog that's structurally different.
+
+The pre-flight's job is to predict the work-cluster-specific deltas
+explicitly so the new venue's surprises happen here, not in front of
+the audience.
+
+### §6.1 Pre-flight predictions — what's the same, what's different
+
+**Same as sandbox (the proven-portable layer):**
+
+| Layer | Why it stays the same |
+|---|---|
+| Helm chart templates | Sandbox + work both render through the same templates; chart proven by the rehearsal |
+| Source defaults (DNS class-fixed) | All `iagent-<component>:port` URLs; render correctly against `{Release.Name}-{component}` naming |
+| Engine source code (Tier-3 four-layer fix included) | Image is the carrier; rebuild propagates the fix |
+| Standing guards (substrate invariants, DNS class-fix, Tier-3 propagation) | CI; identical execution |
+| Canonical pipeline behavior | doc-tools + Writer C blank-node filter rolled into the image |
+
+**Different on work (the explicit delta list — predict each):**
+
+| Delta | What to verify pre-flight | Predicted state |
+|---|---|---|
+| `values-work.yaml` exists and includes `meshRegistrar.enabled: true` | The §1.0 deploy-blocker from the rehearsal finding. Sandbox flipped; work needs its own flip in its own values file. | **Must be present**; halt if missing |
+| `values-work.yaml` includes `ENGINE_W_PUBLIC_URL` and `ENGINE_E_PUBLIC_URL` pins | The belt-and-suspenders from the durability check. Source defaults are now correct, but the explicit pin makes the deployment's intent auditable | **Must be present**; halt if missing |
+| Work-cluster release name | If `Release.Name` differs from `iagent`, every service named `{Release.Name}-{component}` differs from the source defaults | Predict: same `iagent` release name; if different, source defaults need overrides via env var per engine |
+| Work-cluster namespace | Sandbox runs in `sandbox`; work runs in its own namespace | Predict: a single dedicated work namespace; `meshRegistrar.enabled` discipline still applies |
+| LLM endpoints (`OLLAMA_BASE_URL`, `MEM0_OLLAMA_BASE_URL`) | sandbox hardcoded to `192.168.1.119` and `192.168.1.188`; work uses its own LLM hosts | Predict: different IPs in work-values; benchmark for parity per `MODEL_COMPARISON_BENCHMARK.md` |
+| Secrets (`NEO4J_PASSWORD`, `BPMN_POSTGRES_PASSWORD`, etc.) | All `changeme-*-sandbox` markers MUST be replaced for work | **Must be replaced**; halt if any `changeme-*-sandbox` reaches work |
+| Ingress hostnames (`*.edgy-solutions.com`) | sandbox-specific routing | Predict: work uses its own DNS scheme |
+| DataHub catalog content | sandbox has `gold.sales.revenue_summary` etc. as test fixtures; work has its real catalog | Predict: §1.3 real-name substitution applies — re-point matrix rows to real work assets |
+| Manuals content (S1000D/40051) | sandbox has SANDBOXRTX + helmet IADS fixtures; work has its real manuals (or none yet) | Predict: B4 verb-routing works (substrate test), but live retrieval depends on work-ingested content. **If manuals aren't ingested into work, predict Tier-4 rows 11–14 as known-not-yet, NOT a failure** |
+| Tier-3 row 8 | source-complete fix; live behavior confirmed by image rebuild | Predict: deploy *is* the Tier-3 live confirmation — Acceptances A and B run post-rollout |
+
+### §6.2 Work-values translation checklist
+
+Run through `helm/invincible-agent/values-sandbox.yaml` against the
+work-values file. For each top-level section overridden in sandbox,
+confirm the work equivalent is set:
+
+- [ ] `global` — pull secret + imagePullPolicy
+- [ ] `engineB`, `engineC` — enabled state (sandbox disables both; work decides)
+- [ ] `engineE`, `engineW`, `meshRegistrar` — **enabled: true** (the rehearsal-finding fix)
+- [ ] `agentFleet.env` — LLM endpoints (work-specific IPs), `MEM0_*` settings, BAML config
+- [ ] `agentFleet.secrets` — NEO4J_PASSWORD (work value), SUPERSET_ACCESS_TOKEN (work)
+- [ ] Per-engine `env:` blocks — `ENGINE_W_PUBLIC_URL`, `ENGINE_E_PUBLIC_URL` belt-and-suspenders pins
+- [ ] `dataAnalyst`, `engineA`, `engineO`, `engineD`, `engineF` — replicas, resources, work-specific overrides
+- [ ] `postgresql`, `neo4j`, `weaviate`, `fuseki`, `keycloak`, `topaz` — admin passwords (NO `changeme-*-sandbox` allowed)
+- [ ] `dagster` — image repository + ingress hostnames (work DNS)
+- [ ] `centralGateway`, `cortexBff`, `cortexUi` — ingress + auth URLs (work DNS)
+- [ ] `secrets` — top-level secret values (NO `changeme-*-sandbox` allowed)
+
+**Gate:** before `helm install`, grep work-values for `changeme-`. If
+ANY match, halt. The placeholder discipline exists exactly to catch this.
+
+```bash
+grep -n "changeme-" path/to/values-work.yaml && echo "HALT: placeholder secrets present"
+```
+
+### §6.3 Deploy procedure (the actual sequence)
+
+The §2.1 order of operations still applies. The pre-flight specifically
+adds:
+
+1. **Pre-deploy snapshot of work cluster state** — what's already there before this deploy adds anything. Snapshot the work namespace's existing resources so rollback is concrete (see §6.5 reversibility).
+2. **Helm install** (or upgrade if a prior partial install exists):
+   ```bash
+   helm install iagent helm/invincible-agent -n <work-ns> -f path/to/values-work.yaml
+   ```
+3. **Watch `iagent-mesh-registrar` pod come up FIRST.** The rehearsal
+   finding requires it; engines block on its DNS at registration time.
+   If mesh-registrar isn't Running before engines start, registration
+   warnings appear in engine logs (the named alarm from the rehearsal).
+   Halt and resolve before proceeding.
+4. **Run `setup/prime_databases.py`** per §2.1 with `--trigger-ingest`.
+5. **Wait for the canonical pipeline** to materialize the substrate
+   (~5 min for the standard 11 partitions).
+6. **Substrate verification** — exact substrate counts depend on what
+   TTLs the work cluster ingests; predict 1400+ OntologyClass nodes if
+   the full set ingests cleanly, scaled down if work runs a subset.
+7. **Engine pod rollout** triggered by mesh-registrar coming up; check
+   each engine's first-startup log for
+   `Registered engine ... via mesh-registrar v0.2`. **Any retry-
+   exhaustion message is a named alarm — halt and diagnose** (DNS,
+   service selector, network policy).
+8. **Run the post-rollout verification** (§6.4 below).
+
+### §6.4 Post-rollout verification
+
+#### §6.4.1 Matrix + guards (the reproduce-36/36 gate)
+
+```bash
+# From this repo, against work cluster's Engine O port-forward:
+export ROUTING_TEST_BASE_URL=http://localhost:8084
+kubectl port-forward -n <work-ns> svc/iagent-engine-o 8084:8084 &
+kubectl port-forward -n <work-ns> svc/iagent-neo4j 7687:7687 &
+
+pytest tests/routing/test_classify_route.py \
+       tests/routing/test_substrate_invariants.py \
+       tests/routing/test_no_legacy_dns_references.py
+```
+
+**Predicted state after work deploy + canonical ingest + ALL B4 verbs registered:**
+
+| Suite | Expected | Notes |
+|---|---|---|
+| `test_no_legacy_dns_references.py` | 1/1 (CI guard; pure source-scan) | Independent of cluster; deterministic |
+| `test_substrate_invariants.py` | 13/13 | Substrate counts may differ from sandbox; the GUARDS work against logical invariants, not counts |
+| `test_classify_route.py` matrix | **Conditional** — see below |
+
+**Matrix conditional predictions** (the work-cluster-specific deltas):
+
+- The DATA_ENGINEERING rows (1–6, 9 in the demo script) depend on work's
+  real DataHub catalog content. After §1.3 real-name substitution, predict
+  matched routing if substituted assets exist in work's DataHub.
+- The MAINTENANCE rows (10–14) depend on what manuals content has been
+  ingested into work. If no manuals ingested yet, predict: `/resolve`
+  may UNKNOWN-out for B4 rows; that's expected, NOT a regression. Don't
+  flip Tier-4 rows red without confirming work has manuals ingested.
+
+**Outside-predictions findings:** if any row fails with a shape OTHER
+than the predicted deltas, that's a real work-cluster-specific finding.
+Characterize before pushing forward.
+
+#### §6.4.2 Tier-3 Acceptance A — URN-equality happy path
+
+This is the live confirmation that the four-layer URN propagation
+shipped in this arc actually behaves end-to-end. The image rebuild +
+pod rollout is what makes the source-complete fix live, so the deploy
+IS the live test.
+
+Procedure:
+
+```bash
+# Pick a query whose /resolve returns a non-empty provenance.instance_id.
+# (Use a substituted real work asset name per §1.3.)
+TEST_QUERY="Fetch a sample of rows from <WORK_REAL_TABLE>"
+
+# Step 1 — capture what /resolve produces (the URN we expect DA to use)
+curl -s -m 30 http://localhost:8084/resolve \
+  -X POST -H "Content-Type: application/json" \
+  -d "{\"query\":\"$TEST_QUERY\",\"domain\":\"DATA_ENGINEERING\"}" \
+  > /tmp/tier3_a_resolve.json
+EXPECTED_URN=$(jq -r '.provenance.instance_id' /tmp/tier3_a_resolve.json)
+echo "Expected URN from /resolve: $EXPECTED_URN"
+
+# Step 2 — dispatch the same query through cortex_bff /orchestrate
+# (this is the runtime path — supervisor → dispatch → Engine DA)
+kubectl port-forward -n <work-ns> svc/iagent-cortex-bff 8090:8090 &
+curl -s -m 600 http://localhost:8090/orchestrate \
+  -X POST -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <real-user-jwt>" \
+  -d "{\"query\":\"$TEST_QUERY\",\"...\":\"...\"}" \
+  > /tmp/tier3_a_orchestrate.json
+
+# Step 3 — inspect Engine DA pod logs for the smolagent's actual
+# query_datahub_asset call
+DA_POD=$(kubectl get pods -n <work-ns> -l app.kubernetes.io/component=data-analyst -o jsonpath='{.items[0].metadata.name}')
+kubectl logs -n <work-ns> "$DA_POD" --tail=200 | grep -E "query_datahub_asset|urn:li:dataset"
+```
+
+**Acceptance A criterion:** the URN appearing in the
+`query_datahub_asset` call in DA's pod logs MUST equal `$EXPECTED_URN`
+captured in Step 1. Any deviation (modification, substitution,
+abbreviation) fails Acceptance A.
+
+#### §6.4.3 Tier-3 Acceptance B — Absent-URN honest not-found (the keystone)
+
+This is the negative control — the test that proves fabrication is
+structurally eliminated, not just bypassed on the happy path.
+
+Procedure:
+
+```bash
+# Construct a query whose resolved URN is ABSENT from the work catalog.
+# Options:
+#   (a) Reference a real-shape but nonexistent asset:
+#       "Fetch a sample of rows from absent_definitely_not_in_catalog_table"
+#   (b) Reference an obviously absurd name that /resolve will fan out on
+#       but no provider will match:
+#       "Fetch rows from xyz_fake_table_for_negative_control"
+ABSENT_QUERY="Fetch a sample of rows from xyz_fake_table_for_negative_control"
+
+# Step 1 — confirm /resolve produces empty/missing instance_id
+curl -s -m 30 http://localhost:8084/resolve \
+  -X POST -H "Content-Type: application/json" \
+  -d "{\"query\":\"$ABSENT_QUERY\",\"domain\":\"DATA_ENGINEERING\"}" \
+  > /tmp/tier3_b_resolve.json
+INSTANCE_RESOLVED=$(jq -r '.provenance.instance_resolved' /tmp/tier3_b_resolve.json)
+ABSENT_INSTANCE_ID=$(jq -r '.provenance.instance_id // ""' /tmp/tier3_b_resolve.json)
+echo "instance_resolved: $INSTANCE_RESOLVED"
+echo "instance_id: $ABSENT_INSTANCE_ID"
+# Expected: instance_resolved=false or instance_id=null/empty
+
+# Step 2 — dispatch through cortex_bff
+curl -s -m 600 http://localhost:8090/orchestrate \
+  -X POST -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <real-user-jwt>" \
+  -d "{\"query\":\"$ABSENT_QUERY\",\"...\":\"...\"}" \
+  > /tmp/tier3_b_orchestrate.json
+
+# Step 3 — inspect Engine DA logs for honest not-found vs fabrication
+DA_POD=$(kubectl get pods -n <work-ns> -l app.kubernetes.io/component=data-analyst -o jsonpath='{.items[0].metadata.name}')
+kubectl logs -n <work-ns> "$DA_POD" --tail=200
+```
+
+**Acceptance B criteria (ALL must hold):**
+
+1. DA must NOT call `query_datahub_asset` with a fabricated URN.
+   Specifically: there must be NO `urn:li:dataset:(...)` string in
+   DA's pod log that wasn't passed by the supervisor.
+2. DA must return a response indicating "no URN was resolved" or
+   equivalent honest-not-found. The user-visible answer must NOT
+   claim to have queried an asset.
+3. If DA tries to call `search_datahub`, that's a fix incomplete —
+   the instruction was removed but the tool removal wasn't (it
+   shouldn't be in the roster at all). Confirm `search_datahub` is
+   not exercised.
+
+**If Acceptance B fails**: structural elimination didn't behave as
+designed. Halt and diagnose — likely the dagster-user-code image
+wasn't rebuilt with the new source, or the supervisor's payload
+field name doesn't match the handler's expected name. Bank the
+finding precisely; do not push forward on the failed contract.
+
+**On Acceptance B pass:** flip demo row 8 from ⚙ READY-PENDING-IMAGE-
+DEPLOY to ✅ READY in `docs/demo-script.md`.
+
+### §6.5 Reversibility discipline (the expensive-venue gate)
+
+**Before any work-cluster operation that isn't trivially reversible,
+confirm the reversibility first.** The sandbox let you snapshot-and-
+restore freely; the work cluster's properties may differ. Confirm what
+the equivalent is BEFORE you need it.
+
+Specifically:
+
+- [ ] **Substrate wipe path** — sandbox's `prime_databases.py --wipe
+      --i-mean-it --namespace=sandbox` requires all three guards.
+      Confirm the same triple-guard is honored on work. If work's
+      Neo4j/Weaviate/Jena store anything beyond the canonical-
+      pipeline-rebuildable substrate (e.g., user-added instances,
+      operational ABox state), `--wipe` is destructive-and-not-
+      reversible by the canonical pipeline alone. **HALT and confirm
+      before wiping work data.**
+- [ ] **Namespace deletion** — never delete the work namespace as a
+      rollback step unless explicitly authorized. Containing-resource
+      ownership may include things the deploy didn't create.
+- [ ] **Helm rollback** — `helm rollback iagent <REVISION> -n <ns>`
+      restores the prior chart revision but does NOT restore substrate
+      state. If a deploy fails midway and substrate is partially
+      populated, the canonical pipeline can rebuild substrate from
+      source; user-added state cannot.
+- [ ] **DataHub URN mutations** — if the deploy triggers any URN
+      writes against the work DataHub (e.g., the mesh-registrar's
+      DataHub MCP emit), confirm those URNs are idempotent and
+      cleanable. Sandbox treated DataHub as disposable; work may not.
+
+**If any reversibility property is unknown, halt the destructive step
+and ask before proceeding.** Push-through on unknown reversibility is
+the failure mode the expensive venue exists to teach against.
+
+### §6.6 Hard scope + halt-and-confirm criteria
+
+**In scope** for the deploy session:
+
+1. `helm install` (or upgrade) of the iagent chart with the work-values
+   file.
+2. `prime_databases.py --trigger-ingest` against work substrate.
+3. Wait for canonical pipeline; verify substrate counts.
+4. Confirm engines registered (mesh-registrar reachable, no retry-
+   exhaustion alarms in logs).
+5. Run §6.4 post-rollout verification: matrix + guards + Tier-3
+   Acceptance A + Tier-3 Acceptance B.
+6. §1.3 real-name substitution against work's actual DataHub catalog.
+7. Flip demo-script row 8 to ✅ READY on Acceptance B pass.
+
+**Out of scope** (banked from this arc):
+
+- Engine A class-fix (re-discovery pattern; first-instance-of-class
+  is the Tier-3 fix; class generalization is a future session).
+- ADR-0020 implementation (composition-walk; non-urgent; trigger-gated).
+- Manufacturing track (separate work; needs Gap-1 corpus).
+- Any new substrate cleanup.
+
+**Halt-and-confirm triggers** (do NOT push through any of these):
+
+- mesh-registrar pod fails to come Running before engines start
+  → diagnose; halt.
+- Any engine's first-startup log shows "v0.2 retries EXHAUSTED"
+  → DNS or network policy issue; halt.
+- Substrate count drops to zero, or canonical pipeline returns errors
+  → halt; do NOT proceed to matrix.
+- Matrix fails on rows OUTSIDE the predicted work-cluster deltas
+  → real finding; characterize before proceeding.
+- Tier-3 Acceptance B fails (DA fabricates on absent-URN test)
+  → structural fix didn't behave as designed; halt and diagnose.
+- Reversibility of any step is unknown
+  → halt and confirm before executing.
+- Any work-cluster out-of-band accretion gap surfaces (analogous to the
+  sandbox `meshRegistrar` finding) → characterize; possibly halt;
+  do NOT silently work around.
+
+### §6.7 What this deploy proves
+
+If the §6.4 verification all passes:
+
+- The chart bootstraps a working cluster on a venue it wasn't built on
+  (the work cluster is a different cluster than sandbox).
+- The canonical pipeline reproduces the substrate at scale.
+- The DNS class-fix renders correctly against work's service names.
+- The mesh-registrar gate (the rehearsal finding) is closed on work.
+- The Tier-3 four-layer fix behaves as designed in live execution.
+- The system holds the "stop being confidently wrong" thesis at the
+  execution layer, not just at the routing layer.
+
+That's the deploy as the thing the whole arc was building toward.
+
+### §6.8 Closing note — why this deploy is defensible rather than hopeful
+
+Every loaded regression that would have bitten live was caught in the
+cheap venue:
+
+1. Legacy-DNS source defaults (three drift instances on B4 edges + three
+   systemic in the sweep + CI guard against the fourth).
+2. `PROCEDURE_STEP` guard staleness (canonicalization missed in 2026-06-15).
+3. Helm chart's `meshRegistrar.enabled=false` default (rehearsal finding —
+   would have silently broken every engine registration on fresh
+   bootstrap).
+4. The fabrication-class bug at Tier-3 (structurally closed via four-
+   layer URN propagation; live confirmation rides on the deploy).
+
+The deploy is a re-run of a proven operation in a venue that's new but
+not untested-in-kind. The only genuinely new variables are work-cluster-
+specific (its values file, its rendered names, its catalog content, its
+reversibility properties) — and §6.1's predictions name them explicitly
+so the new venue's surprises happen in pre-flight, not in front of the
+audience.
+
+The cheap venue paid for itself three times so this venue doesn't have to.
