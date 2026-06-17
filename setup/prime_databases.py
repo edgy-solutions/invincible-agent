@@ -62,10 +62,20 @@ import argparse
 import os
 import sys
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 import urllib3
+
+# Resolved at import time so subsequent path-based manifest entries
+# resolve regardless of CWD. The script lives at setup/prime_databases.py;
+# vendored TTLs live at setup/ontologies/. So SCRIPT_DIR points at
+# .../invincible-agent/setup/ and `SCRIPT_DIR / entry["path"]` resolves
+# to the right file whether the script is invoked from the repo root
+# (local dev), from /app (Helm Job in dagster-server image), or from
+# anywhere else.
+SCRIPT_DIR = Path(__file__).resolve().parent
 from neo4j import GraphDatabase
 
 try:
@@ -125,13 +135,16 @@ CANONICAL_TTL_MANIFEST = [
         "domain": "MAINTENANCE",
         "name": "mro_extension",
         "s3_key": "maintenance/mro_extension.ttl",
-        "url": "https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/mro_extension.ttl",
+        # Locally vendored 2026-06-17 — was https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/mro_extension.ttl
+        # before TTL ownership moved from doc-tools to invincible-agent
+        # (see commit 8768728 in doc-tools and below in invincible-agent).
+        "path": "ontologies/mro_extension.ttl",
     },
     {
         "domain": "MAINTENANCE",
         "name": "maintenance_extension",
         "s3_key": "maintenance/maintenance_extension.ttl",
-        "url": "https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/maintenance_extension.ttl",
+        "path": "ontologies/maintenance_extension.ttl",
     },
 
     # ----- LAYER 1b: MIL (B0 docs-phase TBox; Session-2 acceptance-test carrier) -----
@@ -150,7 +163,7 @@ CANONICAL_TTL_MANIFEST = [
         "domain": "MAINTENANCE",
         "name": "mil_extension",
         "s3_key": "mil/mil_extension.ttl",
-        "url": "https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/mil_extension.ttl",
+        "path": "ontologies/mil_extension.ttl",
     },
 
     # ----- LAYER 2: SUSTAINMENT -----
@@ -185,7 +198,7 @@ CANONICAL_TTL_MANIFEST = [
         "domain": "DATA_ENGINEERING",
         "name": "idp_extension",
         "s3_key": "idp/idp_extension.ttl",
-        "url": "https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/idp_extension.ttl",
+        "path": "ontologies/idp_extension.ttl",
     },
 
     # ----- LAYER 4: MESH (system ontology — request/response shapes) -----
@@ -193,7 +206,7 @@ CANONICAL_TTL_MANIFEST = [
         "domain": "MESH",
         "name": "mesh_system",
         "s3_key": "mesh/mesh_system.ttl",
-        "url": "https://raw.githubusercontent.com/edgy-solutions/doc-tools/main/setup/mesh_system.ttl",
+        "path": "ontologies/mesh_system.ttl",
     },
 ]
 
@@ -332,14 +345,38 @@ def upload_canonical_ttls() -> None:
         name = entry["name"]
         domain = entry["domain"]
         s3_key = entry["s3_key"]
-        url = entry["url"]
-        print(f"  {name} (domain={domain}) ← {url}")
-        try:
-            resp = requests.get(url, verify=False, timeout=30)
-            resp.raise_for_status()
-            data = resp.content
-        except Exception as e:
-            print(f"    [WARNING] fetch failed: {e}; skipping (re-run after upstream recovery)")
+        # Two source shapes:
+        #   path: <relative path under setup/> — locally vendored. Read
+        #     from filesystem; resolved relative to SCRIPT_DIR so CWD
+        #     doesn't matter. Used for the TTLs invincible-agent owns
+        #     (custom extensions; vendored 2026-06-17 from doc-tools).
+        #   url: <upstream URL> — fetch over network. Used for ontologies
+        #     we don't own (IOF Core, IOF MRO, DINEN62264, S3000L, PROV-O).
+        local_path = entry.get("path")
+        url = entry.get("url")
+        if local_path:
+            full_path = SCRIPT_DIR / local_path
+            source_label = f"path:{local_path}"
+            print(f"  {name} (domain={domain}) ← {source_label}")
+            try:
+                data = full_path.read_bytes()
+            except Exception as e:
+                print(f"    [ERROR] read failed for {full_path}: {e}")
+                raise
+            source_metadata = f"local:{local_path}"
+        elif url:
+            source_label = url
+            print(f"  {name} (domain={domain}) ← {source_label}")
+            try:
+                resp = requests.get(url, verify=False, timeout=30)
+                resp.raise_for_status()
+                data = resp.content
+            except Exception as e:
+                print(f"    [WARNING] fetch failed: {e}; skipping (re-run after upstream recovery)")
+                continue
+            source_metadata = url
+        else:
+            print(f"    [ERROR] entry {name} has neither 'path' nor 'url'; skipping")
             continue
 
         try:
@@ -349,7 +386,7 @@ def upload_canonical_ttls() -> None:
                 Body=data,
                 Metadata={
                     "x-amz-meta-domain": domain,
-                    "x-amz-meta-source-url": url,
+                    "x-amz-meta-source-url": source_metadata,
                     "x-amz-meta-canonical-name": name,
                 },
             )
