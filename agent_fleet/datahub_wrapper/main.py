@@ -13,6 +13,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import logging
 import difflib
@@ -102,33 +103,214 @@ query SearchDataHub($input: SearchAcrossEntitiesInput!) {
 }
 """
 
-# Query for finding tools based on ontology_uri in customProperties.
-# Switched from `search` (type required, silently empty on validation
-# failure) to `searchAcrossEntities` for the same reason as the generic
-# query above — Engine D's "find anything tagged with X" use case never
-# wanted a type narrowing.
-_FIND_TOOLS_QUERY = """
-query SearchDataHub($input: SearchAcrossEntitiesInput!) {
-  searchAcrossEntities(input: $input) {
-    searchResults {
-      entity {
-        urn
-        type
-        ... on Dataset {
-          properties {
-            name
-            description
-          }
-          customProperties {
-            key
-            value
-          }
-        }
-      }
-    }
-  }
+# ---------------------------------------------------------------------------
+# DataHub schema introspection — version-skew tolerance for `customProperties`.
+#
+# DataHub moved `customProperties` between major versions. The two shapes
+# this wrapper has to support concurrently:
+#
+#   Legacy / v1.1.0 shape (and most pre-1.0 builds):
+#     customProperties is nested INSIDE the `properties` block of Dataset
+#       ... on Dataset {
+#         properties {
+#           customProperties { key value }   <- here
+#         }
+#       }
+#
+#   Newer shape (the previous code targeted this):
+#     customProperties is a TOP-LEVEL field of Dataset
+#       ... on Dataset {
+#         customProperties { key value }   <- here
+#       }
+#
+# Querying the wrong shape returns
+# `FieldUndefined@[searchAcrossEntities/searchResults/entity/customProperties]`
+# from the deployed GMS and Engine D logs an error + returns an empty
+# tool list (which broke JIT tool discovery in d4-sandbox running 1.1.0).
+#
+# The clean fix is GraphQL introspection: ask the GMS what fields its
+# Dataset type actually exposes, once, at first use, then build the
+# query and parse the response based on whichever shape that GMS
+# supports. Cached for the process lifetime.
+#
+# The user-facing contract is "version-skew tolerant" — newer DataHub
+# installations still get full customProperties; older 1.1.0 installations
+# stop tripping the FieldUndefined error. No code change needed when
+# bumping DataHub versions in either direction; the next process start
+# re-introspects.
+_INTROSPECTION_QUERY = """
+query ProbeDataHubSchema {
+  dataset: __type(name: "Dataset") { fields { name } }
+  datasetProperties: __type(name: "DatasetProperties") { fields { name } }
 }
 """
+
+_SchemaFeatures = Dict[str, bool]
+_schema_cache: Optional[_SchemaFeatures] = None
+_schema_cache_lock = asyncio.Lock()
+
+
+async def _discover_schema_features() -> _SchemaFeatures:
+    """Introspect the deployed DataHub GMS once; cache the result.
+
+    Returns a dict with two booleans:
+      - dataset_has_top_level_customProperties:
+          True when GMS exposes `customProperties` as a direct field of
+          the Dataset type (newer DataHub).
+      - dataset_properties_has_customProperties:
+          True when GMS exposes `customProperties` nested inside the
+          DatasetProperties type (legacy / v1.1.0 shape).
+
+    Both can be true on transitional GMS builds. The query builder
+    prefers the top-level shape when present (richer data path in
+    newer DataHub); falls back to nested when only that's available.
+
+    On introspection failure (network error, GMS unreachable, schema
+    response malformed), assumes the legacy nested shape — that's the
+    safer default because the nested shape works on more DataHub
+    versions historically and was what this wrapper started with
+    before being updated to the new shape.
+    """
+    global _schema_cache
+    if _schema_cache is not None:
+        return _schema_cache
+    async with _schema_cache_lock:
+        # Re-check after acquiring the lock (another coroutine may
+        # have raced in and populated the cache while we waited).
+        if _schema_cache is not None:
+            return _schema_cache
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if DATAHUB_TOKEN:
+            headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    DATAHUB_GMS_URL,
+                    json={"query": _INTROSPECTION_QUERY},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+            data = payload.get("data") or {}
+            dataset = data.get("dataset") or {}
+            dataset_properties = data.get("datasetProperties") or {}
+            dataset_field_names = {
+                f.get("name") for f in (dataset.get("fields") or []) if f
+            }
+            dataset_props_field_names = {
+                f.get("name") for f in (dataset_properties.get("fields") or []) if f
+            }
+            features: _SchemaFeatures = {
+                "dataset_has_top_level_customProperties":
+                    "customProperties" in dataset_field_names,
+                "dataset_properties_has_customProperties":
+                    "customProperties" in dataset_props_field_names,
+            }
+            logger.info(
+                "DataHub schema introspection complete: "
+                "Dataset.customProperties=%s, "
+                "DatasetProperties.customProperties=%s",
+                features["dataset_has_top_level_customProperties"],
+                features["dataset_properties_has_customProperties"],
+            )
+        except Exception as exc:
+            logger.warning(
+                "DataHub schema introspection failed (%s); assuming "
+                "legacy nested customProperties shape "
+                "(DatasetProperties.customProperties).",
+                exc,
+            )
+            features = {
+                "dataset_has_top_level_customProperties": False,
+                "dataset_properties_has_customProperties": True,
+            }
+
+        _schema_cache = features
+        return features
+
+
+def _reset_schema_cache_for_tests() -> None:
+    """Test-only helper: clear the introspection cache so the next
+    `_discover_schema_features()` call re-probes the GMS. Lets unit
+    tests simulate a DataHub version change without restarting the
+    process.
+    """
+    global _schema_cache
+    _schema_cache = None
+
+
+def _build_find_tools_query(features: _SchemaFeatures) -> str:
+    """Build the find-tools GraphQL query string based on the deployed
+    DataHub's schema features. See `_discover_schema_features` for the
+    two shapes this handles.
+    """
+    has_top_level = features.get("dataset_has_top_level_customProperties", False)
+    has_nested = features.get("dataset_properties_has_customProperties", False)
+
+    # Build the properties block. When customProperties is nested in
+    # DatasetProperties, include it here.
+    if has_nested:
+        properties_block = (
+            "          properties {\n"
+            "            name\n"
+            "            description\n"
+            "            customProperties { key value }\n"
+            "          }\n"
+        )
+    else:
+        properties_block = (
+            "          properties {\n"
+            "            name\n"
+            "            description\n"
+            "          }\n"
+        )
+
+    # Build the top-level customProperties block. When the field exists at
+    # the Dataset top level, include it too (newer DataHub builds carry
+    # the same data here; some installations populate both).
+    if has_top_level:
+        top_level_cp_block = (
+            "          customProperties { key value }\n"
+        )
+    else:
+        top_level_cp_block = ""
+
+    return (
+        "query SearchDataHub($input: SearchAcrossEntitiesInput!) {\n"
+        "  searchAcrossEntities(input: $input) {\n"
+        "    searchResults {\n"
+        "      entity {\n"
+        "        urn\n"
+        "        type\n"
+        "        ... on Dataset {\n"
+        f"{properties_block}"
+        f"{top_level_cp_block}"
+        "        }\n"
+        "      }\n"
+        "    }\n"
+        "  }\n"
+        "}\n"
+    )
+
+
+def _extract_custom_properties(entity: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Pull the `customProperties` list out of a Dataset search result,
+    looking in BOTH locations the two DataHub shapes use. Prefers the
+    top-level location when both are present and non-empty (newer
+    DataHub builds carry the authoritative data there); falls back to
+    the nested `properties.customProperties` location used by
+    DataHub 1.1.0.
+
+    Returns an empty list when neither location yields data, which
+    callers should treat as "no metadata bag" rather than an error.
+    """
+    top_level = entity.get("customProperties")
+    if top_level:
+        return top_level
+    nested = (entity.get("properties") or {}).get("customProperties")
+    return nested or []
 
 # ---------------------------------------------------------------------------
 # Request / Response Models
@@ -556,20 +738,26 @@ async def find_tools(ontology_uri: str):
         }
     }
 
+    # Build the query dynamically based on which `customProperties`
+    # shape the deployed DataHub supports (introspected once, cached).
+    # See `_discover_schema_features` for the version-skew rationale.
+    schema_features = await _discover_schema_features()
+    find_tools_query = _build_find_tools_query(schema_features)
+
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 DATAHUB_GMS_URL,
-                json={"query": _FIND_TOOLS_QUERY, "variables": search_variables},
+                json={"query": find_tools_query, "variables": search_variables},
                 headers=headers,
             )
             resp.raise_for_status()
             data = resp.json()
-            
+
             # Check for GraphQL-level errors
             if "errors" in data:
                 logger.error(f"DataHub GraphQL Errors for {ontology_uri}: {json.dumps(data['errors'])}")
-                
+
     except Exception as exc:
         logger.error(f"HTTP Error in find_tools for {ontology_uri}: {exc}")
         return {"tools": [], "error": str(exc)}
@@ -584,10 +772,11 @@ async def find_tools(ontology_uri: str):
         entity = result.get("entity", {})
         if not entity:
             continue
-            
+
         props = entity.get("properties") or {}
-        # Guard against customProperties being null/None
-        cp_list = entity.get("customProperties") or []
+        # Look in both shapes the two DataHub versions use; see
+        # `_extract_custom_properties` for the lookup rules.
+        cp_list = _extract_custom_properties(entity)
         custom_props = {cp.get("key"): cp.get("value") for cp in cp_list if cp and "key" in cp}
         
         # Tools can be 'AITool' (standard OpenAPI) or 'MCPServer' (SSE protocol)
