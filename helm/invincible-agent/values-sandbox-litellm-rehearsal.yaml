@@ -67,6 +67,16 @@ agentFleet:
     MEM0_LLM_PROVIDER: "openai"
     MEM0_OPENAI_BASE_URL: "http://iagent-litellm:4000/v1"
     MEM0_OPENAI_API_KEY: "any"
+
+    # CRITICAL: clear OPENROUTER_API_KEY. mem0's OpenAILLM
+    # (mem0/llms/openai.py) checks `if os.environ.get("OPENROUTER_API_KEY")`
+    # FIRST and routes to https://openrouter.ai/api/v1 IGNORING our base_url
+    # + api_key config. The chart's legacy default carries OPENROUTER_API_KEY=skip
+    # which is non-empty (truthy) so mem0 hijacks the LLM call to OpenRouter
+    # (sandbox saw real 401 from api.openai.com via OpenRouter). Empty
+    # string is falsy → mem0 falls through to the OpenAI branch and respects
+    # our LiteLLM URL. Observed 2026-06-18 sandbox.
+    OPENROUTER_API_KEY: ""
     # MEM0_LLM_MODEL stays as values-sandbox.yaml's "phi4-16k:14b" — the
     # LiteLLM config above routes that name to the .188 host. Same for
     # MEM0_EMBEDDER_MODEL "nomic-embed-8k:latest". Both already set in
