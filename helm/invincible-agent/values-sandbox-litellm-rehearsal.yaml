@@ -1,5 +1,5 @@
 # ==========================================================================
-# Sandbox LiteLLM rehearsal overlay — 2026-06-17
+# Sandbox LiteLLM rehearsal overlay — 2026-06-17 / extended 2026-06-18
 #
 # Layered ON TOP OF values-sandbox.yaml. Use as:
 #   helm upgrade iagent ./helm/invincible-agent -n sandbox \
@@ -7,34 +7,67 @@
 #     -f ./helm/invincible-agent/values-sandbox-litellm-rehearsal.yaml
 #
 # Purpose: exercise the new "openai" provider code path (c558032) end-to-end
-# against a real LiteLLM proxy (8da1843). LiteLLM proxies the existing ai1
-# Ollama, so the underlying model stays identical (gpt-oss-128k:120b).
-# Only the transport hop changes:
+# against a real LiteLLM proxy (8da1843). LiteLLM proxies the existing
+# Ollama hosts; the underlying models stay identical. Only the transport
+# hop changes:
 #
 #   before:  engine → 192.168.1.119:11434/v1            (direct Ollama, ollama provider)
-#   after:   engine → iagent-litellm:4000/v1 → 192.168.1.119:11434   (LiteLLM proxy, openai provider)
+#   after:   engine → iagent-litellm:4000/v1 → 192.168.1.x:11434   (LiteLLM proxy, openai provider)
 #
-# Mem0 is INTENTIONALLY left on the ollama path against phi4:14b on .188 —
-# smaller blast radius for the rehearsal. If the openai path is sound on
-# the agent side, the mem0 side trivially follows (same code path).
+# 2026-06-18 extension: mem0 now ALSO routed through LiteLLM (was direct
+# ollama to .188 phi4:14b). Per ADR-0001 the mem0 LLM stays a smaller
+# JSON-stable model (phi4-16k:14b) and the embedder stays nomic-embed-8k;
+# we just change the transport. Adds the two model entries the LiteLLM
+# config needs and flips the MEM0 env to the openai provider.
 #
 # Back-out: re-run helm upgrade with only values-sandbox.yaml. The
 # rehearsal env block disappears; LiteLLM template renders zero resources
 # because we set litellm.enabled back to its default false.
 # ==========================================================================
 
-# Turn on the LiteLLM proxy template (default off in chart values.yaml).
-# The chart's default litellm.config already routes to ai1 Ollama — no
-# config override needed for the rehearsal.
 litellm:
   enabled: true
+  # Extended model_list — adds phi4-16k:14b (mem0 LLM) and
+  # nomic-embed-8k:latest (mem0 embedder) routes to the openwebui host
+  # (192.168.1.188), in addition to the existing gpt-oss-128k:120b +
+  # nomic-embed-text routes to ai1 (192.168.1.119).
+  config: |
+    model_list:
+      - model_name: gpt-oss-128k:120b
+        litellm_params:
+          model: ollama/gpt-oss-128k:120b
+          api_base: http://192.168.1.119:11434
+      - model_name: nomic-embed-text
+        litellm_params:
+          model: ollama/nomic-embed-text
+          api_base: http://192.168.1.188:11434
+      - model_name: phi4-16k:14b
+        litellm_params:
+          model: ollama/phi4-16k:14b
+          api_base: http://192.168.1.188:11434
+      - model_name: nomic-embed-8k:latest
+        litellm_params:
+          model: ollama/nomic-embed-8k:latest
+          api_base: http://192.168.1.188:11434
+    litellm_settings:
+      drop_params: true
 
-# Flip the agent-reasoning provider only. Keep mem0 on the ollama path
-# (the agentFleet.env block from values-sandbox.yaml still applies for
-# MEM0_LLM_PROVIDER / MEM0_OLLAMA_BASE_URL / MEM0_LLM_MODEL).
 agentFleet:
   env:
+    # Agent-reasoning provider — unchanged from prior rehearsal.
     SMOLAGENTS_PROVIDER: "openai"
     OPENAI_BASE_URL: "http://iagent-litellm:4000/v1"
     OPENAI_MODEL: "gpt-oss-128k:120b"
     OPENAI_API_KEY: "any"  # LiteLLM stateless (no master_key) — any non-empty token accepted
+
+    # Mem0 LLM + embedder now also through LiteLLM via the openai provider.
+    # Per ADR-0001 the underlying models stay decoupled from the agent
+    # reasoning model: phi4-16k:14b for fact extraction (JSON-stable,
+    # small, on the .188 host), nomic-embed-8k:latest for embeddings.
+    MEM0_LLM_PROVIDER: "openai"
+    MEM0_OPENAI_BASE_URL: "http://iagent-litellm:4000/v1"
+    MEM0_OPENAI_API_KEY: "any"
+    # MEM0_LLM_MODEL stays as values-sandbox.yaml's "phi4-16k:14b" — the
+    # LiteLLM config above routes that name to the .188 host. Same for
+    # MEM0_EMBEDDER_MODEL "nomic-embed-8k:latest". Both already set in
+    # values-sandbox.yaml; no override needed here.
