@@ -683,6 +683,16 @@ litellm:
   # in your environment. See https://docs.litellm.ai/docs/proxy/configs.
   # The example below routes two model names to the dev ai1 Ollama; flip
   # it to your vLLM endpoint(s) when those are available.
+  #
+  # NOTE: no `general_settings.master_key` is set. With master_key set
+  # AND no `database_url`, LiteLLM's auth path errors with
+  #   "No connected db." (user_api_key_auth.py:1644)
+  # on /v1/chat/completions for non-cached key validation — observed in
+  # sandbox rehearsal 2026-06-17. For stateless deployments inside a
+  # trusted cluster network, leave master_key OUT (any Authorization
+  # header value is accepted). To enable auth in production, EITHER add
+  # a postgres `database_url` here, OR run a LiteLLM image variant with
+  # the DB schema pre-applied.
   config: |
     model_list:
       - model_name: gpt-oss-128k:120b
@@ -695,8 +705,6 @@ litellm:
           api_base: http://192.168.1.188:11434
     litellm_settings:
       drop_params: true
-    general_settings:
-      master_key: sk-litellm-sandbox
 
 # ==========================================================================
 # Secrets — override these in your values-production.yaml

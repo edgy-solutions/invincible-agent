@@ -1,0 +1,40 @@
+# ==========================================================================
+# Sandbox LiteLLM rehearsal overlay — 2026-06-17
+#
+# Layered ON TOP OF values-sandbox.yaml. Use as:
+#   helm upgrade iagent ./helm/invincible-agent -n sandbox \
+#     -f ./helm/invincible-agent/values-sandbox.yaml \
+#     -f ./helm/invincible-agent/values-sandbox-litellm-rehearsal.yaml
+#
+# Purpose: exercise the new "openai" provider code path (c558032) end-to-end
+# against a real LiteLLM proxy (8da1843). LiteLLM proxies the existing ai1
+# Ollama, so the underlying model stays identical (gpt-oss-128k:120b).
+# Only the transport hop changes:
+#
+#   before:  engine → 192.168.1.119:11434/v1            (direct Ollama, ollama provider)
+#   after:   engine → iagent-litellm:4000/v1 → 192.168.1.119:11434   (LiteLLM proxy, openai provider)
+#
+# Mem0 is INTENTIONALLY left on the ollama path against phi4:14b on .188 —
+# smaller blast radius for the rehearsal. If the openai path is sound on
+# the agent side, the mem0 side trivially follows (same code path).
+#
+# Back-out: re-run helm upgrade with only values-sandbox.yaml. The
+# rehearsal env block disappears; LiteLLM template renders zero resources
+# because we set litellm.enabled back to its default false.
+# ==========================================================================
+
+# Turn on the LiteLLM proxy template (default off in chart values.yaml).
+# The chart's default litellm.config already routes to ai1 Ollama — no
+# config override needed for the rehearsal.
+litellm:
+  enabled: true
+
+# Flip the agent-reasoning provider only. Keep mem0 on the ollama path
+# (the agentFleet.env block from values-sandbox.yaml still applies for
+# MEM0_LLM_PROVIDER / MEM0_OLLAMA_BASE_URL / MEM0_LLM_MODEL).
+agentFleet:
+  env:
+    SMOLAGENTS_PROVIDER: "openai"
+    OPENAI_BASE_URL: "http://iagent-litellm:4000/v1"
+    OPENAI_MODEL: "gpt-oss-128k:120b"
+    OPENAI_API_KEY: "any"  # LiteLLM stateless (no master_key) — any non-empty token accepted
