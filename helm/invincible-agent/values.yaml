@@ -618,6 +618,63 @@ externalTopaz:
   grpcUrl: "" # e.g. "my-topaz.infra.svc:8282"
 
 # ==========================================================================
+# LiteLLM (OpenAI-compatible proxy / router) — optional, opt-in
+# ==========================================================================
+# When enabled (litellm.enabled: true) the chart deploys an in-cluster
+# LiteLLM proxy at:
+#   http://<release>-litellm.<namespace>.svc.cluster.local:4000/v1
+#
+# It fronts one or more backend LLMs (Ollama, vLLM, real OpenAI, etc.)
+# with a single OpenAI-compatible URL — the same protocol the new
+# "openai" provider in llm_utils.py / mem0_utils.py speaks. Useful for:
+#   - Routing a single OPENAI_BASE_URL to multiple physical backends
+#   - Rehearsing the "openai" provider locally against existing Ollama
+#     before vLLM is deployed
+#   - Centralizing rate limits, fallbacks, and per-model routing
+#
+# To wire engines through LiteLLM after enabling it:
+#   agentFleet.env.SMOLAGENTS_PROVIDER: "openai"
+#   agentFleet.env.OPENAI_BASE_URL:     "http://<release>-litellm:4000/v1"
+#   agentFleet.env.OPENAI_MODEL:        "<a model_name from litellm.config>"
+#   agentFleet.env.OPENAI_API_KEY:      "<general_settings.master_key>"
+#
+# DISABLED BY DEFAULT — no resources are rendered when litellm.enabled is
+# false, so existing deployments pointing directly at Ollama / OpenRouter
+# / real OpenAI are unaffected by this block existing.
+litellm:
+  enabled: false
+  image:
+    repository: ghcr.io/berriai/litellm
+    tag: "main-stable"
+  replicas: 1
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  # Full LiteLLM YAML config (model_list + settings). The operator owns
+  # this — adjust model_name entries and api_base URLs for the backends
+  # in your environment. See https://docs.litellm.ai/docs/proxy/configs.
+  # The example below routes two model names to the dev ai1 Ollama; flip
+  # it to your vLLM endpoint(s) when those are available.
+  config: |
+    model_list:
+      - model_name: gpt-oss-128k:120b
+        litellm_params:
+          model: ollama/gpt-oss-128k:120b
+          api_base: http://192.168.1.119:11434
+      - model_name: nomic-embed-text
+        litellm_params:
+          model: ollama/nomic-embed-text
+          api_base: http://192.168.1.188:11434
+    litellm_settings:
+      drop_params: true
+    general_settings:
+      master_key: sk-litellm-sandbox
+
+# ==========================================================================
 # Secrets — override these in your values-production.yaml
 # ==========================================================================
 secrets:

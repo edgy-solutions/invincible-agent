@@ -1,0 +1,110 @@
+{{- /*
+LiteLLM — OpenAI-compatible proxy / router. Optional, opt-in.
+
+When enabled (.Values.litellm.enabled = true) this renders a ConfigMap
+holding the operator-supplied LiteLLM YAML config, a single-replica
+Deployment running the LiteLLM proxy, and a ClusterIP Service exposing
+port 4000.
+
+Engines that should reach LiteLLM set:
+  SMOLAGENTS_PROVIDER = "openai"
+  OPENAI_BASE_URL     = "http://{{ .Release.Name }}-litellm:4000/v1"
+  OPENAI_MODEL        = "<a model_name from litellm.config.model_list>"
+  OPENAI_API_KEY      = "<general_settings.master_key from litellm.config>"
+
+When disabled (default) NO resources are rendered — existing deployments
+pointing directly at Ollama / OpenAI / OpenRouter are unaffected.
+*/ -}}
+{{- if .Values.litellm.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-litellm-config
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+data:
+  config.yaml: |
+{{ .Values.litellm.config | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-litellm
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  replicas: {{ .Values.litellm.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "litellm" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "litellm" "root" .) | nindent 8 }}
+      annotations:
+        # Roll the pod when the config changes — otherwise a values
+        # update to litellm.config never reaches the running proxy.
+        checksum/config: {{ .Values.litellm.config | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: litellm
+          image: "{{ .Values.litellm.image.repository }}:{{ .Values.litellm.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
+          args:
+            - "--config"
+            - "/config/config.yaml"
+            - "--port"
+            - "4000"
+          ports:
+            - name: http
+              containerPort: 4000
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.litellm.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-litellm-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-litellm
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "litellm" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+{{- end }}
