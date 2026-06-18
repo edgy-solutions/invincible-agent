@@ -142,9 +142,33 @@ dagster:
 agentFleet:
   env:
     # 🔗 Agent Runtime Essentials
+    #
+    # LLM provider selection (SMOLAGENTS_PROVIDER controls the agent
+    # reasoning path AND, by fallback, mem0's structured-output path).
+    # Supported values:
+    #   ollama      — Ollama daemon at OLLAMA_BASE_URL. mem0 uses native
+    #                 Ollama protocol; smolagents/BAML use Ollama's
+    #                 OpenAI-compat endpoint.
+    #   openai      — Generic OpenAI-compatible endpoint at OPENAI_BASE_URL.
+    #                 Covers LiteLLM proxies (point at LiteLLM's /v1 URL),
+    #                 vLLM (point at /v1), and real OpenAI (leave
+    #                 OPENAI_BASE_URL unset to use api.openai.com).
+    #                 OPENAI_API_KEY is required for real OpenAI; LiteLLM
+    #                 and vLLM accept any non-empty string ("any" is the
+    #                 default fallback).
+    #   openrouter  — OpenRouter via its hosted endpoint
+    #                 (OPENROUTER_API_KEY required).
+    #
+    # mem0 can override independently via MEM0_LLM_PROVIDER (e.g. agents
+    # on ollama, mem0 on openai-via-LiteLLM-routing-to-vLLM). When
+    # MEM0_LLM_PROVIDER is unset, mem0 inherits SMOLAGENTS_PROVIDER.
     SMOLAGENTS_PROVIDER: "ollama"
     SMOLAGENTS_MODEL: "gpt-oss-128k:120b"
     OLLAMA_BASE_URL: "http://ollama:11434/v1"
+    # OPENAI_BASE_URL: "http://litellm:4000/v1"   # uncomment + flip
+    # OPENAI_MODEL: "gpt-oss-128k:120b"           # provider to "openai"
+    # OPENAI_API_KEY: "..."                       # for an OpenAI-compat
+                                                  # backend (LiteLLM/vLLM)
     BAML_LOG_LEVEL: "info"
     
     # 🔗 Network & Service Discovery

@@ -364,7 +364,16 @@ def _build_mem0_memory() -> Memory:
     """
     weaviate_client = get_weaviate_client()
 
-    provider = os.getenv("SMOLAGENTS_PROVIDER", "ollama").lower()
+    # Provider resolution: prefer the mem0-specific knob, then fall back
+    # to the shared smolagents knob, then default to ollama. This lets
+    # deployments target one backend for agent reasoning and a different
+    # backend for mem0's structured-output prompts (the ADR-0001 split)
+    # OR run both against the same backend by leaving MEM0_LLM_PROVIDER
+    # unset.
+    provider = (
+        os.getenv("MEM0_LLM_PROVIDER")
+        or os.getenv("SMOLAGENTS_PROVIDER", "ollama")
+    ).lower()
 
     if provider == "ollama":
         from langchain_ollama import OllamaEmbeddings
@@ -383,9 +392,62 @@ def _build_mem0_memory() -> Memory:
             model=embedder_model, base_url=ollama_url
         )
         index_name = "Mem0migrationsOllama"
+    elif provider == "openai":
+        # OpenAI-compatible endpoint — covers LiteLLM, vLLM, OpenRouter,
+        # and real OpenAI. The protocol matters; the implementation label
+        # is incidental. Engine talks OpenAI Chat Completions + OpenAI
+        # Embeddings to whatever URL OPENAI_BASE_URL points at.
+        #
+        # Env var resolution (per knob, with sensible fallbacks):
+        #   base URL:  MEM0_OPENAI_BASE_URL -> OPENAI_BASE_URL
+        #   API key:   MEM0_OPENAI_API_KEY  -> OPENAI_API_KEY -> "any"
+        #              (vLLM and most LiteLLM gateways accept any non-empty
+        #              string; real OpenAI requires a valid key)
+        #   embedder:  MEM0_EMBEDDER_MODEL  (required; no sane default
+        #              because embedding model availability is
+        #              backend-specific)
+        from langchain_openai import OpenAIEmbeddings
+
+        openai_url = (
+            os.getenv("MEM0_OPENAI_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+        )
+        if not openai_url:
+            raise RuntimeError(
+                "MEM0_LLM_PROVIDER=openai requires MEM0_OPENAI_BASE_URL "
+                "or OPENAI_BASE_URL to be set (e.g. http://litellm:4000/v1)."
+            )
+        openai_api_key = (
+            os.getenv("MEM0_OPENAI_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or "any"
+        )
+        embedder_model = os.getenv("MEM0_EMBEDDER_MODEL")
+        if not embedder_model:
+            raise RuntimeError(
+                "MEM0_LLM_PROVIDER=openai requires MEM0_EMBEDDER_MODEL "
+                "(e.g. BAAI/bge-large-en-v1.5 via vLLM, or "
+                "text-embedding-3-small via OpenAI, or nomic-embed-text "
+                "via Ollama-behind-LiteLLM)."
+            )
+        langchain_embedder = OpenAIEmbeddings(
+            model=embedder_model,
+            base_url=openai_url,
+            api_key=openai_api_key,
+        )
+        # Share the existing Mem0migrationsOpenAI index — schema is
+        # identical (same embedding-dimensionality assumption is on the
+        # operator; if they swap embedder models, they need to wipe the
+        # collection or use a different index name via Weaviate-side).
+        index_name = "Mem0migrationsOpenAI"
     else:
         from langchain_openai import OpenAIEmbeddings
 
+        # Default real-OpenAI path (uses OpenAI's default endpoint when
+        # no base_url is set). Kept for the SMOLAGENTS_PROVIDER=openrouter
+        # case where the LLM is OpenRouter but mem0 has no explicit
+        # provider knob set — falls through here and uses real OpenAI
+        # embeddings.
         langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
         index_name = "Mem0migrationsOpenAI"
 
@@ -427,6 +489,28 @@ def _build_mem0_memory() -> Memory:
             "config": {
                 "model": "nomic-embed-text",
                 "ollama_base_url": ollama_url,
+            },
+        }
+    elif provider == "openai":
+        # mem0 talks OpenAI Chat Completions + Embeddings to the
+        # configured base_url. Works against LiteLLM, vLLM, OpenRouter,
+        # or real OpenAI — the protocol is the same, only the URL
+        # changes. The same env vars feed the embedder branch above so
+        # mem0 and langchain agree on which endpoint to call.
+        mem0_config["llm"] = {
+            "provider": "openai",
+            "config": {
+                "model": mem0_llm_model,
+                "api_key": openai_api_key,
+                "openai_base_url": openai_url,
+            },
+        }
+        mem0_config["embedder"] = {
+            "provider": "openai",
+            "config": {
+                "model": embedder_model,
+                "api_key": openai_api_key,
+                "openai_base_url": openai_url,
             },
         }
     elif provider == "openrouter":

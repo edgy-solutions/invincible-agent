@@ -54,17 +54,34 @@ def get_smolagent_model():
             temperature=0.0
         )
     elif provider == "openai":
+        # Generic OpenAI-compatible endpoint. Covers real OpenAI (no
+        # base_url override needed), LiteLLM proxies (point at the
+        # LiteLLM /v1 URL), vLLM (point at /v1), and any other
+        # OpenAI-compat server. The protocol matters; the implementation
+        # label is incidental.
+        #
+        # When OPENAI_BASE_URL is unset, the underlying client uses
+        # OpenAI's default endpoint (api.openai.com) — preserving
+        # behavior for deployments already on real OpenAI.
+        openai_base_url = os.getenv("OPENAI_BASE_URL")
+        openai_api_key = os.getenv("OPENAI_API_KEY") or "any"
         if USE_LITELLM:
-            return LiteLLMModel(
+            kwargs = dict(
                 model_id=model_id or "gpt-4o",
-                api_key=os.getenv("OPENAI_API_KEY"),
-                temperature=0.0
+                api_key=openai_api_key,
+                temperature=0.0,
             )
-        return OpenAIServerModel(
+            if openai_base_url:
+                kwargs["api_base"] = openai_base_url
+            return LiteLLMModel(**kwargs)
+        kwargs = dict(
             model_id=model_id or "gpt-4o",
-            api_key=os.getenv("OPENAI_API_KEY"),
-            temperature=0.0
+            api_key=openai_api_key,
+            temperature=0.0,
         )
+        if openai_base_url:
+            kwargs["api_base"] = openai_base_url
+        return OpenAIServerModel(**kwargs)
     else:
         # Default to Hugging Face
         return InferenceClientModel(model_id=model_id or "Qwen/Qwen2.5-Coder-32B-Instruct", temperature=0.0)
@@ -125,6 +142,31 @@ def init_baml_client(baml_client_instance):
                 "model": ollama_model,
                 "temperature": 0,
             }
+        )
+
+        # Generic OpenAI-compatible client — covers LiteLLM, vLLM,
+        # OpenRouter (when used as a plain OpenAI-compat endpoint), and
+        # real OpenAI. Same rationale as the Ollama re-registration above:
+        # this overrides the clients.baml default so we can point at a
+        # custom base_url + key + model from env without rebuilding the
+        # BAML client.
+        openai_base_url = os.getenv("OPENAI_BASE_URL")
+        openai_api_key = os.getenv("OPENAI_API_KEY") or "any"
+        openai_model = (
+            os.getenv("OPENAI_MODEL")
+            or os.getenv("SMOLAGENTS_MODEL", "gpt-4o")
+        )
+        openai_options = {
+            "api_key": openai_api_key,
+            "model": openai_model,
+            "temperature": 0,
+        }
+        if openai_base_url:
+            openai_options["base_url"] = openai_base_url
+        cr.add_llm_client(
+            name="OpenAI",
+            provider="openai",
+            options=openai_options,
         )
 
         # BAML functions explicitly request 'MainAgent', so we must overwrite it
