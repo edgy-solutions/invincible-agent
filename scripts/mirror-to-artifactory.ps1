@@ -149,7 +149,8 @@ if ($Method -eq 'crane') {
 # values-artifactory.yaml together.
 # -----------------------------------------------------------------------
 $IagentImages = @(
-    # Engine fleet (12) — built by invincible-agent's build-containers.yml
+    # Engine fleet (11) + cortex-bff + 2 dagster runtimes — built by
+    # invincible-agent's build-containers.yml matrix.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-control-plane:latest'; dst='edgy-solutions/invincible-agent/dagster-control-plane:latest' },
@@ -162,6 +163,15 @@ $IagentImages = @(
     @{ src='ghcr.io/edgy-solutions/invincible-agent/presentation-agent:latest';    dst='edgy-solutions/invincible-agent/presentation-agent:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/weaviate-expert:latest';       dst='edgy-solutions/invincible-agent/weaviate-expert:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/data-analyst:latest';          dst='edgy-solutions/invincible-agent/data-analyst:latest' },
+    # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
+    # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
+    # (work overlay) requires this image.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/mesh-registrar:latest';        dst='edgy-solutions/invincible-agent/mesh-registrar:latest' },
+
+    # doc-tools — Dagster code location for canonical TTL ingest +
+    # document parsing pipelines. Deployed by the doc-tools helm chart
+    # in the same namespace as iagent. Single image, all of doc_tools/.
+    @{ src='ghcr.io/edgy-solutions/doc-tools:latest';                              dst='edgy-solutions/doc-tools:latest' },
 
     # cortex-ui (multi-arch as of cortex-ui commit 6312f31)
     @{ src='ghcr.io/edgy-solutions/cortex-ui/frontend:latest';                     dst='edgy-solutions/cortex-ui/frontend:latest' },
