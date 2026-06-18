@@ -56,10 +56,12 @@ spec:
       restartPolicy: Never
       containers:
         - name: prime-substrate
-          image: {{ include "invincible-agent.image" (dict "name" "dagster-server" "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.primeSubstrate.image.pullPolicy }}
-          # The dagster-server image WORKDIR is /app and has the
-          # invincible-agent repo COPY'd in. Run the script from there.
+          # The dagster-control-plane image WORKDIR is /app and has the
+          # full invincible-agent repo COPY'd in (it's the same image
+          # the dagster-user-code Deployment runs, picked for source-
+          # availability + uv-synced venv). Run the script from there.
           workingDir: /app
           command:
             - python

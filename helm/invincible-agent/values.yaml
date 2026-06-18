@@ -448,13 +448,16 @@ primeSubstrate:
   # without it, the canonical pipeline only uploads TTLs to MinIO and
   # waits for the dagster sensor / manual UI trigger to ingest.
   triggerIngest: true
-  # Image reuse: the dagster-server image (used by dagster-user-code)
-  # has the invincible-agent source COPY'd in, which includes
-  # setup/prime_databases.py and the full CANONICAL_TTL_MANIFEST.
+  # Image reuse: the dagster-control-plane image (the SAME image the
+  # dagster-user-code Deployment runs) has the full invincible-agent
+  # source COPY'd into /app, which includes setup/prime_databases.py
+  # and the full CANONICAL_TTL_MANIFEST. The thin dagster-server image
+  # is webserver/daemon only — it has dagster ecosystem libs but NO
+  # iagent source, so it can't run the prime script.
   # Override here if you need to point at a different image (e.g. a
   # dedicated bootstrap image, a pinned SHA for reproducibility).
   image:
-    repository: "edgy-solutions/invincible-agent/dagster-server"
+    repository: "edgy-solutions/invincible-agent/dagster-control-plane"
     tag: "latest"
     pullPolicy: "Always"
   # Resource budget. The script is mostly I/O (downloads TTLs, uploads
