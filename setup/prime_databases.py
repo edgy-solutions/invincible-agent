@@ -201,7 +201,31 @@ CANONICAL_TTL_MANIFEST = [
         "path": "ontologies/idp_extension.ttl",
     },
 
-    # ----- LAYER 4: MESH (system ontology — request/response shapes) -----
+    # ----- LAYER 4: MANUFACTURING (the manufacturing content-kind axis) -----
+    # General mfg:WorkInstruction kind only — the routing-visible class the
+    # ManufacturingPlugin's INSTANCE_OF stamping (ADR-0021) targets. Single
+    # general kind by architect's ruling 2026-06-18: munitions / sensors /
+    # electronics / mechanical-assemblies are *what is described* by a work
+    # instruction, NOT separate kinds. Sub-kinds become warranted only when
+    # a routing question demands disambiguating them (Wave-3 discipline) —
+    # same content-hierarchy decision pattern the mil:* manuals follow.
+    #
+    # This entry closes Gap-1 durably (the substrate patch from the prior
+    # overnight reverts on next canonical-pipeline run otherwise — see
+    # STATE_GATEWAY_V02.md 2026-06-17 Step 1). The pre-canonical residue at
+    # http://example.com/manufacturing# (MunitionsAssemblyStep et al., 7
+    # classes) was the legacy direct-load shape; it is NOT what the new
+    # canonical pipeline materializes. Residue stays orphaned (synced_from
+    # is NULL on those rows so the substrate guard's filter already ignores
+    # it) until a cleanup pass retires it.
+    {
+        "domain": "MANUFACTURING",
+        "name": "mfg_extension",
+        "s3_key": "manufacturing/mfg_extension.ttl",
+        "path": "ontologies/mfg_extension.ttl",
+    },
+
+    # ----- LAYER 5: MESH (system ontology — request/response shapes) -----
     {
         "domain": "MESH",
         "name": "mesh_system",
