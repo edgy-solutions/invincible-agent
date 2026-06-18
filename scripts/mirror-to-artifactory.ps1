@@ -205,6 +205,16 @@ $ExternalImages = @(
     @{ src='secoresearch/fuseki:latest';                               dst='secoresearch/fuseki:latest' },
     @{ src='ghcr.io/aserto-dev/topaz:0.33.13';                         dst='aserto-dev/topaz:0.33.13' },
 
+    # LLM gateway. Optional in the iagent helm chart (litellm.enabled,
+    # default false). When turned on, fronts Ollama / vLLM / OpenAI /
+    # OpenRouter behind a single OpenAI-compatible /v1 endpoint so the
+    # fleet's smolagents / BAML / embed.py / mem0 paths all talk one
+    # protocol. The chart pins :main-stable; that's a moving tag
+    # upstream so re-running this script picks up drift. If you want
+    # a locked digest, switch the chart to a SHA pin and reflect that
+    # here too.
+    @{ src='ghcr.io/berriai/litellm:main-stable';                      dst='berriai/litellm:main-stable' },
+
     # Persistent state (deployed by the iagent chart as third-party
     # sidecars to engines that need them — clickhouse for analytics,
     # minio for object store, redis for cache).
