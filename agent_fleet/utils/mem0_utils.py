@@ -377,6 +377,14 @@ def _build_mem0_memory() -> Memory:
 
     if provider == "ollama":
         from langchain_ollama import OllamaEmbeddings
+        # Import the embed module's canonical default so mem0 stays aligned
+        # with the rest of the fleet's embedding-model contract. Same default,
+        # same dim (768), same vector space — so mem0 collections share
+        # numerical compatibility with Predicate / OntologyClass.
+        try:
+            from utils.embed import DEFAULT_EMBED_MODEL as _DEFAULT_EMBED_MODEL
+        except ImportError:
+            from agent_fleet.utils.embed import DEFAULT_EMBED_MODEL as _DEFAULT_EMBED_MODEL
 
         # Prefer MEM0_OLLAMA_BASE_URL so Mem0's embedder can be pointed at a
         # separate ollama instance from the main agent LLM. Falls back to the
@@ -387,7 +395,11 @@ def _build_mem0_memory() -> Memory:
             "MEM0_OLLAMA_BASE_URL",
             os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434"),
         ).replace("/v1", "")
-        embedder_model = os.getenv("MEM0_EMBEDDER_MODEL", "nomic-embed-text")
+        embedder_model = (
+            os.getenv("MEM0_EMBEDDER_MODEL")
+            or os.getenv("LLM_EMBED_MODEL")
+            or _DEFAULT_EMBED_MODEL
+        )
         langchain_embedder = OllamaEmbeddings(
             model=embedder_model, base_url=ollama_url
         )
@@ -422,13 +434,22 @@ def _build_mem0_memory() -> Memory:
             or os.getenv("OPENAI_API_KEY")
             or "any"
         )
-        embedder_model = os.getenv("MEM0_EMBEDDER_MODEL")
+        # Embedder model: prefer MEM0_EMBEDDER_MODEL for the mem0-specific
+        # override (e.g. when mem0 should use a different-dim embedder than
+        # the rest of the fleet), else fall back to LLM_EMBED_MODEL — the
+        # SAME env var the shared embed_text() helper uses for OntologyClass,
+        # Predicate, DocumentChunk etc. Default keeps the cross-repo contract
+        # in sync without an extra knob unless ops explicitly want
+        # mem0-specific routing.
+        embedder_model = (
+            os.getenv("MEM0_EMBEDDER_MODEL")
+            or os.getenv("LLM_EMBED_MODEL")
+        )
         if not embedder_model:
             raise RuntimeError(
-                "MEM0_LLM_PROVIDER=openai requires MEM0_EMBEDDER_MODEL "
-                "(e.g. BAAI/bge-large-en-v1.5 via vLLM, or "
-                "text-embedding-3-small via OpenAI, or nomic-embed-text "
-                "via Ollama-behind-LiteLLM)."
+                "MEM0_LLM_PROVIDER=openai requires MEM0_EMBEDDER_MODEL or "
+                "LLM_EMBED_MODEL to be set. See agent_fleet/utils/embed.py "
+                "DEFAULT_EMBED_MODEL for the canonical default."
             )
         langchain_embedder = OpenAIEmbeddings(
             model=embedder_model,
@@ -448,7 +469,18 @@ def _build_mem0_memory() -> Memory:
         # case where the LLM is OpenRouter but mem0 has no explicit
         # provider knob set — falls through here and uses real OpenAI
         # embeddings.
-        langchain_embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+        #
+        # Honors LLM_EMBED_MODEL when set so this path stays consistent
+        # with the rest of the fleet; otherwise falls back to a real-OpenAI
+        # default. NOTE: real OpenAI's text-embedding-3-small is 1536-dim,
+        # which won't match Predicate / OntologyClass collections written
+        # by writers using nomic-embed-text (768-dim). This fallback is for
+        # the OpenRouter-only LLM case and assumes mem0 is the only consumer
+        # of its own collection.
+        _real_openai_default = "text-embedding-3-small"
+        langchain_embedder = OpenAIEmbeddings(
+            model=os.getenv("LLM_EMBED_MODEL", _real_openai_default)
+        )
         index_name = "Mem0migrationsOpenAI"
 
     vector_store = Mem0CompatibleWeaviate(
@@ -487,7 +519,7 @@ def _build_mem0_memory() -> Memory:
         mem0_config["embedder"] = {
             "provider": "ollama",
             "config": {
-                "model": "nomic-embed-text",
+                "model": embedder_model,  # same name as the langchain_embedder built above
                 "ollama_base_url": ollama_url,
             },
         }

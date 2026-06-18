@@ -170,6 +170,27 @@ agentFleet:
     # OPENAI_API_KEY: "..."                       # for an OpenAI-compat
                                                   # backend (LiteLLM/vLLM)
     BAML_LOG_LEVEL: "info"
+
+    # --- Embedding gateway (agent_fleet/utils/embed.py) ---
+    # All Weaviate vector writes + reads in iagent code go through this
+    # endpoint via embed_text(). Same family of env vars as OPENAI_* /
+    # LLM_* — by convention point at the same LiteLLM proxy so embeddings,
+    # chat completions, and BAML calls share one auth boundary and one
+    # observability stream.
+    #
+    # LLM_BASE_URL falls back to OPENAI_BASE_URL when unset, so existing
+    # deployments that already set OPENAI_BASE_URL keep working without
+    # an extra knob. Set LLM_EMBED_MODEL only if you've routed a different
+    # model name through LiteLLM than the default.
+    #
+    # Default model "nomic-embed-text" matches the chart's litellm.config
+    # model_list entry (`ollama/nomic-embed-text` → 192.168.1.188:11434).
+    # Changing this model requires REBUILDING any Weaviate collections
+    # populated under the old name — vectors are NOT compatible across
+    # embedding models even when dimensions match.
+    LLM_EMBED_MODEL: "nomic-embed-text"
+    # LLM_BASE_URL: "http://litellm:4000/v1"   # else falls back to OPENAI_BASE_URL
+    # LLM_API_KEY: "any"                        # else falls back to OPENAI_API_KEY
     
     # 🔗 Network & Service Discovery
     # Default realm matches the chart name; operators override in their

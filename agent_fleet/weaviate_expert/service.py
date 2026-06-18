@@ -24,6 +24,15 @@ except ImportError:
     except ImportError:
         from weaviate_utils import create_weaviate_client
 
+# Shared embedding helper — code owns the contract for "what model"
+try:
+    from utils.embed import embed_text
+except ImportError:
+    try:
+        from agent_fleet.utils.embed import embed_text
+    except ImportError:
+        from embed import embed_text
+
 from baml_client import b
 
 # Initialize runtime BAML configuration
@@ -109,12 +118,28 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
             else:
                 final_filter = base_filter
             
-            # STRICT DOMAIN SEGREGATION FILTER
-            response = collection.query.near_text(
-                query=semantic_query,
-                limit=5,
-                filters=final_filter
-            )
+            # STRICT DOMAIN SEGREGATION FILTER + explicit vector.
+            # We compute the query vector via embed_text() (LiteLLM
+            # /embeddings) instead of letting Weaviate vectorize the
+            # query via a text2vec module — code owns the contract, NOT
+            # infra. See agent_fleet/utils/embed.py for the rationale.
+            try:
+                query_vector = embed_text(semantic_query)
+                response = collection.query.near_vector(
+                    near_vector=query_vector,
+                    limit=5,
+                    filters=final_filter,
+                )
+            except Exception as embed_err:
+                # If the embedding gateway is down, fall back to BM25 so
+                # the engine still returns something instead of error.
+                # Logs the failure so observability surfaces the gap.
+                print(f"embed_text failed in Engine W; BM25 fallback: {embed_err}")
+                response = collection.query.bm25(
+                    query=semantic_query,
+                    limit=5,
+                    filters=final_filter,
+                )
             
             if not response.objects:
                 return f"No relevant information found for '{semantic_query}' in the {domain} domain."

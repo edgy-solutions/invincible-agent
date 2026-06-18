@@ -60,6 +60,13 @@ except ImportError:
     except ImportError:
         pass
 
+# Shared embedding helper (agent_fleet/utils/embed.py). Container flat-layout
+# and source-layout both supported.
+try:
+    from utils.embed import embed_text  # container flat layout
+except ImportError:
+    from agent_fleet.utils.embed import embed_text  # source layout
+
 # ---------------------------------------------------------------------------
 # Fleet-standard utilities
 # ---------------------------------------------------------------------------
@@ -632,14 +639,17 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
     Always invoke via ``await asyncio.to_thread(...)`` from async paths so
     the event loop stays free and /health keeps responding.
 
-    Hybrid (BM25 + vector) requires a text2vec module on the Weaviate
-    cluster. The sandbox deployment has no vectorizer enabled (helm
-    default), so hybrid() raises "VectorFromInput was called without
-    vectorizer on class OntologyClass". We fall through to pure bm25()
-    so /resolve still works while a vectorizer module is decided on —
-    same pragmatic pattern that _predicate_hybrid_search_sync already
-    uses for the Predicate collection. When a vectorizer is added,
-    hybrid() succeeds first and the bm25 fallback is dormant.
+    Hybrid (BM25 + vector) — we compute the query vector explicitly via
+    embed_text() (agent_fleet/utils/embed.py → LiteLLM /embeddings) and
+    pass it as `vector=` to Weaviate. Weaviate is dumb storage: NO
+    text2vec module is involved on the cluster side. See the embed.py
+    docstring for the rationale (code owns the contract, not infra).
+
+    If the OntologyClass collection has no vectors stored (e.g. the
+    ingest pipeline hasn't been re-run since this change), Weaviate's
+    hybrid path effectively becomes BM25-only — same observable behavior
+    as the old fallback, but the code path is identical regardless of
+    cluster state.
     """
     if not _WEAVIATE_CLIENT:
         return []
@@ -650,13 +660,18 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
         filters = wvc.query.Filter.by_property("domain").equal(domain.upper()) if domain else None
 
         try:
-            response = collection.query.hybrid(
-                query=query, limit=limit, filters=filters,
-            )
-        except Exception:
-            # No vectorizer module on Weaviate — fall back to BM25.
+            query_vector = embed_text(query)
+        except Exception as e:
+            # Embedding gateway is down or misconfigured — fall back to
+            # BM25 so /resolve stays available. Surfaces as reduced
+            # routing accuracy in observability, not a hard failure.
+            print(f"embed_text failed, falling back to BM25 for OntologyClass: {e}")
             response = collection.query.bm25(
                 query=query, limit=limit, filters=filters,
+            )
+        else:
+            response = collection.query.hybrid(
+                query=query, vector=query_vector, limit=limit, filters=filters,
             )
         return [
             {
@@ -767,20 +782,31 @@ def _predicate_hybrid_search_sync(
                 wvc.query.Filter.by_property("domains", length=True).equal(0),
             ])
 
-        # NOTE: hybrid() requires a text2vec module on the Weaviate cluster
-        # to vectorize the query. The sandbox Weaviate deployment has no
-        # vectorizer modules enabled (helm chart default), so hybrid() fails
-        # with "VectorFromInput was called without vectorizer on class
-        # Predicate". Fall back to bm25() (inverted-index-only) so routing
-        # still works while we figure out the long-term vectorizer choice
-        # (text2vec-ollama would match the LLM stack but needs Weaviate
-        # to be redeployed with the module enabled).
-        response = collection.query.bm25(
-            query=query,
-            limit=limit,
-            filters=filters,
-            return_metadata=wvc.query.MetadataQuery(score=True),
-        )
+        # Hybrid: compute the query vector via embed_text() (LiteLLM
+        # /embeddings) and hand it to Weaviate explicitly. No text2vec
+        # module on the cluster — code owns the contract. If the embedding
+        # gateway fails OR the Predicate collection has no vectors stored
+        # yet (current state — only re-ingest will backfill them), Weaviate
+        # hybrid() degrades gracefully: BM25 still scores normally; the
+        # vector contribution is just zero / no-op.
+        try:
+            query_vector = embed_text(query)
+        except Exception as e:
+            print(f"embed_text failed, falling back to BM25 for Predicate: {e}")
+            response = collection.query.bm25(
+                query=query,
+                limit=limit,
+                filters=filters,
+                return_metadata=wvc.query.MetadataQuery(score=True),
+            )
+        else:
+            response = collection.query.hybrid(
+                query=query,
+                vector=query_vector,
+                limit=limit,
+                filters=filters,
+                return_metadata=wvc.query.MetadataQuery(score=True),
+            )
 
         out: list[dict] = []
         for obj in response.objects:

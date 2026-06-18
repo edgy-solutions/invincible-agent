@@ -242,10 +242,41 @@ def upsert_weaviate_predicate_row(
 
     deterministic_uuid = _deterministic_predicate_uuid(verb_iri, input_uri)
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
+
+    # Compute the vector explicitly via embed_text(). Weaviate is dumb
+    # storage of the vector — NO server-side text2vec module is used.
+    # Both writer (here) and reader (Engine O hybrid) call embed_text(),
+    # so the embedding-model contract lives in code (utils/embed.py) and
+    # is grep-able. See utils/embed.py for the full rationale.
+    #
+    # On embed gateway failure we still write the row WITHOUT a vector
+    # so the registration saga isn't blocked on the LLM stack being
+    # healthy. BM25 queries still work; a backfill can populate vectors
+    # once the gateway is restored.
+    try:
+        from utils.embed import embed_text
+    except ImportError:
+        from agent_fleet.utils.embed import embed_text
+
+    try:
+        predicate_vector = embed_text(search_text)
+    except Exception as e:
+        print(f"[mesh_registrar v2] embed_text failed for Predicate row "
+              f"{verb_iri}|{input_uri}; writing without vector "
+              f"(BM25-only until backfill): {e}")
+        predicate_vector = None
+
+    write_kwargs: dict = {
+        "uuid": deterministic_uuid,
+        "properties": properties,
+    }
+    if predicate_vector is not None:
+        write_kwargs["vector"] = predicate_vector
+
     if collection.data.exists(uuid=deterministic_uuid):
-        collection.data.replace(uuid=deterministic_uuid, properties=properties)
+        collection.data.replace(**write_kwargs)
     else:
-        collection.data.insert(uuid=deterministic_uuid, properties=properties)
+        collection.data.insert(**write_kwargs)
 
 
 def compensate_weaviate_predicate_row(

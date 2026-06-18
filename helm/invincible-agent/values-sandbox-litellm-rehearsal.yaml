@@ -68,6 +68,13 @@ agentFleet:
     MEM0_OPENAI_BASE_URL: "http://iagent-litellm:4000/v1"
     MEM0_OPENAI_API_KEY: "any"
 
+    # Embedding gateway — all Weaviate vector writes/reads go through
+    # LiteLLM. Same proxy as chat completions. agent_fleet/utils/embed.py
+    # reads LLM_BASE_URL first; if unset it falls back to OPENAI_BASE_URL
+    # so we only set it here when we want a different model name or path.
+    # LLM_BASE_URL and LLM_API_KEY pick up OPENAI_* fallbacks above.
+    LLM_EMBED_MODEL: "nomic-embed-text"
+
     # CRITICAL: clear OPENROUTER_API_KEY. mem0's OpenAILLM
     # (mem0/llms/openai.py) checks `if os.environ.get("OPENROUTER_API_KEY")`
     # FIRST and routes to https://openrouter.ai/api/v1 IGNORING our base_url
