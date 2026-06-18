@@ -657,6 +657,27 @@ litellm:
     limits:
       cpu: "1000m"
       memory: "2Gi"
+  # Probe timings. LiteLLM main-stable can take 60-120s before port 4000
+  # is bound — too slow for a typical 30s liveness initialDelay, so the
+  # template uses a generous startup probe to bracket the slow boot and
+  # then hand off to liveness/readiness. Tune here if your config is
+  # faster (smaller model_list, fewer providers).
+  probes:
+    startup:
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30   # 30 * 10s = 5 min max startup window
+    liveness:
+      initialDelaySeconds: 180
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 6
   # Full LiteLLM YAML config (model_list + settings). The operator owns
   # this — adjust model_name entries and api_base URLs for the backends
   # in your environment. See https://docs.litellm.ai/docs/proxy/configs.

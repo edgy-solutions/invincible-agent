@@ -69,20 +69,34 @@ spec:
             - name: config
               mountPath: /config
               readOnly: true
+          # LiteLLM main-stable startup loads many provider modules and can
+          # take 60-120s before port 4000 is bound. Default delays here are
+          # deliberately generous; tune via .Values.litellm.probes if you
+          # know your config starts faster.
           livenessProbe:
             httpGet:
               path: /health/liveliness
               port: http
-            initialDelaySeconds: 30
-            periodSeconds: 15
-            failureThreshold: 3
+            initialDelaySeconds: {{ .Values.litellm.probes.liveness.initialDelaySeconds | default 180 }}
+            periodSeconds: {{ .Values.litellm.probes.liveness.periodSeconds | default 20 }}
+            timeoutSeconds: {{ .Values.litellm.probes.liveness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.litellm.probes.liveness.failureThreshold | default 3 }}
           readinessProbe:
             httpGet:
               path: /health/readiness
               port: http
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            failureThreshold: 3
+            initialDelaySeconds: {{ .Values.litellm.probes.readiness.initialDelaySeconds | default 60 }}
+            periodSeconds: {{ .Values.litellm.probes.readiness.periodSeconds | default 15 }}
+            timeoutSeconds: {{ .Values.litellm.probes.readiness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.litellm.probes.readiness.failureThreshold | default 6 }}
+          startupProbe:
+            httpGet:
+              path: /health/liveliness
+              port: http
+            initialDelaySeconds: {{ .Values.litellm.probes.startup.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ .Values.litellm.probes.startup.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.litellm.probes.startup.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.litellm.probes.startup.failureThreshold | default 30 }}
           resources:
             {{- toYaml .Values.litellm.resources | nindent 12 }}
       volumes:
