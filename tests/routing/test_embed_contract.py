@@ -158,8 +158,134 @@ def test_only_canonical_embedding_model_name_in_iagent():
 
     assert not violations, (
         f"Hardcoded embedding model name(s) found outside the contract.\n"
-        f"Resolve by calling agent_fleet.utils.embed.embed_text() instead, "
-        f"which reads LLM_EMBED_MODEL from env (default 'nomic-embed-text').\n"
+        f"Resolve by calling agent_fleet.utils.embed.embed_document() or "
+        f"embed_query() instead. They read LLM_EMBED_MODEL from env "
+        f"(default 'nomic-embed-text') and apply the correct task prefix.\n"
         f"Offending lines:\n"
+        + "\n".join(f"  {f}:{ln}  {snippet}" for f, ln, snippet in violations)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task-prefix discipline guards
+# ---------------------------------------------------------------------------
+# nomic-embed-text uses asymmetric task prefixes:
+#   - "search_document: " for corpus chunks (write side)
+#   - "search_query: "    for user queries  (read side)
+# Mixing them up — or using neither — silently splits the embedding space
+# and tanks retrieval. Two guards keep this honest:
+#
+# (a) The literal prefix strings must appear ONLY in agent_fleet/utils/embed.py
+#     (the contract). Anywhere else is a code path that hand-rolls prefixing,
+#     which means a future model migration has to chase those strings down.
+# (b) No code outside agent_fleet/utils/embed.py may import / call the
+#     low-level helpers (embed_text, embed_texts, _post_embedding). All
+#     non-helper code uses embed_document, embed_documents, or embed_query.
+#     This forces every new vector path to declare its intent (write vs
+#     read) at the call site.
+
+EMBED_MODULE_RELATIVE = "agent_fleet/utils/embed.py"
+
+PREFIX_STRINGS = (
+    "search_document: ",
+    "search_query: ",
+)
+
+# Symbols that MUST NOT appear outside the embed module. embed_text was the
+# pre-prefix-split helper; embed_texts was its batch sibling. Any new code
+# accidentally calling them is a contract regression that bypasses prefix
+# discipline.
+FORBIDDEN_LOW_LEVEL_SYMBOLS = (
+    "embed_text",
+    "embed_texts",
+    "_post_embedding",
+)
+
+
+def test_prefix_strings_only_in_embed_module():
+    """search_document: / search_query: literal strings may only appear in
+    agent_fleet/utils/embed.py. Anywhere else is a hand-rolled prefix that
+    bypasses the contract — fix by calling embed_document / embed_query."""
+    violations: list[tuple[str, int, str]] = []
+    embed_module_abs = AGENT_FLEET.parent / EMBED_MODULE_RELATIVE
+
+    for py_file in AGENT_FLEET.rglob("*.py"):
+        if py_file.resolve() == embed_module_abs.resolve():
+            continue
+        if any(part.startswith(".") for part in py_file.relative_to(AGENT_FLEET).parts):
+            continue
+        try:
+            text = py_file.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if any(p in line for p in PREFIX_STRINGS):
+                # Tolerate comments / docstrings referencing the prefix by
+                # name; only flag string-literal occurrences. Conservative
+                # heuristic: skip lines that are pure comments. Docstring
+                # mentions of the prefix name in prose pass through too.
+                if line.lstrip().startswith("#"):
+                    continue
+                violations.append((str(py_file), lineno, line.strip()))
+
+    assert not violations, (
+        "Task-prefix literal strings found outside "
+        f"{EMBED_MODULE_RELATIVE}. The prefix scheme is contract; "
+        "hand-rolling prefixes anywhere else means a future migration "
+        "(e.g. nomic v1 -> v2 with different prefixes) has to chase strings.\n"
+        "Resolve by calling embed_document() / embed_query() from "
+        "agent_fleet.utils.embed.\n"
+        + "\n".join(f"  {f}:{ln}  {snippet}" for f, ln, snippet in violations)
+    )
+
+
+def test_no_low_level_embed_symbols_outside_embed_module():
+    """embed_text / embed_texts / _post_embedding only exist (and are only
+    callable) inside agent_fleet/utils/embed.py. Their use elsewhere bypasses
+    the task-prefix discipline."""
+    violations: list[tuple[str, int, str]] = []
+    embed_module_abs = AGENT_FLEET.parent / EMBED_MODULE_RELATIVE
+
+    for py_file in AGENT_FLEET.rglob("*.py"):
+        if py_file.resolve() == embed_module_abs.resolve():
+            continue
+        if any(part.startswith(".") for part in py_file.relative_to(AGENT_FLEET).parts):
+            continue
+        try:
+            text = py_file.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        in_docstring = False
+        docstring_delim = None
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if in_docstring:
+                assert docstring_delim is not None
+                if line.count(docstring_delim) % 2 == 1:
+                    in_docstring = False
+                    docstring_delim = None
+                continue
+            for delim in ('"""', "'''"):
+                if line.count(delim) % 2 == 1:
+                    in_docstring = True
+                    docstring_delim = delim
+                    break
+            if in_docstring:
+                continue
+            if line.lstrip().startswith("#"):
+                continue
+            for sym in FORBIDDEN_LOW_LEVEL_SYMBOLS:
+                # match as a word-boundary token so embed_text doesn't match
+                # against embed_text_with_prefix or similar future helpers.
+                import re as _re
+                if _re.search(rf"\b{sym}\b", line):
+                    violations.append((str(py_file), lineno, line.strip()))
+                    break
+
+    assert not violations, (
+        "Low-level embed symbols (embed_text / embed_texts / _post_embedding) "
+        f"used outside {EMBED_MODULE_RELATIVE}. These bypass the task-prefix "
+        "discipline that pairs writers with readers.\n"
+        "Resolve by calling embed_document() (write side) or embed_query() "
+        "(read side) instead.\n"
         + "\n".join(f"  {f}:{ln}  {snippet}" for f, ln, snippet in violations)
     )

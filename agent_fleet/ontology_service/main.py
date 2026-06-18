@@ -61,11 +61,14 @@ except ImportError:
         pass
 
 # Shared embedding helper (agent_fleet/utils/embed.py). Container flat-layout
-# and source-layout both supported.
+# and source-layout both supported. embed_query is for READ paths — it
+# applies the nomic-embed-text task prefix that pairs with embed_document's
+# write-side prefix. NEVER call embed_document from a query path or vice
+# versa; the prefixes split the embedding space.
 try:
-    from utils.embed import embed_text  # container flat layout
+    from utils.embed import embed_query  # container flat layout
 except ImportError:
-    from agent_fleet.utils.embed import embed_text  # source layout
+    from agent_fleet.utils.embed import embed_query  # source layout
 
 # ---------------------------------------------------------------------------
 # Fleet-standard utilities
@@ -660,12 +663,12 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
         filters = wvc.query.Filter.by_property("domain").equal(domain.upper()) if domain else None
 
         try:
-            query_vector = embed_text(query)
+            query_vector = embed_query(query)
         except Exception as e:
             # Embedding gateway is down or misconfigured — fall back to
             # BM25 so /resolve stays available. Surfaces as reduced
             # routing accuracy in observability, not a hard failure.
-            print(f"embed_text failed, falling back to BM25 for OntologyClass: {e}")
+            print(f"embed_query failed, falling back to BM25 for OntologyClass: {e}")
             response = collection.query.bm25(
                 query=query, limit=limit, filters=filters,
             )
@@ -790,9 +793,9 @@ def _predicate_hybrid_search_sync(
         # hybrid() degrades gracefully: BM25 still scores normally; the
         # vector contribution is just zero / no-op.
         try:
-            query_vector = embed_text(query)
+            query_vector = embed_query(query)
         except Exception as e:
-            print(f"embed_text failed, falling back to BM25 for Predicate: {e}")
+            print(f"embed_query failed, falling back to BM25 for Predicate: {e}")
             response = collection.query.bm25(
                 query=query,
                 limit=limit,

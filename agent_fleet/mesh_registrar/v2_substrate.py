@@ -243,25 +243,26 @@ def upsert_weaviate_predicate_row(
     deterministic_uuid = _deterministic_predicate_uuid(verb_iri, input_uri)
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
 
-    # Compute the vector explicitly via embed_text(). Weaviate is dumb
+    # Compute the vector explicitly via embed_document(). Weaviate is dumb
     # storage of the vector — NO server-side text2vec module is used.
-    # Both writer (here) and reader (Engine O hybrid) call embed_text(),
-    # so the embedding-model contract lives in code (utils/embed.py) and
-    # is grep-able. See utils/embed.py for the full rationale.
+    # Predicate rows are CORPUS (the read-side hybrid query uses embed_query
+    # for the QUERY-prefixed vector). Asymmetric prefixes are the contract;
+    # using the wrong helper silently splits the embedding space. See
+    # utils/embed.py for the rationale.
     #
     # On embed gateway failure we still write the row WITHOUT a vector
     # so the registration saga isn't blocked on the LLM stack being
     # healthy. BM25 queries still work; a backfill can populate vectors
     # once the gateway is restored.
     try:
-        from utils.embed import embed_text
+        from utils.embed import embed_document
     except ImportError:
-        from agent_fleet.utils.embed import embed_text
+        from agent_fleet.utils.embed import embed_document
 
     try:
-        predicate_vector = embed_text(search_text)
+        predicate_vector = embed_document(search_text)
     except Exception as e:
-        print(f"[mesh_registrar v2] embed_text failed for Predicate row "
+        print(f"[mesh_registrar v2] embed_document failed for Predicate row "
               f"{verb_iri}|{input_uri}; writing without vector "
               f"(BM25-only until backfill): {e}")
         predicate_vector = None

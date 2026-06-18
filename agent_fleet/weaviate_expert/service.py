@@ -24,14 +24,16 @@ except ImportError:
     except ImportError:
         from weaviate_utils import create_weaviate_client
 
-# Shared embedding helper — code owns the contract for "what model"
+# Shared embedding helper — code owns the contract for "what model" and
+# "what task prefix." Engine W is a READ path, so embed_query is the right
+# helper (it adds the nomic search_query: prefix).
 try:
-    from utils.embed import embed_text
+    from utils.embed import embed_query
 except ImportError:
     try:
-        from agent_fleet.utils.embed import embed_text
+        from agent_fleet.utils.embed import embed_query
     except ImportError:
-        from embed import embed_text
+        from embed import embed_query
 
 from baml_client import b
 
@@ -119,12 +121,12 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                 final_filter = base_filter
             
             # STRICT DOMAIN SEGREGATION FILTER + explicit vector.
-            # We compute the query vector via embed_text() (LiteLLM
-            # /embeddings) instead of letting Weaviate vectorize the
-            # query via a text2vec module — code owns the contract, NOT
-            # infra. See agent_fleet/utils/embed.py for the rationale.
+            # We compute the query vector via embed_query() (LiteLLM
+            # /embeddings, search_query: prefix) instead of letting
+            # Weaviate vectorize the query via a text2vec module — code
+            # owns the contract, NOT infra. See agent_fleet/utils/embed.py.
             try:
-                query_vector = embed_text(semantic_query)
+                query_vector = embed_query(semantic_query)
                 response = collection.query.near_vector(
                     near_vector=query_vector,
                     limit=5,
@@ -134,7 +136,7 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                 # If the embedding gateway is down, fall back to BM25 so
                 # the engine still returns something instead of error.
                 # Logs the failure so observability surfaces the gap.
-                print(f"embed_text failed in Engine W; BM25 fallback: {embed_err}")
+                print(f"embed_query failed in Engine W; BM25 fallback: {embed_err}")
                 response = collection.query.bm25(
                     query=semantic_query,
                     limit=5,
