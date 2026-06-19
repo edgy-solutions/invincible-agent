@@ -435,7 +435,15 @@ def trigger_ingest_jobs() -> None:
     override with DAGSTER_URL.
     """
     print("--- Triggering dagster ingest_ontology_job per partition ---")
-    dagster_url = os.environ.get("DAGSTER_URL", "http://localhost:3000")
+    # Backward-compat: DAGSTER_URL was the original env name; the helm
+    # chart emits DAGSTER_HOST (matches the engineering convention used by
+    # most fleet services). Read both, prefer DAGSTER_URL when explicitly
+    # set so callers can override.
+    dagster_url = (
+        os.environ.get("DAGSTER_URL")
+        or os.environ.get("DAGSTER_HOST")
+        or "http://localhost:3000"
+    )
     graphql = f"{dagster_url}/graphql"
 
     for entry in CANONICAL_TTL_MANIFEST:

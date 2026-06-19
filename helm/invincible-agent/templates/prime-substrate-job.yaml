@@ -137,9 +137,15 @@ spec:
             # naming differs.
             - name: ONTOLOGY_BUCKET
               value: "ontologies"
-            # DAGSTER_HOST: --trigger-ingest hits dagster's GraphQL to
-            # launch ingest_ontology_job. Use the in-cluster webserver
-            # endpoint.
+            # DAGSTER_URL / DAGSTER_HOST: --trigger-ingest hits dagster's
+            # GraphQL to launch ingest_ontology_job. Use the in-cluster
+            # webserver endpoint. We publish under BOTH names because the
+            # script accepts either (DAGSTER_URL is the historical name;
+            # DAGSTER_HOST matches the engineering convention used by
+            # other fleet services). Older script versions in stale images
+            # only read DAGSTER_URL; newer ones (>=c26d033) read both.
+            - name: DAGSTER_URL
+              value: "http://{{ .Release.Name }}-dagster-webserver:80"
             - name: DAGSTER_HOST
               value: "http://{{ .Release.Name }}-dagster-webserver:80"
             # NEO4J_USER alias: the script reads NEO4J_USERNAME (from
