@@ -625,6 +625,58 @@ def wipe_databases(*, namespace: str) -> None:
     except Exception as e:
         print(f"[ERROR] Jena wipe: {e}")
 
+    # MinIO ontologies bucket.
+    #
+    # Why this is in --wipe: the canonical TTL manifest's s3_key list can
+    # change between releases (e.g. mro/IOF_Core.rdf was renamed to
+    # maintenance/IOF_Core.rdf when the path-derived-domain fallback was
+    # retired 2026-06-16). Without clearing, the bucket accumulates
+    # orphan keys from PRIOR manifests — the dagster ontology_sensor
+    # enumerates the whole bucket and tries to ingest those orphans
+    # alongside the current canonical set. The orphans lack
+    # x-amz-meta-domain (it's only written for current manifest entries)
+    # so ingest_ontology_to_jena raises:
+    #
+    #   Exception: Domain not declared for ontology '<orphan path>'.
+    #
+    # Wiping here makes the bucket reproduce the manifest exactly. The
+    # subsequent upload_canonical_ttls() repopulates it from scratch.
+    endpoint = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("MINIO_URL", "http://localhost:9000")
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+    bucket = os.environ.get("ONTOLOGY_BUCKET", "ontologies")
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+        try:
+            s3.head_bucket(Bucket=bucket)
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchBucket", "NotFound"):
+                print(f"[OK] MinIO bucket {bucket} doesn't exist; nothing to wipe.")
+                return
+            raise
+
+        # delete_objects caps at 1000 keys per batch; paginate.
+        paginator = s3.get_paginator("list_objects_v2")
+        deleted = 0
+        for page in paginator.paginate(Bucket=bucket):
+            contents = page.get("Contents") or []
+            if not contents:
+                continue
+            batch = [{"Key": obj["Key"]} for obj in contents]
+            s3.delete_objects(Bucket=bucket, Delete={"Objects": batch, "Quiet": True})
+            deleted += len(batch)
+        print(f"[OK] MinIO bucket {bucket} cleared ({deleted} objects).")
+    except Exception as e:
+        print(f"[ERROR] MinIO wipe: {e}")
+
 
 # ============================================================================
 # Main
