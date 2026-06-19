@@ -54,6 +54,111 @@ spec:
       # the Job, which then either retries (backoffLimit > 0) or fails
       # outright (our backoffLimit: 0).
       restartPolicy: Never
+      # ----------------------------------------------------------------
+      # Readiness gate: wait until every prerequisite is actually
+      # accepting traffic before the prime script runs.
+      #
+      # The post-install/post-upgrade hook fires once resources have
+      # been APPLIED, not when their PODS are READY. If Neo4j / Jena /
+      # MinIO / Dagster aren't fully up yet, the prime script's first
+      # connection attempt can succeed-on-port-open but fail at the
+      # application layer — and Neo4j in particular has a 5s lockout
+      # after repeated bad-auth attempts (Neo.ClientError.Security.
+      # AuthenticationRateLimit), so a script-internal retry loop can
+      # outlast the init for ONE phase and not the next (observed at
+      # work-cluster prime 2026-06-18: wipe failed rate-limited, prime
+      # phase ~10s later succeeded with same creds).
+      #
+      # Probes are TCP-only (raw socket, never goes through HTTP_PROXY)
+      # PLUS a Neo4j auth-loop that exits only when the configured
+      # password is accepted. Image is the same dagster-control-plane
+      # used by the main container — neo4j-python is already in its
+      # venv, no extra image to mirror.
+      # ----------------------------------------------------------------
+      initContainers:
+        - name: wait-for-prereqs
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.primeSubstrate.image.registry "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.primeSubstrate.image.pullPolicy }}
+          workingDir: /app
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            - name: NEO4J_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: NEO4J_USERNAME
+                  optional: true
+          command:
+            - /app/.venv/bin/python
+            - -c
+            - |
+              import os, time, socket
+              from urllib.parse import urlparse
+
+              def wait_tcp(name, host, port, timeout=300):
+                  start = time.time()
+                  while time.time() - start < timeout:
+                      try:
+                          with socket.create_connection((host, port), timeout=3):
+                              print(f"[ready] {name} TCP {host}:{port}", flush=True)
+                              return
+                      except (OSError, socket.timeout):
+                          pass
+                      time.sleep(2)
+                  raise TimeoutError(f"{name} not ready at {host}:{port} after {timeout}s")
+
+              def parse_host_port(url, default_port):
+                  p = urlparse(url)
+                  return (p.hostname, p.port or default_port)
+
+              checks = [
+                  ("Neo4j", os.environ.get("NEO4J_URI"), 7687),
+                  ("Jena", os.environ.get("JENA_URL") or os.environ.get("JENA_SPARQL_ENDPOINT"), 3030),
+                  ("MinIO", os.environ.get("MINIO_ENDPOINT_URL") or os.environ.get("S3_ENDPOINT_URL"), 9000),
+                  ("Dagster", os.environ.get("DAGSTER_URL") or os.environ.get("DAGSTER_HOST"), 80),
+              ]
+              for name, url, default_port in checks:
+                  if not url:
+                      print(f"[skip] {name}: no URL configured", flush=True)
+                      continue
+                  host, port = parse_host_port(url, default_port)
+                  if not host:
+                      print(f"[skip] {name}: unparseable URL {url!r}", flush=True)
+                      continue
+                  wait_tcp(name, host, port)
+
+              # Extra: Neo4j auth probe — the prime wipe phase otherwise
+              # hits AuthenticationRateLimit when neo4j's password setup
+              # is racing the script. Loop until the configured password
+              # is accepted; sleeps between attempts are >> neo4j's
+              # rate-limit window (typ. 5s) so we don't accumulate
+              # towards the lockout threshold.
+              if os.environ.get("NEO4J_URI"):
+                  from neo4j import GraphDatabase
+                  print("[probe] Neo4j auth", flush=True)
+                  user = os.environ.get("NEO4J_USERNAME") or os.environ.get("NEO4J_USER", "neo4j")
+                  pw = os.environ.get("NEO4J_PASSWORD", "")
+                  for attempt in range(60):
+                      try:
+                          d = GraphDatabase.driver(os.environ["NEO4J_URI"], auth=(user, pw))
+                          with d.session() as s:
+                              s.run("RETURN 1").single()
+                          d.close()
+                          print("[ready] Neo4j auth", flush=True)
+                          break
+                      except Exception as e:
+                          # Don't print full stack; just the error class so
+                          # we don't leak passwords into logs.
+                          print(f"[wait] Neo4j auth attempt {attempt+1}: {type(e).__name__}", flush=True)
+                          time.sleep(6)  # > neo4j's 5s rate-limit window
+                  else:
+                      raise RuntimeError("Neo4j never accepted configured password")
+
+              print("[OK] all prerequisites ready", flush=True)
       containers:
         - name: prime-substrate
           image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.primeSubstrate.image.registry "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
@@ -144,10 +249,21 @@ spec:
             # DAGSTER_HOST matches the engineering convention used by
             # other fleet services). Older script versions in stale images
             # only read DAGSTER_URL; newer ones (>=c26d033) read both.
+            #
+            # FQDN form is intentional. Bare release-name service names
+            # (e.g. "invincible-agent-dagster-webserver") don't match a
+            # NO_PROXY entry of ".svc" or ".svc.cluster.local" — they
+            # have no trailing dot for suffix matching. The corporate
+            # proxy then intercepts the in-cluster call and 502s the
+            # whole --trigger-ingest pass (observed at work-cluster
+            # prime 2026-06-18). The full FQDN form matches .svc.
+            # .cluster.local suffix correctly, so operators only need
+            # ".svc.cluster.local" in their NO_PROXY — not every
+            # release-name-prefixed service name.
             - name: DAGSTER_URL
-              value: "http://{{ .Release.Name }}-dagster-webserver:80"
+              value: "http://{{ .Release.Name }}-dagster-webserver.{{ .Release.Namespace }}.svc.cluster.local:80"
             - name: DAGSTER_HOST
-              value: "http://{{ .Release.Name }}-dagster-webserver:80"
+              value: "http://{{ .Release.Name }}-dagster-webserver.{{ .Release.Namespace }}.svc.cluster.local:80"
             # NEO4J_USER alias: the script reads NEO4J_USERNAME (from
             # ConfigMap) AND falls back to NEO4J_USER. Both work; this
             # alias is defensive against older script versions in old
