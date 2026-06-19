@@ -652,6 +652,14 @@ fuseki:
 externalFuseki:
   url: ""     # e.g. "http://my-fuseki.infra.svc:3030"
 
+# BYO Dagster. When dagster.webserver.enabled=false the chart's
+# prime-substrate-job uses externalDagster.url instead of the chart's
+# bundled webserver. Set the FQDN so a NO_PROXY entry of
+# ".svc.cluster.local" suffix-matches it (bare service names DON'T —
+# they have no trailing dot for suffix matching).
+externalDagster:
+  url: ""     # e.g. "http://dagster-dagster-webserver.<namespace>.svc.cluster.local:80"
+
 # ==========================================================================
 # Identity Management (Keycloak)
 # ==========================================================================

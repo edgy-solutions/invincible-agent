@@ -261,9 +261,9 @@ spec:
             # ".svc.cluster.local" in their NO_PROXY — not every
             # release-name-prefixed service name.
             - name: DAGSTER_URL
-              value: "http://{{ .Release.Name }}-dagster-webserver.{{ .Release.Namespace }}.svc.cluster.local:80"
+              value: "{{ include "invincible-agent.dagsterUrl" . }}"
             - name: DAGSTER_HOST
-              value: "http://{{ .Release.Name }}-dagster-webserver.{{ .Release.Namespace }}.svc.cluster.local:80"
+              value: "{{ include "invincible-agent.dagsterUrl" . }}"
             # NEO4J_USER alias: the script reads NEO4J_USERNAME (from
             # ConfigMap) AND falls back to NEO4J_USER. Both work; this
             # alias is defensive against older script versions in old

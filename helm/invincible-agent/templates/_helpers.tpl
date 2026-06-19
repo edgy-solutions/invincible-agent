@@ -186,3 +186,24 @@ http://{{ .Release.Name }}-fuseki{{ include "invincible-agent.svcDomain" . }}:30
 {{ .Values.externalFuseki.url }}
 {{- end -}}
 {{- end }}
+
+{{/*
+Dagster webserver URL — uses in-chart deployment or external.
+
+Used by prime-substrate-job for --trigger-ingest.
+
+When using the chart's bundled Dagster, returns the FQDN form
+(<release>-dagster-webserver.<release-ns>.svc.cluster.local:80) so a
+NO_PROXY entry of ".svc.cluster.local" suffix-matches and the corporate
+proxy doesn't intercept the in-cluster call.
+
+When using an external (BYO) Dagster, returns externalDagster.url
+verbatim — operators set the FQDN themselves there.
+*/}}
+{{- define "invincible-agent.dagsterUrl" -}}
+{{- if .Values.dagster.webserver.enabled -}}
+http://{{ .Release.Name }}-dagster-webserver.{{ .Release.Namespace }}.svc.cluster.local:80
+{{- else -}}
+{{ .Values.externalDagster.url }}
+{{- end -}}
+{{- end }}
