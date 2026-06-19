@@ -792,14 +792,26 @@ litellm:
   # the DB schema pre-applied.
   config: |
     model_list:
+      # api_key required on each entry — LiteLLM v1.89.x unified backends
+      # to use openai-python internally for ALL routing (including
+      # ollama/* model names), and openai-python's client constructor
+      # raises if api_key is unset. The upstream (Ollama) ignores it,
+      # but the openai-python client checks it at init. Without an
+      # explicit value here LiteLLM errors:
+      #   litellm.AuthenticationError: OpenAIException - The api_key
+      #   client option must be set...
+      # (observed at work-cluster engine-o BAML call 2026-06-19).
+      # "any" is conventional for stateless / Ollama backends.
       - model_name: gpt-oss-128k:120b
         litellm_params:
           model: ollama/gpt-oss-128k:120b
           api_base: http://192.168.1.119:11434
+          api_key: "any"
       - model_name: nomic-embed-text
         litellm_params:
           model: ollama/nomic-embed-text
           api_base: http://192.168.1.188:11434
+          api_key: "any"
     litellm_settings:
       drop_params: true
 
