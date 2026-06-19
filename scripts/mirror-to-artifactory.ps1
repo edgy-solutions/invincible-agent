@@ -208,34 +208,42 @@ $ExternalImages = @(
 
     # Identity, durable execution, ontology graph, vector store,
     # ontology triple store, FGA authorization.
-    @{ src='quay.io/keycloak/keycloak:latest';                         dst='keycloak/keycloak:latest' },
+    # ------------------------------------------------------------------
+    # All tags below are pinned to the EXACT versions running in our
+    # sandbox cluster at the time of validation (2026-06-19). Floating
+    # tags like :latest or :main-stable are intentionally avoided so
+    # the work cluster gets a byte-identical environment to what was
+    # tested. To roll a new version: bump here, redeploy sandbox
+    # against that tag, validate, then redeploy work.
+    # ------------------------------------------------------------------
+    @{ src='quay.io/keycloak/keycloak:26.6.3';                         dst='keycloak/keycloak:26.6.3' },
     @{ src='docker.io/restatedev/restate:1.6.2';                       dst='restatedev/restate:1.6.2' },
     @{ src='neo4j:5.26.0';                                             dst='library/neo4j:5.26.0' },
     @{ src='semitechnologies/weaviate:1.27.0';                         dst='semitechnologies/weaviate:1.27.0' },
-    @{ src='secoresearch/fuseki:latest';                               dst='secoresearch/fuseki:latest' },
+    @{ src='secoresearch/fuseki:5.5.0';                                dst='secoresearch/fuseki:5.5.0' },
     @{ src='ghcr.io/aserto-dev/topaz:0.33.13';                         dst='aserto-dev/topaz:0.33.13' },
 
     # LLM gateway. Optional in the iagent helm chart (litellm.enabled,
     # default false). When turned on, fronts Ollama / vLLM / OpenAI /
     # OpenRouter behind a single OpenAI-compatible /v1 endpoint so the
     # fleet's smolagents / BAML / embed.py / mem0 paths all talk one
-    # protocol. The chart pins :main-stable; that's a moving tag
-    # upstream so re-running this script picks up drift. If you want
-    # a locked digest, switch the chart to a SHA pin and reflect that
-    # here too.
-    @{ src='ghcr.io/berriai/litellm:main-stable';                      dst='berriai/litellm:main-stable' },
+    # protocol. Pinned to v1.89.2 — the version validated end-to-end in
+    # sandbox (matrix 23/23 + mem0 round-trip + cortex-bff). The chart
+    # default litellm.image.tag should be updated alongside this pin.
+    @{ src='ghcr.io/berriai/litellm:v1.89.2';                          dst='berriai/litellm:v1.89.2' },
 
     # Persistent state (deployed by the iagent chart as third-party
     # sidecars to engines that need them — clickhouse for analytics,
     # minio for object store, redis for cache).
     @{ src='postgres:16';                                              dst='library/postgres:16' },
     @{ src='redis:7-alpine';                                           dst='library/redis:7-alpine' },
-    @{ src='minio/minio:latest';                                       dst='minio/minio:latest' },
+    @{ src='minio/minio:RELEASE.2025-09-07T16-13-09Z';                 dst='minio/minio:RELEASE.2025-09-07T16-13-09Z' },
 
     # Utility / sidecar. python is the runtime image for the
     # domain-broker pod (config-driven, not a custom CI image).
-    @{ src='curlimages/curl:latest';                                   dst='curlimages/curl:latest' },
-    @{ src='busybox:latest';                                           dst='library/busybox:latest' },
+    # curl + busybox used by init containers (wait-for-services, etc.).
+    @{ src='curlimages/curl:8.11.0';                                   dst='curlimages/curl:8.11.0' },
+    @{ src='busybox:1.37.0';                                           dst='library/busybox:1.37.0' },
     @{ src='python:3.12-slim';                                         dst='library/python:3.12-slim' }
 )
 

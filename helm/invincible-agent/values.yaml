@@ -738,7 +738,11 @@ litellm:
   enabled: false
   image:
     repository: ghcr.io/berriai/litellm
-    tag: "main-stable"
+    # Pinned to v1.89.2 — the version validated end-to-end in sandbox
+    # (matrix 23/23, mem0 round-trip, cortex-bff). Matches the pin in
+    # scripts/mirror-to-artifactory.ps1. To roll: bump both alongside
+    # a sandbox revalidation.
+    tag: "v1.89.2"
   replicas: 1
   # LiteLLM loads many provider modules at startup; 1Gi limit OOMs in <60s
   # under the main-stable image (observed 2026-06-17). 2Gi is the empirical
