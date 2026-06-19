@@ -202,7 +202,7 @@ verbatim — operators set the FQDN themselves there.
 */}}
 {{- define "invincible-agent.dagsterUrl" -}}
 {{- if .Values.dagster.webserver.enabled -}}
-http://{{ .Release.Name }}-dagster-webserver.{{ .Release.Namespace }}.svc.cluster.local:80
+http://{{ .Release.Name }}-dagster.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.dagster.webserver.port }}
 {{- else -}}
 {{ .Values.externalDagster.url }}
 {{- end -}}

@@ -38,7 +38,13 @@ data:
   WEAVIATE_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}"
   
   # Dagster Discovery
-  DAGSTER_WEBSERVER_URL: "http://{{ .Release.Name }}-dagster{{ include "invincible-agent.svcDomain" . }}:{{ .Values.dagster.webserver.port }}"
+  # DAGSTER_WEBSERVER_URL: consumed by cortex-bff and src/iagent/gateway.py
+  # (DAGSTER_URL / DAGSTER_HOST is the equivalent for the prime job).
+  # Helper-driven so the value tracks dagster.webserver.enabled (bundled)
+  # vs externalDagster.url (BYO Dagster) cleanly, AND the bundled form
+  # is the FQDN so a NO_PROXY entry of ".svc.cluster.local" suffix-
+  # matches it under corporate proxies.
+  DAGSTER_WEBSERVER_URL: {{ include "invincible-agent.dagsterUrl" . | quote }}
   DAGSTER_LOCATION: "iagent"
   DAGSTER_REPOSITORY: "__repository__"
 
