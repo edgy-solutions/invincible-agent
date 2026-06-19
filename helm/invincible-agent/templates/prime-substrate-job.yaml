@@ -56,7 +56,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: prime-substrate
-          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.primeSubstrate.image.registry "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.primeSubstrate.image.pullPolicy }}
           # The dagster-control-plane image WORKDIR is /app and has the
           # full invincible-agent repo COPY'd in (it's the same image
@@ -152,6 +152,55 @@ spec:
                   name: {{ .Release.Name }}-config
                   key: NEO4J_USERNAME
                   optional: true
+            {{- if .Values.primeSubstrate.caBundle.enabled }}
+            # CA bundle for corporate-proxy TLS MITM. The bundle is
+            # mounted from a Secret operators create out-of-band (chart
+            # doesn't manage the bytes). Setting all three env vars below
+            # covers requests / boto3 / weaviate-client (REQUESTS_CA_BUNDLE),
+            # the python ssl module + httpx default + most other libs
+            # (SSL_CERT_FILE), and curl (CURL_CA_BUNDLE). The mounted file
+            # is treated as the FULL trust set — operators who want to
+            # ALSO trust the system roots should concatenate the system
+            # bundle into the file BEFORE creating the Secret.
+            - name: REQUESTS_CA_BUNDLE
+              value: "{{ .Values.primeSubstrate.caBundle.mountPath }}/{{ .Values.primeSubstrate.caBundle.secretKey }}"
+            - name: SSL_CERT_FILE
+              value: "{{ .Values.primeSubstrate.caBundle.mountPath }}/{{ .Values.primeSubstrate.caBundle.secretKey }}"
+            - name: CURL_CA_BUNDLE
+              value: "{{ .Values.primeSubstrate.caBundle.mountPath }}/{{ .Values.primeSubstrate.caBundle.secretKey }}"
+            {{- end }}
+            # ------------------------------------------------------------
+            # Operator-supplied prime-only env. Iterated AFTER the
+            # hardcoded bridges above so any name collision (e.g. operator
+            # sets DAGSTER_HOST) wins. Use for:
+            #   - corporate proxy that engines DON'T need (HTTP_PROXY /
+            #     HTTPS_PROXY / NO_PROXY) — the prime script reaches out
+            #     for external TTLs, engines do not.
+            #   - one-shot overrides for a manual re-prime (e.g. pin
+            #     ONTOLOGY_BUCKET to a side-bucket).
+            #   - certificate bundle paths for self-signed TLS proxies.
+            # Keys go on the prime container ONLY — agentFleet.env is for
+            # everything that needs the value cluster-wide.
+            # ------------------------------------------------------------
+            {{- range $k, $v := .Values.primeSubstrate.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if .Values.primeSubstrate.caBundle.enabled }}
+          volumeMounts:
+            - name: ca-bundle
+              mountPath: {{ .Values.primeSubstrate.caBundle.mountPath }}
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.primeSubstrate.resources | nindent 12 }}
+      {{- if .Values.primeSubstrate.caBundle.enabled }}
+      volumes:
+        - name: ca-bundle
+          secret:
+            secretName: {{ .Values.primeSubstrate.caBundle.existingSecret }}
+            items:
+              - key: {{ .Values.primeSubstrate.caBundle.secretKey }}
+                path: {{ .Values.primeSubstrate.caBundle.secretKey }}
+      {{- end }}
 {{- end }}

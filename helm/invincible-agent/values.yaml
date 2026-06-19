@@ -454,12 +454,58 @@ primeSubstrate:
   # and the full CANONICAL_TTL_MANIFEST. The thin dagster-server image
   # is webserver/daemon only — it has dagster ecosystem libs but NO
   # iagent source, so it can't run the prime script.
-  # Override here if you need to point at a different image (e.g. a
-  # dedicated bootstrap image, a pinned SHA for reproducibility).
+  #
+  # Three override knobs:
+  #   - registry: explicit registry host. When set, the image becomes
+  #     "<registry>/<repository>:<tag>" — useful for pointing prime at
+  #     a DIFFERENT registry than the global.imageRegistry the engines
+  #     use (e.g. a bootstrap-only / proxy-traversal-only registry, or
+  #     a hand-built image with extra deps). Leave empty to inherit
+  #     global.imageRegistry.
+  #   - repository: image path within the registry.
+  #   - tag: image tag; pin to a SHA when reproducibility matters.
   image:
+    registry: ""
     repository: "edgy-solutions/invincible-agent/dagster-control-plane"
     tag: "latest"
     pullPolicy: "Always"
+  # Prime-only env vars. Iterated by the prime-substrate-job template
+  # AFTER its hardcoded bridges, so anything you set here wins over the
+  # defaults. Common uses:
+  #   - HTTP_PROXY / HTTPS_PROXY / NO_PROXY when the prime script must
+  #     reach OUTSIDE the cluster (e.g. fetching the PROV-O / IOF Core
+  #     / S3000L TTLs from the public web) but engines do NOT — keeping
+  #     proxy config off the global agentFleet.env block.
+  #   - Self-signed-CA paths (REQUESTS_CA_BUNDLE, SSL_CERT_FILE) when
+  #     the proxy terminates TLS.
+  #   - One-shot overrides for a manual re-prime (e.g. ONTOLOGY_BUCKET).
+  # Keys land ONLY on the prime container; engines are unaffected.
+  env: {}
+    # HTTP_PROXY: "http://corp-proxy.example.com:3128"
+    # HTTPS_PROXY: "http://corp-proxy.example.com:3128"
+    # NO_PROXY: "localhost,127.0.0.1,.svc,.svc.cluster.local,minio,iagent-litellm"
+  # CA bundle mount for corporate proxies that MITM TLS with a private
+  # root CA. When enabled, the chart:
+  #   - mounts <existingSecret>/<secretKey> at <mountPath>/<secretKey>
+  #     (read-only volume)
+  #   - sets REQUESTS_CA_BUNDLE, SSL_CERT_FILE, and CURL_CA_BUNDLE env
+  #     vars on the prime container to point at the mounted file
+  #
+  # The Secret is NOT managed by this chart — operators create it
+  # out-of-band so the chart values don't carry private CA bytes. The
+  # mounted file is treated as the FULL trust set; if you also need the
+  # standard public roots (e.g. real CDN URLs in CANONICAL_TTL_MANIFEST
+  # that bypass the proxy), concatenate the system bundle into the file
+  # BEFORE creating the Secret:
+  #
+  #   cat /etc/ssl/certs/ca-certificates.crt corp-root.pem > combined.pem
+  #   kubectl create secret generic prime-ca-bundle \
+  #     --from-file=ca-bundle.crt=combined.pem -n <ns>
+  caBundle:
+    enabled: false
+    existingSecret: ""        # e.g. "prime-ca-bundle"
+    secretKey: "ca-bundle.crt"
+    mountPath: "/etc/ssl/certs/extra"
   # Resource budget. The script is mostly I/O (downloads TTLs, uploads
   # to MinIO, triggers dagster), so CPU/memory are modest. The dagster
   # ingest itself runs in dagster-user-code, not here.
