@@ -404,14 +404,26 @@ def upload_canonical_ttls() -> None:
             continue
 
         try:
+            # Boto3 PREPENDS "x-amz-meta-" to every key in Metadata={...}
+            # when constructing the actual S3 headers — so passing keys
+            # that already contain "x-amz-meta-" produces double-prefixed
+            # headers like "x-amz-meta-x-amz-meta-domain". The reader in
+            # doc-tools' ontology_assets does head.get("Metadata").get("domain")
+            # (boto3 strips the single prefix on read), so the
+            # double-prefixed key is invisible to it and every ingest
+            # raises "Domain not declared for ontology '<path>'" even
+            # though the upload reported [OK]. Observed at work-cluster
+            # ingest 2026-06-19.
+            #
+            # Pass the bare keys; boto3 adds the one prefix; reader finds them.
             s3.put_object(
                 Bucket=bucket,
                 Key=s3_key,
                 Body=data,
                 Metadata={
-                    "x-amz-meta-domain": domain,
-                    "x-amz-meta-source-url": source_metadata,
-                    "x-amz-meta-canonical-name": name,
+                    "domain": domain,
+                    "source-url": source_metadata,
+                    "canonical-name": name,
                 },
             )
             print(f"    [OK] → s3://{bucket}/{s3_key} ({len(data)} bytes)")
