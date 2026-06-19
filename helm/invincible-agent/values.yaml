@@ -815,6 +815,37 @@ litellm:
     litellm_settings:
       drop_params: true
 
+  # ----------------------------------------------------------------------
+  # Environment for the LiteLLM proxy container.
+  #
+  # Two paths, mirror the engine/cortex-bff pattern:
+  #
+  #   env:                  inline key/value pairs (non-secret tuning).
+  #   envFromConfigMaps:    bulk-import a ConfigMap's keys as env vars.
+  #   envFromSecrets:       bulk-import a Secret's keys as env vars.
+  #
+  # Use envFromSecrets for credentials — e.g. self-hosted Langfuse:
+  #
+  #   kubectl create secret generic langfuse-creds -n <ns> \
+  #     --from-literal=LANGFUSE_PUBLIC_KEY=pk-lf-... \
+  #     --from-literal=LANGFUSE_SECRET_KEY=sk-lf-... \
+  #     --from-literal=LANGFUSE_HOST=http://langfuse-web.observability:3000
+  #
+  #   litellm:
+  #     envFromSecrets: ["langfuse-creds"]
+  #     config: |
+  #       ...
+  #       litellm_settings:
+  #         success_callback: ["langfuse"]
+  #         failure_callback: ["langfuse"]
+  #
+  # The proxy's callback machinery reads LANGFUSE_* from process env at
+  # request time — the YAML `config` block does NOT inherit them, so
+  # setting them in agentFleet.env does not reach the LiteLLM container.
+  env: {}
+  envFromConfigMaps: []
+  envFromSecrets: []
+
 # ==========================================================================
 # Secrets — override these in your values-production.yaml
 # ==========================================================================

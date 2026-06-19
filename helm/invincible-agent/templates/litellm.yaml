@@ -65,6 +65,34 @@ spec:
           ports:
             - name: http
               containerPort: 4000
+          # envFrom — pull operator-managed ConfigMaps and Secrets in bulk.
+          # Typical use: a `langfuse-creds` Secret carrying
+          # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_HOST so the
+          # proxy's success_callback/failure_callback can authenticate
+          # against self-hosted Langfuse. The proxy reads these from its
+          # own process env at request time; the YAML config block does
+          # NOT inherit them.
+          {{- if or .Values.litellm.envFromConfigMaps .Values.litellm.envFromSecrets }}
+          envFrom:
+            {{- range .Values.litellm.envFromConfigMaps }}
+            - configMapRef:
+                name: {{ . }}
+            {{- end }}
+            {{- range .Values.litellm.envFromSecrets }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+          {{- end }}
+          # env — explicit inline key/value pairs. Operator overlays often
+          # use this for non-secret tuning (LITELLM_LOG, LITELLM_DROP_PARAMS,
+          # OTEL endpoint, etc.). Secrets belong in envFromSecrets above.
+          {{- if .Values.litellm.env }}
+          env:
+            {{- range $k, $v := .Values.litellm.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
           volumeMounts:
             - name: config
               mountPath: /config
