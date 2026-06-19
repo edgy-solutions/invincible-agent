@@ -446,11 +446,58 @@ def trigger_ingest_jobs() -> None:
     )
     graphql = f"{dagster_url}/graphql"
 
+    # ontology_files is a DynamicPartitionsDefinition. Partition keys must
+    # be REGISTERED with Dagster (via addDynamicPartition) BEFORE they can
+    # be used in a run. Normally the ontology_sensor in doc-tools'
+    # definitions.py does this on the next tick after MinIO upload — but
+    # --trigger-ingest runs synchronously RIGHT after the upload, faster
+    # than the sensor's poll interval, so we call addDynamicPartition
+    # ourselves. Idempotent: if the sensor has already registered the
+    # partition the mutation succeeds with no-op.
+    add_partition_mutation_q = (
+        "mutation AddPartition($partitionsDefName: String!, $partitionKey: String!) { "
+        "addDynamicPartition(partitionsDefName: $partitionsDefName, partitionKey: $partitionKey) { "
+        "__typename "
+        "... on AddDynamicPartitionSuccess { partitionsDefName partitionKey } "
+        "... on PythonError { message } "
+        "... on DuplicateDynamicPartitionError { __typename } "
+        "} }"
+    )
+
     for entry in CANONICAL_TTL_MANIFEST:
         domain = entry["domain"]
         s3_key = entry["s3_key"]
         partition_key = s3_key.replace("/", "__")
         file_url = f"s3://{os.environ.get('ONTOLOGY_BUCKET', 'ontologies')}/{s3_key}"
+
+        # Register the partition key first. Errors here are non-fatal —
+        # the sensor may have beaten us to it, and DuplicateDynamicPartitionError
+        # is exactly that case.
+        try:
+            ap_resp = requests.post(
+                graphql,
+                json={
+                    "query": add_partition_mutation_q,
+                    "variables": {
+                        "partitionsDefName": "ontology_files",
+                        "partitionKey": partition_key,
+                    },
+                },
+                timeout=15,
+            )
+            if ap_resp.status_code == 200:
+                ap_data = ap_resp.json().get("data", {}).get("addDynamicPartition", {})
+                t = ap_data.get("__typename")
+                if t == "AddDynamicPartitionSuccess":
+                    pass  # registered cleanly
+                elif t == "DuplicateDynamicPartitionError":
+                    pass  # sensor beat us to it; fine
+                else:
+                    print(f"  [WARNING] {entry['name']} addDynamicPartition: {ap_data}")
+            else:
+                print(f"  [WARNING] {entry['name']} addDynamicPartition HTTP {ap_resp.status_code}")
+        except Exception as e:
+            print(f"  [WARNING] {entry['name']} addDynamicPartition: {type(e).__name__}: {e}")
 
         mutation = {
             "query": (
