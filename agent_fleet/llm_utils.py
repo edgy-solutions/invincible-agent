@@ -66,8 +66,24 @@ def get_smolagent_model():
         openai_base_url = os.getenv("OPENAI_BASE_URL")
         openai_api_key = os.getenv("OPENAI_API_KEY") or "any"
         if USE_LITELLM:
+            # LiteLLM's SDK requires a provider prefix on model_id to know
+            # which backend protocol to use. For an OpenAI-compatible
+            # upstream (our LiteLLM proxy, vLLM, real OpenAI), the prefix
+            # is "openai/". Without it, LiteLLM tries to look the bare
+            # name up in its model catalog and raises
+            #   BadRequestError: LLM Provider NOT provided.
+            # Observed at work-cluster engine-o smolagents call 2026-06-19
+            # with SMOLAGENTS_MODEL=gpt-oss-128k:120b. The ollama branch
+            # above already adds this prefix; openai branch was missing it.
+            #
+            # Preserve operator overrides: if the value already carries a
+            # provider prefix (slash), pass it through untouched.
+            raw_model = model_id or "gpt-4o"
+            prefixed_model = (
+                raw_model if "/" in raw_model else f"openai/{raw_model}"
+            )
             kwargs = dict(
-                model_id=model_id or "gpt-4o",
+                model_id=prefixed_model,
                 api_key=openai_api_key,
                 temperature=0.0,
             )
