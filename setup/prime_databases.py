@@ -599,16 +599,31 @@ def main() -> None:
 
     # ----- Guarded wipe -----
     if args.wipe:
+        # Allowlist of namespaces this script is allowed to wipe. The
+        # default covers the common dev names; clusters with their own
+        # naming convention (e.g. "d4-sandbox", "prod-east-1") publish
+        # an override via the PRIME_NAMESPACE_ALLOWLIST env var, which
+        # the helm chart's primeSubstrate.namespaceAllowlist value
+        # populates. Comma-separated, whitespace tolerated.
+        default_allow = "sandbox,work,local"
+        env_allow = os.environ.get("PRIME_NAMESPACE_ALLOWLIST", default_allow)
+        allowlist = {n.strip() for n in env_allow.split(",") if n.strip()}
+
         if not args.i_mean_it or not args.namespace:
             print(
-                "ERROR: --wipe requires BOTH --i-mean-it AND --namespace=<sandbox|work|local>. "
-                "Refusing to proceed."
+                f"ERROR: --wipe requires BOTH --i-mean-it AND "
+                f"--namespace=<one of: {sorted(allowlist)}>. "
+                f"Refusing to proceed."
             )
             sys.exit(2)
-        if args.namespace not in {"sandbox", "work", "local"}:
+        if args.namespace not in allowlist:
             print(
-                f"ERROR: --namespace={args.namespace!r} is not in the allowlist. "
-                "Update prime_databases.py if this is a new cluster."
+                f"ERROR: --namespace={args.namespace!r} is not in the allowlist "
+                f"{sorted(allowlist)}. "
+                f"Either set PRIME_NAMESPACE_ALLOWLIST env to include it "
+                f"(comma-separated; helm chart: primeSubstrate.namespaceAllowlist), "
+                f"or update setup/prime_databases.py if this is a new cluster you "
+                f"want baked in."
             )
             sys.exit(2)
         wipe_databases(namespace=args.namespace)

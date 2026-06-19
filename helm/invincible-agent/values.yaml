@@ -443,6 +443,21 @@ primeSubstrate:
   # Use only when you want a fresh-start re-prime; flip back to false
   # after the wipe has run.
   wipe: false
+  # Allowlist of cluster identifiers the script will accept for `--wipe`.
+  # The script defaults to "sandbox,work,local" when this is unset. When
+  # your release runs in a namespace OUTSIDE that list (e.g. "d4-sandbox",
+  # "prod-east-1") the wipe will refuse with "namespace not in allowlist."
+  # Set this to a comma-separated list that INCLUDES your cluster
+  # identifier — typically the same as your k8s namespace, since the
+  # chart passes `--namespace={{ .Release.Namespace }}`.
+  #
+  # Empty (default) -> script falls back to "sandbox,work,local".
+  # Example: "sandbox,work,local,d4-sandbox" — keeps the safe defaults
+  # and adds the new cluster.
+  #
+  # Doesn't change anything when wipe=false; only consulted on the
+  # guarded-wipe path.
+  namespaceAllowlist: ""
   # When true, the Job invokes `--trigger-ingest`, which fires the
   # dagster ingest_ontology_job for each partition. Typically true —
   # without it, the canonical pipeline only uploads TTLs to MinIO and
