@@ -2,8 +2,11 @@ import os
 import sys
 import asyncio
 import json
+import logging
 from typing import Dict, Any
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Add baml_shared to Python path so we can import telemetry
 _CURRENT_FILE = Path(__file__).resolve()
@@ -445,17 +448,31 @@ print(result)
         # Run 3: Save Successful Event to Memory
         # --------------------------------------------------------------------------
         async def save_memory() -> str:
-            if user_id:
-                # Bridge to a worker thread — m.add() is sync gRPC and must
-                # not block the asyncio loop.
-                #
-                # ADR-0016 (r2) Tier 0(b): infer=False disables the Mem0
-                # extractor LLM. Mirrors Engine A's restate_analyst/main.py
-                # save_memory site — Engine E shares the Mem0 collection
-                # under user_id-only scoping, so the same poisoning path
-                # exists here. Lands in lockstep with Engine A so Phase 3
-                # re-enable doesn't reintroduce the failure mode from a
-                # second entry point.
+            if not user_id:
+                return "no-user-id"
+
+            # Bridge to a worker thread — m.add() is sync gRPC and must
+            # not block the asyncio loop.
+            #
+            # ADR-0016 (r2) Tier 0(b): infer=False disables the Mem0
+            # extractor LLM. Mirrors Engine A's restate_analyst/main.py
+            # save_memory site — Engine E shares the Mem0 collection
+            # under user_id-only scoping, so the same poisoning path
+            # exists here. Lands in lockstep with Engine A so Phase 3
+            # re-enable doesn't reintroduce the failure mode from a
+            # second entry point.
+            #
+            # Trailing-step semantics: final_structured_dict (line ~442) is
+            # already built and ready to return. A failure here MUST NOT
+            # propagate up to restate as a step error — restate would retry
+            # then eventually mark the whole invocation failed, and the
+            # gateway would surface "Timeout or failed to fetch UI payload"
+            # to a user who in fact had a correct Engine E answer ready.
+            # Mirrors the engine-a guard (commit ff968f4). Same standing
+            # rule (memory: trailing-steps-nonfatal). Catch Exception (not
+            # BaseException) so CancelledError still propagates and
+            # cooperative cancellation is preserved.
+            try:
                 await asyncio.to_thread(
                     m.add,
                     messages=[
@@ -466,6 +483,15 @@ print(result)
                     agent_id="engine_e_neo4j_expert",
                     infer=False,
                 )
+            except Exception as e:
+                logger.warning(
+                    "save-memory mem0.add failed for user_id=%s "
+                    "(non-fatal, Engine E answer already generated): %s",
+                    user_id,
+                    e,
+                    exc_info=True,
+                )
+                return "skipped-error"
             return "saved"
 
         await ctx.run("save-memory", save_memory)
