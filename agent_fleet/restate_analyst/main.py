@@ -729,19 +729,38 @@ print(result)
         output_uri = echoed_output_uri or verb_block["output_uri"]
 
         async def save_memory() -> str:
-            if user_id:
-                # Bridge to a worker thread — m.add() is sync gRPC and must
-                # not block the asyncio loop.
-                #
-                # ADR-0016 (r2) Tier 0(b): infer=False disables the Mem0
-                # extractor LLM. Without it, mem0 v2.0.1's default
-                # ADDITIVE_EXTRACTION_PROMPT mines the assistant message
-                # (which is summary_text — the agent's own voice, an
-                # inference) and reframes it as a fact attributed to the
-                # user. That is the Q9 catalog-PII poisoning mechanism.
-                # Setting infer=False stores the raw transcript only and
-                # makes m.search a similarity lookup over user queries,
-                # not over agent-derived claims about the world.
+            if not user_id:
+                return "no-user-id"
+
+            # Bridge to a worker thread — m.add() is sync gRPC and must
+            # not block the asyncio loop.
+            #
+            # ADR-0016 (r2) Tier 0(b): infer=False disables the Mem0
+            # extractor LLM. Without it, mem0 v2.0.1's default
+            # ADDITIVE_EXTRACTION_PROMPT mines the assistant message
+            # (which is summary_text — the agent's own voice, an
+            # inference) and reframes it as a fact attributed to the
+            # user. That is the Q9 catalog-PII poisoning mechanism.
+            # Setting infer=False stores the raw transcript only and
+            # makes m.search a similarity lookup over user queries,
+            # not over agent-derived claims about the world.
+            #
+            # Trailing-step semantics: the agent's answer was already
+            # generated above. Persistence to long-term memory is a
+            # trailing concern; a failure here MUST NOT propagate up to
+            # restate as a step error, because restate would retry then
+            # eventually mark the whole invocation failed — and the
+            # gateway would surface "Timeout or failed to fetch UI
+            # payload" to a user who in fact had a correct answer ready.
+            # Catch broadly, log with the trace for diagnostics, return
+            # a string that distinguishes the skipped case in restate's
+            # journal. Real failures observed at work-cluster 2026-06-19
+            # (vLLM tokenizer mismatch — Token id out of vocabulary)
+            # were poisoning the user-facing path despite the agent
+            # answering correctly; this guard breaks that chain. The
+            # vLLM bug still needs its own fix to RESTORE persistence,
+            # but never at the cost of the user's answer.
+            try:
                 await asyncio.to_thread(
                     m.add,
                     messages=[
@@ -752,6 +771,15 @@ print(result)
                     agent_id="engine_a_restate_analyst",
                     infer=False,
                 )
+            except Exception as e:
+                logger.warning(
+                    "save-memory mem0.add failed for user_id=%s "
+                    "(non-fatal, answer already generated): %s",
+                    user_id,
+                    e,
+                    exc_info=True,
+                )
+                return "skipped-error"
             return "saved"
 
         await ctx.run("save-memory", save_memory)
