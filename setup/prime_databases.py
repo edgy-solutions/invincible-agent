@@ -88,6 +88,30 @@ try:
 except ImportError:
     boto3 = None
 
+
+def _minio_compat_config():
+    """Return a botocore Config that keeps boto3 1.36+ MinIO-compatible.
+
+    boto3 1.36 switched the default request-checksum algorithm from
+    Content-Md5 (sent as a header) to x-amz-checksum-crc32 (sent as a
+    trailer). MinIO's DeleteObjects still requires Content-Md5 and
+    rejects the new shape with:
+
+        MissingContentMD5 — Missing required header for this request: Content-Md5.
+
+    Setting request_checksum_calculation="when_required" restores the
+    pre-1.36 behavior: boto3 sends Content-Md5 on the requests that
+    historically needed it (DeleteObjects, PutBucketLifecycle, etc.).
+
+    Apply to every boto3 S3 client pointed at MinIO. Cheap and safe
+    against real AWS too — AWS accepts both shapes.
+    """
+    if boto3 is None:
+        return None
+    from botocore.config import Config
+    return Config(request_checksum_calculation="when_required")
+
+
 proxy_int = None
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -356,7 +380,13 @@ def upload_canonical_ttls() -> None:
     secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or os.environ.get("MINIO_SECRET_KEY", "minioadmin")
     bucket = os.environ.get("ONTOLOGY_BUCKET", "ontologies")
 
-    s3 = boto3.client("s3", endpoint_url=endpoint, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=access_key,
+        aws_secret_access_key=secret_key,
+        config=_minio_compat_config(),
+    )
 
     # Ensure the bucket exists.
     try:
@@ -466,15 +496,30 @@ def trigger_ingest_jobs() -> None:
     # than the sensor's poll interval, so we call addDynamicPartition
     # ourselves. Idempotent: if the sensor has already registered the
     # partition the mutation succeeds with no-op.
+    #
+    # Dagster's GraphQL schema requires repositorySelector on this mutation
+    # (1.5+; 1.13.7 in use at the work cluster). Omitting it returns HTTP
+    # 400 with a validation error "Field 'addDynamicPartition' argument
+    # 'repositorySelector' of type 'RepositorySelector!' is required" —
+    # that's what was producing the per-partition WARNING lines (the runs
+    # then launched anyway because launchPipelineExecution auto-registers
+    # the partition on launch in this version). Adding the selector makes
+    # the warning go away and gives us a real success/duplicate ack.
     add_partition_mutation_q = (
-        "mutation AddPartition($partitionsDefName: String!, $partitionKey: String!) { "
-        "addDynamicPartition(partitionsDefName: $partitionsDefName, partitionKey: $partitionKey) { "
+        "mutation AddPartition($repositorySelector: RepositorySelector!, "
+        "$partitionsDefName: String!, $partitionKey: String!) { "
+        "addDynamicPartition(repositorySelector: $repositorySelector, "
+        "partitionsDefName: $partitionsDefName, partitionKey: $partitionKey) { "
         "__typename "
         "... on AddDynamicPartitionSuccess { partitionsDefName partitionKey } "
         "... on PythonError { message } "
         "... on DuplicateDynamicPartitionError { __typename } "
         "} }"
     )
+    add_partition_repo_selector = {
+        "repositoryLocationName": "doc-tools",
+        "repositoryName": "__repository__",
+    }
 
     for entry in CANONICAL_TTL_MANIFEST:
         domain = entry["domain"]
@@ -491,6 +536,7 @@ def trigger_ingest_jobs() -> None:
                 json={
                     "query": add_partition_mutation_q,
                     "variables": {
+                        "repositorySelector": add_partition_repo_selector,
                         "partitionsDefName": "ontology_files",
                         "partitionKey": partition_key,
                     },
@@ -507,7 +553,14 @@ def trigger_ingest_jobs() -> None:
                 else:
                     print(f"  [WARNING] {entry['name']} addDynamicPartition: {ap_data}")
             else:
-                print(f"  [WARNING] {entry['name']} addDynamicPartition HTTP {ap_resp.status_code}")
+                # Surface the GraphQL error body so the next mismatch
+                # (schema changes in future Dagster bumps) is diagnosable
+                # at first sight instead of opaque "HTTP 400".
+                body_preview = ap_resp.text[:400].replace("\n", " ")
+                print(
+                    f"  [WARNING] {entry['name']} addDynamicPartition "
+                    f"HTTP {ap_resp.status_code}: {body_preview}"
+                )
         except Exception as e:
             print(f"  [WARNING] {entry['name']} addDynamicPartition: {type(e).__name__}: {e}")
 
@@ -665,6 +718,7 @@ def wipe_databases(*, namespace: str) -> None:
             endpoint_url=endpoint,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
+            config=_minio_compat_config(),
         )
         try:
             s3.head_bucket(Bucket=bucket)
