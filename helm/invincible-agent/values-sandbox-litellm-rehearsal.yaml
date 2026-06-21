@@ -28,32 +28,41 @@
 litellm:
   enabled: true
   # Extended model_list — adds phi4-16k:14b (mem0 LLM) and
-  # nomic-embed-8k:latest (mem0 embedder) routes to the openwebui host
-  # (192.168.1.188), in addition to the existing gpt-oss-128k:120b +
-  # nomic-embed-text routes to ai1 (192.168.1.119).
+  # nomic-embed-8k:latest (mem0 embedder) routes to ai2 (192.168.1.169,
+  # Strix Halo + R97000 PRO — secondary inference host added 2026-06-21),
+  # in addition to the existing gpt-oss-128k:120b + nomic-embed-text
+  # routes to ai1 (192.168.1.119).
+  #
+  # HOST RESERVATION RULE (2026-06-21): .179 and .188 are RESERVED for
+  # goat-yard-archive production work and MUST NOT be referenced from
+  # this project. Only ai1 (.119) and ai2 (.169) are valid LLM hosts
+  # here. See memory/project_inference_hosts.md.
   config: |
     model_list:
       # api_key required on every entry — see values.yaml litellm.config
       # comment for the LiteLLM v1.89.x openai-python init requirement.
+      # ai1 (192.168.1.119) — large model: gpt-oss-128k:120b.
       - model_name: gpt-oss-128k:120b
         litellm_params:
           model: ollama/gpt-oss-128k:120b
           api_base: http://192.168.1.119:11434
           api_key: "any"
+      # ai2 (192.168.1.169) — secondary host for embeddings + lighter
+      # models, so the 120b's KV cache on ai1 doesn't thrash.
       - model_name: nomic-embed-text
         litellm_params:
           model: ollama/nomic-embed-text
-          api_base: http://192.168.1.188:11434
+          api_base: http://192.168.1.169:11434
           api_key: "any"
       - model_name: phi4-16k:14b
         litellm_params:
           model: ollama/phi4-16k:14b
-          api_base: http://192.168.1.188:11434
+          api_base: http://192.168.1.169:11434
           api_key: "any"
       - model_name: nomic-embed-8k:latest
         litellm_params:
           model: ollama/nomic-embed-8k:latest
-          api_base: http://192.168.1.188:11434
+          api_base: http://192.168.1.169:11434
           api_key: "any"
     litellm_settings:
       drop_params: true

@@ -83,7 +83,8 @@ agentFleet:
     # thrash on every smolagent step.
     #
     # New layout: agent reasoning (120b) stays on ai1; mem0 LLM moves to
-    # the openwebui host (192.168.1.188, 24 GB VRAM) running phi4-16k:14b
+    # ai2 (192.168.1.169, Strix Halo + R97000 PRO — added 2026-06-21 as
+    # the secondary inference host for this project) running phi4-16k:14b
     # (~9 GB) — a custom Modelfile tag of phi4:14b with num_ctx 16384
     # (the model's native max). The bare `phi4:14b` tag would serve at
     # ollama's default 2k context, which silently truncates Mem0's
@@ -98,9 +99,14 @@ agentFleet:
     # regardless — see follow-up note about switching to
     # `nomic-embed-text:v1.5` or `snowflake-arctic-embed` for a
     # genuinely-8k embedder when we revisit.
+    #
+    # HOST RESERVATION RULE (2026-06-21): 192.168.1.179 and 192.168.1.188
+    # are RESERVED for goat-yard-archive production work and MUST NOT
+    # appear in this project's values files. Only ai1 (.119) and ai2
+    # (.169) are valid LLM hosts here. See memory/project_inference_hosts.md.
     MEM0_LLM_MODEL: "phi4-16k:14b"
     MEM0_LLM_PROVIDER: "ollama"
-    MEM0_OLLAMA_BASE_URL: "http://192.168.1.188:11434"
+    MEM0_OLLAMA_BASE_URL: "http://192.168.1.169:11434"
     MEM0_EMBEDDER_MODEL: "nomic-embed-8k:latest"
     MEM0_EMBEDDING_MODEL: "nomic-embed-8k:latest"
 
