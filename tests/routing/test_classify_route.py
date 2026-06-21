@@ -595,10 +595,40 @@ TEST_CASES: list[RouteCase] = [
         domain="MAINTENANCE",
     ),
 
-    # --- MFG verb 1 (2026-06-17 overnight): MunitionsAssemblyStep routing ---
-    # mesh:retrieveKnowledge typed against
+    # --- MFG verb 1: mfg:WorkInstruction routing (post ADR-0021 cleanup) ---
+    #
+    # Per ADR-0021 Phase 1 (ratified 2026-06-20), this case was UPDATED
+    # to expect the canonical `mfg:WorkInstruction` URI instead of the
+    # legacy residue `http://example.com/manufacturing#MunitionsAssemblyStep`.
+    # The expectation change followed (not preceded) a resolution probe
+    # that confirmed canonical wins: after deleting the 7 mfg + 2 ISA-95
+    # residue classes from Neo4j and Weaviate, the same query resolved
+    # to `mfg:WorkInstruction` at confidence 0.98 — top of the predicted
+    # band, via semantic match on the class definition phrase
+    # "Routing subject for ... 'what are the assembly steps for X'".
+    #
+    # Why the change was required: the instances stamped by the
+    # manufacturing plugin (manufacturing.py:333-334) carry
+    # `INSTANCE_OF mfg:WorkInstruction`, but resolution was landing on
+    # the residue class `MunitionsAssemblyStep` (pre-canonical direct-
+    # load era, synced_by=None) — so the verb couldn't actually reach
+    # the instances it was meant to. The conjunctive-read failure.
+    # Cleanup closed the loop: instances and resolution now both land
+    # on `mfg:WorkInstruction`.
+    #
+    # Historical context — the V1 mfg verb (2026-06-17 overnight) was
+    # originally typed against `MunitionsAssemblyStep` because that was
+    # the strongest-anchor class in the residue pool the matrix had at
+    # the time. ADR-0021 retired both that name (general kind is
+    # `mfg:WorkInstruction`, not munitions-specific) and the residue
+    # nodes themselves. The standing residue guard
+    # (test_no_legacy_residue.py) is the class-fix that catches a
+    # regression of either condition.
+    #
+    # --- ORIGINAL V1 ROUTING NOTES (kept as probe-evidence reference) ---
+    # mesh:retrieveKnowledge was typed against
     # http://example.com/manufacturing#MunitionsAssemblyStep,
-    # owned by Engine W. This is the FIRST mfg verb in the matrix.
+    # owned by Engine W. This was the FIRST mfg verb in the matrix.
     #
     # Why MunitionsAssemblyStep: of the 7 manufacturing classes Gap-1
     # released (Step 1 overnight), MunitionsAssemblyStep is the most
@@ -651,7 +681,10 @@ TEST_CASES: list[RouteCase] = [
     #      registration) vs. re-create. MERGE is the safer call.
     RouteCase(
         query="What are the assembly steps for the M67 grenade?",
-        expected_subject_substring="MunitionsAssemblyStep",
+        # Updated 2026-06-20 per ADR-0021 Phase 1 ratification — see
+        # the comment block above for the expectation-follows-probe
+        # rationale. Probe B post-cleanup: WorkInstruction @ 0.98.
+        expected_subject_substring="WorkInstruction",
         expected_verb_iri="mesh:retrieveKnowledge",
         min_confidence=0.5,
         domain="MANUFACTURING",
