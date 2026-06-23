@@ -447,6 +447,15 @@ def _classify_route(
         # fabricating one. See Tier-3 fix (state doc 2026-06-16).
         "subject_instance_id": subject_instance_id,
         "compatible_verb_iris": compatible_verb_iris,
+        # Full /find_compatible_verbs response (one dict per candidate verb)
+        # surfaced for the subtask_graph_trace asset materialization in
+        # execute_subtask. The supervisor consumes only `verb_iri` from
+        # these for compat filtering; the full records (input_uri,
+        # output_uri, hops, owner_persona, endpoint_url) are projected
+        # into the typed graph_trace event the cortex-ui consumes. None
+        # when /find_compatible_verbs failed; [] when subject was
+        # genuinely unsupported.
+        "compatible_verbs": compatible_verbs,
         "neo4j_find_error": find_err,
         "verb_iri": verb_iri,
         "verb_confidence": verb_conf,
@@ -557,6 +566,138 @@ def _call_engine_a_fallback(
     }
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Phase 1 observability — supervisor-side asset materializations that
+# the cortex-bff gateway projects into typed SSE events for the
+# grounding panel.
+#
+# Two assets, both logged from execute_subtask after _classify_route
+# returns:
+#
+#   subtask_routing_decision
+#     One materialization per subtask. Metadata fields project the
+#     /resolve + /find_compatible_verbs + /classify_predicate outcome
+#     into the shape the typed `route_decision` event consumes:
+#       subject_uri, subject_confidence, subject_instance_id
+#       verb_iri, verb_confidence, classify_called, candidate_count
+#       handler_provider, handler_endpoint, owner_persona
+#       route_status (matched | no_match | infra_error)
+#       sub_query (so multi-subtask runs can be distinguished)
+#
+#   subtask_graph_trace
+#     One materialization per subtask, only when /find_compatible_verbs
+#     returned a non-empty list. Surfaces the compat-walk in a form
+#     the typed `graph_trace` event renders directly:
+#       subject_uri (the resolved subject)
+#       compatible_verbs: list of { verb_iri, verb_local, input_uri,
+#                                   output_uri, hops, owner_persona,
+#                                   endpoint_url, domains, cost_class }
+#       picked_verb_iri (the verb /classify_predicate ultimately picked,
+#                        for highlighting in the graph)
+#
+# The gateway projects the FIRST materialization per run into typed
+# events (multi-subtask fan-out emits later materializations the
+# gateway sees but doesn't re-emit — keeps the RoutingDecision card
+# focused on the primary route the user's answer flows through).
+#
+# Architect's principle locked in: every metadata field below is a
+# real pipeline value (from /resolve, /find_compatible_verbs,
+# /classify_predicate, or the verb edge). Nothing synthesized.
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _log_subtask_route_assets(
+    context,
+    *,
+    telemetry: Dict[str, Any],
+    predicate: Dict[str, Any] | None,
+    status: str,
+    sub_query: str,
+) -> None:
+    """Emit the two route-observability asset materializations."""
+    # ── subtask_routing_decision ────────────────────────────────────
+    routing_meta: Dict[str, Any] = {
+        "route_status": MetadataValue.text(status),
+        "subject_uri": MetadataValue.text(
+            telemetry.get("subject_uri") or "UNKNOWN"
+        ),
+        "subject_confidence": MetadataValue.float(
+            float(telemetry.get("subject_confidence") or 0.0)
+        ),
+        "subject_instance_id": MetadataValue.text(
+            telemetry.get("subject_instance_id") or ""
+        ),
+        "verb_iri": MetadataValue.text(
+            telemetry.get("verb_iri") or "UNKNOWN"
+        ),
+        "verb_confidence": MetadataValue.float(
+            float(telemetry.get("verb_confidence") or 0.0)
+        ),
+        # classify_called is true whenever /classify_predicate ran
+        # (status == matched OR status == no_match-after-classify-returned-UNKNOWN).
+        # ADR-0019 Contract B short-circuit cases (subject UNKNOWN, or
+        # Neo4j zero-compat) DO NOT invoke classify_predicate; status
+        # carries that signal already.
+        "classify_called": MetadataValue.bool(
+            status == _ROUTING_MATCHED
+            or telemetry.get("verb_iri") not in (None, "UNKNOWN")
+        ),
+        "candidate_count": MetadataValue.int(
+            len(telemetry.get("compatible_verb_iris") or [])
+        ),
+        "sub_query": MetadataValue.text(sub_query or ""),
+    }
+    if predicate:
+        routing_meta["handler_provider"] = MetadataValue.text(
+            str(predicate.get("provider") or "")
+        )
+        routing_meta["handler_endpoint"] = MetadataValue.text(
+            str(predicate.get("endpoint") or "")
+        )
+        routing_meta["owner_persona"] = MetadataValue.text(
+            str(predicate.get("owner_persona") or "")
+        )
+        routing_meta["output_uri"] = MetadataValue.text(
+            str(predicate.get("output_uri") or "")
+        )
+    context.log_event(
+        AssetMaterialization(
+            asset_key=["subtask_routing_decision"],
+            metadata=routing_meta,
+        )
+    )
+
+    # ── subtask_graph_trace ─────────────────────────────────────────
+    # Only meaningful when the compat-walk returned candidates. Skip
+    # the materialization on UNKNOWN subjects (Contract B short-circuit
+    # has nothing to graph) and on infra errors.
+    compatible_verbs = telemetry.get("compatible_verbs")
+    subject_uri = telemetry.get("subject_uri")
+    if (
+        status != _ROUTING_INFRA_ERROR
+        and subject_uri
+        and subject_uri != "UNKNOWN"
+        and compatible_verbs
+    ):
+        context.log_event(
+            AssetMaterialization(
+                asset_key=["subtask_graph_trace"],
+                metadata={
+                    "subject_uri": MetadataValue.text(subject_uri),
+                    "picked_verb_iri": MetadataValue.text(
+                        telemetry.get("verb_iri") or ""
+                    ),
+                    # Stash the full list as JSON text so the gateway
+                    # can deserialize and project per-verb nodes for
+                    # the typed graph_trace event.
+                    "compatible_verbs": MetadataValue.text(
+                        json.dumps(compatible_verbs)
+                    ),
+                },
+            )
+        )
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -605,6 +746,37 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         list(config.entitled_domains),
         routing_domain=routing_domain,
     )
+
+    # ------------------------------------------------------------------
+    # Phase 1 observability: log AssetMaterialization for the route
+    # decision + the compat-walk so the gateway can project them into
+    # typed `route_decision` and `graph_trace` SSE events for the
+    # cortex-ui grounding panel. The events are derived from REAL
+    # Dagster asset materializations — the supervisor remains the
+    # audit trail, the gateway never bypasses Dagster to fabricate
+    # routing data.
+    #
+    # Architect's principle (banked at code-site): surface what the
+    # pipeline did; never synthesize. Each metadata field below is a
+    # value from a real /resolve, /find_compatible_verbs, or
+    # /classify_predicate response — projected, not invented.
+    # ------------------------------------------------------------------
+    try:
+        _log_subtask_route_assets(
+            context,
+            telemetry=telemetry,
+            predicate=predicate,
+            status=status,
+            sub_query=sub_query,
+        )
+    except Exception as mat_err:  # pragma: no cover — best-effort
+        # Observability failure must not break the routing decision —
+        # log and continue so a malformed metadata write doesn't kill
+        # the user's query.
+        context.log.warning(
+            "Failed to log subtask route asset materializations "
+            "(non-fatal — routing continues): %s", mat_err,
+        )
 
     # Routing decision table (simpler than the prior version: no
     # yellow-zone band):

@@ -280,6 +280,202 @@ def _stage(
     return _sse("pipeline_stage", json.dumps(payload))
 
 
+def _metadata_dict(mat: dict) -> dict[str, Any]:
+    """Flatten a Dagster materialization's metadataEntries list into a
+    label → raw-value dict. Dagster's GraphQL response shape for each
+    entry is one of:
+      - {label, text}            (TextMetadataValue)
+      - {label, jsonString}      (JsonMetadataValue — historical)
+      - {label, floatValue}      (FloatMetadataValue)
+      - {label, intValue}        (IntMetadataValue)
+      - {label, boolValue}       (BoolMetadataValue)
+    Returns raw strings/floats/ints/bools indexed by label; the caller
+    converts as needed. Missing keys are simply absent from the dict.
+    """
+    out: dict[str, Any] = {}
+    for entry in mat.get("metadataEntries", []) or []:
+        label = entry.get("label")
+        if not label:
+            continue
+        if "text" in entry and entry["text"] is not None:
+            out[label] = entry["text"]
+        elif "jsonString" in entry and entry["jsonString"] is not None:
+            out[label] = entry["jsonString"]
+        elif "floatValue" in entry and entry["floatValue"] is not None:
+            out[label] = entry["floatValue"]
+        elif "intValue" in entry and entry["intValue"] is not None:
+            out[label] = entry["intValue"]
+        elif "boolValue" in entry and entry["boolValue"] is not None:
+            out[label] = entry["boolValue"]
+    return out
+
+
+def _engine_name_from_provider(provider: str | None) -> str:
+    """Best-effort human-readable engine name from a verb edge's provider
+    string. Provider values are conventionally `engine_<letter>_<role>`
+    (e.g. `engine_w_weaviate_expert_work_instruction`). The letter
+    after the underscore identifies which mesh engine handled the
+    dispatch. Falls back to the raw provider string when the convention
+    doesn't apply (e.g. a future engine with a different naming scheme).
+    """
+    if not provider:
+        return "Unknown engine"
+    p = provider.lower()
+    if p.startswith("engine_a"):
+        return "Engine A"
+    if p.startswith("engine_b"):
+        return "Engine B"
+    if p.startswith("engine_c"):
+        return "Engine C"
+    if p.startswith("engine_d_") or p == "engine_d":
+        return "Engine D"
+    if p.startswith("engine_da"):
+        return "Engine DA"
+    if p.startswith("engine_e"):
+        return "Engine E"
+    if p.startswith("engine_f"):
+        return "Engine F"
+    if p.startswith("engine_o"):
+        return "Engine O"
+    if p.startswith("engine_w"):
+        return "Engine W"
+    return provider
+
+
+def _label_from_uri(uri: str | None) -> str:
+    """Derive a human-readable label from a URI or CURIE.
+
+    Splits on `#`, `/`, then `:` to peel off namespace prefixes
+    (`http://...#Foo` → `Foo`; `mesh:doX` → `doX`; `urn:li:dataset:foo`
+    → `foo`). CamelCase is then space-split (`WorkInstruction` →
+    `Work Instruction`). Mirrors cortex-ui's fallbackSubjectLabel +
+    fallbackVerbLabel behavior so the gateway can ship labels in the
+    typed event payload and the UI doesn't have to round-trip every
+    URI through its own fallback.
+    """
+    if not uri:
+        return "Unknown"
+    local = uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1].rsplit(":", 1)[-1] or uri
+    # Insert space at lower-to-upper transitions: WorkInstruction → Work Instruction
+    spaced: list[str] = []
+    for i, ch in enumerate(local):
+        if i > 0 and ch.isupper() and local[i - 1].islower():
+            spaced.append(" ")
+        spaced.append(ch)
+    return "".join(spaced).strip()
+
+
+def _project_route_decision(mat: dict) -> dict | None:
+    """Project a subtask_routing_decision materialization into the
+    RouteDecision payload shape the cortex-ui typed event consumes.
+    Returns None on UNKNOWN routes (Contract B short-circuit cases) —
+    the gateway then doesn't emit a route_decision event for those,
+    matching the architect's "honest about what the pipeline did"
+    rule: when the system couldn't ground, don't fabricate routing.
+    """
+    md = _metadata_dict(mat)
+    route_status = md.get("route_status") or ""
+    subject_uri = md.get("subject_uri") or "UNKNOWN"
+    verb_iri = md.get("verb_iri") or "UNKNOWN"
+
+    # If no routing took (UNKNOWN subject, no verb), skip the typed
+    # event entirely. The Engine A generalist fallback handles the
+    # answer; the UI shows the empty-state Routing card per spec.
+    if subject_uri == "UNKNOWN" or verb_iri == "UNKNOWN":
+        return None
+
+    return {
+        "about": {
+            "label": _label_from_uri(subject_uri),
+            "uri": subject_uri,
+            "confidence": float(md.get("subject_confidence") or 0.0),
+            "instance_resolved": bool(md.get("subject_instance_id")),
+            "instance_identifier": md.get("subject_instance_id") or "",
+        },
+        "action": {
+            "label": _label_from_uri(verb_iri),
+            "iri": verb_iri,
+            "confidence": float(md.get("verb_confidence") or 0.0),
+            "classify_called": bool(md.get("classify_called")),
+            "candidate_count": int(md.get("candidate_count") or 0),
+            "owner_persona": md.get("owner_persona") or None,
+        },
+        "handled_by": {
+            "engine_name": _engine_name_from_provider(md.get("handler_provider")),
+            "provider": md.get("handler_provider") or "",
+            "endpoint_url": md.get("handler_endpoint") or None,
+        },
+        "route_status": route_status,
+    }
+
+
+def _project_graph_trace(mat: dict) -> list[dict] | None:
+    """Project a subtask_graph_trace materialization into GraphTraceNode
+    list shape. The walk shown to the user:
+        resolved_subject → ancestor (if hops > 0) → verb edge → output
+    Only the PICKED verb's branch is included; other candidates are
+    visible in Dagster's asset metadata for operator audit but not
+    in the UI panel (which is grounded to the answer's actual path).
+    """
+    md = _metadata_dict(mat)
+    subject_uri = md.get("subject_uri") or ""
+    picked_verb_iri = md.get("picked_verb_iri") or ""
+    raw = md.get("compatible_verbs") or "[]"
+    try:
+        verbs = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return None
+
+    # Find the picked verb's record; that's the trace branch we draw.
+    picked = None
+    if picked_verb_iri:
+        for v in verbs:
+            if v.get("verb_iri") == picked_verb_iri:
+                picked = v
+                break
+    # Fallback: if the picked verb isn't in the list (Weaviate-vs-Neo4j
+    # sync gap the supervisor tolerates), draw the first candidate so
+    # the panel still shows substrate structure.
+    if picked is None and verbs:
+        picked = verbs[0]
+    if picked is None:
+        return None
+
+    nodes: list[dict] = []
+    nodes.append({
+        "uri": subject_uri,
+        "label": _label_from_uri(subject_uri),
+        "role": "resolved_subject",
+        "hops": 0,
+    })
+
+    hops = int(picked.get("hops") or 0)
+    input_uri = picked.get("input_uri") or ""
+    output_uri = picked.get("output_uri") or ""
+    verb_iri = picked.get("verb_iri") or ""
+
+    # Show the ancestor only when the walk traversed subClassOf hops to
+    # find the verb. hops=0 means the verb is typed directly against
+    # the resolved subject — skip the ancestor row in that case.
+    if hops > 0 and input_uri and input_uri != subject_uri:
+        nodes.append({
+            "uri": input_uri,
+            "label": _label_from_uri(input_uri),
+            "role": "ancestor_class",
+            "hops": hops,
+        })
+
+    if output_uri:
+        nodes.append({
+            "uri": output_uri,
+            "label": _label_from_uri(output_uri),
+            "role": "output_class",
+            "via_verb": verb_iri or None,
+        })
+
+    return nodes
+
+
 def _perror(
     message: str,
     *,
@@ -1014,6 +1210,17 @@ async def generate_dagster_stream(
         # emitted any more per Option A — see [[persona-split]]: the
         # active roster was decorative theater, output-side persona
         # lives on the verb edge and surfaces via route_decision.owner_persona.
+        #
+        # Phase 1 additions:
+        #   subtask_routing_decision → route_decision typed event
+        #   subtask_graph_trace      → graph_trace typed event
+        # Both projected from real supervisor asset metadata. The
+        # gateway emits the FIRST materialization per run; later
+        # subtasks' materializations are observed via Dagster (the
+        # audit trail) but not re-emitted to the UI — the Routing
+        # Decision card focuses on the primary route the user's
+        # answer flows through. Multi-subtask UI semantics is a
+        # future ADR.
         mats = await _get_run_events(run_id)
         for mat in mats:
             path = mat.get("assetKey", {}).get("path")
@@ -1036,6 +1243,35 @@ async def generate_dagster_stream(
 
                 emitted_steps.add("plan_emitted")
                 logger.info("✅ Plan emission confirmed for run %s", run_id)
+
+            elif (
+                path == ["subtask_routing_decision"]
+                and "route_decision_emitted" not in emitted_steps
+            ):
+                decision = _project_route_decision(mat)
+                if decision is not None:
+                    logger.info(
+                        "📡 Emitting SSE 'route_decision' for run %s: "
+                        "subject=%s verb=%s",
+                        run_id,
+                        decision.get("about", {}).get("uri"),
+                        decision.get("action", {}).get("iri"),
+                    )
+                    yield _sse("route_decision", json.dumps(decision))
+                emitted_steps.add("route_decision_emitted")
+
+            elif (
+                path == ["subtask_graph_trace"]
+                and "graph_trace_emitted" not in emitted_steps
+            ):
+                trace_nodes = _project_graph_trace(mat)
+                if trace_nodes:
+                    logger.info(
+                        "📡 Emitting SSE 'graph_trace' for run %s: %d nodes",
+                        run_id, len(trace_nodes),
+                    )
+                    yield _sse("graph_trace", json.dumps({"nodes": trace_nodes}))
+                emitted_steps.add("graph_trace_emitted")
 
         # Map Dagster step transitions onto typed pipeline_stage events.
         # The mapping projects the supervisor's REAL step keys (Dagster
