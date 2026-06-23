@@ -368,32 +368,88 @@ def _label_from_uri(uri: str | None) -> str:
 def _project_route_decision(mat: dict) -> dict | None:
     """Project a subtask_routing_decision materialization into the
     RouteDecision payload shape the cortex-ui typed event consumes.
-    Returns None on UNKNOWN routes (Contract B short-circuit cases) —
-    the gateway then doesn't emit a route_decision event for those,
-    matching the architect's "honest about what the pipeline did"
-    rule: when the system couldn't ground, don't fabricate routing.
+
+    Surfaces THREE cases honestly, per the architect's
+    "what-actually-happened" principle (2026-06-23 amendment):
+
+    1. **Specialist match** — subject + verb both resolved, engine
+       dispatched. Card shows the full route. (route_status="matched")
+
+    2. **Fallback** — subject and/or verb didn't ground to a specialist,
+       routing fell to Engine A generalist. The card now SURFACES this
+       as a fallback (rather than going empty) so the user sees what
+       the pipeline actually did instead of wondering if it's broken.
+       The fallback IS what happened; surfacing it is more honest than
+       hiding it. ``fallback=true``, ``fallback_reason`` carries the
+       supervisor's classification (``no_predicate_matched``,
+       ``low_confidence``, ``ADR-0019 Contract B``, etc.).
+
+    3. **Infra error** — routing couldn't run at all (Engine O down,
+       Neo4j unreachable). Same shape as fallback but signals
+       ``route_status="infra_error"`` so the UI can render the alarm
+       differently from a benign fallback.
+
+    Only returns None when the materialization itself is unparseable
+    (i.e., there's no honest projection to make).
     """
     md = _metadata_dict(mat)
     route_status = md.get("route_status") or ""
     subject_uri = md.get("subject_uri") or "UNKNOWN"
     verb_iri = md.get("verb_iri") or "UNKNOWN"
 
-    # If no routing took (UNKNOWN subject, no verb), skip the typed
-    # event entirely. The Engine A generalist fallback handles the
-    # answer; the UI shows the empty-state Routing card per spec.
-    if subject_uri == "UNKNOWN" or verb_iri == "UNKNOWN":
-        return None
+    is_specialist = (
+        subject_uri != "UNKNOWN"
+        and verb_iri != "UNKNOWN"
+        and bool(md.get("handler_provider"))
+    )
 
+    if is_specialist:
+        return {
+            "about": {
+                "label": _label_from_uri(subject_uri),
+                "uri": subject_uri,
+                "confidence": float(md.get("subject_confidence") or 0.0),
+                "instance_resolved": bool(md.get("subject_instance_id")),
+                "instance_identifier": md.get("subject_instance_id") or "",
+            },
+            "action": {
+                "label": _label_from_uri(verb_iri),
+                "iri": verb_iri,
+                "confidence": float(md.get("verb_confidence") or 0.0),
+                "classify_called": bool(md.get("classify_called")),
+                "candidate_count": int(md.get("candidate_count") or 0),
+                "owner_persona": md.get("owner_persona") or None,
+            },
+            "handled_by": {
+                "engine_name": _engine_name_from_provider(md.get("handler_provider")),
+                "provider": md.get("handler_provider") or "",
+                "endpoint_url": md.get("handler_endpoint") or None,
+            },
+            "route_status": route_status,
+            "fallback": False,
+        }
+
+    # Fallback projection — surface that the pipeline GENUINELY fell
+    # back to the generalist instead of leaving the card empty (which
+    # was honest-by-omission but read to users as "system is broken").
+    # The fallback IS what happened; saying so directly is the more
+    # informative form of "surface what the pipeline did".
+    fallback_reason = (
+        "infra_error" if route_status == "infra_error"
+        else ("no_compatible_verbs" if (subject_uri != "UNKNOWN" and verb_iri == "UNKNOWN")
+              else ("no_subject" if subject_uri == "UNKNOWN"
+                    else "no_predicate_matched"))
+    )
     return {
         "about": {
-            "label": _label_from_uri(subject_uri),
+            "label": _label_from_uri(subject_uri) if subject_uri != "UNKNOWN" else "Not grounded",
             "uri": subject_uri,
             "confidence": float(md.get("subject_confidence") or 0.0),
             "instance_resolved": bool(md.get("subject_instance_id")),
             "instance_identifier": md.get("subject_instance_id") or "",
         },
         "action": {
-            "label": _label_from_uri(verb_iri),
+            "label": _label_from_uri(verb_iri) if verb_iri != "UNKNOWN" else "General search",
             "iri": verb_iri,
             "confidence": float(md.get("verb_confidence") or 0.0),
             "classify_called": bool(md.get("classify_called")),
@@ -401,11 +457,13 @@ def _project_route_decision(mat: dict) -> dict | None:
             "owner_persona": md.get("owner_persona") or None,
         },
         "handled_by": {
-            "engine_name": _engine_name_from_provider(md.get("handler_provider")),
-            "provider": md.get("handler_provider") or "",
-            "endpoint_url": md.get("handler_endpoint") or None,
+            "engine_name": "Engine A (generalist fallback)",
+            "provider": "engine_a_fallback",
+            "endpoint_url": None,
         },
         "route_status": route_status,
+        "fallback": True,
+        "fallback_reason": fallback_reason,
     }
 
 
