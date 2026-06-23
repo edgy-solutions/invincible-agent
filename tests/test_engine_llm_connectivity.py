@@ -15,7 +15,7 @@ that exercises the LLM path without needing Restate / Weaviate / Engine O.
 
 Configuration (env vars, with defaults for the dev LAN):
     OLLAMA_TEST_BASE_URL   default: http://ai1:11434/v1
-    OLLAMA_TEST_HOST_IP    default: 192.168.1.119   (for --add-host; the
+    OLLAMA_TEST_HOST_IP    default: 192.168.1.126   (for --add-host; the
                            container can't resolve a bare LAN hostname)
     OLLAMA_TEST_MODEL      default: gpt-oss:120b
     ENGINE_IMAGE_TAG       default: latest
@@ -42,7 +42,7 @@ _REGISTRY = "ghcr.io/edgy-solutions/invincible-agent"
 _TAG = os.getenv("ENGINE_IMAGE_TAG", "latest")
 
 _OLLAMA_BASE_URL = os.getenv("OLLAMA_TEST_BASE_URL", "http://ai1:11434/v1")
-_OLLAMA_HOST_IP = os.getenv("OLLAMA_TEST_HOST_IP", "192.168.1.119")
+_OLLAMA_HOST_IP = os.getenv("OLLAMA_TEST_HOST_IP", "192.168.1.126")
 _OLLAMA_MODEL = os.getenv("OLLAMA_TEST_MODEL", "gpt-oss:120b")
 
 _ENGINES = {

@@ -13,7 +13,7 @@ client<llm> OpenRouter {
 }
 
 // --- Ollama (Local LLM Deployment) ---
-// Sandbox ai1 host (192.168.1.119) exposes these models via Ollama:
+// Sandbox ai1 host (192.168.1.126) exposes these models via Ollama:
 //   gpt-oss:120b, gpt-oss-128k:120b, gpt-oss:20b, gemma4:31b, nomic-embed-text.
 // The model name on the wire uses a COLON (Ollama tag convention), not a
 // hyphen — the earlier "gpt-oss-120b" entry was a 404 on every request,

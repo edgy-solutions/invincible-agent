@@ -11,7 +11,7 @@
 # Ollama hosts; the underlying models stay identical. Only the transport
 # hop changes:
 #
-#   before:  engine → 192.168.1.119:11434/v1            (direct Ollama, ollama provider)
+#   before:  engine → 192.168.1.126:11434/v1            (direct Ollama, ollama provider)
 #   after:   engine → iagent-litellm:4000/v1 → 192.168.1.x:11434   (LiteLLM proxy, openai provider)
 #
 # 2026-06-18 extension: mem0 now ALSO routed through LiteLLM (was direct
@@ -31,21 +31,21 @@ litellm:
   # nomic-embed-8k:latest (mem0 embedder) routes to ai2 (192.168.1.169,
   # Strix Halo + R97000 PRO — secondary inference host added 2026-06-21),
   # in addition to the existing gpt-oss-128k:120b + nomic-embed-text
-  # routes to ai1 (192.168.1.119).
+  # routes to ai1 (192.168.1.126).
   #
   # HOST RESERVATION RULE (2026-06-21): .179 and .188 are RESERVED for
   # goat-yard-archive production work and MUST NOT be referenced from
-  # this project. Only ai1 (.119) and ai2 (.169) are valid LLM hosts
+  # this project. Only ai1 (.126) and ai2 (.169) are valid LLM hosts
   # here. See memory/project_inference_hosts.md.
   config: |
     model_list:
       # api_key required on every entry — see values.yaml litellm.config
       # comment for the LiteLLM v1.89.x openai-python init requirement.
-      # ai1 (192.168.1.119) — large model: gpt-oss-128k:120b.
+      # ai1 (192.168.1.126) — large model: gpt-oss-128k:120b.
       - model_name: gpt-oss-128k:120b
         litellm_params:
           model: ollama/gpt-oss-128k:120b
-          api_base: http://192.168.1.119:11434
+          api_base: http://192.168.1.126:11434
           api_key: "any"
       # ai2 (192.168.1.169) — secondary host for embeddings + lighter
       # models, so the 120b's KV cache on ai1 doesn't thrash.

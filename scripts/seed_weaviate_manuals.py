@@ -26,7 +26,7 @@ WEAVIATE_HTTP_HOST = os.getenv("WEAVIATE_HTTP_HOST", "localhost")
 WEAVIATE_HTTP_PORT = int(os.getenv("WEAVIATE_HTTP_PORT", "18082"))
 WEAVIATE_GRPC_HOST = os.getenv("WEAVIATE_GRPC_HOST", "localhost")
 WEAVIATE_GRPC_PORT = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
-OLLAMA_API = os.getenv("OLLAMA_API_ENDPOINT", "http://192.168.1.119:11434")
+OLLAMA_API = os.getenv("OLLAMA_API_ENDPOINT", "http://192.168.1.126:11434")
 EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 COLLECTION = os.getenv("WEAVIATE_DOC_COLLECTION", "DocumentChunk")
 

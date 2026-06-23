@@ -802,17 +802,17 @@ litellm:
       #   client option must be set...
       # (observed at work-cluster engine-o BAML call 2026-06-19).
       # "any" is conventional for stateless / Ollama backends.
-      # ai1 (Strix Halo + R97000 PRO, 192.168.1.119) — large model host.
+      # ai1 (Strix Halo + R97000 PRO, 192.168.1.126) — large model host.
       - model_name: gpt-oss-128k:120b
         litellm_params:
           model: ollama/gpt-oss-128k:120b
-          api_base: http://192.168.1.119:11434
+          api_base: http://192.168.1.126:11434
           api_key: "any"
       # ai2 (Strix Halo + R97000 PRO, 192.168.1.169) — secondary inference
       # host added 2026-06-21. Hosts embeddings and lighter models so the
       # 120b's KV cache stays on ai1 without thrash. Note: .188 and .179
       # are RESERVED for goat-yard-archive production and MUST NOT be
-      # referenced by this project. Use only ai1 (.119) and ai2 (.169).
+      # referenced by this project. Use only ai1 (.126) and ai2 (.169).
       - model_name: nomic-embed-text
         litellm_params:
           model: ollama/nomic-embed-text

@@ -35,7 +35,7 @@ Prerequisites:
 
 Configuration (env vars):
     OLLAMA_TEST_BASE_URL    default: http://ai1:11434/v1
-    OLLAMA_TEST_HOST_IP     default: 192.168.1.119   (for --add-host)
+    OLLAMA_TEST_HOST_IP     default: 192.168.1.126   (for --add-host)
     MEM0_TEST_LLM_MODEL     default: gemma4:31b
     SMOKE_SMOLAGENTS_MODEL  default: gpt-oss:120b    (only present to satisfy
                                                      the env contract; mem0
@@ -67,7 +67,7 @@ _TAG = os.getenv("ENGINE_IMAGE_TAG", "latest")
 _IMAGE = f"{_REGISTRY}/restate-analyst:{_TAG}"
 
 _OLLAMA_BASE_URL = os.getenv("OLLAMA_TEST_BASE_URL", "http://ai1:11434/v1")
-_OLLAMA_HOST_IP = os.getenv("OLLAMA_TEST_HOST_IP", "192.168.1.119")
+_OLLAMA_HOST_IP = os.getenv("OLLAMA_TEST_HOST_IP", "192.168.1.126")
 _MEM0_MODEL = os.getenv("MEM0_TEST_LLM_MODEL", "gemma4:31b")
 _SMOKE_MODEL = os.getenv("SMOKE_SMOLAGENTS_MODEL", "gpt-oss:120b")
 

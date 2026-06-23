@@ -67,7 +67,7 @@ agentFleet:
     # LLM endpoint — ai1 Ollama, IP-resolved (no LAN DNS for `ai1`)
     SMOLAGENTS_PROVIDER: "ollama"
     SMOLAGENTS_MODEL: "gpt-oss-128k:120b"
-    OLLAMA_BASE_URL: "http://192.168.1.119:11434/v1"  # verified reachable from sandbox pods
+    OLLAMA_BASE_URL: "http://192.168.1.126:11434/v1"  # verified reachable from sandbox pods
     BAML_LOG_LEVEL: "info"
 
     # mem0 LLM decoupling — gpt-oss crashes on mem0's structured-output
@@ -76,7 +76,7 @@ agentFleet:
     # ADR-0001.
     #
     # Before 2026-06-03: both 120b (agent) and gemma4:31b (mem0) lived on
-    # ai1 (192.168.1.119). The Strix Halo unified 128 GB pool held both
+    # ai1 (192.168.1.126). The Strix Halo unified 128 GB pool held both
     # while flash attention compressed the 120b KV cache (~70 GB). After
     # flash-attn was disabled for stability the 120b grew to ~97 GB and
     # no longer co-resided with gemma4:31b (~37 GB), causing model swap
@@ -102,7 +102,7 @@ agentFleet:
     #
     # HOST RESERVATION RULE (2026-06-21): 192.168.1.179 and 192.168.1.188
     # are RESERVED for goat-yard-archive production work and MUST NOT
-    # appear in this project's values files. Only ai1 (.119) and ai2
+    # appear in this project's values files. Only ai1 (.126) and ai2
     # (.169) are valid LLM hosts here. See memory/project_inference_hosts.md.
     MEM0_LLM_MODEL: "phi4-16k:14b"
     MEM0_LLM_PROVIDER: "ollama"

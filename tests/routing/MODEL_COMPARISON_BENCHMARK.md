@@ -7,7 +7,7 @@ candidate Ollama models for engine-o's `/resolve` and
 
 ## Setup
 
-- **ai1 (`192.168.1.119`)** = Strix Halo APU, shared unified DRAM.
+- **ai1 (`192.168.1.126`)** = Strix Halo APU, shared unified DRAM.
   Hosts the agent-reasoning model (`gpt-oss-128k:120b`) pinned forever.
 - **.188** = dedicated GPU server. Hosts the routing-comparison models
   + Mem0's `phi4-16k:14b`.

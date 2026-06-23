@@ -87,7 +87,7 @@ services:
     ports:
       - "8084:8084"
     extra_hosts:
-      - "ai1:192.168.1.119"
+      - "ai1:192.168.1.126"
     environment:
       - WEAVIATE_HTTP_HOST=weaviate:8080
       - WEAVIATE_GRPC_HOST=weaviate:50051
@@ -117,7 +117,7 @@ services:
     ports:
       - "8081:8081"
     extra_hosts:
-      - "ai1:192.168.1.119"
+      - "ai1:192.168.1.126"
     volumes:
       - ./agent_fleet/utils/mem0_utils.py:/app/utils/mem0_utils.py:ro
     environment:
