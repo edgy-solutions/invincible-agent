@@ -200,6 +200,25 @@ agentFleet:
     JENA_SPARQL_ENDPOINT: "http://jena:3030/ds/query"
     DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
     DATAHUB_MOCK_MODE: "false"
+
+    # 🔗 mesh-registrar opt-in for all engines that ship a capability
+    # registration on boot (Engines A, D, E, W, F use this; Engine O is
+    # the registry consumer so it stays off). The value lives in
+    # agentFleet.env (broadcasts to every engine via the ConfigMap) so
+    # one switch controls the whole fleet — and so a fresh-bootstrap
+    # reproduces the registering behavior without manual kubectl-patch
+    # steps. Set to "false" to disable cluster-wide. Engine O ignores
+    # the value (its registration code path is gated separately).
+    #
+    # Banked here because the alternative (each engine's deployment
+    # carrying a hardcoded env entry) is the meshRegistrar-accretion
+    # class of cluster state: it works in a long-lived cluster where
+    # someone manually set it once, and silently breaks on every
+    # fresh bootstrap until the operator remembers the manual step.
+    # Surfaced 2026-06-23 by tracing engine-f's runtime env back to a
+    # 2026-06-06 kubectl-patch that hit the whole fleet and was never
+    # reconciled into chart values.
+    MESH_REGISTER_ON_STARTUP: "true"
     
     # 🔗 Storage Layer (Neo4j & Weaviate)
     NEO4J_URI: "bolt://neo4j"
