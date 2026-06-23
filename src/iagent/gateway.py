@@ -221,6 +221,93 @@ def _sse(event: str, data: str) -> str:
     return f"event: {event}\ndata: {data}\n\n"
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Typed grounding-panel events (Option A clean cut, 2026-06-22)
+# ──────────────────────────────────────────────────────────────────────
+#
+# Old free-text `status` events with action="think"/"found"/"error"/"plan"
+# are GONE from this gateway. Every signal that drives the cortex-ui
+# grounding panel is now a typed event whose payload projects real
+# pipeline data. The Dagster path remains authoritative — the events
+# the UI sees are derived from Dagster step status, asset
+# materialization metadata, and the pre-Dagster /route_intent call.
+# The gateway is not allowed to fabricate stage progress.
+#
+# Architect's principle: surface what the pipeline did; never
+# synthesize, soften, or hide. The typed variants below let the UI
+# render the substrate's real progress + real errors without the
+# accumulating-heartbeat noise the old `status` events produced.
+#
+# The variants and their UI consumers:
+#   pipeline_stage  → ThinkingCard rows (kind ∈ understanding,
+#                     locating, choosing_action, retrieving, composing)
+#   pipeline_error  → ThinkingCard row in `error` state, optionally
+#                     bound to a specific stage `kind`
+#   route_decision  → RoutingDecision card (NOT emitted yet — needs
+#                     supervisor asset for subject + verb + handler)
+#   sources         → SourcesTrail (NOT emitted yet — needs engine work)
+#   graph_trace     → GraphTrace (NOT emitted yet — needs supervisor asset)
+#   context_update  → existing ontology + bindings signals (unchanged)
+#   chat_message    → agent's text answer (unchanged)
+#   ui_payload /
+#     final_payload → schema-driven semantic payloads (unchanged)
+
+
+def _stage(
+    kind: str,
+    status: str,
+    detail: dict | None = None,
+    elapsed_ms: int | None = None,
+) -> str:
+    """Emit a typed `pipeline_stage` event.
+
+    kind   : one of "understanding", "locating", "choosing_action",
+             "retrieving", "composing"
+    status : "started" | "completed" | "failed"
+    detail : optional projection of real pipeline data
+             (subject_uri, verb_iri, n_candidates, ...)
+
+    The cortex-ui ThinkingCard upserts by `kind`, so emitting the same
+    kind with status="started" then "completed" updates ONE row in
+    place. Recurring emissions of the same stage are safe and do NOT
+    accumulate.
+    """
+    payload: dict = {"kind": kind, "status": status}
+    if detail:
+        payload["detail"] = detail
+    if elapsed_ms is not None:
+        payload["elapsed_ms"] = elapsed_ms
+    return _sse("pipeline_stage", json.dumps(payload))
+
+
+def _perror(
+    message: str,
+    *,
+    kind: str | None = None,
+    retryable: bool | None = None,
+    cause: str | None = None,
+) -> str:
+    """Emit a typed `pipeline_error` event.
+
+    kind      : optional pipeline stage the error is bound to (so the UI
+                marks the relevant ThinkingCard row red rather than
+                injecting a free-floating error row)
+    retryable : policy hint (transient 5xx vs. final contract-B short-
+                circuit). The UI surfaces it in error-row tooltip.
+    cause     : machine-readable classification (verb_unfound,
+                llm_timeout, engine_5xx, dagster_run_failed, ...) for
+                downstream telemetry.
+    """
+    payload: dict = {"message": message}
+    if kind:
+        payload["kind"] = kind
+    if retryable is not None:
+        payload["retryable"] = retryable
+    if cause:
+        payload["cause"] = cause
+    return _sse("pipeline_error", json.dumps(payload))
+
+
 async def _keepalive_wrap(stream, interval_s: float = 10.0):
     """Wrap an SSE generator so it emits `: keepalive\\n\\n` comments
     during quiet stretches.
@@ -254,10 +341,14 @@ async def _keepalive_wrap(stream, interval_s: float = 10.0):
             async for event in stream:
                 await queue.put(event)
         except Exception as exc:  # noqa: BLE001
-            await queue.put(_sse("status", json.dumps({
-                "action": "error",
-                "label": f"Stream producer error: {exc}",
-            })))
+            # Option A clean cut: typed pipeline_error instead of
+            # the legacy status/action=error event. Stream producer
+            # errors aren't bound to a known pipeline stage, so omit
+            # `kind`; UI renders an unbound error row.
+            await queue.put(_perror(
+                f"Stream producer error: {exc}",
+                cause="stream_producer_error",
+            ))
         finally:
             await queue.put(DONE)
 
@@ -691,11 +782,12 @@ async def generate_dagster_stream(
     session_id = request.session_id
     user_query = request.message
 
-    yield _sse("status", json.dumps({
-        "action": "think",
-        "category": "Process",
-        "label": "Analyzing intent..."
-    }))
+    # Option A: typed pipeline_stage "understanding" started. The
+    # gateway's /route_intent call is real gateway-level routing work
+    # (intent extraction + persona/domain bounding), not a shortcut
+    # around Dagster. Dagster launches AFTER this returns; its stages
+    # take over from "locating" onward.
+    yield _stage("understanding", "started")
 
     # 0. Check if there is an active Process Creation Interview in Restate.
     # When a session is mid-interview, every subsequent message goes back
@@ -738,7 +830,12 @@ async def generate_dagster_stream(
                 intent_extraction = resp.json()
         except Exception as exc:
             logger.error("Failed to extract intent: %s", exc)
-            yield _sse("status", json.dumps({"action": "error", "label": "Failed to determine execution intent."}))
+            yield _perror(
+                "Failed to determine execution intent.",
+                kind="understanding",
+                retryable=True,
+                cause="route_intent_failed",
+            )
             yield _sse("stream_end", "{}")
             return
 
@@ -755,8 +852,14 @@ async def generate_dagster_stream(
 
     if intent == "PROCESS_CREATION":
         # 🔵 THE INTERVIEW PATH (RESTATE)
-        yield _sse("status", json.dumps({"action": "think", "category": "Process", "label": "Process Engineer is reviewing requirements..."}))
-        
+        # The interview is Restate-driven (ProcessInterviewer durable
+        # object), not Dagster. We map its phases onto the same typed
+        # pipeline_stage events so the UI gets one consistent timeline.
+        # "understanding" completes when the interview reply arrives;
+        # "composing" runs during auto-compile (if it triggers).
+        yield _stage("understanding", "completed")
+        yield _stage("composing", "started")
+
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 restate_response = await client.post(
@@ -765,15 +868,16 @@ async def generate_dagster_stream(
                 )
                 restate_response.raise_for_status()
                 data = restate_response.json()
-                
+
                 if "ui_payload" in data:
                     yield _sse("ui_payload", json.dumps(data["ui_payload"]))
                 if "chat_reply" in data:
                     yield _sse("chat_message", json.dumps({"role": "assistant", "content": data["chat_reply"]}))
-                
-                # Auto-Compile Logic
-                if data.get("is_complete"):
-                    yield _sse("status", json.dumps({"action": "think", "category": "System", "label": "Compiling Graph to Dagster Workspace..."}))
+
+                # Auto-Compile Logic — keep the same "composing" stage
+                # active across the BPMN→Dagster compile, which is the
+                # last real work this turn does. No new stage event
+                # needed; the ThinkingCard row stays in "loading".
                     try:
                         raw = data.get("raw_bpmn_payload", {})
                         # Transform tasks: Restate uses description, BPMNPayload expects agent_endpoint
@@ -814,33 +918,40 @@ async def generate_dagster_stream(
                             break  # Only need one session
                     except Exception as compile_err:
                         logger.error("Auto-compile failed: %s", compile_err)
-                        yield _sse("status", json.dumps({"action": "error", "label": f"Auto-compile failed: {compile_err}"}))
-                
+                        yield _perror(
+                            f"Auto-compile failed: {compile_err}",
+                            kind="composing",
+                            retryable=False,
+                            cause="auto_compile_failed",
+                        )
+
+                # Mark composing complete on the happy path.
+                yield _stage("composing", "completed")
+
         except Exception as exc:
             logger.error("Failed to call Restate Interviewer: %s", exc)
-            yield _sse("status", json.dumps({"action": "error", "label": "Failed to reach Process Engineer."}))
-            
+            yield _perror(
+                "Failed to reach Process Engineer.",
+                kind="composing",
+                retryable=True,
+                cause="restate_unreachable",
+            )
+
         yield _sse("stream_end", "{}")
         return
 
     # 🟢 THE GRAPH PATH (DAGSTER)
-    yield _sse("status", json.dumps({
-        "action": "plan",
-        "category": "Process",
-        "label": "Engine O Planning Complete..."
-    }))
+    # /route_intent has returned. Mark "understanding" complete and
+    # move to "locating" — the supervisor's create_task_plan step
+    # will run /plan and /resolve next.
+    yield _stage("understanding", "completed")
+    yield _stage("locating", "started")
 
     # Per ADR-0009 Step F'.2: /route_intent does not produce a task_plan
     # anymore — the supervisor's `create_task_plan` op asks Engine O's /plan
     # endpoint itself when task_plan_json is empty. Step F'.3 will switch
     # that decomposition path to be predicate-aware too.
     task_plan_json = ""
-
-    yield _sse("status", json.dumps({
-        "action": "think",
-        "category": "Concept",
-        "label": f"Triggering Supervisor Job for thread {session_id[:8]}..."
-    }))
     run_id = await _launch_supervisor_job(
         user_query,
         session_id,
@@ -852,125 +963,156 @@ async def generate_dagster_stream(
         entity_refs=entity_refs,
     )
     if not run_id:
-        yield _sse("status", json.dumps({"action": "error", "label": "Failed to trigger Dagster job."}))
+        yield _perror(
+            "Failed to trigger Dagster job.",
+            kind="locating",
+            retryable=True,
+            cause="dagster_launch_failed",
+        )
         yield _sse("stream_end", "{}")
         return
-        
-    yield _sse("status", json.dumps({"action": "think", "category": "Process", "label": f"Dagster Run Initiated: {run_id[:8]}"}))
+
+    # Note: the "Dagster Run Initiated: ..." status emission was
+    # operational noise; the user doesn't need to see the run id, and
+    # the supervisor's first asset materialization (active_agent_roster
+    # → concepts/personas) arrives within a second or two and gives the
+    # real signal the run is alive.
 
     # Polling Loop
     emitted_steps = set()
     is_success = False
-    
+
+    # Option A: the every-10s "Agents are reasoning (Elapsed: Ns)"
+    # heartbeat is REMOVED. The cortex-ui ThinkingCard ticks the
+    # elapsed time locally from each stage's startedAt timestamp, so
+    # heartbeat events from the server were always redundant —
+    # they only existed to keep proxy connections alive, which is now
+    # handled by _keepalive_wrap's `: keepalive\n\n` comment lines.
+    # The accumulating-rows UI bug is fixed at its source.
+
     for idx in range(900): # 15 minute max timeout (slow Ollama backends)
         await asyncio.sleep(1.0)
-        
-        # 🛑 THE FIX: Keep-Alive Heartbeat (Fires every 10 seconds)
-        if idx > 0 and idx % 10 == 0:
-            heartbeat_payload = json.dumps({
-                "action": "think", 
-                "category": "Process", 
-                "label": f"Agents are reasoning (Elapsed: {idx}s)..."
-            })
-            yield _sse("status", heartbeat_payload)
-        
+
         status_data = await _get_run_status(run_id)
         if status_data.get("status") == "FAILURE":
-            yield _sse("status", json.dumps({"action": "error", "label": "Pipeline Failed."}))
+            yield _perror(
+                "Pipeline failed.",
+                kind="retrieving",
+                retryable=False,
+                cause="dagster_run_failed",
+            )
             break
-            
+
         if status_data.get("status") == "SUCCESS":
             is_success = True
             break
             
-        # 🛑 GET INTERMEDIATE EVENTS (Personas & Concepts)
+        # Pull intermediate asset materializations from the supervisor.
+        # active_agent_roster surfaces:
+        #   - extracted_concepts → context_update (ontology terms in HUD)
+        # The historical personas list (drove AgentTeamLoader) is NOT
+        # emitted any more per Option A — see [[persona-split]]: the
+        # active roster was decorative theater, output-side persona
+        # lives on the verb edge and surfaces via route_decision.owner_persona.
         mats = await _get_run_events(run_id)
         for mat in mats:
-            # Check for the active_agent_roster asset
             path = mat.get("assetKey", {}).get("path")
             if path == ["active_agent_roster"] and "plan_emitted" not in emitted_steps:
-                personas_list = []
                 concepts_list = []
                 for meta in mat.get("metadataEntries", []):
-                    if meta.get("label") == "personas":
-                        try:
-                            json_str = meta.get("text") or meta.get("jsonString") or "[]"
-                            personas_list = json.loads(json_str)
-                        except Exception as parse_err:
-                            logger.error("Failed to parse persona metadata: %s", parse_err)
-                    elif meta.get("label") == "extracted_concepts":
+                    if meta.get("label") == "extracted_concepts":
                         try:
                             json_str = meta.get("text") or meta.get("jsonString") or "[]"
                             concepts_list = json.loads(json_str)
                         except Exception as parse_err:
                             logger.error("Failed to parse concepts metadata: %s", parse_err)
-                            
-                if personas_list:
-                    logger.info("📡 Emitting SSE 'plan' with personas: %s", personas_list)
-                    yield _sse("status", json.dumps({
-                        "action": "plan",
-                        "personas": personas_list,
-                        "label": "Summoning specialized graph agents..."
-                    }))
+
                 if concepts_list:
                     logger.info("📡 Emitting SSE 'context_update' with ontology concepts: %s", concepts_list)
                     yield _sse("context_update", json.dumps({
                         "type": "ontology",
-                        "data": concepts_list
+                        "data": concepts_list,
                     }))
-                    
+
                 emitted_steps.add("plan_emitted")
                 logger.info("✅ Plan emission confirmed for run %s", run_id)
+
+        # Map Dagster step transitions onto typed pipeline_stage events.
+        # The mapping projects the supervisor's REAL step keys (Dagster
+        # is the audit trail) onto the UI's 5 stage kinds:
+        #   create_task_plan      → choosing_action (Engine O plan + verb)
+        #   execute_subtask-*     → retrieving (engine dispatch)
+        #   synthesize_stateful   → composing (Engine B synthesis)
+        #   generate_ui_payload   → composing (Engine F mapping) — same
+        #                           kind as synthesize; UI shows ONE
+        #                           composing row that stays loading
+        #                           until the final payload arrives.
+        STEP_TO_KIND = {
+            "create_task_plan": "choosing_action",
+            "synthesize_stateful": "composing",
+            "generate_ui_payload": "composing",
+        }
+
+        def _step_kind(step_key: str) -> str | None:
+            if step_key.startswith("execute_subtask-"):
+                return "retrieving"
+            return STEP_TO_KIND.get(step_key)
 
         step_stats = await _get_step_stats(run_id)
         for stat in step_stats:
             step_key = stat.get("stepKey", "")
             status = stat.get("status", "")
-            
-            # If step has started but not emitted yet
-            if status == "SUCCESS" and f"{step_key}_success" not in emitted_steps:
-                lbl = ""
-                if step_key == "create_task_plan": lbl = "Task plan created by Engine O"
-                elif step_key.startswith("execute_subtask-"): lbl = f"Expert Graph evaluation complete ({step_key})"
-                elif step_key == "synthesize_stateful": lbl = "Results synthesized by Engine B"
-                elif step_key == "generate_ui_payload": lbl = "UI State mapped by Engine F"
-                
-                if lbl:
-                     yield _sse("status", json.dumps({"action": "found", "category": "Asset", "label": lbl}))
+            kind = _step_kind(step_key)
+            if not kind:
+                continue
+
+            if status == "RUNNING" and f"{step_key}_running" not in emitted_steps:
+                # Stage upserts by kind on the UI side — multiple
+                # execute_subtask-* steps all map to "retrieving" and
+                # only one row renders, which is the right semantics
+                # (the user sees "retrieving evidence", not a fan-out
+                # of per-engine subrows).
+                yield _stage(kind, "started", detail={"step_key": step_key})
+                emitted_steps.add(f"{step_key}_running")
+
+            elif status == "SUCCESS" and f"{step_key}_success" not in emitted_steps:
+                yield _stage(kind, "completed", detail={"step_key": step_key})
                 emitted_steps.add(f"{step_key}_success")
                 
-            elif status == "RUNNING" and f"{step_key}_running" not in emitted_steps:
-                lbl = ""
-                if step_key == "create_task_plan": lbl = "Asking Engine O to build task plan..."
-                elif step_key.startswith("execute_subtask-"): lbl = f"Fanning out to Engine E..."
-                elif step_key == "synthesize_stateful": lbl = "Synthesizing parallel state via Engine B..."
-                elif step_key == "generate_ui_payload": lbl = "Calling Engine F for component mapping..."
-                
-                if lbl:
-                     yield _sse("status", json.dumps({"action": "think", "category": "Process", "label": lbl}))
-                emitted_steps.add(f"{step_key}_running")
-                
     if is_success:
-        yield _sse("status", json.dumps({"action": "think", "category": "Concept", "label": "Retrieving Final UI Payload..."}))
+        # Composing was already marked started by generate_ui_payload's
+        # RUNNING transition above; the actual fetch of the final
+        # payload happens here. No extra "Retrieving Final UI Payload"
+        # status row needed — composing stays loading until either
+        # the payload arrives (completed) or fetching fails (error).
         result = await _get_ui_payload_output(run_id)
-        
+
         if "error" in result:
             logger.error("BFF Error: %s", result["error"])
-            yield _sse("status", json.dumps({"action": "error", "label": result["error"]}))
+            yield _perror(
+                result["error"],
+                kind="composing",
+                retryable=False,
+                cause="ui_payload_fetch_error",
+            )
         else:
             # Emit data bindings to the HUD
             if result.get("referenced_uris"):
                 yield _sse("context_update", json.dumps({
                     "type": "bindings",
-                    "data": result["referenced_uris"]
+                    "data": result["referenced_uris"],
                 }))
-                
-            # Mark the retrieval step as done before sending the payload
-            yield _sse("status", json.dumps({"action": "found", "category": "Asset", "label": "UI Payload Retrieved"}))
+
+            yield _stage("composing", "completed")
             yield _sse("final_payload", json.dumps(result["payload"]))
     else:
-        yield _sse("status", json.dumps({"action": "error", "label": "Timeout or failed to fetch UI payload."}))
-        
+        yield _perror(
+            "Timeout or failed to fetch UI payload.",
+            kind="composing",
+            retryable=True,
+            cause="ui_payload_timeout",
+        )
+
     yield _sse("stream_end", "{}")
 
 
