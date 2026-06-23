@@ -95,23 +95,88 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
     weaviate_schema_string = await ctx.run("fetch-weaviate-schema", fetch_weaviate_schema_task)
 
     # --------------------------------------------------------------------------
+    # Source attribution (Phase 3 of grounding panel)
+    # --------------------------------------------------------------------------
+    # Closure-scoped accumulator: every search_knowledge_base call that
+    # returns a Weaviate hit appends one source-record dict here. After
+    # the smolagent loop finishes, these records are attached to the
+    # engine's response. The supervisor materializes them as a
+    # `subtask_sources` Dagster asset, the gateway projects into a
+    # typed `sources` SSE event, the cortex-ui SourcesTrail renders them.
+    #
+    # Architect's discipline (carried through to citation layer):
+    # snippet = matched-chunk text VERBATIM (NOT an LLM summary). Synthesis
+    # at the citation layer is the exact failure this panel exists to
+    # prevent — users must be able to read the words the retriever
+    # actually saw.
+    #
+    # Dedup-by-uri so a multi-tool-call loop that hits the same chunk
+    # twice doesn't produce duplicate sources. First-seen relevance wins
+    # (the agent's first call gets the most relevant ordering; later
+    # exploratory calls are weaker and shouldn't override the first
+    # relevance score).
+    sources_collected: List[Dict[str, Any]] = []
+    sources_seen_uris: set[str] = set()
+
+    def _collect_weaviate_source(obj, search_query: str) -> None:
+        """Project a Weaviate object into the Source shape the UI expects."""
+        try:
+            doc_id = obj.properties.get("doc_id") or "Unknown Document"
+            text = obj.properties.get("text") or ""
+            page_number = obj.properties.get("page_number")
+            object_uri = obj.properties.get("source_url") or obj.properties.get("uri") or f"weaviate://{doc_collection_name}/{obj.uuid}"
+            if object_uri in sources_seen_uris:
+                return
+            sources_seen_uris.add(object_uri)
+            # relevance: weaviate-client v4 surfaces `score` (hybrid) or
+            # `certainty` (near_*). Either is a 0..1 signal that maps
+            # directly to the cortex-ui ConfidenceBar.
+            relevance: float | None = None
+            md = getattr(obj, "metadata", None)
+            if md is not None:
+                if getattr(md, "score", None) is not None:
+                    relevance = float(md.score)
+                elif getattr(md, "certainty", None) is not None:
+                    relevance = float(md.certainty)
+            label = f"{doc_id}" + (f" · p.{page_number}" if page_number else "")
+            sources_collected.append({
+                "type": "document",
+                "label": label,
+                "uri": str(object_uri),
+                # First ~240 chars of matched-chunk text (snippet, not
+                # summary — see discipline note above).
+                "snippet": (text[:240].strip() + ("…" if len(text) > 240 else "")) if text else None,
+                "relevance": relevance,
+                "open_url": str(object_uri) if str(object_uri).startswith(("http://", "https://", "s3://")) else None,
+                # search_query is the actual semantic_query the agent
+                # passed in — useful as audit trail (which query call
+                # produced this match).
+                "matched_for": search_query,
+            })
+        except Exception as collect_err:
+            # Source-collection failure must NEVER kill the search;
+            # log and continue. [[trailing-steps-nonfatal]] applied
+            # to the citation accumulator.
+            print(f"Source-collection failed in Engine W (non-fatal): {collect_err}")
+
+    # --------------------------------------------------------------------------
     # The Semantic Tool
     # --------------------------------------------------------------------------
     @tool
     def search_knowledge_base(semantic_query: str, metadata_filters: dict = None) -> str:
         """
         Searches the text of the technical manuals for policies, definitions, summaries, and general knowledge.
-        
+
         Args:
             semantic_query: The natural language search phrase.
             metadata_filters: Optional dictionary of metadata fields and exact values to filter by (e.g., {"doc_id": "TM-123"}).
         """
         try:
             collection = weaviate_client.collections.get(doc_collection_name)
-            
+
             # Base filter: strict domain segregation
             base_filter = wvc.query.Filter.by_property("domain").equal(domain_label)
-            
+
             if metadata_filters and isinstance(metadata_filters, dict):
                 filter_list = [base_filter]
                 for key, value in metadata_filters.items():
@@ -119,18 +184,22 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                 final_filter = wvc.query.Filter.all_of(filter_list)
             else:
                 final_filter = base_filter
-            
+
             # STRICT DOMAIN SEGREGATION FILTER + explicit vector.
             # We compute the query vector via embed_query() (LiteLLM
             # /embeddings, search_query: prefix) instead of letting
             # Weaviate vectorize the query via a text2vec module — code
             # owns the contract, NOT infra. See agent_fleet/utils/embed.py.
+            # return_metadata=ALL surfaces score/certainty so the
+            # source-attribution accumulator can populate `relevance`.
+            metadata_query = wvc.query.MetadataQuery(score=True, certainty=True, distance=True)
             try:
                 query_vector = embed_query(semantic_query)
                 response = collection.query.near_vector(
                     near_vector=query_vector,
                     limit=5,
                     filters=final_filter,
+                    return_metadata=metadata_query,
                 )
             except Exception as embed_err:
                 # If the embedding gateway is down, fall back to BM25 so
@@ -141,17 +210,20 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     query=semantic_query,
                     limit=5,
                     filters=final_filter,
+                    return_metadata=metadata_query,
                 )
-            
+
             if not response.objects:
                 return f"No relevant information found for '{semantic_query}' in the {domain} domain."
-                
+
             results = []
             for idx, obj in enumerate(response.objects):
                 text = obj.properties.get("text", "")
                 doc_id = obj.properties.get("doc_id", "Unknown Document")
                 results.append(f"--- Excerpt {idx + 1} (Source: {doc_id}) ---\n{text}")
-                
+                # Accumulate the source record for the engine's response.
+                _collect_weaviate_source(obj, semantic_query)
+
             return "\n\n".join(results)
         except Exception as e:
             return f"Error executing semantic search: {str(e)}"
@@ -211,5 +283,17 @@ print(result)
         return baml_response.model_dump()
         
     final_structured_dict = await ctx.run("format-baml", format_baml)
-    
+
+    # Phase 3 source attribution: attach the accumulated source records
+    # to the engine's response. The supervisor reads this in
+    # execute_subtask and materializes a Dagster `subtask_sources` asset
+    # which the gateway projects into the typed `sources` SSE event.
+    # The field name `sources` is the supervisor's expected key (other
+    # engines W/E/A use the same key for a uniform contract).
+    #
+    # Dropped silently if the BAML response already has a `sources` key
+    # (defensive against a future BAML schema change that adds one).
+    if "sources" not in final_structured_dict:
+        final_structured_dict["sources"] = sources_collected
+
     return final_structured_dict

@@ -409,6 +409,63 @@ def _project_route_decision(mat: dict) -> dict | None:
     }
 
 
+def _project_sources(mat: dict) -> list[dict] | None:
+    """Project a subtask_sources materialization into the Source[] list
+    shape the cortex-ui typed event consumes.
+
+    The supervisor stashes the engine-attached sources as a JSON-encoded
+    text metadata field (sources_json). We deserialize and shape-check
+    each item against the cortex-ui Source contract:
+        { type, label, uri, snippet?, relevance?, open_url?, ... }
+
+    Defensive: tolerates missing `type` (defaults to "document"), drops
+    items with no `uri`, caps snippet length at 240 chars (matches
+    Engine W's cap; UI's line-clamp handles longer gracefully too but
+    no point shipping more bytes than needed). Engine-provided extra
+    fields (e.g. `matched_for` from Engine W) pass through verbatim
+    — UI ignores unknown fields per its TypeScript shape.
+    """
+    md = _metadata_dict(mat)
+    raw = md.get("sources_json")
+    if not raw:
+        return None
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return None
+    if not isinstance(items, list) or not items:
+        return None
+
+    out: list[dict] = []
+    for src in items:
+        if not isinstance(src, dict):
+            continue
+        uri = src.get("uri")
+        if not uri:
+            continue
+        projected: dict[str, Any] = {
+            "type": src.get("type") or "document",
+            "label": src.get("label") or _label_from_uri(uri),
+            "uri": uri,
+        }
+        if isinstance(src.get("relevance"), (int, float)):
+            projected["relevance"] = float(src["relevance"])
+        snippet = src.get("snippet")
+        if isinstance(snippet, str) and snippet:
+            projected["snippet"] = snippet[:240]
+        open_url = src.get("open_url")
+        if isinstance(open_url, str) and open_url:
+            projected["open_url"] = open_url
+        # Pass-through engine extras (matched_for, etc.) without
+        # validating — UI's TypeScript shape ignores unknown keys.
+        for extra in ("matched_for",):
+            if extra in src:
+                projected[extra] = src[extra]
+        out.append(projected)
+
+    return out or None
+
+
 def _project_graph_trace(mat: dict) -> list[dict] | None:
     """Project a subtask_graph_trace materialization into GraphTraceNode
     list shape. The walk shown to the user:
@@ -1272,6 +1329,26 @@ async def generate_dagster_stream(
                     )
                     yield _sse("graph_trace", json.dumps({"nodes": trace_nodes}))
                 emitted_steps.add("graph_trace_emitted")
+
+            elif (
+                path == ["subtask_sources"]
+                and "sources_emitted" not in emitted_steps
+            ):
+                # Phase 3: sources from the picked engine. Same
+                # emit-once-per-run semantics as route_decision and
+                # graph_trace — first subtask wins. Multi-subtask UI
+                # semantics will revisit this.
+                projected_sources = _project_sources(mat)
+                if projected_sources:
+                    logger.info(
+                        "📡 Emitting SSE 'sources' for run %s: %d source(s)",
+                        run_id, len(projected_sources),
+                    )
+                    yield _sse(
+                        "sources",
+                        json.dumps({"sources": projected_sources}),
+                    )
+                emitted_steps.add("sources_emitted")
 
         # Map Dagster step transitions onto typed pipeline_stage events.
         # The mapping projects the supervisor's REAL step keys (Dagster

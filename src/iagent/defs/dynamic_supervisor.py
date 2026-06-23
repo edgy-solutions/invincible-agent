@@ -698,6 +698,53 @@ def _log_subtask_route_assets(
         )
 
 
+def _log_subtask_sources_asset(
+    context,
+    *,
+    engine_response: Dict[str, Any],
+    verb_iri: str | None,
+    sub_query: str,
+) -> None:
+    """Materialize a subtask_sources Dagster asset from the engine's
+    response. The gateway projects this into the typed `sources` SSE
+    event for the cortex-ui SourcesTrail.
+
+    Engine response contract (Phase 3): if an engine attached the
+    `sources` key to its response (top-level list[dict]), each dict
+    matches the cortex-ui Source shape — `type`, `label`, `uri`,
+    optional `snippet`, `relevance`, `open_url`. Engines that haven't
+    been migrated yet (E and A in the first Phase 3 pass) don't
+    include the key; the supervisor skips the materialization for
+    them. SourcesTrail then renders its empty-state for those turns.
+
+    The materialization metadata includes a JSON-serialized full
+    `sources` list (so the gateway can deserialize and project) plus
+    a `sources_count` summary scalar for at-a-glance Dagster UI audit.
+    """
+    sources = engine_response.get("sources") if isinstance(engine_response, dict) else None
+    if not sources or not isinstance(sources, list):
+        # Engine didn't attach sources (yet). Skip the asset.
+        return
+
+    # Defensive: cap at a reasonable max so a runaway engine response
+    # can't fill Dagster metadata with megabytes of citations. 50 is
+    # well above the 5-hit-per-tool-call default any engine uses today.
+    capped = sources[:50]
+
+    context.log_event(
+        AssetMaterialization(
+            asset_key=["subtask_sources"],
+            metadata={
+                "sources_count": MetadataValue.int(len(capped)),
+                "verb_iri": MetadataValue.text(verb_iri or ""),
+                "sub_query": MetadataValue.text(sub_query or ""),
+                # Full payload as JSON text — the gateway deserializes.
+                "sources_json": MetadataValue.text(json.dumps(capped)),
+            },
+        )
+    )
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -950,6 +997,28 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     trace = data.get("execution_trace")
     if trace:
         context.log.info(f"🧠 Agent Reasoning Trajectory:\n{trace}")
+
+    # Phase 3 source attribution: if the engine returned a `sources`
+    # list, materialize it as a Dagster asset so the gateway can
+    # project it into the typed `sources` SSE event. The asset name
+    # `subtask_sources` mirrors the subtask_routing_decision /
+    # subtask_graph_trace pattern. Engines that haven't been updated
+    # yet (E and A, until follow-up) return responses without a
+    # `sources` key — the supervisor just doesn't materialize the
+    # asset, gateway doesn't emit, UI shows the empty SourcesTrail
+    # state. Safe per-engine rollout.
+    try:
+        _log_subtask_sources_asset(
+            context,
+            engine_response=data,
+            verb_iri=predicate.get("verb_iri"),
+            sub_query=sub_query,
+        )
+    except Exception as src_err:  # pragma: no cover — best-effort
+        context.log.warning(
+            "Failed to log subtask_sources materialization "
+            "(non-fatal — routing/answer continue): %s", src_err,
+        )
 
     return {
         "persona": answerer_persona,

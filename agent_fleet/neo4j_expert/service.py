@@ -247,6 +247,49 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
     )
     system_prompt_with_segregation += grounding_rule
 
+    # Phase 3 source attribution — closure-scoped accumulator matching
+    # Engine W's pattern. Sources collected here from search_manual_text
+    # ride out to the supervisor in the response's `sources` key. Cypher-
+    # result source attribution (graph_node typed sources from execute_cypher
+    # node URIs) is a separate follow-up — same accumulator, additional
+    # collection site.
+    sources_collected: List[Dict[str, Any]] = []
+    sources_seen_uris: set[str] = set()
+
+    def _collect_weaviate_source(obj, search_query: str) -> None:
+        """Project a Weaviate object into the Source shape the UI expects.
+        See Engine W's _collect_weaviate_source for the architect's
+        discipline (snippet = matched-chunk text verbatim, never a
+        summary; dedup by uri so multi-tool-call loops don't duplicate).
+        """
+        try:
+            doc_id = obj.properties.get("doc_id") or "Unknown Document"
+            text = obj.properties.get("text") or ""
+            page_number = obj.properties.get("page_number")
+            object_uri = obj.properties.get("source_url") or obj.properties.get("uri") or f"weaviate://{doc_collection_name}/{obj.uuid}"
+            if object_uri in sources_seen_uris:
+                return
+            sources_seen_uris.add(object_uri)
+            relevance: float | None = None
+            md = getattr(obj, "metadata", None)
+            if md is not None:
+                if getattr(md, "score", None) is not None:
+                    relevance = float(md.score)
+                elif getattr(md, "certainty", None) is not None:
+                    relevance = float(md.certainty)
+            label = f"{doc_id}" + (f" · p.{page_number}" if page_number else "")
+            sources_collected.append({
+                "type": "document",
+                "label": label,
+                "uri": str(object_uri),
+                "snippet": (text[:240].strip() + ("…" if len(text) > 240 else "")) if text else None,
+                "relevance": relevance,
+                "open_url": str(object_uri) if str(object_uri).startswith(("http://", "https://", "s3://")) else None,
+                "matched_for": search_query,
+            })
+        except Exception as collect_err:
+            print(f"Source-collection failed in Engine E (non-fatal): {collect_err}")
+
     try:
 
         @tool
@@ -273,11 +316,16 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 else:
                     final_filter = base_filter
 
-                # 🔗 STRICT DOMAIN SEGREGATION APPLIED TO VECTOR SEARCH
+                # 🔗 STRICT DOMAIN SEGREGATION APPLIED TO VECTOR SEARCH.
+                # return_metadata=ALL surfaces score/certainty so the
+                # source-attribution accumulator can populate `relevance`
+                # (Phase 3 of grounding panel).
+                metadata_query = wvc.query.MetadataQuery(score=True, certainty=True, distance=True)
                 response = collection.query.near_text(
                     query=semantic_query,
                     limit=3,
-                    filters=final_filter
+                    filters=final_filter,
+                    return_metadata=metadata_query,
                 )
 
                 if not response.objects:
@@ -286,6 +334,8 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 results = []
                 for obj in response.objects:
                     results.append(obj.properties.get("text", ""))
+                    # Accumulate the source for the engine's response.
+                    _collect_weaviate_source(obj, semantic_query)
 
                 return "\n\n---\n\n".join(results)
             except Exception as e:
@@ -495,6 +545,16 @@ print(result)
             return "saved"
 
         await ctx.run("save-memory", save_memory)
+
+        # Phase 3 source attribution: attach accumulated sources to the
+        # engine's response. The supervisor materializes them as a
+        # subtask_sources Dagster asset; the gateway projects into the
+        # typed SSE event the cortex-ui SourcesTrail consumes.
+        # Engine E currently only captures sources from search_manual_text
+        # (Weaviate hits = document sources). Cypher-result graph_node
+        # sources from execute_cypher are a separate follow-up.
+        if "sources" not in final_structured_dict:
+            final_structured_dict["sources"] = sources_collected
 
         return final_structured_dict
     finally:
