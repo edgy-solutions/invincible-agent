@@ -342,6 +342,27 @@ def _engine_name_from_provider(provider: str | None) -> str:
     return provider
 
 
+def _engine_name_from_endpoint(endpoint: str | None) -> str:
+    """Derive a human-readable engine name from a verb edge's endpoint
+    URL. Used as a fallback when the predicate dict has no ``provider``
+    field (the Weaviate Predicate-collection record doesn't store one;
+    only ``endpoint_url`` is reliable). Endpoint shape is conventionally
+    ``http://iagent-engine-<letter>:<port>/<route>`` (k8s in-cluster DNS).
+    """
+    if not endpoint:
+        return ""
+    e = endpoint.lower()
+    # Match iagent-engine-X where X is a single letter or letter pair.
+    import re
+    m = re.search(r"iagent-engine-([a-z]{1,2})\b", e)
+    if not m:
+        return ""
+    letter = m.group(1)
+    if letter == "da":
+        return "Engine DA"
+    return f"Engine {letter.upper()}"
+
+
 def _label_from_uri(uri: str | None) -> str:
     """Derive a human-readable label from a URI or CURIE.
 
@@ -396,14 +417,28 @@ def _project_route_decision(mat: dict) -> dict | None:
     route_status = md.get("route_status") or ""
     subject_uri = md.get("subject_uri") or "UNKNOWN"
     verb_iri = md.get("verb_iri") or "UNKNOWN"
+    handler_endpoint = md.get("handler_endpoint") or ""
 
-    is_specialist = (
-        subject_uri != "UNKNOWN"
-        and verb_iri != "UNKNOWN"
-        and bool(md.get("handler_provider"))
-    )
+    # Specialist detection: route_status=="matched" is the supervisor's
+    # authoritative "yes, we dispatched to a specialist endpoint" signal.
+    # handler_endpoint being non-empty is a belt-and-suspenders check.
+    # Don't gate on handler_provider — the Weaviate Predicate record
+    # doesn't store a provider field; only endpoint_url is reliable, so
+    # provider is empty even on perfectly-routed specialist dispatches.
+    # That mistake (gating on provider) was the bug that made every
+    # specialist route render as "Engine A (generalist fallback)" with
+    # the architect-#4 projection.
+    is_specialist = route_status == "matched" and bool(handler_endpoint)
 
     if is_specialist:
+        # Derive engine name from provider first; fall back to endpoint
+        # parsing when provider is empty (the common case post-Weaviate
+        # predicate-storage path, which doesn't include provider).
+        engine_name = _engine_name_from_provider(md.get("handler_provider"))
+        if engine_name == "Unknown engine":
+            ep_name = _engine_name_from_endpoint(handler_endpoint)
+            if ep_name:
+                engine_name = ep_name
         return {
             "about": {
                 "label": _label_from_uri(subject_uri),
@@ -421,9 +456,9 @@ def _project_route_decision(mat: dict) -> dict | None:
                 "owner_persona": md.get("owner_persona") or None,
             },
             "handled_by": {
-                "engine_name": _engine_name_from_provider(md.get("handler_provider")),
+                "engine_name": engine_name,
                 "provider": md.get("handler_provider") or "",
-                "endpoint_url": md.get("handler_endpoint") or None,
+                "endpoint_url": handler_endpoint or None,
             },
             "route_status": route_status,
             "fallback": False,
@@ -834,6 +869,18 @@ async def _get_run_status(run_id: str) -> dict:
 async def _get_run_events(run_id: str) -> list:
     """Fetches materializations via both eventConnection (real-time) and stepStats (aggregated)."""
     
+    # GraphQL needs an inline fragment per metadata entry type, otherwise
+    # the value field is dropped from the response and _metadata_dict
+    # silently treats the entry as missing. Float, Int, and Bool
+    # fragments were the gap — the supervisor materializes
+    # subject_confidence, verb_confidence as Float; classify_called as
+    # Bool; candidate_count as Int. Without these fragments the HUD
+    # showed 0.0 / false / 0 for every routing decision, which the UI
+    # rendered as "very low confidence" + "classify called: no" even
+    # when the supervisor logged subject_conf=0.98 verb_conf=0.86. The
+    # text+json fragments worked fine because they were the only ones
+    # requested. Caught 2026-06-23 by tracing UI confidence-tier vs
+    # supervisor routing telemetry.
     query = """
     query RunEventsQuery($runId: ID!) {
       runOrError(runId: $runId) {
@@ -848,6 +895,9 @@ async def _get_run_events(run_id: str) -> list:
                   label
                   ... on TextMetadataEntry { text }
                   ... on JsonMetadataEntry { jsonString }
+                  ... on FloatMetadataEntry { floatValue }
+                  ... on IntMetadataEntry { intValue }
+                  ... on BoolMetadataEntry { boolValue }
                 }
               }
             }
@@ -857,12 +907,11 @@ async def _get_run_events(run_id: str) -> list:
               assetKey { path }
               metadataEntries {
                 label
-                ... on TextMetadataEntry {
-                  text
-                }
-                ... on JsonMetadataEntry {
-                  jsonString
-                }
+                ... on TextMetadataEntry { text }
+                ... on JsonMetadataEntry { jsonString }
+                ... on FloatMetadataEntry { floatValue }
+                ... on IntMetadataEntry { intValue }
+                ... on BoolMetadataEntry { boolValue }
               }
             }
           }
@@ -1479,6 +1528,25 @@ async def generate_dagster_stream(
                 for kind in kinds:
                     yield _stage(kind, "completed", detail={"step_key": step_key})
                 emitted_steps.add(f"{step_key}_success")
+
+                # When create_task_plan succeeds, the supervisor is
+                # already in flight dispatching to the engine. Pre-emit
+                # "retrieving" started so the UI doesn't show a dead
+                # gap between "Choosing" green and execute_subtask
+                # actually transitioning to RUNNING (Dagster scheduling
+                # delay is ~1-3s; the user perceives that gap as
+                # "nothing is happening"). Reality-tracking: dispatch
+                # genuinely IS the next thing happening; surfacing it
+                # is honest, not synthetic. Idempotent via emitted_steps.
+                if (
+                    step_key == "create_task_plan"
+                    and "retrieving_pre_started" not in emitted_steps
+                ):
+                    yield _stage(
+                        "retrieving", "started",
+                        detail={"step_key": "create_task_plan_dispatch"},
+                    )
+                    emitted_steps.add("retrieving_pre_started")
                 
     if is_success:
         # Composing was already marked started by generate_ui_payload's
