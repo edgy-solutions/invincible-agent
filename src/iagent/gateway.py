@@ -1352,34 +1352,55 @@ async def generate_dagster_stream(
 
         # Map Dagster step transitions onto typed pipeline_stage events.
         # The mapping projects the supervisor's REAL step keys (Dagster
-        # is the audit trail) onto the UI's 5 stage kinds:
-        #   create_task_plan      → choosing_action (Engine O plan + verb)
+        # is the audit trail) onto the UI's 5 stage kinds. Some Dagster
+        # steps span multiple UI stages — `create_task_plan` runs BOTH
+        # /resolve (locating) AND /plan + classify_predicate (choosing),
+        # so its SUCCESS transition completes both stages.
+        #
+        #   create_task_plan      → locating, then choosing_action
+        #                           (/resolve runs first within the step,
+        #                           then /plan + classify_predicate; both
+        #                           must mark complete together because
+        #                           Dagster only emits ONE step transition)
         #   execute_subtask-*     → retrieving (engine dispatch)
         #   synthesize_stateful   → composing (Engine B synthesis)
         #   generate_ui_payload   → composing (Engine F mapping) — same
         #                           kind as synthesize; UI shows ONE
         #                           composing row that stays loading
         #                           until the final payload arrives.
-        STEP_TO_KIND = {
+        STEP_TO_STARTED_KIND = {
+            # "locating" already started at line 1201 before the polling
+            # loop begins, so create_task_plan RUNNING only triggers the
+            # choosing_action started transition.
             "create_task_plan": "choosing_action",
             "synthesize_stateful": "composing",
             "generate_ui_payload": "composing",
         }
+        STEP_TO_COMPLETED_KINDS = {
+            "create_task_plan": ["locating", "choosing_action"],
+            "synthesize_stateful": ["composing"],
+            "generate_ui_payload": ["composing"],
+        }
 
-        def _step_kind(step_key: str) -> str | None:
+        def _step_started_kind(step_key: str) -> str | None:
             if step_key.startswith("execute_subtask-"):
                 return "retrieving"
-            return STEP_TO_KIND.get(step_key)
+            return STEP_TO_STARTED_KIND.get(step_key)
+
+        def _step_completed_kinds(step_key: str) -> list[str]:
+            if step_key.startswith("execute_subtask-"):
+                return ["retrieving"]
+            return STEP_TO_COMPLETED_KINDS.get(step_key, [])
 
         step_stats = await _get_step_stats(run_id)
         for stat in step_stats:
             step_key = stat.get("stepKey", "")
             status = stat.get("status", "")
-            kind = _step_kind(step_key)
-            if not kind:
-                continue
 
             if status == "RUNNING" and f"{step_key}_running" not in emitted_steps:
+                kind = _step_started_kind(step_key)
+                if not kind:
+                    continue
                 # Stage upserts by kind on the UI side — multiple
                 # execute_subtask-* steps all map to "retrieving" and
                 # only one row renders, which is the right semantics
@@ -1389,7 +1410,16 @@ async def generate_dagster_stream(
                 emitted_steps.add(f"{step_key}_running")
 
             elif status == "SUCCESS" and f"{step_key}_success" not in emitted_steps:
-                yield _stage(kind, "completed", detail={"step_key": step_key})
+                kinds = _step_completed_kinds(step_key)
+                if not kinds:
+                    continue
+                # Emit completions in the order the underlying sub-steps
+                # ran (e.g. /resolve before /classify_predicate inside
+                # create_task_plan). The UI's stage list renders in
+                # PIPELINE_KINDS order regardless, but emitting in the
+                # right semantic order keeps the audit-stream coherent.
+                for kind in kinds:
+                    yield _stage(kind, "completed", detail={"step_key": step_key})
                 emitted_steps.add(f"{step_key}_success")
                 
     if is_success:
