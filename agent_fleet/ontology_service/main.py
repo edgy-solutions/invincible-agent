@@ -944,6 +944,29 @@ RETURN DISTINCT
 """
 
 _INSTANCE_RESOLVERS_CACHE: list[dict] | None = None
+# Monotonic timestamp of last cache fill. Paired with _INSTANCE_RESOLVERS_TTL_S
+# to give the cache a bounded staleness window — see _discover_instance_resolvers.
+# Set to 0.0 means "never filled yet" (the cache is None in that case anyway).
+_INSTANCE_RESOLVERS_CACHE_TS: float = 0.0
+# Cache TTL: how long the resolver list can be stale before the next
+# /resolve call triggers a re-read of Neo4j. Default 30s — fast enough
+# that a newly-registered provider becomes visible within half a minute
+# (which is well under the typical "user reports the wrong route was
+# taken" feedback loop), and slow enough that the steady-state /resolve
+# overhead is one Neo4j read per minute, not per call.
+#
+# This closes the latent-staleness window the never-refresh cache had:
+# the docstring banked an /admin/refresh endpoint as "not built here",
+# which meant any new provider registration (e.g. engine_d on a fresh
+# bootstrap when engine-o started before engine_d's MESH_REGISTER_ON_STARTUP
+# completed) was silently invisible to /resolve forever. The failure
+# mode was the Recipe v2 preemption fan-out returning empty for catalog
+# assets, /resolve falling through to the LLM class guess, and the
+# router routing to fallback when it should have routed to engine_d.
+# Caught 2026-06-23 by the first end-to-end UI smoke test of Phase 1+3;
+# the matrix didn't catch it because matrix conditions made the LLM
+# pick the right class directly.
+_INSTANCE_RESOLVERS_TTL_S = float(os.getenv("INSTANCE_RESOLVERS_TTL_S", "30"))
 # Router-level FLOOR for the fan-out budget — used when a provider
 # hasn't declared its own ``timeout_s`` at registration time. The recipe's
 # "~2s" was sized for an in-memory phone book; real catalog providers
@@ -978,17 +1001,29 @@ class _ResolverOutcome:
 
 
 def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
-    """Read the registry once for engines registered as mesh:resolveInstance.
+    """Read the registry for engines registered as mesh:resolveInstance.
 
     Returns a list of ``{endpoint_url, provider, timeout_s, domains}``
     dicts. ``timeout_s`` is the provider's declared SLO from registration
     when present, else None (falls back to the router floor in
-    ``_call_resolver``). Cached after first read; pass refresh=True to
-    force a re-read (e.g. via a /admin endpoint when a new provider
-    registers — not built here).
+    ``_call_resolver``).
+
+    Cache discipline: ``_INSTANCE_RESOLVERS_CACHE`` is reused for up to
+    ``_INSTANCE_RESOLVERS_TTL_S`` seconds since the last fill, then
+    re-read from Neo4j. The TTL closes the never-refresh window that
+    silently dropped engine_d when engine-o booted before engine_d's
+    mesh-registrar registration completed; see the cache constants
+    above for the full failure-mode write-up. ``refresh=True`` forces
+    a re-read regardless of TTL (kept for explicit-refresh code paths;
+    no /admin/refresh endpoint built yet).
     """
-    global _INSTANCE_RESOLVERS_CACHE
-    if _INSTANCE_RESOLVERS_CACHE is not None and not refresh:
+    global _INSTANCE_RESOLVERS_CACHE, _INSTANCE_RESOLVERS_CACHE_TS
+    now = time.monotonic()
+    if (
+        _INSTANCE_RESOLVERS_CACHE is not None
+        and not refresh
+        and (now - _INSTANCE_RESOLVERS_CACHE_TS) < _INSTANCE_RESOLVERS_TTL_S
+    ):
         return _INSTANCE_RESOLVERS_CACHE
     if not _NEO4J_DRIVER:
         return []
@@ -1012,9 +1047,10 @@ def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
             "domains": r.get("domains") or [],
         })
     _INSTANCE_RESOLVERS_CACHE = discovered
+    _INSTANCE_RESOLVERS_CACHE_TS = now
     print(
         f"Discovered {len(_INSTANCE_RESOLVERS_CACHE)} mesh:resolveInstance "
-        f"providers: "
+        f"providers (TTL={_INSTANCE_RESOLVERS_TTL_S}s): "
         f"{[(r['provider'], r['endpoint_url'], r['timeout_s']) for r in _INSTANCE_RESOLVERS_CACHE]}"
     )
     return _INSTANCE_RESOLVERS_CACHE
