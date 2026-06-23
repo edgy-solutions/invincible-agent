@@ -733,7 +733,7 @@ async def find_tools(ontology_uri: str):
             "filters": [
                 {
                     "field": "customProperties.ontology_uri",
-                    "value": ontology_uri
+                    "values": [ontology_uri]
                 }
             ]
         }
