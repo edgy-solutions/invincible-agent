@@ -226,7 +226,18 @@ def _resolve_subject(
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/resolve",
             json={"query": user_query, "domain": domain or "MAINTENANCE"},
-            timeout=15,
+            # 15s was too tight under realistic engine-o load: BAML's
+            # ClassifyDomainIntent runs ~5-10s, Recipe v2's
+            # instance-resolution fan-out adds 3-5s for engine_d's
+            # DataHub call, and a warm-but-busy engine-o can stack
+            # these past 15s. Caught 2026-06-24 when an analytical
+            # query timed out at this layer and got incorrectly
+            # routed through ADR-0019 Contract B to the generalist
+            # fallback — verb registry had the correct specialist
+            # but never got consulted. 30s gives comfortable
+            # headroom while still bounding the worst case well
+            # under the supervisor's 1800s per-engine call ceiling.
+            timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
