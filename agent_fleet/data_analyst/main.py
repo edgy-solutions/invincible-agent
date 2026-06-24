@@ -209,13 +209,13 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
                 return parts[-2]
         return urn
 
-    def _collect_da_source(urn: str, sql_query: str, row_count: int | None) -> None:
-        """Append a Source record after a successful query_datahub_asset
-        call. Snippet carries the SQL that was actually executed (truth
-        about what we asked the dataset), capped to keep the
-        SourcesTrail entry readable. relevance stays None — DA doesn't
-        produce a search-relevance signal; the source is "we executed
-        a query against this asset", binary not graded.
+    def _record_query_attempt(urn: str, sql_query: str) -> None:
+        """Record that the agent ATTEMPTED to query this URN. Called
+        before the data fetch so the SourcesTrail surfaces what was
+        attempted even when CortexDataClient can't reach the
+        underlying data (sandbox data plane unavailable, ACL denial,
+        URN-but-no-data) — the user sees "we tried this", not silent
+        absence.
         """
         if not urn or urn in sources_seen_uris:
             return
@@ -223,21 +223,32 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         snippet = sql_query or ""
         if len(snippet) > 240:
             snippet = snippet[:240].rstrip() + "…"
-        if row_count is not None:
-            snippet = f"{snippet}\n— {row_count} row(s) returned"
         sources_collected.append({
             "type": "dataset",
             "label": _label_from_dataset_urn(urn),
             "uri": urn,
             "snippet": snippet,
             "relevance": None,
-            # open_url could be derived from DATAHUB_FRONTEND_URL same
-            # as Engine A's matched_assets path, but DA only ever has
-            # the URN — no extra metadata to enrich the link. Leaving
-            # None for now; the SourcesTrail still shows label + URN.
-            # Follow-up: add DATAHUB_FRONTEND_URL parsing here too.
             "open_url": None,
         })
+
+    def _annotate_query_success(urn: str, row_count: int | None) -> None:
+        """Update an existing Source record's snippet with the row
+        count after a successful query. No-op if the URN was never
+        recorded as an attempt (defensive — shouldn't happen with
+        the current call order, but keeps the helper idempotent).
+        """
+        if not urn or row_count is None:
+            return
+        for s in sources_collected:
+            if s.get("uri") == urn:
+                snippet = s.get("snippet") or ""
+                if "row(s) returned" not in snippet:
+                    s["snippet"] = (
+                        f"{snippet}\n— {row_count} row(s) returned"
+                        if snippet else f"{row_count} row(s) returned"
+                    )
+                return
 
     @tool
     def query_datahub_asset(urn: str, sql_query: str) -> str:
@@ -248,6 +259,13 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             urn: The DataHub URN of the dataset.
             sql_query: The SQL query to execute against the dataset. The table name in the query should be 'dataset'.
         """
+        # Phase 3 source attribution: record the attempt UP FRONT so
+        # the SourcesTrail surfaces what we tried to query even when
+        # the data fetch below fails (data plane unreachable, ACL
+        # deny, URN-registered-but-no-data). After a successful
+        # query the source's snippet is annotated with the row count.
+        _record_query_attempt(urn, sql_query=sql_query)
+
         broker_url = os.getenv("CENTRAL_GATEWAY_URL", "http://localhost:8000")
         client = CortexDataClient(
             broker_url=broker_url,
@@ -269,14 +287,11 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             result_df = con.execute(sql_query).pl()
         finally:
             con.close()
-        # Phase 3 source attribution: record the URN we just queried
-        # so the supervisor's subtask_sources materialization can
-        # surface it in the cortex-ui SourcesTrail.
         try:
             row_count = result_df.height if result_df is not None else None
         except Exception:
             row_count = None
-        _collect_da_source(urn, sql_query=sql_query, row_count=row_count)
+        _annotate_query_success(urn, row_count=row_count)
         return result_df.write_json()
 
     model = get_smolagent_model()
