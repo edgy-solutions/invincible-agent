@@ -379,9 +379,35 @@ class DataStewardResponse(BaseModel):
     short_answer: str
 
 
+class MatchedAsset(BaseModel):
+    """Structured per-asset record returned alongside the formatted
+    short_answer. Carries the same fields the formatter renders into
+    text, but as named fields so downstream consumers (cortex-ui
+    SourcesTrail via Engine A's Phase 3 source attribution) can pull
+    per-asset descriptions and external URLs without parsing the
+    formatted string. The original ``referenced_uris`` flat-URN list
+    stays for backwards compatibility — this is additive.
+    """
+    urn: str
+    type: str                       # idp-style: "dataset" | "dashboard" | "chart"
+    label: str                      # friendly name (e.g. gold.sales.revenue_summary)
+    owner: Optional[str] = None
+    last_updated: Optional[str] = None
+    description: Optional[str] = None
+    tags: List[str] = []
+    upstream: List[str] = []
+    downstream: List[str] = []
+    columns: Optional[str] = None   # comma-separated "name:type" list, capped
+    open_url: Optional[str] = None  # external DataHub UI link, when configured
+
+
 class ExpertResponse(BaseModel):
     confidence_score: float
     referenced_uris: List[str]
+    # Phase 3 follow-up (2026-06-24): structured per-asset list so
+    # consumers can build rich Source records (snippet, link) without
+    # re-parsing short_answer. Empty when no assets matched.
+    matched_assets: List[MatchedAsset] = []
     data: DataStewardResponse
 
 
@@ -891,6 +917,16 @@ async def query_metadata(request: MetadataQueryRequest):
     search_results = search_dict.get("searchResults") or []
     matched_assets = []
     referenced_uris = []
+    # Phase 3 follow-up: structured per-asset list built alongside
+    # the formatted text. Same source data, two shapes — the smolagent
+    # gets the text (short_answer), the supervisor's source-attribution
+    # path gets the structured list. No double DataHub call.
+    matched_assets_structured: List[MatchedAsset] = []
+    # Optional external DataHub UI link prefix; empty string ⇒ no
+    # open_url is emitted (UI handles missing gracefully). Configured
+    # via the chart's agentFleet.env so a single switch controls the
+    # whole fleet's external-link policy.
+    datahub_frontend_url = (os.getenv("DATAHUB_FRONTEND_URL") or "").rstrip("/")
 
     def _owners(entity_dict: Dict[str, Any]) -> List[str]:
         own = entity_dict.get("ownership") or {}
@@ -976,6 +1012,7 @@ async def query_metadata(request: MetadataQueryRequest):
 
         # Per-entity schema for datasets — keep it bounded so the prompt
         # doesn't balloon under wide tables.
+        columns_str: Optional[str] = None
         if entity_type == "DATASET":
             schema = entity.get("schemaMetadata") or {}
             fields = (schema.get("fields") or [])[:12]
@@ -984,10 +1021,45 @@ async def query_metadata(request: MetadataQueryRequest):
                     f"{(f or {}).get('fieldPath','?')}:{(f or {}).get('nativeDataType','?')}"
                     for f in fields
                 )
+                columns_str = cols
                 line += f"\n    columns: {cols}"
 
         matched_assets.append(line)
         referenced_uris.append(urn)
+
+        # Phase 3 follow-up: build the structured per-asset record.
+        # Type is lowercased to match the idp-style consumer convention
+        # (cortex-ui SourcesTrail expects "dataset" not "DATASET").
+        # open_url is omitted when no DATAHUB_FRONTEND_URL is set —
+        # consumer treats empty as "no link available".
+        open_url: Optional[str] = None
+        if datahub_frontend_url and urn:
+            from urllib.parse import quote
+            # DataHub UI URLs follow /<entity_type_lc>/<URN>/ — Schema
+            # tab for datasets, root for charts/dashboards. Quoting
+            # handles the parenthesized URN body.
+            ui_segment = (
+                "dataset" if entity_type == "DATASET"
+                else "dashboard" if entity_type == "DASHBOARD"
+                else "chart" if entity_type == "CHART"
+                else entity_type.lower()
+            )
+            suffix = "/Schema" if entity_type == "DATASET" else ""
+            open_url = f"{datahub_frontend_url}/{ui_segment}/{quote(urn, safe='')}{suffix}"
+
+        matched_assets_structured.append(MatchedAsset(
+            urn=urn,
+            type=entity_type.lower(),
+            label=name,
+            owner=(owners[0] if owners else None),
+            last_updated=last_updated,
+            description=(desc or None),
+            tags=tags,
+            upstream=upstream,
+            downstream=downstream,
+            columns=columns_str,
+            open_url=open_url,
+        ))
 
     # Construct the final ExpertResponse
     if matched_assets:
@@ -1001,6 +1073,7 @@ async def query_metadata(request: MetadataQueryRequest):
     return ExpertResponse(
         confidence_score=confidence,
         referenced_uris=referenced_uris,
+        matched_assets=matched_assets_structured,
         data=DataStewardResponse(
             short_answer=answer,
             tool_list=["DataHub GraphQL Search"],

@@ -452,30 +452,36 @@ async def analyze(ctx: Context, request: dict) -> dict:
             urn: str,
             search_query: str,
             relevance: float | None = None,
+            label_override: str | None = None,
+            entity_type_override: str | None = None,
+            snippet: str | None = None,
+            open_url: str | None = None,
         ) -> None:
             """Project a DataHub URN into the cortex-ui Source shape and
             append to sources_collected. Dedupes by URN so repeat hits
             across multiple search_datahub calls don't multiply. Uses
-            the module-level parse_datahub_urn helper so the parsing
-            behavior is unit-testable in isolation.
+            the module-level parse_datahub_urn helper for label/type
+            fallback when the caller doesn't provide structured data.
+
+            Phase 3 follow-up (2026-06-24): structured per-asset data
+            now flows through datahub_wrapper's matched_assets list,
+            so the caller can pass the authoritative
+            label/type/description/open_url rather than re-parsing the
+            URN. parse_datahub_urn stays as the fallback for cases
+            where matched_assets isn't available (older response
+            shape, error path, JIT-injected tool).
             """
             if not urn or urn in sources_seen_uris:
                 return
             sources_seen_uris.add(urn)
             entity_type, label = parse_datahub_urn(urn)
             sources_collected.append({
-                "type": entity_type,
-                "label": label or urn,
+                "type": entity_type_override or entity_type,
+                "label": label_override or label or urn,
                 "uri": urn,
-                # No snippet for now — datahub_wrapper returns the
-                # formatted `short_answer` (a multi-asset blob) rather
-                # than per-asset descriptions. Adding per-asset
-                # descriptions would require either parsing
-                # short_answer's lines or extending datahub_wrapper's
-                # response shape; deferred to a follow-up.
-                "snippet": None,
+                "snippet": snippet,
                 "relevance": relevance,
-                "open_url": None,
+                "open_url": open_url,
             })
 
         @tool
@@ -516,22 +522,49 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                # Phase 3 source attribution: capture every URN this
-                # call surfaced. The response's top-level
-                # `referenced_uris` field is the authoritative list;
-                # the agent only sees the formatted short_answer text,
-                # but we record the URN trail for audit-stream
-                # purposes. Confidence (per-call) rides on each Source's
-                # `relevance` so the UI can show which assets the
-                # search was most confident about.
-                refs = data.get("referenced_uris") or []
+                # Phase 3 source attribution: capture every asset this
+                # call surfaced.
+                #
+                # Preferred path: matched_assets (Phase 3 follow-up
+                # 2026-06-24) carries per-asset structured data, so
+                # the Source records get authoritative label/type,
+                # the description as snippet, and the external open_url
+                # for click-through. This is what datahub_wrapper >=
+                # 2026-06-24 returns.
+                #
+                # Fallback: referenced_uris (the flat-URN list) is
+                # still emitted by every datahub_wrapper response.
+                # If matched_assets is missing or empty for some
+                # reason (older wrapper, JIT-injected tool that
+                # follows the same protocol but skips the new field),
+                # parse_datahub_urn derives label/type from the URN
+                # alone and snippet stays None.
                 conf = data.get("confidence_score")
-                for u in refs:
-                    if isinstance(u, str) and u:
+                relevance = float(conf) if conf is not None else None
+                matched = data.get("matched_assets") or []
+                if matched:
+                    for a in matched:
+                        if not isinstance(a, dict):
+                            continue
+                        urn = a.get("urn") or ""
+                        if not urn:
+                            continue
                         _collect_datahub_source(
-                            u, search_query=query,
-                            relevance=float(conf) if conf is not None else None,
+                            urn,
+                            search_query=query,
+                            relevance=relevance,
+                            label_override=a.get("label") or None,
+                            entity_type_override=a.get("type") or None,
+                            snippet=a.get("description") or None,
+                            open_url=a.get("open_url") or None,
                         )
+                else:
+                    refs = data.get("referenced_uris") or []
+                    for u in refs:
+                        if isinstance(u, str) and u:
+                            _collect_datahub_source(
+                                u, search_query=query, relevance=relevance,
+                            )
                 return data.get("data", {}).get("short_answer", "No results found.")
             except Exception as e:
                 return f"Error executing DataHub search via Engine D: {str(e)}"
