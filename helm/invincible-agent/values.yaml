@@ -429,6 +429,55 @@ domainBroker:
   pgPasswordSecretKey: "BPMN_POSTGRES_PASSWORD"
 
 # ==========================================================================
+# userDeployments — Dagster user-deployments that participate in the mesh
+# via the "same image, two startups" pattern.
+#
+# Each entry renders TWO pods from the SAME image:
+#   * A Dagster code-location pod (`dagster api grpc -m <module>`) so the
+#     iagent Dagster daemon can discover/trigger materializations.
+#   * A broker pod (`hypercorn dag_tools.domain_broker.main:app`) with
+#     DAGSTER_DEFS_MODULE=<module>:defs. The broker imports the user's
+#     Definitions, derives URNs via dag_tools.inventory.extract_records,
+#     and registers with the mesh's central-gateway.
+#
+# Requirements for the user image:
+#   * Includes the user's Definitions module (e.g. `pub_tools.definitions`).
+#   * Has `dag-tools`, `fastapi`, `hypercorn`, `httpx`, `pydantic` installed
+#     so the broker pod can boot without a runtime pip install.
+#   * Has `dagster` and any Dagster integrations the Definitions need.
+#
+# To add a new user-deployment to the mesh: add a key under this map
+# with `enabled: true`, the `image`, and the `dagsterModule`. The chart
+# does the rest. See [[project-sidecar-registry-pattern]].
+# ==========================================================================
+
+userDeployments:
+  pub-tools:
+    enabled: false
+    image: "ghcr.io/edgy-solutions/pub-tools:latest"
+    imagePullPolicy: Always
+    # Python import path to the Dagster Definitions object. Used by
+    # both the code-location pod (`-m <module>`) and the broker pod
+    # (DAGSTER_DEFS_MODULE=<module>:defs).
+    dagsterModule: "pub_tools.definitions"
+    codeLocation:
+      replicas: 1
+      port: 4000
+      # env: {}
+      # resources:
+      #   requests: { cpu: 100m, memory: 256Mi }
+      #   limits:   { cpu: 500m, memory: 1Gi }
+    broker:
+      replicas: 1
+      port: 8000
+      # Defaults to http://<release>-central-gateway:8090 when unset.
+      # centralGatewayUrl: ""
+      # env: {}
+      # resources:
+      #   requests: { cpu: 50m, memory: 128Mi }
+      #   limits:   { cpu: 500m, memory: 512Mi }
+
+# ==========================================================================
 # mesh-registrar — Contract D registration gateway.
 # Engines opt into this path by setting MESH_REGISTRAR_URL on themselves
 # (typically via agentFleet.env so all engines pick it up). Disabled by
