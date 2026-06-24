@@ -1,0 +1,151 @@
+{{- if .Values.domainBroker.enabled -}}
+{{- /*
+iagent sandbox Domain Broker — chart-templated migration.
+
+The broker code lives at helm/invincible-agent/files/domain-broker.py
+in this repo, rendered into a ConfigMap below via .Files.Get. This
+replaces the previous kubectl-applied ConfigMap that the chart
+couldn't reproduce — closes the chart-can't-reproduce gap that
+[[project-broker-chart-gap]] surfaced.
+
+This is the *transitional* shape: the broker runs from a tracked
+file but still uses a hardcoded LOCAL_ASSETS dict. The longer-term
+target (per [[project-sidecar-registry-pattern]]) is to retire this
+template in favor of running `hypercorn dag_tools.domain_broker.main:app`
+from the iagent image and serving URNs derived from
+iagent.definitions' Dagster assets. That migration is gated on
+adding sales_customers + instance_state as proper @asset
+definitions with PostgresIOManager resources; until then we ship
+the existing behavior under chart control.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-domain-broker-code
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "domain-broker" "root" .) | nindent 4 }}
+data:
+  broker.py: |
+{{ .Files.Get "files/domain-broker.py" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-domain-broker
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "domain-broker" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.domainBroker.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "domain-broker" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "domain-broker" "root" .) | nindent 8 }}
+      annotations:
+        # Roll the pods whenever the ConfigMap content changes so a
+        # broker.py edit takes effect on the next helm upgrade
+        # without needing a separate restart step.
+        checksum/broker-code: {{ .Files.Get "files/domain-broker.py" | sha256sum }}
+    spec:
+      containers:
+        - name: broker
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              pip install --no-cache-dir --quiet fastapi httpx pydantic hypercorn
+              exec hypercorn /code/broker.py:app --bind 0.0.0.0:8000
+          env:
+            - name: CENTRAL_GATEWAY_URL
+              value: {{ .Values.domainBroker.centralGatewayUrl | default (printf "http://%s-central-gateway:8090" .Release.Name) | quote }}
+            - name: BROKER_URL
+              value: {{ .Values.domainBroker.brokerUrl | default (printf "http://%s-domain-broker:8000" .Release.Name) | quote }}
+            - name: PG_HOST
+              value: {{ .Values.domainBroker.pgHost | default (printf "%s-postgresql" .Release.Name) | quote }}
+            - name: PG_PORT
+              value: {{ .Values.domainBroker.pgPort | default 5432 | quote }}
+            - name: PG_USER
+              value: {{ .Values.domainBroker.pgUser | default "iagent" | quote }}
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: {{ .Values.domainBroker.pgPasswordSecretKey | default "BPMN_POSTGRES_PASSWORD" }}
+            - name: PG_DATABASE
+              value: {{ .Values.domainBroker.pgDatabase | default "iagent" | quote }}
+            - name: CH_HOST
+              value: {{ .Values.domainBroker.chHost | default (printf "%s-clickhouse" .Release.Name) | quote }}
+            - name: CH_PORT
+              value: {{ .Values.domainBroker.chPort | default 8123 | quote }}
+            - name: CH_USER
+              value: {{ .Values.domainBroker.chUser | default "iagent" | quote }}
+            - name: CH_PASSWORD
+              value: {{ .Values.domainBroker.chPassword | default "changeme-clickhouse-sandbox" | quote }}
+            - name: CH_DATABASE
+              value: {{ .Values.domainBroker.chDatabase | default "iagent" | quote }}
+            - name: S3_ENDPOINT_URL
+              value: {{ .Values.domainBroker.s3EndpointUrl | default (printf "http://%s-minio:9000" .Release.Name) | quote }}
+            - name: S3_ACCESS_KEY
+              value: {{ .Values.domainBroker.s3AccessKey | default "minio-sandbox" | quote }}
+            - name: S3_SECRET_KEY
+              value: {{ .Values.domainBroker.s3SecretKey | default "minio-sandbox-secret" | quote }}
+            - name: S3_REGION
+              value: {{ .Values.domainBroker.s3Region | default "us-east-1" | quote }}
+          ports:
+            - containerPort: 8000
+              name: http
+          volumeMounts:
+            - name: code
+              mountPath: /code
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: {{ .Values.domainBroker.resources.requests.cpu | default "50m" }}
+              memory: {{ .Values.domainBroker.resources.requests.memory | default "96Mi" }}
+            limits:
+              cpu: {{ .Values.domainBroker.resources.limits.cpu | default "500m" }}
+              memory: {{ .Values.domainBroker.resources.limits.memory | default "256Mi" }}
+      volumes:
+        - name: code
+          configMap:
+            name: {{ .Release.Name }}-domain-broker-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-domain-broker
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "domain-broker" "root" .) | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "domain-broker" "root" .) | nindent 4 }}
+{{- end }}

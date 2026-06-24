@@ -390,6 +390,45 @@ centralGateway:
     # ConfigMap is the single source of truth and remains overridable.
 
 # ==========================================================================
+# domain-broker — iagent's URN → routing resolver.
+#
+# Previously kubectl-applied as an inline ConfigMap; brought under chart
+# management 2026-06-24 (closes the chart-can't-reproduce gap surfaced
+# by [[project-broker-chart-gap]]). The broker code lives at
+# helm/invincible-agent/files/domain-broker.py and is rendered into a
+# ConfigMap by templates/domain-broker.yaml via .Files.Get.
+#
+# This is the *transitional* shape: serves iagent's hardcoded URN list
+# under chart control. The longer-term migration retires this file in
+# favor of running `dag_tools.domain_broker.main:app` from iagent's
+# own image, with sales_customers + instance_state declared as proper
+# Dagster @asset definitions in iagent.definitions. Gated on that
+# migration; tracked in [[project-sidecar-registry-pattern]].
+# ==========================================================================
+
+domainBroker:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  # All connection env defaults derive from the release name; override
+  # any of these per-cluster when an external Postgres / ClickHouse /
+  # MinIO is in use.
+  # centralGatewayUrl: "http://iagent-central-gateway:8090"
+  # brokerUrl:         "http://iagent-domain-broker:8000"
+  # pgHost:            "iagent-postgresql"
+  # chHost:            "iagent-clickhouse"
+  # s3EndpointUrl:     "http://iagent-minio:9000"
+  # s3AccessKey:       "minio-sandbox"
+  # s3SecretKey:       "minio-sandbox-secret"
+  pgPasswordSecretKey: "BPMN_POSTGRES_PASSWORD"
+
+# ==========================================================================
 # mesh-registrar — Contract D registration gateway.
 # Engines opt into this path by setting MESH_REGISTRAR_URL on themselves
 # (typically via agentFleet.env so all engines pick it up). Disabled by
