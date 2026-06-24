@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 import duckdb
 import restate
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from restate import Context, Service
 from smolagents import CodeAgent, tool
 
@@ -313,6 +313,56 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
 
 # Mount Restate service to FastAPI
 app.mount("/restate", restate.app(services=[data_analyst_service]))
+
+
+# ---------------------------------------------------------------------------
+# POST /analyze_data — proxy route for the supervisor
+# ---------------------------------------------------------------------------
+# Mirrors Engine A's /analyze proxy (restate_analyst/main.py:1500). The
+# verb registry advertises this engine's endpoint as
+# http://iagent-data-analyst:8089/analyze_data, but the FastAPI app
+# only mounted Restate at /restate — there was no plain HTTP route
+# accepting the supervisor's dispatch payload, so every analyzeDataset
+# route returned 404 and the pipeline failed. Caught 2026-06-24 when
+# the supervisor /resolve timeout bump unblocked routing to this
+# engine for the first time.
+@app.post("/analyze_data")
+async def analyze_data_proxy(request: Request):
+    """Forward the supervisor's POST to the Restate ingress so the
+    durable handler runs and the response is returned to Dagster.
+    """
+    import httpx
+    import uuid as _uuid
+    from fastapi.responses import JSONResponse
+    try:
+        payload = await request.json()
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            payload["user_jwt"] = auth_header
+        trace_id = request.headers.get("X-Trace-Id") or str(_uuid.uuid4())
+        payload["trace_id"] = trace_id
+        restate_ingress = os.getenv("RESTATE_INGRESS_URL", "http://iagent-restate:8080")
+        target_url = f"{restate_ingress}/DataAnalystService/analyze_data"
+        # Match the supervisor's per-engine 1800s ceiling so a slow
+        # smolagent loop on a busy Ollama backend doesn't get truncated
+        # mid-step.
+        async with httpx.AsyncClient(timeout=1800.0) as client:
+            resp = await client.post(target_url, json=payload)
+            return JSONResponse(
+                status_code=resp.status_code,
+                content=resp.json() if resp.text else {},
+            )
+    except Exception as exc:
+        print(f"DEBUG: Restate proxy call failed for DataAnalystService: {exc}")
+        return JSONResponse(
+            content={
+                "status": "error",
+                "message": f"Restate proxy call failed: {exc}",
+                "sources": [],
+            },
+            status_code=502,
+        )
+
 
 if __name__ == "__main__":
     import uvicorn
