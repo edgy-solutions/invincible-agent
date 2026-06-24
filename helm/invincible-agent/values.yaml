@@ -201,6 +201,13 @@ agentFleet:
     DATAHUB_GMS_URL: "http://datahub-gms:8080/api/graphql"
     DATAHUB_MOCK_MODE: "false"
 
+    # External DataHub web UI for SourcesTrail click-through
+    # (Phase 3 follow-up 2026-06-24). Empty by default — per-cluster
+    # override should set it in values-<cluster>.yaml. When empty,
+    # the wrapper omits open_url on MatchedAsset records and the UI
+    # renders sources without a click-through link.
+    DATAHUB_FRONTEND_URL: ""
+
     # 🔗 mesh-registrar opt-in for all engines that ship a capability
     # registration on boot (Engines A, D, E, W, F use this; Engine O is
     # the registry consumer so it stays off). The value lives in

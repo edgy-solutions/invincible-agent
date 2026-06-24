@@ -70,6 +70,13 @@ agentFleet:
     OLLAMA_BASE_URL: "http://192.168.1.126:11434/v1"  # verified reachable from sandbox pods
     BAML_LOG_LEVEL: "info"
 
+    # External DataHub web UI (Phase 3 follow-up 2026-06-24).
+    # When set, datahub_wrapper's /query_metadata response includes
+    # an open_url per MatchedAsset so the cortex-ui SourcesTrail can
+    # link out to the DataHub asset page. Hosted via Traefik at
+    # datahub.edgy-solutions.com per the cluster's ingress.
+    DATAHUB_FRONTEND_URL: "https://datahub.edgy-solutions.com"
+
     # mem0 LLM decoupling — gpt-oss crashes on mem0's structured-output
     # request shape, so route mem0's internal extraction/scoring through a
     # smaller non-reasoning model on a DIFFERENT physical ollama host.
