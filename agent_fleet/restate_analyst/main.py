@@ -878,6 +878,11 @@ print(result)
         # then projects into the typed `sources` SSE event and the
         # cortex-ui SourcesTrail renders the citation list. Same field-
         # name contract Engines W and E shipped in commit 20ed5f9.
+        logger.info(
+            "[Phase 3 Engine A] sources_collected count=%d uris=%s",
+            len(sources_collected),
+            [s.get("uri") for s in sources_collected[:5]],
+        )
         result_dict["sources"] = sources_collected
         return result_dict
     except Exception as e:
