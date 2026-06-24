@@ -85,11 +85,17 @@ except ImportError:
             pass
 
 try:
-    from tools import execute_cypher, get_graph_schema, get_neo4j_driver
+    from tools import execute_cypher as _module_execute_cypher, get_graph_schema, get_neo4j_driver
     from prompts import PERSONA_PROMPTS
 except ImportError:
-    from .tools import execute_cypher, get_graph_schema, get_neo4j_driver
+    from .tools import execute_cypher as _module_execute_cypher, get_graph_schema, get_neo4j_driver
     from .prompts import PERSONA_PROMPTS
+
+# Phase 3 source attribution wraps `execute_cypher` inside the request
+# handler so each Cypher result's URI/IRI fields flow into
+# sources_collected. The module-level tool is aliased above; the
+# handler-scope wrapper is defined alongside the other closure-bound
+# helpers (see query_graph()).
 
 service = Service("Neo4jExpertService")
 
@@ -290,7 +296,108 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
         except Exception as collect_err:
             print(f"Source-collection failed in Engine E (non-fatal): {collect_err}")
 
+    def _walk_for_uris(obj):
+        """Yield URI/IRI-like string values found anywhere in a parsed
+        JSON structure. Catches both shape conventions Neo4j produces:
+        (1) a field literally named ``iri``/``uri``/``urn`` carrying a
+        URI value, and (2) any string value that looks like a URI by
+        prefix (``http://``, ``https://``, ``urn:``). The second covers
+        properties that aren't conventionally named but still carry
+        attributable references (e.g. ``source_url``, ``manual_url``).
+        """
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, str) and v and (
+                    str(k).lower() in ("iri", "uri", "urn")
+                    or v.startswith(("http://", "https://", "urn:"))
+                ):
+                    yield v
+                elif isinstance(v, (dict, list)):
+                    yield from _walk_for_uris(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                yield from _walk_for_uris(item)
+
+    def _collect_cypher_source(uri: str, query: str) -> None:
+        """Append a Source record for a URI surfaced by a Cypher
+        result. Dedupes by URI through sources_seen_uris (shared with
+        the Weaviate-side collector so the same instance hit by both
+        text and graph paths doesn't double-render in the
+        SourcesTrail). Label strips the namespace prefix for
+        readability while the full URI rides on the ``uri`` field for
+        click-through and audit.
+        """
+        if not uri or uri in sources_seen_uris:
+            return
+        sources_seen_uris.add(uri)
+        label = uri
+        for sep in ("#", "/", ":"):
+            if sep in label:
+                label = label.rsplit(sep, 1)[-1] or label
+        snippet = f"Returned by Cypher: {query[:200].strip()}"
+        if len(query) > 200:
+            snippet += "…"
+        sources_collected.append({
+            "type": "graph_node",
+            "label": label or uri,
+            "uri": uri,
+            "snippet": snippet,
+            "relevance": None,
+            "open_url": uri if uri.startswith(("http://", "https://")) else None,
+        })
+
     try:
+
+        @tool
+        def execute_cypher(query: str) -> str:
+            """
+            Executes a Cypher read query against the Neo4j military graph database.
+
+            CRITICAL DATABASE SCHEMA & RULES:
+            You are querying a graph of military technical manuals (S1000D, IADS, DITA, MIL-STD-40051).
+            The graph was imported via Neosemantics with handleVocabUris: 'IGNORE'.
+
+            DO NOT USE URI PREFIXES:
+            Do NOT prefix labels or properties with `mil:` or any other namespace.
+            Correct: MATCH (p:Procedure)
+            Incorrect: MATCH (p:`mil:Procedure`)
+
+            CASE SENSITIVITY:
+            Neo4j CONTAINS is CASE-SENSITIVE. Always use toLower() for text matching:
+            CORRECT:   WHERE toLower(p.name) CONTAINS 'fuel pump'
+            INCORRECT: WHERE p.name CONTAINS 'fuel pump'
+
+            STARTING STRATEGY:
+            Start broad. First discover what exists with a simple query like:
+            MATCH (p:Procedure) RETURN p.name LIMIT 20
+            Then refine based on actual data.
+
+            Args:
+                query: The raw Cypher string to execute. Limit queries via `LIMIT 50` to prevent payload overflow.
+
+            Returns:
+                JSON stringified results from the Neo4j session.
+            """
+            # Phase 3 source attribution: delegate to the module-level
+            # tools.execute_cypher (the actual Neo4j call), then walk
+            # the parsed JSON result for URI/IRI fields and feed each
+            # into the closure-scoped sources_collected. The wrapper
+            # docstring is intentionally identical to the underlying
+            # tool so the smolagent prompt sees no change.
+            result_json = _module_execute_cypher(query)
+            try:
+                records = json.loads(result_json)
+            except (TypeError, ValueError):
+                # Underlying tool returned an error string (e.g.
+                # "Neo4j Query Error: ..."). Just pass it through —
+                # no URIs to collect, no harm done.
+                return result_json
+            try:
+                for u in _walk_for_uris(records):
+                    _collect_cypher_source(u, query)
+            except Exception as walk_err:
+                print(f"Cypher source-collection walk failed (non-fatal): {walk_err}")
+            return result_json
 
         @tool
         def search_manual_text(semantic_query: str, metadata_filters: dict = None) -> str:

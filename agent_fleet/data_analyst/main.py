@@ -184,6 +184,61 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         f"{asset_discovery_block}"
     )
 
+    # Phase 3 source attribution (Engine DA, 2026-06-24). Same closure
+    # pattern Engines A / W / E ship. Engine DA's tool surface is a
+    # single tool (query_datahub_asset) and the URN is literally a
+    # tool argument, so the source-emit is simpler than A's
+    # multi-asset matched_assets case — one Source per successful
+    # query, dedup by URN.
+    sources_collected: list[dict] = []
+    sources_seen_uris: set[str] = set()
+
+    def _label_from_dataset_urn(urn: str) -> str:
+        """Pull the friendly dataset name out of a DataHub dataset URN.
+        Same convention as the restate_analyst/urn_utils helper
+        (the second-to-last comma-separated segment for the
+        `urn:li:dataset:(platform,name,env)` shape). Falls back to the
+        raw URN when the shape doesn't match.
+        """
+        if not urn or not urn.startswith("urn:li:dataset:"):
+            return urn or ""
+        body = urn[len("urn:li:dataset:"):]
+        if body.startswith("(") and body.endswith(")"):
+            parts = [p.strip() for p in body[1:-1].split(",")]
+            if len(parts) >= 2:
+                return parts[-2]
+        return urn
+
+    def _collect_da_source(urn: str, sql_query: str, row_count: int | None) -> None:
+        """Append a Source record after a successful query_datahub_asset
+        call. Snippet carries the SQL that was actually executed (truth
+        about what we asked the dataset), capped to keep the
+        SourcesTrail entry readable. relevance stays None — DA doesn't
+        produce a search-relevance signal; the source is "we executed
+        a query against this asset", binary not graded.
+        """
+        if not urn or urn in sources_seen_uris:
+            return
+        sources_seen_uris.add(urn)
+        snippet = sql_query or ""
+        if len(snippet) > 240:
+            snippet = snippet[:240].rstrip() + "…"
+        if row_count is not None:
+            snippet = f"{snippet}\n— {row_count} row(s) returned"
+        sources_collected.append({
+            "type": "dataset",
+            "label": _label_from_dataset_urn(urn),
+            "uri": urn,
+            "snippet": snippet,
+            "relevance": None,
+            # open_url could be derived from DATAHUB_FRONTEND_URL same
+            # as Engine A's matched_assets path, but DA only ever has
+            # the URN — no extra metadata to enrich the link. Leaving
+            # None for now; the SourcesTrail still shows label + URN.
+            # Follow-up: add DATAHUB_FRONTEND_URL parsing here too.
+            "open_url": None,
+        })
+
     @tool
     def query_datahub_asset(urn: str, sql_query: str) -> str:
         """
@@ -214,6 +269,14 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             result_df = con.execute(sql_query).pl()
         finally:
             con.close()
+        # Phase 3 source attribution: record the URN we just queried
+        # so the supervisor's subtask_sources materialization can
+        # surface it in the cortex-ui SourcesTrail.
+        try:
+            row_count = result_df.height if result_df is not None else None
+        except Exception:
+            row_count = None
+        _collect_da_source(urn, sql_query=sql_query, row_count=row_count)
         return result_df.write_json()
 
     model = get_smolagent_model()
@@ -231,11 +294,21 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         # responsive.
         agent_result = await asyncio.to_thread(agent.run, augmented_prompt)
     except Exception as e:
-        return {"status": "error", "message": str(e)}
-    
+        # Even on error, return any sources we did manage to capture —
+        # the agent may have queried successfully before something else
+        # blew up downstream (e.g. SQL syntax issue on a follow-up call).
+        return {"status": "error", "message": str(e), "sources": sources_collected}
+
+    # Phase 3 source attribution: attach the accumulated sources at
+    # the top of the response. The supervisor's
+    # _log_subtask_sources_asset reads engine_response["sources"];
+    # gateway projects into the typed `sources` SSE event; cortex-ui
+    # SourcesTrail renders. Same field-name contract Engines A/W/E
+    # ship.
     return {
         "status": "success",
-        "data": agent_result
+        "data": agent_result,
+        "sources": sources_collected,
     }
 
 # Mount Restate service to FastAPI
