@@ -91,6 +91,15 @@ try:
 except ImportError:
     from agent_fleet.llm_utils import get_smolagent_model
 
+
+# Phase 3 source attribution: parse_datahub_urn lives in
+# restate_analyst/urn_utils.py so unit tests can import it without
+# pulling smolagents / Restate. See tests/test_engine_a_source_attribution.py.
+try:
+    from urn_utils import parse_datahub_urn
+except ImportError:
+    from agent_fleet.restate_analyst.urn_utils import parse_datahub_urn
+
 # ---------------------------------------------------------------------------
 # Fleet-standard utilities — memoized Weaviate client + shared mem0 singleton.
 # The Memory object and its Weaviate-backed adapter are built once per pod,
@@ -425,6 +434,50 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         task_domain = request.get("domain", "ALL")
 
+        # Phase 3 source attribution (closing the Engine A gap from
+        # commit 20ed5f9, which covered Engines W and E only). Each tool
+        # that retrieves data with an attributable URN appends a Source
+        # record here; sources_seen_uris dedupes across repeat hits
+        # within a single agent run. After the smolagent finishes, the
+        # accumulated list rides on result_dict["sources"] so the
+        # supervisor's subtask_sources materialization can project it
+        # into the typed `sources` SSE event the cortex-ui SourcesTrail
+        # consumes. Mirrors the pattern in
+        # agent_fleet/weaviate_expert/service.py and
+        # agent_fleet/neo4j_expert/service.py.
+        sources_collected: List[Dict[str, Any]] = []
+        sources_seen_uris: set[str] = set()
+
+        def _collect_datahub_source(
+            urn: str,
+            search_query: str,
+            relevance: float | None = None,
+        ) -> None:
+            """Project a DataHub URN into the cortex-ui Source shape and
+            append to sources_collected. Dedupes by URN so repeat hits
+            across multiple search_datahub calls don't multiply. Uses
+            the module-level parse_datahub_urn helper so the parsing
+            behavior is unit-testable in isolation.
+            """
+            if not urn or urn in sources_seen_uris:
+                return
+            sources_seen_uris.add(urn)
+            entity_type, label = parse_datahub_urn(urn)
+            sources_collected.append({
+                "type": entity_type,
+                "label": label or urn,
+                "uri": urn,
+                # No snippet for now — datahub_wrapper returns the
+                # formatted `short_answer` (a multi-asset blob) rather
+                # than per-asset descriptions. Adding per-asset
+                # descriptions would require either parsing
+                # short_answer's lines or extending datahub_wrapper's
+                # response shape; deferred to a follow-up.
+                "snippet": None,
+                "relevance": relevance,
+                "open_url": None,
+            })
+
         @tool
         def search_datahub(query: str, entity_type: str = None) -> str:
             """
@@ -463,6 +516,22 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                # Phase 3 source attribution: capture every URN this
+                # call surfaced. The response's top-level
+                # `referenced_uris` field is the authoritative list;
+                # the agent only sees the formatted short_answer text,
+                # but we record the URN trail for audit-stream
+                # purposes. Confidence (per-call) rides on each Source's
+                # `relevance` so the UI can show which assets the
+                # search was most confident about.
+                refs = data.get("referenced_uris") or []
+                conf = data.get("confidence_score")
+                for u in refs:
+                    if isinstance(u, str) and u:
+                        _collect_datahub_source(
+                            u, search_query=query,
+                            relevance=float(conf) if conf is not None else None,
+                        )
                 return data.get("data", {}).get("short_answer", "No results found.")
             except Exception as e:
                 return f"Error executing DataHub search via Engine D: {str(e)}"
@@ -802,6 +871,14 @@ print(result)
         result_dict = response.model_dump()
         result_dict["output_uri"] = output_uri
         result_dict["routed_verb_iri"] = routed_verb_iri
+        # Phase 3 source attribution (Engine A): attach the accumulated
+        # URN-attributed sources at the top of the response. The
+        # supervisor's _log_subtask_sources_asset reads
+        # `engine_response["sources"]` (top-level key); the gateway
+        # then projects into the typed `sources` SSE event and the
+        # cortex-ui SourcesTrail renders the citation list. Same field-
+        # name contract Engines W and E shipped in commit 20ed5f9.
+        result_dict["sources"] = sources_collected
         return result_dict
     except Exception as e:
         print(f"[restate-analyst] Fatal error during agent execution: {e}")
