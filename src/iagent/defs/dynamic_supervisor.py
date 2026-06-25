@@ -778,6 +778,16 @@ def _log_subtask_route_assets(
         )
 
 
+# Pure helper lives in iagent_pure.predicate_routing — extracted there
+# so pure-unit tests can pin its contract without dragging Dagster /
+# psycopg2 through iagent/__init__.py. Re-exported under the legacy
+# underscore name so this file's call site (and any future caller) is
+# unchanged.
+from iagent_pure.predicate_routing import (
+    inject_predicate_output_uri as _inject_predicate_output_uri,
+)
+
+
 def _log_subtask_sources_asset(
     context,
     *,
@@ -1100,17 +1110,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             "(non-fatal — routing/answer continue): %s", src_err,
         )
 
-    # Inject the matched predicate's output_uri into expert_response so
-    # Engine F's /render_ui picks the archetype-hardened path
-    # (PRESENTATION_PATH_ARCHETYPE_HARDENED) instead of falling through
-    # to fallback-no-output-uri. Engine A's smolagent is prompted to
-    # echo output_uri in final_answer() and so its expert_response
-    # already carries it. Engine DA / W / E don't all echo it back, so
-    # the supervisor injects it from the predicate it already routed
-    # against. Cheap, deterministic, makes archetype routing reliable
-    # across the engine fleet rather than per-engine-handler-dependent.
-    if isinstance(data, dict) and not data.get("output_uri") and predicate.get("output_uri"):
-        data["output_uri"] = predicate["output_uri"]
+    _inject_predicate_output_uri(data, predicate)
 
     return {
         "persona": answerer_persona,

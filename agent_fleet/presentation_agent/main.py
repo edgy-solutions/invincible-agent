@@ -54,91 +54,18 @@ logger = logging.getLogger("presentation_agent")
 # DATA_STEWARD vs → some-contact-card for OPS_OPERATOR) can be added
 # as additional registrations without code changes here.
 
-_PRESENTATION_CAPABILITIES = [
-    # Engine A's six specific verbs (ADR-0017 §1).
-    {
-        "subject_uri": "mesh:OwnershipFact",
-        "object_uri": "mesh:KnowledgeDocument",
-        "archetype": "KNOWLEDGE_DOCUMENT",
-        "expected_fields": ["asset_name", "owner_identity", "owner_team", "owner_since"],
-        "description": "Renders mesh:OwnershipFact as a KNOWLEDGE_DOCUMENT panel",
-    },
-    {
-        "subject_uri": "mesh:LineageTopology",
-        "object_uri": "mesh:ProcessTopology",
-        "archetype": "PROCESS_TOPOLOGY",
-        "expected_fields": ["root_asset", "upstream_chain", "downstream_chain", "topology_depth"],
-        "description": "Renders mesh:LineageTopology as a PROCESS_TOPOLOGY diagram",
-    },
-    {
-        "subject_uri": "mesh:ImpactSet",
-        "object_uri": "mesh:KnowledgeDocument",
-        "archetype": "KNOWLEDGE_DOCUMENT",
-        "expected_fields": ["root_asset", "impacted_assets", "impact_count"],
-        "description": "Renders mesh:ImpactSet as a KNOWLEDGE_DOCUMENT table",
-    },
-    {
-        "subject_uri": "mesh:SchemaDescription",
-        "object_uri": "mesh:KnowledgeDocument",
-        "archetype": "KNOWLEDGE_DOCUMENT",
-        "expected_fields": ["asset_name", "columns"],
-        "description": "Renders mesh:SchemaDescription as a KNOWLEDGE_DOCUMENT column table",
-    },
-    {
-        "subject_uri": "mesh:FreshnessReport",
-        "object_uri": "mesh:AssetStateMetric",
-        "archetype": "ASSET_STATE_METRIC",
-        "expected_fields": ["asset_name", "last_updated", "sla_status", "staleness_hours"],
-        "description": "Renders mesh:FreshnessReport as an ASSET_STATE_METRIC widget",
-    },
-    {
-        # PII-flavored default. Persona-scoped triples (compliance vs
-        # general tag listing) are a follow-up.
-        "subject_uri": "mesh:TagFilterResult",
-        "object_uri": "mesh:HazardDeclaration",
-        "archetype": "HAZARD_DECLARATION",
-        "expected_fields": ["tag", "matched_assets", "secondary_condition"],
-        "description": "Renders mesh:TagFilterResult as a HAZARD_DECLARATION (PII-flavored default)",
-    },
-    {
-        "subject_uri": "mesh:AssetProfile",
-        "object_uri": "mesh:KnowledgeDocument",
-        "archetype": "KNOWLEDGE_DOCUMENT",
-        "expected_fields": ["asset_name", "owner", "tags", "domain", "description", "last_updated"],
-        "description": "Renders mesh:AssetProfile as a KNOWLEDGE_DOCUMENT profile card",
-    },
-    {
-        # Catalog enumeration (mesh:enumerateCatalog verb). Renders as
-        # KNOWLEDGE_DOCUMENT so the deterministic-document path composes
-        # markdown from summary_text + a fenced JSON block of the
-        # `tables` list — the right shape for a flat catalog listing.
-        # WITHOUT this entry the router fell back to mesh:traceLineage
-        # which forces output_uri=mesh:LineageTopology and routes to
-        # PROCESS_TOPOLOGY (BPMN canvas). See ADR-0017 §1 and the run
-        # 5fee663d post-mortem.
-        "subject_uri": "mesh:CatalogListing",
-        "object_uri": "mesh:KnowledgeDocument",
-        "archetype": "KNOWLEDGE_DOCUMENT",
-        "expected_fields": ["scope", "tables", "asset_count"],
-        "description": "Renders mesh:CatalogListing as a KNOWLEDGE_DOCUMENT flat enumeration",
-    },
-    # Engine DA — DatasetAnalysisReport renders as a chart.
-    {
-        "subject_uri": "mesh:DatasetAnalysisReport",
-        "object_uri": "mesh:ChartWidget",
-        "archetype": "CHART_WIDGET",
-        "expected_fields": ["dataset_id", "metrics", "viz_type"],
-        "description": "Renders mesh:DatasetAnalysisReport as a CHART_WIDGET",
-    },
-    # Engine W — KnowledgeRetrievalResponse renders as a document.
-    {
-        "subject_uri": "mesh:KnowledgeRetrievalResponse",
-        "object_uri": "mesh:KnowledgeDocument",
-        "archetype": "KNOWLEDGE_DOCUMENT",
-        "expected_fields": ["query", "documents", "scores"],
-        "description": "Renders mesh:KnowledgeRetrievalResponse as a KNOWLEDGE_DOCUMENT",
-    },
-]
+# Capability table + lookup helpers extracted to capabilities.py (dep-
+# free) so pure-unit tests can pin them without dragging the FastAPI /
+# BAML / uvicorn import chain. Re-exported under the legacy underscore
+# names so the lifespan / render_ui code below does not change.
+try:
+    from .capabilities import (  # type: ignore[no-redef]
+        PRESENTATION_CAPABILITIES as _PRESENTATION_CAPABILITIES,
+    )
+except ImportError:
+    from agent_fleet.presentation_agent.capabilities import (
+        PRESENTATION_CAPABILITIES as _PRESENTATION_CAPABILITIES,
+    )
 
 
 def _capability_slug(subject_uri: str) -> str:
@@ -190,54 +117,18 @@ class RenderRequest(BaseModel):
     domain: Optional[str] = None
 
 
-# Compact-prefix → full-IRI expansion. Mirrors the seed script's
-# ``_MESH``/``_IDP`` discipline (canonical full-IRI form for subject /
-# object URIs, compact-form for verbs). Any future namespace prefix
-# added to the substrate must be mirrored here so the lookup stays
-# canonicalization-safe.
-_IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
-    "mesh:": "http://invincible-agent/mesh#",
-    "idp:": "http://invincible-agent/idp#",
-}
-
-
-def _canonical_iri_for_lookup(iri: str) -> str:
-    """Expand a compact-form CURIE to its full IRI; passthrough on full."""
-    if not iri:
-        return ""
-    for prefix, expansion in _IRI_PREFIXES_FOR_LOOKUP.items():
-        if iri.startswith(prefix):
-            return expansion + iri[len(prefix):]
-    return iri
-
-
-def _lookup_capability(output_uri: str) -> Optional[Dict[str, Any]]:
-    """In-memory predicate lookup over Engine F's own capability table.
-
-    ADR-0017 §6 envisions this as an HTTP call to Engine O's
-    /search_predicates with subject=output_uri and
-    predicate=mesh:rendersAs. The capability triples are already
-    advertised (see lifespan above) so that endpoint will see them.
-    For tonight's rollout we look up the same data in-process —
-    same registry, same matches, no network hop. The TODO is to
-    replace this body with the HTTP call once Engine O grows a
-    presentation-aware lookup endpoint; consumers of /render_ui
-    don't change.
-
-    Both sides are canonicalized to full IRI before comparison —
-    the capability table stores compact form (``mesh:Foo``) and the
-    supervisor injects full-IRI form (``http://.../mesh#Foo``) from
-    the seed's predicate registration, so an exact-string compare
-    misses every match. Without canonicalization, render_ui falls
-    through to legacy DesignUI even for archetypes that ARE declared
-    in the table — the same compact-vs-full hazard the contamination
-    arc's Step 1 sweep guarded against, at a different boundary.
-    """
-    target = _canonical_iri_for_lookup(output_uri)
-    for cap in _PRESENTATION_CAPABILITIES:
-        if _canonical_iri_for_lookup(cap["subject_uri"]) == target:
-            return cap
-    return None
+# Canonicalizer + lookup live in capabilities.py — see the import at
+# the top of this file. Re-exported under the legacy underscore names.
+try:
+    from .capabilities import (  # type: ignore[no-redef]
+        canonical_iri_for_lookup as _canonical_iri_for_lookup,
+        lookup_capability as _lookup_capability,
+    )
+except ImportError:
+    from agent_fleet.presentation_agent.capabilities import (
+        canonical_iri_for_lookup as _canonical_iri_for_lookup,
+        lookup_capability as _lookup_capability,
+    )
 
 
 def _extract_agent_response(raw_data: Any) -> Optional[Dict[str, Any]]:
@@ -329,109 +220,16 @@ def _render_document_deterministic(
 # DIGITAL_TWIN_3D is intentionally absent because it's not in the
 # current capability table; if it lands, add RenderAsDigitalTwin
 # alongside.
-def _normalize_chart_data_to_recharts(raw_data: Any) -> Optional[str]:
-    """Coerce an arbitrary chart payload into the exact shape
-    ``cortex-ui/src/components/mesh/ChartWidget.tsx`` reads:
-    a JSON-stringified array of ``{"name": str, "value": number}``
-    objects.
-
-    Why this lives here rather than in the BAML prompt: the widget
-    hardcodes ``dataKey="name"`` and ``dataKey="value"`` on its
-    Recharts ``<XAxis>`` and ``<Bar>``. That's the real contract —
-    only the React component knows the required keys. Asking the
-    LLM (RenderAsChart's prompt) to rename keys to ``name``/``value``
-    works *probably* but leaves shape-conformance to a model that can
-    hallucinate field names on weird inputs and silently empty the
-    chart. The §1 principle the project has converged on
-    everywhere else applies: **LLMs produce data, deterministic
-    steps conform shape.** Chart-data shape is a deterministic
-    transform; it does not need an LLM.
-
-    Accepts the three shapes Engine DA's smolagent typically returns:
-
-    * dict-of-counts/measures: ``{"US-East": 3, "US-West": 2, ...}``
-      → category=key, measure=value.
-    * list-of-records with named fields:
-      ``[{"region": "US-East", "count": 3}, ...]``
-      → first non-numeric field is category, first numeric field is
-      measure.
-    * already-normalized ``[{"name": "...", "value": ...}, ...]``
-      → returned unchanged.
-
-    Returns the JSON-stringified array on success, ``None`` when the
-    payload doesn't look like chart data (the caller falls back to
-    letting BAML do its best, preserving the prior behavior for
-    unrecognized shapes).
-    """
-    import numbers
-    import re
-
-    payload: Any = raw_data
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except Exception:
-            # Sometimes DA's smolagent returns Python-repr (single
-            # quotes) rather than JSON — try a quick coerce so we
-            # don't fall through to the LLM for a recoverable input.
-            try:
-                # Only attempt the coerce if the string really looks
-                # like a Python dict/list literal — never eval arbitrary
-                # text.
-                if re.match(r"^\s*[\[{].*[\]}]\s*$", payload, re.S):
-                    payload = json.loads(payload.replace("'", '"'))
-                else:
-                    return None
-            except Exception:
-                return None
-
-    # Shape 1: dict-of-counts/measures.
-    if isinstance(payload, dict):
-        rows = [
-            {"name": str(k), "value": v}
-            for k, v in payload.items()
-            if isinstance(v, numbers.Number) and not isinstance(v, bool)
-        ]
-        if rows:
-            return json.dumps(rows)
-        return None
-
-    if not isinstance(payload, list) or not payload:
-        return None
-
-    # Shape 3 first: already-normalized.
-    if all(
-        isinstance(r, dict) and "name" in r and "value" in r
-        for r in payload
-    ):
-        return json.dumps([{"name": str(r["name"]), "value": r["value"]} for r in payload])
-
-    # Shape 2: list of records with named fields. Pick category =
-    # first non-numeric field, measure = first numeric field. This is
-    # deterministic on the row schema, independent of the LLM's
-    # choice of field names.
-    if not all(isinstance(r, dict) for r in payload):
-        return None
-
-    first = payload[0]
-    category_key = next(
-        (k for k, v in first.items()
-         if not isinstance(v, numbers.Number) or isinstance(v, bool)),
-        None,
+# Chart-data normalizer extracted to chart_normalizer.py (dep-free)
+# so pure-unit tests can pin all five input shapes without dragging
+# the FastAPI / BAML / uvicorn import chain.
+try:
+    from .chart_normalizer import (  # type: ignore[no-redef]
+        normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
-    measure_key = next(
-        (k for k, v in first.items()
-         if isinstance(v, numbers.Number) and not isinstance(v, bool)),
-        None,
-    )
-    if category_key is None or measure_key is None:
-        return None
-    return json.dumps(
-        [
-            {"name": str(r[category_key]), "value": r[measure_key]}
-            for r in payload
-            if category_key in r and measure_key in r
-        ]
+except ImportError:
+    from agent_fleet.presentation_agent.chart_normalizer import (
+        normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 
 
