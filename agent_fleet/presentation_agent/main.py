@@ -298,15 +298,129 @@ def _render_document_deterministic(
 # DIGITAL_TWIN_3D is intentionally absent because it's not in the
 # current capability table; if it lands, add RenderAsDigitalTwin
 # alongside.
+def _normalize_chart_data_to_recharts(raw_data: Any) -> Optional[str]:
+    """Coerce an arbitrary chart payload into the exact shape
+    ``cortex-ui/src/components/mesh/ChartWidget.tsx`` reads:
+    a JSON-stringified array of ``{"name": str, "value": number}``
+    objects.
+
+    Why this lives here rather than in the BAML prompt: the widget
+    hardcodes ``dataKey="name"`` and ``dataKey="value"`` on its
+    Recharts ``<XAxis>`` and ``<Bar>``. That's the real contract —
+    only the React component knows the required keys. Asking the
+    LLM (RenderAsChart's prompt) to rename keys to ``name``/``value``
+    works *probably* but leaves shape-conformance to a model that can
+    hallucinate field names on weird inputs and silently empty the
+    chart. The §1 principle the project has converged on
+    everywhere else applies: **LLMs produce data, deterministic
+    steps conform shape.** Chart-data shape is a deterministic
+    transform; it does not need an LLM.
+
+    Accepts the three shapes Engine DA's smolagent typically returns:
+
+    * dict-of-counts/measures: ``{"US-East": 3, "US-West": 2, ...}``
+      → category=key, measure=value.
+    * list-of-records with named fields:
+      ``[{"region": "US-East", "count": 3}, ...]``
+      → first non-numeric field is category, first numeric field is
+      measure.
+    * already-normalized ``[{"name": "...", "value": ...}, ...]``
+      → returned unchanged.
+
+    Returns the JSON-stringified array on success, ``None`` when the
+    payload doesn't look like chart data (the caller falls back to
+    letting BAML do its best, preserving the prior behavior for
+    unrecognized shapes).
+    """
+    import numbers
+    import re
+
+    payload: Any = raw_data
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            # Sometimes DA's smolagent returns Python-repr (single
+            # quotes) rather than JSON — try a quick coerce so we
+            # don't fall through to the LLM for a recoverable input.
+            try:
+                # Only attempt the coerce if the string really looks
+                # like a Python dict/list literal — never eval arbitrary
+                # text.
+                if re.match(r"^\s*[\[{].*[\]}]\s*$", payload, re.S):
+                    payload = json.loads(payload.replace("'", '"'))
+                else:
+                    return None
+            except Exception:
+                return None
+
+    # Shape 1: dict-of-counts/measures.
+    if isinstance(payload, dict):
+        rows = [
+            {"name": str(k), "value": v}
+            for k, v in payload.items()
+            if isinstance(v, numbers.Number) and not isinstance(v, bool)
+        ]
+        if rows:
+            return json.dumps(rows)
+        return None
+
+    if not isinstance(payload, list) or not payload:
+        return None
+
+    # Shape 3 first: already-normalized.
+    if all(
+        isinstance(r, dict) and "name" in r and "value" in r
+        for r in payload
+    ):
+        return json.dumps([{"name": str(r["name"]), "value": r["value"]} for r in payload])
+
+    # Shape 2: list of records with named fields. Pick category =
+    # first non-numeric field, measure = first numeric field. This is
+    # deterministic on the row schema, independent of the LLM's
+    # choice of field names.
+    if not all(isinstance(r, dict) for r in payload):
+        return None
+
+    first = payload[0]
+    category_key = next(
+        (k for k, v in first.items()
+         if not isinstance(v, numbers.Number) or isinstance(v, bool)),
+        None,
+    )
+    measure_key = next(
+        (k for k, v in first.items()
+         if isinstance(v, numbers.Number) and not isinstance(v, bool)),
+        None,
+    )
+    if category_key is None or measure_key is None:
+        return None
+    return json.dumps(
+        [
+            {"name": str(r[category_key]), "value": r[measure_key]}
+            for r in payload
+            if category_key in r and measure_key in r
+        ]
+    )
+
+
 async def _render_archetype_hardened(
     archetype: str,
     str_raw_data: str,
     persona: str,
+    raw_data: Any = None,
 ) -> Tuple[Optional[Dict[str, Any]], bool]:
     """Dispatch to the right RenderAs* BAML function for the chosen
     archetype. Returns (components_dict, handled). handled=False means
     no hardened function exists for this archetype and the caller
     should fall back to legacy DesignUI.
+
+    For CHART_WIDGET, the chart_data field is conformed
+    deterministically AFTER the BAML call (overrides whatever keys the
+    LLM produced with the widget's required ``{name, value}`` shape).
+    The LLM is still responsible for chart_type inference and
+    sql_query pass-through — what it can't be trusted to do reliably
+    is rename keys to match a hardcoded React contract.
     """
     if archetype == "PROCESS_TOPOLOGY":
         ui = await b.RenderAsTopology(str_raw_data, persona)
@@ -318,9 +432,21 @@ async def _render_archetype_hardened(
         ui = await b.RenderAsChart(str_raw_data, persona)
     else:
         return None, False
-    # Each RenderAs* returns a single archetype class; wrap it in the
-    # DashboardUI shape callers already expect.
-    return {"components": [ui.model_dump()]}, True
+
+    component = ui.model_dump()
+
+    # Deterministic shape conformance for CHART_WIDGET. The widget's
+    # required keys (``name`` / ``value``) are hardcoded in
+    # ChartWidget.tsx's dataKey props; this normalization lives at
+    # the source-of-truth boundary the LLM cannot drift from.
+    if archetype == "CHART_WIDGET":
+        normalized = _normalize_chart_data_to_recharts(
+            raw_data if raw_data is not None else str_raw_data
+        )
+        if normalized is not None:
+            component["chart_data"] = normalized
+
+    return {"components": [component]}, True
 
 
 @app.post("/render_ui")
@@ -378,6 +504,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 )
             hardened, handled = await _render_archetype_hardened(
                 archetype, str_raw_data, effective_persona,
+                raw_data=request.raw_data,
             )
             if handled:
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_ARCHETYPE_HARDENED

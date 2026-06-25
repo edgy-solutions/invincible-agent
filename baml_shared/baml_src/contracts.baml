@@ -657,24 +657,14 @@ function RenderAsChart(raw_data: string, persona: string) -> ChartUI {
 
     GROUNDING RULES:
 
-    A. CHART_DATA SHAPE IS STRICT. The chart_data field is a JSON-
-       stringified array of objects, and **every object MUST have
-       exactly two keys: ``name`` (string) and ``value`` (number)**.
-       This is what the cortex-ui ChartWidget renders against — it
-       reads ``dataKey="name"`` for the X-axis category and
-       ``dataKey="value"`` for the bar/line height. Any other key
-       names (``region``, ``count``, ``label``, ``y``, ...) render as
-       an empty chart because Recharts cannot find the expected
-       fields.
-
-       Examples of the required shape:
-         [{"name":"US-East","value":3},{"name":"US-West","value":2}]
-         [{"name":"Q1","value":1450.7},{"name":"Q2","value":1820.3}]
-
-       When raw_data uses different field names, map them: take the
-       category/label/group field to ``name`` and the
-       count/total/measure field to ``value``. Preserve every row;
-       do not aggregate or invent rows.
+    A. CHART_DATA IS VERBATIM. The chart_data field is a JSON-stringified
+       array of data points. Use the rows present in raw_data; do not
+       invent rows. The presentation_agent runs a deterministic
+       key-normalization pass on this field after the BAML call —
+       coerces whatever keys you pick into the widget's required
+       ``{name, value}`` shape — so the field-name choice you make
+       here is not load-bearing for rendering. Preserve the data
+       faithfully and the normalizer handles shape conformance.
 
     B. SQL_QUERY IS PRESERVED. If raw_data contains a sql_query field
        or a sql query inline, copy it into ChartUI.sql_query verbatim.
