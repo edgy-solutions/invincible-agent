@@ -439,12 +439,20 @@ async def _render_archetype_hardened(
     # required keys (``name`` / ``value``) are hardcoded in
     # ChartWidget.tsx's dataKey props; this normalization lives at
     # the source-of-truth boundary the LLM cannot drift from.
+    #
+    # We normalize the BAML-emitted ``chart_data`` (which the LLM
+    # already extracted from the wrapped supervisor payload into a
+    # list of records) — NOT the raw_data the caller passed in. The
+    # raw_data may be the supervisor's full ``results`` list (one
+    # entry per subtask, ``expert_response`` nested), and the
+    # normalizer can't find chart-shaped data inside that wrapper.
+    # The LLM does the extraction; we conform the keys.
     if archetype == "CHART_WIDGET":
-        normalized = _normalize_chart_data_to_recharts(
-            raw_data if raw_data is not None else str_raw_data
-        )
-        if normalized is not None:
-            component["chart_data"] = normalized
+        baml_chart_data = component.get("chart_data")
+        if isinstance(baml_chart_data, str):
+            normalized = _normalize_chart_data_to_recharts(baml_chart_data)
+            if normalized is not None:
+                component["chart_data"] = normalized
 
     return {"components": [component]}, True
 
