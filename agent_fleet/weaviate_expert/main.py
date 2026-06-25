@@ -270,6 +270,49 @@ async def lifespan(app: FastAPI):
         domains=["MAINTENANCE", "MANUFACTURING"],
         cost_class="medium",
     )
+
+    # WorkInstruction registration — manufacturing assembly-procedure
+    # routing. The matrix's M67 grenade case (post-ADR-0021 phrasing-
+    # probe scan) resolves to ``mfg:WorkInstruction`` as its subject
+    # and expects ``mesh:retrieveKnowledge`` as its routed verb. The
+    # canonical answer is "Engine W handles WorkInstruction-shaped
+    # content the same way it handles other manual content-kinds" —
+    # so it goes here alongside the other four kind-specific
+    # registrations, not as an out-of-band manual migration.
+    #
+    # History: this verb edge was originally created by a one-shot
+    # manual migration on 2026-06-20 (per docs/adr/ADR-0021 + the
+    # comment block in test_no_legacy_residue.py:54-57 that documents
+    # the substrate-side migration of the placeholder
+    # MunitionsAssemblyStep row to mfg:WorkInstruction). Promoting it
+    # into Engine W's lifespan converts the one-time manual writer
+    # into a tracked source writer — re-seed + bounce regenerates the
+    # row, no manual step needed.
+    register_engine_to_mesh(
+        name="engine_w_weaviate_expert_work_instruction",
+        description=(
+            "Knowledge retrieval engine. Weaviate v4 hybrid search "
+            "over manufacturing WorkInstructions (assembly procedures, "
+            "production steps, kitting instructions); returns Markdown "
+            "summaries and citations."
+        ),
+        verb="mesh:retrieveKnowledge",
+        input_uri="http://edgy-solutions.com/ontology/mfg#WorkInstruction",
+        output_uri="http://invincible-agent/mesh#KnowledgeRetrievalResponse",
+        verb_synonyms=[
+            "assembly steps", "assembly procedure",
+            "production steps", "build instructions",
+            "how to assemble", "step-by-step",
+            "work instruction", "kitting steps",
+        ],
+        endpoint_url=os.getenv(
+            "ENGINE_W_PUBLIC_URL",
+            "http://iagent-engine-w:8088/query_knowledge",
+        ),
+        owner_persona="TECH_WRITER",
+        domains=["MANUFACTURING"],
+        cost_class="medium",
+    )
     yield
 
 
