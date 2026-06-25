@@ -1726,12 +1726,54 @@ async def plan_query(request: PlanRequest) -> dict:
         )
         result = {**plan.model_dump(), "domain": request.domain}
 
-        # Some LLM backends (e.g. gpt-oss via Ollama) populate reasoning
-        # and extracted_concepts but leave tasks=[]. Falling through with
-        # zero tasks means the supervisor's dynamic_tasks.map() spawns
-        # nothing and the user gets back a no-op. Synthesize a single
-        # passthrough task in that case so the predicate router still
-        # has a sub_query to dispatch.
+        # ── Silent-degrade detection ────────────────────────────────────
+        # Reject BAML responses that have NO content at all — empty
+        # tasks AND empty extracted_concepts AND empty reasoning. That
+        # combination doesn't occur on a working LLM: even a legitimate
+        # gpt-oss reasoning-only response populates reasoning and
+        # extracted_concepts when tasks=[]. All-three-empty indicates
+        # the LLM was unreachable / misconfigured (LiteLLM returned 200
+        # with malformed body, or the configured model produced
+        # degenerate output) and BAML coerced the result into a
+        # zero-valued model rather than raising.
+        #
+        # Without this check, the passthrough-synthesis below masks the
+        # outage: empty tasks → synthesized passthrough → supervisor
+        # fans out a vacuous task → Engine A fallback produces an
+        # apologetic empty answer → final_payload arrives → UI marks
+        # every stage green. The user sees "success" when nothing
+        # actually happened. This is the silent-degrade composition
+        # class (2026-06-25); the standing rule
+        # [[feedback-verification-must-fail]] mandates positive-signal
+        # detection of degradation, not success-by-default.
+        if (
+            not result.get("tasks")
+            and not result.get("extracted_concepts")
+            and not (result.get("reasoning") or "").strip()
+        ):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "BAML DecomposeQuery returned an empty model "
+                    "(tasks=[], extracted_concepts=[], reasoning=''). "
+                    "The LLM appears unreachable or misconfigured — "
+                    "the configured backend produced no usable output."
+                ),
+            )
+
+        # ── Legitimate degraded passthrough ─────────────────────────────
+        # gpt-oss via Ollama (and similar reasoning-heavy small models)
+        # sometimes populates reasoning + extracted_concepts but leaves
+        # tasks=[]. Synthesizing a single passthrough task keeps the
+        # supervisor's dynamic_tasks.map() from spawning nothing. The
+        # `degraded` flag lets downstream callers (supervisor, gateway)
+        # know this is the degraded path rather than a normal plan —
+        # callers can surface a "partial confidence" signal in the
+        # final UI rather than rendering an empty answer as full
+        # success. The flag is the architectural-follow-up hook for
+        # the gateway's banked `pipeline_warn` (see
+        # [[silent-degrade-composition]]); for now it rides through
+        # the response unused, but the contract is in place.
         if not result.get("tasks"):
             result["tasks"] = [{
                 "sub_query": request.query,
@@ -1739,7 +1781,12 @@ async def plan_query(request: PlanRequest) -> dict:
                 "tools_needed": [],
                 "expected_output": "Direct response to the user's query.",
             }]
+            result["degraded"] = "synthesized_passthrough_zero_tasks"
         return result
+    except HTTPException:
+        # Pass through our deliberate 502 (silent-degrade detection)
+        # without rewrapping it.
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -1770,9 +1817,33 @@ async def route_intent(request: RouteIntentRequest) -> RouteIntentResponse:
             detail=f"BAML ExtractIntent failed: {exc}",
         ) from exc
 
+    # Silent-degrade detection (paired with /plan above). All-empty
+    # ExtractIntent result indicates the LLM produced no usable output
+    # — see /plan's detection block for the full rationale. Without
+    # this, the gateway treats the empty intent as ONE_SHOT and
+    # proceeds to launch a Dagster job that ultimately produces a
+    # green-with-empty-answer false-positive (silent-degrade
+    # composition class, [[silent-degrade-composition]]).
+    extracted_refs = list(intent.entity_refs or [])
+    extracted_reasoning = (intent.reasoning or "").strip()
+    extracted_mode = intent.mode.value if hasattr(intent.mode, "value") else str(intent.mode)
+    if (
+        not extracted_refs
+        and not extracted_reasoning
+        and not extracted_mode
+    ):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "BAML ExtractIntent returned an empty model "
+                "(mode='', entity_refs=[], reasoning=''). "
+                "The LLM appears unreachable or misconfigured."
+            ),
+        )
+
     return RouteIntentResponse(
-        mode=intent.mode.value if hasattr(intent.mode, "value") else str(intent.mode),
-        entity_refs=list(intent.entity_refs or []),
+        mode=extracted_mode,
+        entity_refs=extracted_refs,
         confidence=float(intent.confidence),
         reasoning=intent.reasoning,
         user_persona=request.user_persona,
