@@ -173,6 +173,17 @@ $IagentImages = @(
     # in the same namespace as iagent. Single image, all of doc_tools/.
     @{ src='ghcr.io/edgy-solutions/doc-tools:latest';                              dst='edgy-solutions/doc-tools:latest' },
 
+    # pub-tools — first canonical Dagster user-deployment in the mesh
+    # (sidecar-registry pattern, 2026-06-24). Same image runs as BOTH
+    # ``iagent-pub-tools`` (Dagster code-location, ``dagster api grpc -m
+    # pub_tools.definitions``) AND ``iagent-pub-tools-broker`` (the
+    # dag-tools domain-broker FastAPI, ``hypercorn
+    # dag_tools.domain_broker.main:app``) per templates/user-deployments.yaml.
+    # Required when ``userDeployments.pub-tools.enabled=true`` in
+    # iagent helm values. Future user-deployments (other Dagster repos
+    # following the same pattern) will each need their own entry here.
+    @{ src='ghcr.io/edgy-solutions/pub-tools:latest';                              dst='edgy-solutions/pub-tools:latest' },
+
     # cortex-ui (multi-arch as of cortex-ui commit 6312f31)
     @{ src='ghcr.io/edgy-solutions/cortex-ui/frontend:latest';                     dst='edgy-solutions/cortex-ui/frontend:latest' },
 
