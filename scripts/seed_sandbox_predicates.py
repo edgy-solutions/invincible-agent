@@ -72,10 +72,32 @@ WEAVIATE_GRPC_PORT = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
 _MESH = "http://invincible-agent/mesh#"
 
 
+# Post-migration canonical input_uris.
+#
+# The historical seed wrote each verb against a ``mesh:`` pseudo-class
+# (``DatasetAnalysisRequest``, ``KnowledgeQuery``, ``GraphQuery``,
+# ``AgentTask``). Subsequent migrations re-typed several of these to
+# real ontology classes (Phase 5 moved ``analyzeDataset`` to ``idp:Dataset``;
+# the mesh#AgentTask retype kept ``analyzeWithCodeAgent`` against
+# ``mesh:AgentTask``). The seed must match the post-migration canonical
+# state — otherwise re-running it writes pre-migration rows that coexist
+# with the engines' own post-migration self-registrations, bloating
+# substrate without misrouting (Step 5 reads endpoint from Neo4j,
+# canonical pairs differ so the dedup guard doesn't flag them, but
+# they're dead weight that complicates audits).
+#
+# Each entry's ``input_uri`` MUST match what the engine itself writes
+# from its lifespan via ``register_engine_to_mesh`` — that's the
+# convergence rule that keeps the seed idempotent against engine
+# self-registration.
+_IDP = "http://invincible-agent/idp#"
+
 ENGINES = [
     {
         "name": "engine_a_restate_analyst",
         "verb_iri": "mesh:analyzeWithCodeAgent",   # verbs stay compact (substrate-canonical for verbs)
+        # ``mesh:AgentTask`` per the 2026-06-11 system-verb retype —
+        # matches restate_analyst/main.py's lifespan registration.
         "input_uri": _MESH + "AgentTask",
         "output_uri": _MESH + "AgentResponse",
         "endpoint_url": "http://iagent-engine-a:8081/analyze",
@@ -91,6 +113,12 @@ ENGINES = [
     {
         "name": "engine_e_neo4j_expert",
         "verb_iri": "mesh:queryKnowledgeGraph",
+        # Engine E self-registers ``queryKnowledgeGraph`` against THREE
+        # distinct input_uris (WorkInstruction, ProcedureStep,
+        # ProcedureDataModule) — one per maintenance sub-domain. The
+        # seed picks ``mesh:GraphQuery`` (the canonical envelope class
+        # for graph queries) as the skeleton entry; the per-sub-domain
+        # rows arrive on engine boot.
         "input_uri": _MESH + "GraphQuery",
         "output_uri": _MESH + "GraphExpertResponse",
         "endpoint_url": "http://iagent-engine-e:8086/query_graph",
@@ -107,7 +135,13 @@ ENGINES = [
     {
         "name": "engine_da_data_analyst",
         "verb_iri": "mesh:analyzeDataset",
-        "input_uri": _MESH + "DatasetAnalysisRequest",
+        # ``idp:Dataset`` per the Phase 5 catalog-verb migration
+        # (2026-06-11). Matches data_analyst/main.py:61. Re-seeding
+        # this against the pre-migration ``mesh:DatasetAnalysisRequest``
+        # is the substrate-bloat shape Step 2 of the contamination-fix
+        # sequence was meant to clean — fixing the seed makes the
+        # clean idempotent.
+        "input_uri": _IDP + "Dataset",
         "output_uri": _MESH + "DatasetAnalysisReport",
         "endpoint_url": "http://iagent-data-analyst:8089/analyze_data",
         "owner_persona": "DATA_STEWARD",
@@ -122,6 +156,12 @@ ENGINES = [
     {
         "name": "engine_w_weaviate_expert",
         "verb_iri": "mesh:retrieveKnowledge",
+        # Engine W self-registers ``retrieveKnowledge`` against FOUR
+        # distinct input_uris (TechnicalManual, FaultIsolationDataModule,
+        # IllustratedPartsDataModule, DescriptiveDataModule) — one per
+        # manual sub-class. The seed picks ``mesh:KnowledgeQuery`` (the
+        # canonical envelope class) as the skeleton entry; the per-
+        # sub-class rows arrive on engine boot.
         "input_uri": _MESH + "KnowledgeQuery",
         "output_uri": _MESH + "KnowledgeRetrievalResponse",
         "endpoint_url": "http://iagent-engine-w:8088/query_knowledge",
