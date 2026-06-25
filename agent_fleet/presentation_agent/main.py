@@ -58,8 +58,14 @@ logger = logging.getLogger("presentation_agent")
 # free) so pure-unit tests can pin them without dragging the FastAPI /
 # BAML / uvicorn import chain. Re-exported under the legacy underscore
 # names so the lifespan / render_ui code below does not change.
+#
+# Three import shapes, same as utils.mesh_registration above: the
+# container's Dockerfile flattens agent_fleet/presentation_agent/
+# into /app/ and runs main.py as a flat script (no package context),
+# so the FIRST fallback must be the flat ``capabilities`` import; dev
+# checkout uses the agent_fleet.* path.
 try:
-    from .capabilities import (  # type: ignore[no-redef]
+    from capabilities import (  # type: ignore[no-redef]
         PRESENTATION_CAPABILITIES as _PRESENTATION_CAPABILITIES,
     )
 except ImportError:
@@ -120,7 +126,7 @@ class RenderRequest(BaseModel):
 # Canonicalizer + lookup live in capabilities.py — see the import at
 # the top of this file. Re-exported under the legacy underscore names.
 try:
-    from .capabilities import (  # type: ignore[no-redef]
+    from capabilities import (  # type: ignore[no-redef]
         canonical_iri_for_lookup as _canonical_iri_for_lookup,
         lookup_capability as _lookup_capability,
     )
@@ -224,7 +230,7 @@ def _render_document_deterministic(
 # so pure-unit tests can pin all five input shapes without dragging
 # the FastAPI / BAML / uvicorn import chain.
 try:
-    from .chart_normalizer import (  # type: ignore[no-redef]
+    from chart_normalizer import (  # type: ignore[no-redef]
         normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 except ImportError:
