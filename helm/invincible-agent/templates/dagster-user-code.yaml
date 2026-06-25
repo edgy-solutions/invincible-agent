@@ -131,4 +131,23 @@ data:
           port: {{ .Values.dagster.docToolsCodeLocation.port | default 3030 }}
           location_name: doc-tools
       {{- end }}
+      {{- /*
+        Every enabled .Values.userDeployments entry renders an additional
+        grpc_server pointing at the code-location service that
+        templates/user-deployments.yaml created. Without this, the
+        Dagster webserver and daemon never connect to the user-deployment
+        pods — pods run fine in isolation but their assets don't show up
+        in Dagit. Each entry's service name matches "<release>-<name>"
+        and the port is the value of $deploy.codeLocation.port (default
+        4000). Location name uses the entry's key so Dagit lists each
+        user-deployment under its own label.
+      */}}
+      {{- range $name, $deploy := .Values.userDeployments }}
+      {{- if $deploy.enabled }}
+      - grpc_server:
+          host: {{ printf "%s-%s" $.Release.Name $name | quote }}
+          port: {{ default 4000 $deploy.codeLocation.port }}
+          location_name: {{ $name | quote }}
+      {{- end }}
+      {{- end }}
 {{- end }}
