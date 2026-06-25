@@ -138,13 +138,6 @@ spec:
             - "dag_tools.domain_broker.main:app"
             - "--bind"
             - "0.0.0.0:{{ $brokerPort }}"
-            # Lifespan startup runs load_dagster_definitions, which
-            # imports every Component the user-deployment ships. For a
-            # non-trivial Definitions module this regularly exceeds
-            # hypercorn's 60s default — bumped to 5 min so cold start
-            # under cold pip wheel cache doesn't false-fail.
-            - "--startup-timeout"
-            - "300"
           env:
             - name: DAGSTER_DEFS_MODULE
               value: {{ printf "%s:defs" $deploy.dagsterModule | quote }}
