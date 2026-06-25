@@ -445,6 +445,75 @@ def _classify_route(
                 }
                 break
 
+    # --------------------------------------------------------------
+    # Dispatch-endpoint authority: ALWAYS prefer Neo4j's compat-walk
+    # record for the resolved verb_iri over the Weaviate-backed
+    # predicate dict's `endpoint` / `domains` / `owner_persona`.
+    #
+    # Why: classify_predicate's predicate dict comes from Weaviate,
+    # whose Predicate collection can carry stale or rename-orphan
+    # records (uuid5 keyed on (verb_iri, input_uri); rename + scope
+    # change mints a new UUID and leaves the old record orphaned,
+    # with no compensate-on-rescope in register_engine_to_mesh). The
+    # Neo4j compat-walk is authoritative on dispatch coordinates —
+    # /find_compatible_verbs reads the verb edges that Engine O
+    # rebuilt deterministically from the TTL + registration sync,
+    # not the vector-search-returned blob. The Weaviate predicate
+    # stays the source for "which verb the LLM picked"; Neo4j
+    # becomes the source for "where to dispatch that verb."
+    #
+    # The override logs a WARNING when Weaviate and Neo4j disagree —
+    # that disagreement is the contamination signal the substrate
+    # dedup guard (step 3) and the phrasing-independence test
+    # (step 4) will codify. Seeing this log fire is data, not noise.
+    if predicate is not None and verb_iri != "UNKNOWN" and compatible_verbs:
+        truth = next(
+            (cv for cv in compatible_verbs if cv.get("verb_iri") == verb_iri),
+            None,
+        )
+        if truth:
+            neo4j_endpoint = truth.get("endpoint_url") or ""
+            neo4j_domains = list(truth.get("domains") or [])
+            neo4j_owner = truth.get("owner_persona")
+            weav_endpoint = predicate.get("endpoint") or ""
+            weav_domains = list(predicate.get("domains") or [])
+            weav_owner = predicate.get("owner_persona")
+            if (
+                neo4j_endpoint != weav_endpoint
+                or set(neo4j_domains) != set(weav_domains)
+                or neo4j_owner != weav_owner
+            ):
+                context.log.warning(
+                    "predicate_endpoint_skew verb_iri=%s "
+                    "weaviate_endpoint=%s neo4j_endpoint=%s "
+                    "weaviate_domains=%s neo4j_domains=%s "
+                    "weaviate_owner=%s neo4j_owner=%s "
+                    "→ overriding with Neo4j (authoritative).",
+                    verb_iri,
+                    weav_endpoint, neo4j_endpoint,
+                    weav_domains, neo4j_domains,
+                    weav_owner, neo4j_owner,
+                )
+            predicate["endpoint"] = neo4j_endpoint
+            predicate["domains"] = neo4j_domains
+            predicate["owner_persona"] = neo4j_owner
+        else:
+            # Neo4j compat-walk doesn't have this verb. That's the
+            # conjunctive-read invariant violation — Weaviate picked
+            # a verb Neo4j can't confirm. Treat as no-match rather
+            # than dispatching to whatever endpoint Weaviate claimed,
+            # because the Neo4j absence means the verb-edge typing
+            # doesn't actually cover this subject's class chain.
+            context.log.warning(
+                "predicate_neo4j_absence verb_iri=%s subject_uri=%s "
+                "weaviate_endpoint=%s — Weaviate resolved a verb "
+                "Neo4j does not include in the compat-walk; "
+                "downgrading to NO_MATCH.",
+                verb_iri, subject_uri, predicate.get("endpoint"),
+            )
+            predicate = None
+            verb_iri = "UNKNOWN"
+
     telemetry = {
         "subject_uri": subject_uri,
         "subject_confidence": subject_conf,
