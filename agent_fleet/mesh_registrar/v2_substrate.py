@@ -297,6 +297,145 @@ def compensate_weaviate_predicate_row(
 
 
 # ---------------------------------------------------------------------------
+# Compensate-on-rescope sweep (Step 1 of the contamination-fix sequence)
+# ---------------------------------------------------------------------------
+#
+# Background. The Weaviate Predicate collection's row UUID is
+# ``uuid5(verb_iri, input_uri)``. When an engine *migrates* the
+# ``input_uri`` it registers a verb against (e.g. the catalog-verb
+# migration that moved ``analyzeDataset`` from
+# ``mesh:DatasetAnalysisRequest`` to ``idp#Dataset``), the new
+# registration mints a *new* UUID. The OLD row — same engine, same
+# verb, prior input_uri — is left orphaned, because nothing in the
+# registration path knew to delete it. After enough migrations the
+# collection accretes rename-stale duplicates, and Weaviate's
+# vector-similarity search can return the wrong one — which is how a
+# verb resolved correctly but dispatched to the wrong endpoint.
+#
+# This sweep is the per-call compensate-on-rescope. Each registration
+# now sweeps rows where:
+#
+#   * ``tool_urn`` equals the engine's CURRENT tool_urn (the
+#     cross-engine isolation guarantee — the sweep cannot touch
+#     another engine's records because the tool_urn would differ).
+#   * ``verb_iri`` equals the verb being registered (so the sweep
+#     touches only the verb under registration; an engine registering
+#     N verbs runs N independent narrow sweeps).
+#   * Canonicalized ``input_uri`` does NOT match the canonicalized
+#     current input_uri (so the row being upserted survives the sweep).
+#
+# The compact-form vs full-IRI hazard is handled by canonicalizing
+# both sides through ``_canonical_iri`` before comparison. A row
+# stored as ``mesh:AgentTask`` is canonicalized to
+# ``http://invincible-agent/mesh#AgentTask`` for the comparison, so a
+# row in compact form still gets deleted when the current registration
+# is in full form (and vice versa). Without canonicalization, the
+# sweep would either fail to delete (under-delete) or delete its own
+# current registration (over-delete — catastrophic).
+#
+# What the sweep deliberately does NOT catch:
+#
+#   * Rename-orphans where the tool_urn itself changed
+#     (e.g. ``engine_a_analyze_dataset`` → ``engine_a_restate_analyst``).
+#     A sweep keyed on the engine's CURRENT tool_urn can't see records
+#     under the OLD tool_urn. That's the correct safety boundary — a
+#     fuzzy "looks like one of my old names" match would risk deleting
+#     records that aren't actually yours. Rename-orphans are caught
+#     downstream by the substrate dedup guard (catches
+#     ``(verb_iri, input_uri)`` collisions on the SAME canonical pair)
+#     and the seed-collection drop+recreate (kills the historical
+#     artifact permanently, since the writer that created it is
+#     retired and the orphan never recurs).
+#
+# Failure shape:
+#
+#   * Sweep failure must NOT block the registration itself. The new
+#     row was already upserted; failing the sweep would leave the
+#     substrate in a coherent (though duplicated) state. Logged at
+#     WARNING, the dedup guard catches the residual.
+
+# Compact-prefix → full-IRI base. Mirrors the seed script's _MESH /
+# _IDP discipline (canonical full-IRI for subject/object URIs,
+# compact-form for verbs). Adding a new namespace prefix: add an
+# entry here and the sweep handles compact-vs-full equivalence.
+_IRI_PREFIXES: dict[str, str] = {
+    "mesh:": "http://invincible-agent/mesh#",
+    "idp:": "http://invincible-agent/idp#",
+}
+
+
+def _canonical_iri(iri: str) -> str:
+    """Expand a compact-form CURIE to its full IRI.
+
+    Idempotent on full IRIs — anything that doesn't start with a known
+    compact prefix is returned unchanged, so this can be applied to
+    both sides of a comparison without surprises. Falsy input maps to
+    empty string so set-membership comparisons stay stable.
+    """
+    if not iri:
+        return ""
+    for prefix, expansion in _IRI_PREFIXES.items():
+        if iri.startswith(prefix):
+            return expansion + iri[len(prefix):]
+    return iri
+
+
+def sweep_stale_weaviate_predicate_rows(
+    *,
+    weaviate_client: Any,
+    verb_iri: str,
+    current_input_uri: str,
+    tool_urn: str,
+) -> list[dict]:
+    """Compensate-on-rescope sweep for the engine's prior registrations of this verb.
+
+    Deletes rows in the Predicate collection where:
+
+      * ``tool_urn`` equals the engine's current ``tool_urn``, AND
+      * ``verb_iri`` equals the verb being registered, AND
+      * canonical(``input_uri``) does NOT equal canonical(``current_input_uri``).
+
+    The first two clauses keep the sweep cross-engine-isolated and
+    cross-verb-isolated; the third clause is what makes the sweep an
+    *upsert* in effect — the row being upserted is preserved by
+    matching the canonical input_uri, every other input_uri for this
+    (engine, verb) pair is treated as a rename-stale orphan.
+
+    Returns a list of ``{uuid, input_uri}`` dicts for the rows
+    deleted, so the saga and tests can assert the surgical scope.
+    Empty list = nothing to sweep, the steady-state condition after
+    the first post-deploy boot.
+
+    Raises only on Weaviate transport errors; the caller should log
+    and continue rather than failing the registration. The new row
+    was already upserted; the sweep is best-effort hygiene.
+    """
+    from weaviate.classes.query import Filter
+
+    collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
+    canonical_current = _canonical_iri(current_input_uri)
+
+    candidates = collection.query.fetch_objects(
+        filters=(
+            Filter.by_property("tool_urn").equal(tool_urn)
+            & Filter.by_property("verb_iri").equal(verb_iri)
+        ),
+        limit=100,
+    )
+
+    deleted: list[dict] = []
+    for obj in candidates.objects:
+        row_input_uri = (obj.properties or {}).get("input_uri") or ""
+        if _canonical_iri(row_input_uri) == canonical_current:
+            # Row matches the registration we just upserted — keep it.
+            continue
+        collection.data.delete_by_id(uuid=obj.uuid)
+        deleted.append({"uuid": str(obj.uuid), "input_uri": row_input_uri})
+
+    return deleted
+
+
+# ---------------------------------------------------------------------------
 # Read-back probe — the gateway's own postcondition test
 # ---------------------------------------------------------------------------
 

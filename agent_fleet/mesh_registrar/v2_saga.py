@@ -266,6 +266,38 @@ def run_registration_saga(
             elapsed_s=_now() - started,
         )
 
+    # Step: Compensate-on-rescope sweep -------------------------------------
+    # Runs after the upsert succeeded — surgically deletes the engine's
+    # OWN rename-stale rows (same tool_urn, same verb_iri, different
+    # canonical input_uri). Cross-engine isolation is structural: the
+    # tool_urn match prevents touching any other engine's records.
+    # Failure here MUST NOT roll back the registration — the new row
+    # is already in. Logged at WARNING; the dedup guard catches the
+    # residue. See tests/test_compensate_on_rescope_sweep.py for the
+    # surgical-scope assertions against the live contamination shape.
+    try:
+        deleted = substrate.sweep_stale_weaviate_predicate_rows(
+            weaviate_client=weaviate_client,
+            verb_iri=verb_iri,
+            current_input_uri=input_uri,
+            tool_urn=tool_urn,
+        )
+        if deleted:
+            print(
+                f"[saga] sweep_stale_weaviate_predicate_rows: "
+                f"tool_urn={tool_urn} verb_iri={verb_iri} "
+                f"deleted {len(deleted)} stale row(s): "
+                f"{[d['input_uri'] for d in deleted]}"
+            )
+    except Exception as sweep_exc:  # noqa: BLE001
+        print(
+            f"[saga] WARNING sweep_stale_weaviate_predicate_rows failed "
+            f"(non-fatal — registration succeeded; dedup guard will "
+            f"surface residual duplicates): "
+            f"tool_urn={tool_urn} verb_iri={verb_iri} "
+            f"err={type(sweep_exc).__name__}: {sweep_exc}"
+        )
+
     # Step: Read-back probe -------------------------------------------------
     try:
         attempts = _retry_step(
