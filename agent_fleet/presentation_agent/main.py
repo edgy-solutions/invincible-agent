@@ -190,6 +190,27 @@ class RenderRequest(BaseModel):
     domain: Optional[str] = None
 
 
+# Compact-prefix → full-IRI expansion. Mirrors the seed script's
+# ``_MESH``/``_IDP`` discipline (canonical full-IRI form for subject /
+# object URIs, compact-form for verbs). Any future namespace prefix
+# added to the substrate must be mirrored here so the lookup stays
+# canonicalization-safe.
+_IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
+    "mesh:": "http://invincible-agent/mesh#",
+    "idp:": "http://invincible-agent/idp#",
+}
+
+
+def _canonical_iri_for_lookup(iri: str) -> str:
+    """Expand a compact-form CURIE to its full IRI; passthrough on full."""
+    if not iri:
+        return ""
+    for prefix, expansion in _IRI_PREFIXES_FOR_LOOKUP.items():
+        if iri.startswith(prefix):
+            return expansion + iri[len(prefix):]
+    return iri
+
+
 def _lookup_capability(output_uri: str) -> Optional[Dict[str, Any]]:
     """In-memory predicate lookup over Engine F's own capability table.
 
@@ -202,9 +223,19 @@ def _lookup_capability(output_uri: str) -> Optional[Dict[str, Any]]:
     replace this body with the HTTP call once Engine O grows a
     presentation-aware lookup endpoint; consumers of /render_ui
     don't change.
+
+    Both sides are canonicalized to full IRI before comparison —
+    the capability table stores compact form (``mesh:Foo``) and the
+    supervisor injects full-IRI form (``http://.../mesh#Foo``) from
+    the seed's predicate registration, so an exact-string compare
+    misses every match. Without canonicalization, render_ui falls
+    through to legacy DesignUI even for archetypes that ARE declared
+    in the table — the same compact-vs-full hazard the contamination
+    arc's Step 1 sweep guarded against, at a different boundary.
     """
+    target = _canonical_iri_for_lookup(output_uri)
     for cap in _PRESENTATION_CAPABILITIES:
-        if cap["subject_uri"] == output_uri:
+        if _canonical_iri_for_lookup(cap["subject_uri"]) == target:
             return cap
     return None
 
