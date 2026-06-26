@@ -542,6 +542,17 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 conf = data.get("confidence_score")
                 relevance = float(conf) if conf is not None else None
                 matched = data.get("matched_assets") or []
+                refs_top = data.get("referenced_uris") or []
+                # TEMP-INSTR (2026-06-25 sources-card diagnosis): print
+                # bypasses logger threshold so we can see whether
+                # search_datahub is reaching _collect_datahub_source.
+                # Remove after the bug is located.
+                print(
+                    f"[INSTR search_datahub] query={query!r} "
+                    f"matched_count={len(matched)} refs_count={len(refs_top)} "
+                    f"sources_collected_before={len(sources_collected)}",
+                    flush=True,
+                )
                 if matched:
                     for a in matched:
                         if not isinstance(a, dict):
@@ -565,6 +576,12 @@ async def analyze(ctx: Context, request: dict) -> dict:
                             _collect_datahub_source(
                                 u, search_query=query, relevance=relevance,
                             )
+                # TEMP-INSTR — see counter at top of this block.
+                print(
+                    f"[INSTR search_datahub] sources_collected_after={len(sources_collected)} "
+                    f"uris={[s.get('uri') for s in sources_collected[:5]]}",
+                    flush=True,
+                )
                 return data.get("data", {}).get("short_answer", "No results found.")
             except Exception as e:
                 return f"Error executing DataHub search via Engine D: {str(e)}"
@@ -915,6 +932,15 @@ print(result)
             "[Phase 3 Engine A] sources_collected count=%d uris=%s",
             len(sources_collected),
             [s.get("uri") for s in sources_collected[:5]],
+        )
+        # TEMP-INSTR — same diagnosis as search_datahub prints above.
+        # Bypasses logger threshold so we can confirm whether this
+        # code path is reached on the lookup_ownership verb.
+        print(
+            f"[INSTR result_dict] sources_collected count={len(sources_collected)} "
+            f"uris={[s.get('uri') for s in sources_collected[:5]]} "
+            f"result_dict_keys={list(result_dict.keys())}",
+            flush=True,
         )
         result_dict["sources"] = sources_collected
         return result_dict
