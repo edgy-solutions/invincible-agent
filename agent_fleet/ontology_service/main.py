@@ -498,7 +498,14 @@ class ResolveRequest(BaseModel):
     # over-fire guard: instance fan-out fires ONLY when intent
     # extraction surfaced a named entity to resolve, never on raw query
     # text and never on every class-recall miss.
-    entity_refs: List[str] = []
+    #
+    # ``list[str] = []`` (PEP 585) rather than ``List[str]`` because
+    # this module uses ``from __future__ import annotations`` and
+    # never imports ``List`` from typing — Pydantic v2's
+    # forward-reference resolution at model build time would fail
+    # with PydanticUserError otherwise. The builtin generic is
+    # available natively on the project's Python 3.12 floor.
+    entity_refs: list[str] = []
 
 
 class SemanticResolutionResponse(BaseModel):
