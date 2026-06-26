@@ -910,8 +910,62 @@ async def query_metadata(request: MetadataQueryRequest):
             )
         )
 
-    # Parse Results Generically
+    # LOUD GraphQL-error path. DataHub returns HTTP 200 with
+    # ``{"errors": [...], "data": null}`` on validation failures
+    # (e.g. an entity_type the deployed schema doesn't expose as an
+    # enum value). The previous ``data.get("data") or {}`` pattern
+    # silently collapsed that to an empty result set — the smolagent
+    # saw "0 results found", broadened to another entity_type, hit
+    # another validation error, broadened again, and so on, while
+    # the actual error message DataHub returned (which would have
+    # been actionable) was discarded. Same silent-swallow shape the
+    # /resolve_instance endpoint already guards against; mirror that
+    # discipline here so the smolagent's broaden-on-miss loop gets
+    # honest feedback instead of looping on fabricated empties.
     data = data or {}
+    gql_errors = data.get("errors") or []
+    if gql_errors:
+        print(
+            f"ERROR: DataHub GraphQL errors for /query_metadata "
+            f"user_query={request.user_query!r} "
+            f"entity_type={request.entity_type!r}: "
+            f"{json.dumps(gql_errors)}",
+            flush=True,
+        )
+        # Surface the validation failure to the smolagent as a
+        # short_answer it can read and react to. Without this, the
+        # smolagent just sees "No results found." and retries with
+        # another invalid type. With this, it sees the actual
+        # rejection and (for enum validation errors specifically)
+        # has a chance to pick a valid type next time.
+        error_messages = [
+            (e or {}).get("message") or ""
+            for e in gql_errors
+            if (e or {}).get("message")
+        ]
+        return ExpertResponse(
+            confidence_score=0.0,
+            referenced_uris=[],
+            matched_assets=[],
+            data=DataStewardResponse(
+                short_answer=(
+                    "DataHub rejected the query: "
+                    + "; ".join(error_messages)
+                    + ". Common cause: the entity_type isn't in this "
+                    "DataHub deployment's EntityType enum. Valid types "
+                    "for this deployment are listed in the "
+                    "'Valid DataHub Entity Types' block of your system "
+                    "prompt — use one of those, not a guessed value."
+                ),
+                tool_list=["DataHub"],
+                safety_warnings=[
+                    "Query validation failed at DataHub. Not the same "
+                    "as 'no asset found' — the query itself was malformed."
+                ],
+            ),
+        )
+
+    # Parse Results Generically
     data_dict = data.get("data") or {}
     search_dict = data_dict.get("searchAcrossEntities") or data_dict.get("search") or {}
     search_results = search_dict.get("searchResults") or []
