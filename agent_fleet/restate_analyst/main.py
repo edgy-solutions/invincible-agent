@@ -330,6 +330,64 @@ def _select_verb_prompt_block(routed_verb_iri: str | None) -> dict:
 analyst_service = Service("AnalystService")
 
 
+# Deterministic ontology-class → DataHub entity_type mapping.
+#
+# The smolagent's search_datahub tool takes an ``entity_type`` arg that
+# must be one of DataHub's exact entity-type strings ("DASHBOARD",
+# "DATASET", ...). Picking the right one is the difference between
+# "DataHub returns the asset" and "DataHub returns 0 matches"; the
+# smolagent prompt at run_smolagent's construction site historically
+# handed the resolved_uri (e.g. ``idp#Dashboard``) to the LLM and let
+# it INFER the entity_type — and the inference was non-deterministic:
+# sometimes the smolagent picked "DASHBOARD" (matches → sources flow),
+# sometimes "dataset" or "data_product" (0 matches → honest empty
+# Sources card, but the system DID know the answer and the LLM just
+# missed). 2026-06-26: with print-instrumentation in search_datahub we
+# observed the smolagent calling ``search_datahub(query="customer 360",
+# entity_type="dataset")`` twice in succession when the routing layer
+# had already resolved the class to ``idp#Dashboard`` at score 0.9.
+#
+# This table is the inverse of ``datahub_wrapper/main.py:_DATAHUB_TO_IDP``
+# (kept inline rather than imported to avoid a cross-engine
+# dependency, since each engine's container ships its own flattened
+# main.py). When the inverse mapping ever changes, BOTH must move in
+# lockstep. The shape itself is canonical and stable: each DataHub
+# entity-type maps to exactly one idp:* class (CHART folds into
+# Dashboard because charts hang off dashboards in our model).
+#
+# The fix is the [[deterministic-threading]] pattern: the resolved
+# class IS known at routing time, the mapping IS a table lookup, the
+# LLM should NOT be asked to re-derive it. Same shape as
+# content-kind resolution, chart-key normalization, dispatch-endpoint-
+# from-Neo4j. Closes [[engine-a-entity-type-hint-gap]].
+_IDP_CLASS_TO_DATAHUB_ENTITY_TYPE: Dict[str, str] = {
+    "http://invincible-agent/idp#Table":     "DATASET",
+    "http://invincible-agent/idp#Dashboard": "DASHBOARD",
+    "http://invincible-agent/idp#Pipeline":  "DATA_FLOW",
+    "http://invincible-agent/idp#Job":       "DATA_JOB",
+    # ``idp#Column`` deliberately omitted — columns live inside a
+    # dataset's schemaMetadata.fields and don't have their own
+    # entity_type top-level. The smolagent's first search for a
+    # column-shaped identifier still wants entity_type="DATASET"
+    # so the dataset's schema comes back with the column embedded.
+}
+
+
+def _recommended_entity_type(resolved_uri: str) -> str | None:
+    """Map an idp:* class URI to the DataHub entity_type string
+    that the smolagent should pass as the ``entity_type`` argument
+    to ``search_datahub``. Returns ``None`` when the class isn't
+    in the table (e.g., the router resolved to UNKNOWN, a mesh:*
+    class that doesn't correspond to a DataHub entity, or a
+    new idp:* class added without the table being updated). The
+    ``None`` case is non-fatal — the smolagent gets no
+    recommendation and falls back to its prior guess-then-broaden
+    behavior, which is the legacy behavior."""
+    if not resolved_uri:
+        return None
+    return _IDP_CLASS_TO_DATAHUB_ENTITY_TYPE.get(resolved_uri)
+
+
 def _resolve_ontology(task_description: str) -> dict:
     """Call Engine O to resolve the task description into semantic context.
 
@@ -699,6 +757,33 @@ async def analyze(ctx: Context, request: dict) -> dict:
                 # no longer always-on; only the patterns relevant to the routed
                 # verb are included. The verb_block also carries the
                 # output_uri the agent must echo in final_answer().
+                #
+                # Deterministic-threading: when the router resolved the
+                # subject to an idp:* class that has a known DataHub
+                # entity_type, surface that as the RECOMMENDED first
+                # search. The smolagent historically had to INFER
+                # entity_type from resolved_uri ("idp#Dashboard means
+                # I should pass DASHBOARD") and got it wrong about
+                # half the time, producing honest-but-frustrating
+                # empty Sources cards. The recommendation eliminates
+                # the variance; the "first search" framing preserves
+                # the broaden-on-miss escape hatch so a wrong class
+                # guess at routing time doesn't trap the agent in
+                # the wrong DataHub partition.
+                recommended_entity_type = _recommended_entity_type(resolved_uri)
+                entity_type_hint = ""
+                if recommended_entity_type:
+                    entity_type_hint = (
+                        f"  RECOMMENDED entity_type for the FIRST "
+                        f"search_datahub call: {recommended_entity_type!r} "
+                        f"(deterministically mapped from the resolved "
+                        f"{resolved_uri} class). Use this as your first "
+                        f"search. If it returns 0 results, broaden to "
+                        f"another entity_type — but the routing layer "
+                        f"already verified the asset class, so the "
+                        f"deterministic mapping is the right starting "
+                        f"point.\n"
+                    )
                 agent_prompt = (
                     f"{fallback_preamble}"
                     f"You are an enterprise data analyst operating across all domains (Maintenance, Manufacturing, Sustainment, etc.). Your ONLY source of truth is the output of the `search_datahub` tool.\n\n"
@@ -707,7 +792,8 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     f"Dataset ID: {task.dataset_id}\n\n"
                     f"Semantic Context (from IOF/MIMOSA ontology):\n"
                     f"  Resolved URI: {resolved_uri}\n"
-                    f"  Confidence: {confidence}\n\n"
+                    f"  Confidence: {confidence}\n"
+                    f"{entity_type_hint}\n"
                     f"CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate facts. Use only what the tools return. If a specific field the user asked about is genuinely absent from the tool result, state it is not available — but do NOT claim a field is missing if the tool returned it. See each tool's docstring for the shape of its response.\n\n"
                     f"PAST EXPERIENCE IS A HINT, NEVER A FACT.\n"
                     f"The \"Relevant Past Experience\" block (when present below) is drawn from earlier sessions in this engine's own memory partition — raw user questions and the agent's prior summaries of how it answered them. It MAY reflect summaries of your own previous answers — and you have been wrong before. Treat past experience as a possibly-stale starting hypothesis, NEVER as ground truth. You MUST verify against the current tool output before reporting anything. If past experience says \"no X exists\" for the current question, IGNORE that claim and run the tool anyway; an empty result must come from a fresh search, not from memory. Repeating a past wrong answer because it appears in past experience is the most common cascading failure in this system. The tool is authoritative; past experience is conversational background only.\n\n"
