@@ -31,44 +31,12 @@ dependent) asserts the live behavior.
 """
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
-
-# ---------------------------------------------------------------------------
-# Engine A's main.py uses `from __future__ import annotations` and lives in
-# an image whose flattened layout (/app/main.py) doesn't expose
-# ``agent_fleet.restate_analyst.main`` as an importable package on the
-# dev checkout's PYTHONPATH. Load the module directly from its file path
-# so this test can run in any environment that has the source tree.
-# ---------------------------------------------------------------------------
-_ENGINE_A_MAIN_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "agent_fleet"
-    / "restate_analyst"
-    / "main.py"
+from agent_fleet.restate_analyst.entity_type_mapping import (
+    IDP_CLASS_TO_DATAHUB_ENTITY_TYPE,
+    recommended_entity_type,
 )
-
-
-def _load_engine_a_module():
-    """Module-loader helper. Skips the test if the engine's heavy
-    imports can't resolve in the test env (BAML client, restate, etc.) —
-    in CI / sandbox the deps are present; on bare dev checkouts they
-    may not be, and a skipped probe is more honest than a fake import."""
-    spec = importlib.util.spec_from_file_location(
-        "engine_a_main_probe", _ENGINE_A_MAIN_PATH
-    )
-    if spec is None or spec.loader is None:
-        pytest.skip(f"Could not load Engine A main.py at {_ENGINE_A_MAIN_PATH}")
-    mod = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(mod)
-    except Exception as exc:
-        pytest.skip(f"Engine A main.py imports failed in this env: {exc}")
-    return mod
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +68,7 @@ def test_engine_a_table_inverts_datahub_to_idp():
     Dashboard (since CHART → idp#Dashboard in the forward table); the
     inverse picks one canonical entity_type per class, so the inverse
     of idp#Dashboard is DASHBOARD (the primary), not CHART."""
-    mod = _load_engine_a_module()
-    inv = mod._IDP_CLASS_TO_DATAHUB_ENTITY_TYPE
+    inv = IDP_CLASS_TO_DATAHUB_ENTITY_TYPE
 
     # Every idp:* class in the forward table must appear in the inverse.
     forward_classes = set(_KNOWN_DATAHUB_TO_IDP.values())
@@ -177,8 +144,7 @@ def test_recommended_entity_type_is_deterministic(
     the real closure: "the deterministic mapping makes it always
     right, proven per class."
     """
-    mod = _load_engine_a_module()
-    recommended = mod._recommended_entity_type(resolved_uri)
+    recommended = recommended_entity_type(resolved_uri)
     assert recommended == expected_entity_type, (
         f"Deterministic mapping broken for {resolved_uri!r}. "
         f"Expected {expected_entity_type!r}, got {recommended!r}. "
@@ -220,8 +186,7 @@ def test_recommended_entity_type_returns_none_on_unmapped(
     legacy behavior. Adding a non-None recommendation here would
     propagate a fabricated entity_type and trap the smolagent in
     the wrong DataHub partition."""
-    mod = _load_engine_a_module()
-    assert mod._recommended_entity_type(resolved_uri) is None, (
+    assert recommended_entity_type(resolved_uri) is None, (
         f"Unmapped resolved_uri {resolved_uri!r} got a non-None "
         f"recommendation — the escape hatch is broken. The smolagent "
         f"would receive a fabricated entity_type recommendation, "

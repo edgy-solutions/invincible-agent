@@ -330,62 +330,24 @@ def _select_verb_prompt_block(routed_verb_iri: str | None) -> dict:
 analyst_service = Service("AnalystService")
 
 
-# Deterministic ontology-class → DataHub entity_type mapping.
+# Deterministic ontology-class → DataHub entity_type mapping lives in
+# ``entity_type_mapping.py`` so pure-unit tests can pin it without
+# dragging this file's heavy import chain (BAML / restate-sdk /
+# smolagents). Imported under the legacy underscored name so the
+# prompt-construction call site (run_smolagent) doesn't change.
 #
-# The smolagent's search_datahub tool takes an ``entity_type`` arg that
-# must be one of DataHub's exact entity-type strings ("DASHBOARD",
-# "DATASET", ...). Picking the right one is the difference between
-# "DataHub returns the asset" and "DataHub returns 0 matches"; the
-# smolagent prompt at run_smolagent's construction site historically
-# handed the resolved_uri (e.g. ``idp#Dashboard``) to the LLM and let
-# it INFER the entity_type — and the inference was non-deterministic:
-# sometimes the smolagent picked "DASHBOARD" (matches → sources flow),
-# sometimes "dataset" or "data_product" (0 matches → honest empty
-# Sources card, but the system DID know the answer and the LLM just
-# missed). 2026-06-26: with print-instrumentation in search_datahub we
-# observed the smolagent calling ``search_datahub(query="customer 360",
-# entity_type="dataset")`` twice in succession when the routing layer
-# had already resolved the class to ``idp#Dashboard`` at score 0.9.
-#
-# This table is the inverse of ``datahub_wrapper/main.py:_DATAHUB_TO_IDP``
-# (kept inline rather than imported to avoid a cross-engine
-# dependency, since each engine's container ships its own flattened
-# main.py). When the inverse mapping ever changes, BOTH must move in
-# lockstep. The shape itself is canonical and stable: each DataHub
-# entity-type maps to exactly one idp:* class (CHART folds into
-# Dashboard because charts hang off dashboards in our model).
-#
-# The fix is the [[deterministic-threading]] pattern: the resolved
-# class IS known at routing time, the mapping IS a table lookup, the
-# LLM should NOT be asked to re-derive it. Same shape as
-# content-kind resolution, chart-key normalization, dispatch-endpoint-
-# from-Neo4j. Closes [[engine-a-entity-type-hint-gap]].
-_IDP_CLASS_TO_DATAHUB_ENTITY_TYPE: Dict[str, str] = {
-    "http://invincible-agent/idp#Table":     "DATASET",
-    "http://invincible-agent/idp#Dashboard": "DASHBOARD",
-    "http://invincible-agent/idp#Pipeline":  "DATA_FLOW",
-    "http://invincible-agent/idp#Job":       "DATA_JOB",
-    # ``idp#Column`` deliberately omitted — columns live inside a
-    # dataset's schemaMetadata.fields and don't have their own
-    # entity_type top-level. The smolagent's first search for a
-    # column-shaped identifier still wants entity_type="DATASET"
-    # so the dataset's schema comes back with the column embedded.
-}
-
-
-def _recommended_entity_type(resolved_uri: str) -> str | None:
-    """Map an idp:* class URI to the DataHub entity_type string
-    that the smolagent should pass as the ``entity_type`` argument
-    to ``search_datahub``. Returns ``None`` when the class isn't
-    in the table (e.g., the router resolved to UNKNOWN, a mesh:*
-    class that doesn't correspond to a DataHub entity, or a
-    new idp:* class added without the table being updated). The
-    ``None`` case is non-fatal — the smolagent gets no
-    recommendation and falls back to its prior guess-then-broaden
-    behavior, which is the legacy behavior."""
-    if not resolved_uri:
-        return None
-    return _IDP_CLASS_TO_DATAHUB_ENTITY_TYPE.get(resolved_uri)
+# Three import shapes for cross-environment compatibility — the
+# container Dockerfile flattens agent_fleet/restate_analyst/ into
+# /app/ so the FIRST fallback is the flat module name; dev checkout
+# uses the agent_fleet.* path.
+try:
+    from entity_type_mapping import (  # type: ignore[no-redef]
+        recommended_entity_type as _recommended_entity_type,
+    )
+except ImportError:
+    from agent_fleet.restate_analyst.entity_type_mapping import (
+        recommended_entity_type as _recommended_entity_type,
+    )
 
 
 def _resolve_ontology(task_description: str) -> dict:
