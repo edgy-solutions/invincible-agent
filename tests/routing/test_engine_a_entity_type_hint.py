@@ -31,12 +31,72 @@ dependent) asserts the live behavior.
 """
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
 
 from agent_fleet.restate_analyst.entity_type_mapping import (
     IDP_CLASS_TO_DATAHUB_ENTITY_TYPE,
     recommended_entity_type,
 )
+
+
+# ---------------------------------------------------------------------------
+# Canonical source extraction — read ``_DATAHUB_TO_IDP`` from
+# ``datahub_wrapper/main.py`` via AST so the test catches drift even when
+# the wrapper's heavy import chain (httpx, fastapi, etc.) isn't available
+# in the test env. The architect's drift-catching property: when someone
+# adds a new entry to the canonical forward table without adding the
+# inverse to Engine A's table, this test turns red. A hardcoded snapshot
+# of "today's four classes" would silently pass for the fifth class.
+# ---------------------------------------------------------------------------
+
+
+def _read_canonical_datahub_to_idp() -> dict[str, str]:
+    """Parse ``datahub_wrapper/main.py`` and extract the literal value
+    of the ``_DATAHUB_TO_IDP`` constant. Uses ``ast.literal_eval`` so
+    no module imports run (no heavy-deps drag). Skips the test if the
+    canonical source isn't readable / parseable in this env."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "agent_fleet"
+        / "datahub_wrapper"
+        / "main.py"
+    )
+    if not path.is_file():
+        pytest.skip(f"Canonical source not found at {path}")
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        pytest.skip(f"Could not parse {path}: {exc}")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AnnAssign):
+            target = node.target
+            if (
+                isinstance(target, ast.Name)
+                and target.id == "_DATAHUB_TO_IDP"
+                and node.value is not None
+            ):
+                try:
+                    return ast.literal_eval(node.value)
+                except (ValueError, SyntaxError):
+                    pytest.skip(
+                        f"_DATAHUB_TO_IDP in {path} isn't a literal — "
+                        f"test needs a literal value to ast.literal_eval"
+                    )
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "_DATAHUB_TO_IDP":
+                    try:
+                        return ast.literal_eval(node.value)
+                    except (ValueError, SyntaxError):
+                        pytest.skip(
+                            f"_DATAHUB_TO_IDP in {path} isn't a literal — "
+                            f"test needs a literal value to ast.literal_eval"
+                        )
+    pytest.skip(f"_DATAHUB_TO_IDP not found in {path}")
+    return {}  # unreachable, satisfies type-check
 
 
 # ---------------------------------------------------------------------------
@@ -52,47 +112,59 @@ from agent_fleet.restate_analyst.entity_type_mapping import (
 # update this constant AND the corresponding entry in Engine A's
 # ``_IDP_CLASS_TO_DATAHUB_ENTITY_TYPE``. The lockstep is enforced by
 # the assertions below.
-_KNOWN_DATAHUB_TO_IDP = {
-    "DATASET":   "http://invincible-agent/idp#Table",
-    "DASHBOARD": "http://invincible-agent/idp#Dashboard",
-    "CHART":     "http://invincible-agent/idp#Dashboard",   # charts → Dashboard
-    "DATA_FLOW": "http://invincible-agent/idp#Pipeline",
-    "DATA_JOB":  "http://invincible-agent/idp#Job",
-}
-
-
 def test_engine_a_table_inverts_datahub_to_idp():
-    """Engine A's ``_IDP_CLASS_TO_DATAHUB_ENTITY_TYPE`` must be the
+    """Engine A's ``IDP_CLASS_TO_DATAHUB_ENTITY_TYPE`` must be the
     inverse of datahub_wrapper's ``_DATAHUB_TO_IDP`` for every idp:*
     class that has a deterministic DataHub partner. CHART folds into
     Dashboard (since CHART → idp#Dashboard in the forward table); the
     inverse picks one canonical entity_type per class, so the inverse
-    of idp#Dashboard is DASHBOARD (the primary), not CHART."""
+    of idp#Dashboard is DASHBOARD (the primary), not CHART.
+
+    **Drift-catching property**: the canonical forward table is read
+    from datahub_wrapper's source via AST (no module import — no
+    heavy-dep drag), so when a new entry is added to the canonical
+    side WITHOUT a corresponding inverse here, this test turns red.
+    A hardcoded snapshot of "today's four classes" would silently
+    pass for the fifth class; the AST-derived version doesn't.
+    """
+    canonical_forward = _read_canonical_datahub_to_idp()
     inv = IDP_CLASS_TO_DATAHUB_ENTITY_TYPE
 
-    # Every idp:* class in the forward table must appear in the inverse.
-    forward_classes = set(_KNOWN_DATAHUB_TO_IDP.values())
+    # Every idp:* class in the canonical forward table must appear in
+    # the inverse. New entries added to the wrapper's table without
+    # the corresponding inverse turn this red.
+    forward_classes = set(canonical_forward.values())
     for cls in forward_classes:
         assert cls in inv, (
             f"idp:* class {cls!r} is in datahub_wrapper's _DATAHUB_TO_IDP "
-            f"but missing from Engine A's _IDP_CLASS_TO_DATAHUB_ENTITY_TYPE. "
-            f"The smolagent's recommended entity_type for this class will "
-            f"be None, and it'll fall back to guessing. Add the inverse."
+            f"(canonical forward table) but missing from Engine A's "
+            f"IDP_CLASS_TO_DATAHUB_ENTITY_TYPE inverse. The smolagent's "
+            f"recommended entity_type for this class will be None, and "
+            f"it'll fall back to guessing. Add the inverse to "
+            f"agent_fleet/restate_analyst/entity_type_mapping.py."
         )
 
     # Each inverse entry must round-trip: cls → entity_type → cls must
-    # be either the same cls or (for many-to-one cases like CHART/DASHBOARD)
-    # a cls that ALSO maps back to the same entity_type via the forward
-    # table.
+    # be either the same cls or (for many-to-one cases like
+    # CHART/DASHBOARD both → idp#Dashboard) a cls that ALSO maps back
+    # to the same entity_type via the forward table.
     for cls, entity_type in inv.items():
-        forward_cls = _KNOWN_DATAHUB_TO_IDP.get(entity_type)
+        forward_cls = canonical_forward.get(entity_type)
         assert forward_cls is not None, (
             f"Engine A's inverse maps {cls!r} → {entity_type!r}, but the "
-            f"forward table has no entry for {entity_type!r}. Drift detected."
+            f"canonical forward table has no entry for {entity_type!r}. "
+            f"Drift detected — either the canonical table dropped the "
+            f"entity_type or the inverse points at a stale string."
         )
         # CHART and DASHBOARD both forward to idp#Dashboard; the inverse
-        # picks DASHBOARD as canonical. Accept that round-trip target.
-        assert forward_cls == cls or forward_cls in inv and inv[entity_type] == inv[forward_cls], (
+        # picks DASHBOARD as canonical. Accept either: forward_cls == cls
+        # OR forward_cls's own forward-entry round-trips to the same
+        # entity_type as cls's inverse pointer.
+        round_trip_ok = (
+            forward_cls == cls
+            or (forward_cls in inv and inv[forward_cls] == entity_type)
+        )
+        assert round_trip_ok, (
             f"Round-trip drift: {cls!r} → {entity_type!r} → {forward_cls!r}. "
             f"The two tables disagree on which DataHub entity_type is "
             f"canonical for this class."
