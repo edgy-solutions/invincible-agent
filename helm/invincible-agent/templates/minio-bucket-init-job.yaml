@@ -1,0 +1,87 @@
+{{- /*
+MinIO bucket initialization Job.
+
+Runs as a helm pre-install AND pre-upgrade hook to ensure the
+buckets each user-deployment writes to actually exist before the
+first materialization fires. MinIO itself is deployed externally
+(``iagent-minio`` service); the chart's responsibility is making
+sure the buckets each deployment expects are present in MinIO
+before the deployment's pods start pulling/pushing.
+
+Idempotent: ``mc mb --ignore-existing`` is a no-op when the bucket
+already exists, so re-running on every chart upgrade is safe.
+
+Values-driven: add a bucket name to ``.Values.minioBucketInit.buckets``
+to have the Job create it. The default list covers known
+user-deployment buckets (``publog-lake`` for pub-tools' publog
+content, ``dag-lake`` for dag-tools' demo/singleton content).
+
+Skip the whole Job by setting ``minioBucketInit.enabled: false`` —
+useful when MinIO isn't reachable from inside the cluster (e.g.,
+an external MinIO that the helm-install host can't see) or when
+bucket creation is owned by a different ops process.
+*/}}
+{{- if .Values.minioBucketInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-minio-bucket-init
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "minio-bucket-init" "root" .) | nindent 4 }}
+  annotations:
+    # Run BEFORE any deployment that might try to write to a
+    # missing bucket. pre-upgrade ensures new buckets added between
+    # releases (like ``dag-lake`` 2026-06-26) appear before the
+    # deployment that needs them rolls.
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Highest-priority cleanup: delete the job after the next
+    # successful hook cycle so completed Jobs don't accumulate.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    # Run early so the buckets are ready before any downstream
+    # deployment expects them.
+    "helm.sh/hook-weight": "-5"
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "minio-bucket-init" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mc
+          image: {{ .Values.minioBucketInit.image | default "quay.io/minio/mc:latest" | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MC_HOST_iagent
+              value: "http://{{ .Values.minioBucketInit.accessKey }}:{{ .Values.minioBucketInit.secretKey }}@{{ trimPrefix "http://" (trimPrefix "https://" .Values.minioBucketInit.endpoint) }}"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "Initializing MinIO buckets at {{ .Values.minioBucketInit.endpoint }}"
+              # Wait briefly for MinIO to be reachable. The hook runs
+              # very early in install, so MinIO may still be coming
+              # up alongside; retry for up to ~60s before failing.
+              for i in $(seq 1 12); do
+                if mc ls iagent >/dev/null 2>&1; then
+                  echo "MinIO reachable on attempt $i"
+                  break
+                fi
+                echo "MinIO not reachable (attempt $i/12); sleeping 5s..."
+                sleep 5
+              done
+              {{- range $b := .Values.minioBucketInit.buckets }}
+              echo "Ensuring bucket: {{ $b }}"
+              mc mb --ignore-existing iagent/{{ $b }}
+              {{- end }}
+              echo "All buckets ensured."
+{{- end }}

@@ -429,6 +429,43 @@ domainBroker:
   pgPasswordSecretKey: "BPMN_POSTGRES_PASSWORD"
 
 # ==========================================================================
+# minioBucketInit — Helm-hook bucket creation for MinIO.
+#
+# MinIO is deployed externally to this chart (the ``iagent-minio``
+# service comes from a separate manifest, not chart dependencies).
+# This Job runs as a pre-install / pre-upgrade hook to ensure the
+# buckets each user-deployment writes to actually exist before the
+# first materialization fires.
+#
+# Idempotent: ``mc mb --ignore-existing`` makes re-running on every
+# chart upgrade safe.
+#
+# Disable when MinIO isn't reachable from inside the cluster (rare;
+# the iagent-minio service is in-cluster) or when bucket creation is
+# owned by a different ops process.
+# ==========================================================================
+
+minioBucketInit:
+  enabled: true
+  # MinIO image override — the default mc client tracks MinIO server
+  # versions reasonably; pin if you need to.
+  # image: "quay.io/minio/mc:latest"
+  endpoint: "http://iagent-minio:9000"
+  accessKey: "minio-sandbox"
+  secretKey: "minio-sandbox-secret"
+  # Buckets to ensure exist. Order doesn't matter (each is mc-mb'd
+  # idempotently). Add new entries when a new user-deployment needs
+  # a bucket.
+  buckets:
+    # pub-tools' real-data lake (DLA PUB LOG content) — historically
+    # created out-of-band; listed here so future installs auto-create it.
+    - publog-lake
+    # dag-tools' user-deployment bucket (demo + future singletons).
+    # Required when userDeployments.dag-tools.enabled=true with
+    # DAG_TOOLS_DEMO_MODE=true so mesh_demo_customers can materialize.
+    - dag-lake
+
+# ==========================================================================
 # userDeployments — Dagster user-deployments that participate in the mesh
 # via the "same image, two startups" pattern.
 #
