@@ -1085,6 +1085,20 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # code. See state doc 2026-06-16 "Tier-3 four-layer fix" and
         # deploy checklist §4 Tier-3 entry for the full trace.
         "resolved_instance_id": telemetry.get("subject_instance_id", ""),
+        # 2026-06-26 — the next-session class-fix the comment above
+        # banked: also thread ``resolved_subject_uri`` (the idp:*
+        # class URI the router resolved) so engines stop re-resolving
+        # what's already known. Engine A's analyze handler historically
+        # called Engine O's /resolve again with just task_description,
+        # discarding the supervisor's already-resolved class — a
+        # textbook [[resolution-discard-pattern]] instance. With this
+        # field the engine can skip the redundant call AND surface the
+        # deterministic class→entity_type mapping in the smolagent
+        # prompt, eliminating the entity_type-selection variance the
+        # 2026-06-26 "who owns customer 360" investigation exposed.
+        # Engines that don't read this field ignore it (forward-
+        # compatible introduction).
+        "resolved_subject_uri": telemetry.get("subject_uri", ""),
     }
 
     context.log.info(

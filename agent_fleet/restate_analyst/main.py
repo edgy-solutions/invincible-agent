@@ -414,11 +414,39 @@ async def analyze(ctx: Context, request: dict) -> dict:
     if trace_id:
         current_trace_id.set(trace_id)
 
-    # Step 1: Resolve semantic context via Engine O (durable HTTP call)
-    semantic_ctx = await ctx.run(
-        "resolve_ontology",
-        lambda: _resolve_ontology(task.task_description),
-    )
+    # Step 1: Resolve semantic context. Prefer the supervisor's
+    # already-resolved fields when present — the supervisor's
+    # /resolve call already ran the routing chain (class recall +
+    # phone-book instance preemption); calling Engine O AGAIN from
+    # here is the [[resolution-discard-pattern]] failure mode the
+    # supervisor's dispatch-payload comment at lines 1056-1086 of
+    # dynamic_supervisor.py named as banked. Without this guard,
+    # Engine A re-resolves task_description (which is just the
+    # user's raw question), discards entity_refs and the phone-
+    # book provenance, and routinely ends up with resolved_uri=
+    # UNKNOWN even for queries the routing layer resolved at
+    # score 0.9+. With UNKNOWN, the deterministic
+    # class→entity_type recommendation (see _recommended_entity_type
+    # below) can't fire, and the smolagent falls back to guessing
+    # entity_type — which is the exact LLM-luck dependency the
+    # 2026-06-26 demo investigation closed at the source.
+    supplied_subject_uri = (request.get("resolved_subject_uri") or "").strip()
+    supplied_instance_id = (request.get("resolved_instance_id") or "").strip()
+    if supplied_subject_uri:
+        semantic_ctx = {
+            "resolved_uri": supplied_subject_uri,
+            "confidence_score": 0.9,  # Trust the supervisor's resolution.
+            "instance_id": supplied_instance_id,
+            "from_supervisor": True,
+        }
+    else:
+        # Legacy path: no supervisor-supplied context (older callers,
+        # direct test probes, the generalist fallback launched via
+        # /analyze_proxy with no routing). Re-resolve via Engine O.
+        semantic_ctx = await ctx.run(
+            "resolve_ontology",
+            lambda: _resolve_ontology(task.task_description),
+        )
 
     # --------------------------------------------------------------------------
     # Acquire the shared mem0 Memory singleton (built once per pod, off-loop).
