@@ -485,6 +485,20 @@ class ResolveRequest(BaseModel):
     """Incoming request to the /resolve endpoint."""
     query: str
     domain: str = "MAINTENANCE"
+    # Optional list of named-entity references the caller already
+    # extracted (typically by /route_intent's BAML ExtractIntent step).
+    # When class-recall (Weaviate hybrid + SPARQL fallback) returns no
+    # candidates, /resolve fans these out to mesh:resolveInstance
+    # providers BEFORE returning UNKNOWN — the original Recipe v2
+    # intent: named entities preempt the class contest. Without this,
+    # a query like "who owns customer 360" (no literal class token in
+    # the query) sees Weaviate find 0 candidates and short-circuits to
+    # UNKNOWN, even though engine_d's phone book would have returned
+    # Customer 360 at score 1.0 if asked. The entity_refs gate is the
+    # over-fire guard: instance fan-out fires ONLY when intent
+    # extraction surfaced a named entity to resolve, never on raw query
+    # text and never on every class-recall miss.
+    entity_refs: List[str] = []
 
 
 class SemanticResolutionResponse(BaseModel):
@@ -1220,7 +1234,57 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 "description": row.get("definition") or "No definition provided."
             })
             
-    # Step 1.6: Ultimate Fallback (Prevents Restate infinite loops)
+    # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
+    # fallback returned zero candidates). Before declaring UNKNOWN,
+    # try the phone book — when the caller supplied entity_refs from
+    # /route_intent, fan them out to registered mesh:resolveInstance
+    # providers. This is the precedence-fix from the 2026-06-25
+    # "who owns customer 360" surface: the original Recipe v2 intent
+    # was "named entities preempt the class contest," but the code
+    # had it wired as a sub-step that ran only AFTER class recall
+    # succeeded — meaning when class recall failed (exactly when the
+    # phone book is most needed), it never fired.
+    #
+    # Tight over-fire guard: this branch fires ONLY when entity_refs
+    # is non-empty AND class recall was zero. A genuinely
+    # unrecognizable query (no entity_refs, no class) STILL goes to
+    # UNKNOWN below — Engine A generalist, the safe fallback. The
+    # instance fan-out is the safety net for "Weaviate missed the
+    # class but intent extraction found a real named entity," not a
+    # blanket "try the phone book on any query."
+    #
+    # Per [[feedback-integration-probe-per-contract]]:
+    # tests/routing/test_resolve_instance_preemption_probe.py asserts
+    # BOTH directions — named-instance query with entity_refs
+    # resolves via preemption; genuinely-unknown query with no
+    # entity_refs (or with entity_refs that all return 0) still
+    # abstains to UNKNOWN. The probe is the property guard against
+    # this branch over-firing or being silently removed.
+    if not candidates and request.entity_refs:
+        for entity_ref in request.entity_refs:
+            instance_subject, instance_provenance = await _resolve_instance(
+                identifier=entity_ref, query=request.query
+            )
+            instance_provenance["instance_identifier"] = entity_ref
+            instance_provenance["llm_guess"] = None
+            instance_provenance["preemption_path"] = "class_recall_empty_fallback"
+            if instance_subject is not None:
+                return SemanticResolutionResponse(
+                    resolved_uri=instance_subject,
+                    confidence_score=0.9,
+                    reasoning=(
+                        f"Routed via mesh:resolveInstance preemption "
+                        f"(no class-recall candidates for query in domain "
+                        f"{request.domain!r}; entity_ref={entity_ref!r} "
+                        f"resolved by "
+                        f"{instance_provenance.get('instance_provider')}, "
+                        f"match={instance_provenance.get('instance_match')})."
+                    ),
+                    provenance=instance_provenance,
+                )
+        # All entity_refs returned no candidates — fall through.
+
+    # Step 1.7: Ultimate Fallback (Prevents Restate infinite loops)
     if not candidates:
         return SemanticResolutionResponse(
             resolved_uri="UNKNOWN",

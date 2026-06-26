@@ -191,6 +191,7 @@ def _resolve_subject(
     context,
     user_query: str,
     domain: str,
+    entity_refs: List[str] | None = None,
 ) -> tuple[str, float, str]:
     """Ask Engine O's /resolve for the subject ontology class.
 
@@ -199,6 +200,18 @@ def _resolve_subject(
     Returns ``(subject_uri, confidence, reasoning, instance_id)``. On
     failure or UNKNOWN return ``("UNKNOWN", 0.0, "<reason>", "")`` so
     the downstream predicate classifier still runs against the raw query.
+
+    ``entity_refs`` are the named-entity tokens /route_intent's BAML
+    ExtractIntent surfaced from the user's query. They're plumbed
+    through to /resolve as the over-fire guard for the precedence-fix
+    branch there: when Weaviate hybrid + SPARQL fallback BOTH return
+    zero class candidates AND entity_refs is non-empty, /resolve fans
+    them out to the registered mesh:resolveInstance providers BEFORE
+    declaring UNKNOWN. Closes the [[recipe-v2-preemption-gap]] failure
+    mode the 2026-06-25 "who owns customer 360" surface exposed:
+    engine_d would have returned Customer 360 at score 1.0 if asked,
+    but the phone book was gated on class recall succeeding first, so
+    it never fired.
 
     Subject classification was the missing leg of SPO routing for years
     (ADR-0004 proposed it; ADR-0009 Step F'.6 simplified it away). With
@@ -223,9 +236,15 @@ def _resolve_subject(
     state doc 2026-06-16 Tier-3 fix entry).
     """
     try:
+        payload: Dict[str, Any] = {
+            "query": user_query,
+            "domain": domain or "MAINTENANCE",
+        }
+        if entity_refs:
+            payload["entity_refs"] = list(entity_refs)
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/resolve",
-            json={"query": user_query, "domain": domain or "MAINTENANCE"},
+            json=payload,
             # 15s was too tight under realistic engine-o load: BAML's
             # ClassifyDomainIntent runs ~5-10s, Recipe v2's
             # instance-resolution fan-out adds 3-5s for engine_d's
@@ -301,6 +320,7 @@ def _classify_route(
     user_query: str,
     entitled_domains: List[str],
     routing_domain: str,
+    entity_refs: List[str] | None = None,
 ) -> tuple[str, Dict[str, Any] | None, dict]:
     """Three-stage SPO routing per ADR-0018 + ADR-0019: /resolve →
     /find_compatible_verbs → /classify_predicate.
@@ -326,7 +346,7 @@ def _classify_route(
     Returns ``(status, predicate_or_none, telemetry_dict)``.
     """
     subject_uri, subject_conf, subject_reason, subject_instance_id = _resolve_subject(
-        context, user_query, routing_domain,
+        context, user_query, routing_domain, entity_refs=entity_refs,
     )
 
     # ADR-0019 Contract B — UNKNOWN-subject short-circuit. No
@@ -882,6 +902,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         routing_query,
         list(config.entitled_domains),
         routing_domain=routing_domain,
+        entity_refs=list(config.entity_refs) if config.entity_refs else None,
     )
 
     # ------------------------------------------------------------------
