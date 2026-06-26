@@ -165,20 +165,28 @@ def test_class_recall_empty_with_no_entity_refs_stays_unknown() -> None:
 
 
 def test_class_recall_empty_with_unmatched_entity_refs_stays_unknown() -> None:
-    """The harder negative case: entity_refs ARE present but they
-    don't match any registered instance (all providers return 0
-    candidates). The fix MUST fall through to UNKNOWN — it iterates
-    the entity_refs and tries each, but if all return None, the
-    final answer is UNKNOWN. Without this, an entity_ref that
-    doesn't match anything would propagate as a non-UNKNOWN
-    fabrication (the fix would return the LAST provider's
-    abstention as the answer).
+    """The harder negative case: class recall genuinely returned 0
+    candidates AND entity_refs ARE present but DON'T match any
+    registered instance (all providers return 0). The fix's
+    preemption branch fires, iterates the entity_refs, all providers
+    return None for each, and the function MUST fall through to
+    UNKNOWN. Without this, an entity_ref that matches nothing would
+    propagate as a non-UNKNOWN fabrication (the fix would return the
+    LAST provider's abstention as the answer).
+
+    Query selection note: "xyzzy plover" is chosen because the
+    predict-snapshot confirmed Weaviate hybrid returns 0 candidates
+    for it — so the fix's preemption branch genuinely fires. A query
+    that Weaviate weakly matches (e.g. "tell me about Frobozz Magic
+    Whatsit" weakly hits ``prov:Usage`` at 0.2) tests the wrong
+    property: it exercises the BAML classifier's low-confidence
+    behavior, not the fix's fallthrough.
     """
     payload = {
-        "query": "tell me about Frobozz Magic Whatsit",
+        "query": "xyzzy plover",
         "domain": "DATA_ENGINEERING",
-        # entity_refs that are real strings but match no DataHub /
-        # mesh instance — exercises the fallthrough path.
+        # Real string but matches no DataHub / mesh instance —
+        # exercises the fix's fallthrough path.
         "entity_refs": ["Frobozz Magic Whatsit"],
     }
     status, body = _post_resolve(payload)
@@ -188,9 +196,10 @@ def test_class_recall_empty_with_unmatched_entity_refs_stays_unknown() -> None:
     resolved = body.get("resolved_uri") or ""
     assert resolved == "UNKNOWN", (
         f"Expected UNKNOWN for entity_refs that match no registered "
-        f"instance. Got: {resolved!r}. The fix's fallthrough path is "
-        f"broken — it's returning a non-UNKNOWN result when all "
-        f"providers returned abstention. Body: {body!r}"
+        f"instance (with class-recall empty). Got: {resolved!r}. The "
+        f"fix's fallthrough path is broken — it's returning a "
+        f"non-UNKNOWN result when all providers returned abstention. "
+        f"Body: {body!r}"
     )
 
 
