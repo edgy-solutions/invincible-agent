@@ -188,7 +188,18 @@ $IagentImages = @(
     @{ src='ghcr.io/edgy-solutions/cortex-ui/frontend:latest';                     dst='edgy-solutions/cortex-ui/frontend:latest' },
 
     # dag-tools — central gateway / aitool registration sensor
-    @{ src='ghcr.io/edgy-solutions/dag-tools/central-gateway:latest';              dst='edgy-solutions/dag-tools/central-gateway:latest' }
+    @{ src='ghcr.io/edgy-solutions/dag-tools/central-gateway:latest';              dst='edgy-solutions/dag-tools/central-gateway:latest' },
+
+    # dag-tools/user-deployment — generic / source-singleton Dagster
+    # user-deployment (2026-06-26). Same image runs as TWO pods:
+    # code-location (``dagster api grpc -m dag_tools.user_deployment.definitions``)
+    # + broker (``hypercorn dag_tools.domain_broker.main:app``).
+    # Required when ``userDeployments.dag-tools.enabled=true`` in iagent
+    # helm values. Hosts demo content (when DAG_TOOLS_DEMO_MODE=true) OR
+    # source-singleton surfaces (when off; future code). The
+    # mesh_demo_customers asset originally lived in pub-tools; relocated
+    # here so pub-tools stays a customer-domain pipeline example.
+    @{ src='ghcr.io/edgy-solutions/dag-tools/user-deployment:latest';              dst='edgy-solutions/dag-tools/user-deployment:latest' }
 )
 
 # -----------------------------------------------------------------------

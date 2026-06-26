@@ -499,6 +499,61 @@ userDeployments:
       #   requests: { cpu: 50m, memory: 128Mi }
       #   limits:   { cpu: 500m, memory: 512Mi }
 
+  # dag-tools — generic / source-singleton user-deployment.
+  #
+  # Hosts content that is NOT tied to a customer-domain pipeline. Has a
+  # single demo-mode switch (DAG_TOOLS_DEMO_MODE):
+  #
+  # * ``true`` — registers the synthetic mesh_demo_customers dataset
+  #   that the bar-chart demo reads. Used in sandbox / dev clusters.
+  # * ``false`` (production override) — registers only the source-
+  #   singleton surface (currently empty; future code from the owner
+  #   provides Snowflake all-assets, etc.). Production-safe.
+  #
+  # Same image, two pods (code-location gRPC + broker hypercorn) via
+  # the user-deployments template above. Cluster-specific demoMode is
+  # set per-environment: sandbox defaults to true (this file); work-
+  # cluster / production values files should override DAG_TOOLS_DEMO_MODE
+  # to "false".
+  dag-tools:
+    enabled: true
+    image: "ghcr.io/edgy-solutions/dag-tools/user-deployment:latest"
+    imagePullPolicy: Always
+    dagsterModule: "dag_tools.user_deployment.definitions"
+    codeLocation:
+      replicas: 1
+      port: 4000
+      env:
+        # Demo-mode toggle — read by definitions.py at module load
+        # to pick which components subdir registers. Default true
+        # here matches the sandbox-friendly defaults pattern in this
+        # file; production values files MUST override to "false".
+        DAG_TOOLS_DEMO_MODE: "true"
+        AWS_ACCESS_KEY_ID: "minio-sandbox"
+        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ENDPOINT_URL: "http://iagent-minio:9000"
+        AWS_DEFAULT_REGION: "us-east-1"
+        # New bucket for dag-tools-owned demo content. Replaces
+        # pub-tools' publog-lake for mesh_demo_customers. The bucket
+        # MUST exist in the cluster's MinIO before the first
+        # materialization fires.
+        DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"
+        MESH_DEMO_PREFIX: "mesh_demo"
+        DATAHUB_SERVER: "http://datahub-datahub-gms:8080"
+    broker:
+      replicas: 1
+      port: 8000
+      env:
+        # Broker reads the same demo flag so its physical_coordinates
+        # advertisements match the code-location's writes.
+        DAG_TOOLS_DEMO_MODE: "true"
+        AWS_ACCESS_KEY_ID: "minio-sandbox"
+        AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
+        AWS_ENDPOINT_URL: "http://iagent-minio:9000"
+        AWS_DEFAULT_REGION: "us-east-1"
+        DAG_TOOLS_DEMO_S3_BUCKET: "dag-lake"
+        MESH_DEMO_PREFIX: "mesh_demo"
+
 # ==========================================================================
 # mesh-registrar — Contract D registration gateway.
 # Engines opt into this path by setting MESH_REGISTRAR_URL on themselves
