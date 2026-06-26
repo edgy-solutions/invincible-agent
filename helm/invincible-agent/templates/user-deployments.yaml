@@ -77,13 +77,36 @@ spec:
           ports:
             - name: grpc
               containerPort: {{ $codeLocationPort }}
-          {{- with $deploy.codeLocation.env }}
+          # DAGSTER_POSTGRES_* are REQUIRED for the daemon's
+          # launch_run subprocess to instantiate the
+          # DagsterPostgresStorage backend configured in
+          # iagent-dagster's dagster.yaml. Without these, every
+          # asset materialization through DefaultRunLauncher fails
+          # with a misleading "User code server timed out after
+          # 60s" error — the actual cause is a config-loading
+          # failure on the storage backend that the daemon never
+          # gets back as a success. Mirror of what the central
+          # ``dagster-user-code.yaml`` template wires in.
           env:
+            - name: DAGSTER_POSTGRES_HOST
+              value: {{ include "invincible-agent.pgHost" $ | quote }}
+            - name: DAGSTER_POSTGRES_PORT
+              value: {{ include "invincible-agent.pgPort" $ | quote }}
+            - name: DAGSTER_POSTGRES_DB
+              value: {{ include "invincible-agent.pgDatabase" $ | quote }}
+            - name: DAGSTER_POSTGRES_USER
+              value: {{ include "invincible-agent.pgUser" $ | quote }}
+            - name: DAGSTER_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Release.Name }}-secrets
+                  key: BPMN_POSTGRES_PASSWORD
+            {{- with $deploy.codeLocation.env }}
             {{- range $k, $v := . }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
-          {{- end }}
+            {{- end }}
           resources:
             {{- toYaml (default (dict "requests" (dict "cpu" "100m" "memory" "256Mi") "limits" (dict "cpu" "500m" "memory" "1Gi")) $deploy.codeLocation.resources) | nindent 12 }}
 ---
