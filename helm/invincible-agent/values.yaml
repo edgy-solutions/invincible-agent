@@ -463,38 +463,33 @@ userDeployments:
     codeLocation:
       replicas: 1
       port: 4000
-      # AWS env so the mesh_demo asset can write parquet to MinIO at
-      # materialize time. Same shape as the broker env below — must
-      # match so the IO manager's write target equals the location the
-      # broker advertises through physical_coordinates().
+      # AWS env for the publog_pipeline component's CSV/parquet path.
+      # MESH_DEMO_PREFIX was removed when the mesh_demo component
+      # relocated to the dag-tools user-deployment (2026-06-26); only
+      # publog-relevant config stays here.
       env:
         AWS_ACCESS_KEY_ID: "minio-sandbox"
         AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         PUBLOG_S3_BUCKET: "publog-lake"
-        MESH_DEMO_PREFIX: "mesh_demo"
         # DataHub GMS base URL (NOT the GraphQL endpoint). Used by
-        # CortexPolarsIOManager.handle_output to emit the URN of each
-        # materialized asset directly to DataHub via the REST API.
-        # Service name is "datahub-datahub-gms" — the prefix comes
-        # from the acryl helm chart's release name.
+        # any IO manager that emits the URN of materialized assets
+        # directly to DataHub via the REST API. Service name is
+        # "datahub-datahub-gms" — the prefix comes from the acryl
+        # helm chart's release name.
         DATAHUB_SERVER: "http://datahub-datahub-gms:8080"
     broker:
       replicas: 1
       port: 8000
       # Defaults to http://<release>-central-gateway:8090 when unset.
       # centralGatewayUrl: ""
-      # AWS env so CortexPolarsIOManager.physical_coordinates can read
-      # the same credentials the IO manager would use at write time —
-      # the broker pod returns these to consumers via /resolve.
       env:
         AWS_ACCESS_KEY_ID: "minio-sandbox"
         AWS_SECRET_ACCESS_KEY: "minio-sandbox-secret"
         AWS_ENDPOINT_URL: "http://iagent-minio:9000"
         AWS_DEFAULT_REGION: "us-east-1"
         PUBLOG_S3_BUCKET: "publog-lake"
-        MESH_DEMO_PREFIX: "mesh_demo"
       # resources:
       #   requests: { cpu: 50m, memory: 128Mi }
       #   limits:   { cpu: 500m, memory: 512Mi }
