@@ -725,6 +725,39 @@ cortexBff:
       cpu: 500m
       memory: 512Mi
   env: {}
+  # Optional cluster-specific TLS trust override.
+  #
+  # When the cortex-bff pod needs to talk to an external HTTPS endpoint
+  # signed by a private CA (the canonical case is Keycloak's public
+  # interface on a corporate work cluster — see src/iagent/auth.py's
+  # PyJWKClient JWKS fetch), the CI cortex-bff image's stock trust store
+  # doesn't have the CA root and the JWKS call fails with a cert
+  # verification error.
+  #
+  # Setting ``tlsTrust.secretName`` mounts a PEM bundle from the named
+  # Secret and points Python's SSL stack at it via SSL_CERT_FILE. This
+  # collapses what used to be a parallel image lineage ("rebuild
+  # cortex-bff with work certs in the trust store, push to private
+  # registry, redeploy") into deployment config — the CI image is
+  # unmodified on every cluster; the cluster-specific trust lives in
+  # a Secret.
+  #
+  # **CRITICAL** — the Secret must contain a COMBINED bundle:
+  #     cat /etc/ssl/certs/ca-certificates.crt corporate-ca.pem > combined.pem
+  # SSL_CERT_FILE REPLACES the default cert bundle rather than appending
+  # to it; if you provide ONLY the corporate CA, every public-CA HTTPS
+  # call from cortex-bff will start failing with cert errors. The Python
+  # base image (python:3.12-slim-bookworm) ships ca-certificates.crt at
+  # /etc/ssl/certs/ca-certificates.crt — the canonical recipe is to
+  # concatenate that file with the corporate PEM(s) before creating the
+  # Secret.
+  #
+  # Sandbox / local clusters: leave ``secretName`` empty; nothing
+  # mounts, no env vars set, behavior unchanged.
+  tlsTrust:
+    secretName: ""      # Secret containing the combined PEM bundle.
+    secretKey: "ca.pem" # Key within the Secret.
+    mountPath: "/etc/ssl/work-ca-bundle.pem"
   ingress:
     enabled: false
     className: ""

@@ -77,6 +77,22 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.cortexBff.tlsTrust.secretName }}
+      # Cluster-specific TLS trust override — mount a combined PEM
+      # bundle (system roots + corporate CA) from a Secret so cortex-bff
+      # can talk to private-CA-signed external endpoints (Keycloak's
+      # public interface on a work cluster being the canonical case).
+      # Closes the [[cortex-bff-stale-drift]] seam: the CI image runs
+      # unmodified on every cluster; cluster-specific trust lives in
+      # config, not in a parallel image lineage.
+      volumes:
+        - name: work-ca-bundle
+          secret:
+            secretName: {{ .Values.cortexBff.tlsTrust.secretName }}
+            items:
+              - key: {{ .Values.cortexBff.tlsTrust.secretKey | quote }}
+                path: ca.pem
+      {{- end }}
       containers:
         - name: cortex-bff
           image: {{ include "invincible-agent.image" (dict "name" .Values.cortexBff.image.name "repository" .Values.cortexBff.image.repository "tag" .Values.cortexBff.image.tag "root" .) }}
@@ -89,12 +105,30 @@ spec:
                 name: {{ .Release.Name }}-config
             - secretRef:
                 name: {{ .Release.Name }}-secrets
-          {{- if .Values.cortexBff.env }}
           env:
+            {{- if .Values.cortexBff.tlsTrust.secretName }}
+            # Python's ssl module + the `requests` library both honor
+            # these. PyJWKClient (auth.py:42) → urllib → ssl.create_default_context
+            # reads SSL_CERT_FILE; httpx (used elsewhere in gateway.py)
+            # also honors it. REQUESTS_CA_BUNDLE is set as belt-and-
+            # suspenders in case any sub-library uses requests directly.
+            - name: SSL_CERT_FILE
+              value: {{ .Values.cortexBff.tlsTrust.mountPath | quote }}
+            - name: REQUESTS_CA_BUNDLE
+              value: {{ .Values.cortexBff.tlsTrust.mountPath | quote }}
+            {{- end }}
+            {{- if .Values.cortexBff.env }}
             {{- range $k, $v := .Values.cortexBff.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            {{- end }}
+          {{- if .Values.cortexBff.tlsTrust.secretName }}
+          volumeMounts:
+            - name: work-ca-bundle
+              mountPath: {{ .Values.cortexBff.tlsTrust.mountPath | quote }}
+              subPath: ca.pem
+              readOnly: true
           {{- end }}
           resources:
             {{- toYaml .Values.cortexBff.resources | nindent 12 }}
