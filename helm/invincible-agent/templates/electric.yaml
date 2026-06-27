@@ -1,0 +1,109 @@
+{{- if .Values.electric.enabled }}
+# iagent-electric — Hop 3 of the projector build plan
+# (docs/plans/projector-build-plan.md commit 0eda9f7 §4 Hop 3 Part 2).
+#
+# Electric is the CDC-from-Postgres server that delivers the
+# `answer_artifact_projection` rows to the cortex-ui client over a
+# long-lived shape subscription. It is the read-side path of the
+# CQRS pair ADR-0023 names; the projector writes Postgres, Electric
+# propagates to the client, the canvas store hydrates from the
+# subscription.
+#
+# INTERIM under Decisions 0+1+3 per
+# [[coupled-interim-mechanisms-retire-together]] — Electric is the
+# THIRD leg of the trio (poll loop + watermark column + Electric
+# subscription) that retires together under the Restate+topic
+# successor. When that lands, the topic offset becomes the position
+# and the cortex-ui client consumes the topic directly (or via a
+# successor read-side); Electric exits with the same flip.
+#
+# Lifecycle independence rationale (Decision 4 §3.4): Electric has
+# its own release cadence and image; bundling its lifecycle with the
+# projector means upgrading Electric requires re-rolling the
+# projector and vice versa. Distinct Deployment.
+#
+# Postgres prerequisite: wal_level=logical, max_replication_slots>=10,
+# max_wal_senders>=10 (see infrastructure.yaml's Postgres args block).
+# Without logical replication on Postgres, Electric will fail to
+# create its replication slot on startup. Per
+# [[feedback-baseline-regression-gate]], the postgres args are part
+# of this hop's chart changes — not "fix it later".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-electric
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.electric.replicas }}
+  selector:
+    matchLabels:
+      {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: electric
+          image: "{{ .Values.electric.image.repository }}:{{ .Values.electric.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.electric.port }}
+          env:
+            # Electric reads from Postgres via its connection URL. We
+            # reuse the iagent-postgresql instance (Decision 2's wide
+            # table lives there; Electric just subscribes).
+            #
+            # The DATABASE_URL secret form: uses the iagent role and
+            # password. Electric will create its logical replication
+            # slot ('electric_slot_*' prefix) on startup; the role
+            # needs REPLICATION privilege OR the database owner role.
+            # The `iagent` role is the DB owner from initdb, so it has
+            # the privileges needed.
+            - name: DATABASE_URL
+              value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)?sslmode=disable"
+            # Disable insecure mode in prod; sandbox/dev can flip on.
+            - name: ELECTRIC_INSECURE
+              value: {{ .Values.electric.insecure | quote }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          resources:
+            {{- toYaml .Values.electric.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-electric
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "invincible-agent.selectorLabels" (dict "component" "electric" "root" .) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.electric.port }}
+      targetPort: http
+{{- end }}

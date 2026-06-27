@@ -25,6 +25,23 @@ spec:
       containers:
         - name: postgresql
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          # Hop 3 of projector build plan (commit 0eda9f7) —
+          # logical replication for Electric. Default postgres image
+          # ships with wal_level=replica; Electric requires logical.
+          # max_replication_slots/max_wal_senders bumped to 10 to give
+          # Electric headroom + leave slots for ad-hoc subscribers.
+          # Args layered after the image's default entrypoint, so
+          # `postgres -c wal_level=logical` activates the override.
+          # INTERIM under Decisions 0+1+3 — when the Restate+topic
+          # successor lands and Electric retires, these args become
+          # benign (no slots consumed) but stay safe to leave.
+          args:
+            - "-c"
+            - "wal_level=logical"
+            - "-c"
+            - "max_replication_slots=10"
+            - "-c"
+            - "max_wal_senders=10"
           ports:
             - name: tcp-pg
               containerPort: 5432
