@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -49,6 +50,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from .answer_artifact_writer import (
+    AnswerArtifactBundle,
+    DurabilityStatus,
+    get_writer,
+)
 
 
 logger = logging.getLogger("cortex")
@@ -1326,6 +1332,41 @@ async def generate_dagster_stream(
     yield _stage("understanding", "completed")
     yield _stage("locating", "started")
 
+    # ── Hop 1 of projector build plan (docs/plans/projector-build-plan.md
+    # commit 0eda9f7) — accumulate the AnswerArtifact bundle as the SSE
+    # events fire, dispatch the Neo4j write on a separate task AFTER
+    # stream_end. Per Decision 0 sub-decision: delivery is NEVER coupled
+    # to the Neo4j write. The accumulator is local to this generator
+    # invocation.
+    #
+    # INTERIM: when Restate+topic successor lands, this accumulator
+    # moves out of the gateway and into a Restate handler; the dispatch
+    # becomes invoke-handler instead of in-process task. Decisions
+    # 0+1+3 retire together. See [[coupled-interim-mechanisms-retire-together]].
+    _artifact_id = f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
+    _artifact_bundle: dict = {
+        "id": _artifact_id,
+        "question_text": user_query,
+        "message_id": session_id,
+        "valid_as_of": int(time.time() * 1000),
+        "produced_by": {
+            "actor_type": "agent",
+            "actor_id": "pending",  # refined when route_decision arrives
+        },
+        "produced_for": {
+            "user_id": user_id,
+            "is_authenticated": True,
+            "user_persona": user_persona,
+            "entitled_domains": entitled_domains or [],
+        },
+        "resolved_intent": intent_extraction or {},
+        "routing": None,
+        "sources": [],
+        "graph_trace": [],
+        "rendered_output": None,
+        "derived_from_artifact_id": None,
+    }
+
     # Per ADR-0009 Step F'.2: /route_intent does not produce a task_plan
     # anymore — the supervisor's `create_task_plan` op asks Engine O's /plan
     # endpoint itself when task_plan_json is empty. Step F'.3 will switch
@@ -1441,6 +1482,22 @@ async def generate_dagster_stream(
                         decision.get("action", {}).get("iri"),
                     )
                     yield _sse("route_decision", json.dumps(decision))
+                    # Hop 1: capture routing + refine produced_by sentinel.
+                    _artifact_bundle["routing"] = decision
+                    handled_by = (decision.get("handled_by") or {}) if isinstance(
+                        decision, dict
+                    ) else {}
+                    if handled_by:
+                        _artifact_bundle["produced_by"] = {
+                            "actor_type": "agent",
+                            "actor_id": handled_by.get(
+                                "engine_name"
+                            ) or handled_by.get(
+                                "name"
+                            ) or "pending",
+                            "endpoint": handled_by.get("endpoint"),
+                            "version": handled_by.get("version"),
+                        }
                 emitted_steps.add("route_decision_emitted")
 
             elif (
@@ -1454,6 +1511,8 @@ async def generate_dagster_stream(
                         run_id, len(trace_nodes),
                     )
                     yield _sse("graph_trace", json.dumps({"nodes": trace_nodes}))
+                    # Hop 1: accumulate into bundle.
+                    _artifact_bundle["graph_trace"] = trace_nodes
                 emitted_steps.add("graph_trace_emitted")
 
             elif (
@@ -1474,6 +1533,8 @@ async def generate_dagster_stream(
                         "sources",
                         json.dumps({"sources": projected_sources}),
                     )
+                    # Hop 1: accumulate into bundle.
+                    _artifact_bundle["sources"] = projected_sources
                 emitted_steps.add("sources_emitted")
 
         # Map Dagster step transitions onto typed pipeline_stage events.
@@ -1593,6 +1654,8 @@ async def generate_dagster_stream(
 
             yield _stage("composing", "completed")
             yield _sse("final_payload", json.dumps(result["payload"]))
+            # Hop 1: capture rendered_output into the bundle.
+            _artifact_bundle["rendered_output"] = result.get("payload")
     else:
         yield _perror(
             "Timeout or failed to fetch UI payload.",
@@ -1602,6 +1665,66 @@ async def generate_dagster_stream(
         )
 
     yield _sse("stream_end", "{}")
+
+    # ── Hop 1: dispatch the AnswerArtifact Neo4j write on a SEPARATE
+    # asyncio task AFTER stream_end. Delivery is already done from the
+    # client's perspective. The writer's contract: dispatch_async NEVER
+    # raises back to us, regardless of Neo4j health. Per
+    # [[feedback-trailing-steps-nonfatal]] and Decision 0 sub-decision:
+    # this trailing step CANNOT fail delivery. The artifact's
+    # durability_status carries the honest recorded state.
+    #
+    # INTERIM: under the Restate+topic successor, this becomes an
+    # invoke-handler call, not an in-process task. The handler journals
+    # the Neo4j write + topic emit as exactly-once durable steps.
+    # Decisions 0+1+3 retire together per
+    # [[coupled-interim-mechanisms-retire-together]].
+    try:
+        _writer = get_writer()
+        if _writer is not None:
+            _bundle_obj = AnswerArtifactBundle(
+                id=_artifact_bundle["id"],
+                question_text=_artifact_bundle["question_text"],
+                message_id=_artifact_bundle["message_id"],
+                valid_as_of=_artifact_bundle["valid_as_of"],
+                produced_by=_artifact_bundle["produced_by"],
+                produced_for=_artifact_bundle["produced_for"],
+                resolved_intent=_artifact_bundle["resolved_intent"],
+                routing=_artifact_bundle["routing"],
+                sources=_artifact_bundle["sources"],
+                graph_trace=_artifact_bundle["graph_trace"],
+                rendered_output=_artifact_bundle["rendered_output"],
+                derived_from_artifact_id=_artifact_bundle[
+                    "derived_from_artifact_id"
+                ],
+            )
+            # Fire-and-await on a separate task so the SSE generator
+            # exits immediately; the writer drives the retry loop on
+            # its own. `asyncio.create_task` returns control to the
+            # event loop and the stream_end SSE event flushes to the
+            # client without waiting for the Neo4j write.
+            asyncio.create_task(_writer.dispatch_async(_bundle_obj))
+            logger.info(
+                "AnswerArtifact dispatch scheduled: id=%s (delivery already "
+                "completed at stream_end)",
+                _artifact_bundle["id"],
+            )
+        else:
+            logger.warning(
+                "AnswerArtifact writer not available; artifact %s NOT "
+                "scheduled for persistence (trailing-step non-fatal).",
+                _artifact_bundle["id"],
+            )
+    except Exception as exc:
+        # Belt-and-suspenders: the writer module's dispatch_async is
+        # already contracted to never raise, but if the scheduling
+        # itself blows up (e.g., loop closed), swallow it. The
+        # decoupling contract is honored at this layer too.
+        logger.warning(
+            "AnswerArtifact dispatch scheduling failed (decoupling "
+            "preserved): %s",
+            exc,
+        )
 
 
 # ══════════════════════════════════════════════════════════
