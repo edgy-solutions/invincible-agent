@@ -97,12 +97,34 @@ class AnswerArtifactBundle:
     interim-shaped fields `durability_status` and `watermark` which the
     writer assigns itself; the bundle is the upstream's view, the writer
     enforces those two).
+
+    `status` is REQUIRED — no default. Per
+    [[optimistic-defaults-are-dishonest]] rule #1 (Option A): a
+    multi-valued enum where the writer defaults to the "everything
+    succeeded" value silently lies about every failed-and-forgotten
+    pipeline. The gateway is the layer that knows the answer's
+    lifecycle (it sees `final_payload` AND `_perror`); requiring the
+    field at construction forces the gateway to confront the
+    decision. A forgotten `status` is a TypeError at construction,
+    NOT a silent persist-as-complete.
+
+    Vocabulary matches the cortex-ui Artifact.status field exactly:
+    `pending | complete | failed`. The writer accepts any of the
+    three; callers SHOULD NOT pass `pending` (per ADR-0023's
+    "generation-status is never an artifact property" rule — pending
+    is the transient UI-side state before the artifact is born) but
+    the writer does not enforce that. Enforcing it would re-create
+    the optimistic-default trap one layer over: the rule that
+    excludes `pending` does NOT mandate `complete`; both `complete`
+    and `failed` are legitimate persisted values, and which one is
+    correct depends on what actually happened upstream.
     """
 
     id: str
     question_text: str
     message_id: str
     valid_as_of: int
+    status: str  # REQUIRED — see class docstring.
     produced_by: Dict[str, Any]
     produced_for: Dict[str, Any]
     resolved_intent: Dict[str, Any]
@@ -387,18 +409,28 @@ class AnswerArtifactWriter:
         watermark = seq_result["watermark"]
 
         # MERGE the artifact node.
-        # `status` is born complete here — the bundle is assembled at
-        # answer-composition time, so the cortex-ui pending→complete
-        # transition is upstream of this write. Per ADR-0023's
-        # "generation-status is never an artifact property" discipline,
-        # the node is born complete.
+        # `status` is REQUIRED ON THE BUNDLE — no optimistic default
+        # here. Per [[optimistic-defaults-are-dishonest]] (first
+        # confirmed instance at this writer's prior commit, see the
+        # memory): a writer that defaults `status` to 'complete' would
+        # silently persist failed pipelines as durable + complete.
+        # The gateway is the layer that knows the lifecycle (it sees
+        # `final_payload` AND `_perror`); the bundle's status carries
+        # the gateway's explicit signal; the MERGE respects it
+        # verbatim. Failure-mode-1 (pipeline failed) persists as
+        # `status='failed' + durability_status='durable' +
+        # rendered_output=null` — honest.
+        #
+        # `rendered_output` is similarly written verbatim — if the
+        # bundle's rendered_output is None (failed pipeline produced
+        # no payload), the column stores null, not an empty placeholder.
         tx.run(
             """
             MERGE (a:AnswerArtifact {id: $id})
             ON CREATE SET
-              a.created_at = $now_ms,
-              a.status = 'complete'
+              a.created_at = $now_ms
             SET
+              a.status = $status,
               a.updated_at = $now_ms,
               a.valid_as_of = $valid_as_of,
               a.valid_until = $valid_until,
@@ -412,6 +444,7 @@ class AnswerArtifactWriter:
             """,
             id=bundle.id,
             now_ms=now_ms,
+            status=bundle.status,
             valid_as_of=bundle.valid_as_of,
             valid_until=bundle.valid_until,
             question_text=bundle.question_text,

@@ -84,6 +84,11 @@ def _make_bundle(artifact_id: str) -> AnswerArtifactBundle:
         ),
         message_id="msg-hop1-001",
         valid_as_of=int(time.time() * 1000),
+        # Required per [[optimistic-defaults-are-dishonest]]: the
+        # writer no longer defaults to 'complete'. Probe 1 exercises
+        # the happy path, so the caller's status here IS 'complete'
+        # explicitly (the gateway's final_payload-arrived flip).
+        status="complete",
         produced_by={
             "actor_type": "agent",
             "actor_id": "iagent-engine-a",

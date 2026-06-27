@@ -1349,6 +1349,15 @@ async def generate_dagster_stream(
         "question_text": user_query,
         "message_id": session_id,
         "valid_as_of": int(time.time() * 1000),
+        # Per [[optimistic-defaults-are-dishonest]]: status starts
+        # 'pending' (the transient in-flight state, honest about
+        # not-yet-known). It flips to 'complete' when final_payload
+        # arrives AND parses cleanly; flips to 'failed' when any
+        # _perror branch fires (architect-ruled failure-mode-1 fix
+        # on top of the prior Hop 1 commit). If neither flip happens
+        # before stream_end, the bundle is NOT dispatched — see the
+        # dispatch site for the guard.
+        "status": "pending",
         "produced_by": {
             "actor_type": "agent",
             "actor_id": "pending",  # refined when route_decision arrives
@@ -1421,6 +1430,14 @@ async def generate_dagster_stream(
                 retryable=False,
                 cause="dagster_run_failed",
             )
+            # Architect-ruled failure-mode-1 fix per
+            # [[optimistic-defaults-are-dishonest]]: the gateway sees
+            # the pipeline-failure signal; flip the bundle's status
+            # to 'failed' so the writer persists it honestly. Without
+            # this the writer would have applied an optimistic
+            # 'complete' default (now removed); even with the default
+            # gone, the bundle's status must carry the truth.
+            _artifact_bundle["status"] = "failed"
             break
 
         if status_data.get("status") == "SUCCESS":
@@ -1644,6 +1661,9 @@ async def generate_dagster_stream(
                 retryable=False,
                 cause="ui_payload_fetch_error",
             )
+            # Failure-mode-1 fix: gateway sees ui_payload_fetch_error;
+            # bundle status flips to 'failed'.
+            _artifact_bundle["status"] = "failed"
         else:
             # Emit data bindings to the HUD
             if result.get("referenced_uris"):
@@ -1656,6 +1676,11 @@ async def generate_dagster_stream(
             yield _sse("final_payload", json.dumps(result["payload"]))
             # Hop 1: capture rendered_output into the bundle.
             _artifact_bundle["rendered_output"] = result.get("payload")
+            # Happy path: payload arrived AND parsed cleanly; status
+            # flips to 'complete'. This is the ONLY site where the
+            # status becomes 'complete' — there is no default-to-
+            # complete elsewhere.
+            _artifact_bundle["status"] = "complete"
     else:
         yield _perror(
             "Timeout or failed to fetch UI payload.",
@@ -1663,6 +1688,13 @@ async def generate_dagster_stream(
             retryable=True,
             cause="ui_payload_timeout",
         )
+        # Failure-mode-1 fix: ui_payload_timeout is the canonical
+        # case the architect inspection cited (`_perror` "Timeout or
+        # failed to fetch UI payload" branch). Bundle status flips
+        # to 'failed' so the artifact persists honestly as
+        # `status='failed' + durability_status='durable' +
+        # rendered_output=null`.
+        _artifact_bundle["status"] = "failed"
 
     yield _sse("stream_end", "{}")
 
@@ -1680,6 +1712,28 @@ async def generate_dagster_stream(
     # Decisions 0+1+3 retire together per
     # [[coupled-interim-mechanisms-retire-together]].
     try:
+        # Per [[optimistic-defaults-are-dishonest]]: never dispatch
+        # while bundle.status is still 'pending'. The reachable post-
+        # init paths above each flip it to 'complete' (happy path,
+        # final_payload received + parsed) or 'failed' (any _perror
+        # branch). If we land here with status still 'pending', some
+        # exit path was added without a status flip — log loudly and
+        # skip the dispatch rather than letting an honest-pending
+        # leak through. (We do NOT default to 'failed' here because
+        # that would re-create the trap one layer over: the dispatch
+        # site has no idea what actually happened; only the gateway
+        # exit paths know.)
+        if _artifact_bundle["status"] == "pending":
+            logger.error(
+                "AnswerArtifact dispatch ABORTED: bundle.status is still "
+                "'pending' at stream_end for artifact %s. Some Graph "
+                "Path exit path failed to flip status. Skipping write "
+                "rather than persisting an honest-pending; investigate "
+                "the gateway exit paths.",
+                _artifact_bundle["id"],
+            )
+            return
+
         _writer = get_writer()
         if _writer is not None:
             _bundle_obj = AnswerArtifactBundle(
@@ -1687,6 +1741,7 @@ async def generate_dagster_stream(
                 question_text=_artifact_bundle["question_text"],
                 message_id=_artifact_bundle["message_id"],
                 valid_as_of=_artifact_bundle["valid_as_of"],
+                status=_artifact_bundle["status"],
                 produced_by=_artifact_bundle["produced_by"],
                 produced_for=_artifact_bundle["produced_for"],
                 resolved_intent=_artifact_bundle["resolved_intent"],

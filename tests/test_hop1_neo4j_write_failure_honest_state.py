@@ -61,6 +61,12 @@ def _make_bundle(artifact_id: str, message_id: str) -> AnswerArtifactBundle:
         ),
         message_id=message_id,
         valid_as_of=int(time.time() * 1000),
+        # Required per [[optimistic-defaults-are-dishonest]]. Probe 2
+        # exercises the unreachable-Neo4j case on a completed
+        # pipeline; the gateway's final_payload-arrived flip would
+        # have set this to 'complete'. The decoupling+honest-state
+        # contract is on durability_status, not on status itself.
+        status="complete",
         produced_by={
             "actor_type": "agent",
             "actor_id": "iagent-engine-a",

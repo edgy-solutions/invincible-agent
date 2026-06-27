@@ -287,6 +287,12 @@ The build session opens at gate 3. Gates 1 and 2 are CLOSED by positive evidence
 
 ## 4. Hop 1 plan — AnswerArtifact as a real Neo4j node
 
+### Architect-inspection follow-up (recorded post-`64a4662`)
+
+**Failure mode 1 (pipeline failed → recorded `durable + complete`):** FIXED in the narrow follow-up commit on top of `64a4662`. The writer used to hardcode `a.status = 'complete'` with a comment citing ADR-0023's "never persist pending" rule — the comment was wrong on both counts (assembly is piecewise not upstream; the rule excludes ONE value and does NOT mandate `complete`). Per `[[optimistic-defaults-are-dishonest]]` (this writer is the rule's first confirmed instance) the fix is Option A: `AnswerArtifactBundle.status` is REQUIRED at construction; the writer's MERGE uses `a.status = $status` from the explicit input; the gateway flips status to `'failed'` on every `_perror` branch and to `'complete'` only when `final_payload` arrives and parses cleanly. The dispatch guard refuses to write while status is still `'pending'` (a Graph Path exit was added without a flip). Probe 3 (`test_hop1_pipeline_failure_recorded_as_failed.py`) was RED-first per `[[pre-written-fixtures-must-fail-first]]`: predicted RED was `TypeError: AnswerArtifactBundle.__init__() got an unexpected keyword argument 'status'` (the bundle has no status field); predicted GREEN holds with all four legs (delivery decoupled + `status=failed` + `durability_status=durable` + `rendered_output=null`).
+
+**Failure mode 2 (per-leg absent-vs-empty distinction):** DEFERRED to the publish-backend planning thread (ADR-0024 Part B). The persisted artifact's `sources: []` and `graph_trace: []` are observationally identical to "engine produced empty" vs "engine never reported." Hop 1 does NOT distinguish these — a `complete` artifact with empty sources is treated as "honestly empty." The distinction matters for publish (do not promote an answer whose sources were never reported); the publish backend's planning will add per-field reported-vs-empty machinery when a consumer needs it. Banked at `[[fixture-must-exercise-paths]]`'s publish suite as the `@projection-published-not-rendered-as-empty-answer` shape (related but distinct case).
+
 ### Scope
 
 Stand up the write-side under the **decouple-with-honest-failure-state** shape settled in Decision 0's sub-decision. The flow is:
