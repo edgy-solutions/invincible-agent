@@ -1,9 +1,9 @@
 ---
-status: Plan (FINAL — settled after architect review and Decision-0 sub-decision ruling; build-session opens after this commit)
+status: Plan (LOCKED — Decision 3 RESOLVED by spike fe14d67 + Option C ruling; gates 1 and 2 closed; build proceeds at Hop 1 with a separate agent)
 date: 2026-06-27
-authors: claude (plan-only session, final revision after architect sub-decision ruling)
+authors: claude (plan-only session, final revision folds in spike outcome + Option C ruling)
 gates: ADR-0023 (read side) + ADR-0024 Part B (publish backend dependency)
-revision: 2 — folds in Decision 0 sub-decision ruling (decouple-with-honest-failure-state, NOT write-before vs write-after binary), introduces `durability_status` as a separate concept from `status`, adds Hop 1 `@neo4j-write-failure-honest-state` probe, cites `[[ordering-questions-hide-coupling-questions]]`. Prior revisions: ded7cc7 (original), 07023ce (Decision 0 + interim/successor framing).
+revision: 3 — Decision 3 RESOLVED Option C (watermark is a COLUMN on every artifact row, not a separate row, not a separate shape). Hop 3 Part 3 DROPS (ordering invariant dissolved — there are no two things to order). Decision 4 liveness probe REVISED (reads internal cursor, not a synced watermark row; `GET /projector/watermark` endpoint survives, only the synced row dies). Hop 2 Phase D EXPANDED (watermark-advanced co-required with durability_status orthogonal propagation). Prior revisions: ded7cc7 (original), 07023ce (Decision 0 + interim/successor), 0c2f5fe (Decision 0 sub-decision settled). Spike outcome: fe14d67.
 ---
 
 # Projector build plan — Neo4j → Postgres → Electric
@@ -14,9 +14,9 @@ This plan covers the Neo4j → Postgres → Electric projector seam that ADR-002
 
 This plan describes **what to build, in what order, with what acceptance probes, and what discipline holds across all three hops**. It states five premise-shift decisions explicitly (Decision 0 elevated post-review, plus the original four) so the architect can challenge each on review. It does NOT cover the publish backend itself, click-to-recall, ADR-0024 Part A's standards integrations, or any UI metaphor decisions about how artifacts arrange themselves in a workspace.
 
-**Two of the five decisions are interim-with-named-successor.** Decisions 1 and 3 are explicitly labeled as throwaway scaffolding pointing at a single shared successor (cortex-bff → Restate handler → Redpanda topic → projector consumes topic). The coupling is load-bearing — see Decision 3's revision and the new "Through-line — interim vs successor" section.
+**Three of the five decisions are interim-with-named-successor.** Decisions 0, 1, and 3 are explicitly labeled as throwaway scaffolding pointing at a single shared successor (cortex-bff → Restate handler → Redpanda topic → projector consumes topic, with topic offset as the position). Decision 3 was RESOLVED by the Electric-position spike (commit `fe14d67`) — the bespoke separate-watermark-row is dead by measured evidence; the watermark is a COLUMN on every artifact row (Option C), which dissolves the see-your-write ordering invariant entirely (no two things to order). Decision 3's watermark column is itself interim — it retires when the Restate+topic successor makes the topic offset the position. See Decision 3 in §3 for the architect's structural-vs-coordinated reasoning, and §3.5's Through-line for the retirement-coupling table.
 
-This session ends when this revised plan is committed. The build session is the next thread, gated on architect sign-off on the revision.
+This session ends when this final-revision is committed. The build session is the next thread (with a separate agent), proceeding directly to Hop 1 — gates 1 (Neo4j edition) and 2 (Electric-position spike) are CLOSED.
 
 ## 2. Audit findings
 
@@ -67,7 +67,7 @@ Audit across `c:/Users/cnogr/git/invincible-agent/` for who currently writes Ans
 
 The original draft had four — the four open questions ADR-0023's "Open questions for the implementing PR" section enumerates. The architect's second-agent review elevated a fifth (Decision 0) that the original plan buried in §2.4 as an audit consequence. Each decision is stated explicitly: chosen option, reasoning, rejection-trigger. Decisions are top-down readable and individually rejectable without re-reading the rest of this document.
 
-**Two interim/successor pairs are flagged.** Decisions 1 and 3 are explicitly coupled (per `[[coupled-interim-mechanisms-retire-together]]` — this plan is the first banked instance of that rule). They retire together under the same successor named in §3.5's "Through-line — interim vs successor" section.
+**Three interim mechanisms are flagged.** Decisions 0, 1, and 3 are explicitly coupled (per `[[coupled-interim-mechanisms-retire-together]]` — this plan is the first banked instance of that rule). They retire together under the same successor named in §3.5's "Through-line — interim vs successor" section. Decision 3 was RESOLVED by spike `fe14d67` to Option C (watermark-as-column on every artifact row); the column is still interim and retires with Decisions 0 and 1 under the Restate+topic successor. See Decision 3 in §3 for the full RESOLVED state and the architect's structural-vs-coordinated reasoning verbatim.
 
 ### Decision 0 — cortex-bff as the AnswerArtifact write authority
 
@@ -178,46 +178,46 @@ The projector then becomes a **topic consumer** instead of a poller. The poll lo
 
 **Rejection trigger:** If the architect rules `PublishedArtifact` should be a separate table (because the ADR's "instances vs classes" distinction is load-bearing differently than this plan reads), swap to one-table-per-archetype with shared FK to a small shared `actor` table for the producer/consumer references. The hop-2 acceptance probe shape stays the same; only the schema migration script changes. **Alternative rejection:** if the architect rules JSONB sub-columns are not future-proof enough (because `[[ui-contract-assumed-not-published]]` argues for per-field publication), split `routing`, `sources`, `graph_trace` into related tables; canvas reads then hit a `LEFT JOIN ... LATERAL` shape. Higher query cost, more migrations, but per-field discoverability.
 
-### Decision 3 — Position advertisement (REVISED: spike Electric-native position FIRST; watermark only if needed; coupled to Decision 1)
+### Decision 3 — Position advertisement (RESOLVED by spike fe14d67 + Option C ruling: watermark is a COLUMN on every artifact row)
 
-**Choice (revised): the build session's FIRST step is a one-day spike characterizing Electric's native per-shape position semantics. The watermark is built ONLY if the spike proves Electric's native position is insufficient for the see-your-write contract. If Electric's native position is sufficient, the bespoke watermark is never built — the interim leans on Electric, the successor leans on the topic offset, and the parallel counter never exists.**
+**Choice (RESOLVED): the watermark is a `watermark: int64` column on every artifact row (Option C), not a separate row, not a separate shape, not a separate Electric subscription.** See-your-write becomes `max(watermark) over the client's subscribed rows ≥ N` — a single fact derived from the artifact data the client already has. There is no second thing to deliver in order.
 
-**Coupled to Decision 1.** This is the canonical case `[[coupled-interim-mechanisms-retire-together]]` was banked from. The watermark exists *only because* polling has no native position primitive — choosing poll (Decision 1) caused the need to invent a position substitute. When the Restate+topic successor (named in Decision 1's body and §3.5) lands, **both** Decisions 1 and 3 retire at the same moment: the poll loop is replaced by topic consumption, and the topic offset becomes the position (the bespoke watermark never exists in the successor). Naming them as coupled in writing is what prevents the watermark from becoming orphan scaffolding when the poll loop is eventually replaced.
+**Spike outcome (commit `fe14d67`).** The spike characterized Electric's per-shape delivery semantics. Measured evidence:
+- **Cross-shape delivery is NOT ordered.** 15 of 500 trials reordered watermark-row arrival before its corresponding artifact-row at the 15–16 ms boundary. The original separate-watermark-row design would have produced ~3% see-your-write violations in production — invisible to most tests, hell to diagnose when surfaced.
+- **Same-shape FIFO holds.** 30/30 trials maintained order when the watermark and artifact were rows in the same shape. This would have made an Option B "watermark-row in same shape" design correct.
+- **Option B (same-shape watermark row) is correct by transport-property; Option C (watermark-as-column) is correct by construction.** The spike's measured evidence rules out the original cross-shape design and makes Option B viable, but the ruling prefers Option C for the structural reason recorded below.
 
-**Why this was sent back from the original draft:**
+**The architect's structural-vs-coordinated reasoning (verbatim, the load-bearing rationale):**
 
-1. **The coupling to Decision 1 was missed.** The original plan treated Decisions 1 and 3 as independent. They are not — polling is what *causes* the need for a hand-built position primitive. The streaming successor gets position for free. Writing the watermark as a stand-alone permanent invariant (which the original draft implicitly did) would have built scaffolding nobody knew when to retire.
-2. **The watermark's ordering invariant was untested.** The watermark's see-your-write contract is "client waits until `projector_watermark.value ≥ N`, then trusts the view is current." But the projector commits the artifact row and the watermark row as **two upserts**, and Electric syncs them as **two separate shapes with no stated cross-shape delivery-ordering guarantee**. If the client sees `projector_watermark = N` arrive *before* the artifact row tagged with watermark N, it concludes "visible," reads the store, and the artifact isn't there. **That's a see-your-write violation that looks exactly like a flaky test and would be hell to diagnose.** It is an assumed contract about Electric's delivery semantics that the original plan's three hop probes did not test — the project's dominant failure mode (`[[ui-contract-assumed-not-published]]`, `[[feedback-integration-positive-controls]]`) reproduced inside the projector itself.
+> "The deepest reason Option C is correct rather than just simpler is that it makes the see-your-write guarantee **structural** rather than **coordinated**. With a watermark row (Option B), even in the same shape, the client reconciles two facts: 'the artifact row' and 'the watermark row,' and the correctness depends on per-shape FIFO delivering them in the right order. That works — the spike proved same-shape FIFO holds 30/30 — but it's a guarantee that depends on a property of the transport. With Option C, there is no reconciliation at all. The watermark *is* a field on the artifact. When the artifact arrives, its watermark arrived, because they're the same row. There's no ordering question left to get right, because there are no longer two things to order. Option B is 'correct because FIFO holds'; Option C is 'correct because there's nothing to order.' The second is strictly better — it doesn't just pass the see-your-write test, it makes the test inapplicable. **That's why Hop 3 Part 3 doesn't just become passable, it vanishes.**"
 
-**The spike — required BEFORE Hop 2's projector code lands:**
+**This is the rule worth surfacing one level up.** Per `[[ordering-questions-hide-coupling-questions]]`'s sibling discipline at a different layer: when an ordering-or-coordination contract is required to make a design correct, the strictly-better move is to dissolve the contract entirely rather than satisfy it. The Decision-0 sub-decision dissolved a delivery-vs-persistence coupling; this Option C ruling dissolves a cross-row-delivery coupling. Same shape of move at two different decision layers in the same plan.
 
-- **Goal:** characterize Electric's native per-shape position semantics and cross-shape delivery ordering. Specifically: when the client subscribes to a single shape that includes both `answer_artifact_projection` and `projector_watermark` rows (or a single combined shape that includes the watermark as a derived field of the artifact row), does Electric guarantee in-order delivery within the shape? When the client subscribes to two separate shapes, are cross-shape ordering guarantees stated?
-- **Cheaper to answer than to build a parallel counter and discover it races**, per the architect's framing. The spike is bounded to a day; it may delete Decision 3 entirely. Don't build a watermark you spike your way out of an hour later.
-- **Spike output:** either (a) "Electric's native position is sufficient — drop the watermark, use Electric's per-shape position as the see-your-write primitive," in which case Decision 3 collapses and Hop 3's probe asserts against Electric's native position; or (b) "Electric's native position is insufficient — build the watermark, AND build the see-your-write ordering probe described below."
+**Mechanics under Option C:**
 
-**If the watermark IS built (spike outcome b):**
+- **Neo4j AnswerArtifact node** gains a `watermark: int64` property. Set monotonically by the cortex-bff write helper at write time, and **bumped on every UPDATE** — even an update that only changes `status` or `durability_status`. This is the load-bearing rule (see Consequence 2 / Hop 2 Phase D expansion below).
+- **Postgres `answer_artifact_projection`** gains a top-level `watermark bigint NOT NULL` column. The projector bumps it on every apply — including applies whose only change is `durability_status` or `status`.
+- **cortex-ui Artifact type** gains a `watermark: number` field (TypeScript `number` is sufficient since JS bigint isn't needed at the client; the value fits safely in 2^53 — confirmable budget calculation but uncontroversial at this throughput).
+- **`projector_watermark` table is DELETED from Hop 2's schema migrations.** It was the synced-row primitive — Option C eliminates it.
+- **`projector_cursor` table SURVIVES** — that's the projector's own internal state for poll-resumability, separate from the per-row watermark. Different concept.
+- **The `GET /projector/watermark` HTTP endpoint SURVIVES** — it now reads from the projector's internal apply-tick counter (in-memory or PG-backed via `projector_cursor` extended with a `last_applied_watermark` field). The endpoint is for probes/admin/operability, not for the see-your-write contract (which is now structural per Option C). See Decision 4's revised liveness probe.
+- **The cortex-bff `stream_end` event** still returns the issued watermark — the client uses it as the N in `max(subscribed_watermarks) ≥ N`. No `await_until_watermark_row` machinery, no separate subscription.
 
-The original draft's watermark mechanics stand — projector-local monotonic sequence, recovered from `SELECT MAX(watermark)` at restart, published via HTTP endpoint AND as a synced row, returned by cortex-bff in the SSE `stream_end` event. **Plus** Hop 3 gains a fourth probe assertion: see-your-write ordering.
+**Two values, separate facts — explicitly do NOT collapse.** Per `[[verify-subtle-acceptance-by-inspection]]`'s neighboring-concept-trap class: the AnswerArtifact now carries BOTH:
+- `valid_as_of` — the as-of of the grounding (ADR-0023's freshness primitive; the time the substrate was sampled at). Semantic, operational, content-side concept.
+- `watermark` — the projector's monotonic apply-order position. Mechanical, transport-side concept.
 
-The fourth probe assertion (load-bearing, must be able to fail):
+These are orthogonal facts about the artifact. They live in different concept spaces. **Do NOT collapse them under any framing.** A future refactor that says "valid_as_of is monotonic, just use it as the watermark" would re-create the same concept-conflation class as the Phase-1 persona-conflation, the Message-vs-Artifact conflation, and the canvas-overwrite. Two distinct concepts get two distinct slots. The Hop 2 Phase D probe (expanded below) protects against the watermark slot quietly going vestigial; this paragraph protects against it being collapsed in the opposite direction.
 
-```
-GIVEN the projector is running and the watermark is built.
-WHEN cortex-bff writes an artifact (returns watermark = N)
-AND the client immediately calls await_until_watermark(N)
-AND then synchronously reads useCurrentArtifact() for the written id.
-THEN the artifact is present in the store.
+**Consequence — Hop 3 Part 3 (see-your-write ordering probe) DROPS.** Not because the projector got cleverer, but because the ordering invariant is dissolved. There are no longer two things to order. A probe for "ordering" requires an ordering contract to validate; Option C has none. The plan must explicitly note that "no probe needed" is the correct outcome here, not a missing probe. The two-shape race window the original Decision 3 needed a probe for cannot exist by construction.
 
-The probe is made able to fail by ARTIFICIALLY DELAYING the artifact-row sync relative to the watermark-row sync (slow-network simulation or controlled inject in the test harness). If with the artifact-row delayed and the watermark-row arriving first, the wait-until-watermark + synchronous read finds the artifact absent, the see-your-write contract is violated AS IT WAS IN PRODUCTION RACE WINDOWS, and the watermark is decorative — the design has to add either:
-  (i) ordering inside Electric (publish both as one shape, lean on within-shape in-order delivery), OR
-  (ii) ordering in the projector apply (write the watermark row to Postgres AFTER the artifact row, and rely on Postgres commit ordering — which only helps if Electric reads them in commit order).
-```
+**Consequence — Decision 4's liveness probe shape changes.** With Option C, there is no global synced "projector watermark" row to query; the projector's position lives only in its internal cursor and per-row watermark columns. Decision 4's liveness probe is revised in the Decision 4 observability-seam bullet below to read the projector's internal cursor (via the surviving `GET /projector/watermark` endpoint, which now sources from internal state) instead of a synced row. The discipline of asserting advance per `[[liveness-probe-watches-advance-not-just-correctness]]` is unchanged; the source of the advance signal moves from "synced row" to "internal cursor."
 
-Per `[[pre-written-fixtures-must-fail-first]]` — show the see-your-write probe RED first (with the artifact-row sync delayed, the assertion has to fail), then implement whichever ordering fix is needed, then re-run and trust GREEN. A watermark whose see-your-write probe has only ever been green-without-having-been-red is decorative.
+**Consequence — Hop 2 Phase D expands.** Every artifact apply must bump the watermark column, including updates that only change `status` or `durability_status`. A status-only or durability-only update that propagates the row change but leaves `watermark` unchanged would quietly break see-your-write for any client awaiting a *later* write — `max(watermark) ≥ N` could be satisfied by a stale max, or worse, the updated row's unchanged watermark makes the see-your-write reasoning evaluate against the wrong position. Phase D's converse assertion grows a co-required sibling: durability_status propagates AND watermark advanced. Per `[[fixture-must-exercise-paths]]`, Phase D must EXERCISE the durability-only update path (not just status updates) — a fixture that only exercises status updates leaves the durability-only-but-watermark-doesn't-bump trap invisible.
 
-**Rejection trigger:** If the architect rules the spike is overkill (because Electric's native position is documented and the team trusts the docs), skip step (a) and adopt Electric's native position directly. Decision 3 collapses without a spike. **Alternative rejection:** if the architect rules the see-your-write contract is itself not load-bearing (clients tolerate "the artifact appears within ~2s" without a wait-until primitive), drop the position-advertisement entirely. The cost is a worse UX during pending → complete; the gain is one fewer mechanism in the interim.
+**Coupled to Decision 1 — still interim.** Option C resolves the cross-shape coordination problem, but the watermark COLUMN itself is still interim. Per `[[coupled-interim-mechanisms-retire-together]]`: when the Restate+topic successor lands, the polling loop retires AND the watermark column retires together. The topic offset becomes the position; the per-row watermark column becomes redundant scaffolding. The retirement-coupling table in §3.5's Through-line is updated to record this: the column joins the retirement, it doesn't survive the flip as permanent substrate.
 
-**Build-sequencing implication (binding):** The Electric-native-position spike runs BEFORE Hop 2's projector code, per the architect's explicit guidance. See §3.6 Build-session gate list.
+**No further rejection trigger.** Decision 3 is RESOLVED. The spike's measured evidence rules out the original cross-shape framing; the architect's structural-vs-coordinated reasoning rules out Option B (same-shape watermark row); Option C is what proceeds into Hop 2. The build session does NOT re-litigate Decision 3 — it implements Option C.
 
 ### Decision 4 — Where the projector runs
 
@@ -227,7 +227,7 @@ Per `[[pre-written-fixtures-must-fail-first]]` — show the see-your-write probe
 
 - **Lifecycle independence:** the projector's apply loop should not restart whenever cortex-bff restarts (which happens on every cortex-bff deploy). Conversely, a projector restart should not impact cortex-bff's request path. Co-locating them couples lifecycles in a way that creates outages when none is required.
 - **Auth surface:** the projector needs Neo4j credentials (poll-side) AND Postgres credentials (apply-side). Both already exist in the chart (`.Values.neo4j.auth`, `.Values.postgresql.auth`). Mounting them onto a dedicated projector Deployment is one env-config block; mixing them into cortex-bff expands cortex-bff's credential surface for no benefit.
-- **Observability seam:** the projector logs go to a labeled pod (`app=iagent-projector`) that is grep-able as a unit. The **liveness probe asserts the apply loop is ADVANCING, not just that data is correct** — per `[[liveness-probe-watches-advance-not-just-correctness]]` (banked from this plan's §7 footnote in the original draft, elevated by the architect to its own rule). The advance check reads the watermark (if built per Decision 3) or the projector's apply-tick counter (if Decision 3 collapses), and asserts the value at T+1s is greater than the value at T-0 when the source has writes. A correctness-only probe (e.g., "are the rows shaped right") misses the frozen-but-correct failure mode — a projector that ran once, projected the table, then died has identical data to a healthy projector; only the advance check distinguishes them. A readiness probe verifies the Neo4j and Postgres connections are healthy. If the projector is stuck, the sandbox finds out via the readiness probe failing — which it cannot do if the projector is embedded in cortex-bff. **The liveness probe must itself be verified can-fail per `[[pre-written-fixtures-must-fail-first]]`**: kill the projector's apply loop, watch the probe go red. If the probe stays green when the loop is dead, the probe is checking the wrong thing.
+- **Observability seam (REVISED under Decision 3 Option C):** the projector logs go to a labeled pod (`app=iagent-projector`) that is grep-able as a unit. The **liveness probe asserts the apply loop is ADVANCING, not just that data is correct** — per `[[liveness-probe-watches-advance-not-just-correctness]]` (banked from this plan's §7 footnote in the original draft, elevated by the architect to its own rule). Under Option C, there is no synced "projector watermark" row to query — the watermark lives only as a column on each artifact row, and a global `max(watermark)` over the synced rows is a client-side concept, not an operator probe primitive. The liveness probe therefore reads the **projector's INTERNAL CURSOR POSITION** via the surviving `GET /projector/watermark` HTTP endpoint, which now sources from the projector's own in-process state (or from a `last_applied_watermark` field added to the `projector_cursor` table) rather than from a synced row. The endpoint exists for probes and admin tooling, NOT for the see-your-write contract (which Option C makes structural — clients don't need it). The probe asserts the cursor at T+1s is greater than the value at T-0 when the source has writes. A correctness-only probe (e.g., "are the rows shaped right") misses the frozen-but-correct failure mode — a projector that ran once, projected the table, then died has identical data to a healthy projector; only the advance check distinguishes them. **This shape is arguably cleaner than the original synced-row design** — the liveness signal SHOULD come from the projector's own state, not from a row it writes. A readiness probe verifies the Neo4j and Postgres connections are healthy. If the projector is stuck, the sandbox finds out via the readiness probe failing — which it cannot do if the projector is embedded in cortex-bff. **The liveness probe must itself be verified can-fail per `[[pre-written-fixtures-must-fail-first]]`**: kill the projector's apply loop, watch the probe go red. If the probe stays green when the loop is dead, the probe is checking the wrong thing.
 - **Why not a Dagster sensor:** a sensor is one of Dagster's polling primitives, but the projector is not a Dagster asset and shouldn't appear in the Dagster graph. Dagster runs already have their own materialization assets (`subtask_routing_decision`, `subtask_graph_trace`, `subtask_sources`). Adding the projector as a sensor conflates Dagster's role (orchestration of pipeline runs) with the projector's role (CQRS read-side maintenance).
 - **Why not a sidecar to Neo4j:** Neo4j runs as a StatefulSet; sidecars to StatefulSet pods complicate the volume/restart story for no operational gain. The projector is network-attached to Neo4j over bolt, same as any other client.
 - **Why distinguish projector and Electric server:** Electric is a third-party server with its own release cadence and image. Bundling its lifecycle with the projector means upgrading Electric requires re-rolling the projector and vice versa. Distinct Deployments let each upgrade independently. The two communicate over Postgres (Electric reads from Postgres just like any other consumer).
@@ -268,22 +268,22 @@ cortex-bff → Restate handler → (Neo4j write + Redpanda emit) → projector c
 |---|---|---|
 | Decision 0 — cortex-bff direct write | Interim | Restate handler (cortex-bff becomes invoker) |
 | Decision 1 — polling | Interim | Topic consumption |
-| Decision 3 — bespoke watermark (if built) | Interim | Topic offset becomes position |
+| Decision 3 — watermark COLUMN on every artifact row (Option C, post-spike) | Interim | Topic offset becomes position; the column becomes redundant scaffolding and is dropped at the same flip |
 | Decision 2 — wide table + discriminator | Permanent | — |
 | Decision 4 — separate Deployments | Permanent | — |
 
-The interim trio (Decisions 0, 1, 3) retires under a **single shared successor** (the Restate+topic path). Per `[[coupled-interim-mechanisms-retire-together]]` — this plan is the first banked instance of that rule. The retirements are coupled by their shared cause (no streaming change-feed today); when that cause is removed (Redpanda emit exists), all three exit at once. **Naming this in writing is what prevents the watermark from becoming orphan scaffolding the team forgets to retire.**
+The interim trio (Decisions 0, 1, 3) retires under a **single shared successor** (the Restate+topic path). Per `[[coupled-interim-mechanisms-retire-together]]` — this plan is the first banked instance of that rule. The retirements are coupled by their shared cause (no streaming change-feed today); when that cause is removed (Redpanda emit exists), all three exit at once. The Option C watermark COLUMN does not survive the flip — the topic offset becomes the projector's position, and the per-row column it currently carries is redundant scaffolding. **Recording this in the table is what prevents the column from becoming orphan scaffolding the team forgets to retire** — even though Option C is structurally cleaner than the original synced-row design, it is still interim, and its retirement is coupled to the same shared cause as Decisions 0 and 1.
 
-### 3.6 Build-session gate list (binding sequence)
+### 3.6 Build-session gate list (LOCKED — gates 1 and 2 closed; build proceeds at Hop 1)
 
-The build session opens with this gate list. Each gate is a positive-confirmation step, not an assumption. Out-of-order execution is a premise-shift requiring architect re-review.
+The build session opens at gate 3. Gates 1 and 2 are CLOSED by positive evidence recorded in this plan. Out-of-order execution from here forward is a premise-shift requiring architect re-review.
 
-1. **Confirm Neo4j edition.** `CALL dbms.components()` from inside the cluster. Predicted: community. If Enterprise, re-evaluate Decision 1's framing (Enterprise CDC remains dead by choice per the architect's review, but the audit's accuracy claim has to be corrected before further steps).
-2. **Run the Electric-native-position spike (one-day budget).** This runs BEFORE Hop 2's projector code. Outcome decides whether Decision 3 collapses (use Electric's native position, no watermark built) or stands (build the watermark + the see-your-write ordering probe). The architect was explicit: "It may delete Decision 3 entirely, and you don't want to build a watermark you spike your way out of an hour later."
-3. **Hop 1 — cortex-bff becomes the Neo4j write authority (Decision 0).** **Two probes** pre-written and RED-first: Probe 1 (`@hop1-happy-path-write`) AND Probe 2 (`@neo4j-write-failure-honest-state`, both-legs assertion). Trailing-steps-nonfatal interaction is **settled** per Decision 0's sub-decision ruling: decouple-with-honest-failure-state, NOT write-before-vs-after binary. The `durability_status` field is added to the Artifact type at Hop 1's close (architect-approved baseline shift for Hop 3's diff probe).
-4. **Hop 2 — projector (poll loop or whichever Decision 1 settled on).** Probe written first (Phases A, B, C, D all red where applicable), code lands, probes go green. Phase D specifically verifies `durability_status` propagates as an ORTHOGONAL field from `status`. Liveness probe verified can-fail by killing the apply loop and watching it go red, per `[[liveness-probe-watches-advance-not-just-correctness]]` and `[[pre-written-fixtures-must-fail-first]]`.
-5. **Hop 3 — Electric → store swap.** Part 1 (byte-identical diff probe) and Part 2 (propagation without SSE) both run; if Decision 3 stood after the spike, Part 3 (see-your-write ordering probe with artificially-delayed artifact-row sync) also runs. Per `[[pre-written-fixtures-must-fail-first]]`, see-your-write probe goes RED first (with the delay injected, the wait-until-watermark + synchronous read finds the artifact absent), then the ordering fix lands, then the probe goes green.
-6. **Visual confirmation per `[[verify-subtle-acceptance-by-inspection]]`.** Open Neo4j browser, open Postgres, open cortex-ui DevTools. Confirm by eye that the data flows match the predicted shapes. Don't accept "all green" without the visual sweep.
+1. **~~Confirm Neo4j edition~~ ✓ CLOSED.** Community confirmed via the deployed image tag `neo4j:5.26.0` (audit §2.2, recorded in revision 1). The image carries no `-enterprise` suffix; Enterprise CDC remains dead by choice per the architect's revision-1 review. The build session does NOT need to re-run `CALL dbms.components()` unless something about the deployed image changes; if it does, that's a new premise-shift requiring architect cover before Hop 1 starts.
+2. **~~Electric-native-position spike~~ ✓ CLOSED.** Spike `fe14d67` characterized Electric's per-shape delivery semantics. Cross-shape order is NOT guaranteed (15/500 reorders at the 15–16 ms boundary); same-shape FIFO holds (30/30). Decision 3 RESOLVED to Option C (watermark-as-column, not synced row). See Decision 3 in §3 for the full ruling + the architect's structural-vs-coordinated reasoning. The build session does NOT re-run the spike or re-litigate Decision 3 — it implements Option C.
+3. **Hop 1 — cortex-bff becomes the Neo4j write authority (Decision 0).** **Two probes** pre-written and RED-first: Probe 1 (`@hop1-happy-path-write`) AND Probe 2 (`@neo4j-write-failure-honest-state`, both-legs assertion). Trailing-steps-nonfatal interaction is **settled** per Decision 0's sub-decision ruling: decouple-with-honest-failure-state, NOT write-before-vs-after binary. The `durability_status` field AND the Option-C `watermark` field are both added to the Artifact type at Hop 1's close. Architect-approved baseline shift for Hop 3's diff probe. **The build session opens HERE.**
+4. **Hop 2 — projector poll loop with watermark-as-column.** Probe written first (Phases A, B, C, D all red where applicable), code lands, probes go green. Phase D EXPANDED under Option C: verifies BOTH that `durability_status` propagates as an ORTHOGONAL field from `status` AND that `watermark` advanced on the durability-only flip. Liveness probe reads the projector's INTERNAL CURSOR via the surviving `GET /projector/watermark` endpoint (no synced watermark row exists under Option C); verified can-fail by killing the apply loop and watching it go red, per `[[liveness-probe-watches-advance-not-just-correctness]]` and `[[pre-written-fixtures-must-fail-first]]`.
+5. **Hop 3 — Electric → store swap.** Part 1 (byte-identical diff probe, baseline = post-Hop-1) and Part 2 (propagation without SSE) both run. **Part 3 (see-your-write ordering probe) DROPS under Option C** — the ordering invariant is dissolved (no two things to order). "No probe needed" is the correct outcome here, not a missing probe.
+6. **Visual confirmation per `[[verify-subtle-acceptance-by-inspection]]`.** Open Neo4j browser, open Postgres, open cortex-ui DevTools. Confirm by eye that the data flows match the predicted shapes — including that `watermark` and `valid_as_of` are distinct fields not collapsed under any framing. Don't accept "all green" without the visual sweep.
 
 ## 4. Hop 1 plan — AnswerArtifact as a real Neo4j node
 
@@ -298,7 +298,7 @@ Stand up the write-side under the **decouple-with-honest-failure-state** shape s
 The fields written match the Phase-1 `Artifact` type contract exactly **plus** the new `durability_status` field this revision adds (this is the load-bearing constraint: the Neo4j node's properties + edges have to project cleanly into a row that round-trips into the `Artifact` shape the cortex-ui store consumes — including the new field).
 
 Specifically:
-- `(:AnswerArtifact {id, created_at, updated_at, valid_as_of, valid_until?, question_text, resolved_intent, message_id, status, durability_status, rendered_output})` — `rendered_output` as inline JSONB property until the size discriminant fires (ADR-0023 leaves this to the implementing PR; this plan ships inline, files a follow-up for the size threshold). **`durability_status` is a property on the node** (not on an edge, not in a JSONB sub-blob) so the projector can query and update it directly.
+- `(:AnswerArtifact {id, created_at, updated_at, valid_as_of, valid_until?, question_text, resolved_intent, message_id, status, durability_status, watermark, rendered_output})` — `rendered_output` as inline JSONB property until the size discriminant fires (ADR-0023 leaves this to the implementing PR; this plan ships inline, files a follow-up for the size threshold). **`durability_status` is a property on the node** (not on an edge, not in a JSONB sub-blob) so the projector can query and update it directly. **`watermark` is a property on the node** under Decision 3 Option C — a monotonic int64 assigned at write time, **bumped on every UPDATE** (including updates that only change `status` or `durability_status`). The cortex-bff write helper owns watermark assignment. **`watermark` and `valid_as_of` are orthogonal facts** — `valid_as_of` is the as-of of the grounding (ADR-0023's freshness primitive); `watermark` is the projector's apply-order position (Option C's see-your-write primitive). Two distinct concepts, two distinct slots. Do NOT collapse.
 - `(:AnswerArtifact)-[:PRODUCED_BY]->(:Actor {actor_type, actor_id, version?, endpoint?, code_hash?})` — agent identity captured at creation. Refined from the pending-sentinel only if the routing event carries real `handled_by`.
 - `(:AnswerArtifact)-[:PRODUCED_FOR]->(:Actor {actor_type, user_id, is_authenticated, user_persona?, entitled_domains?})` — user-side persona slot present even when null (per `[[pingsso-claim-gap]]`).
 - `(:AnswerArtifact)-[:DERIVED_FROM]->(:AnswerArtifact)` — when `derived_from_artifact_id` is non-null. (Phase 1 almost always null; the edge-write code path exists for when follow-up detection lands.)
@@ -347,16 +347,20 @@ AND (:AnswerArtifact)-[:PRODUCED_BY]->(:Actor {actor_type: "agent"}) exists with
     (the routing event refined the sentinel).
 AND (:AnswerArtifact)-[:CITES]->(:Source) edges resolve to at least one Source node whose uri is non-empty.
 AND the (:AnswerArtifact).valid_as_of property is a real epoch-millis number, NOT null, NOT 0.
+AND the (:AnswerArtifact).watermark property is a positive int64, NOT null, NOT 0.
 
 ASSERT: a second write with the same id (replay) does NOT create a duplicate node — count of (:AnswerArtifact {id: <known-id>}) == 1.
+ASSERT: after the second write, the watermark on the row has STRICTLY ADVANCED (the replay-as-update bumps watermark; vestigial-watermark trap caught).
 ```
 
-The probe is "predict a specific value AND a specific change-propagation": the predicted value is the question text, the predicted change-propagation is that the pending-sentinel `produced_by.actor_id` got refined to a real engine_name when routing arrived, AND that `durability_status` transitioned from `persistence_pending` (at delivery) to `durable` (after the Neo4j write succeeded).
+The probe is "predict a specific value AND a specific change-propagation": the predicted value is the question text, the predicted change-propagation is that the pending-sentinel `produced_by.actor_id` got refined to a real engine_name when routing arrived, AND that `durability_status` transitioned from `persistence_pending` (at delivery) to `durable` (after the Neo4j write succeeded), AND that `watermark` advanced on the update (per Decision 3 Option C — every apply that touches the row touches the watermark).
 
 **This probe MUST be able to fail.** Failure modes it has to catch:
 - The write never happens (cortex-bff has no Neo4j write path) — the node is absent.
 - The write happens but `valid_as_of` is null — capture-or-lose-forever violated.
 - The write happens but `durability_status` is missing or still `persistence_pending` — the field isn't being managed, or the success-path transition is broken.
+- The write happens but `watermark` is null or 0 — Option C's watermark-as-column wasn't wired.
+- The replay-as-update bumps the row but leaves `watermark` unchanged — the vestigial-watermark trap per `[[verify-subtle-acceptance-by-inspection]]`. Every apply that touches the row MUST touch the watermark; if any update path leaves it stale, see-your-write quietly breaks for clients awaiting later writes.
 - The write happens but `produced_by.actor_id` is still "pending" — the routing-event refinement path didn't apply.
 - The replay creates a duplicate node — idempotency violated.
 - The `:Source` node has empty `uri` — `MERGE` keyed on a missing field.
@@ -435,11 +439,11 @@ Stand up the projector: a new `iagent-projector` Deployment (Decision #4), polli
 
 Schema migrations land in this hop:
 - `CREATE INDEX ON :AnswerArtifact(updated_at)` on Neo4j (required for poll efficiency).
-- `CREATE TABLE answer_artifact_projection (id text PRIMARY KEY, kind text NOT NULL DEFAULT 'AnswerArtifact', created_at bigint, updated_at bigint, valid_as_of bigint NOT NULL, valid_until bigint, question_text text, resolved_intent jsonb, message_id text, status text, durability_status text, rendered_output jsonb, produced_by jsonb, produced_for jsonb, routing jsonb, sources jsonb, graph_trace jsonb, derived_from_artifact_id text, watermark bigint NOT NULL)`. **`durability_status` is a separate top-level column from `status`**, not a JSONB sub-field — consumers will filter by it ("show me artifacts that need persistence retry") and the orthogonality from `status` must be preserved at the projection layer.
-- `CREATE TABLE projector_watermark (id int PRIMARY KEY DEFAULT 1, value bigint NOT NULL)` — single-row table, the published current watermark (subject to Decision 3's spike outcome — may not be built if Electric's native position is sufficient).
-- `CREATE TABLE projector_cursor (id int PRIMARY KEY DEFAULT 1, last_polled_updated_at bigint NOT NULL)` — projector's own resumable state.
+- `CREATE TABLE answer_artifact_projection (id text PRIMARY KEY, kind text NOT NULL DEFAULT 'AnswerArtifact', created_at bigint, updated_at bigint, valid_as_of bigint NOT NULL, valid_until bigint, question_text text, resolved_intent jsonb, message_id text, status text, durability_status text, rendered_output jsonb, produced_by jsonb, produced_for jsonb, routing jsonb, sources jsonb, graph_trace jsonb, derived_from_artifact_id text, watermark bigint NOT NULL)`. **`durability_status` is a separate top-level column from `status`** (not a JSONB sub-field — consumers filter by it). **`watermark` is a top-level column under Decision 3 Option C** — bumped on every apply, including durability-only or status-only changes. Two top-level columns (`durability_status`, `watermark`) — both orthogonal to `status` for different reasons; do not collapse either.
+- **~~`CREATE TABLE projector_watermark`~~ — DELETED under Decision 3 Option C.** The original synced single-row watermark table is dead. The watermark lives only as a column on the artifact row.
+- `CREATE TABLE projector_cursor (id int PRIMARY KEY DEFAULT 1, last_polled_updated_at bigint NOT NULL, last_applied_watermark bigint NOT NULL DEFAULT 0)` — projector's own resumable state. **The `last_applied_watermark` field is added under Option C** so the liveness probe (Decision 4, revised) can read the projector's internal cursor without depending on a synced row. It is INTERNAL state, NOT synced to Electric.
 
-The projector's apply loop: poll Neo4j → assemble the projected row (denormalizing edges into the JSONB columns; copying `durability_status` as a top-level column) → upsert into `answer_artifact_projection` with the next watermark → upsert into `projector_watermark` → advance cursor.
+The projector's apply loop: poll Neo4j → assemble the projected row (denormalizing edges into the JSONB columns; copying `durability_status` and `watermark` as top-level columns) → upsert into `answer_artifact_projection` (the watermark column carries the per-row position; every apply bumps it including no-content changes that only touch status or durability_status) → update `projector_cursor.last_applied_watermark` to the newly-applied value → advance the poll cursor. **No separate watermark-row write.** The `GET /projector/watermark` HTTP endpoint reads `projector_cursor.last_applied_watermark` (or the in-process counter that mirrors it) for probe/admin/operability use.
 
 ### Probe shape (predict-before-run)
 
@@ -456,43 +460,55 @@ AND the projector's next apply cycle fires (≤ 1.5s wait)
 THEN a row exists in answer_artifact_projection with id == <known-id>
 AND the row's valid_as_of MATCHES the Neo4j node's valid_as_of
 AND the row's sources::jsonb contains an element whose uri matches Hop 1's recorded Source
-AND projector_watermark.value > <pre-write watermark>
+AND the row's watermark column is > 0 (Option C: the watermark is on the row itself)
+AND projector_cursor.last_applied_watermark >= the row's watermark (internal cursor advanced to match)
 
 PHASE B — update propagation (THE DISCRIMINATING TEST):
-GIVEN the projected row from Phase A exists with status == 'complete'
-WHEN cortex-bff issues an updateArtifact equivalent that sets status to 'failed' (simulate a stale-mark)
-AND the Neo4j AnswerArtifact's status property is set to 'failed' (the write commits)
+GIVEN the projected row from Phase A exists with status == 'complete' and watermark == <W_A>
+WHEN cortex-bff issues an updateArtifact equivalent that sets status to 'failed' AND bumps watermark to <W_B> where W_B > W_A
+AND the Neo4j AnswerArtifact's status property is set to 'failed' (the write commits, watermark bumped)
 AND the projector's next apply cycle fires (≤ 1.5s wait)
 
 THEN the row in answer_artifact_projection has status == 'failed'
 AND the row's updated_at is greater than its value pre-update
-AND projector_watermark.value advanced further
+AND the row's watermark column == <W_B> (advanced; Option C requires every apply to copy the new watermark)
+AND projector_cursor.last_applied_watermark >= <W_B>
 
-PHASE C — idempotent replay:
+PHASE C — idempotent replay (poll without changes):
 GIVEN the Neo4j AnswerArtifact has not changed
 WHEN three consecutive polls fire
-THEN the row in answer_artifact_projection is unchanged across the three polls (same updated_at, same watermark)
-AND projector_watermark.value advances ONLY when a real change applies (NOT on every poll)
+THEN the row in answer_artifact_projection is unchanged across the three polls (same updated_at, same watermark column)
+AND projector_cursor.last_applied_watermark does NOT advance when there are no real applies (NOT every poll bumps it)
 
-PHASE D — durability_status propagation (orthogonal to Phase B):
-GIVEN a Neo4j AnswerArtifact exists with status='complete' AND durability_status='persistence_pending'
+PHASE D — durability_status orthogonal propagation AND watermark-advanced co-required (EXPANDED under Decision 3 Option C):
+GIVEN a Neo4j AnswerArtifact exists with status='complete' AND durability_status='persistence_pending' AND watermark=<W0>
       (the post-delivery, mid-retry state from Hop 1's decoupled write path)
-WHEN cortex-bff's retry succeeds and patches the node to durability_status='durable'
+WHEN cortex-bff's retry succeeds and patches the node to durability_status='durable' AND bumps watermark to <W1> where W1 > W0
 AND the projector's next apply cycle fires (≤ 1.5s wait)
 THEN the row in answer_artifact_projection has durability_status='durable'
 AND the row's status is STILL 'complete' (the two fields are orthogonal; the projector did NOT collapse them)
-AND projector_watermark.value advanced
+AND the row's watermark column == <W1> (advanced; NOT vestigial)
+AND projector_cursor.last_applied_watermark >= <W1>
 
-CONVERSE (durability_status transitions can ALSO be the only change):
-GIVEN a Neo4j AnswerArtifact exists with status='complete' AND durability_status='persistence_pending'
-WHEN cortex-bff's retry budget exhausts and patches the node to durability_status='persistence_failed'
+CONVERSE 1 (durability_status alone, status unchanged — orthogonality leg):
+GIVEN a Neo4j AnswerArtifact exists with status='complete' AND durability_status='persistence_pending' AND watermark=<W0>
+WHEN cortex-bff's retry budget exhausts and patches the node to durability_status='persistence_failed' AND bumps watermark to <W2> where W2 > W0
 AND the projector's next apply cycle fires
-THEN the row in answer_artifact_projection has durability_status='persistence_failed' AND status STILL 'complete'.
+THEN the row has durability_status='persistence_failed' AND status STILL 'complete' AND watermark=<W2>.
+
+CONVERSE 2 (watermark-advanced co-required leg — the EXPANSION under Option C):
+GIVEN a Neo4j AnswerArtifact exists with status='complete' AND durability_status='persistence_pending' AND watermark=<W0>
+WHEN cortex-bff's retry succeeds and patches durability_status='durable' AND ALSO bumps watermark to <W3>
+AND the projector applies
+THEN the row's watermark column is STRICTLY <W3>, not <W0>.
+ASSERT FAILURE MODE: if the projector applies the durability_status change but does NOT copy the new watermark (e.g., because the projector's update path branches on status changes and only reads watermark from there), this probe goes RED. That's the vestigial-watermark trap and it must be caught.
 ```
 
-**Phase B is the load-bearing test for update propagation.** Insert-only projectors are easy to write; update-respecting projectors are where the rot lives. The probe MUST fail if the projector treats updates as inserts (duplicates), if it ignores updates (stale rows), or if it advances the watermark on every poll regardless of change (Electric clients then see spurious "row changed" events).
+**Phase B is the load-bearing test for update propagation.** Insert-only projectors are easy to write; update-respecting projectors are where the rot lives. The probe MUST fail if the projector treats updates as inserts (duplicates), if it ignores updates (stale rows), or if it advances the watermark on every poll regardless of change.
 
-**Phase D is the load-bearing test for the durability_status orthogonality.** Per `[[verify-subtle-acceptance-by-inspection]]`, the temptation when implementing the projector is to fold `durability_status` into the `status` JSONB or to overload `status` itself. The probe asserts that durability_status transitions propagate **independently** of status — a green that shows both transitioning together for the wrong reason (because the projector collapsed them) is hollow. The "CONVERSE" sub-assertion specifically catches the case where durability_status alone changing must propagate; a projector that only re-applies on status changes would miss it.
+**Phase D is doubly load-bearing under Decision 3 Option C.** Per `[[verify-subtle-acceptance-by-inspection]]`, the temptation when implementing the projector is to fold `durability_status` into the `status` JSONB or to overload `status` itself; the original probe shape catches that. **The Option-C expansion catches a sibling trap one layer over**: an update path that bumps the row but quietly fails to copy the new watermark. Per `[[fixture-must-exercise-paths]]`, Phase D MUST exercise the durability-only update path (not just status updates) — a fixture that only exercises status updates leaves the durability-only-but-watermark-doesn't-bump trap invisible. The two assertions are **co-required**: durability_status propagates orthogonally AND watermark advanced on the durability-only change. A green that asserts only one is hollow for the same reason a one-legged Hop 1 Probe 2 green is hollow.
+
+**Why this matters under Option C specifically.** With the original synced-watermark-row design, the watermark advancement was a single explicit write the projector did after the artifact upsert; it was hard to forget. Under Option C, the watermark IS a field on the artifact row, which means the projector's update logic might branch on "what changed" and accidentally skip the watermark on durability-only changes (because the code path "an update is propagating a status field" doesn't realize the watermark column also has to advance). The expanded Phase D forces every update path through the watermark column. Without it, Option C's see-your-write quietly breaks for any client awaiting a later write — `max(watermark)` could be satisfied by a stale max, OR the updated row's unchanged watermark could make the client's await-logic reason against the wrong position.
 
 ### Red-first sequence
 
@@ -501,14 +517,15 @@ THEN the row in answer_artifact_projection has durability_status='persistence_fa
 3. Re-run Phase A. Expect GREEN.
 4. With the projector running, simulate the update in Phase B (deliberately patch the Neo4j node to set `status = 'failed'`). Re-run the probe — Phase B has never run on the new projector. **Predict: GREEN if updates apply; RED if the projector only inserts.** Inspect either outcome carefully. (This is the moment where many projector implementations silently fail — the implementation might have "looked complete" after Phase A passed.)
 5. Phase C is a stability check; run after A and B are both green. Predicted GREEN if watermark advancement is change-gated.
-6. **Phase D — durability_status orthogonality.** Patch the Neo4j node to change `durability_status` while leaving `status` unchanged. Re-run the probe. **Predict: GREEN if the projector propagates the orthogonal field; RED if the projector collapsed the two fields or ignores durability_status changes.** Run the CONVERSE case explicitly — durability_status alone changing must propagate, NOT just durability_status changing alongside status. Per `[[verify-subtle-acceptance-by-inspection]]`, inspect the projected row's column-level state, not just the assertion result.
+6. **Phase D — durability_status orthogonality AND watermark-advanced co-required.** Patch the Neo4j node to change `durability_status` AND bump `watermark` while leaving `status` unchanged. Re-run the probe. **Predict: GREEN if the projector propagates both the durability_status change AND the new watermark column value; RED if the projector collapsed durability_status into status, OR if the projector applied the update but copied the OLD watermark (the vestigial-watermark trap).** Run the CONVERSE 1 (durability_status alone) case AND CONVERSE 2 (watermark-advanced co-required) case explicitly. Per `[[verify-subtle-acceptance-by-inspection]]`, inspect the projected row's column-level state — specifically read the watermark column, don't just trust the assertion result. Per `[[fixture-must-exercise-paths]]`, the fixture must exercise the durability-only update path (not piggyback on status updates); a fixture that only exercises status updates leaves the trap invisible.
 
 ### Breakpoint
 
 Hop 2 is done when:
 - All four phases are green, and Phases A, B, and D were red before the projector code landed.
 - The Hop 3 byte-identical-diff probe (next section) has been WRITTEN but not yet run.
-- A short observability check: `kubectl logs deployment/iagent-projector --tail=50` shows the apply loop is alive and advancing the cursor. A stuck loop is the projector's quiet-failure mode; the operator has to be able to see it from logs. Per `[[liveness-probe-watches-advance-not-just-correctness]]`, the advance-check liveness probe verified can-fail by killing the apply loop and watching it go red.
+- A short observability check: `kubectl logs deployment/iagent-projector --tail=50` shows the apply loop is alive and advancing the internal cursor. A stuck loop is the projector's quiet-failure mode; the operator has to be able to see it from logs. Per `[[liveness-probe-watches-advance-not-just-correctness]]`, the advance-check liveness probe — now reading `projector_cursor.last_applied_watermark` via `GET /projector/watermark` (Decision 4's revised internal-cursor source under Option C, NOT a synced row that no longer exists) — verified can-fail by killing the apply loop and watching it go red.
+- A column-level audit of `answer_artifact_projection`: every row has a non-zero `watermark`, and the column is strictly monotonic across the apply history. If any row has watermark=0 or a non-monotonic value, the projector's watermark-management is broken and Hop 2 is NOT done.
 
 ## 6. Hop 3 plan — Postgres → Electric → store
 
@@ -522,15 +539,19 @@ Critical constraint: **the `Artifact` type contract in `c:/Users/cnogr/git/corte
 
 `test_hop3_electric_to_store_diff.py` is a **two-part probe**.
 
-**Part 1 — byte-identical type contract (baseline = post-Hop-1):**
+**Part 1 — byte-identical type contract (baseline = post-Hop-1, with `durability_status` AND `watermark` added):**
 
 ```
 GIVEN c:/Users/cnogr/git/cortex-ui/src/api/types.ts as of the post-Hop-1 commit, AFTER the architect-approved
-      addition of the `durability_status` field but BEFORE any Hop 3 changes.
-      (This is a SHIFTED baseline relative to revision 1 of this plan: revision 1 pinned the baseline at
-      the pre-Hop-1 commit; revision 2 shifts it forward because Hop 1's settled sub-decision required
-      the durability_status field addition. The architect's sign-off at Hop 1's breakpoint is what
-      establishes the new baseline.)
+      additions of:
+        (a) the `durability_status` field (Decision 0 sub-decision ruling, revision 2 of this plan), AND
+        (b) the `watermark: number` field (Decision 3 Option C, revision 3 of this plan)
+      but BEFORE any Hop 3 changes.
+      (This is a TWICE-SHIFTED baseline relative to the original draft: revision 1 pinned the baseline at
+      the pre-Hop-1 commit; revision 2 shifted it for `durability_status`; revision 3 shifts it again
+      for `watermark`. The architect's sign-off at Hop 1's breakpoint is what establishes the new baseline —
+      the two additions are bundled into Hop 1 because they're orthogonal slot-additions in the same
+      foundation work, not because they share a concept.)
 WHEN Hop 3's swap lands
 THEN git diff between the post-Hop-1 baseline and the post-Hop-3 commit on src/api/types.ts is EMPTY
      for the Artifact interface block (lines covering the Artifact interface).
@@ -573,10 +594,11 @@ The "no SSE handler fired" assertion is what distinguishes "Electric is the path
 ### Breakpoint
 
 Hop 3 is done when:
-- Part 1 diff probe is GREEN at the end (after the swap) — the Artifact type didn't drift.
+- Part 1 diff probe is GREEN at the end (after the swap) — the Artifact type didn't drift relative to the post-Hop-1 baseline (which includes both `durability_status` and `watermark`).
 - Part 2 propagation probe is GREEN AND was red before the swap.
-- **Part 3 (conditional) — see-your-write ordering probe is GREEN AND was red before the ordering fix landed.** Required only if Decision 3's spike outcome required building the bespoke watermark. Probe shape: write artifact (returns watermark = N) → `await_until_watermark(N)` → synchronous `useCurrentArtifact()` read → assert artifact present. Made able-to-fail by artificially delaying the artifact-row sync relative to the watermark-row sync; per `[[pre-written-fixtures-must-fail-first]]`, the probe must be observed RED with the delay injected before the ordering fix lands. If Decision 3 collapsed after the spike (Electric's native position is sufficient), this part is replaced by an equivalent probe against Electric's native position; if Decision 3 collapsed entirely (no see-your-write contract), this part is dropped.
+- **Part 3 DROPPED under Decision 3 Option C.** Recorded explicitly here so a future reader doesn't read "two probes" as "Part 3 is missing." The see-your-write ordering invariant is **dissolved** by Option C — there are no longer two things to deliver in order, so there is no ordering contract left to probe. "No probe needed" is the correct outcome here, not a missing probe. The spike `fe14d67` + Option C ruling did not just satisfy the see-your-write test; it made the test inapplicable. See Decision 3 in §3 for the architect's structural-vs-coordinated reasoning verbatim.
 - A manual canvas check: type a query in the running cortex-ui, watch the pending → complete transition, watch the Sources card populate with a URN that matches `subtask_routing_decision`'s `subject_uri` in the corresponding Dagster run. This is the Monday-handoff visual proof.
+- A see-your-write smoke check (NOT a probe — the contract is structural now, no probe is required): write an artifact, immediately read `useCurrentArtifact()`, confirm it's there. If it's NOT there, something violated Option C's invariant (likely the watermark column isn't being copied on the artifact apply, or Electric isn't subscribed correctly). Diagnose by inspecting the artifact row in Postgres directly.
 - Optional but recommended: shut down the SSE path entirely for one test session and confirm the canvas still works end-to-end via Electric alone. (If it doesn't, the SSE path is still load-bearing and the swap is incomplete.)
 
 ## 7. Cross-cutting discipline
@@ -587,12 +609,12 @@ These rules apply across all three hops. Each hop's plan references them above; 
 
 - **Pre-written fixtures must fail first.** Per `[[pre-written-fixtures-must-fail-first]]`: each hop's probe is written BEFORE the hop's code, and is shown FAILING before the hop's code lands. The red-green transition is the proof. Specifically:
   - Hop 1: BOTH probes written and RED first. Probe 1's predicted-RED is "no AnswerArtifact node in Neo4j" — confirm RED before adding the cortex-bff Neo4j writer. Probe 2's predicted-RED is structural: "field `durability_status` doesn't exist in the Artifact / Neo4j node schema" — confirm RED before the durability_status concept is added. Both legs of Probe 2 (delivery decoupled + honest recorded state) asserted in the green run; a one-legged green is hollow.
-  - Hop 2: probe written, Phase A predicted-RED is "row not in answer_artifact_projection" — confirm RED before deploying the projector. Phase B's update-propagation must ALSO go red before code, NOT just degenerate-green by accident of the insert path. Phase D's durability_status orthogonality assertion must go red before code — predicted-RED is either "durability_status column doesn't exist in the projection" or "the projector overloaded durability_status onto status." **The projector's liveness probe is itself subject to this rule** — kill the apply loop, watch the liveness probe go red, then trust green afterward.
-  - Hop 3: byte-identical-diff probe is degenerate-green pre-swap (with the baseline shifted to post-Hop-1, per Hop 1's Breakpoint); Part 2 must go RED before Electric is deployed. **If Decision 3's spike outcome required building the watermark, Hop 3's see-your-write ordering probe (Part 3) goes RED with the artifact-row sync delayed before the ordering fix lands, then GREEN after.** A watermark whose see-your-write probe has only ever been green-without-having-been-red is decorative.
+  - Hop 2: probe written, Phase A predicted-RED is "row not in answer_artifact_projection" — confirm RED before deploying the projector. Phase B's update-propagation must ALSO go red before code, NOT just degenerate-green by accident of the insert path. Phase D's expanded both-legged assertion (durability_status orthogonal propagation AND watermark-advanced co-required) must go red before code — predicted-RED is either "durability_status column doesn't exist in the projection," or "the projector overloaded durability_status onto status," or "the projector applied the durability change but copied the OLD watermark." Per `[[fixture-must-exercise-paths]]`, the fixture must EXERCISE the durability-only update path; a fixture that only exercises status-updates leaves the watermark-doesn't-bump trap invisible. **The projector's liveness probe is itself subject to this rule** — kill the apply loop, watch the liveness probe (now reading `projector_cursor.last_applied_watermark` via `GET /projector/watermark` per Decision 4's Option-C-revised internal-cursor source) go red, then trust green afterward.
+  - Hop 3: byte-identical-diff probe is degenerate-green pre-swap (with the baseline twice-shifted to post-Hop-1, which includes both `durability_status` and `watermark` field additions); Part 2 must go RED before Electric is deployed. **Part 3 (see-your-write ordering probe) DROPPED under Decision 3 Option C.** No ordering invariant exists; no probe is required. This is the correct outcome, not a missing probe — recorded explicitly so a future reader does not misread it.
 
-- **Liveness watches advance, not just correctness.** Per `[[liveness-probe-watches-advance-not-just-correctness]]` (banked from this plan's original §7 footnote, elevated by the architect): the projector's liveness check asserts the loop is ADVANCING — watermark increments, apply-tick counter increments, cursor moves — not just that data is currently correct. Frozen-but-correct is the failure mode a correctness-only probe misses. A stopped projector with a backfilled-once table is data-identical to a healthy projector; only the advance check distinguishes them.
+- **Liveness watches advance, not just correctness.** Per `[[liveness-probe-watches-advance-not-just-correctness]]` (banked from this plan's original §7 footnote, elevated by the architect): the projector's liveness check asserts the loop is ADVANCING — `projector_cursor.last_applied_watermark` increments (the internal-cursor source under Option C, exposed via `GET /projector/watermark` for probes and admin) — not just that data is currently correct. Frozen-but-correct is the failure mode a correctness-only probe misses. A stopped projector with a backfilled-once table is data-identical to a healthy projector; only the advance check distinguishes them. **Under Option C the advance signal lives in the projector's own internal state, NOT in a synced row** — arguably cleaner, because the liveness signal should come from the loop's own state, not from a row it writes.
 
-- **Coupled interim mechanisms retire together.** Per `[[coupled-interim-mechanisms-retire-together]]` (banked from this plan's Decision-1/Decision-3 coupling; this plan is the first instance): the interim trio of Decisions 0, 1, and 3 retires together under the Restate+topic successor. The retirements share a single cause (no streaming change-feed today); they exit together when that cause is removed. The watermark is NOT permanent substrate even if it survives Hop 2; it is throwaway scaffolding whose retirement is documented in §3.5.
+- **Coupled interim mechanisms retire together.** Per `[[coupled-interim-mechanisms-retire-together]]` (banked from this plan's Decision-1/Decision-3 coupling; this plan is the first instance): the interim trio of Decisions 0, 1, and 3 retires together under the Restate+topic successor. The retirements share a single cause (no streaming change-feed today); they exit together when that cause is removed. **The Option C watermark COLUMN is NOT permanent substrate even though it survives Hop 2** — when the Restate+topic successor lands, the topic offset becomes the projector's position and the per-row watermark column becomes redundant scaffolding. Its retirement is documented in §3.5's Through-line table.
 
 - **Ordering questions hide coupling questions.** Per `[[ordering-questions-hide-coupling-questions]]` (banked from this plan's Decision-0 sub-decision; this plan is the first instance): when a sub-decision is framed as "in what order do these two operations against two systems happen?", STOP and check whether they should be ordered at all. "Before vs after" presupposes a coupled sequence, which is the dual-write failure shape one layer down. The right answer is usually decouple-with-honest-failure-state per-domain. This plan's Decision-0 sub-decision is the canonical case; the rule will fire again in ADR-0024 Part B's publish-backend planning (publish action ordering, scrub ordering, SUPERSEDES chain construction) per the memory's "Where this rule was about to apply" section. Sibling rule to `[[coupled-interim-mechanisms-retire-together]]` at a different layer — both detect coupling-the-planner-missed; one fires on decisions, the other on operations.
 
@@ -619,25 +641,33 @@ The Monday work-cluster handoff Phase 1 was waiting on has two parts: (a) the UR
 - **Workspace UI metaphor** — tabs / projects / free-spatial canvas. The collection is durable as of Phase 1; how it arranges in a workspace is a UI-arc decision after Hop 3.
 - **Latency budget measurement under load.** ADR-0023's "Consequences" section flags that the write-path now touches Neo4j + projector + Electric, longer than the current "render and forget" shape. Measuring under realistic load is a post-Hop-3 task; this plan's choices argue the budget is sufficient but don't verify it.
 
-## 10. STOP for this thread (FINAL)
+## 10. STOP for this thread (TRULY FINAL — build session opens with a separate agent)
 
-**This revision-2 commit is the FINAL STOP point for the planning thread.** Binding. The architect signs off after this commit and the next thread opens on the Electric-position spike.
+**This revision-3 commit is the TRULY FINAL STOP point for the planning thread.** Binding. The architect signs off the moment this commit lands. The next thread is **Hop 1 with a separate build agent** — not me — proceeding directly to the cortex-bff Neo4j write authority work. Gates 1 (Neo4j edition) and 2 (Electric-position spike) are CLOSED in this revision.
 
 Prior commits in the audit trail:
 - `ded7cc7` — original draft (four decisions, four hops).
 - `07023ce` — revision 1 (Decision 0 elevated, Decisions 1 + 3 reframed as coupled interim-with-named-successor, build-sequencing gates added).
-- this commit — revision 2 (Decision 0 sub-decision settled with decouple-with-honest-failure-state, `durability_status` introduced as a new field distinct from `status`, Hop 1 gains the `@neo4j-write-failure-honest-state` probe, `[[ordering-questions-hide-coupling-questions]]` cited).
+- `0c2f5fe` — revision 2 (Decision 0 sub-decision settled with decouple-with-honest-failure-state, `durability_status` introduced as a new field distinct from `status`, Hop 1 gains the `@neo4j-write-failure-honest-state` probe, `[[ordering-questions-hide-coupling-questions]]` cited).
+- this commit — revision 3 (Decision 3 RESOLVED Option C by spike `fe14d67` + architect ruling: watermark is a COLUMN on every artifact row, not a synced row, not a separate shape. Hop 3 Part 3 DROPS — ordering invariant dissolved. Decision 4 liveness probe revised to read internal cursor. Hop 2 Phase D EXPANDED with co-required watermark-advanced assertion. Schema reflects column-not-row.).
 
-The four primary decisions are settled (0 with sub-decision; 1, 3 as interim-with-named-successor; 2, 4 as permanent). The sub-decision is settled (decouple-with-honest-failure-state, continuity-to-Restate-successor proven). The fixture discipline is settled (RED-first per pre-written rule, both legs of two-legged probes asserted, advance-check liveness, orthogonality on durability_status). The build-session sequencing is settled (Neo4j edition confirmation → Electric-position spike → Hop 1 → Hop 2 → Hop 3).
+The five primary decisions are settled:
+- **Decision 0** (cortex-bff as write authority) with sub-decision (decouple-with-honest-failure-state, continuity-to-Restate-successor proven).
+- **Decision 1** (poll-as-interim, Restate+topic successor named) — coupled with 0 and 3 in retirement.
+- **Decision 2** (wide table + discriminator) — PERMANENT.
+- **Decision 3** RESOLVED (Option C, watermark-as-column on every row) by spike + ruling — interim, retires with 0 and 1 under the Restate+topic successor.
+- **Decision 4** (separate Deployments, internal-cursor liveness under Option C) — PERMANENT with one Option-C-driven probe-source adjustment.
+
+The fixture discipline is settled (RED-first per pre-written rule, both legs of two-legged probes asserted, advance-check liveness reading internal cursor, orthogonality on durability_status AND watermark-advanced co-required at every apply). The build-session sequencing is settled and locked: gates 1 and 2 CLOSED; build proceeds at gate 3 (Hop 1) → gate 4 (Hop 2) → gate 5 (Hop 3) → gate 6 (visual confirmation).
 
 This thread does NOT:
 - Write backend code (no Neo4j writer in cortex-bff, no projector Deployment, no Electric Shape).
 - Modify any helm chart (no new templates, no values changes).
 - Write to any database (Neo4j read-only via inspector existing today; Postgres untouched).
-- Change the cortex-ui Artifact type (zero diff against `src/api/types.ts` — the `durability_status` addition is planned for Hop 1 of the build session, not implemented here).
-- Run the Electric-native-position spike (that's the build session's first gate, per §3.6).
-- Open the build session.
+- Change the cortex-ui Artifact type (zero diff against `src/api/types.ts` — `durability_status` AND `watermark` field additions are planned for Hop 1 of the build session, not implemented here).
+- Run the Electric-native-position spike (the spike `fe14d67` already ran and informed Decision 3's Option C resolution; no re-run is needed).
+- Open the build session for the next agent (the dispatch happens after this commit).
 
-The build session is the next thread, opening after the architect signs off on this revision. Its first step is the Neo4j edition confirmation; its second step is the Electric-native-position spike (which may delete Decision 3 entirely); Hops 1 / 2 / 3 follow per §3.6's binding sequence.
+The build session is the next thread, opening with a separate build agent the moment the architect signs off on this commit. The Hop 1 dispatch references this committed plan. My job ends at this commit.
 
-If, in the moments after this commit, the pull arrives to "just sketch hop 1's Neo4j write while I'm in here" — STOP. The build session is the next thread; the spike is its first step; the spike may change Decision 3 and thus change parts of Hop 2 and Hop 3. Skipping the spike collapses a premise-shift surface into work-already-done, which is exactly the discipline-failure the build-session-gate-list is structured to prevent.
+If, in the moments after this commit, the pull arrives to "just sketch hop 1's Neo4j write while I'm in here" — STOP. The build agent is the one who does Hop 1, not me. Skipping the handoff would collapse the planning/build separation that has been the load-bearing discipline of this entire thread.
