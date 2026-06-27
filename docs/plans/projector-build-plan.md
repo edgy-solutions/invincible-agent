@@ -1,9 +1,9 @@
 ---
-status: Plan (revised post-architect-review; build-gated on revisions held in this commit)
+status: Plan (FINAL — settled after architect review and Decision-0 sub-decision ruling; build-session opens after this commit)
 date: 2026-06-27
-authors: claude (plan-only session, revised after architect's second-agent challenge)
+authors: claude (plan-only session, final revision after architect sub-decision ruling)
 gates: ADR-0023 (read side) + ADR-0024 Part B (publish backend dependency)
-revision: 1 — folds in Decision 0 (cortex-bff as write authority), Decision 1 rewritten as poll-as-interim, Decision 3 sent back for Electric-position spike first, build-sequencing updated. Original plan: commit ded7cc7.
+revision: 2 — folds in Decision 0 sub-decision ruling (decouple-with-honest-failure-state, NOT write-before vs write-after binary), introduces `durability_status` as a separate concept from `status`, adds Hop 1 `@neo4j-write-failure-honest-state` probe, cites `[[ordering-questions-hide-coupling-questions]]`. Prior revisions: ded7cc7 (original), 07023ce (Decision 0 + interim/successor framing).
 ---
 
 # Projector build plan — Neo4j → Postgres → Electric
@@ -84,7 +84,57 @@ The original draft had four — the four open questions ADR-0023's "Open questio
 
 **Rejection trigger:** If the architect rules cortex-bff is the wrong authority (because the write should originate from the engine that produced the answer, or from a new dedicated `iagent-artifact-writer` service, or directly from the supervisor's Dagster materialization), Hop 1's scope changes substantively: the write-helper moves to a different component, the bundle-assembly point has to be re-located, and the SSE event flow has to be re-wired so that the writer (wherever it now lives) has the bundle in its hands. The projector (Hop 2) and the read-side swap (Hop 3) are unchanged by the rejection; only Hop 1 is.
 
-**Uncertainty flagged:** The "trailing-steps-nonfatal" interaction is real but not fully specified. The cleanest interim shape is: complete the SSE stream FIRST (user gets the answer), then write to Neo4j (the durability is best-effort within a short retry window). The risk: an answer the user saw is not durable. The alternative — write BEFORE the SSE `stream_end` — couples user-visible latency to Neo4j health. The Restate successor cleans this up (the handler is the durable thing; cortex-bff fires-and-forgets the invocation), but the interim needs an explicit answer the architect signs off on. Build-session sequencing: this is a Hop 1 sub-decision the build owner picks with architect cover.
+#### Decision 0 sub-decision — delivery vs Neo4j-write trailing-steps interaction (SETTLED: decouple-with-honest-failure-state)
+
+**Background.** Revision 1 of this plan flagged the trailing-steps-nonfatal interaction as an open sub-decision and posed it as a binary: write-before SSE `stream_end` (couples user latency to Neo4j health) vs write-after (best-effort durability; the user holds an answer not yet in the substrate). The architect rejected the binary outright and ruled the sub-decision in this revision.
+
+**The architect's ruling — verbatim discipline.** The framing was subtly wrong. **Write-after is NOT "best-effort durability"; it is the project's signature dual-write failure mode reintroduced one layer below where Decision 1 just rejected it.** The user saw an answer that the graph-of-record doesn't have, and nothing reconciles them. That is the same shape Decision 1 killed; it just doesn't have the words "dual-write" on it here.
+
+The false premise: that the Neo4j write and the user-visible answer have to be **ordered against each other at all**. They don't. They answer two different questions:
+
+- `stream_end` answers **"did the user get their answer."**
+- The Neo4j write answers **"is this answer durable in the substrate."**
+
+**Coupling them in either order is the mistake.** Per the newly banked `[[ordering-questions-hide-coupling-questions]]` — this sub-decision is the first banked instance of that rule. The rule's general statement: when a sub-decision is framed as "in what order do these two operations against two systems happen?", STOP. The framing is usually the trap. The real question is whether they should be coupled at all, and the answer is usually decouple-with-honest-failure-state per-domain. The rule is the planning-layer generalization of the same shape Decision 1's poll/watermark coupling exhibited — **this plan keeps finding pairs of operations it assumed were ordered or independent when they were actually coupled or separable.**
+
+**The settled interim shape — decouple-with-honest-failure-state:**
+
+1. **Delivery at `stream_end` is never coupled to the Neo4j write.** Honors `[[feedback-trailing-steps-nonfatal]]` literally — nothing after `final_answer` can fail delivery. The user gets their answer regardless of Neo4j state.
+2. **The Neo4j write is a separate retryable step** that does NOT gate `stream_end`, but is **NOT fire-and-forget either.** The distinction from naive write-after is the failure handling: if the write fails, that is a **known, recorded state** — the artifact is `delivered-but-persistence-pending`. The artifact carries a durability status the same way it carries the existing `status: pending|complete|failed` lifecycle. A delivered answer whose Neo4j write hasn't landed is honestly recorded as `delivered, persistence pending`; retry drives it to durable, or surfaces it as `persistence_failed` if retries exhaust.
+3. **The polling projector tolerates the small write-lands-after-delivery window** because it polls on a 500ms cursor anyway (Decision 1). A Neo4j write that lands a second or two after `stream_end` is invisible to the projector's correctness model — the projector applies whatever is in Neo4j when it polls; it doesn't care about when the write committed relative to delivery.
+
+The latency concern (write-before slowing the user) is gone — delivery isn't coupled. The durability gap (write-after losing the answer silently) is bounded — the write is retryable and its failure is a **recorded state**, not a silent drop.
+
+**Continuity proof — why this is the correct interim shape, not just an acceptable one.** Per `[[ordering-questions-hide-coupling-questions]]`'s "successor test": when staging interim → successor, ask whether the successor formalizes the interim's shape or replaces it wholesale. **This interim's shape — decouple delivery from the durable write, record honest partial-completion state, retry per-domain — is EXACTLY what the Restate successor formalizes.** Restate's durable handler does precisely this: deliver, then journal the Neo4j write as a step driven to completion exactly-once with resume-on-crash. The interim is "decouple-with-best-effort + honest recorded state"; the successor is "decouple-with-durable-journaling + exactly-once." They agree on shape; they differ only in the **strength of the durability guarantee**. Write-before and naive write-after **don't** have that continuity — they're shapes Restate would have to undo. The continuity is the proof this is the right interim.
+
+#### `durability_status` — a new artifact concept, separate from `status`
+
+The decouple-with-honest-failure-state shape forces an addition to the AnswerArtifact model: a **`durability_status` field separate from the existing `status` field**.
+
+The two cover **orthogonal questions** and must not be collapsed:
+
+| Field | Question it answers | Values |
+|---|---|---|
+| `status` (existing, from Phase 1 / ADR-0023) | Lifecycle of *producing the answer*: pending while the pipeline runs, complete when produced, failed if the pipeline errored. | `pending` / `complete` / `failed` |
+| `durability_status` (new, this revision) | Whether the produced answer has been **written to Neo4j as the substrate of record**. | `persistence_pending` / `durable` / `persistence_failed` |
+
+A delivered answer can be `status=complete` AND `durability_status=persistence_pending` (delivered, write in flight). It can be `status=complete` AND `durability_status=durable` (the happy steady state). It can be `status=complete` AND `durability_status=persistence_failed` (delivered, write attempts exhausted — the user has the answer, but it is NOT in the graph-of-record; the system honestly knows this).
+
+**Discipline — do NOT collapse `durability_status` into `status`.** Per `[[verify-subtle-acceptance-by-inspection]]`, the temptation is to overload the existing `status` field with new values (e.g., add `persistence_failed` to the `status` enum). That is exactly the neighboring-concept-quietly-carries-a-field trap the rule covers (the canonical case was `Message.payload` quietly carrying an artifact-shaped field). The two questions are orthogonal facts about the artifact; collapsing them re-creates the same concept-conflation class as the persona-conflation, the Message-vs-Artifact conflation, and the canvas-overwrite. **Two distinct concepts get two distinct slots.**
+
+In the Neo4j model: `durability_status` is a property on the `:AnswerArtifact` node (alongside `status`). In the Postgres projection: a separate top-level column (queryable, not buried in a JSONB substructure — because consumers will filter by it: "show me artifacts that need persistence retry"). In the cortex-ui `Artifact` type: a new field with the same orthogonality preserved.
+
+**Lifecycle interaction with retry.** The cortex-bff Neo4j writer attempts the write after delivery. On success: the row goes through Hop 2's projector with `durability_status=durable`. On transient failure: cortex-bff retries within a bounded window; the artifact carries `durability_status=persistence_pending` in the interim. On exhausted retries: the artifact carries `durability_status=persistence_failed`. The Restate successor replaces the bounded-retry-window with crash-safe exactly-once execution, but does NOT change the `durability_status` values or their semantics — the field survives the successor flip unchanged. This is a second instance of the continuity-proof: the interim's data shape is what the successor inherits.
+
+#### Where the ordering-vs-coupling rule will fire again — note for ADR-0024 Part B planning
+
+`[[ordering-questions-hide-coupling-questions]]`'s "Where this rule was about to apply on the publish backend" section calls out three publish-backend sub-decisions that will pose as ordering questions if not caught:
+
+- **Publish action**: PublishedArtifact write to Neo4j BEFORE the target-system emit, or AFTER? Same trap shape. Answer: decouple with honest "publish attempted, target emit pending / failed / succeeded" recorded state.
+- **DataHub scrub job**: scrub marks `orphaned` BEFORE the UI sees the dangling state, or AFTER? Trap shape. Answer: scrub runs on its own track; UI reads current `status` honestly whatever it is.
+- **SUPERSEDES chain construction**: new PublishedArtifact node created BEFORE the SUPERSEDES edge to the prior is wired, or AFTER? Trap shape. Answer: durable handler manages the create+edge as exactly-once (this is where Restate matters even within iagent, not just at the cortex-bff write boundary).
+
+**This is NOT this plan's job to solve** — they belong to ADR-0024 Part B's planning thread. But noting it here so the Part B planner reads this section and applies the rule prophylactically rather than re-discovering it through the same architect-review challenge cycle.
 
 ### Decision 1 — CDC vs polling for Neo4j → projector (REVISED: poll-as-interim, not the settled answer)
 
@@ -230,8 +280,8 @@ The build session opens with this gate list. Each gate is a positive-confirmatio
 
 1. **Confirm Neo4j edition.** `CALL dbms.components()` from inside the cluster. Predicted: community. If Enterprise, re-evaluate Decision 1's framing (Enterprise CDC remains dead by choice per the architect's review, but the audit's accuracy claim has to be corrected before further steps).
 2. **Run the Electric-native-position spike (one-day budget).** This runs BEFORE Hop 2's projector code. Outcome decides whether Decision 3 collapses (use Electric's native position, no watermark built) or stands (build the watermark + the see-your-write ordering probe). The architect was explicit: "It may delete Decision 3 entirely, and you don't want to build a watermark you spike your way out of an hour later."
-3. **Hop 1 — cortex-bff becomes the Neo4j write authority (Decision 0).** Probe written first (red), code lands, probe goes green. Trailing-steps-nonfatal interaction (write AFTER SSE stream_end, or BEFORE — the build owner picks with architect cover per Decision 0's uncertainty flag).
-4. **Hop 2 — projector (poll loop or whichever Decision 1 settled on).** Probe written first (Phases A, B, C all red where applicable), code lands, probes go green. Liveness probe verified can-fail by killing the apply loop and watching it go red, per `[[liveness-probe-watches-advance-not-just-correctness]]` and `[[pre-written-fixtures-must-fail-first]]`.
+3. **Hop 1 — cortex-bff becomes the Neo4j write authority (Decision 0).** **Two probes** pre-written and RED-first: Probe 1 (`@hop1-happy-path-write`) AND Probe 2 (`@neo4j-write-failure-honest-state`, both-legs assertion). Trailing-steps-nonfatal interaction is **settled** per Decision 0's sub-decision ruling: decouple-with-honest-failure-state, NOT write-before-vs-after binary. The `durability_status` field is added to the Artifact type at Hop 1's close (architect-approved baseline shift for Hop 3's diff probe).
+4. **Hop 2 — projector (poll loop or whichever Decision 1 settled on).** Probe written first (Phases A, B, C, D all red where applicable), code lands, probes go green. Phase D specifically verifies `durability_status` propagates as an ORTHOGONAL field from `status`. Liveness probe verified can-fail by killing the apply loop and watching it go red, per `[[liveness-probe-watches-advance-not-just-correctness]]` and `[[pre-written-fixtures-must-fail-first]]`.
 5. **Hop 3 — Electric → store swap.** Part 1 (byte-identical diff probe) and Part 2 (propagation without SSE) both run; if Decision 3 stood after the spike, Part 3 (see-your-write ordering probe with artificially-delayed artifact-row sync) also runs. Per `[[pre-written-fixtures-must-fail-first]]`, see-your-write probe goes RED first (with the delay injected, the wait-until-watermark + synchronous read finds the artifact absent), then the ordering fix lands, then the probe goes green.
 6. **Visual confirmation per `[[verify-subtle-acceptance-by-inspection]]`.** Open Neo4j browser, open Postgres, open cortex-ui DevTools. Confirm by eye that the data flows match the predicted shapes. Don't accept "all green" without the visual sweep.
 
@@ -239,21 +289,45 @@ The build session opens with this gate list. Each gate is a positive-confirmatio
 
 ### Scope
 
-Stand up the write-side. Add code to cortex-bff that, at SSE `stream_end` (or earlier on individual events), commits a real Neo4j AnswerArtifact node with its typed edges. The fields written match the Phase-1 `Artifact` type contract exactly (this is the load-bearing constraint: the Neo4j node's properties + edges have to project cleanly into a row that round-trips into the `Artifact` shape the cortex-ui store consumes).
+Stand up the write-side under the **decouple-with-honest-failure-state** shape settled in Decision 0's sub-decision. The flow is:
+
+1. cortex-bff completes the SSE stream and delivers the answer to the client at `stream_end`. **Delivery is NOT coupled to the Neo4j write.**
+2. Separately (independent track), cortex-bff attempts the Neo4j AnswerArtifact write. Failure of this write does NOT fail delivery; success transitions the artifact's `durability_status` from `persistence_pending` to `durable`; exhausted retries transition it to `persistence_failed`.
+3. The artifact node carries `durability_status` as a distinct property from `status`. Two orthogonal questions, two slots.
+
+The fields written match the Phase-1 `Artifact` type contract exactly **plus** the new `durability_status` field this revision adds (this is the load-bearing constraint: the Neo4j node's properties + edges have to project cleanly into a row that round-trips into the `Artifact` shape the cortex-ui store consumes — including the new field).
 
 Specifically:
-- `(:AnswerArtifact {id, created_at, updated_at, valid_as_of, valid_until?, question_text, resolved_intent, message_id, status, rendered_output})` — `rendered_output` as inline JSONB property until the size discriminant fires (ADR-0023 leaves this to the implementing PR; this plan ships inline, files a follow-up for the size threshold).
+- `(:AnswerArtifact {id, created_at, updated_at, valid_as_of, valid_until?, question_text, resolved_intent, message_id, status, durability_status, rendered_output})` — `rendered_output` as inline JSONB property until the size discriminant fires (ADR-0023 leaves this to the implementing PR; this plan ships inline, files a follow-up for the size threshold). **`durability_status` is a property on the node** (not on an edge, not in a JSONB sub-blob) so the projector can query and update it directly.
 - `(:AnswerArtifact)-[:PRODUCED_BY]->(:Actor {actor_type, actor_id, version?, endpoint?, code_hash?})` — agent identity captured at creation. Refined from the pending-sentinel only if the routing event carries real `handled_by`.
 - `(:AnswerArtifact)-[:PRODUCED_FOR]->(:Actor {actor_type, user_id, is_authenticated, user_persona?, entitled_domains?})` — user-side persona slot present even when null (per `[[pingsso-claim-gap]]`).
 - `(:AnswerArtifact)-[:DERIVED_FROM]->(:AnswerArtifact)` — when `derived_from_artifact_id` is non-null. (Phase 1 almost always null; the edge-write code path exists for when follow-up detection lands.)
 - `(:AnswerArtifact)-[:ROUTED_AS]->(:RoutingDecision {subject_uri, verb_iri, owner_persona, ...})` OR as inline properties on the AnswerArtifact — this hop picks **inline properties** since the first re-use case for a shared RoutingDecision node hasn't fired yet (per ADR-0023's open question). When that case fires, a follow-up migration extracts.
 - `(:AnswerArtifact)-[:CITES]->(:Source {uri, type, label})` per source — Source nodes deduped by URN (`MERGE (s:Source {uri: $uri})` semantics), with the per-artifact citation evidence on the `CITES` edge (`{snippet, relevance, open_url}`).
 
-The write is **idempotent** (`MERGE` on `AnswerArtifact.id`), so the pending → complete transition is one Cypher write with property updates, not two creates.
+The write is **idempotent** (`MERGE` on `AnswerArtifact.id`), so the pending → complete transition is one Cypher write with property updates, not two creates. Retries of the durability write are also idempotent — re-running the same MERGE against an already-written node is a no-op apart from `updated_at`.
+
+**Durability-status state machine:**
+
+```
+Initial: durability_status = "persistence_pending"  (set IMMEDIATELY at delivery time, even if no write attempt has happened yet — honest about the in-flight state)
+
+On successful Neo4j write: durability_status = "durable"
+
+On retryable Neo4j failure (cortex-bff retries within bounded window): durability_status stays "persistence_pending"
+
+On exhausted retries: durability_status = "persistence_failed"
+```
+
+The initial `persistence_pending` value is **set in the client-side store at delivery time**, not derived from the absence of a write. This is the load-bearing distinction from naive write-after: the absence of a write is a silent gap; an explicit `persistence_pending` value is honest recorded state. When the Neo4j write succeeds, the projector picks up the `durable` transition and surfaces it through Hop 2/Hop 3 to the client; the client's store transitions from `persistence_pending` (locally set) to `durable` (server-synced).
 
 ### Probe shape (predict-before-run)
 
-Probe `test_hop1_neo4j_writeback.py` (under `tests/sandbox_e2e/` to mirror existing layout):
+Hop 1 has **two probes**, both pre-written and both RED-first.
+
+#### Probe 1 — `test_hop1_neo4j_writeback.py` (the happy-path write)
+
+Under `tests/sandbox_e2e/` to mirror existing layout:
 
 ```
 PRECONDITION: cortex-bff is running, Neo4j is reachable.
@@ -265,8 +339,9 @@ GIVEN message_id "msg-hop1-001"
 WHEN cortex-bff receives the question through its normal entry path
 AND the routing decision arrives with verb_iri == "mesh:retrieveKnowledge"
 AND stream_end fires
+AND the Neo4j write completes (within the bounded retry window)
 
-THEN a (:AnswerArtifact {id: <known-id>, valid_as_of: <committed-timestamp>}) node exists in Neo4j.
+THEN a (:AnswerArtifact {id: <known-id>, valid_as_of: <committed-timestamp>, durability_status: "durable"}) node exists in Neo4j.
 AND (:AnswerArtifact)-[:PRODUCED_FOR]->(:Actor {user_id: "test-user-7d"}) exists.
 AND (:AnswerArtifact)-[:PRODUCED_BY]->(:Actor {actor_type: "agent"}) exists with actor_id != "pending"
     (the routing event refined the sentinel).
@@ -276,28 +351,80 @@ AND the (:AnswerArtifact).valid_as_of property is a real epoch-millis number, NO
 ASSERT: a second write with the same id (replay) does NOT create a duplicate node — count of (:AnswerArtifact {id: <known-id>}) == 1.
 ```
 
-The probe is "predict a specific value AND a specific change-propagation": the predicted value is the question text, the predicted change-propagation is that the pending-sentinel `produced_by.actor_id` got refined to a real engine_name when routing arrived.
+The probe is "predict a specific value AND a specific change-propagation": the predicted value is the question text, the predicted change-propagation is that the pending-sentinel `produced_by.actor_id` got refined to a real engine_name when routing arrived, AND that `durability_status` transitioned from `persistence_pending` (at delivery) to `durable` (after the Neo4j write succeeded).
 
 **This probe MUST be able to fail.** Failure modes it has to catch:
 - The write never happens (cortex-bff has no Neo4j write path) — the node is absent.
 - The write happens but `valid_as_of` is null — capture-or-lose-forever violated.
+- The write happens but `durability_status` is missing or still `persistence_pending` — the field isn't being managed, or the success-path transition is broken.
 - The write happens but `produced_by.actor_id` is still "pending" — the routing-event refinement path didn't apply.
 - The replay creates a duplicate node — idempotency violated.
 - The `:Source` node has empty `uri` — `MERGE` keyed on a missing field.
 
+#### Probe 2 — `test_hop1_neo4j_write_failure_honest_state.py` (the decoupling probe — load-bearing)
+
+This is the probe the architect's Decision-0 sub-decision ruling required. It exists specifically to make the decouple-with-honest-failure-state shape **load-bearing instead of optional** — without this probe, an implementer could "implement Hop 1" by just doing the Neo4j write and forgetting the failure-state recording, and the system would silently regress to the dual-write failure mode.
+
+```
+PRECONDITION: cortex-bff is running. Neo4j is artificially UNREACHABLE from cortex-bff
+              (use a network policy, a deliberately-broken bolt URI, or a Neo4j-pod
+              `kubectl scale --replicas=0` for the duration of the probe).
+
+GIVEN a known question text "what is engine A's owner_persona for retrieveKnowledge?"
+GIVEN a known PRODUCED_FOR actor (test user with stable user_id "test-user-7d")
+GIVEN message_id "msg-hop1-fail-002"
+
+WHEN cortex-bff receives the question through its normal entry path
+AND the routing decision arrives
+AND stream_end fires
+AND the cortex-bff Neo4j-write retry budget is exhausted (Neo4j stays unreachable)
+
+THEN two assertions both hold (a green that asserts only one is HOLLOW):
+
+  ASSERTION A — DELIVERY DECOUPLED:
+    The SSE stream completed normally. The client received stream_end. The user
+    saw the answer. Neo4j unreachability did NOT cause delivery to fail.
+
+  ASSERTION B — HONEST RECORDED STATE:
+    The artifact is in a recorded `delivered-but-persistence-pending` (or, after
+    retry exhaustion, `persistence_failed`) state. Specifically:
+      - The cortex-ui store has an Artifact row with id=<known-id>, status="complete",
+        AND durability_status="persistence_failed" (after retry exhaustion;
+        "persistence_pending" if checked mid-retry).
+      - The artifact is NOT silently absent (dual-write failure mode).
+      - The delivery did NOT fail with an error to the user (coupling mistake).
+
+CLEANUP: restore Neo4j reachability. Confirm that on subsequent retry (if the
+implementation supports background reconciliation), the artifact transitions
+to durability_status="durable" — OR document that reconciliation lives in
+the Restate successor and the persistence_failed state is the terminal interim
+state until a manual replay.
+```
+
+**Why this probe MUST fail today (the RED-first proof):** there is no `durability_status` concept in the cortex-ui Artifact type today (audit §2.1 confirms the existing field set ends at `status`/`rendered_output`/`produced_by`/`produced_for`/`routing`/`sources`/`graph_trace`/`derived_from_artifact_id`). The probe asserts a value of a field that doesn't exist. Running it against the current sandbox produces a structural failure — the assertion can't even evaluate against the existing schema. **This RED is the proof that the decoupling is real, not "we didn't notice the write failed."** Per `[[pre-written-fixtures-must-fail-first]]`: show RED first, implement the durability-status concept, then run GREEN. A green-without-having-been-red is decorative.
+
+**Why this probe is two-legged (assertions A AND B both required):** a probe that asserts only delivery succeeded (A alone) can pass for the wrong reason: the implementation might be naive write-after with no honest-state recording (delivery passes, the write-failed state is silently dropped). A probe that asserts only honest state (B alone) can pass for the wrong reason: the implementation might be write-before (B passes after a delivery failure that the probe didn't measure). Per `[[fixture-must-exercise-paths]]`, both assertions exercise distinct binding paths the decouple-shape requires. A green that only asserts one leg is hollow.
+
 ### Red-first sequence
 
-1. **Write the probe first**, against the running sandbox. Run it. **It must fail** — there is no Neo4j write path in cortex-bff today (audit confirms only a `/node_details` reader). The predicted-RED is "no `(:AnswerArtifact {id: <known-id>})` exists." Inspect the failure message; confirm it's the predicted-RED and not e.g. a Neo4j connection error.
-2. Add the Neo4j write helper to cortex-bff. Idempotent MERGE patterns. PRODUCED_FOR/PRODUCED_BY/CITES edge writes.
-3. Hook the SSE event handlers in cortex-bff to call the write helper at `stream_end` (and on each event for the pending → complete update path — this exercises Hop 2's update probe later).
-4. Re-run the probe. Expect GREEN. Inspect: open Neo4j browser, confirm by eye the node + edges shape match the predicted property names.
+Both probes pre-written before any Hop 1 code lands. Both must be shown RED first.
+
+1. **Write Probe 1 (happy-path write) first**, against the running sandbox. Run it. **It must fail** — there is no Neo4j write path in cortex-bff today (audit confirms only a `/node_details` reader). The predicted-RED is "no `(:AnswerArtifact {id: <known-id>})` exists." Inspect the failure message; confirm it's the predicted-RED and not e.g. a Neo4j connection error.
+2. **Write Probe 2 (write-failure-honest-state) next**, against the same sandbox. Run it. **It must fail differently than Probe 1** — Probe 2's failure is structural: the `durability_status` field doesn't exist in the Artifact schema yet, so the probe's assertion against that field can't evaluate. Predicted-RED is "field `durability_status` not present in Artifact / Neo4j node." This RED is the proof that the decouple-with-honest-failure-state shape is being added net-new; if Probe 2 went green initially, the assertion is trivially-true and decorative.
+3. **Add the `durability_status` field to the AnswerArtifact model** — cortex-ui type (`src/api/types.ts`), Neo4j schema (just a property name; no migration), cortex-bff write helper. **Do NOT collapse `durability_status` into `status`** — they are orthogonal per the architect's ruling and `[[verify-subtle-acceptance-by-inspection]]`.
+4. **Add the Neo4j write helper to cortex-bff.** Idempotent MERGE patterns. PRODUCED_FOR/PRODUCED_BY/CITES edge writes. Bounded-retry loop. On success → set `durability_status = "durable"`. On exhausted retries → set `durability_status = "persistence_failed"` in the local store and surface it through the store path.
+5. **Hook the SSE event handlers in cortex-bff.** Delivery at `stream_end` is independent of the Neo4j write per the architect's ruling. The write attempt runs on its own track; it does NOT gate delivery. The initial `durability_status = "persistence_pending"` is set at delivery time in the store; the write attempt drives it forward.
+6. **Re-run Probe 1.** Expect GREEN. Inspect: open Neo4j browser, confirm by eye the node + edges shape match the predicted property names, including `durability_status = "durable"`.
+7. **Re-run Probe 2.** Expect GREEN — but only if BOTH assertions A and B hold. Specifically with Neo4j made unreachable, delivery still completes AND the artifact carries `durability_status = "persistence_failed"` after retry exhaustion. If only A passes, the implementation regressed to fire-and-forget. If only B passes, delivery is still coupled. A one-legged green is hollow.
 
 ### Breakpoint
 
 Hop 1 is done when:
-- The probe is green AND was red before the implementation landed.
-- A second probe variant — re-run the same question with a fresh `id`, then re-run AGAIN with the SAME `id` — shows idempotency (count == 1).
-- An inspector check on a real Neo4j browser session confirms the node has `valid_as_of` populated and the edges resolve to the expected target labels.
+- **Probe 1 is green AND was red before the implementation landed.**
+- **Probe 2 is green AND was red before the implementation landed AND both legs (delivery decoupled + honest recorded state) are independently asserted in the green run.**
+- A second variant of Probe 1 — re-run the same question with a fresh `id`, then re-run AGAIN with the SAME `id` — shows idempotency (count == 1).
+- An inspector check on a real Neo4j browser session confirms the node has `valid_as_of` populated AND `durability_status` populated, and the edges resolve to the expected target labels.
+- The Artifact type in `cortex-ui/src/api/types.ts` has a new `durability_status` field. This is the first deliberate Artifact type change since Phase 1 — it surfaces in the Hop 3 byte-identical-diff probe (which will now diff against a post-Hop-1 baseline, not against the pre-Hop-1 commit). The architect signs off on the Artifact type addition when Hop 1 closes; that sign-off is the new baseline for Hop 3's diff probe.
 - The Hop 2 probe (next section) has been WRITTEN but not yet run. The build session is about to open Hop 2.
 
 ## 5. Hop 2 plan — the projector, Neo4j → Postgres
@@ -308,11 +435,11 @@ Stand up the projector: a new `iagent-projector` Deployment (Decision #4), polli
 
 Schema migrations land in this hop:
 - `CREATE INDEX ON :AnswerArtifact(updated_at)` on Neo4j (required for poll efficiency).
-- `CREATE TABLE answer_artifact_projection (id text PRIMARY KEY, kind text NOT NULL DEFAULT 'AnswerArtifact', created_at bigint, updated_at bigint, valid_as_of bigint NOT NULL, valid_until bigint, question_text text, resolved_intent jsonb, message_id text, status text, rendered_output jsonb, produced_by jsonb, produced_for jsonb, routing jsonb, sources jsonb, graph_trace jsonb, derived_from_artifact_id text, watermark bigint NOT NULL)`.
-- `CREATE TABLE projector_watermark (id int PRIMARY KEY DEFAULT 1, value bigint NOT NULL)` — single-row table, the published current watermark.
+- `CREATE TABLE answer_artifact_projection (id text PRIMARY KEY, kind text NOT NULL DEFAULT 'AnswerArtifact', created_at bigint, updated_at bigint, valid_as_of bigint NOT NULL, valid_until bigint, question_text text, resolved_intent jsonb, message_id text, status text, durability_status text, rendered_output jsonb, produced_by jsonb, produced_for jsonb, routing jsonb, sources jsonb, graph_trace jsonb, derived_from_artifact_id text, watermark bigint NOT NULL)`. **`durability_status` is a separate top-level column from `status`**, not a JSONB sub-field — consumers will filter by it ("show me artifacts that need persistence retry") and the orthogonality from `status` must be preserved at the projection layer.
+- `CREATE TABLE projector_watermark (id int PRIMARY KEY DEFAULT 1, value bigint NOT NULL)` — single-row table, the published current watermark (subject to Decision 3's spike outcome — may not be built if Electric's native position is sufficient).
 - `CREATE TABLE projector_cursor (id int PRIMARY KEY DEFAULT 1, last_polled_updated_at bigint NOT NULL)` — projector's own resumable state.
 
-The projector's apply loop: poll Neo4j → assemble the projected row (denormalizing edges into the JSONB columns) → upsert into `answer_artifact_projection` with the next watermark → upsert into `projector_watermark` → advance cursor.
+The projector's apply loop: poll Neo4j → assemble the projected row (denormalizing edges into the JSONB columns; copying `durability_status` as a top-level column) → upsert into `answer_artifact_projection` with the next watermark → upsert into `projector_watermark` → advance cursor.
 
 ### Probe shape (predict-before-run)
 
@@ -346,9 +473,26 @@ GIVEN the Neo4j AnswerArtifact has not changed
 WHEN three consecutive polls fire
 THEN the row in answer_artifact_projection is unchanged across the three polls (same updated_at, same watermark)
 AND projector_watermark.value advances ONLY when a real change applies (NOT on every poll)
+
+PHASE D — durability_status propagation (orthogonal to Phase B):
+GIVEN a Neo4j AnswerArtifact exists with status='complete' AND durability_status='persistence_pending'
+      (the post-delivery, mid-retry state from Hop 1's decoupled write path)
+WHEN cortex-bff's retry succeeds and patches the node to durability_status='durable'
+AND the projector's next apply cycle fires (≤ 1.5s wait)
+THEN the row in answer_artifact_projection has durability_status='durable'
+AND the row's status is STILL 'complete' (the two fields are orthogonal; the projector did NOT collapse them)
+AND projector_watermark.value advanced
+
+CONVERSE (durability_status transitions can ALSO be the only change):
+GIVEN a Neo4j AnswerArtifact exists with status='complete' AND durability_status='persistence_pending'
+WHEN cortex-bff's retry budget exhausts and patches the node to durability_status='persistence_failed'
+AND the projector's next apply cycle fires
+THEN the row in answer_artifact_projection has durability_status='persistence_failed' AND status STILL 'complete'.
 ```
 
-**Phase B is the load-bearing test.** Insert-only projectors are easy to write; update-respecting projectors are where the rot lives. The probe MUST fail if the projector treats updates as inserts (duplicates), if it ignores updates (stale rows), or if it advances the watermark on every poll regardless of change (Electric clients then see spurious "row changed" events).
+**Phase B is the load-bearing test for update propagation.** Insert-only projectors are easy to write; update-respecting projectors are where the rot lives. The probe MUST fail if the projector treats updates as inserts (duplicates), if it ignores updates (stale rows), or if it advances the watermark on every poll regardless of change (Electric clients then see spurious "row changed" events).
+
+**Phase D is the load-bearing test for the durability_status orthogonality.** Per `[[verify-subtle-acceptance-by-inspection]]`, the temptation when implementing the projector is to fold `durability_status` into the `status` JSONB or to overload `status` itself. The probe asserts that durability_status transitions propagate **independently** of status — a green that shows both transitioning together for the wrong reason (because the projector collapsed them) is hollow. The "CONVERSE" sub-assertion specifically catches the case where durability_status alone changing must propagate; a projector that only re-applies on status changes would miss it.
 
 ### Red-first sequence
 
@@ -357,13 +501,14 @@ AND projector_watermark.value advances ONLY when a real change applies (NOT on e
 3. Re-run Phase A. Expect GREEN.
 4. With the projector running, simulate the update in Phase B (deliberately patch the Neo4j node to set `status = 'failed'`). Re-run the probe — Phase B has never run on the new projector. **Predict: GREEN if updates apply; RED if the projector only inserts.** Inspect either outcome carefully. (This is the moment where many projector implementations silently fail — the implementation might have "looked complete" after Phase A passed.)
 5. Phase C is a stability check; run after A and B are both green. Predicted GREEN if watermark advancement is change-gated.
+6. **Phase D — durability_status orthogonality.** Patch the Neo4j node to change `durability_status` while leaving `status` unchanged. Re-run the probe. **Predict: GREEN if the projector propagates the orthogonal field; RED if the projector collapsed the two fields or ignores durability_status changes.** Run the CONVERSE case explicitly — durability_status alone changing must propagate, NOT just durability_status changing alongside status. Per `[[verify-subtle-acceptance-by-inspection]]`, inspect the projected row's column-level state, not just the assertion result.
 
 ### Breakpoint
 
 Hop 2 is done when:
-- All three phases are green, and Phases A and B were red before the projector code landed.
+- All four phases are green, and Phases A, B, and D were red before the projector code landed.
 - The Hop 3 byte-identical-diff probe (next section) has been WRITTEN but not yet run.
-- A short observability check: `kubectl logs deployment/iagent-projector --tail=50` shows the apply loop is alive and advancing the cursor. A stuck loop is the projector's quiet-failure mode; the operator has to be able to see it from logs.
+- A short observability check: `kubectl logs deployment/iagent-projector --tail=50` shows the apply loop is alive and advancing the cursor. A stuck loop is the projector's quiet-failure mode; the operator has to be able to see it from logs. Per `[[liveness-probe-watches-advance-not-just-correctness]]`, the advance-check liveness probe verified can-fail by killing the apply loop and watching it go red.
 
 ## 6. Hop 3 plan — Postgres → Electric → store
 
@@ -377,12 +522,18 @@ Critical constraint: **the `Artifact` type contract in `c:/Users/cnogr/git/corte
 
 `test_hop3_electric_to_store_diff.py` is a **two-part probe**.
 
-**Part 1 — byte-identical type contract:**
+**Part 1 — byte-identical type contract (baseline = post-Hop-1):**
 
 ```
-GIVEN c:/Users/cnogr/git/cortex-ui/src/api/types.ts as of the commit BEFORE Hop 3 starts (git ref pinned)
+GIVEN c:/Users/cnogr/git/cortex-ui/src/api/types.ts as of the post-Hop-1 commit, AFTER the architect-approved
+      addition of the `durability_status` field but BEFORE any Hop 3 changes.
+      (This is a SHIFTED baseline relative to revision 1 of this plan: revision 1 pinned the baseline at
+      the pre-Hop-1 commit; revision 2 shifts it forward because Hop 1's settled sub-decision required
+      the durability_status field addition. The architect's sign-off at Hop 1's breakpoint is what
+      establishes the new baseline.)
 WHEN Hop 3's swap lands
-THEN git diff between the pre-swap commit and the post-swap commit on src/api/types.ts is EMPTY for the Artifact interface block (lines covering the Artifact interface).
+THEN git diff between the post-Hop-1 baseline and the post-Hop-3 commit on src/api/types.ts is EMPTY
+     for the Artifact interface block (lines covering the Artifact interface).
 
 If the diff is non-empty:
   HALT. Surface to the architect for review. The type-contract drift IS a premise-shift requiring its own decision. The build does NOT proceed without architect sign-off on the diff.
@@ -435,13 +586,15 @@ These rules apply across all three hops. Each hop's plan references them above; 
 - **Integration probe per contract, each able to fail.** Per `[[feedback-endpoint-probe-per-engine]]` and `[[feedback-verification-must-fail]]`: every hop's probe predicts a SPECIFIC value AND a SPECIFIC change-propagation. A probe that returns "all green" because the readback cache stayed warm, or because the projected row was the mock all along, is the always-green anti-pattern this stack now codifies as a recognized class. The Phase B "update propagation" assertion in Hop 2's probe is the canonical instance: insert-only projectors look complete until update arrives.
 
 - **Pre-written fixtures must fail first.** Per `[[pre-written-fixtures-must-fail-first]]`: each hop's probe is written BEFORE the hop's code, and is shown FAILING before the hop's code lands. The red-green transition is the proof. Specifically:
-  - Hop 1: probe written, predicted-RED is "no AnswerArtifact node in Neo4j" — confirm RED before adding the cortex-bff Neo4j writer.
-  - Hop 2: probe written, Phase A predicted-RED is "row not in answer_artifact_projection" — confirm RED before deploying the projector. Phase B's update-propagation must ALSO go red before code, NOT just degenerate-green by accident of the insert path. **The projector's liveness probe is itself subject to this rule** — kill the apply loop, watch the liveness probe go red, then trust green afterward.
-  - Hop 3: byte-identical-diff probe is degenerate-green pre-swap; Part 2 must go RED before Electric is deployed. **If Decision 3's spike outcome required building the watermark, Hop 3's see-your-write ordering probe (Part 3) goes RED with the artifact-row sync delayed before the ordering fix lands, then GREEN after.** A watermark whose see-your-write probe has only ever been green-without-having-been-red is decorative.
+  - Hop 1: BOTH probes written and RED first. Probe 1's predicted-RED is "no AnswerArtifact node in Neo4j" — confirm RED before adding the cortex-bff Neo4j writer. Probe 2's predicted-RED is structural: "field `durability_status` doesn't exist in the Artifact / Neo4j node schema" — confirm RED before the durability_status concept is added. Both legs of Probe 2 (delivery decoupled + honest recorded state) asserted in the green run; a one-legged green is hollow.
+  - Hop 2: probe written, Phase A predicted-RED is "row not in answer_artifact_projection" — confirm RED before deploying the projector. Phase B's update-propagation must ALSO go red before code, NOT just degenerate-green by accident of the insert path. Phase D's durability_status orthogonality assertion must go red before code — predicted-RED is either "durability_status column doesn't exist in the projection" or "the projector overloaded durability_status onto status." **The projector's liveness probe is itself subject to this rule** — kill the apply loop, watch the liveness probe go red, then trust green afterward.
+  - Hop 3: byte-identical-diff probe is degenerate-green pre-swap (with the baseline shifted to post-Hop-1, per Hop 1's Breakpoint); Part 2 must go RED before Electric is deployed. **If Decision 3's spike outcome required building the watermark, Hop 3's see-your-write ordering probe (Part 3) goes RED with the artifact-row sync delayed before the ordering fix lands, then GREEN after.** A watermark whose see-your-write probe has only ever been green-without-having-been-red is decorative.
 
 - **Liveness watches advance, not just correctness.** Per `[[liveness-probe-watches-advance-not-just-correctness]]` (banked from this plan's original §7 footnote, elevated by the architect): the projector's liveness check asserts the loop is ADVANCING — watermark increments, apply-tick counter increments, cursor moves — not just that data is currently correct. Frozen-but-correct is the failure mode a correctness-only probe misses. A stopped projector with a backfilled-once table is data-identical to a healthy projector; only the advance check distinguishes them.
 
 - **Coupled interim mechanisms retire together.** Per `[[coupled-interim-mechanisms-retire-together]]` (banked from this plan's Decision-1/Decision-3 coupling; this plan is the first instance): the interim trio of Decisions 0, 1, and 3 retires together under the Restate+topic successor. The retirements share a single cause (no streaming change-feed today); they exit together when that cause is removed. The watermark is NOT permanent substrate even if it survives Hop 2; it is throwaway scaffolding whose retirement is documented in §3.5.
+
+- **Ordering questions hide coupling questions.** Per `[[ordering-questions-hide-coupling-questions]]` (banked from this plan's Decision-0 sub-decision; this plan is the first instance): when a sub-decision is framed as "in what order do these two operations against two systems happen?", STOP and check whether they should be ordered at all. "Before vs after" presupposes a coupled sequence, which is the dual-write failure shape one layer down. The right answer is usually decouple-with-honest-failure-state per-domain. This plan's Decision-0 sub-decision is the canonical case; the rule will fire again in ADR-0024 Part B's publish-backend planning (publish action ordering, scrub ordering, SUPERSEDES chain construction) per the memory's "Where this rule was about to apply" section. Sibling rule to `[[coupled-interim-mechanisms-retire-together]]` at a different layer — both detect coupling-the-planner-missed; one fires on decisions, the other on operations.
 
 - **Verify by inspection, not by attestation.** Per `[[verify-subtle-acceptance-by-inspection]]`: when the agent reports a hop green, the architect (or a different reviewer) opens the actual diff and the actual probe output. Specific inspections this plan calls out:
   - Hop 1: open Neo4j browser, see the node + edge shape match the predicted property names. Don't accept "the probe passed" without the visual confirmation.
@@ -466,18 +619,25 @@ The Monday work-cluster handoff Phase 1 was waiting on has two parts: (a) the UR
 - **Workspace UI metaphor** — tabs / projects / free-spatial canvas. The collection is durable as of Phase 1; how it arranges in a workspace is a UI-arc decision after Hop 3.
 - **Latency budget measurement under load.** ADR-0023's "Consequences" section flags that the write-path now touches Neo4j + projector + Electric, longer than the current "render and forget" shape. Measuring under realistic load is a post-Hop-3 task; this plan's choices argue the budget is sufficient but don't verify it.
 
-## 10. STOP for this thread
+## 10. STOP for this thread (FINAL)
 
-**This revised-plan commit is the STOP point.** Binding. The original draft was `ded7cc7`; this revision sits on top of it preserving the review audit trail.
+**This revision-2 commit is the FINAL STOP point for the planning thread.** Binding. The architect signs off after this commit and the next thread opens on the Electric-position spike.
+
+Prior commits in the audit trail:
+- `ded7cc7` — original draft (four decisions, four hops).
+- `07023ce` — revision 1 (Decision 0 elevated, Decisions 1 + 3 reframed as coupled interim-with-named-successor, build-sequencing gates added).
+- this commit — revision 2 (Decision 0 sub-decision settled with decouple-with-honest-failure-state, `durability_status` introduced as a new field distinct from `status`, Hop 1 gains the `@neo4j-write-failure-honest-state` probe, `[[ordering-questions-hide-coupling-questions]]` cited).
+
+The four primary decisions are settled (0 with sub-decision; 1, 3 as interim-with-named-successor; 2, 4 as permanent). The sub-decision is settled (decouple-with-honest-failure-state, continuity-to-Restate-successor proven). The fixture discipline is settled (RED-first per pre-written rule, both legs of two-legged probes asserted, advance-check liveness, orthogonality on durability_status). The build-session sequencing is settled (Neo4j edition confirmation → Electric-position spike → Hop 1 → Hop 2 → Hop 3).
 
 This thread does NOT:
 - Write backend code (no Neo4j writer in cortex-bff, no projector Deployment, no Electric Shape).
 - Modify any helm chart (no new templates, no values changes).
 - Write to any database (Neo4j read-only via inspector existing today; Postgres untouched).
-- Change the cortex-ui Artifact type (zero diff against `src/api/types.ts`).
+- Change the cortex-ui Artifact type (zero diff against `src/api/types.ts` — the `durability_status` addition is planned for Hop 1 of the build session, not implemented here).
 - Run the Electric-native-position spike (that's the build session's first gate, per §3.6).
 - Open the build session.
 
-The architect's review of this plan (with a second agent challenging the four decisions specifically) is the next step. The build session is the step after that, gated on architect sign-off on whichever subset of the four decisions survives review.
+The build session is the next thread, opening after the architect signs off on this revision. Its first step is the Neo4j edition confirmation; its second step is the Electric-native-position spike (which may delete Decision 3 entirely); Hops 1 / 2 / 3 follow per §3.6's binding sequence.
 
-If, in the moments after this commit, the pull arrives to "just sketch hop 1's Neo4j write while I'm in here" — STOP. The architect's review is the next step; the build is the step after that. Skipping the review collapses the premise-shift surface into the build, which is exactly the discipline-failure the four-decision section is structured to prevent.
+If, in the moments after this commit, the pull arrives to "just sketch hop 1's Neo4j write while I'm in here" — STOP. The build session is the next thread; the spike is its first step; the spike may change Decision 3 and thus change parts of Hop 2 and Hop 3. Skipping the spike collapses a premise-shift surface into work-already-done, which is exactly the discipline-failure the build-session-gate-list is structured to prevent.
