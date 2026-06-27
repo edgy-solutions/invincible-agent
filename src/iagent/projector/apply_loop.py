@@ -324,12 +324,14 @@ class ApplyLoop:
                   }] AS producers,
                   [(a)-[:PRODUCED_FOR]->(u) | u {
                     .actor_type, .actor_id, .user_id, .is_authenticated,
-                    .user_persona, .entitled_domains
+                    .user_persona, .entitled_domains,
+                    .entitlement_source
                   }] AS consumers,
                   [(a)-[c:CITES]->(s) | {
                     uri: s.uri, type: s.type, label: s.label,
                     snippet: c.snippet, relevance: c.relevance,
-                    open_url: c.open_url
+                    open_url: c.open_url,
+                    access_decision_json: c.access_decision_json
                   }] AS sources,
                   [(a)-[:DERIVED_FROM]->(d) | d.id][0] AS derived_from
                 ORDER BY a.watermark
@@ -374,6 +376,17 @@ class ApplyLoop:
         produced_by = producers[0] if producers else {}
         produced_for = consumers[0] if consumers else {}
         sources = art.get("__sources") or []
+        # Capture B per ADR-0025: re-parse the writer's
+        # `access_decision_json` (JSON string on the CITES edge, since
+        # Neo4j cannot hold nested dicts as properties) back into a
+        # dict, on the `access_decision` key. The slot is RESERVED —
+        # production writes set it null today; the enforcement
+        # session populates it. The projector flowing it through is
+        # the structural-pre-requisite that means the enforcement
+        # session does not need a second projection migration.
+        for s in sources:
+            ad_json = s.pop("access_decision_json", None)
+            s["access_decision"] = _parse_json(ad_json)
         # Edge metadata at Hop 2 lives in JSONB columns; the substantive
         # graph_trace will come from a future edge type. For now we
         # honestly project an empty list — `[[fixture-must-exercise-paths]]`

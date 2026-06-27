@@ -1154,6 +1154,14 @@ async def generate_dagster_stream(
     # so legacy callers that haven't been migrated still work.
     user_persona: str = "MECHANIC",
     entitled_domains: list[str] | None = None,
+    # Capture A per ADR-0025: WHICH origin the persona / entitled_domains
+    # came from. Threaded down from /orchestrate so the produced_for dict
+    # construction below at line ~1370 can record it on the artifact.
+    # Default "fallback" matches the persona/domains defaults above —
+    # the legacy-caller path was never carrying real claims anyway, so
+    # the honest default per `[[optimistic-defaults-are-dishonest]]` is
+    # the failure-revealing value, not "claim".
+    entitlement_source: str = "fallback",
 ) -> AsyncGenerator[str, None]:
     """
     Trigger Dagster job and stream step status as Holographic Thinking Cards.
@@ -1367,6 +1375,13 @@ async def generate_dagster_stream(
             "is_authenticated": True,
             "user_persona": user_persona,
             "entitled_domains": entitled_domains or [],
+            # Capture A per ADR-0025: WHICH origin the persona /
+            # entitled_domains came from at the moment auth.py read
+            # the JWT. Once the persisted produced_for dict is written
+            # to Neo4j, the information that the claim was absent is
+            # gone — capture-or-lose-forever. The User model required
+            # this explicitly per `[[optimistic-defaults-are-dishonest]]`.
+            "entitlement_source": entitlement_source,
         },
         "resolved_intent": intent_extraction or {},
         "routing": None,
@@ -1856,6 +1871,10 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
                 user_id=current_user.id,
                 user_persona=current_user.persona,
                 entitled_domains=current_user.entitled_domains,
+                # Capture A per ADR-0025: thread the JWT-read-time
+                # origin flag from auth.User down to the produced_for
+                # dict construction inside generate_dagster_stream.
+                entitlement_source=current_user.entitlement_source,
             ),
             interval_s=10.0,
         ),

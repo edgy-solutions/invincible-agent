@@ -4,7 +4,7 @@ from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 # Configuration
 # The Keycloak Realm URL is retrieved from environment variables, defaulting to a standard local path.
@@ -23,6 +23,32 @@ USER_PERSONA_CLAIM = os.getenv("USER_PERSONA_CLAIM", "persona")
 USER_PERSONA_FALLBACK = os.getenv("USER_PERSONA_FALLBACK", "MECHANIC")
 USER_DOMAINS_CLAIM = os.getenv("USER_DOMAINS_CLAIM", "entitled_domains")
 
+
+# Capture A per ADR-0025 § "Capture A — entitlement_source fidelity flag
+# on produced_for".
+#
+# The persona / entitlements VALUE the User carries is the same value
+# downstream code uses today (fallback when the claim is absent, claim
+# value when present). The new `entitlement_source` field records WHICH
+# ORIGIN the value came from — information that exists ONLY at the
+# moment the JWT is read, and is unrecoverable later
+# (capture-or-lose-forever per `[[verify-subtle-acceptance-by-inspection]]`).
+#
+# Vocabulary:
+#   "claim"    — both persona and domains claims were present.
+#   "fallback" — neither was present (the PingSSO production baseline
+#                per `[[pingsso-claim-gap]]`).
+#   "partial"  — exactly one was present, the other fell back
+#                (transitional / misconfigured state).
+#
+# Per `[[optimistic-defaults-are-dishonest]]`: the field is REQUIRED on
+# the User model — no default. Defaulting to "claim" would silently
+# mask the fallback path (which is the production baseline) and
+# convert silence into a success signal. Required input forces
+# get_current_user to compute the value at the moment the JWT is read.
+EntitlementSource = Literal["claim", "fallback", "partial"]
+
+
 class User(BaseModel):
     id: str
     email: str
@@ -36,6 +62,11 @@ class User(BaseModel):
     # should treat that as "no scope filter applied" rather than "no access"
     # until the IdP team expands the claim set.
     entitled_domains: List[str] = []
+    # Capture A per ADR-0025: which origin did the persona / entitlements
+    # come from? REQUIRED — no default per
+    # `[[optimistic-defaults-are-dishonest]]`. A forgotten value here is a
+    # ValidationError at construction, not a silent fallback-to-"claim".
+    entitlement_source: EntitlementSource
 
 # Global JWKS Client for caching public keys
 jwks_url = f"{KEYCLOAK_URL}/protocol/openid-connect/certs"
@@ -65,6 +96,16 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         realm_access = payload.get("realm_access", {})
         roles = realm_access.get("roles", [])
 
+        # Capture A per ADR-0025: record WHICH ORIGIN the persona /
+        # entitlements came from, BEFORE the fallback is applied. After
+        # `or USER_PERSONA_FALLBACK` runs, the information that the
+        # claim was absent is gone — capture-or-lose-forever per
+        # `[[verify-subtle-acceptance-by-inspection]]`. The presence
+        # check must happen on the raw payload dict, not on the
+        # post-fallback value.
+        persona_claim_present = USER_PERSONA_CLAIM in payload
+        domains_claim_present = USER_DOMAINS_CLAIM in payload
+
         # Per ADR-0009: try the configured persona claim; default to the
         # fallback if the IdP doesn't issue it yet. Normalize to upper-case
         # to match the answerer-persona vocabulary engines already use.
@@ -79,6 +120,18 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             entitled_raw = [s.strip() for s in entitled_raw.split(",") if s.strip()]
         entitled_domains = [str(d).upper() for d in entitled_raw if d]
 
+        # Capture A: compute entitlement_source from the presence
+        # checks captured above. Three legitimate values; per
+        # `[[optimistic-defaults-are-dishonest]]` the User model
+        # REQUIRES this explicitly — a forgotten value would be a
+        # ValidationError, not a silent default.
+        if persona_claim_present and domains_claim_present:
+            entitlement_source: EntitlementSource = "claim"
+        elif not persona_claim_present and not domains_claim_present:
+            entitlement_source = "fallback"
+        else:
+            entitlement_source = "partial"
+
         if not user_id or not email:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -92,6 +145,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             roles=roles,
             persona=persona,
             entitled_domains=entitled_domains,
+            entitlement_source=entitlement_source,
         )
         
     except jwt.ExpiredSignatureError:

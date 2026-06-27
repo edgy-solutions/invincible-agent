@@ -489,6 +489,24 @@ class AnswerArtifactWriter:
 
         # PRODUCED_FOR edge → Actor node. user-side persona slot held
         # nullable per [[pingsso-claim-gap]].
+        #
+        # Capture A per ADR-0025: `entitlement_source` records WHICH
+        # ORIGIN the persona / entitled_domains came from at the
+        # moment auth.py read the JWT — "claim" / "fallback" /
+        # "partial". The persisted produced_for VALUE is downstream
+        # code's view; the origin flag is the audit fact that
+        # otherwise would be lost
+        # (capture-or-lose-forever per
+        # `[[verify-subtle-acceptance-by-inspection]]`).
+        #
+        # Note: if the caller's bundle does not carry the field
+        # (legacy direct-writer call sites), we default to "fallback"
+        # at the Cypher layer rather than silently writing null. Per
+        # `[[optimistic-defaults-are-dishonest]]`: "fallback" is the
+        # failure-revealing default that makes a forgotten origin
+        # visible. Production callers thread the field through from
+        # the gateway; the legacy default exists only so probe/repair
+        # call sites stay compatible.
         consumer = bundle.produced_for or {}
         if consumer:
             tx.run(
@@ -502,7 +520,8 @@ class AnswerArtifactWriter:
                   u.user_id = $user_id,
                   u.is_authenticated = $is_authenticated,
                   u.user_persona = $user_persona,
-                  u.entitled_domains = $entitled_domains
+                  u.entitled_domains = $entitled_domains,
+                  u.entitlement_source = $entitlement_source
                 MERGE (a)-[:PRODUCED_FOR]->(u)
                 """,
                 id=bundle.id,
@@ -510,11 +529,27 @@ class AnswerArtifactWriter:
                 is_authenticated=bool(consumer.get("is_authenticated", False)),
                 user_persona=consumer.get("user_persona"),
                 entitled_domains=consumer.get("entitled_domains"),
+                entitlement_source=consumer.get(
+                    "entitlement_source", "fallback"
+                ),
             )
 
         # CITES → Source. MERGE the Source by uri (sources are reusable
         # across artifacts per ADR-0023). MERGE the CITES edge so
         # replay doesn't double-edge.
+        #
+        # Capture B per ADR-0025: `access_decision` is a RESERVED SLOT
+        # on the CITES edge. The slot is part of the type today, null
+        # in all production writes, no consumer reads it. Reserving
+        # the slot now means the enforcement session does not need a
+        # second migration through writer + Neo4j + projector +
+        # Postgres + Electric + cortex-ui to land the captured
+        # Topaz decision. Neo4j edge properties cannot hold nested
+        # dicts, so we serialize to a JSON string property
+        # `c.access_decision_json` (mirrors `routing_inline` /
+        # `resolved_intent`'s JSON-string-on-Neo4j shape). The
+        # projector re-parses it back into a dict in the `sources`
+        # JSONB.
         for src in bundle.sources or []:
             uri = src.get("uri")
             if not uri:
@@ -530,7 +565,8 @@ class AnswerArtifactWriter:
                 SET
                   c.snippet = $snippet,
                   c.relevance = $relevance,
-                  c.open_url = $open_url
+                  c.open_url = $open_url,
+                  c.access_decision_json = $access_decision_json
                 """,
                 id=bundle.id,
                 uri=uri,
@@ -539,6 +575,10 @@ class AnswerArtifactWriter:
                 snippet=src.get("snippet"),
                 relevance=src.get("relevance"),
                 open_url=src.get("open_url"),
+                # Capture B reserved slot: null when not populated.
+                # When enforcement lands, the retrieval call site
+                # populates this with the Topaz decision record.
+                access_decision_json=_to_json(src.get("access_decision")),
             )
 
         # DERIVED_FROM → AnswerArtifact (lineage). Only when present.
