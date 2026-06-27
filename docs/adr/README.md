@@ -76,4 +76,4 @@ the decision probably isn't ADR-worthy — it's permanent.
 | [0010](ADR-0010-distributed-tracing-strategy.md) | Distributed tracing strategy (OpenTelemetry at the HTTP boundary) | Proposed |
 | [0011](ADR-0011-multi-spo-routing.md) | Multi-SPO routing in NL (design exploration) | Proposed |
 | [0023](ADR-0023-iagent-answer-artifact-graph-cqrs.md) | iagent AnswerArtifact as a graph-native CQRS object (Neo4j write + Electric read) | Proposed |
-| [0024](ADR-0024-standards-composition-bpmn-calm-odps-odcs.md) | Standards composition (BPMN / CALM / ODPS / ODCS) — reasoning lands per-demand | Reserved |
+| [0024](ADR-0024-standards-composition-bpmn-calm-odps-odcs.md) | Standards composition (BPMN / CALM / ODPS / ODCS) + publish/promotion (one-way emit; PublishedArtifact thin reference; SUPERSEDES chain; honest dangling) | Partially Proposed (publish 2026-06-27); Reserved (standards) |
