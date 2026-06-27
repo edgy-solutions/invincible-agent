@@ -857,6 +857,34 @@ cortexBff:
     tls: []
 
 # ==========================================================================
+# Projector (Hop 2 of docs/plans/projector-build-plan.md)
+# Standalone Deployment per Decision 4 (PERMANENT). Mirrors cortex-bff's
+# shape — single replica, env-driven config, no PVC. Apply loop is
+# INTERIM under Decision 1; retires with the Restate+topic successor
+# per [[coupled-interim-mechanisms-retire-together]].
+# ==========================================================================
+projector:
+  enabled: true
+  replicas: 1
+  image:
+    # Same image as cortex-bff — both run from src/iagent/. The entry
+    # point is `python -m iagent.projector`, set as the container's
+    # `command` in the template so the same image serves both pods.
+    name: cortex-bff
+    tag: ""
+  port: 8095
+  pollIntervalSeconds: 0.5
+  batchLimit: 100
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  env: {}
+
+# ==========================================================================
 # Additional Infrastructure
 # ==========================================================================
 
