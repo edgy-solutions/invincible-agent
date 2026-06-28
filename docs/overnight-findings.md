@@ -20,7 +20,7 @@ Dispatched by: architect (Chris) for unsupervised overnight work.
 
 **Queued morning decisions** (don't silent-decide):
 1. **Option 2 (during-query SSE optimism)** — confirmed by item 7's diagnostic; numbers attached. Decision is yours.
-2. **Resolver phrasing gap** — every routed-path query I attempted hit `prov#*` fallback, even with exact subject-class labels. The `[[resolve-phrasing-sensitivity]]` gap is deeper than rough-grammar variants and is blocking "fair test" diagnostics. Fenced per dispatch but worth a dedicated session.
+2. ~~**Resolver phrasing gap**~~ → **PROV contamination of the OntologyClass corpus**. Architect re-flagged this finding mid-overnight as worth investigating immediately. **Investigated.** New banked memory `[[ontology-class-pool-prov-contamination]]` — same shape as the 2026-06-25 predicate-corpus contamination, one substrate over. Likely blocking Gate 6 (specialist-routed end-to-end). Recommendation: Path A (ingest-time filter on meta-ontologies). Details in section below.
 3. **Message persistence (Hop 4)** — explicitly fenced; left untouched.
 
 **Critical: commits NOT applied to sandbox** (item 1 — values.yaml change is a next-deploy fix only). Sandbox is still running the manual `kubectl set image ... :latest` patch on the projector.
@@ -172,5 +172,58 @@ The candidates I considered and explicitly skipped as **judgment calls** (left f
 5. **`Artifact N of M` counter order** — array-order = apply-order = watermark-order; user has not flagged this as wrong. Surfacing UI metaphor for prior artifacts is explicitly deferred per ADR-0023 "What stays deferred."
 
 Each above is queued for a morning decision, not silent-fixed.
+
+---
+
+## Mid-overnight escalation — PROV-O contaminates OntologyClass corpus
+
+The architect woke briefly to escalate the resolver finding from item 7's report. Their re-framing: this isn't `[[resolve-phrasing-sensitivity]]` (phrasing variants confuse the resolver) — it's **the resolver matches the exact label to the wrong thing — a W3C PROV concept instead of the domain class — with middling confidence**. They flagged the same shape as the 2026-06-25 predicate-corpus contamination arc and asked me to check whether PROV terms are sitting in the resolver pool where they shouldn't be.
+
+**They were right. Confirmed.** Full investigation banked at `[[ontology-class-pool-prov-contamination]]`.
+
+### Confirmed contamination (verified 2026-06-28)
+- **31 PROV-O classes** sit in Weaviate's `OntologyClass` collection
+- Tagged `domain: DATA_ENGINEERING` (30) + `MAINTENANCE` (1 — `prov:Entity` with malformed URI)
+- **Rich English definitions** (e.g., Bundle: "Note that there are kinds of bundles ... that are not expressed in PROV-O but can be still be described")
+- Sit next to domain classes that have either empty or short definitions → vector-half retrieval favors PROV's rich text
+
+### Routing-domain pick locks to DATA_ENGINEERING
+`src/iagent/defs/dynamic_supervisor.py:895` — `routing_domain = list(config.entitled_domains)[0]`. For the `agent-user` JWT carrying `entitled_domains: ["DATA_ENGINEERING", "MAINTENANCE"]`, routing_domain is **always** `DATA_ENGINEERING`. This is where PROV lives.
+
+### Production behavior — every routed-path query in this session
+From `kubectl logs deploy/iagent-dagster-user-code` 2026-06-28 00:33 → 03:45:
+
+| Query | Resolver result | Confidence |
+|---|---|---|
+| `"What are the rotor blade assets used for safety in helmets?"` | `prov#Usage` | 0.85 |
+| `"Find documentation about helmet safety procedures"` | `prov#PrimarySource` | 0.45 |
+| `"Show me the descriptive data module for the helmet"` | `prov#Bundle` | 0.66 |
+| `"What's in the illustrated parts data module for the helmet?"` | `prov#Bundle` | 0.66 |
+| `"Show me the Descriptive Data Module"` (overnight diagnostic) | `prov#Bundle` | 0.66 |
+
+**Specialist routing path has never been exercised end-to-end** because the resolver never produces a `mil#*` URI that the verb graph has compatible verbs for. This connects directly to Gate 6 — the engine-end-to-end specialist-routed variant the architect noted as still-unproven. **This is plausibly what was blocking it.**
+
+### Recommended fix shape
+**Path A (architecturally correct, recommended):** the doc-tools / ontology-ingest pipeline that writes to Weaviate's `OntologyClass` collection should identify meta-ontologies (PROV-O, RDFS, OWL, DC, SKOS) by IRI prefix and either skip them or route to a separate collection that the resolver doesn't consult. Same shape as `[[mesh-thing-retired]]` (synthetic catch-all retired across 2 stores).
+
+**Path B (defensive Band-Aid):** Engine O's `weaviate_hybrid_search` filters candidates with `prov#`, `rdf#`, `owl#`, etc. URI prefixes before passing to BAML. Doesn't fix the ingestion bug; future meta-ontologies leak the same way.
+
+**Cleanup at storage layer:** `MATCH (c:OntologyClass) WHERE c.uri CONTAINS 'prov#' DELETE c` in Neo4j + equivalent Weaviate delete. Must be paired with the ingest-pipeline fix or next ingest re-pollutes.
+
+### Unresolved evidence gap (queue)
+My direct hybrid query (proper `search_query: ` prefix on nomic-embed vector, alpha=0.5, DATA_ENGINEERING) does NOT surface PROV in the top 10 — only Pipeline + Dataset. But production reproducibly returns `prov#Bundle`. Three hypotheses, all queued in the memory file:
+
+1. `/plan` rewrites the query into a sub-query that surfaces PROV (check `routing_query = sub_query or config.user_query`).
+2. TypeBuilder's `@@dynamic` enum doesn't strictly constrain BAML; the LLM hallucinates `prov#Bundle` from training-data familiarity. The "always 0.66" pattern is suspicious for a real LLM confidence.
+3. A second source of candidates beyond `weaviate_hybrid_search` — possibly the SPARQL cold-start fallback at `main.py:1228-1242`.
+
+Any of these still requires corpus cleanup as a prerequisite — leaving PROV in the pool is a structural risk regardless of today's winning mechanism.
+
+### What did NOT happen (per fence)
+- No code change to Engine O's `/resolve`.
+- No Neo4j/Weaviate cleanup commands run.
+- No commits touching the ingest pipeline.
+
+Banking + write-up only. Path A vs Path B decision is yours.
 
 ---
