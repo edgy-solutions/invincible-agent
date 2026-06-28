@@ -484,7 +484,24 @@ class PlanRequest(BaseModel):
 class ResolveRequest(BaseModel):
     """Incoming request to the /resolve endpoint."""
     query: str
+    # Legacy single-domain field — kept for backward compat with any
+    # direct callers (curl tests, /classes endpoint, etc.). The
+    # supervisor's `_resolve_subject` was the only production caller
+    # that hit this with a SINGLE domain, and it was picking
+    # `entitled_domains[0]` — the routing_domain lock bug confirmed
+    # 2026-06-28. New callers should populate `domains` instead.
     domain: str = "MAINTENANCE"
+    # NEW (2026-06-28): list of entitled domains to scope the
+    # candidate pool. When provided (non-empty), supersedes `domain`.
+    # The Weaviate hybrid search filters candidates by
+    # `domain IN domains` so the LLM picks the best match ACROSS the
+    # union — query-driven, not entitlement-order-driven. This fixes
+    # the routing_domain lock at `dynamic_supervisor.py:895`.
+    # Per `[[failure-mode-pluralism-in-fixes]]`: this lands as a
+    # SEPARATE diagnosable change from the PROV-contamination cleanup.
+    # The symptom should shift after this fix; the shift's direction
+    # tells us which mechanism was load-bearing.
+    domains: list[str] = []
     # Optional list of named-entity references the caller already
     # extracted (typically by /route_intent's BAML ExtractIntent step).
     # When class-recall (Weaviate hybrid + SPARQL fallback) returns no
@@ -657,7 +674,12 @@ class FindPathResponse(BaseModel):
     reason: str | None = None
 
 
-def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> list[dict]:
+def _weaviate_hybrid_search_sync(
+    query: str,
+    domain: str | None = None,
+    domains: list[str] | None = None,
+    limit: int = 10,
+) -> list[dict]:
     """Synchronous hybrid search implementation. gRPC blocks here.
 
     Always invoke via ``await asyncio.to_thread(...)`` from async paths so
@@ -668,6 +690,14 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
     pass it as `vector=` to Weaviate. Weaviate is dumb storage: NO
     text2vec module is involved on the cluster side. See the embed.py
     docstring for the rationale (code owns the contract, not infra).
+
+    Domain scoping (2026-06-28): `domains` (list) supersedes `domain`
+    (single string) when provided non-empty. The filter is OR across
+    the listed domains — entitlement-list scoping where the candidate
+    pool spans every domain the user IS entitled to, and the LLM picks
+    the best across the union (query-driven). When `domains` is empty
+    or None, falls back to `domain` for backward compat. When BOTH are
+    empty, no filter is applied.
 
     If the OntologyClass collection has no vectors stored (e.g. the
     ingest pipeline hasn't been re-run since this change), Weaviate's
@@ -681,7 +711,20 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
         return []
     try:
         collection = _WEAVIATE_CLIENT.collections.get("OntologyClass")
-        filters = wvc.query.Filter.by_property("domain").equal(domain.upper()) if domain else None
+        # Resolve which domains the filter spans. List supersedes
+        # single-string per the routing_domain lock fix (2026-06-28).
+        scope_domains: list[str] = []
+        if domains:
+            scope_domains = [d.upper() for d in domains if d]
+        elif domain:
+            scope_domains = [domain.upper()]
+
+        if len(scope_domains) == 0:
+            filters = None
+        elif len(scope_domains) == 1:
+            filters = wvc.query.Filter.by_property("domain").equal(scope_domains[0])
+        else:
+            filters = wvc.query.Filter.by_property("domain").contains_any(scope_domains)
 
         try:
             query_vector = embed_query(query)
@@ -710,9 +753,22 @@ def _weaviate_hybrid_search_sync(query: str, domain: str, limit: int = 10) -> li
         return []
 
 
-async def weaviate_hybrid_search(query: str, domain: str, limit: int = 10) -> list[dict]:
-    """Async wrapper that runs the blocking hybrid search on a worker thread."""
-    return await asyncio.to_thread(_weaviate_hybrid_search_sync, query, domain, limit)
+async def weaviate_hybrid_search(
+    query: str,
+    domain: str | None = None,
+    domains: list[str] | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Async wrapper that runs the blocking hybrid search on a worker thread.
+
+    `domains` (list) supersedes `domain` (single string) when provided
+    non-empty — query-driven cross-domain pool scoping per the
+    routing_domain lock fix (2026-06-28). Backward-compatible with
+    callers passing only `domain`.
+    """
+    return await asyncio.to_thread(
+        _weaviate_hybrid_search_sync, query, domain, domains, limit
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1222,8 +1278,18 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     2. Inject these candidates into BAML TypeBuilder as a dynamic enum.
     3. Call BAML ClassifyDomainIntent to strictly select the best match.
     """
-    # Step 1: Hybrid Search for candidates in Weaviate
-    candidates = await weaviate_hybrid_search(query=request.query, domain=request.domain, limit=10)
+    # Step 1: Hybrid Search for candidates in Weaviate. The `domains`
+    # field (when non-empty) supersedes `domain` — the supervisor's
+    # entitled_domains list spans the candidate pool query-driven,
+    # rather than locking to entitled_domains[0]. See ResolveRequest
+    # docstring + [[failure-mode-pluralism-in-fixes]] for the
+    # diagnose-each-mechanism rationale.
+    candidates = await weaviate_hybrid_search(
+        query=request.query,
+        domain=request.domain,
+        domains=request.domains,
+        limit=10,
+    )
     
     # Step 1.5: COLD START FALLBACK -> If Weaviate is empty, read the RDF graph
     if not candidates:

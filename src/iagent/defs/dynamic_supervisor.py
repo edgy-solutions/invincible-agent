@@ -192,6 +192,7 @@ def _resolve_subject(
     user_query: str,
     domain: str,
     entity_refs: List[str] | None = None,
+    domains: List[str] | None = None,
 ) -> tuple[str, float, str]:
     """Ask Engine O's /resolve for the subject ontology class.
 
@@ -238,8 +239,19 @@ def _resolve_subject(
     try:
         payload: Dict[str, Any] = {
             "query": user_query,
+            # `domain` retained for backward-compat with Engine O's
+            # ResolveRequest. `domains` (list, NEW 2026-06-28) is the
+            # query-driven fix: when populated, Engine O scopes the
+            # OntologyClass pool to the UNION of these and lets the
+            # LLM pick the best match across them. Routes by query
+            # within the entitlement scope instead of locking to
+            # entitled_domains[0]. See
+            # [[failure-mode-pluralism-in-fixes]] for the
+            # diagnose-each-mechanism rationale.
             "domain": domain or "MAINTENANCE",
         }
+        if domains:
+            payload["domains"] = list(domains)
         if entity_refs:
             payload["entity_refs"] = list(entity_refs)
         resp = requests.post(
@@ -345,8 +357,22 @@ def _classify_route(
 
     Returns ``(status, predicate_or_none, telemetry_dict)``.
     """
+    # `routing_domain` is the legacy single-string fallback Engine O
+    # still accepts for backward-compat. `entitled_domains` is the
+    # NEW (2026-06-28) query-driven path: Engine O scopes the
+    # OntologyClass pool to the UNION of these and lets the LLM pick
+    # across them. Without this, the resolver was locked to
+    # entitled_domains[0] regardless of query, funneling every query
+    # for a multi-entitlement user through the SAME domain. See
+    # [[failure-mode-pluralism-in-fixes]] for the fix-sequencing
+    # rationale (this is Bug A; PROV contamination is Bug B,
+    # diagnosed separately).
     subject_uri, subject_conf, subject_reason, subject_instance_id = _resolve_subject(
-        context, user_query, routing_domain, entity_refs=entity_refs,
+        context,
+        user_query,
+        routing_domain,
+        entity_refs=entity_refs,
+        domains=list(entitled_domains) if entitled_domains else None,
     )
 
     # ADR-0019 Contract B — UNKNOWN-subject short-circuit. No
@@ -888,10 +914,21 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # BM25. The threshold below applies to the LLM's own confidence.
     routing_query = sub_query or config.user_query
 
-    # Domain used for the BAML domain field on /resolve. Same value used
-    # for the /classify_predicate domain hint. First entitled domain
-    # wins; falls back to MAINTENANCE if no scope (preserves
-    # backward-compatible behavior with the prior router).
+    # Legacy single-domain hint. `entitled_domains[0]` is the prior
+    # "first entitled wins" lock that funneled every multi-entitlement
+    # user's query through the same domain regardless of query content
+    # (Bug A confirmed 2026-06-28; full diagnosis in
+    # [[ontology-class-pool-prov-contamination]]'s linked memory and
+    # [[failure-mode-pluralism-in-fixes]]).
+    #
+    # The lock is now MITIGATED — _classify_route passes the full
+    # `entitled_domains` list to Engine O via the new `domains` field,
+    # and Engine O scopes the OntologyClass pool to the UNION of those.
+    # The LLM picks the best match query-driven across them. We keep
+    # `routing_domain` for the legacy /classify_predicate domain hint
+    # (which has the same lock shape but is downstream of subject
+    # resolution and a separate question — left for a follow-up if
+    # the diagnosis surfaces it as material).
     routing_domain = (
         list(config.entitled_domains)[0]
         if config.entitled_domains else "MAINTENANCE"
