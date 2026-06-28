@@ -425,6 +425,12 @@ cortexUi:
     VITE_API_URL: "https://bff.edgy-solutions.com"
     VITE_KEYCLOAK_REALM_URL: "https://keycloak.edgy-solutions.com/realms/invincible-agent"
     VITE_KEYCLOAK_CLIENT_ID: "cortex-ui"
+    # Electric subscription endpoint (ADR-0023 / Hop 3). Browser
+    # subscribes directly to Electric's shape stream; ingress block
+    # for `electric:` below exposes the in-cluster service. When this
+    # is empty, cortex-ui's electric.ts logs "subscription skipped"
+    # and the canvas falls back to SSE-only (no refresh resilience).
+    VITE_ELECTRIC_URL: "https://electric.edgy-solutions.com"
 
 cortexBff:
   enabled: true
@@ -473,6 +479,26 @@ keycloak:
     tls:
       - hosts:
           - keycloak.edgy-solutions.com
+        secretName: edgy-wildcard-tls
+
+# --------------------------------------------------------------------------
+# Electric (ADR-0023 / Hop 3 substrate). Browser clients subscribe
+# directly to Electric's shape endpoint; we expose it via the same
+# *.edgy-solutions.com pattern as cortex-bff / Keycloak. The cortexUi
+# block above sets VITE_ELECTRIC_URL to this host.
+# --------------------------------------------------------------------------
+electric:
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - host: electric.edgy-solutions.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - hosts:
+          - electric.edgy-solutions.com
         secretName: edgy-wildcard-tls
 
 # --------------------------------------------------------------------------

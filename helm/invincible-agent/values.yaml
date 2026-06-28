@@ -909,6 +909,21 @@ electric:
     limits:
       cpu: 500m
       memory: 512Mi
+  # Browser clients (cortex-ui) subscribe to Electric's shape endpoint
+  # directly — same domain as `bff.edgy-solutions.com`. Disabled by
+  # default for portability; enable per-environment in the values
+  # overlay (see values-sandbox.yaml) when an externally-routable
+  # endpoint is needed.
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: electric.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    tls: []
 
 # ==========================================================================
 # Additional Infrastructure
