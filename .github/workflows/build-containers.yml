@@ -95,6 +95,19 @@ jobs:
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        continue-on-error: true
+
+      # docker/setup-buildx-action@v3 pulls a buildx binary/image from
+      # docker.io during setup; that path occasionally times out
+      # ("context deadline exceeded" on registry-1.docker.io) — observed
+      # on dagster-server build at run 28306220148 (2026-06-27). Same
+      # transient class as the rancher-gateway flakes in helm. One
+      # automatic retry covers the typical case without adding a
+      # third-party retry action.
+      - name: Set up Docker Buildx (retry on transient docker.io timeout)
+        if: steps.buildx.outcome == 'failure'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and Push image (Multi-Arch)
