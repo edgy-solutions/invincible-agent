@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -26,6 +27,28 @@ from fastapi import FastAPI
 from .apply_loop import ApplyLoop, build_loop_from_env
 
 logger = logging.getLogger(__name__)
+
+
+# Per `[[optimistic-defaults-are-dishonest]]`: default is OFF. A
+# forgotten env var leaves the endpoint absent — the failure-revealing
+# default for an unauthenticated mutation surface. Truthy spellings
+# accepted because deploy systems vary; "true"/"1"/"yes" mean enable.
+_TRUTHY_ENV_VALUES = {"true", "1", "yes"}
+
+
+def _force_poll_enabled() -> bool:
+    """Returns True iff PROJECTOR_ENABLE_FORCE_POLL is explicitly truthy.
+
+    The default-off behavior closes the carry-forward
+    [[projector-hardening-carry-forwards]] item (b): `POST
+    /projector/poll` was previously mounted unconditionally,
+    exposing an unauthenticated mutation surface in every
+    production deploy. Tests that NEED the affordance set the env
+    in their bootstrap (Hop 2 phase suite, this file's gating
+    suite); production never sets it.
+    """
+    raw = os.environ.get("PROJECTOR_ENABLE_FORCE_POLL", "").strip().lower()
+    return raw in _TRUTHY_ENV_VALUES
 
 
 def create_app(loop: Optional[ApplyLoop] = None) -> FastAPI:
@@ -76,16 +99,36 @@ def create_app(loop: Optional[ApplyLoop] = None) -> FastAPI:
             "apply_count": state.apply_count,
         }
 
-    @app.post("/projector/poll")
-    async def force_poll():
-        """Force one apply batch. Test affordance — production polls on
-        the configured interval. The probe suite uses this to cut the
-        poll-interval wait down to near-zero so phase probes don't
-        spend 500ms-per-step idle.
-        """
-        loop: ApplyLoop = app.state.loop
-        applied = await asyncio.to_thread(loop.apply_once)
-        return {"applied": applied}
+    # POST /projector/poll is registered ONLY when PROJECTOR_ENABLE_FORCE_POLL
+    # is explicitly truthy. When unset, FastAPI returns 404 — the
+    # honest-default per [[optimistic-defaults-are-dishonest]] for an
+    # unauthenticated mutation surface. Test bootstraps that need the
+    # affordance set the env explicitly.
+    if _force_poll_enabled():
+        @app.post("/projector/poll")
+        async def force_poll():
+            """Force one apply batch. Test affordance — production polls on
+            the configured interval. The probe suite uses this to cut the
+            poll-interval wait down to near-zero so phase probes don't
+            spend 500ms-per-step idle.
+
+            Uses apply_once_async so the run_forever interval loop's
+            concurrent apply cannot race this one — both callers grab
+            ApplyLoop._apply_lock. See item (b) closure in
+            [[projector-hardening-carry-forwards]].
+            """
+            loop: ApplyLoop = app.state.loop
+            applied = await loop.apply_once_async()
+            return {"applied": applied}
+        logger.info(
+            "projector: POST /projector/poll mounted "
+            "(PROJECTOR_ENABLE_FORCE_POLL=true)"
+        )
+    else:
+        logger.info(
+            "projector: POST /projector/poll NOT mounted "
+            "(PROJECTOR_ENABLE_FORCE_POLL unset/false; default-off)"
+        )
 
     return app
 

@@ -121,6 +121,18 @@ class ApplyLoop:
         self._last_applied_watermark: int = 0
         self._last_apply_at_ms: int = 0
         self._apply_count: int = 0
+        # Apply-path concurrency lock — None until first awaited so the
+        # asyncio.Lock binds to the running event loop. Both the
+        # interval-driven run_forever AND the force_poll endpoint go
+        # through apply_once_async, which grabs this lock before
+        # offloading the sync work to a thread. Without it, a concurrent
+        # force_poll arriving mid-batch races the interval loop's cursor
+        # read → both fetch the same K rows from Neo4j → both call
+        # _apply_one for each row → apply_count double-increments (the
+        # data is still correct via idempotent UPSERT, but the
+        # operator-facing throughput signal lies). See
+        # `[[projector-hardening-carry-forwards]]` item (b).
+        self._apply_lock: Optional[asyncio.Lock] = None
         self._load_cursor_state()
 
     # ────────────────────────────────────────────────────────────────
@@ -222,7 +234,9 @@ class ApplyLoop:
             try:
                 # INTERIM POLL — retires under Restate+topic successor
                 # per [[coupled-interim-mechanisms-retire-together]].
-                applied = await asyncio.to_thread(self.apply_once)
+                # apply_once_async grabs _apply_lock so a concurrent
+                # force_poll cannot race this interval call.
+                applied = await self.apply_once_async()
                 if applied > 0:
                     logger.info(
                         "applied batch: count=%d last_applied_watermark=%d",
@@ -247,11 +261,42 @@ class ApplyLoop:
                 pass
         logger.info("projector apply loop stopped")
 
+    async def apply_once_async(self) -> int:
+        """Serialized async wrapper around apply_once. Both run_forever
+        AND the FastAPI force_poll endpoint go through this so the two
+        callers can never overlap.
+
+        Lazy-init of the lock binds it to whichever event loop is
+        running on first await — safer than constructing in __init__
+        (which may run outside an event loop in some test setups).
+
+        Per [[projector-hardening-carry-forwards]] item (b): without
+        this lock, a concurrent force_poll arriving mid-batch races
+        the interval loop's cursor read; both fetch the same K rows
+        from Neo4j; both call _apply_one for each; apply_count goes up
+        by 2K instead of K. Data is correct (UPSERT idempotent,
+        GREATEST() on watermark) but the operator throughput signal
+        lies.
+
+        Probe: `tests/test_projector_apply_concurrency.py` self-anchors
+        both directions — proves the race IS observable without the
+        lock AND that the lock serializes when in place.
+        """
+        if self._apply_lock is None:
+            self._apply_lock = asyncio.Lock()
+        async with self._apply_lock:
+            return await asyncio.to_thread(self.apply_once)
+
     def apply_once(self) -> int:
         """Apply one batch (or empty). Returns the count of rows applied.
 
         Synchronous because both the Neo4j driver and psycopg2 are sync;
         the run_forever wrapper offloads via asyncio.to_thread.
+
+        NOTE: callers from within an asyncio context should prefer
+        `apply_once_async()` so the concurrency lock fires. The sync
+        method is kept public for the Hop 2 phase probes, which run
+        outside an event loop and don't trigger the concurrent shape.
         """
         rows = self._poll_neo4j()
         if not rows:
