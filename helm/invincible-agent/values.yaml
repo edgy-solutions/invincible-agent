@@ -871,7 +871,15 @@ projector:
     # point is `python -m iagent.projector`, set as the container's
     # `command` in the template so the same image serves both pods.
     name: cortex-bff
-    tag: ""
+    # `latest` matches the cortexBff pattern in this chart's sandbox
+    # overlay. Empty here used to fall back to Chart.AppVersion (0.1.1),
+    # a tag that does NOT exist on GHCR — the projector pod went into
+    # ImagePullBackOff on every fresh deploy, and a kubectl set image
+    # patch was the only way to keep it running. Pinning `latest`
+    # makes the chart reproducible from values alone. Per-cluster
+    # overrides (e.g., production SHA-pin) still go through the
+    # values-{env}.yaml overlay.
+    tag: "latest"
   port: 8095
   pollIntervalSeconds: 0.5
   batchLimit: 100
