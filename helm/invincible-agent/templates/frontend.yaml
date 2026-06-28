@@ -28,13 +28,19 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.cortexUi.port }}
+          # Render every key in cortexUi.env so adding a new VITE_*
+          # variable doesn't require a template edit. Mirrors the
+          # cortex-bff pattern below. Closes a [[verify-subtle-acceptance-
+          # by-inspection]] class catch: the prior hardcoded enumeration
+          # silently dropped VITE_ELECTRIC_URL (Hop 3 / ADR-0023) even
+          # though the values block defined it.
+          {{- if .Values.cortexUi.env }}
           env:
-            - name: VITE_API_URL
-              value: {{ .Values.cortexUi.env.VITE_API_URL | default "http://localhost:8000" | quote }}
-            - name: VITE_KEYCLOAK_REALM_URL
-              value: {{ .Values.cortexUi.env.VITE_KEYCLOAK_REALM_URL | quote }}
-            - name: VITE_KEYCLOAK_CLIENT_ID
-              value: {{ .Values.cortexUi.env.VITE_KEYCLOAK_CLIENT_ID | quote }}
+            {{- range $k, $v := .Values.cortexUi.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
           resources:
             {{- toYaml .Values.cortexUi.resources | nindent 12 }}
 ---
