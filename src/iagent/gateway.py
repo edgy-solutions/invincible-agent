@@ -122,6 +122,17 @@ class InterviewRequest(BaseModel):
     # duplicate Dagster runs whenever the UI re-fired the same submission.
     session_id: str
     current_graph_json: str | None = None
+    # Optional: client-supplied AnswerArtifact id. Hop 3 (Electric →
+    # store) needs cortex-ui's locally-created pending artifact id to
+    # equal the server's persisted artifact id, otherwise Electric
+    # streams the real artifact with a DIFFERENT id, the store's
+    # `existingIdx === -1`, and the pending stays foregrounded with
+    # empty data while the real one sits unviewed. Pass the client's
+    # `artifactId` here so writer + projector + Electric flow it
+    # through, and `electricUpsertArtifact` finds the pending row by
+    # id and merges in place. Fallback (None) preserves the server-
+    # generates-id behavior for non-cortex-ui callers (curl, tests).
+    artifact_id: str | None = None
 
 
 class BPMNTask(BaseModel):
@@ -1351,7 +1362,14 @@ async def generate_dagster_stream(
     # moves out of the gateway and into a Restate handler; the dispatch
     # becomes invoke-handler instead of in-process task. Decisions
     # 0+1+3 retire together. See [[coupled-interim-mechanisms-retire-together]].
-    _artifact_id = f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
+    # Prefer client-supplied artifact_id (Hop 3 Electric merge depends
+    # on local-pending and server-persisted artifact ids matching, so
+    # `existingIdx` in cortex-ui's `electricUpsertArtifact` finds the
+    # pending row and merges in place). Fallback to server-generated
+    # id for non-cortex-ui callers (curl, tests, mesh-registrar).
+    _artifact_id = request.artifact_id or (
+        f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
+    )
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
