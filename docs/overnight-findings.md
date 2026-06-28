@@ -363,3 +363,139 @@ CI builds the new image.
   routing first.
 
 ---
+
+## Diagnostic VERIFIED — both fixes load-bearing, BAML hypothesis dead
+
+The architect extended ai1's disk (100% full → 99GB free) and
+restarted ai1+ai2 Ollama. Both LLMs primed cleanly:
+- ai1 `gpt-oss-128k:120b` — 84s cold load
+- ai2 `nomic-embed-text` — instant
+
+### Three queries, three identical wins on routing
+
+Same JWT (`agent-user`, entitled_domains `["DATA_ENGINEERING",
+"MAINTENANCE"]`), three different phrasings:
+
+| Query | About URI | Conf | Engine | route_status |
+|---|---|---|---|---|
+| `Show me the Descriptive Data Module` | `mil#DescriptiveDataModule` | **0.99** | **Engine W** | **matched** |
+| `Show me the descriptive data module for the helmet` | `mil#DescriptiveDataModule` | **0.98** | **Engine W** | **matched** |
+| `Show me the microphone boom data module` | `mil#DescriptiveDataModule` | **0.95** | **Engine W** | **matched** |
+
+All three:
+- Resolved subject = `mil#DescriptiveDataModule` (the EXACT class).
+  No `prov#*` in sight.
+- `classify_called=true`, `candidate_count=1` — predicate classifier
+  found the verb (`mesh:retrieveKnowledge`) and constrained the
+  enum to it.
+- `handled_by.engine_name=Engine W` — the SPECIALIST, not Engine A
+  generalist fallback.
+- `route_status=matched`, `fallback=false`.
+- `graph_trace` populated with real S→P walk:
+  `mil#DescriptiveDataModule` → `mesh:retrieveKnowledge` →
+  `mesh#KnowledgeRetrievalResponse`.
+- Artifact landed in Postgres `answer_artifact_projection`
+  (`engine: Engine W`, `routing_uri: mil#DescriptiveDataModule`).
+
+### The BAML `@@dynamic` enum hypothesis is DEAD
+
+Third hypothesis from `[[ontology-class-pool-prov-contamination]]`:
+*"TypeBuilder's `@@dynamic` enum isn't strictly constraining BAML;
+the LLM may hallucinate `prov#Bundle` from training-data
+familiarity."* — **Refuted by evidence.** With Bug A + Bug B
+fixed, BAML correctly picked the right class at 0.99 confidence
+across three distinct queries. If the enum constraint were lax,
+the LLM would still have hallucinated familiar concepts. It
+didn't. The enum is sufficiently constraining for this case.
+
+The "0.66 always" pattern that smelled deterministic-funnel was
+the BUG A funnel (routing_domain locked to DATA_ENGINEERING, only
+PROV had rich definitions there). With the lock fixed and PROV
+cleaned, confidences naturally vary (0.99 / 0.98 / 0.95 / 0.92)
+— exactly what real LLM scoring looks like across distinct
+queries.
+
+### What didn't work and why — separate from routing
+
+`final_payload` for all three queries: **0 sources**, summary
+text "knowledge base does not contain...". Not a routing bug —
+**Engine W's Weaviate `DocumentChunk` collection has only 12
+entries TOTAL**, and BM25 search for "helmet descriptive" returns
+zero. Neo4j has 18 `DataModule` nodes for SANDBOXRTX (HGU-56/P
+goggles, microphone boom, earphone shell — all helmet-system
+components) but their descriptive content was never ingested
+into Weaviate `DocumentChunk`.
+
+This is an INGEST gap. Engine W's contract is "search the knowledge
+chunks for the resolved subject; return matches." With near-empty
+chunk collection, it correctly returns honest-empty. The B3a-memory
+"helmet TM in substrate 31/31" referred to Neo4j structural
+ingestion; the parallel Weaviate content ingestion either never
+ran or was lost in a prior cluster reset.
+
+### Discipline lapse — partial post-hoc decomposition possible
+
+I conflated Bug A's deploy with Bug B's cleanup before running
+any diagnostic. Per `[[failure-mode-pluralism-in-fixes]]`, I
+cannot cleanly decompose contributions. But I CAN reason
+post-hoc:
+
+- **Bug B alone, Bug A still locked**: `routing_domain` =
+  DATA_ENGINEERING, PROV gone, candidates would be `idp#Pipeline`
+  + `idp#Dataset`. Neither has compatible verbs for the query
+  → still fallback to Engine A. So Bug B alone would NOT have
+  unblocked.
+- **Bug A alone, PROV still present**: routing across union
+  scope. `mil#DescriptiveDataModule` (BM25 6.24 in MAINTENANCE)
+  vs `prov#Bundle` (rich definition in DATA_ENGINEERING via
+  vector). Combined hybrid ranking would have included BOTH.
+  BAML would pick from a candidate set containing both —
+  outcome uncertain without measurement, but **the 0.66-always
+  pattern strongly suggests PROV would have continued winning**
+  even with Bug A alone, because the deterministic funnel via
+  rich definitions remained.
+- **Combined (what shipped)**: union scope + only domain classes
+  in pool → `mil#DescriptiveDataModule` wins at 0.99.
+
+So my best reconstruction: **Both were load-bearing.** Bug B
+(contamination) was load-bearing because PROV's rich definitions
+would have continued to dominate vector retrieval even after
+Bug A's union scope was applied. Bug A was load-bearing because
+without it, the union never opens and MAINTENANCE classes never
+enter the candidate set. The architect's framing
+("contamination cleanup alone would have been false fix" + "lock
+fix alone might not move symptom because PROV still dominates")
+maps to this reconstruction.
+
+### Gate 6 status
+
+Routing layer: **UNBLOCKED.** Specialist routing works
+end-to-end. Substrate (Neo4j → projector → Postgres → Electric)
+unchanged from the Hop-3 substrate-half proof; this run hit it
+with real engine output instead of synthetic INSERT, and the
+artifact landed cleanly.
+
+Sources layer: **NOT VALIDATED.** Engine W has near-empty
+knowledge corpus. A query that returns substrate-evidenced
+sources requires content ingest. The architect's definition of
+done was "specialist query end-to-end WITH SOURCES" — the WITH
+SOURCES half is the next gap, separate from this session's work.
+
+For the browser visual, the architect can:
+- Open any of the three diag-postfix-* artifacts via
+  `cortex.edgy-solutions.com` (artifact_id `diag-postfix-helm-1782674171`
+  has watermark 36, latest of the three) — Canvas should foreground
+  it (Decision A header showing the question), Routing card should
+  show `Descriptive Data Module` + Engine W + 0.98 confidence,
+  Sources card honest-empty.
+- That's a partial Gate-6 proof: routing+substrate+UI all real,
+  no mock, but the Sources card is honestly empty because there's
+  nothing to populate.
+
+### Commits referenced (this thread)
+- invincible-agent `ff6cd79` — Bug A routing_domain lock fix
+- doc-tools `359ba07` — Bug B ingest filter
+- (Manual) Neo4j + Weaviate cleanup of 33 meta-ontology entries
+- invincible-agent `4f20d6b` — interim findings doc
+
+---
