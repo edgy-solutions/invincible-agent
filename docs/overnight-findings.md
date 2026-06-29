@@ -499,3 +499,66 @@ For the browser visual, the architect can:
 - invincible-agent `4f20d6b` — interim findings doc
 
 ---
+
+## Corpus-ingest investigation — architectural gap, not a missing job run
+
+Architect's directive: *"run the real ingestion process through doc-tools and ensure that it properly fills all the data in neo AND weaviate. Then rerun the tests questions."* + *"don't manually load this — need to exercise real paths."*
+
+I went looking for the real Dagster path and surfaced an architectural finding instead. Reporting before any state-change.
+
+### The corpus-state picture
+- Weaviate `DocumentChunk` (singular, what Engine W queries — verified via `kubectl exec`: `WEAVIATE_DOC_COLLECTION=DocumentChunk` in iagent-engine-w via iagent-config ConfigMap): **12 entries**, none helmet.
+- Neo4j `DataModule`: **18 SANDBOXRTX nodes** (HGU-56/P GOGGLES, microphone boom, earphone shell, etc.) — structural data is there, but it's not where Engine W looks.
+- S3 buckets:
+  - `processing-artifacts/` — almost empty (1 Dagster pickle, 1 test PNG)
+  - `ontologies/` — has PROV-O + IOF-Core + IOF_MRO + DINEN62264 + maintenance/mil/mesh/manufacturing extensions
+  - `iagent-data/` — Iceberg warehouse for sales/customers
+  - `dag-lake/`, `publog-lake/` — empty
+  - **No helmet S1000D / 40051 / IADS content anywhere in S3.**
+- Recent Dagster runs (30 most recent): all `supervisor_query_job` or failed `__ASSET_JOB`. **No `xml_graph_sync_job` / `process_document_artifact_job` / `ingest_ontology_job` has run recently.** Substrate hasn't been seeded since the last cluster state I can see.
+
+### The architectural mismatch
+Two asset-graph paths exist; neither does what Engine W needs for helmet content:
+
+| Job | Inputs | What it writes |
+|---|---|---|
+| `xml_graph_sync_job` | XML in S3 (s1000d/iads/40051/dita prefix) → `XmlIngestConfig` | `upload_to_jena` → `init_neo4j_n10s` → `sync_jena_to_neo4j`. **Jena + Neo4j only. Does NOT touch Weaviate.** |
+| `process_document_artifact_job` | PDFs in `processing-artifacts/manufacturing/inbound/` or `sustainment/inbound/` | `process_document_artifact` → `build_knowledge_graph`. **Writes DocumentChunk in Weaviate + structural in Neo4j. PDF-only.** |
+| `ingest_ontology_job` | TTLs in `ontologies/` bucket | `ingest_ontology_to_jena` → `sync_jena_ontologies_to_neo4j`. Ontology-class graph (meta — the corpus my Bug B filter applies to). |
+
+**There is NO asset that takes S1000D/40051 XML and writes per-data-module chunks to Weaviate's DocumentChunk.** The verb registry includes `engine_w_weaviate_expert_descriptive` and other data-module variants pointing at Engine W. Engine W expects to query DocumentChunk. The pipeline never populates DocumentChunk from XML.
+
+The B3a memory's "helmet TM in substrate 31/31" must have meant Neo4j structural data (the 18 nodes we see), not Weaviate chunks. The verb wiring was set up anticipating an XML-to-chunks path that doesn't exist (or was lost).
+
+### What this means for Gate 6 sources-half
+The routing fix lands a query at Engine W's door. Engine W honestly tells the truth: "I have no matching chunks." That's correct behavior given a near-empty corpus. To populate it:
+
+**Three plausible paths** — the architect picks:
+
+1. **Add the missing XML→DocumentChunk asset.** Substrate work. A new asset downstream of `extract_rdf_from_xml` that chunks the XML body text and writes to Weaviate `DocumentChunk` with domain segregation. This is the architecturally-correct fix.
+2. **Convert helmet TM to PDFs and run `process_document_artifact_job`.** The PDF path already does DocumentChunk write. Cheaper than #1; loses provenance back to DMC.
+3. **Engine W queries Neo4j directly for data-module content.** Would mean changing Engine W's collection target from Weaviate to Neo4j, or adding a Neo4j path alongside hybrid search. Significant Engine W refactor.
+
+I'd recommend #1 — it preserves Engine W's hybrid search contract and keeps the substrate truthful (XML → both stores). #2 is a stopgap. #3 changes the contract that the verb registry was designed around.
+
+### Why I didn't trigger any job
+Triggering `xml_graph_sync_job` would have:
+- Required uploading the fixture files to S3 first (real path needs S3 source)
+- Filled Neo4j with helmet TM data-module structural info (more than 18 SANDBOXRTX entries)
+- Left Weaviate `DocumentChunk` untouched (the actual gap)
+- Still resulted in `Engine W returns 0 sources` on re-test
+
+I would have exercised the real path AND verified an architectural gap exists — but the architect needs to choose path 1/2/3 before any meaningful ingest can change Engine W's behavior. So I stopped before state-mutating to surface the choice cleanly.
+
+### Diagnostic re-test blocked by LLM infrastructure (same as before)
+After investigating, when I tried to re-run a query (routed at "Procedure Step" to see whether Engine E's Neo4j path returns sources where Engine W's Weaviate path doesn't), the pipeline failed at `/route_intent` again. Direct check: `ai1:/api/ps` returns `{"models":[]}`; `/api/generate` hung 3+ minutes with zero bytes — same symptom as last night's disk-full state, even though disk now has 99GB headroom. The 120b is failing to reload after some idle-or-eviction event. This is the same recurring infrastructure issue from before — needs an Ollama kick (`systemctl restart ollama` on ai1) to recover.
+
+### State before this hand-off
+- No Dagster jobs triggered. No S3 uploads. No corpus state changed.
+- Bug A code + Bug B cleanup + ingest filter still in cluster (from prior commits).
+- Diagnostic results from earlier in the thread still stand (`mil#DescriptiveDataModule` routes to Engine W at 0.95-0.99 across three queries — routing fix decisively verified).
+- The gap is now clearly named: **substrate has no XML→DocumentChunk asset; Engine W's corpus stays empty until path 1/2/3 lands.**
+
+Per architect's `[[honest-failure-as-demo-asset]]`: the partial-Gate-6 visual still has real value — it would show honest-empty sources rendering correctly through a real specialist route, which IS the demo signal. Capturing that now (before the corpus is fixed) is arguably MORE useful than capturing it after, because it proves the honest-empty discipline works in the UI under a query that legitimately has no sources.
+
+---
