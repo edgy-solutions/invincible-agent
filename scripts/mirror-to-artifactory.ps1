@@ -245,6 +245,21 @@ $ExternalImages = @(
     @{ src='secoresearch/fuseki:5.5.0';                                dst='secoresearch/fuseki:5.5.0' },
     @{ src='ghcr.io/aserto-dev/topaz:0.33.13';                         dst='aserto-dev/topaz:0.33.13' },
 
+    # ------------------------------------------------------------------
+    # Hop 3 — Electric SQL streaming substrate for cortex-ui's
+    # artifact projection. The chart's `electric.enabled=true` brings
+    # up `iagent-electric` (this image) + `iagent-projector` (which
+    # reuses the cortex-bff image, see $IagentImages above — the
+    # projector entrypoint runs cortex-bff's projector subcommand
+    # against the dedicated `iagent-postgresql` Postgres with
+    # `wal_level=logical` for the logical-replication slot Electric
+    # streams). The Postgres image itself is the standard
+    # `postgres:16` already in the list below — Electric requires
+    # logical replication which is a runtime config flag, not a
+    # custom image.
+    # ------------------------------------------------------------------
+    @{ src='electricsql/electric:1.0.13';                              dst='electricsql/electric:1.0.13' },
+
     # LLM gateway. Optional in the iagent helm chart (litellm.enabled,
     # default false). When turned on, fronts Ollama / vLLM / OpenAI /
     # OpenRouter behind a single OpenAI-compatible /v1 endpoint so the
