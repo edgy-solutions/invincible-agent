@@ -562,3 +562,50 @@ After investigating, when I tried to re-run a query (routed at "Procedure Step" 
 Per architect's `[[honest-failure-as-demo-asset]]`: the partial-Gate-6 visual still has real value — it would show honest-empty sources rendering correctly through a real specialist route, which IS the demo signal. Capturing that now (before the corpus is fixed) is arguably MORE useful than capturing it after, because it proves the honest-empty discipline works in the UI under a query that legitimately has no sources.
 
 ---
+
+## Path 1 landed — Gate 6 sources-half closes end-to-end (2026-06-28)
+
+Architect ruled Path 1: *"add the missing feature and then test using this path"* — augment the military-doc pipeline to write Weaviate `DocumentChunk` alongside the existing Jena+Neo4j writes. Their docs paragraph on the "Unified Military Graph" confirmed Weaviate-population was always intended but never implemented; the Reason-Then-Serve architecture's chunk-writing leg was missing from `xml_graph_sync_job`.
+
+### Code (doc-tools `5173c85`)
+- **`doc_tools/utils/xml_chunks.py`** (new) — `extract_chunks_from_graph()` walks the parser's in-memory rdflib Graph for text Literals on the root (title via `rdfs:label`, instruction steps via `mil:hasInstructionText`, warnings via `mil:hasWarning`, generic-body fallback ≥20 chars). Honors "Zero disk I/O".
+- **`doc_tools/assets/xml_ingestion.py`** — `extract_rdf_from_xml` now returns `chunks` in its dict (the parser's graph + the chunker, no XML re-parse). New `index_xml_chunks_to_weaviate` asset consumes the dict and writes via the same `_index_chunk` + `_ensure_weaviate_collection` helpers `build_knowledge_graph` (PDF path) uses. Per-chunk failures non-fatal; empty-chunks branch logs honestly.
+- **`doc_tools/definitions.py`** — `xml_graph_sync_job` selection now includes `index_xml_chunks_to_weaviate`. Same job, expanded leg.
+- **`doc_tools/parsers/mil_std_40051_rdf.py`** — fixed two parser bugs surfaced by the local fixture run:
+  - `wpno` is the wp-root element's **attribute** per the 40051E DTD, not a child. The `//wpno/text()` XPath missed every real file. Helmet fixtures both fell through to `"unknown_wp"` and collided on the same URI in Weaviate.
+  - Title chunks now use the actual `<wpidinfo>/<title>` text ("MICROPHONE BOOM REMOVAL/INSTALLATION") instead of the generic "Work Package {wp_id}" placeholder. BM25 matches "microphone boom" against the real title; the placeholder never matched anything substantive.
+
+### Substrate verification (real-path, not synthetic)
+- Uploaded `M0004.xml` + `T0003.xml` to `s3://processing-artifacts/40051/` (real MinIO via mc, the same S3 client the production pipeline uses).
+- Rolled `doc-tools` deployment to pull the new `:latest`. Dagster code-location reloaded; `index_xml_chunks_to_weaviate` registered.
+- Triggered `xml_graph_sync_job` twice via Dagster GraphQL `launchRun` mutation (per-file `XmlIngestConfig`). Both runs **5/5 steps SUCCESS**:
+  - M0004 (`a48a4fe9`): 18 chunks → DocumentChunk 12 → 30
+  - T0003 (`6676e1ad`): 15 chunks → DocumentChunk 30 → 45
+- Weaviate BM25 "helmet microphone boom" returns 5 helmet hits, top score 2.05 on step:17 ("Plug microphone cord into communications jack on rear of helmet").
+
+### End-to-end query through Engine W (the goal)
+Query: *"Show me the descriptive data module for the helmet microphone boom removal"* via `/interview/stream`.
+
+- **route_decision**: `mil#DescriptiveDataModule` at 0.99 confidence; `handled_by`: Engine W (`http://iagent-engine-w:8088/query_knowledge`); `route_status: matched`, `fallback: false`.
+- **sources event**: 5 entries, all from helmet TM (`wpn-m0004-*` ×4 + `wpn-t0003-*` ×1), each with verbatim snippet per Engine W's "snippet = matched-chunk VERBATIM" discipline.
+- **final_payload**: synthesized answer quotes the real ingested text — "Disconnect the microphone cord… Remove the thumbscrew… Plug the microphone cord into the communications jack on the rear of the helmet."
+
+This is what the architect asked for: **a real specialist query end-to-end with sources**. Engine W's hybrid search reached the helmet chunks I just ingested through the production Dagster path, and the supervisor's `subtask_sources` projection wired them through to the SSE `sources` event the cortex-ui SourcesTrail renders.
+
+### `[[failure-mode-pluralism-in-fixes]]` — decisive instance
+The rule (drafted at Hop 1 partial-bundle inspection, banked at PROV+routing+enum mid-overnight) earned its **decisive third instance** here. Three mechanisms produced the original symptom (every routed query → 0 sources via fallback):
+1. **`routing_domain` lock** at `dynamic_supervisor.py:895` (Bug A)
+2. **PROV-O contamination** of the OntologyClass corpus (Bug B)
+3. **Missing XML→DocumentChunk asset** in the military-doc pipeline (Hole 3 — surfaced only after Bugs A+B were fixed; the fallback path had been masking it)
+
+Fixing the first two exposed the third, exactly as the rule predicts. Bundle-fixing would have hidden each mechanism's contribution. The decomposition was reconstructed-from-symptom-shift, not measured-up-front; per the rule's guard, this is the validated discipline shape.
+
+### State at close
+- doc-tools `5173c85` deployed, Dagster registered, two real ingest runs succeeded.
+- Weaviate `DocumentChunk` carries 33 helmet TM chunks alongside the existing 12-entry baseline (C-130H content from earlier runs intact).
+- Engine W's specialist route returns matched + non-empty sources for helmet queries.
+- ai1's 120b loaded with `expires_at=2318` (keep_alive=-1).
+
+Per `[[fixture-must-exercise-paths]]` + `[[pre-written-fixtures-must-fail-first]]`: the M0004+T0003 fixtures exercised the brand-new asset's code path; the local chunker pre-test had a red→green transition (parser bug surfaced + fixed before deploy); the production end-to-end then proved the assertion (sources>0 + correct attribution) under a real query through real infrastructure.
+
+---
