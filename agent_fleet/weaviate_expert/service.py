@@ -131,13 +131,33 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
             # relevance: weaviate-client v4 surfaces `score` (hybrid) or
             # `certainty` (near_*). Either is a 0..1 signal that maps
             # directly to the cortex-ui ConfidenceBar.
+            #
+            # WATCH: for a `near_vector` query, Weaviate v4 returns
+            # `metadata.score = 0.0` (NOT None) — score only carries
+            # signal in hybrid/BM25 queries. The naive `is not None`
+            # check picked up the 0.0 and locked the UI's MATCH bar to
+            # 0% even when the chunk was a strong vector hit. The fix
+            # below prefers a POSITIVE score, then certainty, then
+            # 1.0 - distance (for near_*) so the projection always
+            # carries the strongest available signal.
+            # Banked at 2026-06-28 when the cortex-ui SourcesTrail
+            # showed real helmet chunks at MATCH=0% on a clean query.
             relevance: float | None = None
             md = getattr(obj, "metadata", None)
             if md is not None:
-                if getattr(md, "score", None) is not None:
-                    relevance = float(md.score)
-                elif getattr(md, "certainty", None) is not None:
-                    relevance = float(md.certainty)
+                score = getattr(md, "score", None)
+                certainty = getattr(md, "certainty", None)
+                distance = getattr(md, "distance", None)
+                if score is not None and float(score) > 0:
+                    relevance = float(score)
+                elif certainty is not None:
+                    relevance = float(certainty)
+                elif distance is not None:
+                    # Cosine distance: 0 = perfect, 2 = opposite. Map to
+                    # [0, 1] confidence as max(0, 1 - distance) — only
+                    # used when neither score nor certainty is set,
+                    # which is rare but possible for some query shapes.
+                    relevance = max(0.0, 1.0 - float(distance))
             label = f"{doc_id}" + (f" · p.{page_number}" if page_number else "")
             sources_collected.append({
                 "type": "document",

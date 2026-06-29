@@ -1620,12 +1620,22 @@ async def generate_dagster_stream(
         }
 
         def _step_started_kind(step_key: str) -> str | None:
-            if step_key.startswith("execute_subtask-"):
+            # Dagster names dynamic-output step keys with SQUARE BRACKETS:
+            # `execute_subtask[task_0]`, not `execute_subtask-task_0`.
+            # The original `startswith("execute_subtask-")` matched the
+            # dash-form that the op never produced, so the "retrieving"
+            # stage's completion event was never emitted to the UI
+            # (every query rendered "Retrieving evidence — never
+            # confirmed" even when sources had landed and the engine
+            # had returned). Fix: match the prefix that handles BOTH
+            # forms (just `execute_subtask` — bare name or with `[..]`).
+            # Banked 2026-06-28 with relevance=0 fix; same SSE pipeline.
+            if step_key.startswith("execute_subtask"):
                 return "retrieving"
             return STEP_TO_STARTED_KIND.get(step_key)
 
         def _step_completed_kinds(step_key: str) -> list[str]:
-            if step_key.startswith("execute_subtask-"):
+            if step_key.startswith("execute_subtask"):
                 return ["retrieving"]
             return STEP_TO_COMPLETED_KINDS.get(step_key, [])
 
