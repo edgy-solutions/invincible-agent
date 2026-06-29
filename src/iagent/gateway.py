@@ -2399,3 +2399,96 @@ def federated_image(
             "Cache-Control": "private, max-age=3600",
         },
     )
+
+
+# ════════════════════════════════════════════════════════════════════
+# Data-module figures endpoint (Phase B of the 2026-06-30 figure work)
+# ════════════════════════════════════════════════════════════════════
+#
+# Returns the figures associated with a `mil:DataModule` URI for the
+# cortex-ui slide-in panel. The panel is triggered from a Source card
+# click; it shows the data module's figures in three states per the
+# rendering-origin discipline:
+#
+#   - "pipeline"            → render the image inline via FederatedImage
+#   - "supplied_override"   → render the image inline + visible badge
+#   - "format_not_supported"→ honest placeholder + click-through to
+#                             raw source bytes (source_s3)
+#
+# The data flow:
+#   - extract_iads_bundle writes a per-bundle graphics_manifest.json
+#     to S3 AND per-figure .meta.json sidecars
+#   - 40051 parser propagates `mil:hasURL` + `mil:renderingOrigin`
+#     onto each Figure URI (read from the manifest)
+#   - n10s imports the RDF into Neo4j as :Resource nodes with
+#     properties + relationships
+#   - This endpoint queries Neo4j for those nodes and returns
+#     a compact JSON for the panel to render
+#
+# Authz: gates on JWT auth (the rest is non-PII metadata about figures
+# the caller can already see surfaced as Source cards). Per-domain
+# scope follows naturally from what the engine returned as sources.
+
+@app.get("/data_module/figures")
+def data_module_figures(
+    uri: str = Query(..., description="mil:DataModule URI to fetch figures for"),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the figures linked from a `mil:DataModule` URI.
+
+    Response shape:
+        {
+          "uri": "http://edgy-solutions.com/ontology/mil#wpn-m0004-...",
+          "figures": [
+            {
+              "uri": "http://.../mil#fig-MS098897A",
+              "label": "MS098897A",
+              "url": "s3://processing-artifacts/40051/.../MS098897A.bmp",
+              "rendering_origin": "pipeline" | "supplied_override" |
+                                  "format_not_supported" | ""
+            },
+            ...
+          ]
+        }
+
+    The cortex-ui slide-in panel renders each figure based on
+    `rendering_origin`. Empty string = legacy / unknown — panel falls
+    back to caption-only.
+    """
+    # n10s with `handleVocabUris: 'IGNORE'` imports RDF triples as
+    # :Resource nodes whose properties/relationships use the LOCAL
+    # name of the predicate (everything after the # or /). So
+    # `mil:hasFigure` becomes a relationship named `hasFigure`,
+    # `mil:hasURL` becomes a `hasURL` property, etc.
+    cypher = """
+    MATCH (dm:Resource {uri: $uri})-[:hasFigure]->(fig:Resource)
+    RETURN
+      fig.uri AS uri,
+      coalesce(fig.label, fig.uri) AS label,
+      fig.hasURL AS url,
+      coalesce(fig.renderingOrigin, '') AS rendering_origin
+    """
+    figures: list[dict] = []
+    try:
+        with neo4j_driver.session() as session:
+            result = session.run(cypher, {"uri": uri})
+            for record in result:
+                figures.append({
+                    "uri": record["uri"],
+                    "label": record["label"],
+                    "url": record["url"],
+                    "rendering_origin": record["rendering_origin"] or "",
+                })
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "data_module_figures Neo4j query error for uri=%s: %s",
+            uri, exc,
+        )
+        raise HTTPException(
+            status_code=502, detail="neo4j query failed",
+        ) from exc
+
+    return {
+        "uri": uri,
+        "figures": figures,
+    }
