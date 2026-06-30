@@ -97,12 +97,12 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
     # --------------------------------------------------------------------------
     # Source attribution (Phase 3 of grounding panel)
     # --------------------------------------------------------------------------
-    # Closure-scoped accumulator: every search_knowledge_base call that
-    # returns a Weaviate hit appends one source-record dict here. After
-    # the smolagent loop finishes, these records are attached to the
-    # engine's response. The supervisor materializes them as a
-    # `subtask_sources` Dagster asset, the gateway projects into a
-    # typed `sources` SSE event, the cortex-ui SourcesTrail renders them.
+    # Source records are now collected INSIDE `run_smolagent` (see below)
+    # and returned through Restate's `ctx.run` journal so they survive
+    # replay. The previous closure-scoped accumulator broke under
+    # journal replay because mutations to outer-scope variables don't
+    # replay when ctx.run returns its cached result. See run_smolagent's
+    # docstring for the full failure-mode explanation.
     #
     # Architect's discipline (carried through to citation layer):
     # snippet = matched-chunk text VERBATIM (NOT an LLM summary). Synthesis
@@ -116,10 +116,12 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
     # exploratory calls are weaker and shouldn't override the first
     # relevance score).
     sources_collected: List[Dict[str, Any]] = []
-    sources_seen_uris: set[str] = set()
 
-    def _collect_weaviate_source(obj, search_query: str) -> None:
-        """Project a Weaviate object into the Source shape the UI expects."""
+    def _collect_weaviate_source_DEAD(obj, search_query: str) -> None:
+        """DEAD: replaced by `_collect_local` inside run_smolagent. Kept
+        as a stub to avoid disturbing the rest of the file's structure;
+        retire in a follow-up cleanup. Original docstring: Project a
+        Weaviate object into the Source shape the UI expects."""
         try:
             doc_id = obj.properties.get("doc_id") or "Unknown Document"
             text = obj.properties.get("text") or ""
@@ -251,25 +253,157 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
     # --------------------------------------------------------------------------
     # The Agent Execution Loop
     # --------------------------------------------------------------------------
-    async def run_smolagent() -> str:
+    async def run_smolagent() -> Dict[str, Any]:
+        """Run the smolagent and return a dict containing BOTH the agent's
+        text response AND the collected sources.
+
+        Why a dict (not just str): the previous version returned only the
+        agent response and mutated the OUTER-scope ``sources_collected`` /
+        ``sources_seen_uris`` closure variables via
+        ``_collect_weaviate_source``. That worked for fresh invocations
+        but broke under Restate's `ctx.run` JOURNAL REPLAY: on resume
+        after suspension, Restate returns the cached `ctx.run` result
+        WITHOUT re-executing the function, so the closure mutations
+        don't replay — `sources_collected` stays `[]` and the engine
+        returned a response with empty sources. Caught 2026-06-30 when
+        the cortex-ui Sources card was empty for some helmet queries
+        despite Engine W having 5+ hits.
+
+        Fix: include the collected sources in the journal-captured
+        return value so they're durable across replays. Closure no
+        longer relied on. The outer `sources_collected` initialization
+        is removed — collection happens locally to this function and
+        flows back through ctx.run's journal.
+        """
+        local_sources: List[Dict[str, Any]] = []
+        local_seen_uris: set[str] = set()
+
+        def _collect_local(obj, search_query: str) -> None:
+            try:
+                doc_id = obj.properties.get("doc_id") or "Unknown Document"
+                text = obj.properties.get("text") or ""
+                page_number = obj.properties.get("page_number")
+                object_uri = (
+                    obj.properties.get("source_url")
+                    or obj.properties.get("uri")
+                    or f"weaviate://{doc_collection_name}/{obj.uuid}"
+                )
+                if object_uri in local_seen_uris:
+                    return
+                local_seen_uris.add(object_uri)
+
+                relevance: float | None = None
+                md = getattr(obj, "metadata", None)
+                if md is not None:
+                    score = getattr(md, "score", None)
+                    certainty = getattr(md, "certainty", None)
+                    distance = getattr(md, "distance", None)
+                    if score is not None and float(score) > 0:
+                        relevance = float(score)
+                    elif certainty is not None:
+                        relevance = float(certainty)
+                    elif distance is not None:
+                        relevance = max(0.0, 1.0 - float(distance))
+
+                label = f"{doc_id}" + (f" · p.{page_number}" if page_number else "")
+                local_sources.append({
+                    "type": "document",
+                    "label": label,
+                    "uri": str(object_uri),
+                    "snippet": (
+                        text[:240].strip() + ("…" if len(text) > 240 else "")
+                    ) if text else None,
+                    "relevance": relevance,
+                    "open_url": str(object_uri) if str(object_uri).startswith(
+                        ("http://", "https://", "s3://")
+                    ) else None,
+                    "matched_for": search_query,
+                })
+            except Exception as collect_err:
+                print(
+                    f"Source-collection failed in Engine W (non-fatal): "
+                    f"{collect_err}"
+                )
+
+        # Inner search tool — same body as the outer `search_knowledge_base`
+        # but collects into `local_sources` instead of the closure
+        # variable. Wrapped as a tool so smolagent can call it.
+        @tool
+        def search_knowledge_base_local(
+            semantic_query: str, metadata_filters: dict = None
+        ) -> str:
+            """
+            Searches the text of the technical manuals for policies,
+            definitions, summaries, and general knowledge.
+
+            Args:
+                semantic_query: The natural language search phrase.
+                metadata_filters: Optional dictionary of metadata fields
+                    and exact values to filter by (e.g., {"doc_id": "TM-123"}).
+            """
+            try:
+                collection = weaviate_client.collections.get(doc_collection_name)
+                base_filter = wvc.query.Filter.by_property("domain").equal(domain_label)
+                if metadata_filters and isinstance(metadata_filters, dict):
+                    filter_list = [base_filter]
+                    for key, value in metadata_filters.items():
+                        filter_list.append(wvc.query.Filter.by_property(key).equal(value))
+                    final_filter = wvc.query.Filter.all_of(filter_list)
+                else:
+                    final_filter = base_filter
+
+                metadata_query = wvc.query.MetadataQuery(
+                    score=True, certainty=True, distance=True
+                )
+                try:
+                    query_vector = embed_query(semantic_query)
+                    response = collection.query.near_vector(
+                        near_vector=query_vector,
+                        limit=5,
+                        filters=final_filter,
+                        return_metadata=metadata_query,
+                    )
+                except Exception as embed_err:
+                    print(f"embed_query failed in Engine W; BM25 fallback: {embed_err}")
+                    response = collection.query.bm25(
+                        query=semantic_query,
+                        limit=5,
+                        filters=final_filter,
+                        return_metadata=metadata_query,
+                    )
+
+                if not response.objects:
+                    return f"No relevant information found for '{semantic_query}' in the {domain} domain."
+
+                results = []
+                for idx, obj in enumerate(response.objects):
+                    text = obj.properties.get("text", "")
+                    doc_id = obj.properties.get("doc_id", "Unknown Document")
+                    results.append(
+                        f"--- Excerpt {idx + 1} (Source: {doc_id}) ---\n{text}"
+                    )
+                    _collect_local(obj, semantic_query)
+                return "\n\n".join(results)
+            except Exception as e:
+                return f"Error executing semantic search: {str(e)}"
+
         model = get_smolagent_model()
-        
         agent = CodeAgent(
-            tools=[search_knowledge_base],
+            tools=[search_knowledge_base_local],
             model=model,
             add_base_tools=False
         )
-        
+
         system_prompt = f"""
         You are a Technical Librarian and Policy Expert for the {domain} domain.
         Your sole job is to answer the user's query by searching the knowledge base and summarizing the findings accurately.
         Never invent information. If the search tool returns no results, state clearly that the information is unavailable.
         ALWAYS include the Source Document IDs in your final answer so the user knows where the information came from.
-        
-        When using the search_knowledge_base tool, you may only filter using the following metadata properties:
+
+        When using the search_knowledge_base_local tool, you may only filter using the following metadata properties:
 {weaviate_schema_string}
         """
-        
+
         syntax_reminder = """
 CRITICAL SYNTAX REQUIREMENT:
 You are a Code Agent. You MUST wrap ALL of your Python code strictly inside <code> and </code> tags.
@@ -288,11 +422,20 @@ result = search("query")
 print(result)
 </code>
 """
-        
+
         full_query = f"{system_prompt}\n{syntax_reminder}\n\nUser Query: {user_query}"
-        return str(await asyncio.to_thread(agent.run, full_query))
-        
-    raw_agent_response = await ctx.run("run-smolagent", run_smolagent)
+        agent_response = str(await asyncio.to_thread(agent.run, full_query))
+        # Both pieces of state cross the ctx.run boundary together. On
+        # replay the entire dict (including local_sources) is returned
+        # from the journal — sources survive.
+        return {"agent_response": agent_response, "sources": local_sources}
+
+    smolagent_result = await ctx.run("run-smolagent", run_smolagent)
+    raw_agent_response = smolagent_result.get("agent_response", "")
+    # Replace the outer closure-mutated list with the durable result so
+    # the downstream `final_structured_dict["sources"] = sources_collected`
+    # assignment works on both fresh AND replayed invocations.
+    sources_collected = smolagent_result.get("sources", [])
 
     # --------------------------------------------------------------------------
     # BAML Strict Formatting
