@@ -361,7 +361,8 @@ class ApplyLoop:
                   .question_text,
                   .resolved_intent,
                   .routing_inline,
-                  .rendered_output
+                  .rendered_output,
+                  .graph_trace_json
                 } AS a,
                   [(a)-[:PRODUCED_BY]->(p) | p {
                     .actor_type, .actor_id, .version, .endpoint,
@@ -432,11 +433,21 @@ class ApplyLoop:
         for s in sources:
             ad_json = s.pop("access_decision_json", None)
             s["access_decision"] = _parse_json(ad_json)
-        # Edge metadata at Hop 2 lives in JSONB columns; the substantive
-        # graph_trace will come from a future edge type. For now we
-        # honestly project an empty list — `[[fixture-must-exercise-paths]]`
-        # forbids synthesizing content.
-        graph_trace: List[Any] = []
+        # graph_trace flows through the writer's `a.graph_trace_json`
+        # property (JSON-serialized list of trace nodes). 2026-06-30
+        # fix: pre-Hop-3 the writer never wrote this, the projector
+        # honestly projected an empty list, and the cortex-ui SSE
+        # handler shoved trace nodes straight to the canvas store.
+        # Post-Hop-3 the SSE handler became a no-op (Electric became
+        # the sole source for Electric-covered fields including
+        # graph_trace) and the detailed HUD's graph silently
+        # disappeared because the projection was still empty. Now
+        # the writer persists `graph_trace_json` and we re-parse it
+        # here for the projection's `graph_trace` JSONB column. An
+        # empty list is honest when the route had no compat-walk
+        # (Engine A fallback, no_match, etc.); the writer flows
+        # that through, and we project what we got.
+        graph_trace: List[Any] = _parse_json(art.get("graph_trace_json")) or []
 
         now_ms = int(time.time() * 1000)
 

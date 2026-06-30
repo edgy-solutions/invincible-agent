@@ -439,6 +439,7 @@ class AnswerArtifactWriter:
               a.resolved_intent = $resolved_intent,
               a.routing_inline = $routing_inline,
               a.rendered_output = $rendered_output,
+              a.graph_trace_json = $graph_trace_json,
               a.durability_status = $durability_status,
               a.watermark = $watermark
             """,
@@ -455,6 +456,19 @@ class AnswerArtifactWriter:
             resolved_intent=_to_json(bundle.resolved_intent),
             routing_inline=_to_json(bundle.routing),
             rendered_output=_to_json(bundle.rendered_output),
+            # graph_trace was on the dataclass since Hop 1 but was
+            # never written to Neo4j — the MERGE clause was missing
+            # the SET line. Pre-Hop-3 this was masked because the
+            # cortex-ui SSE handler shoved `graph_trace` directly
+            # into the canvas store, so the GraphTrace HUD component
+            # rendered from SSE-supplied data without the projection.
+            # Post-Hop-3 the SSE handler is a no-op (Electric became
+            # the sole source for Electric-covered fields including
+            # graph_trace), and the writer's missing field surfaced
+            # as "the detailed HUD's graph disappeared." 2026-06-30:
+            # close the gap. JSON-serialized into a single Neo4j
+            # property; projector re-parses into the jsonb column.
+            graph_trace_json=_to_json(bundle.graph_trace or []),
             durability_status=durability_status,
             watermark=watermark,
         )
