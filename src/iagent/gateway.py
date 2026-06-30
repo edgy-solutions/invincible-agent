@@ -2705,9 +2705,10 @@ async def electric_shape_proxy(
     `electric-up-to-date`). We forward those headers verbatim so the
     cortex-ui ShapeStream's incremental sync continues working.
     """
-    # 1. JWT validated by Depends(get_current_user). user_id is
-    #    payload["sub"] from a RS256-verified JWT. CANNOT be spoofed.
-    verified_user_id = current_user.user_id
+    # 1. JWT validated by Depends(get_current_user). User.id is set
+    #    to payload["sub"] from a RS256-verified JWT (see auth.py).
+    #    CANNOT be spoofed.
+    verified_user_id = current_user.id
 
     # 2. Build the upstream WHERE clause with the escaped, validated
     #    user_id. PostgreSQL JSONB path operator `->>` extracts the
