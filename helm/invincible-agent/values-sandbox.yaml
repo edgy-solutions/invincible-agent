@@ -488,18 +488,15 @@ keycloak:
 # block above sets VITE_ELECTRIC_URL to this host.
 # --------------------------------------------------------------------------
 electric:
+  # 2026-06-30: direct Electric ingress CLOSED. Per-user isolation
+  # interim flows browser → cortex-bff `/electric/shape` proxy → in-
+  # cluster Electric service (`http://iagent-electric:3000`). Exposing
+  # Electric directly would let a tester construct a ShapeStream with
+  # a client-supplied WHERE clause and bypass the proxy's verified
+  # `produced_for_user_id = <sub>` filter. Trust the proxy, close the
+  # bypass. See gateway.py `electric_shape_proxy` for the trusted path.
   ingress:
-    enabled: true
-    className: traefik
-    hosts:
-      - host: electric.edgy-solutions.com
-        paths:
-          - path: /
-            pathType: Prefix
-    tls:
-      - hosts:
-          - electric.edgy-solutions.com
-        secretName: edgy-wildcard-tls
+    enabled: false
 
 # --------------------------------------------------------------------------
 # Secrets — sandbox tokens. Real prod secrets go in a separate Sealed-
