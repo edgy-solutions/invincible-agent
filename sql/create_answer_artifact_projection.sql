@@ -75,17 +75,23 @@ CREATE INDEX IF NOT EXISTS idx_aap_kind
 -- `/electric/shape` proxy filters subscriptions on the authenticated
 -- user's `sub`. Electric's WHERE-clause parser supports a subset of
 -- PostgreSQL expressions and does NOT accept the `->>` JSONB path
--- operator, so we add a STORED generated column derived from
--- `produced_for->>'user_id'`. Electric subscribes to the whole row,
--- so the generated column flows to clients automatically (UI ignores
--- columns it doesn't know).
+-- operator, so the WHERE clause must reference a plain column.
+--
+-- Originally tried as a `GENERATED ALWAYS AS (produced_for->>'user_id')
+-- STORED` column — Electric refused to replicate it with "The
+-- following columns are generated and cannot be included in
+-- replication." Switched to a regular TEXT column populated by the
+-- projector at write time (apply_loop.py reads produced_for.user_id
+-- and writes it to this column on INSERT/UPDATE).
 --
 -- IDEMPOTENT — re-running the migration on a cluster that already
 -- has the column is a no-op via IF NOT EXISTS. New clusters get the
--- column at first creation.
+-- column at first creation. Backfill on existing data:
+--   UPDATE answer_artifact_projection
+--   SET produced_for_user_id = produced_for->>'user_id'
+--   WHERE produced_for_user_id IS NULL;
 ALTER TABLE answer_artifact_projection
-    ADD COLUMN IF NOT EXISTS produced_for_user_id TEXT
-    GENERATED ALWAYS AS (produced_for->>'user_id') STORED;
+    ADD COLUMN IF NOT EXISTS produced_for_user_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_aap_produced_for_user_id
     ON answer_artifact_projection (produced_for_user_id);
 

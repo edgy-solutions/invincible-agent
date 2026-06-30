@@ -449,7 +449,8 @@ class ApplyLoop:
                         valid_as_of, valid_until, status, durability_status,
                         message_id, question_text, resolved_intent,
                         routing, sources, graph_trace, rendered_output,
-                        produced_by, produced_for, derived_from_artifact_id
+                        produced_by, produced_for, derived_from_artifact_id,
+                        produced_for_user_id
                     ) VALUES (
                         %(id)s, %(kind)s, %(watermark)s, %(created_at)s,
                         %(updated_at)s, %(valid_as_of)s, %(valid_until)s,
@@ -457,7 +458,8 @@ class ApplyLoop:
                         %(question_text)s, %(resolved_intent)s, %(routing)s,
                         %(sources)s, %(graph_trace)s, %(rendered_output)s,
                         %(produced_by)s, %(produced_for)s,
-                        %(derived_from_artifact_id)s
+                        %(derived_from_artifact_id)s,
+                        %(produced_for_user_id)s
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         -- Decision 3 Option C: every apply that touches
@@ -484,7 +486,9 @@ class ApplyLoop:
                         produced_by = EXCLUDED.produced_by,
                         produced_for = EXCLUDED.produced_for,
                         derived_from_artifact_id =
-                            EXCLUDED.derived_from_artifact_id
+                            EXCLUDED.derived_from_artifact_id,
+                        produced_for_user_id =
+                            EXCLUDED.produced_for_user_id
                     """,
                     {
                         "id": artifact_id,
@@ -527,6 +531,19 @@ class ApplyLoop:
                         "produced_for": json.dumps(produced_for),
                         "derived_from_artifact_id": art.get(
                             "__derived_from"
+                        ),
+                        # 2026-06-30 per-user isolation: write the
+                        # produced_for.user_id out to its own column
+                        # so the cortex-bff Electric proxy can filter
+                        # subscriptions on it. Electric's WHERE-clause
+                        # parser doesn't accept the `->>` JSONB
+                        # operator, and generated columns can't be
+                        # replicated, so this regular column is
+                        # populated by the projector at write time.
+                        # See sql/create_answer_artifact_projection.sql
+                        # for the column definition.
+                        "produced_for_user_id": (
+                            (produced_for or {}).get("user_id")
                         ),
                     },
                 )
