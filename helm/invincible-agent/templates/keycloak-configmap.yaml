@@ -37,6 +37,42 @@ data:
                       "user"
                   ]
               }
+          },
+          {
+              "username": "alice",
+              "enabled": true,
+              "email": "alice@example.com",
+              "firstName": "Alice",
+              "lastName": "Tester",
+              "credentials": [
+                  { "type": "password", "value": "alice", "temporary": false }
+              ],
+              "realmRoles": [ "user" ],
+              "clientRoles": { "cortex-ui": [ "user" ] }
+          },
+          {
+              "username": "bob",
+              "enabled": true,
+              "email": "bob@example.com",
+              "firstName": "Bob",
+              "lastName": "Tester",
+              "credentials": [
+                  { "type": "password", "value": "bob", "temporary": false }
+              ],
+              "realmRoles": [ "user" ],
+              "clientRoles": { "cortex-ui": [ "user" ] }
+          },
+          {
+              "username": "carol",
+              "enabled": true,
+              "email": "carol@example.com",
+              "firstName": "Carol",
+              "lastName": "Tester",
+              "credentials": [
+                  { "type": "password", "value": "carol", "temporary": false }
+              ],
+              "realmRoles": [ "user" ],
+              "clientRoles": { "cortex-ui": [ "user" ] }
           }
       ],
       "clients": [

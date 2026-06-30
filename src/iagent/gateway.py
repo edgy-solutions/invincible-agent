@@ -39,7 +39,7 @@ from typing import AsyncGenerator, Any
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from neo4j import GraphDatabase
@@ -65,6 +65,13 @@ load_dotenv()
 _DAGSTER_WEBSERVER_URL = os.getenv("DAGSTER_WEBSERVER_URL", "http://localhost:3000")
 _DAGSTER_REPOSITORY = os.getenv("DAGSTER_REPOSITORY", "__repository__")
 _DAGSTER_LOCATION = os.getenv("DAGSTER_LOCATION", "iagent")
+
+# Upstream Electric service for the JWT-scoped shape proxy. The client
+# (cortex-ui) connects to cortex-bff's `/electric/shape` endpoint
+# rather than to Electric directly, so a server-verified `user_id`
+# WHERE clause is injected based on the authenticated JWT instead of
+# being client-controlled. See `electric_shape_proxy` below.
+_ELECTRIC_UPSTREAM_URL = os.getenv("ELECTRIC_UPSTREAM_URL", "http://iagent-electric:3000")
 
 # ── Lifespan ──────────────────────────────────────────────
 
@@ -110,6 +117,19 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Electric SQL's ShapeStream client reads custom headers from
+    # the `/electric/shape` proxy response to drive incremental sync.
+    # Browsers hide non-safelisted response headers from fetch()
+    # unless explicitly exposed by CORS; without this, the
+    # ShapeStream sees no `electric-handle` / `electric-offset` and
+    # never advances past the first chunk.
+    expose_headers=[
+        "electric-handle",
+        "electric-offset",
+        "electric-up-to-date",
+        "electric-schema",
+        "electric-cursor",
+    ],
 )
 
 
@@ -593,6 +613,67 @@ def _project_sources(mat: dict) -> list[dict] | None:
         out.append(projected)
 
     return out or None
+
+
+def _enrich_sources_with_has_figures(sources: list[dict]) -> None:
+    """For each source whose label looks like a mil/ontology data-module
+    URI, set `has_figures: bool` based on Neo4j. Used to hide the
+    cortex-ui slide-in trigger when clicking it would only show
+    "No figures are linked to this data module."
+
+    Batched single Neo4j query — N+1 would be wasteful for sources lists
+    in the 5-20 range we see in practice. Failures (Neo4j unreachable,
+    etc.) leave `has_figures` UNSET on every source — the UI's behavior
+    in that case is to fall back to the heuristic camera-icon visibility
+    (label pattern match), matching pre-enrichment behavior. Mutates in
+    place to avoid copying the list.
+    """
+    # The figures endpoint takes the URI from `source.label` when it
+    # looks like an ontology URI; otherwise `source.uri`. Match the
+    # same precedence here so the has_figures check covers the same
+    # URI the UI would actually pass to `/data_module/figures`.
+    def _data_module_uri(src: dict) -> str | None:
+        label = src.get("label") or ""
+        if isinstance(label, str) and (
+            label.startswith("http://") or label.startswith("https://")
+        ):
+            return label
+        uri = src.get("uri") or ""
+        if isinstance(uri, str) and (
+            uri.startswith("http://") or uri.startswith("https://")
+        ):
+            return uri
+        return None
+
+    uri_to_idx: dict[str, list[int]] = {}
+    for idx, src in enumerate(sources):
+        dm_uri = _data_module_uri(src)
+        if not dm_uri:
+            continue
+        uri_to_idx.setdefault(dm_uri, []).append(idx)
+
+    if not uri_to_idx:
+        return
+
+    uris = list(uri_to_idx.keys())
+    cypher = """
+    UNWIND $uris AS uri
+    OPTIONAL MATCH (dm:Resource {uri: uri})-[:hasFigure]->(f:Resource)
+    RETURN uri, count(f) > 0 AS has_figures
+    """
+    try:
+        with neo4j_driver.session() as session:
+            result = session.run(cypher, {"uris": uris})
+            for record in result:
+                u = record["uri"]
+                has = bool(record["has_figures"])
+                for idx in uri_to_idx.get(u, []):
+                    sources[idx]["has_figures"] = has
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "has_figures enrichment failed (UI falls back to label "
+            "heuristic): %s", exc,
+        )
 
 
 def _project_graph_trace(mat: dict) -> list[dict] | None:
@@ -1575,6 +1656,13 @@ async def generate_dagster_stream(
                 # semantics will revisit this.
                 projected_sources = _project_sources(mat)
                 if projected_sources:
+                    # Tag each ontology-URI source with whether the
+                    # data module has linked figures, so the cortex-ui
+                    # only shows the "View figures" camera-icon trigger
+                    # when clicking it would actually surface figures.
+                    # Failures leave `has_figures` UNSET and the UI
+                    # falls back to its label-pattern heuristic.
+                    _enrich_sources_with_has_figures(projected_sources)
                     logger.info(
                         "📡 Emitting SSE 'sources' for run %s: %d source(s)",
                         run_id, len(projected_sources),
@@ -2518,3 +2606,148 @@ def data_module_figures(
         "uri": uri,
         "figures": list(deduped_by_url.values()) + no_url_figures,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Electric shape proxy — per-user isolation interim
+# ─────────────────────────────────────────────────────────────────────
+#
+# Architect's 2026-06-30 ruling (per-user demo workbench):
+#
+# The substrate today stores answer artifacts globally — one
+# `answer_artifact_projection` table, no per-user partitioning. The
+# write side captures `produced_for.user_id` per artifact (audit trail
+# intact), but cortex-ui's Electric subscription has no `where` clause
+# and streams the whole table. In a multi-user demo, every tester
+# would see everyone else's questions — over-sharing.
+#
+# This proxy is the INTERIM per-user isolation surface. It is
+# explicitly NOT access control:
+#
+#   - Today's filter:    `produced_for.user_id = $authenticated_sub`
+#                        (ownership-based; under-shares is safe)
+#   - Tomorrow's filter: viewability derived from source ACLs
+#                        (ADR-0025 access-control arc; gated by Topaz)
+#
+# Same Electric-shape-scoping mechanism, different predicate. This
+# proxy doesn't pull the access-control arc forward; it just applies
+# the `user_id` already captured at write time as a subscription
+# filter.
+#
+# Why proxy (server-side), not client-supplied WHERE: if the client
+# passed `where: produced_for->>'user_id' = 'X'` to Electric directly,
+# the client could set X to anyone's `sub` and bypass isolation. The
+# WHERE must be sourced from a SERVER-VERIFIED JWT claim, not a
+# client parameter. This proxy is the trusted middle that injects
+# the verified `sub` into the upstream Electric call.
+#
+# What the proxy does:
+#   1. Validates the JWT via the same `get_current_user` dependency
+#      every other endpoint uses (RS256 against Keycloak JWKS).
+#   2. STRIPS any client-supplied `where` parameter — never trusted.
+#   3. Injects `where: "produced_for->>'user_id' = '<verified_sub>'"`
+#      with the user_id escaped against SQL-quote-injection (UUID
+#      regex validation + PostgreSQL single-quote doubling).
+#   4. Forwards all other Electric params (`table`, `offset`, `live`,
+#      `handle`, `columns`, etc.) verbatim.
+#   5. Streams the upstream response back, preserving Electric's
+#      protocol headers (`electric-handle`, `electric-offset`,
+#      `electric-up-to-date`) so the client's incremental sync works.
+#
+# `_ELECTRIC_UPSTREAM_URL` defaults to the cluster-internal service
+# URL; the direct ingress `electric.edgy-solutions.com` is closed as
+# part of this rollout so testers can't bypass the proxy.
+
+import re as _re_for_uuid
+
+_UUID_RE = _re_for_uuid.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _escape_sql_string_literal(s: str) -> str:
+    """Escape a string for inclusion in a PostgreSQL single-quoted
+    literal: PostgreSQL doubles single quotes. We ALSO validate
+    against a UUID regex first because Keycloak's `sub` is always a
+    UUID v4 — anything else is a malformed token. Belt-and-suspenders.
+    """
+    if not _UUID_RE.match(s):
+        # Defensive: should never happen with a Keycloak-issued JWT;
+        # if it does, the JWT is malformed and we refuse to proxy.
+        raise ValueError(f"verified user_id is not a UUID: {s!r}")
+    return s.replace("'", "''")
+
+
+_ELECTRIC_FORWARD_HEADERS = {
+    "electric-handle",
+    "electric-offset",
+    "electric-up-to-date",
+    "electric-schema",
+    "electric-cursor",
+    "content-type",
+    "cache-control",
+}
+
+
+@app.get("/electric/shape")
+async def electric_shape_proxy(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy to upstream Electric `/v1/shape` with a server-verified
+    `produced_for.user_id = <authenticated sub>` filter injected.
+
+    Per-user isolation interim — see the module-level comment above.
+
+    Electric's `/v1/shape` is long-polled: each request hangs up to
+    ~30s waiting for new data, then returns a JSON array of inserts/
+    updates plus protocol headers (`electric-handle`, `electric-offset`,
+    `electric-up-to-date`). We forward those headers verbatim so the
+    cortex-ui ShapeStream's incremental sync continues working.
+    """
+    # 1. JWT validated by Depends(get_current_user). user_id is
+    #    payload["sub"] from a RS256-verified JWT. CANNOT be spoofed.
+    verified_user_id = current_user.user_id
+
+    # 2. Build the upstream WHERE clause with the escaped, validated
+    #    user_id. PostgreSQL JSONB path operator `->>` extracts the
+    #    user_id field as text for the literal comparison.
+    escaped = _escape_sql_string_literal(verified_user_id)
+    server_where = f"produced_for->>'user_id' = '{escaped}'"
+
+    # 3. Pass through Electric params, EXCEPT any client-supplied
+    #    `where` (always overridden by the server-injected clause).
+    upstream_params: dict[str, str] = {}
+    for key, value in request.query_params.multi_items():
+        if key.lower() == "where":
+            # Client cannot influence the WHERE clause. Silently drop.
+            continue
+        upstream_params[key] = value
+    upstream_params["where"] = server_where
+    upstream_params.setdefault("table", "answer_artifact_projection")
+
+    upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
+
+    # 4. Fire the upstream request and forward the body + protocol
+    #    headers. httpx read timeout is set generous to accommodate
+    #    Electric's long-poll.
+    timeout = httpx.Timeout(connect=5.0, read=60.0, write=5.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            upstream_resp = await client.get(upstream_url, params=upstream_params)
+        except httpx.HTTPError as exc:
+            logger.error("electric proxy upstream error: %s", exc)
+            raise HTTPException(
+                status_code=502, detail="electric upstream unavailable"
+            ) from exc
+
+    forwarded = {
+        k: v for k, v in upstream_resp.headers.items()
+        if k.lower() in _ELECTRIC_FORWARD_HEADERS
+    }
+
+    return StreamingResponse(
+        iter([upstream_resp.content]),
+        status_code=upstream_resp.status_code,
+        headers=forwarded,
+    )
