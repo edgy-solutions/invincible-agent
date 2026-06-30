@@ -2488,7 +2488,33 @@ def data_module_figures(
             status_code=502, detail="neo4j query failed",
         ) from exc
 
+    # Dedup by URL — the 40051 XML often references the same image via
+    # both `<graphic boardno="X"/>` AND a separate `<figure>` element,
+    # producing two distinct `fig-*` nodes pointing at the same S3 URL.
+    # The slide-in shouldn't show duplicate cards. Keep the entry with
+    # the more informative label (longer wins as a heuristic — "Mouse
+    # (Right Click) TOC" beats "rightclickmenuinTOC") and the more
+    # informative rendering_origin (non-empty wins).
+    deduped_by_url: dict[str, dict] = {}
+    no_url_figures: list[dict] = []
+    for fig in figures:
+        url = fig.get("url")
+        if not url:
+            no_url_figures.append(fig)
+            continue
+        existing = deduped_by_url.get(url)
+        if existing is None:
+            deduped_by_url[url] = fig
+            continue
+        # Prefer non-empty rendering_origin.
+        if not existing.get("rendering_origin") and fig.get("rendering_origin"):
+            deduped_by_url[url] = fig
+            continue
+        # Prefer longer label when origin equally informative.
+        if len(fig.get("label", "")) > len(existing.get("label", "")):
+            deduped_by_url[url] = fig
+
     return {
         "uri": uri,
-        "figures": figures,
+        "figures": list(deduped_by_url.values()) + no_url_figures,
     }
