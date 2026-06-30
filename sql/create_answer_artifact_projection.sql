@@ -71,6 +71,24 @@ CREATE INDEX IF NOT EXISTS idx_aap_watermark
 CREATE INDEX IF NOT EXISTS idx_aap_kind
     ON answer_artifact_projection (kind);
 
+-- 2026-06-30: per-user isolation interim. The cortex-bff
+-- `/electric/shape` proxy filters subscriptions on the authenticated
+-- user's `sub`. Electric's WHERE-clause parser supports a subset of
+-- PostgreSQL expressions and does NOT accept the `->>` JSONB path
+-- operator, so we add a STORED generated column derived from
+-- `produced_for->>'user_id'`. Electric subscribes to the whole row,
+-- so the generated column flows to clients automatically (UI ignores
+-- columns it doesn't know).
+--
+-- IDEMPOTENT — re-running the migration on a cluster that already
+-- has the column is a no-op via IF NOT EXISTS. New clusters get the
+-- column at first creation.
+ALTER TABLE answer_artifact_projection
+    ADD COLUMN IF NOT EXISTS produced_for_user_id TEXT
+    GENERATED ALWAYS AS (produced_for->>'user_id') STORED;
+CREATE INDEX IF NOT EXISTS idx_aap_produced_for_user_id
+    ON answer_artifact_projection (produced_for_user_id);
+
 -- ── Projector cursor (internal resumable state, NOT synced) ──
 --
 -- Decision 4 (Option C revised): the `GET /projector/watermark` HTTP

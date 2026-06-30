@@ -2710,11 +2710,15 @@ async def electric_shape_proxy(
     #    CANNOT be spoofed.
     verified_user_id = current_user.id
 
-    # 2. Build the upstream WHERE clause with the escaped, validated
-    #    user_id. PostgreSQL JSONB path operator `->>` extracts the
-    #    user_id field as text for the literal comparison.
+    # 2. Build the upstream WHERE clause. Electric's WHERE parser
+    #    supports a subset of PostgreSQL expressions and does NOT
+    #    accept the `->>` JSONB path operator. We filter on a
+    #    GENERATED ALWAYS AS (produced_for->>'user_id') STORED column
+    #    added to `answer_artifact_projection` (see migration
+    #    sql/create_answer_artifact_projection.sql) — the extraction
+    #    happens at write time, the filter is a plain text equality.
     escaped = _escape_sql_string_literal(verified_user_id)
-    server_where = f"produced_for->>'user_id' = '{escaped}'"
+    server_where = f"produced_for_user_id = '{escaped}'"
 
     # 3. Pass through Electric params, EXCEPT any client-supplied
     #    `where` (always overridden by the server-injected clause).
