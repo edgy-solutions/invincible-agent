@@ -1,5 +1,43 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.4 — 2026-07-01
+
+Patch bump. Fixes chart-package silent-empty SQL bug that was making
+0.3.2 and 0.3.3 look like the wrong fix.
+
+### Fix
+
+- **`db-configmap.yaml` reads SQL from `files/sql/` (chart-relative),
+  not from `sql/` (repo root).** Helm's `.Files.Get` cannot reach
+  files outside the chart directory. The previous templates
+  referenced `.Files.Get "sql/create_bpmn_catalog.sql"` — outside
+  the chart — so `.Files.Get` silently returned `""` and the
+  ConfigMap shipped with EMPTY SQL fields. The db-init hook then
+  ran `psql -f` on empty files (exit 0, no output, no CREATE
+  TABLE), silently completed, helm reported "hook succeeded," and
+  every fresh install ended up with NO tables.
+- Symptom the architect finally caught by watching the pod live:
+    ```
+    Applying BPMN catalog schema (as postgres superuser)...
+    Applying projector schema ...
+    Granting runtime privileges to app user 'iagent'...
+    GRANT
+    GRANT
+    ...
+    DB init complete.
+    ```
+  The GRANT block ran (its SQL is inline in the shell script). The
+  two `psql -f` commands printed NOTHING because the SQL files were
+  empty — no `CREATE TABLE`, no `NOTICE relation ... already
+  exists`, nothing.
+- Sandbox happened to work because someone applied the SQL manually
+  during Hop 2 rollout (the tables have been there since); every
+  fresh install elsewhere has been broken since day one.
+- Fix: chart-scoped `helm/invincible-agent/files/sql/` is now the
+  authoritative source. Repo-root `sql/` stays for manual `psql`
+  reference and dev use. Both are kept in sync manually until a
+  future consolidation.
+
 ## 0.3.3 — 2026-07-01
 
 Patch bump. Fixes db-init on PG15+ / PG17 (Bitnami-flavored deploys).

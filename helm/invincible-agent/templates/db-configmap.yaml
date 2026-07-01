@@ -5,7 +5,22 @@ metadata:
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
 data:
+  # 2026-07-01: paths point at chart-relative `files/sql/` — helm's
+  # `.Files.Get` CANNOT reach files outside the chart directory. Prior
+  # versions referenced `sql/...` at the REPO ROOT, which is outside
+  # the chart, so `.Files.Get` silently returned "" and the ConfigMap
+  # shipped with empty SQL fields. The db-init hook then ran `psql -f`
+  # on empty files (exit 0, no output, no CREATE), silently completed,
+  # helm reported "hook succeeded," and every fresh install ended up
+  # with NO tables. Sandbox happened to work because someone applied
+  # the SQL manually during Hop 2 rollout; work Bitnami install
+  # surfaced the gap on first fresh deploy.
+  #
+  # Fix: `helm/invincible-agent/files/sql/` is the authoritative
+  # location for chart-packaged migrations. Repo-root `sql/` stays
+  # for manual `psql` reference and dev use; a pre-commit sync (or
+  # periodic diff check) should keep them equal until we consolidate.
   create_bpmn_catalog.sql: |
-{{ .Files.Get "sql/create_bpmn_catalog.sql" | indent 4 }}
+{{ .Files.Get "files/sql/create_bpmn_catalog.sql" | indent 4 }}
   create_answer_artifact_projection.sql: |
-{{ .Files.Get "sql/create_answer_artifact_projection.sql" | indent 4 }}
+{{ .Files.Get "files/sql/create_answer_artifact_projection.sql" | indent 4 }}
