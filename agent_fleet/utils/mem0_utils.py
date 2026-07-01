@@ -451,10 +451,31 @@ def _build_mem0_memory() -> Memory:
                 "LLM_EMBED_MODEL to be set. See agent_fleet/utils/embed.py "
                 "DEFAULT_EMBED_MODEL for the canonical default."
             )
+        # 2026-07-01: MUST disable tiktoken-based pre-tokenization when
+        # pointing at a non-OpenAI backend (vLLM, LiteLLM→vLLM, Ollama's
+        # openai-compat mode, etc.). LangChain's OpenAIEmbeddings assumes
+        # OpenAI's real API and:
+        #   1. Chunks long input with tiktoken (cl100k_base, vocab ~100k)
+        #      into token-ID arrays before sending
+        #   2. Sends `input: [[<token_ids>]]` NOT `input: "text"` to /embeddings
+        #
+        # vLLM/nomic-embed-text-v1.5 uses a BERT tokenizer with a ~30k
+        # vocab. cl100k token IDs > 30k → "Token id N is out of vocabulary"
+        # 400 error at vLLM. Symptom captured at work 2026-07-01:
+        #   input: [[14965, 25241, 279, 436, 708, 24007, 1043, 45246, 28065]]
+        #   Error: Token id 45246 is out of vocabulary
+        #
+        # `check_embedding_ctx_length=False` disables the chunker that
+        # triggers pre-tokenization. `tiktoken_enabled=False` disables
+        # the tokenizer path entirely for text-length checks. With both
+        # off, LangChain sends the raw text string as-is; vLLM tokenizes
+        # with nomic's own tokenizer server-side and returns embeddings.
         langchain_embedder = OpenAIEmbeddings(
             model=embedder_model,
             base_url=openai_url,
             api_key=openai_api_key,
+            check_embedding_ctx_length=False,
+            tiktoken_enabled=False,
         )
         # Share the existing Mem0migrationsOpenAI index — schema is
         # identical (same embedding-dimensionality assumption is on the
@@ -478,8 +499,16 @@ def _build_mem0_memory() -> Memory:
         # the OpenRouter-only LLM case and assumes mem0 is the only consumer
         # of its own collection.
         _real_openai_default = "text-embedding-3-small"
+        # If LLM_EMBED_MODEL is set to a non-OpenAI model (nomic-embed-text
+        # etc.), the tiktoken pre-tokenization trap fires here too. Keep
+        # the disable flags for symmetry with the openai-compat branch
+        # above; harmless when pointed at real OpenAI (tiktoken chunking
+        # was just an optimization; the API accepts long inputs and
+        # chunks them itself now).
         langchain_embedder = OpenAIEmbeddings(
-            model=os.getenv("LLM_EMBED_MODEL", _real_openai_default)
+            model=os.getenv("LLM_EMBED_MODEL", _real_openai_default),
+            check_embedding_ctx_length=False,
+            tiktoken_enabled=False,
         )
         index_name = "Mem0migrationsOpenAI"
 
