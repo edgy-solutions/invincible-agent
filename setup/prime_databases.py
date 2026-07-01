@@ -212,12 +212,28 @@ CANONICAL_TTL_MANIFEST = [
     # path, not what the resolver actually queries with" gives
     # silent UNKNOWN cascades). idp:* classes are the canonical
     # catalog/lineage vocabulary for data-engineering questions.
-    {
-        "domain": "DATA_ENGINEERING",
-        "name": "PROV-O",
-        "s3_key": "idp/PROV-O.ttl",
-        "url": "https://www.w3.org/ns/prov-o.ttl",
-    },
+    #
+    # PROV-O was REMOVED 2026-07-01 per
+    # [[ontology-class-pool-prov-contamination]]. PROV-O is used as a
+    # design-reference vocabulary throughout the system (our
+    # AnswerArtifact writer produces produced_by / produced_for /
+    # derived_from_artifact_id / valid_as_of shapes that mirror
+    # prov:wasAttributedTo / prov:wasInformedBy / prov:wasDerivedFrom /
+    # prov:generatedAtTime — same semantics, our own namespace so we
+    # can extend without touching W3C), but its CLASSES are corpus-
+    # noise when they enter the routable OntologyClass pool. Their
+    # W3C-quality definitions vector-outcompete domain classes with
+    # weaker definitions (a user asking "who authorized this?" would
+    # route to prov:Bundle before AuthorizationDecision). The
+    # meta-ontology filter in doc_tools/assets/ontology_assets.py
+    # (_META_ONTOLOGY_IRI_PREFIXES) already drops every one of PROV-O's
+    # URIs; ingesting the TTL just to filter it out was wasted work
+    # AND caused sync_jena_ontologies_to_neo4j to fail with the
+    # confusing "zero classes extracted" exception (SPARQL DID find
+    # them; filter dropped them all; the zero-check couldn't tell
+    # the difference). Removing at the seed source is the durable
+    # fix; doc-tools' cc79098 handles accidental future meta-ontology
+    # uploads gracefully.
     {
         "domain": "DATA_ENGINEERING",
         "name": "idp_extension",
