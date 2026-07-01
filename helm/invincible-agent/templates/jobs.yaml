@@ -101,6 +101,23 @@ spec:
       containers:
         - name: apply-schema
           image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
+          # 2026-07-01: connect as postgres superuser (not the app user).
+          #
+          # Root cause: PG15+ removed the default `PUBLIC → CREATE` on
+          # the `public` schema. Even a DATABASE OWNER (which Bitnami's
+          # POSTGRESQL_USERNAME becomes for its POSTGRESQL_DATABASE)
+          # cannot CREATE TABLE in public without an explicit grant.
+          # PG17 continues this posture. `CREATE TABLE bpmn_catalog`
+          # resolves to `public.bpmn_catalog` and gets denied.
+          #
+          # The official docker library postgres image happens to make
+          # POSTGRES_USER a superuser (implicit privilege everywhere),
+          # so this bug only surfaces on Bitnami. Rather than branch
+          # on imageStyle, we just always connect as the postgres
+          # superuser for the schema apply — schema DDL is a
+          # privileged, one-time-per-cluster operation anyway, and
+          # the app user only needs SELECT/INSERT/UPDATE at runtime,
+          # which it already has via database ownership.
           env:
             - name: PGHOST
               value: {{ include "invincible-agent.pgHost" . }}
@@ -109,15 +126,29 @@ spec:
             - name: PGDATABASE
               value: {{ include "invincible-agent.pgDatabase" . }}
             - name: PGUSER
-              value: {{ include "invincible-agent.pgUser" . }}
+              value: "postgres"
+            {{- if and .Values.postgresql.enabled (eq (default "postgres" .Values.postgresql.imageStyle) "bitnami") }}
+            # Bitnami separates the superuser (postgres) from the app
+            # user; POSTGRESQL_POSTGRES_PASSWORD is the superuser's
+            # password. Fall back to the app password only if the
+            # overlay didn't set postgresPassword — same shape as the
+            # Postgres container's env logic.
             - name: PGPASSWORD
-              value: {{ include "invincible-agent.pgPassword" . }}
+              value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
+            {{- else }}
+            # Official postgres image: POSTGRES_USER IS the superuser
+            # (POSTGRES_PASSWORD is its password). External Postgres:
+            # operator must supply postgresql.auth.postgresPassword
+            # with a password that can connect as `postgres`.
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
+            {{- end }}
           command:
             - sh
             - -c
             - |
               set -e
-              echo "Applying BPMN catalog schema..."
+              echo "Applying BPMN catalog schema (as postgres superuser)..."
               psql -v ON_ERROR_STOP=1 -f /sql-schema/create_bpmn_catalog.sql
               # 2026-07-01: projector schema was previously "applied by
               # the projector on startup" (per the projector template
@@ -129,6 +160,21 @@ spec:
               # are safe.
               echo "Applying projector schema (answer_artifact_projection, projector_cursor, projector_skip_log)..."
               psql -v ON_ERROR_STOP=1 -f /sql-schema/create_answer_artifact_projection.sql
+              # 2026-07-01: PG15+ requires explicit grant for the app
+              # user to write to tables in the public schema. The
+              # schemas were created as postgres superuser above; now
+              # grant runtime read/write to the app user so cortex-bff,
+              # engine-a, and projector can INSERT/UPDATE/DELETE.
+              # OWNER stays with postgres — that's fine; runtime
+              # doesn't need OWNER, just row-level access.
+              echo "Granting runtime privileges to app user '{{ include "invincible-agent.pgUser" . }}'..."
+              psql -v ON_ERROR_STOP=1 -c "
+                GRANT USAGE ON SCHEMA public TO \"{{ include "invincible-agent.pgUser" . }}\";
+                GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO \"{{ include "invincible-agent.pgUser" . }}\";
+                GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{{ include "invincible-agent.pgUser" . }}\";
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"{{ include "invincible-agent.pgUser" . }}\";
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO \"{{ include "invincible-agent.pgUser" . }}\";
+              "
               echo "DB init complete."
           volumeMounts:
             - name: sql-schema

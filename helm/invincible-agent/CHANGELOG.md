@@ -1,5 +1,37 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.3 — 2026-07-01
+
+Patch bump. Fixes db-init on PG15+ / PG17 (Bitnami-flavored deploys).
+
+### Fix
+
+- **db-init hook connects as `postgres` superuser** for schema apply.
+  PG15+ removed the default `PUBLIC → CREATE` grant on the `public`
+  schema. Even a database OWNER (which Bitnami's `POSTGRESQL_USERNAME`
+  becomes for its `POSTGRESQL_DATABASE`) can't `CREATE TABLE` in
+  public without an explicit grant. PG17 continues that posture.
+  Symptom on fresh Bitnami PG17 deploys: `helm upgrade` reports
+  "Upgrade complete" but tables are silently missing; cortex-bff /
+  projector then crash on first request with `relation "bpmn_catalog"
+  does not exist` / `relation "projector_cursor" does not exist`.
+- Fix: hook now uses `PGUSER=postgres` + password from
+  `postgresql.auth.postgresPassword` (falls back to `.auth.password`
+  for the Docker-library image where POSTGRES_USER IS a superuser).
+  Schema DDL is privileged; superuser is the right actor.
+- Then grants runtime privileges to the app user so cortex-bff /
+  engine-a / projector can INSERT/UPDATE/DELETE:
+    ```sql
+    GRANT USAGE ON SCHEMA public TO iagent;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES ...;
+    GRANT USAGE, SELECT ON ALL SEQUENCES ...;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ... TO iagent;
+    ```
+  `ALTER DEFAULT PRIVILEGES` covers tables created LATER by future
+  schema migrations without needing to re-grant each time.
+- Docker library postgres deploys are unaffected — its `POSTGRES_USER`
+  is implicit superuser so grants are no-ops but harmless.
+
 ## 0.3.2 — 2026-07-01
 
 Patch bump. Fixes a latent-since-Hop-2 schema migration gap.
