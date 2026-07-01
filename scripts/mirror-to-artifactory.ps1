@@ -275,6 +275,12 @@ $ExternalImages = @(
     @{ src='postgres:16';                                              dst='library/postgres:16' },
     @{ src='redis:7-alpine';                                           dst='library/redis:7-alpine' },
     @{ src='minio/minio:RELEASE.2025-09-07T16-13-09Z';                 dst='minio/minio:RELEASE.2025-09-07T16-13-09Z' },
+    # minio/mc — MinIO client, used by the helm chart's pre-install/pre-
+    # upgrade hook (minio-bucket-init-job.yaml) to `mc mb` any buckets
+    # declared in `minioBucketInit.buckets`. Version-align with the
+    # server release above so client and server speak the same
+    # protocol version.
+    @{ src='minio/mc:RELEASE.2025-08-13T08-35-41Z';                    dst='minio/mc:RELEASE.2025-08-13T08-35-41Z' },
 
     # Utility / sidecar. python is the runtime image for the
     # domain-broker pod (config-driven, not a custom CI image).

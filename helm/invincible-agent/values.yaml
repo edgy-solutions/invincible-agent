@@ -447,9 +447,15 @@ domainBroker:
 
 minioBucketInit:
   enabled: true
-  # MinIO image override — the default mc client tracks MinIO server
-  # versions reasonably; pin if you need to.
-  # image: "quay.io/minio/mc:latest"
+  # `mc` (MinIO client) image used by the pre-install/pre-upgrade
+  # helm hook to `mc mb` the buckets listed below. Version-aligned
+  # with the mirrored minio server release (see scripts/mirror-to-
+  # artifactory.ps1). Override for a private-registry deploy by
+  # setting the full image string in your values-{env}.yaml overlay,
+  # e.g.:
+  #   minioBucketInit:
+  #     image: "artifactory.corp.example.com/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+  image: "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
   endpoint: "http://iagent-minio:9000"
   accessKey: "minio-sandbox"
   secretKey: "minio-sandbox-secret"
