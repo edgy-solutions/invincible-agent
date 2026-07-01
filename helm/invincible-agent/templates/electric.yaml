@@ -52,7 +52,7 @@ spec:
       {{- end }}
       containers:
         - name: electric
-          image: "{{ .Values.electric.image.repository }}:{{ .Values.electric.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "electric" "registry" .Values.electric.image.registry "repository" .Values.electric.image.repository "tag" .Values.electric.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           ports:
             - name: http

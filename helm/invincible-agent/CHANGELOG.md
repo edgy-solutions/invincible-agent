@@ -1,5 +1,41 @@
 # invincible-agent helm chart — changelog
 
+## 0.2.3 — 2026-07-01
+
+Patch bump. Electric image now honors `global.imageRegistry` /
+per-component `registry` overrides.
+
+### Chart mechanics
+
+- **Electric template refactored to use `invincible-agent.image`
+  helper.** Previously the image line was a direct-string
+  concatenation (`{{ .Values.electric.image.repository }}:{{ tag }}`),
+  which meant `global.imageRegistry` didn't apply. Private-registry
+  deploys had to bake the registry into `repository`, e.g.
+  `repository: "artifactory.corp.example.com/electricsql/electric"`.
+- Now uses the same helper that dagster, projector, cortex-bff,
+  cortex-ui, etc. use:
+    ```yaml
+    # Option A: consolidate under global
+    global:
+      imageRegistry: "artifactory.corp.example.com"
+    electric:
+      image:
+        registry: ""      # explicit clear so global wins
+
+    # Option B: per-component
+    electric:
+      image:
+        registry: "artifactory.corp.example.com"
+    ```
+- Default in values.yaml pins `registry: "docker.io"` explicitly so
+  the shipped default still renders `docker.io/electricsql/electric:1.0.13`
+  for stock deploys.
+
+Postgres + user-deployments (pub-tools / dag-tools images) still
+use the direct-string shape — a separate refactor. Their overlays
+still work via the bake-into-repository pattern.
+
 ## 0.2.2 — 2026-07-01
 
 Patch bump. Per-pod toggles for user-deployments.
