@@ -1,5 +1,31 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.6 — 2026-07-01
+
+Patch bump. db-init hook transfers table ownership to the app user
+so Electric can publish.
+
+### Fix
+
+- **db-init hook now transfers ownership of all created tables
+  (bpmn_catalog, answer_artifact_projection, projector_cursor,
+  projector_skip_log) to the app user.** Electric's shape
+  subscriber runs `CREATE PUBLICATION FOR TABLE ...` for each
+  shape's underlying table; PG requires the caller to be the
+  OWNER of the table (or a superuser). Electric connects with the
+  app-user DSN, not superuser.
+- 0.3.3 fixed the PG15+ public-schema privilege trap by creating
+  tables as postgres superuser. That put ownership on postgres.
+  0.3.6 finishes the pattern: transfer ownership back to the app
+  user after schema apply. Electric can now configure publications.
+- Symptom on fresh Bitnami PG17 deploy pre-fix:
+    ```
+    Failed to configure publication:
+      42501 (insufficient_privilege)
+      must be owner of table answer_artifact_projection
+    ```
+  cortex-bff proxy then returned 500 on every /electric/shape.
+
 ## 0.3.5 — 2026-07-01
 
 Patch bump. cortex-bff Electric proxy default URL now uses release name.

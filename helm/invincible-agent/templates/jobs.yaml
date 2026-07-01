@@ -175,6 +175,30 @@ spec:
                 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"{{ include "invincible-agent.pgUser" . }}\";
                 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO \"{{ include "invincible-agent.pgUser" . }}\";
               "
+              # 2026-07-01: Electric needs to be able to configure a
+              # PostgreSQL logical-replication PUBLICATION for
+              # answer_artifact_projection (that's the row-level shape
+              # it subscribes to). PG's rule for
+              # CREATE PUBLICATION FOR TABLE x: caller must be the
+              # OWNER of x OR a superuser. Electric connects with the
+              # same DSN as the app user (BPMN_POSTGRES_USER via the
+              # combined secret) — not superuser. If ownership stays
+              # with postgres, Electric fails with:
+              #   42501 (insufficient_privilege) must be owner of table
+              # Transfer ownership after schema apply. iagent already
+              # has REPLICATION (granted by electric.yaml's
+              # grant-replication initContainer); with ownership it can
+              # now add the table to a publication. Idempotent — ALTER
+              # TABLE ... OWNER TO is safe when ownership already
+              # matches.
+              echo "Transferring table ownership to '{{ include "invincible-agent.pgUser" . }}' so Electric can publish..."
+              psql -v ON_ERROR_STOP=1 -c "
+                ALTER TABLE bpmn_catalog OWNER TO \"{{ include "invincible-agent.pgUser" . }}\";
+                ALTER TABLE answer_artifact_projection OWNER TO \"{{ include "invincible-agent.pgUser" . }}\";
+                ALTER TABLE projector_cursor OWNER TO \"{{ include "invincible-agent.pgUser" . }}\";
+                ALTER TABLE projector_skip_log OWNER TO \"{{ include "invincible-agent.pgUser" . }}\";
+                ALTER SEQUENCE projector_skip_log_id_seq OWNER TO \"{{ include "invincible-agent.pgUser" . }}\";
+              "
               echo "DB init complete."
           volumeMounts:
             - name: sql-schema
