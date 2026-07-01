@@ -32,6 +32,30 @@ Architecture: see [[project-sidecar-registry-pattern]].
 {{- $brokerName := printf "%s-broker" $fullName }}
 {{- $codeLocationPort := default 4000 $deploy.codeLocation.port }}
 {{- $brokerPort := default 8000 $deploy.broker.port }}
+{{- /*
+Per-pod toggles: an operator can enable ONLY the code-location
+(Dagster daemon can trigger materializations; mesh URN resolution
+unavailable), ONLY the broker (mesh URN resolution works; nothing
+materializes locally — assets live elsewhere), or both (default).
+
+Backward compat: `enabled` alone still renders both. Explicit
+opt-out per side is:
+  userDeployments.<name>.codeLocation.enabled: false
+  userDeployments.<name>.broker.enabled: false
+
+`hasKey` is used because a missing `enabled` key means "operator
+did not opt out"; treating a missing key as "false" would silently
+drop the pod on every existing overlay.
+*/}}
+{{- $codeLocationEnabled := true }}
+{{- if and $deploy.codeLocation (hasKey $deploy.codeLocation "enabled") }}
+  {{- $codeLocationEnabled = $deploy.codeLocation.enabled }}
+{{- end }}
+{{- $brokerEnabled := true }}
+{{- if and $deploy.broker (hasKey $deploy.broker "enabled") }}
+  {{- $brokerEnabled = $deploy.broker.enabled }}
+{{- end }}
+{{- if $codeLocationEnabled }}
 ---
 # ---------------------------------------------------------------------------
 # {{ $name }} — Dagster code-location (serves Definitions over gRPC)
@@ -126,6 +150,8 @@ spec:
       name: grpc
   selector:
     {{- include "invincible-agent.selectorLabels" (dict "component" $name "root" $) | nindent 4 }}
+{{- end }}{{/* end $codeLocationEnabled */}}
+{{- if $brokerEnabled }}
 ---
 # ---------------------------------------------------------------------------
 # {{ $name }} — Broker (same image, runs dag_tools.domain_broker)
@@ -212,5 +238,6 @@ spec:
       name: http
   selector:
     {{- include "invincible-agent.selectorLabels" (dict "component" (printf "%s-broker" $name) "root" $) | nindent 4 }}
-{{- end }}
-{{- end }}
+{{- end }}{{/* end $brokerEnabled */}}
+{{- end }}{{/* end $deploy.enabled */}}
+{{- end }}{{/* end range .Values.userDeployments */}}

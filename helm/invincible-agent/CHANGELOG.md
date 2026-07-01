@@ -1,5 +1,33 @@
 # invincible-agent helm chart — changelog
 
+## 0.2.2 — 2026-07-01
+
+Patch bump. Per-pod toggles for user-deployments.
+
+### Behavior
+
+- **User-deployment code-location and broker are now independently
+  togglable.** Previously `userDeployments.<name>.enabled: true`
+  always rendered both the Dagster code-location pod AND the mesh
+  broker pod as a fixed pair. Some deploys want only one:
+    - broker-only: URN resolution works, no local materializations
+      (assets live on another Dagster instance)
+    - code-location-only: assets materialize via the daemon, but the
+      mesh doesn't know about them (integration testing, hidden
+      internal pipeline)
+  Override:
+    ```yaml
+    userDeployments:
+      pub-tools:
+        enabled: true
+        codeLocation:
+          enabled: false   # skip the code-location pod
+        broker:
+          enabled: true    # broker still runs
+    ```
+  Backward compat: existing overlays that don't set the per-pod
+  `enabled` keep rendering both pods.
+
 ## 0.2.1 — 2026-07-01
 
 Patch bump. Pull for private-registry deploys that need the new
