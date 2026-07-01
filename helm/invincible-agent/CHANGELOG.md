@@ -1,5 +1,23 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.5 — 2026-07-01
+
+Patch bump. cortex-bff Electric proxy default URL now uses release name.
+
+### Fix
+
+- **`ELECTRIC_UPSTREAM_URL` env now defaults to
+  `http://{{ .Release.Name }}-electric:{{ .Values.electric.port }}`
+  when unset by the operator.** Previously it fell back to the
+  gateway.py source-level default of `http://iagent-electric:3000` —
+  which only works if the release is named `iagent`. At work with
+  release name `invincible-agent`, cortex-bff hit
+  `[Errno -2] Name or service not known` on every proxied Electric
+  shape request and returned 502.
+- Operator overrides via `cortexBff.env.ELECTRIC_UPSTREAM_URL`
+  still win over this default.
+- Only emitted when `electric.enabled` is true.
+
 ## 0.3.4 — 2026-07-01
 
 Patch bump. Fixes chart-package silent-empty SQL bug that was making

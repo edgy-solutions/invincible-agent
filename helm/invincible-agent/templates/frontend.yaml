@@ -112,6 +112,18 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            # 2026-07-01: default the Electric proxy's upstream URL from
+            # the release name so clusters with a release name other
+            # than "iagent" (e.g. "invincible-agent" at work) don't hit
+            # "Name or service not known" from a hardcoded `iagent-electric`
+            # default. Operator overrides via `cortexBff.env.ELECTRIC_UPSTREAM_URL`
+            # still win — this is just a sensible default when unset.
+            {{- if not (hasKey (default (dict) .Values.cortexBff.env) "ELECTRIC_UPSTREAM_URL") }}
+            {{- if .Values.electric.enabled }}
+            - name: ELECTRIC_UPSTREAM_URL
+              value: "http://{{ .Release.Name }}-electric:{{ .Values.electric.port | default 3000 }}"
+            {{- end }}
+            {{- end }}
             {{- if .Values.cortexBff.tlsTrust.secretName }}
             # Python's ssl module + the `requests` library both honor
             # these. PyJWKClient (auth.py:42) → urllib → ssl.create_default_context
