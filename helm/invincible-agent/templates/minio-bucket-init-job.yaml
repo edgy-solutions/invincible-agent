@@ -57,11 +57,10 @@ spec:
       {{- end }}
       containers:
         - name: mc
-          # 2026-07-01: consolidated on `global.images.mc` for private-
-          # registry deploys — same override pattern operators already
-          # use for curl / postgresClient. Legacy `.Values.minioBucketInit.image`
-          # kept as a fallback so pre-existing overlays with the old
-          # key still work; the new key wins when both are set.
+          # 0.3.0 sweep: image resolved through `invincible-agent.image`
+          # helper from `utilImages.mc.{registry,repository,tag}`.
+          # Legacy `global.images.mc` and `.Values.minioBucketInit.image`
+          # are RETIRED — overlays that set either key are ignored.
           image: {{ include "invincible-agent.image" (dict "name" "mc" "registry" .Values.utilImages.mc.registry "repository" .Values.utilImages.mc.repository "tag" .Values.utilImages.mc.tag "root" .) }}
           imagePullPolicy: IfNotPresent
           env:
