@@ -1,5 +1,29 @@
 # invincible-agent helm chart — changelog
 
+## 0.2.1 — 2026-07-01
+
+Patch bump. Pull for private-registry deploys that need the new
+`mc` image path.
+
+### Chart mechanics
+
+- **`mc` image consolidated under `global.images.mc`.** Follows the
+  same override pattern operators already use for `global.images.curl`
+  and `global.images.postgresClient`. One place to redirect utility
+  images at your artifactory for private-registry deploys.
+    ```yaml
+    global:
+      images:
+        mc: "artifactory.corp.example.com/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+    ```
+  Legacy `.Values.minioBucketInit.image` still falls back gracefully;
+  no forced overlay migration.
+
+- **`minio/mc` added to `scripts/mirror-to-artifactory.ps1`.** Private
+  registries that mirror via that script now get `mc` pulled alongside
+  `minio/minio`. Pinned to `RELEASE.2025-08-13T08-35-41Z` for
+  reproducibility (was implicitly `:latest`).
+
 ## 0.2.0 — 2026-06-30
 
 Minor bump. Two behavior changes worth flagging for operators; four
