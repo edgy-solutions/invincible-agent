@@ -1,5 +1,27 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.2 — 2026-07-01
+
+Patch bump. Fixes a latent-since-Hop-2 schema migration gap.
+
+### Fix
+
+- **`db-init` helm hook now applies BOTH schemas** — bpmn_catalog AND
+  the projector's answer_artifact_projection + projector_cursor +
+  projector_skip_log. Previously only bpmn was applied; the projector
+  template comment falsely claimed the projector "applies
+  sql/create_answer_artifact_projection.sql idempotently on startup"
+  but the code never did — it only READS `projector_cursor` and
+  hard-fails if the row is missing. Fresh installs (including the
+  work Bitnami deploy 2026-07-01) crashed with:
+    - `relation "bpmn_catalog" does not exist` (cortex-bff)
+    - `relation "projector_cursor" does not exist` (projector)
+- Both schemas use `CREATE TABLE IF NOT EXISTS` — safe to re-run on
+  every helm upgrade.
+- Added `psql -v ON_ERROR_STOP=1` + `set -e` so a schema-apply
+  failure fails the hook loudly instead of silently continuing.
+- Projector template comment corrected to describe reality.
+
 ## 0.3.1 — 2026-07-01
 
 Patch bump. Electric now works against Bitnami Postgres out of the box.

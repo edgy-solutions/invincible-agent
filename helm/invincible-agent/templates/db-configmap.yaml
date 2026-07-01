@@ -7,3 +7,5 @@ metadata:
 data:
   create_bpmn_catalog.sql: |
 {{ .Files.Get "sql/create_bpmn_catalog.sql" | indent 4 }}
+  create_answer_artifact_projection.sql: |
+{{ .Files.Get "sql/create_answer_artifact_projection.sql" | indent 4 }}

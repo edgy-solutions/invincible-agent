@@ -116,9 +116,20 @@ spec:
             - sh
             - -c
             - |
-              echo "Applying BPMN Catalog schema..."
-              psql -f /sql-schema/create_bpmn_catalog.sql
-              echo "DB Init complete."
+              set -e
+              echo "Applying BPMN catalog schema..."
+              psql -v ON_ERROR_STOP=1 -f /sql-schema/create_bpmn_catalog.sql
+              # 2026-07-01: projector schema was previously "applied by
+              # the projector on startup" (per the projector template
+              # comment) but the code never actually ran it — the loop
+              # only READS projector_cursor and hard-fails if the row
+              # is missing. Latent gap since Hop 2. Fix: apply both
+              # schemas from this post-install/post-upgrade hook, in
+              # order. Both use CREATE TABLE IF NOT EXISTS so re-runs
+              # are safe.
+              echo "Applying projector schema (answer_artifact_projection, projector_cursor, projector_skip_log)..."
+              psql -v ON_ERROR_STOP=1 -f /sql-schema/create_answer_artifact_projection.sql
+              echo "DB init complete."
           volumeMounts:
             - name: sql-schema
               mountPath: /sql-schema

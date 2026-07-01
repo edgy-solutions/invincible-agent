@@ -11,9 +11,16 @@
 # Restate+topic successor lands, the projector becomes a topic consumer
 # and the polling code in iagent.projector.apply_loop dies.
 #
-# Migration: the projector applies sql/create_answer_artifact_projection.sql
-# idempotently on startup. There is no separate migration Job — the
-# CREATE TABLE IF NOT EXISTS pattern means re-running is safe.
+# Migration: sql/create_answer_artifact_projection.sql is applied by
+# the db-init post-install/post-upgrade helm hook (jobs.yaml), NOT by
+# the projector itself. The projector reads projector_cursor.WHERE id=1
+# on startup and hard-fails if the row is missing — the honest error
+# preserves per [[verify-subtle-acceptance-by-inspection]] (silent
+# default-to-0 would hide a missing migration). CREATE TABLE IF NOT
+# EXISTS makes the hook's re-runs safe. Previous versions of this
+# comment claimed the projector applied the migration itself — it
+# never did; latent gap surfaced by fresh Bitnami work-cluster deploy
+# 2026-07-01.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
