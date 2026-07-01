@@ -50,6 +50,48 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      # 2026-07-01: init container ensures the DB role Electric connects
+      # with has the REPLICATION attribute needed to create logical
+      # replication slots. The official `postgres` image happens to make
+      # POSTGRES_USER a superuser (implicit REPLICATION), so this init
+      # is redundant there. Bitnami's POSTGRESQL_USERNAME creates a
+      # NON-superuser role — Electric crashes with "insufficient_privilege
+      # to start WAL sender" on first boot until the role is granted.
+      # `ALTER ROLE ... WITH REPLICATION` is idempotent (already-set is a
+      # no-op), so this init runs safely on every pod restart across
+      # both image styles.
+      initContainers:
+        - name: grant-replication
+          image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
+          env:
+            - name: PGHOST
+              value: {{ include "invincible-agent.pgHost" . }}
+            - name: PGPORT
+              value: {{ include "invincible-agent.pgPort" . | default "5432" | quote }}
+            - name: PGUSER
+              value: "postgres"
+            - name: PGDATABASE
+              value: {{ include "invincible-agent.pgDatabase" . }}
+            - name: TARGET_ROLE
+              value: {{ include "invincible-agent.pgUser" . }}
+            {{- if eq (default "postgres" .Values.postgresql.imageStyle) "bitnami" }}
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
+            {{- else }}
+            - name: PGPASSWORD
+              value: {{ .Values.postgresql.auth.password | quote }}
+            {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Postgres at $PGHOST:$PGPORT..."
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U postgres -d "$PGDATABASE"; do
+                sleep 2
+              done
+              echo "Granting REPLICATION to $TARGET_ROLE (idempotent)..."
+              psql -v ON_ERROR_STOP=1 -c "ALTER ROLE \"$TARGET_ROLE\" WITH REPLICATION;"
+              echo "OK."
       containers:
         - name: electric
           image: {{ include "invincible-agent.image" (dict "name" "electric" "registry" .Values.electric.image.registry "repository" .Values.electric.image.repository "tag" .Values.electric.image.tag "root" .) }}
@@ -63,11 +105,13 @@ spec:
             # table lives there; Electric just subscribes).
             #
             # The DATABASE_URL secret form: uses the iagent role and
-            # password. Electric will create its logical replication
-            # slot ('electric_slot_*' prefix) on startup; the role
-            # needs REPLICATION privilege OR the database owner role.
-            # The `iagent` role is the DB owner from initdb, so it has
-            # the privileges needed.
+            # password. Electric creates its logical replication slot
+            # ('electric_slot_*' prefix) on startup; the role needs the
+            # REPLICATION attribute. For the official `postgres` image
+            # POSTGRES_USER becomes a superuser (REPLICATION implicit).
+            # For Bitnami, POSTGRESQL_USERNAME is NOT a superuser — the
+            # `grant-replication` initContainer above grants REPLICATION
+            # on every pod boot as an idempotent ALTER ROLE.
             - name: DATABASE_URL
               value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)?sslmode=disable"
             # Disable insecure mode in prod; sandbox/dev can flip on.

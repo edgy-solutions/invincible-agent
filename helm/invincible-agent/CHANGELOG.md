@@ -1,5 +1,25 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.1 — 2026-07-01
+
+Patch bump. Electric now works against Bitnami Postgres out of the box.
+
+### Fix
+
+- **Electric pod gets an `initContainer` that grants REPLICATION to
+  the connection role.** Root cause: Bitnami's `POSTGRESQL_USERNAME`
+  creates a NON-superuser role by default, so `iagent` couldn't
+  create logical replication slots. Electric crashed with
+  `FATAL 42501 (insufficient_privilege) permission denied to start
+  WAL sender`. The official `postgres` image happens to make its
+  `POSTGRES_USER` a superuser (REPLICATION implicit), so this bug
+  only surfaced on Bitnami.
+- Fix: `grant-replication` initContainer connects as the `postgres`
+  superuser (using `POSTGRESQL_POSTGRES_PASSWORD` on Bitnami, or the
+  same as the app password on the official image where user IS
+  superuser) and issues `ALTER ROLE <app-user> WITH REPLICATION`.
+  Idempotent — subsequent boots re-run the ALTER as a no-op.
+
 ## 0.3.0 — 2026-07-01
 
 **Minor bump. Overlay migration required for private-registry deploys.**
