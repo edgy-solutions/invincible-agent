@@ -3,6 +3,18 @@ entries:
   invincible-agent:
   - apiVersion: v2
     appVersion: 2026.06.30
+    created: "2026-07-01T02:16:58.113012208Z"
+    description: Invincible Agent — Multi-engine AI agent mesh orchestrated by Dagster.
+      Includes Restate durable execution, LangGraph support, Swarms.ai scraper, DataHub
+      wrapper, Ontology reasoner, and a dynamic BPMN workflow interpreter.
+    digest: 915a31adb0963a676e1a58460647af5b9826c267ac4a98e3a367ba9bc7a8fb27
+    name: invincible-agent
+    type: application
+    urls:
+    - https://github.com/edgy-solutions/invincible-agent/releases/download/invincible-agent-0.2.2/invincible-agent-0.2.2.tgz
+    version: 0.2.2
+  - apiVersion: v2
+    appVersion: 2026.06.30
     created: "2026-07-01T01:57:07.469552394Z"
     description: Invincible Agent — Multi-engine AI agent mesh orchestrated by Dagster.
       Includes Restate durable execution, LangGraph support, Swarms.ai scraper, DataHub
@@ -517,4 +529,4 @@ entries:
     urls:
     - https://github.com/edgy-solutions/invincible-agent/releases/download/invincible-agent-0.1.1/invincible-agent-0.1.1.tgz
     version: 0.1.1
-generated: "2026-07-01T01:57:07.469900775Z"
+generated: "2026-07-01T02:16:58.11320112Z"
