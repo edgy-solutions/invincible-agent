@@ -15,6 +15,11 @@ global:
   images:
     curl: "curlimages/curl:latest"
     postgresClient: "postgres:15-alpine"
+    # `mc` (MinIO client) used by the pre-install/pre-upgrade helm
+    # hook (minio-bucket-init-job.yaml) to `mc mb` the buckets
+    # declared in `minioBucketInit.buckets`. Version-aligned with the
+    # mirrored minio server (see scripts/mirror-to-artifactory.ps1).
+    mc: "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
 
 # ==========================================================================
 # PostgreSQL
@@ -447,15 +452,13 @@ domainBroker:
 
 minioBucketInit:
   enabled: true
-  # `mc` (MinIO client) image used by the pre-install/pre-upgrade
-  # helm hook to `mc mb` the buckets listed below. Version-aligned
-  # with the mirrored minio server release (see scripts/mirror-to-
-  # artifactory.ps1). Override for a private-registry deploy by
-  # setting the full image string in your values-{env}.yaml overlay,
-  # e.g.:
-  #   minioBucketInit:
-  #     image: "artifactory.corp.example.com/minio/mc:RELEASE.2025-08-13T08-35-41Z"
-  image: "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+  # The `mc` (MinIO client) image used by this hook is now sourced
+  # from `global.images.mc` (same shape as `global.images.curl` /
+  # `global.images.postgresClient`). Override for a private-registry
+  # deploy in your values-{env}.yaml:
+  #   global:
+  #     images:
+  #       mc: "artifactory.corp.example.com/minio/mc:RELEASE.2025-08-13T08-35-41Z"
   endpoint: "http://iagent-minio:9000"
   accessKey: "minio-sandbox"
   secretKey: "minio-sandbox-secret"
