@@ -27,9 +27,26 @@ global:
 # ==========================================================================
 postgresql:
   enabled: true
+  # Two image styles supported. Set `imageStyle` to match whichever
+  # image your registry has:
+  #
+  #   postgres (default) — Docker library `postgres` image or any
+  #     downstream mirror that keeps the same entrypoint. Config
+  #     comes in via `-c` args + POSTGRES_* env vars.
+  #
+  #   bitnami — Bitnami's `bitnami/postgresql` image or downstream
+  #     mirrors. Ignores command args entirely; reads config from
+  #     POSTGRESQL_* env vars. Data mounted at /bitnami/postgresql.
+  #     Use this if your work registry mirrors Bitnami.
+  #
+  # Both styles enable wal_level=logical + slot/sender bumps that
+  # Electric needs. Auth / db creation are equivalent.
+  imageStyle: "postgres"
   image:
     repository: "postgres"
     tag: "16"
+    # For Bitnami: image.repository: "bitnami/postgresql", tag: "16"
+    # (or your mirror path).
   auth:
     postgresPassword: "changeme-postgres"
     username: "iagent"

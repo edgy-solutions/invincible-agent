@@ -25,16 +25,28 @@ spec:
       containers:
         - name: postgresql
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
-          # Hop 3 of projector build plan (commit 0eda9f7) —
-          # logical replication for Electric. Default postgres image
-          # ships with wal_level=replica; Electric requires logical.
-          # max_replication_slots/max_wal_senders bumped to 10 to give
-          # Electric headroom + leave slots for ad-hoc subscribers.
-          # Args layered after the image's default entrypoint, so
-          # `postgres -c wal_level=logical` activates the override.
-          # INTERIM under Decisions 0+1+3 — when the Restate+topic
-          # successor lands and Electric retires, these args become
-          # benign (no slots consumed) but stay safe to leave.
+          {{- /*
+          Two image styles supported:
+            postgres (default) — Docker library postgres image.
+              Uses `-c` args for wal_level config, POSTGRES_* env vars
+              for auth, PGDATA at /var/lib/postgresql/data/pgdata.
+            bitnami — Bitnami postgresql image.
+              Ignores command args; reads config from env vars
+              (POSTGRESQL_* prefix). Data at /bitnami/postgresql.
+              Entrypoint script processes env into postgresql.conf
+              before starting the postgres binary.
+          Both flavors deliver identical Postgres behavior — the
+          template just speaks each image's config protocol.
+
+          Hop 3 (commit 0eda9f7): logical replication for Electric.
+          Default postgres image ships wal_level=replica; Electric
+          requires logical. max_replication_slots/max_wal_senders
+          bumped to 10 for Electric headroom + ad-hoc subscribers.
+          INTERIM under Decisions 0+1+3 — Restate+topic successor
+          retires the need for these settings; they stay benign.
+          */}}
+          {{- $style := default "postgres" .Values.postgresql.imageStyle }}
+          {{- if eq $style "postgres" }}
           args:
             - "-c"
             - "wal_level=logical"
@@ -42,10 +54,27 @@ spec:
             - "max_replication_slots=10"
             - "-c"
             - "max_wal_senders=10"
+          {{- end }}
           ports:
             - name: tcp-pg
               containerPort: 5432
           env:
+            {{- if eq $style "bitnami" }}
+            - name: POSTGRESQL_USERNAME
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRESQL_PASSWORD
+              value: {{ .Values.postgresql.auth.password | quote }}
+            - name: POSTGRESQL_DATABASE
+              value: {{ .Values.postgresql.auth.database | quote }}
+            - name: POSTGRESQL_POSTGRES_PASSWORD
+              value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
+            - name: POSTGRESQL_WAL_LEVEL
+              value: "logical"
+            - name: POSTGRESQL_MAX_REPLICATION_SLOTS
+              value: "10"
+            - name: POSTGRESQL_MAX_WAL_SENDERS
+              value: "10"
+            {{- else }}
             - name: POSTGRES_USER
               value: {{ .Values.postgresql.auth.username | quote }}
             - name: POSTGRES_PASSWORD
@@ -54,9 +83,14 @@ spec:
               value: {{ .Values.postgresql.auth.database | quote }}
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+            {{- end }}
           volumeMounts:
             - name: data
+              {{- if eq $style "bitnami" }}
+              mountPath: /bitnami/postgresql
+              {{- else }}
               mountPath: /var/lib/postgresql/data
+              {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data

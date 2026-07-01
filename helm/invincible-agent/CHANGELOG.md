@@ -1,5 +1,40 @@
 # invincible-agent helm chart — changelog
 
+## 0.2.4 — 2026-07-01
+
+Patch bump. Postgres template supports Bitnami image variant.
+
+### Behavior
+
+- **`postgresql.imageStyle`** toggle. Two variants:
+    - `postgres` (default) — Docker library `postgres` image or
+      downstream mirrors. Config via `-c` args + `POSTGRES_*` env
+      vars. Data at `/var/lib/postgresql/data/pgdata`. Unchanged.
+    - `bitnami` — `bitnami/postgresql` image or downstream mirrors.
+      Ignores command args entirely; config via `POSTGRESQL_*` env
+      vars. Data at `/bitnami/postgresql`. `wal_level=logical` +
+      slot/sender bumps still applied but via
+      `POSTGRESQL_WAL_LEVEL` / `POSTGRESQL_MAX_REPLICATION_SLOTS` /
+      `POSTGRESQL_MAX_WAL_SENDERS`.
+- Overlay example (Bitnami mirror):
+    ```yaml
+    postgresql:
+      imageStyle: "bitnami"
+      image:
+        repository: "artifactory.corp.example.com/bitnami/postgresql"
+        tag: "16"
+      auth:
+        postgresPassword: "<superuser-password>"
+        username: "iagent"
+        password: "<iagent-app-password>"
+        database: "iagent"
+    ```
+- Root cause: previous chart hardcoded `-c wal_level=logical` in the
+  container's `args:`, which the Docker library postgres entrypoint
+  passes through to the postgres binary but Bitnami's entrypoint
+  script treats as a command to `exec`, failing with
+  `exec: wal_level=logical: not found`.
+
 ## 0.2.3 — 2026-07-01
 
 Patch bump. Electric image now honors `global.imageRegistry` /
