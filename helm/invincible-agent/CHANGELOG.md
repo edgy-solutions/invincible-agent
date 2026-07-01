@@ -1,5 +1,99 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.0 — 2026-07-01
+
+**Minor bump. Overlay migration required for private-registry deploys.**
+
+Every third-party image reference now flows through the
+`invincible-agent.image` helper. Single override point:
+`global.imageRegistry` redirects everything (or override per-image
+via `<component>.image.registry`). The `global.images.*` map (curl,
+mc, postgresClient) is retired in favor of top-level `utilImages.*`
+with the same registry/repository/tag shape.
+
+### Overlay migration guide
+
+**Before (0.2.x)**:
+
+```yaml
+global:
+  images:
+    curl: "artifactory.corp.example.com/curlimages/curl:latest"
+    mc: "artifactory.corp.example.com/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+    postgresClient: "artifactory.corp.example.com/postgres:15-alpine"
+
+# and every third-party component needed the registry baked in
+postgresql:
+  image:
+    repository: "artifactory.corp.example.com/library/postgres"
+    tag: "16"
+neo4j:
+  image:
+    repository: "artifactory.corp.example.com/library/neo4j"
+    tag: "5.26.0"
+# ... etc for weaviate, fuseki, keycloak, topaz, restate, litellm,
+#     electric, plus userDeployments.<name>.image (as a full string)
+```
+
+**After (0.3.0)** — one blanket override:
+
+```yaml
+global:
+  imageRegistry: "artifactory.corp.example.com"
+
+# Then EITHER clear each component's registry so it inherits global:
+postgresql:
+  image:
+    registry: ""       # clears so global.imageRegistry wins
+# ...
+utilImages:
+  curl:
+    registry: ""
+  mc:
+    registry: ""
+  postgresClient:
+    registry: ""
+
+# OR override selectively per component if some live elsewhere:
+keycloak:
+  image:
+    registry: "artifactory.corp.example.com"
+    repository: "keycloak/keycloak"
+    tag: "latest"
+```
+
+### What was refactored
+
+**Templates now use `invincible-agent.image` helper**:
+- `infrastructure.yaml`: postgresql, neo4j, weaviate, fuseki
+- `keycloak.yaml`, `litellm.yaml`, `restate.yaml`, `topaz-deployment.yaml`
+- `user-deployments.yaml`: pub-tools + dag-tools brokers/code-locations
+- `domain-broker.yaml`: python:slim broker (previously hardcoded)
+- `jobs.yaml`: restate-init curl + db-init postgresClient hooks
+- `minio-bucket-init-job.yaml`: mc hook
+
+**values.yaml split for each component**:
+- Every third-party `image:` block gets `registry:` + `repository:` +
+  `tag:` fields
+- `global.images.*` retired; new `utilImages.*` block at bottom of
+  file with same three-field shape
+
+**User-deployments shape change** (breaking):
+- `userDeployments.<name>.image: "string"` → split into
+  `userDeployments.<name>.image.{registry,repository,tag}`
+
+### Also in this bump
+
+- **Topaz Deployment strategy: Recreate** — architect reported every
+  `helm upgrade` was leaving a stuck-in-ContainerCreating topaz pod
+  with a Multi-Attach error. Root cause: RollingUpdate strategy with
+  a ReadWriteOnce PVC. The new pod couldn't mount the PVC while the
+  old one still held it; RollingUpdate expects overlap between old
+  and new pods. Fixed by switching to `strategy.type: Recreate` —
+  kills the old pod first, brief availability gap during upgrade,
+  no PVC conflict. Safe because topaz is single-replica with a local
+  BoltDB store; no state loss.
+
 ## 0.2.4 — 2026-07-01
 
 Patch bump. Postgres template supports Bitnami image variant.

@@ -8,6 +8,15 @@ metadata:
     app.kubernetes.io/component: topaz
 spec:
   replicas: 1
+  # RollingUpdate + ReadWriteOnce PVC = MultiAttach error on every
+  # helm upgrade: the new pod tries to mount the PVC before the old
+  # one releases it (same node scheduling), stalls in ContainerCreating
+  # while k8s waits for the old pod, times out. Recreate strategy
+  # kills the old pod first so the PVC is free when the new one starts.
+  # Safe here because topaz is a single-replica policy engine with a
+  # local BoltDB — brief availability gap during upgrade is acceptable.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "invincible-agent.selectorLabels" (dict "component" "topaz" "root" .) | nindent 6 }}
@@ -23,7 +32,7 @@ spec:
       {{- end }}
       containers:
         - name: topaz
-          image: "{{ .Values.topaz.image.repository }}:{{ .Values.topaz.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "topaz" "registry" .Values.topaz.image.registry "repository" .Values.topaz.image.repository "tag" .Values.topaz.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           args: ["run", "--config-file", "/config/config.yaml"]
           ports:

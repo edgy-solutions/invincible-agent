@@ -20,7 +20,7 @@ spec:
       {{- end }}
       initContainers:
         - name: wait-for-services
-          image: {{ .Values.global.images.curl | quote }}
+          image: {{ include "invincible-agent.image" (dict "name" "curl" "registry" .Values.utilImages.curl.registry "repository" .Values.utilImages.curl.repository "tag" .Values.utilImages.curl.tag "root" .) }}
           command:
             - sh
             - -c
@@ -43,7 +43,7 @@ spec:
               sleep 5
       containers:
         - name: register-services
-          image: {{ .Values.global.images.curl | quote }}
+          image: {{ include "invincible-agent.image" (dict "name" "curl" "registry" .Values.utilImages.curl.registry "repository" .Values.utilImages.curl.repository "tag" .Values.utilImages.curl.tag "root" .) }}
           command:
             - sh
             - -c
@@ -78,7 +78,7 @@ spec:
       {{- end }}
       initContainers:
         - name: wait-for-db
-          image: {{ .Values.global.images.postgresClient | quote }}
+          image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
           env:
             - name: PGHOST
               value: {{ include "invincible-agent.pgHost" . }}
@@ -100,7 +100,7 @@ spec:
               echo "PostgreSQL is reachable."
       containers:
         - name: apply-schema
-          image: {{ .Values.global.images.postgresClient | quote }}
+          image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
           env:
             - name: PGHOST
               value: {{ include "invincible-agent.pgHost" . }}

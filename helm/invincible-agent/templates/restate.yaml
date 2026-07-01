@@ -24,7 +24,7 @@ spec:
       {{- end }}
       containers:
         - name: restate
-          image: "{{ .Values.restate.image.repository }}:{{ .Values.restate.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "restate" "registry" .Values.restate.image.registry "repository" .Values.restate.image.repository "tag" .Values.restate.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.restate.image.pullPolicy }}
           ports:
             - name: ingress

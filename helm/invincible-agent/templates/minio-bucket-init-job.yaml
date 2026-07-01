@@ -62,7 +62,7 @@ spec:
           # use for curl / postgresClient. Legacy `.Values.minioBucketInit.image`
           # kept as a fallback so pre-existing overlays with the old
           # key still work; the new key wins when both are set.
-          image: {{ .Values.global.images.mc | default .Values.minioBucketInit.image | default "quay.io/minio/mc:latest" | quote }}
+          image: {{ include "invincible-agent.image" (dict "name" "mc" "registry" .Values.utilImages.mc.registry "repository" .Values.utilImages.mc.repository "tag" .Values.utilImages.mc.tag "root" .) }}
           imagePullPolicy: IfNotPresent
           env:
             - name: MC_HOST_iagent

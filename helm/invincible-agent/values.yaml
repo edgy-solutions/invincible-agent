@@ -11,15 +11,10 @@ global:
   clusterDomain: ""
   imagePullSecrets:
     - name: ghcr-pull-secret
-  # -- Utility images for hooks/init-containers
-  images:
-    curl: "curlimages/curl:latest"
-    postgresClient: "postgres:15-alpine"
-    # `mc` (MinIO client) used by the pre-install/pre-upgrade helm
-    # hook (minio-bucket-init-job.yaml) to `mc mb` the buckets
-    # declared in `minioBucketInit.buckets`. Version-aligned with the
-    # mirrored minio server (see scripts/mirror-to-artifactory.ps1).
-    mc: "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+  # Legacy `global.images.*` (curl/postgresClient/mc) RETIRED as of
+  # chart 0.3.0. Utility images now live under top-level `utilImages:`
+  # with the same registry/repository/tag split as component images.
+  # See `utilImages:` block at the end of this file.
 
 # ==========================================================================
 # PostgreSQL
@@ -43,10 +38,14 @@ postgresql:
   # Electric needs. Auth / db creation are equivalent.
   imageStyle: "postgres"
   image:
-    repository: "postgres"
+    # `registry` non-empty wins over global.imageRegistry. Leave blank
+    # to inherit global.imageRegistry. Default: docker.io because
+    # postgres lives at docker.io/library/postgres (registry name is
+    # inferred from what `docker pull postgres:16` resolves to).
+    registry: "docker.io"
+    repository: "library/postgres"
     tag: "16"
-    # For Bitnami: image.repository: "bitnami/postgresql", tag: "16"
-    # (or your mirror path).
+    # For Bitnami: repository: "bitnami/postgresql", tag: "16"
   auth:
     postgresPassword: "changeme-postgres"
     username: "iagent"
@@ -74,7 +73,8 @@ externalPostgresql:
 restate:
   enabled: true
   image:
-    repository: docker.io/restatedev/restate
+    registry: "docker.io"
+    repository: "restatedev/restate"
     tag: "1.1"
     pullPolicy: IfNotPresent
   replicas: 1
@@ -431,6 +431,14 @@ centralGateway:
 domainBroker:
   enabled: true
   replicas: 1
+  # Broker code runs inside a python:slim container — the code itself
+  # is baked into a ConfigMap via .Files.Get, so any Python 3.12 slim
+  # variant works. Override via image.* below or the chart-wide
+  # global.imageRegistry.
+  image:
+    registry: "docker.io"
+    repository: "library/python"
+    tag: "3.12-slim"
   resources:
     requests:
       cpu: 50m
@@ -469,13 +477,9 @@ domainBroker:
 
 minioBucketInit:
   enabled: true
-  # The `mc` (MinIO client) image used by this hook is now sourced
-  # from `global.images.mc` (same shape as `global.images.curl` /
-  # `global.images.postgresClient`). Override for a private-registry
-  # deploy in your values-{env}.yaml:
-  #   global:
-  #     images:
-  #       mc: "artifactory.corp.example.com/minio/mc:RELEASE.2025-08-13T08-35-41Z"
+  # `mc` (MinIO client) image is sourced from `utilImages.mc` at the
+  # bottom of this file. Chart 0.3.0 retired the legacy
+  # `global.images.mc` key + `minioBucketInit.image` string.
   endpoint: "http://iagent-minio:9000"
   accessKey: "minio-sandbox"
   secretKey: "minio-sandbox-secret"
@@ -517,7 +521,10 @@ minioBucketInit:
 userDeployments:
   pub-tools:
     enabled: true
-    image: "ghcr.io/edgy-solutions/pub-tools:latest"
+    image:
+      registry: "ghcr.io"
+      repository: "edgy-solutions/pub-tools"
+      tag: "latest"
     imagePullPolicy: Always
     # Python import path to the Dagster Definitions object. Used by
     # both the code-location pod (`-m <module>`) and the broker pod
@@ -575,7 +582,10 @@ userDeployments:
   # to "false".
   dag-tools:
     enabled: true
-    image: "ghcr.io/edgy-solutions/dag-tools/user-deployment:latest"
+    image:
+      registry: "ghcr.io"
+      repository: "edgy-solutions/dag-tools/user-deployment"
+      tag: "latest"
     imagePullPolicy: Always
     dagsterModule: "dag_tools.user_deployment.definitions"
     codeLocation:
@@ -977,7 +987,8 @@ electric:
 neo4j:
   enabled: true
   image:
-    repository: neo4j
+    registry: "docker.io"
+    repository: "library/neo4j"
     tag: "5.26.0"
   auth:
     username: "neo4j"
@@ -995,7 +1006,8 @@ externalNeo4j:
 weaviate:
   enabled: true
   image:
-    repository: semitechnologies/weaviate
+    registry: "docker.io"
+    repository: "semitechnologies/weaviate"
     tag: "1.27.0"
   persistence:
     enabled: true
@@ -1010,7 +1022,8 @@ externalWeaviate:
 fuseki:
   enabled: true
   image:
-    repository: secoresearch/fuseki
+    registry: "docker.io"
+    repository: "secoresearch/fuseki"
     tag: "latest"
   auth:
     adminPassword: "changeme-fuseki"
@@ -1036,7 +1049,8 @@ externalDagster:
 keycloak:
   enabled: true
   image:
-    repository: quay.io/keycloak/keycloak
+    registry: "quay.io"
+    repository: "keycloak/keycloak"
     tag: "latest"
   auth:
     adminUser: "admin"
@@ -1069,7 +1083,8 @@ keycloak:
 topaz:
   enabled: true
   image:
-    repository: ghcr.io/aserto-dev/topaz
+    registry: "ghcr.io"
+    repository: "aserto-dev/topaz"
     tag: "0.33.13"
   persistence:
     enabled: true
@@ -1107,7 +1122,8 @@ externalTopaz:
 litellm:
   enabled: false
   image:
-    repository: ghcr.io/berriai/litellm
+    registry: "ghcr.io"
+    repository: "berriai/litellm"
     # Pinned to v1.89.2 — the version validated end-to-end in sandbox
     # (matrix 23/23, mem0 round-trip, cortex-bff). Matches the pin in
     # scripts/mirror-to-artifactory.ps1. To roll: bump both alongside
@@ -1221,6 +1237,39 @@ litellm:
   env: {}
   envFromConfigMaps: []
   envFromSecrets: []
+
+# ==========================================================================
+# Utility images used by helm hooks / init-containers.
+#
+# Chart 0.3.0 retired the legacy `global.images.curl` / `global.images.mc`
+# / `global.images.postgresClient` map in favor of per-hook image blocks
+# that follow the same registry/repository/tag shape every other component
+# uses. Overrides flow through `global.imageRegistry` OR per-image `registry`
+# just like the component images above.
+#
+# For a private-registry deploy, either:
+#   - Set `global.imageRegistry: "your.artifactory"` and clear the `registry`
+#     field below on each image you want to redirect, OR
+#   - Set `registry:` on each individually.
+# ==========================================================================
+utilImages:
+  # `curl` — used by the restate-init hook's wait-for-services init-container.
+  curl:
+    registry: "docker.io"
+    repository: "curlimages/curl"
+    tag: "latest"
+  # `postgres-client` — used by the db-init hook (wait-for-db + apply-schema).
+  postgresClient:
+    registry: "docker.io"
+    repository: "library/postgres"
+    tag: "15-alpine"
+  # `mc` (MinIO client) — used by the minio-bucket-init hook to `mc mb` the
+  # buckets declared in `minioBucketInit.buckets`. Version-aligned with the
+  # mirrored minio server (see scripts/mirror-to-artifactory.ps1).
+  mc:
+    registry: "quay.io"
+    repository: "minio/mc"
+    tag: "RELEASE.2025-08-13T08-35-41Z"
 
 # ==========================================================================
 # Secrets — override these in your values-production.yaml

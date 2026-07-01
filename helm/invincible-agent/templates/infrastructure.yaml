@@ -24,7 +24,7 @@ spec:
       {{- end }}
       containers:
         - name: postgresql
-          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "postgres" "registry" .Values.postgresql.image.registry "repository" .Values.postgresql.image.repository "tag" .Values.postgresql.image.tag "root" .) }}
           {{- /*
           Two image styles supported:
             postgres (default) — Docker library postgres image.
@@ -145,7 +145,7 @@ spec:
       {{- end }}
       containers:
         - name: neo4j
-          image: "{{ .Values.neo4j.image.repository }}:{{ .Values.neo4j.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "neo4j" "registry" .Values.neo4j.image.registry "repository" .Values.neo4j.image.repository "tag" .Values.neo4j.image.tag "root" .) }}
           ports:
             - name: http
               containerPort: 7474
@@ -216,7 +216,7 @@ spec:
       {{- end }}
       containers:
         - name: weaviate
-          image: "{{ .Values.weaviate.image.repository }}:{{ .Values.weaviate.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "weaviate" "registry" .Values.weaviate.image.registry "repository" .Values.weaviate.image.repository "tag" .Values.weaviate.image.tag "root" .) }}
           ports:
             - name: http
               containerPort: 8080
@@ -302,7 +302,7 @@ spec:
       {{- end }}
       containers:
         - name: fuseki
-          image: "{{ .Values.fuseki.image.repository }}:{{ .Values.fuseki.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "fuseki" "registry" .Values.fuseki.image.registry "repository" .Values.fuseki.image.repository "tag" .Values.fuseki.image.tag "root" .) }}
           ports:
             - name: http
               containerPort: 3030

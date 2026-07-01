@@ -24,7 +24,7 @@ spec:
       {{- end }}
       containers:
         - name: keycloak
-          image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "keycloak" "registry" .Values.keycloak.image.registry "repository" .Values.keycloak.image.repository "tag" .Values.keycloak.image.tag "root" .) }}
           args: ["start-dev", "--import-realm"]
           ports:
             - name: http

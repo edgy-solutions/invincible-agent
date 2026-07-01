@@ -55,7 +55,7 @@ spec:
       {{- end }}
       containers:
         - name: litellm
-          image: "{{ .Values.litellm.image.repository }}:{{ .Values.litellm.image.tag }}"
+          image: {{ include "invincible-agent.image" (dict "name" "litellm" "registry" .Values.litellm.image.registry "repository" .Values.litellm.image.repository "tag" .Values.litellm.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy | default "IfNotPresent" }}
           args:
             - "--config"

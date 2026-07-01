@@ -84,7 +84,7 @@ spec:
       {{- end }}
       containers:
         - name: code-location
-          image: {{ $deploy.image | quote }}
+          image: {{ include "invincible-agent.image" (dict "name" $name "registry" $deploy.image.registry "repository" $deploy.image.repository "tag" $deploy.image.tag "root" $) }}
           imagePullPolicy: {{ default "Always" $deploy.imagePullPolicy }}
           command:
             - python
@@ -180,7 +180,7 @@ spec:
       {{- end }}
       containers:
         - name: broker
-          image: {{ $deploy.image | quote }}
+          image: {{ include "invincible-agent.image" (dict "name" $name "registry" $deploy.image.registry "repository" $deploy.image.repository "tag" $deploy.image.tag "root" $) }}
           imagePullPolicy: {{ default "Always" $deploy.imagePullPolicy }}
           command:
             - hypercorn

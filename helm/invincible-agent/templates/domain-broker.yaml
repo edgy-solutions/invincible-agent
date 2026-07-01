@@ -54,7 +54,7 @@ spec:
     spec:
       containers:
         - name: broker
-          image: python:3.12-slim
+          image: {{ include "invincible-agent.image" (dict "name" "python" "registry" .Values.domainBroker.image.registry "repository" .Values.domainBroker.image.repository "tag" .Values.domainBroker.image.tag "root" .) }}
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
