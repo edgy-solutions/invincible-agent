@@ -20,6 +20,20 @@ data:
   # Infrastructure URLs
   RESTATE_INGRESS_URL: {{ include "invincible-agent.restateIngressUrl" . | quote }}
   CENTRAL_GATEWAY_URL: "http://{{ .Release.Name }}-central-gateway{{ include "invincible-agent.svcDomain" . }}:{{ .Values.centralGateway.port }}"
+  {{- if .Values.topaz.enabled }}
+  # ADR-0026 step 3: cortex-bff enriches the User model with a
+  # (persona, domain) entitlement matrix from topaz. Directory HTTP
+  # gateway is on port 9393. Setting this env in the shared config
+  # (not per-consumer) so any component that decides to consult
+  # entitlements gets the same URL. External-topaz override:
+  # `externalTopaz.grpcUrl` is a separate value for the authorizer
+  # port; for now we assume bundled topaz.
+  TOPAZ_DIRECTORY_URL: "http://topaz-svc:9393"
+  {{- else if .Values.externalTopaz.url }}
+  # Operator-supplied external topaz — expect the base HTTP URL that
+  # serves /api/v3/directory/*.
+  TOPAZ_DIRECTORY_URL: {{ .Values.externalTopaz.url | quote }}
+  {{- end }}
   NEO4J_URI: {{ include "invincible-agent.neo4jUri" . | quote }}
   NEO4J_USERNAME: {{ include "invincible-agent.neo4jUsername" . | quote }}
   WEAVIATE_HTTP_HOST: "{{ .Release.Name }}-weaviate:8080"

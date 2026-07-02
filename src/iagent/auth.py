@@ -1,10 +1,24 @@
+import logging
 import os
+import threading
+
 import jwt
 from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import List, Literal, Optional
+
+from iagent.authz import (
+    AuthorizationUnavailable,
+    EntitlementCache,
+    Entitlements,
+    TopazDirectoryClient,
+)
+
+
+logger = logging.getLogger(__name__)
+
 
 # Configuration
 # The Keycloak Realm URL is retrieved from environment variables, defaulting to a standard local path.
@@ -22,6 +36,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{KEYCLOAK_URL}/protocol/openid-c
 USER_PERSONA_CLAIM = os.getenv("USER_PERSONA_CLAIM", "persona")
 USER_PERSONA_FALLBACK = os.getenv("USER_PERSONA_FALLBACK", "MECHANIC")
 USER_DOMAINS_CLAIM = os.getenv("USER_DOMAINS_CLAIM", "entitled_domains")
+
+# Topaz Directory service URL for ADR-0026 entitlement enrichment.
+# When set, `get_current_user` fetches the caller's (persona, domain)
+# matrix from topaz and attaches it to the returned User. When unset
+# (empty), topaz enrichment is skipped and the returned User carries
+# an empty `entitlements` object — the ADR-0009 legacy claim path
+# continues to populate `persona` + `entitled_domains`.
+TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
 
 
 # Capture A per ADR-0025 § "Capture A — entitlement_source fidelity flag
@@ -46,7 +68,7 @@ USER_DOMAINS_CLAIM = os.getenv("USER_DOMAINS_CLAIM", "entitled_domains")
 # mask the fallback path (which is the production baseline) and
 # convert silence into a success signal. Required input forces
 # get_current_user to compute the value at the moment the JWT is read.
-EntitlementSource = Literal["claim", "fallback", "partial"]
+EntitlementSource = Literal["claim", "fallback", "partial", "topaz"]
 
 
 class User(BaseModel):
@@ -67,10 +89,39 @@ class User(BaseModel):
     # `[[optimistic-defaults-are-dishonest]]`. A forgotten value here is a
     # ValidationError at construction, not a silent fallback-to-"claim".
     entitlement_source: EntitlementSource
+    # ADR-0026 step 3: full (persona, domain) matrix from topaz. Empty
+    # `cells` when TOPAZ_DIRECTORY_URL is unset OR the user has no
+    # entitlements seeded. Chat request validation (step 4) consumes
+    # this to gate per-prompt persona/domain overrides.
+    entitlements: Entitlements = Entitlements()
+
 
 # Global JWKS Client for caching public keys
 jwks_url = f"{KEYCLOAK_URL}/protocol/openid-connect/certs"
 jwks_client = PyJWKClient(jwks_url)
+
+# ADR-0026 step 3: lazy singletons for the Topaz client + cache.
+# Instantiated on first request rather than at import time so cortex-bff
+# can boot even if topaz is briefly unavailable during rollout.
+_topaz_client: Optional[TopazDirectoryClient] = None
+_entitlement_cache: Optional[EntitlementCache] = None
+_topaz_init_lock = threading.Lock()
+
+
+def _get_entitlement_cache() -> Optional[EntitlementCache]:
+    """Lazy-init the Topaz client + cache. Returns None when
+    TOPAZ_DIRECTORY_URL is unset (ADR-0026 not wired for this
+    cluster) — callers should fall back to the legacy claim path."""
+    global _topaz_client, _entitlement_cache
+    if not TOPAZ_DIRECTORY_URL:
+        return None
+    if _entitlement_cache is not None:
+        return _entitlement_cache
+    with _topaz_init_lock:
+        if _entitlement_cache is None:
+            _topaz_client = TopazDirectoryClient(TOPAZ_DIRECTORY_URL)
+            _entitlement_cache = EntitlementCache(_topaz_client)
+    return _entitlement_cache
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
@@ -139,6 +190,49 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # ADR-0026 step 3: enrich with topaz entitlement matrix.
+        # Per-token cache keyed by (sub, jti) with TTL = token exp.
+        # When TOPAZ_DIRECTORY_URL is unset (legacy cluster), skip
+        # topaz and return the User with an empty Entitlements — the
+        # JWT-claim path above still populates persona + entitled_domains
+        # for downstream code that hasn't switched to the matrix yet.
+        entitlements = Entitlements()
+        cache = _get_entitlement_cache()
+        if cache is not None:
+            jti = payload.get("jti") or user_id  # fall back to sub if
+                                                  # IdP doesn't issue jti
+            exp = float(payload.get("exp") or 0)
+            try:
+                entitlements = cache.get(sub=user_id, jti=jti, exp=exp)
+                # When topaz did return a real matrix (not empty),
+                # override the entitlement_source flag to record
+                # topaz as the authoritative source. Empty matrix from
+                # topaz means the user isn't seeded — leave the JWT-
+                # claim provenance flag in place.
+                if entitlements.cells:
+                    entitlement_source = "topaz"
+            except AuthorizationUnavailable:
+                # ADR-0026 posture: on cache-miss + topaz-unreachable
+                # we DENY, not fall back to legacy claim path. Cache
+                # itself served a stale-but-valid matrix under a
+                # cached token, so this branch only fires for FRESH
+                # tokens during a topaz outage. Distinct 503 lets the
+                # caller distinguish "auth is down" from "you're
+                # denied" per the ADR.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "error": "authorization_unavailable",
+                        "retryable": True,
+                        "message": (
+                            "Topaz Directory is unreachable and no "
+                            "cached entitlement matrix exists for "
+                            "this token. Retry after the authz "
+                            "service is restored."
+                        ),
+                    },
+                )
+
         return User(
             id=user_id,
             email=email,
@@ -146,6 +240,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             persona=persona,
             entitled_domains=entitled_domains,
             entitlement_source=entitlement_source,
+            entitlements=entitlements,
         )
         
     except jwt.ExpiredSignatureError:

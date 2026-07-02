@@ -39,7 +39,7 @@ from typing import AsyncGenerator, Any
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from neo4j import GraphDatabase
@@ -104,6 +104,50 @@ async def get_mesh_config(current_user: User = Depends(get_current_user)):
         logger.error("Failed to fetch mesh config: %s", exc)
         return {"personas": {}, "status": "OFFLINE"}
 
+
+# ADR-0026 step 3: expose the current user's entitlement matrix to
+# cortex-ui. The picker (landing in step 5) fetches this once on
+# login, populates its persona/domain dropdowns from the cells, and
+# starts on `default` (or falls back to the first cell if no default
+# is seeded).
+#
+# Response shape:
+#   {
+#     "cells": [{"persona": "DATA_ENGINEER", "domain": "AVIATION"}, ...],
+#     "default": {"persona": "DATA_ENGINEER", "domain": "AVIATION"} | null,
+#     "source": "topaz" | "cache" | "jwt-legacy" | "fallback",
+#     "user_id": "<sub>",
+#     "email": "<email>"
+#   }
+#
+# `source` records provenance for observability — cortex-ui shows
+# `(from cache | from topaz | ...)` on the "Acting as" badge so
+# operators know whether they're seeing a live or stale matrix,
+# per ADR-0026's `[[optimistic-defaults-are-dishonest]]` posture
+# applied to the entitlement display.
+#
+# When `TOPAZ_DIRECTORY_URL` is unset (legacy cluster without ADR-0026
+# step 3 wired), `cells` is empty and `source` reflects the JWT-legacy
+# path. The picker (step 5) treats an empty cells list as "no picker
+# — the caller is on the legacy persona-in-JWT posture."
+@app.get("/me/entitlements")
+async def get_me_entitlements(current_user: User = Depends(get_current_user)):
+    """Return the current user's (persona, domain) entitlement matrix."""
+    ent = current_user.entitlements
+    return {
+        "user_id": current_user.id,
+        "email": current_user.email,
+        "cells": [
+            {"persona": c.persona, "domain": c.domain} for c in ent.cells
+        ],
+        "default": (
+            {"persona": ent.default.persona, "domain": ent.default.domain}
+            if ent.default is not None
+            else None
+        ),
+        "source": ent.source,
+    }
+
 # Neo4j Driver Setup
 _NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
 _NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
@@ -153,6 +197,17 @@ class InterviewRequest(BaseModel):
     # id and merges in place. Fallback (None) preserves the server-
     # generates-id behavior for non-cortex-ui callers (curl, tests).
     artifact_id: str | None = None
+    # ADR-0026 step 4: per-prompt persona/domain override from the
+    # cortex-ui picker. When present, cortex-bff validates the cell
+    # is in the caller's Topaz-resolved entitlement matrix; entitled
+    # → route with the override, not-entitled → 403 `cell_not_entitled`
+    # with the entitled cells in the response body. When both are
+    # None (legacy clients, or picker unpopulated), we fall back to
+    # the caller's default cell (from entitlements.default) or,
+    # failing that, to `current_user.persona` / `entitled_domains`
+    # from the ADR-0009 JWT-claim path.
+    active_persona: str | None = None
+    active_domains: list[str] | None = None
 
 
 class BPMNTask(BaseModel):
@@ -1979,14 +2034,99 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
 
     Per ADR-0009 Step F'.2: user_persona + entitled_domains come from the
     auth-resolved User and flow downstream to the supervisor + engines.
+
+    ADR-0026 step 4: when the request carries `active_persona` /
+    `active_domains` (the cortex-ui picker's per-prompt selection), we
+    validate the cell is in the caller's Topaz-resolved entitlement
+    matrix. Non-entitled → 403 `cell_not_entitled` with the caller's
+    entitled cells in the body — the client knows what would work
+    (honest denial per ADR-0026, not a silent downgrade). Cell entitled
+    → the picker values override the JWT-claim defaults, and downstream
+    routing sees the picked persona/domains.
+
+    Precedence when a field is absent:
+      1. Explicit picker override (`active_persona` / `active_domains`)
+      2. User's default cell (`entitlements.default`)
+      3. First cell from `entitlements.cells`
+      4. Legacy JWT-claim path (`current_user.persona` /
+         `current_user.entitled_domains`) — kept as a safety net for
+         clients that don't set the picker AND users without seeded
+         entitlements.
     """
+    ent = current_user.entitlements
+    entitled_cells = [
+        {"persona": c.persona, "domain": c.domain} for c in ent.cells
+    ]
+
+    # Validate per-prompt override if the caller sent one.
+    if request.active_persona is not None or request.active_domains is not None:
+        p = request.active_persona
+        ds = request.active_domains or []
+        if p is None or not ds:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "incomplete_override",
+                    "message": (
+                        "active_persona and active_domains must be "
+                        "supplied together — send both or neither."
+                    ),
+                },
+            )
+        # Every requested domain must be entitled under the requested
+        # persona. Any one non-entitled cell → hard 403; we don't
+        # silently drop non-entitled domains from the list.
+        missing = [d for d in ds if not ent.contains(p, d)]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "cell_not_entitled",
+                    "message": (
+                        f"user {current_user.id!r} is not entitled to "
+                        f"persona={p!r} for domains={missing}"
+                    ),
+                    "requested": {"persona": p, "domains": ds},
+                    "entitled_cells": entitled_cells,
+                },
+            )
+        effective_persona = p
+        effective_domains = ds
+        effective_source = "picker"
+    else:
+        # No override — pick the default cell, then fall back to
+        # legacy JWT path only when the user has no seeded entitlements
+        # at all (legacy cluster or unsseeded user).
+        if ent.default is not None:
+            effective_persona = ent.default.persona
+            effective_domains = [ent.default.domain]
+            effective_source = "default"
+        elif ent.cells:
+            effective_persona = ent.cells[0].persona
+            effective_domains = ent.domains_for(ent.cells[0].persona)
+            effective_source = "first-cell"
+        else:
+            effective_persona = current_user.persona
+            effective_domains = current_user.entitled_domains
+            effective_source = "jwt-legacy"
+
+    logger.info(
+        "orchestrate: user=%s persona=%s domains=%s source=%s "
+        "entitlement_source=%s",
+        current_user.id,
+        effective_persona,
+        effective_domains,
+        effective_source,
+        current_user.entitlement_source,
+    )
+
     return StreamingResponse(
         _keepalive_wrap(
             generate_dagster_stream(
                 request,
                 user_id=current_user.id,
-                user_persona=current_user.persona,
-                entitled_domains=current_user.entitled_domains,
+                user_persona=effective_persona,
+                entitled_domains=effective_domains,
                 # Capture A per ADR-0025: thread the JWT-read-time
                 # origin flag from auth.User down to the produced_for
                 # dict construction inside generate_dagster_stream.
