@@ -9,13 +9,40 @@ spec:
   selector:
     {{- include "invincible-agent.selectorLabels" (dict "component" "topaz" "root" .) | nindent 4 }}
   ports:
-    - name: grpc
+    # Console UI (Aserto's built-in relation/query browser). Not
+    # ingress-exposed; reachable inside-cluster or via port-forward.
+    - name: console-http
+      port: 8080
+      targetPort: 8080
+    - name: console-grpc
+      port: 8081
+      targetPort: 8081
+
+    # Authorizer API — this is what dag-tools/central_gateway posts to
+    # via TOPAZ_AUTHORIZER_URL (=http://topaz-svc:8383) and what
+    # cortex-bff will post to in step 3 of the ADR-0026 rollout.
+    - name: authorizer-grpc
       port: 8282
       targetPort: 8282
-    - name: http
+    - name: authorizer-http
       port: 8383
       targetPort: 8383
-    - name: metrics
+
+    # Directory API (reader/writer/model/importer/exporter). Sharing
+    # one port pair per topaz's config-new reference. Step 2's CI
+    # sync tool talks to :9292 (grpc) for writes; step 1's seed Job
+    # talks to :9292 for the initial manifest load + seed relations.
+    - name: directory-grpc
       port: 9292
       targetPort: 9292
+    - name: directory-http
+      port: 9393
+      targetPort: 9393
+
+    # Metrics moved from 9292 → 9696 because the reference config
+    # puts directory grpc on 9292 (and we're following it). Prometheus
+    # scrape target changes to `topaz-svc:9696/metrics`.
+    - name: metrics
+      port: 9696
+      targetPort: 9696
 {{- end }}

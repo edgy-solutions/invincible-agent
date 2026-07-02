@@ -101,23 +101,36 @@ spec:
       containers:
         - name: apply-schema
           image: {{ include "invincible-agent.image" (dict "name" "postgres-client" "registry" .Values.utilImages.postgresClient.registry "repository" .Values.utilImages.postgresClient.repository "tag" .Values.utilImages.postgresClient.tag "root" .) }}
-          # 2026-07-01: connect as postgres superuser (not the app user).
+          # 2026-07-01: connect as the effective superuser, which
+          # depends on imageStyle.
           #
-          # Root cause: PG15+ removed the default `PUBLIC → CREATE` on
-          # the `public` schema. Even a DATABASE OWNER (which Bitnami's
+          # Root cause of the schema-apply needing superuser: PG15+
+          # removed the default `PUBLIC → CREATE` on the `public`
+          # schema. Even a DATABASE OWNER (which Bitnami's
           # POSTGRESQL_USERNAME becomes for its POSTGRESQL_DATABASE)
           # cannot CREATE TABLE in public without an explicit grant.
           # PG17 continues this posture. `CREATE TABLE bpmn_catalog`
           # resolves to `public.bpmn_catalog` and gets denied.
           #
-          # The official docker library postgres image happens to make
-          # POSTGRES_USER a superuser (implicit privilege everywhere),
-          # so this bug only surfaces on Bitnami. Rather than branch
-          # on imageStyle, we just always connect as the postgres
-          # superuser for the schema apply — schema DDL is a
-          # privileged, one-time-per-cluster operation anyway, and
-          # the app user only needs SELECT/INSERT/UPDATE at runtime,
-          # which it already has via database ownership.
+          # The prior fix said "just always connect as the postgres
+          # superuser" — but that assumes a `postgres` role EXISTS,
+          # which is only true when either (a) imageStyle=bitnami
+          # (Bitnami always creates a separate `postgres` superuser
+          # via POSTGRESQL_POSTGRES_PASSWORD), or (b) imageStyle=
+          # postgres AND `auth.username=postgres`. On the OFFICIAL
+          # postgres image with auth.username set to anything else
+          # (like the default "iagent"), initdb runs with
+          # `--username=<auth.username>` and creates that user as
+          # THE superuser — there is no separate `postgres` role.
+          # Sandbox has been running this way since first install,
+          # which is why this bug only surfaced when the db-init
+          # hook ran against sandbox for the first time on 2026-07-01.
+          #
+          # Correct branch:
+          #   - Bitnami → `postgres` (separate superuser) with
+          #     POSTGRESQL_POSTGRES_PASSWORD.
+          #   - Official → `auth.username` (which IS the superuser)
+          #     with `auth.password`.
           env:
             - name: PGHOST
               value: {{ include "invincible-agent.pgHost" . }}
@@ -125,23 +138,28 @@ spec:
               value: {{ include "invincible-agent.pgPort" . | default "5432" | quote }}
             - name: PGDATABASE
               value: {{ include "invincible-agent.pgDatabase" . }}
+            {{- if and .Values.postgresql.enabled (eq (default "postgres" .Values.postgresql.imageStyle) "bitnami") }}
+            # Bitnami: separate `postgres` superuser role with the
+            # POSTGRESQL_POSTGRES_PASSWORD from the Bitnami image
+            # env. Fall back to the app password only if the overlay
+            # didn't set postgresPassword — same shape as the Postgres
+            # container's env logic.
             - name: PGUSER
               value: "postgres"
-            {{- if and .Values.postgresql.enabled (eq (default "postgres" .Values.postgresql.imageStyle) "bitnami") }}
-            # Bitnami separates the superuser (postgres) from the app
-            # user; POSTGRESQL_POSTGRES_PASSWORD is the superuser's
-            # password. Fall back to the app password only if the
-            # overlay didn't set postgresPassword — same shape as the
-            # Postgres container's env logic.
             - name: PGPASSWORD
               value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
             {{- else }}
-            # Official postgres image: POSTGRES_USER IS the superuser
-            # (POSTGRES_PASSWORD is its password). External Postgres:
-            # operator must supply postgresql.auth.postgresPassword
-            # with a password that can connect as `postgres`.
+            # Official postgres image: `auth.username` becomes the
+            # sole superuser via `POSTGRES_USER` at initdb time. Its
+            # password is `auth.password`. `auth.postgresPassword` is
+            # NOT applicable on this path — there is no separate
+            # `postgres` role. External Postgres deployments should
+            # ALSO set `auth.username` to whichever user is a
+            # superuser at the remote DB.
+            - name: PGUSER
+              value: {{ .Values.postgresql.auth.username | quote }}
             - name: PGPASSWORD
-              value: {{ .Values.postgresql.auth.postgresPassword | default .Values.postgresql.auth.password | quote }}
+              value: {{ .Values.postgresql.auth.password | quote }}
             {{- end }}
           command:
             - sh

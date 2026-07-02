@@ -35,13 +35,27 @@ spec:
           image: {{ include "invincible-agent.image" (dict "name" "topaz" "registry" .Values.topaz.image.registry "repository" .Values.topaz.image.repository "tag" .Values.topaz.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           args: ["run", "--config-file", "/config/config.yaml"]
+          # Container port declarations must match the topaz-configmap
+          # config.yaml's listen_addresses. Prior version declared only
+          # 8282/8383/9292/9494 which reflected the (broken) old
+          # port scheme; the 2026-07-01 config rewrite splits authorizer
+          # (8282/8383) from directory (9292/9393) and moves metrics
+          # from 9292 → 9696 to free the directory port.
           ports:
-            - name: grpc
+            - name: console-http
+              containerPort: 8080
+            - name: console-grpc
+              containerPort: 8081
+            - name: authz-grpc
               containerPort: 8282
-            - name: http
+            - name: authz-http
               containerPort: 8383
-            - name: metrics
+            - name: dir-grpc
               containerPort: 9292
+            - name: dir-http
+              containerPort: 9393
+            - name: metrics
+              containerPort: 9696
             - name: health
               containerPort: 9494
           volumeMounts:

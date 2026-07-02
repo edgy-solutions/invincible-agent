@@ -6,48 +6,154 @@ metadata:
   labels:
     {{- include "invincible-agent.labels" . | nindent 4 }}
 data:
+  # ================================================================
+  # config.yaml — Topaz runtime configuration.
+  #
+  # 2026-07-01 rewrite: prior config declared reader/writer/model on
+  # 8282/8383 but never wired them together (no `needs:` blocks, no
+  # `remote_directory`, no `auth` block, no `authorizer` service). The
+  # symptom was Topaz logging "disabling local directory services" and
+  # "model service not configured" on startup and serving nothing but
+  # the console. Confirmed by:
+  #   - `/db/directory.db` 32KB (metadata-seed only, empty of data),
+  #   - central-gateway hitting `topaz-svc:8383` and getting a
+  #     connection error (nothing listening under the Service on the
+  #     right port),
+  #   - `ALLOW_MOCK_AUTH=true` in central-gateway silently converting
+  #     every topaz exception into an allow-by-default (fail-open),
+  # which meant data-access authz has been mock-allow the whole time.
+  # See ADR-0026 "coupled interim mechanisms retire together" — the
+  # mock branch's only remaining function post-fix was hiding the next
+  # outage; it's removed in this same arc (dag-tools/central_gateway).
+  #
+  # New port scheme (matches `topaz config new` reference output):
+  #   - 9494  health
+  #   - 9696  metrics  (was 9292 — moved to free 9292 for directory)
+  #   - 8080  console gateway   (Aserto UI)
+  #   - 8081  console grpc
+  #   - 8282  authorizer grpc   (native `is` check)
+  #   - 8383  authorizer gateway (HTTP /api/v2/authz/is — the port
+  #                               `TOPAZ_AUTHORIZER_URL` already targets)
+  #   - 9292  directory grpc    (reader/writer/model/exporter/importer)
+  #   - 9393  directory gateway (HTTP)
+  # ================================================================
   config.yaml: |
     version: 2
     logging:
       prod: true
       log_level: info
+      grpc_log_level: info
+
     directory:
       db_path: /db/directory.db
+      request_timeout: 5s
       seed_metadata: true
+
+    # Authorizer resolves subject identities via a directory reader.
+    # Point it at ourselves — the reader below is on the same host.
+    # `no_tls: true` = plain HTTP/2 (no TLS at all). Do NOT also set
+    # `insecure: true` — those are mutually exclusive (`insecure`
+    # means TLS-with-skip-verify).
+    remote_directory:
+      address: "0.0.0.0:9292"
+      no_tls: true
+      # `insecure` defaults to true in some topaz builds. That plus
+      # explicit `no_tls: true` trips the "insecure and no_tls
+      # options are mutually exclusive" check. Set it false
+      # explicitly so we don't inherit the default.
+      insecure: false
+
+    # Anonymous access from inside the cluster. Topaz-svc is not
+    # ingress-exposed; the tightening path if that ever changes is
+    # `enable_api_key: true` + shared secret, which we can do without
+    # a manifest change.
+    auth:
+      options:
+        default:
+          enable_api_key: false
+          enable_anonymous: true
+
     api:
       health:
         listen_address: "0.0.0.0:9494"
       metrics:
-        listen_address: "0.0.0.0:9292"
+        listen_address: "0.0.0.0:9696"
+        zpages: true
       services:
+        # Aserto console UI (view relations, run queries interactively).
+        # Not needed for programmatic access, but useful for debugging
+        # entitlements in-cluster via `kubectl port-forward`.
         console:
-          gateway:
-            listen_address: "0.0.0.0:8080"
           grpc:
             listen_address: "0.0.0.0:8081"
-        reader:
-          grpc:
-            listen_address: "0.0.0.0:8282"
           gateway:
-            listen_address: "0.0.0.0:8383"
-        writer:
-          grpc:
-            listen_address: "0.0.0.0:8282"
-          gateway:
-            listen_address: "0.0.0.0:8383"
+            listen_address: "0.0.0.0:8080"
+
+        # Directory services all share 9292 (grpc) / 9393 (gateway).
+        # `needs:` establishes startup ordering — model boots first,
+        # reader/writer/importer depend on it. Without these blocks
+        # topaz says "disabling local directory services" and refuses
+        # to open the ports.
         model:
           grpc:
+            listen_address: "0.0.0.0:9292"
+          gateway:
+            listen_address: "0.0.0.0:9393"
+        reader:
+          needs:
+            - model
+          grpc:
+            listen_address: "0.0.0.0:9292"
+          gateway:
+            listen_address: "0.0.0.0:9393"
+        writer:
+          needs:
+            - model
+          grpc:
+            listen_address: "0.0.0.0:9292"
+          gateway:
+            listen_address: "0.0.0.0:9393"
+        exporter:
+          grpc:
+            listen_address: "0.0.0.0:9292"
+        importer:
+          needs:
+            - model
+          grpc:
+            listen_address: "0.0.0.0:9292"
+
+        # Authorizer serves POST /api/v2/authz/is (gateway on 8383) and
+        # the gRPC Authorizer API (on 8282). This is what
+        # `dag-tools/central_gateway.check_topaz_authz` posts to.
+        authorizer:
+          needs:
+            - reader
+          grpc:
             listen_address: "0.0.0.0:8282"
           gateway:
             listen_address: "0.0.0.0:8383"
+
     opa:
-      instance_id: "-"
+      instance_id: "topaz"
       graceful_shutdown_period_seconds: 2
       local_bundles:
         paths: ["/policies"]
+        skip_verification: true
 
+  # ================================================================
+  # manifest.yaml — ReBAC schema (types, relations, permissions).
+  #
+  # Shared substrate for:
+  #   - ADR-0025 (instance-plane access control as provenance) —
+  #     user/dataset types + can_read / can_write permissions.
+  #   - ADR-0026 (persona/entitlement authorization) — user/persona/
+  #     domain/group/cell types + can_assume permission.
+  #
+  # Both live in ONE Topaz store per the ADR-0026 "single authz
+  # truth" decision. The manifest is loaded into the Directory at
+  # startup by the topaz-seed Job (see topaz-seed-job.yaml).
+  # ================================================================
   manifest.yaml: |
-    # Topaz Zanzibar Schema
     types:
       user: {}
       dataset:
@@ -58,17 +164,75 @@ data:
           can_read: reader | owner
           can_write: owner
 
+      # ---------------------------------------------------------------
+      # ADR-0026 additions — persona/entitlement authorization.
+      #
+      # Model in one line: users are members of groups; groups grant
+      # entitlement to (persona, domain) CELLS. cortex-bff authorizes
+      # a per-prompt persona/domain override with
+      #     is(user:<sub>, "can_assume", cell:<PERSONA>:<DOMAIN>)
+      # which returns true iff the user is a member of any group whose
+      # grant matches that cell.
+      #
+      # Cell reification (a synthetic object per persona×domain pair
+      # that any group grants) is what makes can_assume a NATIVE Topaz
+      # permission check rather than a graph walk cortex-bff would have
+      # to reimplement client-side. Cells are created on-demand by the
+      # CI sync tool — cells with no grant do not exist in the store
+      # and evaluate to false, which is the honest default (see ADR-0026
+      # "cell not entitled → 403 with `cell_not_entitled` code").
+      #
+      # persona and domain are declared as bare types (no relations)
+      # so the CI sync tool can enforce that every cell's key components
+      # exist as canonical vocabulary objects — a Topaz-side positive
+      # control that complements the YAML validator on the git side per
+      # `[[verification-must-fail]]`.
+      #
+      # Cell key format: "<PERSONA>:<DOMAIN>" — colon-delimited,
+      # matching the canonical enum casing from ADR-0009 (uppercase).
+      # Example: cell:DATA_ENGINEER:AVIATION
+      persona: {}
+      domain: {}
+      group:
+        relations:
+          member: user
+      cell:
+        relations:
+          # A cell is assumable_by either:
+          #   - a direct user relation (rare — reserved for one-off
+          #     exception grants; groups.yaml prefers group-based),
+          #   - or "any member of group X" via userset-rewrite
+          #     (group#member), which is how the seed Job and future
+          #     CI sync tool wire group grants.
+          assumable_by: user | group#member
+        permissions:
+          # can_assume is the permission cortex-bff checks. Named
+          # differently from the relation (assumable_by) to keep the
+          # subject/verb read natural at call sites:
+          #     is(user:foo, "can_assume", cell:DATA_ENGINEER:AVIATION)
+          can_assume: assumable_by
+
+  # ================================================================
+  # data_broker.rego — ADR-0025 instance-plane access policy.
+  #
+  # Package path matches what `dag-tools/central_gateway.check_topaz_authz`
+  # posts (`policy_context.path`). This is the policy that gates
+  # DA reads through the CortexDataClient path.
+  # ================================================================
   data_broker.rego: |
     package data_mesh.GET.api.v1.assets.__asset_key.authorize
 
-    import future.keywords.in
+    # 2026-07-01: converted to Rego v1 syntax. Topaz v0.33.13's OPA
+    # rejected the v0 form ("`if` keyword is required before rule
+    # body"). Behavior is unchanged.
+    import future.keywords.if
 
-    default allowed = false
-    default allowed_columns = []
-    default row_filters = ""
+    default allowed := false
+    default allowed_columns := []
+    default row_filters := ""
 
-    allowed {
-        check_relation({
+    allowed if {
+        ds.check_relation({
             "subject": {"type": "user", "key": input.user.id},
             "object": {"type": "dataset", "key": input.resource.asset_key},
             "relation": "can_read"
@@ -76,13 +240,54 @@ data:
     }
 
     # Example mock policies for CLS/RLS
-    allowed_columns = ["timestamp", "rotor_id", "status"] {
+    allowed_columns := ["timestamp", "rotor_id", "status"] if {
         allowed
         input.user.role == "mechanic"
     }
 
-    row_filters = "region = 'US-EAST'" {
+    row_filters := "region = 'US-EAST'" if {
         allowed
         input.user.role == "mechanic"
+    }
+
+  # ================================================================
+  # persona_entitlement.rego — ADR-0026 persona/domain authorization.
+  #
+  # Called by cortex-bff at the per-prompt persona/domain-override
+  # validation seat (step 3 of the ADR-0026 rollout). Returns
+  # `allowed: true` iff the user is member of any group that grants
+  # the (persona, domain) cell they're trying to assume.
+  #
+  # Uses check_permission (not check_relation) so Topaz walks the
+  # userset rewrite `assumable_by: user | group#member` — this is
+  # what makes group-based grants work through a single check call,
+  # which is the whole point of reifying cells.
+  #
+  # Input shape (POST /api/v2/authz/is with
+  # policyContext.path = "invincible_agent.persona.can_assume",
+  # decisions = ["allowed"]):
+  #   input.user.id  — Keycloak `sub`
+  #   input.cell.id  — "<PERSONA>:<DOMAIN>" string
+  #
+  # Decision key: "allowed" (boolean).
+  #
+  # This rego lands in step 1's PR so that step 3 (cortex-bff client)
+  # is purely client-side work. The rego is not exercised by any
+  # runtime component in step 1 — verification of step 1 is native
+  # `topaz ds check` (see topaz-seed-job.yaml positive controls).
+  # ================================================================
+  persona_entitlement.rego: |
+    package invincible_agent.persona.can_assume
+
+    import future.keywords.if
+
+    default allowed := false
+
+    allowed if {
+        ds.check_permission({
+            "subject": {"type": "user", "key": input.user.id},
+            "object": {"type": "cell", "key": input.cell.id},
+            "permission": "can_assume"
+        })
     }
 {{- end }}

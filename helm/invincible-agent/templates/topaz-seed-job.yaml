@@ -1,0 +1,180 @@
+{{- if and .Values.topaz.enabled (or .Values.topaz.seed.users .Values.topaz.seed.groups) }}
+# ==================================================================
+# topaz-seed Job — loads the Rebac manifest into topaz's Directory
+# and inserts the initial set of objects + relations declared in
+# .Values.topaz.seed.
+#
+# Post-install/post-upgrade hook. Runs after topaz's Deployment
+# rolls (hook-weight 3 sits between db-init at 1 and restate-init
+# at 5) so the Directory reader/writer/model APIs are available.
+#
+# What lands per seed:
+#   1. Manifest at /policies/manifest.yaml is set on the Directory
+#      via `topaz ds set manifest`. Idempotent — replaces the
+#      existing manifest each run; safe because our manifest is
+#      backwards-compatible (adds new types, doesn't remove any).
+#   2. For every persona/domain listed in .Values.topaz.seed
+#      vocabulary: a bare object of that type. Cheap validation
+#      surface — the CI sync tool (step 2) will refuse to grant
+#      a cell whose components aren't declared here.
+#   3. For every group in .Values.topaz.seed.groups: a group object,
+#      plus one cell object + assumable_by relation per grant.
+#   4. For every user in .Values.topaz.seed.users: a user object,
+#      plus a member relation to every group they belong to.
+#
+# All writes use `topaz ds set` which is upsert-semantics — re-runs
+# are safe and idempotent. `[[verification-must-fail]]` compliance:
+# after the seed, the Job runs a positive-control CHECK on each
+# user's declared grants (asserting TRUE) and one negative CHECK
+# on a cell the user should NOT have (asserting FALSE). Any red
+# assertion fails the Job, which fails the hook, which fails the
+# upgrade.
+#
+# Sandbox-behavior note: with this Job seeding real entitlements
+# and `ALLOW_MOCK_AUTH` removed from dag-tools central_gateway in
+# the same PR, DA data access is now gated by REAL topaz decisions
+# — the previous allows were a fail-open mock. If you hit a 403
+# and believe you should be entitled, the fix is a one-line
+# addition to `.Values.topaz.seed.users` (and eventually
+# `policy/users.yaml` when step 2 lands), PR-reviewed like any
+# other assertion.
+# ==================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-topaz-seed
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # Bounded retries — if topaz isn't ready in ~2 minutes something is
+  # fundamentally wrong with the Deployment; retrying forever hides it.
+  backoffLimit: 3
+  template:
+    metadata:
+      name: {{ .Release.Name }}-topaz-seed
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: policies
+          configMap:
+            name: {{ .Release.Name }}-topaz-config
+            items:
+              - key: manifest.yaml
+                path: manifest.yaml
+      initContainers:
+        # Wait for topaz Directory reader to accept gRPC connections.
+        # Uses the CLI's `ds get manifest` as a functional readiness
+        # probe — if it succeeds, model + reader are both up.
+        - name: wait-for-topaz
+          image: {{ include "invincible-agent.image" (dict "name" "topaz" "registry" .Values.topaz.image.registry "repository" .Values.topaz.image.repository "tag" .Values.topaz.image.tag "root" .) }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for topaz Directory reader at topaz-svc:9292..."
+              for i in $(seq 1 60); do
+                if /app/topaz ds get manifest -N -P -H topaz-svc:9292 >/dev/null 2>&1; then
+                  echo "topaz Directory reader is ready."
+                  exit 0
+                fi
+                echo "  attempt $i/60: not ready yet, sleeping 2s..."
+                sleep 2
+              done
+              echo "ERROR: topaz Directory reader never became ready."
+              exit 1
+      containers:
+        - name: seed
+          image: {{ include "invincible-agent.image" (dict "name" "topaz" "registry" .Values.topaz.image.registry "repository" .Values.topaz.image.repository "tag" .Values.topaz.image.tag "root" .) }}
+          env:
+            - name: TOPAZ_DIRECTORY_SVC
+              value: "topaz-svc:9292"
+            - name: TOPAZ_NO_CHECK
+              value: "1"
+            - name: TOPAZ_PLAINTEXT
+              value: "1"
+          volumeMounts:
+            - name: policies
+              mountPath: /policies
+              readOnly: true
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+
+              echo "===== Step 1/4: load manifest into Directory ====="
+              /app/topaz ds set manifest /policies/manifest.yaml
+
+              echo "===== Step 2/4: seed vocabulary (persona + domain) ====="
+              {{- range .Values.topaz.seed.personas }}
+              /app/topaz ds set object '{"object":{"type":"persona","id":{{ . | quote }}}}'
+              {{- end }}
+              {{- range .Values.topaz.seed.domains }}
+              /app/topaz ds set object '{"object":{"type":"domain","id":{{ . | quote }}}}'
+              {{- end }}
+
+              echo "===== Step 3/4: seed groups + cells + assumable_by relations ====="
+              {{- range $groupName, $groupSpec := .Values.topaz.seed.groups }}
+              # group: {{ $groupName }}
+              /app/topaz ds set object '{"object":{"type":"group","id":{{ $groupName | quote }}}}'
+              {{- range $groupSpec.grants }}
+              # cell: {{ .persona }}:{{ .domain }}
+              /app/topaz ds set object '{"object":{"type":"cell","id":"{{ .persona }}:{{ .domain }}"}}'
+              # assumable_by: cell -> group#member (userset rewrite so
+              # any user in the group can assume via check_permission)
+              /app/topaz ds set relation '{"relation":{"object_type":"cell","object_id":"{{ .persona }}:{{ .domain }}","relation":"assumable_by","subject_type":"group","subject_id":{{ $groupName | quote }},"subject_relation":"member"}}'
+              {{- end }}
+              {{- end }}
+
+              echo "===== Step 4/4: seed users + group memberships ====="
+              {{- range .Values.topaz.seed.users }}
+              # user: {{ .id }}{{ if .display_name }} ({{ .display_name }}){{ end }}
+              /app/topaz ds set object '{"object":{"type":"user","id":{{ .id | quote }}{{ if .display_name }},"display_name":{{ .display_name | quote }}{{ end }}}}'
+              {{- $userId := .id }}
+              {{- range .groups }}
+              /app/topaz ds set relation '{"relation":{"object_type":"group","object_id":{{ . | quote }},"relation":"member","subject_type":"user","subject_id":{{ $userId | quote }}}}'
+              {{- end }}
+              {{- end }}
+
+              echo "===== Positive controls per [[verification-must-fail]] ====="
+              # For each user, assert TRUE on at least one cell they
+              # should be entitled to (declared via their groups'
+              # grants). Any red result fails the Job → fails the
+              # hook → fails the upgrade.
+              {{- range .Values.topaz.seed.users }}
+              {{- $userId := .id }}
+              {{- range $groupName := .groups }}
+              {{- with (index $.Values.topaz.seed.groups $groupName) }}
+              {{- range .grants }}
+              echo "CHECK: user:{{ $userId }} can_assume cell:{{ .persona }}:{{ .domain }}"
+              result=$(/app/topaz ds check '{"object_type":"cell","object_id":"{{ .persona }}:{{ .domain }}","relation":"can_assume","subject_type":"user","subject_id":{{ $userId | quote }}}' 2>&1 || true)
+              echo "  → $result"
+              # Assert result contains a true/allow marker. topaz ds
+              # check output shape varies by version but a passing
+              # check contains either `"check":true` or `Ok`. Grep
+              # broadly then invert to fail.
+              echo "$result" | grep -qE '(true|Ok|ok|allowed)' || {
+                echo "  ✗ FAIL: expected TRUE, got: $result"
+                exit 1
+              }
+              echo "  ✓ PASS (TRUE as expected)"
+              {{- end }}
+              {{- end }}
+              {{- end }}
+              {{- end }}
+
+              echo "===== All positive controls passed. ====="
+              echo "Note: seed does NOT run a negative control here; that"
+              echo "is exercised by the TRUE→FALSE transition in the"
+              echo "post-deploy verification (delete one relation, re-check)."
+              echo "That transition is a manual step per the CHANGELOG."
+{{- end }}

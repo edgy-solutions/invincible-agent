@@ -1,5 +1,292 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.9 — 2026-07-01
+
+Minor bump. ADR-0026 step 1 rollout: topaz Directory/Authorizer
+services actually serve (were misconfigured); manifest, groups,
+cells, and seed users get loaded; the `ALLOW_MOCK_AUTH` fail-open
+in `dag-tools/central_gateway` is removed. This is the substrate
+step for persona/entitlement authorization — no cortex-bff or
+engine changes ship in this PR (those are steps 3+ of the ADR-0026
+rollout, scope-held).
+
+### Sandbox behavior change — READ THIS BEFORE UPGRADING
+
+Before 0.3.9, DA data-access authz has been effectively fail-open
+in sandbox for months, silently:
+
+- The topaz `config.yaml` declared reader/writer/model on 8282/8383
+  but omitted the `needs:` / `remote_directory` / `auth` blocks
+  required to actually start those services. Topaz logged
+  "disabling local directory services" and served nothing but
+  the console.
+- `dag-tools/central_gateway.check_topaz_authz` POSTed to
+  `topaz-svc:8383/api/v2/authz/is` and got an exception (nothing
+  listening at that port on the Service).
+- The `except` branch fell through to
+  `if os.getenv("ALLOW_MOCK_AUTH")` → `return True, None, None` —
+  allow everything.
+- Nobody chose "sandbox is open"; that behavior fell out of a
+  misconfigured service meeting a mock flag.
+
+After 0.3.9, topaz serves for real, the mock branch is removed
+from `dag-tools/central_gateway`, and DA data-access is gated by
+REAL topaz decisions. **Any DA query by a user not in
+`topaz.seed.users` (in this chart's values or the overlay) will
+get an honest 403.** The prior allows were a fail-open mock, not
+real access; the 403 is the correct behavior. If a tester is
+denied and believes they should be entitled, the fix is a one-line
+addition to `topaz.seed.users` — PR-reviewed like any other
+asserted entitlement per ADR-0026's "no inferred entitlements"
+rule.
+
+### Add
+
+- **Topaz `config.yaml` rewritten with proper wiring** in
+  `topaz-configmap.yaml`. Directory services (model/reader/writer/
+  importer/exporter) now serve on 9292 (grpc) / 9393 (gateway);
+  authorizer serves on 8282 (grpc) / 8383 (gateway — the port
+  `TOPAZ_AUTHORIZER_URL` already targets, so no consumer change).
+  `needs:` blocks establish startup ordering; `auth.options.default.enable_anonymous: true`
+  permits intra-cluster gRPC without API keys; `remote_directory`
+  points the authorizer at the local reader for identity
+  resolution. Metrics moved from 9292 → 9696 to free the directory
+  port; the Prometheus scrape target changes accordingly.
+- **`topaz-service.yaml` exposes the new ports**: console
+  (8080/8081), authorizer (8282/8383), directory (9292/9393),
+  metrics (9696), health (9494). Prior version only exposed
+  8282/8383/9292, which is why nothing could reach topaz's real
+  APIs.
+- **`topaz-deployment.yaml` container ports match** the new listen
+  addresses, with descriptive port names (`console-http`,
+  `authz-grpc`, `dir-grpc`, etc.) so `kubectl port-forward` is
+  legible.
+- **New `topaz-seed-job.yaml`** — post-install/post-upgrade Job
+  that loads the ReBAC manifest into topaz's Directory and inserts
+  the initial set of vocabulary objects (persona/domain enums),
+  group + cell objects, and user + group-membership relations from
+  `.Values.topaz.seed`. Idempotent (`topaz ds set` = upsert). Runs
+  a positive control after seeding: for each user, asserts TRUE on
+  every cell they're entitled to. Any red assertion fails the Job
+  → fails the hook → fails the upgrade. Complies with
+  `[[verification-must-fail]]`.
+- **New `persona_entitlement.rego`** at `data.invincible_agent.persona.can_assume`
+  — the policy cortex-bff will POST to in step 3 of the ADR-0026
+  rollout. Uses `check_permission` so Topaz walks the userset
+  rewrite `assumable_by: user | group#member` — group-based grants
+  work through one call. Landed here (not step 3) so step 3 is
+  pure client-side work.
+- **`topaz.seed` values structure** — chart defaults ship
+  canonical persona/domain vocabulary + a stock group taxonomy
+  (aviation-stewards / aviation-engineers / defense-engineers /
+  aviation-mechanics / enterprise-architects); `topaz.seed.users`
+  defaults to `[]` because ADR-0026's Alternative D rejects
+  chart-default-seeded entitlements as confabulation-as-authorization.
+  Operators supply per-cluster.
+
+### Remove
+
+- **`ALLOW_MOCK_AUTH` fail-open in `dag-tools/central_gateway/main.py`**.
+  Both exception and non-200 branches now `return False, None, None`
+  with a loud `logger.error("TOPAZ AUTHZ DENIED: ...")` naming the
+  URL, subject, URN, and cause. There is no runtime override to
+  relax authz to allow-by-default. Per
+  `[[coupled-interim-mechanisms-retire-together]]`: the mock's
+  only remaining function post-config-fix was hiding the next
+  outage.
+- `ALLOW_MOCK_AUTH` documentation comment in `dag-tools/helm/dag-tools/values.yaml`
+  replaced with a note explaining the removal + how to debug 403
+  storms (grep logs for "TOPAZ AUTHZ DENIED").
+
+### Verify
+
+Post-deploy, the topaz-seed Job's built-in positive control asserts
+TRUE for every seeded user's entitled cells. For the manual
+TRUE→FALSE transition per `[[verification-must-fail]]`:
+
+```bash
+# Confirm TRUE for a seeded cell
+kubectl exec -n <ns> deploy/<release>-topaz -- /app/topaz ds check \
+  '{"object_type":"cell","object_id":"DATA_ENGINEER:AVIATION","relation":"can_assume","subject_type":"user","subject_id":"<seeded-user-id>"}' \
+  -N -P -H localhost:9292
+
+# Delete the group membership relation
+kubectl exec -n <ns> deploy/<release>-topaz -- /app/topaz ds delete relation \
+  '{"object_type":"group","object_id":"aviation-engineers","relation":"member","subject_type":"user","subject_id":"<seeded-user-id>"}' \
+  -N -P -H localhost:9292
+
+# Confirm FALSE for the same cell
+kubectl exec -n <ns> deploy/<release>-topaz -- /app/topaz ds check \
+  '{"object_type":"cell","object_id":"DATA_ENGINEER:AVIATION","relation":"can_assume","subject_type":"user","subject_id":"<seeded-user-id>"}' \
+  -N -P -H localhost:9292
+
+# Restore for continued use
+kubectl exec -n <ns> deploy/<release>-topaz -- /app/topaz ds set relation \
+  '{"relation":{"object_type":"group","object_id":"aviation-engineers","relation":"member","subject_type":"user","subject_id":"<seeded-user-id>"}}' \
+  -N -P -H localhost:9292
+```
+
+The TRUE→FALSE transition is the `[[verification-must-fail]]` gate
+that the ADR-0026 step-1 rollout requires. Delete → check-FALSE →
+restore is idempotent-safe.
+
+### Scope stop (deliberate — noted for the next PR)
+
+Per the second-agent review of the ADR-0026 step-1 plan, this PR
+STOPS at "step 1's TRUE→FALSE positive control green against real
+topaz." Not shipped:
+
+- No cortex-bff Topaz client — that's step 3, its own PR with its
+  own positive controls.
+- No engine `ENABLE_AGENTIC_AUTH` flip — that's ADR-0025's
+  enforcement session, still fenced.
+- No `policy/` YAML + CI sync tool — that's step 2, a separate
+  PR where the sync tool talks to the writer API this PR wires up.
+
+### Discipline notes
+
+- **Why the mock got removed in the same PR as the config fix**:
+  `[[coupled-interim-mechanisms-retire-together]]`. The mock's
+  cause (topaz doesn't serve) is exactly what this PR fixes;
+  leaving the mock would silently hide the next topaz outage.
+- **Why chart-default seeds are empty**: `[[optimistic-defaults-are-dishonest]]`.
+  A permissive default seed would be the confabulation-as-authorization
+  pattern rejected in ADR-0026 Alternative D. Operators assert
+  per-cluster.
+- **Why the seed Job runs positive controls in-line**: any
+  regression that broke topaz's permission evaluation would leave
+  the chart deploy "green" (Job exits 0 despite no permission
+  working) — the in-Job CHECK is what makes the deploy fail loudly
+  when the substrate is silently broken.
+
+## 0.3.8 — 2026-07-01
+
+Patch bump. db-init hook now connects as the effective superuser
+per imageStyle, not always as `postgres`. Fixes a CrashLoopBackOff
+that surfaced only on the official-image + non-standard
+auth.username path (sandbox).
+
+### Fix
+
+- **db-init hook branches PGUSER/PGPASSWORD on imageStyle**:
+  - **Bitnami** → PGUSER=`postgres`, PGPASSWORD=`postgresPassword`
+    (Bitnami's separate superuser role). Unchanged from 0.3.6.
+  - **Official (`postgres` style)** → PGUSER=`auth.username`,
+    PGPASSWORD=`auth.password`. On the official image, initdb runs
+    with `--username=<POSTGRES_USER>` and creates that user as THE
+    superuser — there is no separate `postgres` role unless
+    `auth.username="postgres"` (which sandbox does NOT set;
+    sandbox uses `auth.username="iagent"` per the values default).
+- Bug shape: the 0.3.6 comment said "just always connect as the
+  postgres superuser — the official image happens to make
+  POSTGRES_USER a superuser." That's true — but only reachable as
+  `postgres` if `POSTGRES_USER` was set to `postgres`. When the
+  operator uses the values default (`auth.username: iagent`), the
+  sole superuser IS `iagent`, and `PGUSER=postgres` fails with
+  `password authentication failed for user "postgres"`. This is
+  the `[[optimistic-defaults-are-dishonest]]` pattern applied to
+  a template default — the previous fix was correct for the work
+  cluster (Bitnami) and for any operator who happened to set
+  `auth.username=postgres`, but silently wrong for the values
+  default. The drift wasn't caught until sandbox got its first
+  fresh chart-driven upgrade on 2026-07-01.
+- No values-schema change; existing overlays continue to work.
+
+### Discipline
+
+- **This bug is the reason the "test the whole chart in sandbox
+  first" discipline exists.** Sandbox has a different
+  `auth.username` shape than work; the db-init hook design was
+  correct for work but wrong for the values default. `[[integration-positive-controls]]`:
+  every schema-apply migration needs a positive control that runs
+  on both imageStyle paths. Not landed as part of this fix, but
+  called out for the ADR-0026 rollout to build alongside the CI
+  sync tool.
+
+## 0.3.7 — 2026-07-01
+
+Minor bump. Topaz manifest extended with ADR-0026 types (persona,
+domain, group, cell) for persona/entitlement authorization. No
+runtime consumer yet — this is rollout step 1 of the ADR-0026 arc
+(landing the manifest ahead of the CI sync tool and cortex-bff
+Topaz client so the substrate exists when the wiring lands).
+
+### Add
+
+- **Topaz `manifest.yaml` gains four new object types** in
+  `topaz-configmap.yaml`:
+  - `persona` — bare type; canonical vocabulary object (DATA_STEWARD,
+    MECHANIC, DATA_ENGINEER, ARCHITECT, ANALYST from ADR-0009).
+  - `domain` — bare type; canonical vocabulary object (AVIATION,
+    DEFENSE, ENTERPRISE, DATA_ENGINEERING, MAINTENANCE from ADR-0009).
+  - `group` — org-defined grouping with `member: user` relation.
+  - `cell` — synthetic (persona × domain) object with
+    `assumable_by: user | group#member` relation and
+    `can_assume: assumable_by` permission.
+- **Cell reification pattern** — a granted `(persona, domain)` pair
+  becomes a `cell:<PERSONA>:<DOMAIN>` object. cortex-bff will
+  authorize per-prompt persona/domain overrides via
+  `is(user:<sub>, "can_assume", cell:<PERSONA>:<DOMAIN>)` — a native
+  Topaz permission check, not a client-side graph walk.
+- **ADR-0025 substrate (user + dataset types) is UNCHANGED.** Both
+  ADRs share one Topaz store per ADR-0026's "single authz truth"
+  decision.
+
+### Not yet
+
+- No CI sync tool yet — cells and grants are populated by hand for
+  step-1 verification, via `topaz directory` CLI or the Directory
+  gRPC API. The `policy/` YAML + sync tool land in rollout step 2.
+- No cortex-bff Topaz client yet — the schema is present but no
+  code path calls `can_assume`. That lands in rollout step 3.
+- Retirement of the Keycloak `persona`-attribute mapper (Tier 3a
+  interim) is rollout step 6; not this change.
+
+### Verify
+
+Apply the chart, then from a shell with `topaz` CLI:
+
+```bash
+# Confirm the new types are registered.
+topaz directory get-manifest --host <TOPAZ_READER_HOST>:8282 | grep -E "persona:|domain:|group:|cell:"
+
+# Insert a test seed by hand: user, group, cell, membership,
+# grant. Confirm the permission check returns TRUE.
+topaz directory set object --type user --id test@example.com
+topaz directory set object --type group --id aviation-engineers
+topaz directory set object --type cell --id DATA_ENGINEER:AVIATION
+topaz directory set relation \
+  --subject-type user --subject-id test@example.com \
+  --relation member \
+  --object-type group --object-id aviation-engineers
+topaz directory set relation \
+  --subject-type group --subject-id aviation-engineers --subject-relation member \
+  --relation assumable_by \
+  --object-type cell --object-id DATA_ENGINEER:AVIATION
+
+topaz authorizer is \
+  --subject-type user --subject-id test@example.com \
+  --permission can_assume \
+  --object-type cell --object-id DATA_ENGINEER:AVIATION
+# → true
+
+# Remove the group membership; re-run; expect false.
+topaz directory delete relation \
+  --subject-type user --subject-id test@example.com \
+  --relation member \
+  --object-type group --object-id aviation-engineers
+
+topaz authorizer is \
+  --subject-type user --subject-id test@example.com \
+  --permission can_assume \
+  --object-type cell --object-id DATA_ENGINEER:AVIATION
+# → false
+```
+
+The TRUE-then-FALSE transition is the positive control per
+`[[verification-must-fail]]` — the check must be able to return
+FALSE, not just always return TRUE.
+
 ## 0.3.6 — 2026-07-01
 
 Patch bump. db-init hook transfers table ownership to the app user
