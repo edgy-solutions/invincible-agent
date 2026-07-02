@@ -21,8 +21,12 @@
 # Sandbox seeds: alice / bob / carol are the demo accounts already
 # present in sandbox Keycloak. Alice is the power-user profile for
 # exercising the multi-persona × multi-domain path.
+# NB: `id` values are the EMAIL claim Keycloak actually issues for
+# these users (`@example.com`, per the iagent-keycloak-realm import),
+# NOT `@edgy-solutions.com`. The lookup keys on USER_ENTITLEMENT_CLAIM
+# (email); a domain mismatch here silently blanks the user's matrix.
 users:
-  - id: alice@edgy-solutions.com
+  - id: alice@example.com
     display_name: Alice (demo - power user)
     groups:
       - aviation-engineers
@@ -32,7 +36,7 @@ users:
       persona: DATA_ENGINEER
       domains: [AVIATION]
 
-  - id: bob@edgy-solutions.com
+  - id: bob@example.com
     display_name: Bob (demo - steward)
     groups:
       - aviation-stewards
@@ -40,7 +44,7 @@ users:
       persona: DATA_STEWARD
       domains: [AVIATION]
 
-  - id: carol@edgy-solutions.com
+  - id: carol@example.com
     display_name: Carol (demo - mechanic)
     groups:
       - aviation-mechanics
