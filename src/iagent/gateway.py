@@ -2063,32 +2063,71 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
         p = request.active_persona
         ds = request.active_domains or []
         if p is None or not ds:
+            # Structured 400 body — client + logs get the same shape.
+            # `denied_at` is the capture-or-lose-forever timestamp
+            # the ADR-0026 morning review flagged: any denial that
+            # doesn't record when-it-fired is one that a later
+            # HITL-access-request flow can't sequence correctly.
+            body_400 = {
+                "error": "incomplete_override",
+                "denied_at": datetime.now(timezone.utc).isoformat(),
+                "subject": current_user.id,
+                "subject_email": current_user.email,
+                "session_id": request.session_id,
+                "requested": {"persona": p, "domains": ds},
+                "message": (
+                    "active_persona and active_domains must be "
+                    "supplied together — send both or neither."
+                ),
+            }
+            logger.warning("chat_override_incomplete: %s", body_400)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "error": "incomplete_override",
-                    "message": (
-                        "active_persona and active_domains must be "
-                        "supplied together — send both or neither."
-                    ),
-                },
+                detail=body_400,
             )
         # Every requested domain must be entitled under the requested
         # persona. Any one non-entitled cell → hard 403; we don't
         # silently drop non-entitled domains from the list.
         missing = [d for d in ds if not ent.contains(p, d)]
         if missing:
+            # Capture-or-lose-forever context per the ADR-0026 morning
+            # review: every denial names the subject, the exact cell
+            # requested, the cells they DO have, when the decision
+            # fired, and (importantly) which layer served the
+            # entitlement matrix that produced the denial. If Topaz
+            # says one thing but a stale cache says another, `entitlement_source`
+            # + `entitlements_provenance` together are how ops
+            # tells them apart when a user reports "I should have
+            # access but I'm denied".
+            #
+            # The HITL access-request feature hangs off this exact
+            # denial event — the request payload the user will
+            # eventually submit ("give me DATA_STEWARD for DEFENSE")
+            # is derived directly from `requested` + `subject` here.
+            # Provisioning the fields now avoids retrofitting them
+            # when that flow lands.
+            body_403 = {
+                "error": "cell_not_entitled",
+                "denied_at": datetime.now(timezone.utc).isoformat(),
+                "subject": current_user.id,
+                "subject_email": current_user.email,
+                "session_id": request.session_id,
+                "requested": {"persona": p, "domains": ds},
+                "requested_missing": missing,
+                "entitled_cells": entitled_cells,
+                "entitlement_source": current_user.entitlement_source,
+                "entitlements_provenance": ent.source,
+                "message": (
+                    f"user {current_user.id!r} is not entitled to "
+                    f"persona={p!r} for domains={missing}"
+                ),
+            }
+            # WARN level so denials aggregate to the ops dashboard
+            # without needing to be pulled out of DEBUG noise.
+            logger.warning("chat_cell_not_entitled: %s", body_403)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "error": "cell_not_entitled",
-                    "message": (
-                        f"user {current_user.id!r} is not entitled to "
-                        f"persona={p!r} for domains={missing}"
-                    ),
-                    "requested": {"persona": p, "domains": ds},
-                    "entitled_cells": entitled_cells,
-                },
+                detail=body_403,
             )
         effective_persona = p
         effective_domains = ds

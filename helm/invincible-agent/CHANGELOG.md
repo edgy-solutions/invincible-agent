@@ -1,5 +1,89 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.10 — 2026-07-02
+
+Patch bump. Coupled-interim retirement: the `topaz.seed` values path
+and `topaz-seed-job.yaml` template are removed. `policy/` + the
+Python sync tool are now the single writer to topaz's Directory,
+per `[[coupled-interim-mechanisms-retire-together]]`. Ships two
+morning-inspection hardenings alongside: richer 403
+`cell_not_entitled` context on `/orchestrate`, and a
+distinguishable "no entitlements" state in the picker (both
+provisioned as capture-or-lose-forever surfaces for the future
+HITL access-request flow — see below).
+
+### Remove
+
+- **`templates/topaz-seed-job.yaml`** — deleted. Was step-1
+  scaffolding whose only remaining function post-sync-tool was
+  writing entitlements from `Values.topaz.seed`. Two writers to
+  one authz substrate is the two-truths shape ADR-0026 kills
+  everywhere else; leaving both "until the org standardizes" was
+  how divergence would re-enter via our own chart.
+- **`topaz.seed` values block** — removed from `values.yaml`.
+  Overlays that set `topaz.seed.users` (like the previous
+  sandbox overlay) should be migrated to `policy/users.yaml` in
+  the repo root; both are asserted-in-git named-human decisions,
+  but only `policy/users.yaml` is the durable single-truth path.
+
+### Add
+
+- **Richer 403 `cell_not_entitled` body** on `/orchestrate`
+  (`src/iagent/gateway.py`). Per the morning-inspection review:
+  every denial now records
+    - `denied_at` (ISO timestamp)
+    - `subject` (JWT sub) + `subject_email`
+    - `session_id`
+    - `requested` (persona + domains)
+    - `requested_missing` (the specific domains not entitled)
+    - `entitled_cells` (what the caller CAN assume)
+    - `entitlement_source` (JWT-claim provenance flag)
+    - `entitlements_provenance` (topaz | cache | jwt-legacy)
+  Emitted at WARN level so denials aggregate to the ops dashboard.
+  Same shape for 400 `incomplete_override`. This is the
+  capture-or-lose-forever context the future HITL access-request
+  flow will bind to; provisioning now avoids retrofit.
+
+### Migration
+
+To populate entitlements in a NEW cluster (existing clusters keep
+their current state — the sync tool is idempotent):
+
+```bash
+# Extract manifest from the chart-shipped ConfigMap:
+kubectl get cm <release>-topaz-config -n <ns> \
+    -o jsonpath='{.data.manifest\.yaml}' \
+    > /tmp/topaz-manifest.yaml
+
+# Port-forward + run the sync tool WITH manifest load:
+kubectl port-forward -n <ns> svc/topaz-svc 9393:9393 &
+python policy/sync/topaz_sync.py \
+    --topaz-url http://localhost:9393 \
+    --policy-dir policy/ \
+    --load-manifest /tmp/topaz-manifest.yaml
+```
+
+The `--load-manifest` flag is new in this bump — sync tool now
+handles both manifest-schema-load AND entitlement-writes in one
+command. Idempotent both ways.
+
+### Discipline notes
+
+- Coupled-interim retirement per
+  `[[coupled-interim-mechanisms-retire-together]]`: seed Job's
+  cause (no-way-to-write-entitlements-from-git) was fixed by the
+  sync tool; keeping both writers active is precisely the
+  divergence the ADR spent its whole design killing.
+- Distinguishable-not-hidden empty-matrix per the morning review:
+  the picker's `source==topaz && cells==0` state now renders a
+  visible "no entitlements — request access" block instead of
+  silently hiding, so a user whose seed silently failed sees
+  SOMETHING on screen instead of "picker doesn't apply." Absent-
+  vs-empty applied to the picker surface.
+- 403 context is the capture-or-lose-forever seam for the coming
+  HITL access-request flow. Denials without a rich structured
+  body are impossible to bind a workflow to after the fact.
+
 ## 0.3.9 — 2026-07-01
 
 Minor bump. ADR-0026 step 1 rollout: topaz Directory/Authorizer

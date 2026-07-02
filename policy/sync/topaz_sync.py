@@ -393,6 +393,27 @@ class TopazClient:
                 break
         return out
 
+    # -- manifest (schema) ------------------------------------------------
+
+    def set_manifest_from_file(self, path: Path) -> None:
+        """Load a Rebac manifest YAML into the Directory.
+
+        One-time-per-cluster operation. Called by the `--load-manifest`
+        flag before any object/relation writes; without it the writer
+        API rejects `set object` for a type that doesn't exist in
+        the Directory schema. Content-Type is text/yaml because the
+        gateway rewrite maps that body directly into the model
+        service's UploadRequest.
+        """
+        with path.open("rb") as f:
+            body = f.read()
+        r = self._client.post(
+            "/api/v3/directory/manifest",
+            content=body,
+            headers={"Content-Type": "text/yaml"},
+        )
+        r.raise_for_status()
+
     # -- permission check (readback verification) -------------------------
 
     def check_permission(
@@ -580,6 +601,20 @@ def main() -> int:
         action="store_true",
         help="Print the planned diff and exit; apply nothing.",
     )
+    parser.add_argument(
+        "--load-manifest",
+        metavar="FILE",
+        default=None,
+        help=(
+            "Load the Rebac manifest from FILE into topaz BEFORE the "
+            "object/relation sync. One-time-per-cluster op (topaz "
+            "rejects writes for undeclared types). For sandbox: pass "
+            "the chart's manifest.yaml, extractable via "
+            "`kubectl get cm <release>-topaz-config -o "
+            "jsonpath='{.data.manifest\\.yaml}'`. Idempotent; safe "
+            "to re-run."
+        ),
+    )
     args = parser.parse_args()
 
     policy_dir = Path(args.policy_dir).resolve()
@@ -601,6 +636,16 @@ def main() -> int:
     users_by_id = {u.id: u for u in bundle.users}
 
     with TopazClient(args.topaz_url) as client:
+        if args.load_manifest:
+            manifest_path = Path(args.load_manifest).resolve()
+            print(f"===== Load manifest from {manifest_path} =====")
+            try:
+                client.set_manifest_from_file(manifest_path)
+                print("  loaded.")
+            except (FileNotFoundError, httpx.HTTPError) as e:
+                print(f"ERROR loading manifest: {e}", file=sys.stderr)
+                return 3
+
         print(f"===== Snapshot live state at {args.topaz_url} =====")
         try:
             live_objects, live_relations = snapshot_live(client)

@@ -29,37 +29,40 @@ divergence fails the sync loudly.
 Usage:
 
 ```bash
-# Against a running sandbox (kubectl-reachable):
+# Fresh cluster (loads manifest THEN entitlements):
+kubectl get cm iagent-topaz-config -n sandbox \
+    -o jsonpath='{.data.manifest\.yaml}' \
+    > /tmp/topaz-manifest.yaml
 kubectl port-forward -n sandbox svc/topaz-svc 9393:9393 &
 python policy/sync/topaz_sync.py \
     --topaz-url http://localhost:9393 \
-    --policy-dir policy/
+    --policy-dir policy/ \
+    --load-manifest /tmp/topaz-manifest.yaml
 
-# Against a cluster you're already exec'd into:
+# Existing cluster (entitlement update only, manifest already loaded):
 python policy/sync/topaz_sync.py \
-    --topaz-url http://topaz-svc:9393 \
+    --topaz-url http://localhost:9393 \
     --policy-dir policy/
 ```
 
-Idempotent — same input twice is a no-op.
+Idempotent — same input twice is a no-op. `--load-manifest` on a
+cluster with an existing (identical) manifest is safe.
 
-## Relationship to `topaz.seed` Helm values
+## History note — the retired `topaz.seed` values path
 
-`values.yaml` has a `topaz.seed` block that the ADR-0026 step-1
-seed Job consumes to insert relations at helm-upgrade time. That
-block is a helm-native shortcut for operators who prefer to keep
-their entitlements in the same file as the rest of their chart
-overrides. It has the same shape as the YAML files here.
+Chart 0.3.9 shipped an in-cluster `topaz-seed-job.yaml` that read
+`Values.topaz.seed` and wrote objects/relations at helm-upgrade
+time. That path retired in chart 0.3.10 per
+`[[coupled-interim-mechanisms-retire-together]]`: two writers to
+one authz substrate is the two-truths shape the ADR rejects
+everywhere else. The sync tool here is now the single writer;
+the seed Job template and the `topaz.seed` values block are
+deleted from the chart.
 
-Two paths coexist:
-
-- **Helm-native**: `topaz.seed` in values overlay → topaz-seed Job
-  inserts on upgrade. Simple; opinionated on when the seed runs.
-- **Git-managed**: `policy/` files → CI or manual `topaz_sync.py`
-  run. Explicit; can run on any schedule.
-
-Either works. Both write to the same topaz Directory and produce
-the same runtime behavior.
+Existing sandbox entitlements (alice/bob/carol) migrated verbatim
+into `users.yaml` at the time of retirement — no re-seed needed
+for clusters already populated. Fresh clusters run the sync tool
+as documented above.
 
 ## What NOT to do
 

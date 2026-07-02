@@ -1091,75 +1091,29 @@ topaz:
     storageClass: ""
     size: 1Gi
 
-  # ADR-0026 seed — objects + relations inserted into the topaz
-  # Directory by the post-install/post-upgrade `topaz-seed` Job (see
-  # templates/topaz-seed-job.yaml). The seed IS the initial
-  # entitlement state; it is asserted-in-git per ADR-0026's "no
-  # inferred entitlements" rule. Every entry here is a named human's
-  # PR-reviewed decision that the listed user is entitled to the
-  # listed cells.
+  # 2026-07-02: ADR-0026 step-2 CI sync tool + policy/ YAML source of
+  # truth landed and its readback control is green — the coupled-interim
+  # `topaz.seed` values path retires here per
+  # `[[coupled-interim-mechanisms-retire-together]]`. Two writers to
+  # one authz substrate is the two-truths shape the ADR rejects
+  # everywhere else; leaving both write paths active until "the org
+  # standardizes" was how that divergence would sneak back in via our
+  # own chart. Retire together, and now.
   #
-  # Post-ADR-0026-step-2 (CI sync tool + policy/ YAML) this block
-  # becomes vestigial — the sync tool will read from
-  # policy/{personas,groups,users}.yaml and apply directly. Until
-  # then, this is the source of truth. Keep it minimal; overlays
-  # extend.
+  # The chart no longer ships a seed Job. To populate entitlements
+  # in a new cluster:
   #
-  # Empty defaults ship in this chart because chart-default seeded
-  # entitlements would be exactly the confabulation-as-authorization
-  # pattern ADR-0026 rejects (Alternative D). Operators MUST supply
-  # `topaz.seed.users` per-cluster; without it the Directory holds
-  # only vocabulary + groups (no user is entitled to anything, and
-  # every check returns FALSE — the honest default per
-  # `[[optimistic-defaults-are-dishonest]]`).
-  seed:
-    # Canonical vocabulary — ADR-0009 persona + domain enums.
-    # Objects of these types are inserted so any grant referencing
-    # them is validated (a grant to a non-existent persona will
-    # error at seed time, giving a topaz-side positive control
-    # against typos in overlays).
-    personas:
-      - DATA_STEWARD
-      - DATA_ENGINEER
-      - ARCHITECT
-      - MECHANIC
-      - ANALYST
-    domains:
-      - AVIATION
-      - DEFENSE
-      - ENTERPRISE
-      - DATA_ENGINEERING
-      - MAINTENANCE
-
-    # Canonical group taxonomy — each group grants entitlement to
-    # one or more (persona, domain) cells. Adding a user to a group
-    # (in .users below) grants them everything the group grants.
-    groups:
-      aviation-stewards:
-        grants:
-          - {persona: DATA_STEWARD, domain: AVIATION}
-      aviation-engineers:
-        grants:
-          - {persona: DATA_ENGINEER, domain: AVIATION}
-      defense-engineers:
-        grants:
-          - {persona: DATA_ENGINEER, domain: DEFENSE}
-      aviation-mechanics:
-        grants:
-          - {persona: MECHANIC, domain: AVIATION}
-      enterprise-architects:
-        grants:
-          - {persona: ARCHITECT, domain: AVIATION}
-          - {persona: ARCHITECT, domain: DEFENSE}
-          - {persona: ARCHITECT, domain: ENTERPRISE}
-
-    # No default users. See the block comment above — empty by
-    # construction to avoid a permissive default.
-    # Shape per entry:
-    #   - id: <keycloak-sub-or-email>
-    #     display_name: <optional, for the console UI>
-    #     groups: [<group-name>, ...]
-    users: []
+  #   1. Manifest load (one-time per cluster): the topaz-configmap
+  #      still mounts manifest.yaml at /policies/manifest.yaml; run
+  #        kubectl exec deploy/<release>-topaz -- \
+  #            /app/topaz ds set manifest /policies/manifest.yaml -N -P
+  #      or add `--load-manifest` to the sync tool (planned follow-up).
+  #
+  #   2. Entitlements: run policy/sync/topaz_sync.py against the
+  #      cluster's topaz endpoint. See policy/README.md.
+  #
+  # `externalTopaz.url` is the operator override for pointing the
+  # chart at a topaz outside the release (unchanged from step 1).
 
 externalTopaz:
   url: ""     # e.g. "http://my-topaz.infra.svc:8383"
