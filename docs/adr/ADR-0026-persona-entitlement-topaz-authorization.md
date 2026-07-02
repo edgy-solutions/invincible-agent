@@ -351,7 +351,7 @@ groups:
 
 ```yaml
 users:
-  - sub: user@example.com
+  - id: user@example.com
     display_name: Example User
     groups:
       - aviation-engineers
@@ -361,6 +361,19 @@ users:
       persona: DATA_ENGINEER
       domains: [AVIATION]
 ```
+
+The `id` field matches whichever JWT claim `USER_ENTITLEMENT_CLAIM`
+selects on cortex-bff — **`email` by default, not `sub`**. This is a
+deliberate reconciliation of an earlier draft that said "id must match
+sub": a `users.yaml` keyed by Keycloak's opaque `sub` UUID is not
+human-reviewable, which defeats the git-assertion discipline this ADR
+is built on (§3 — "every entitlement is a named human's PR-reviewed
+claim"). Nobody can review "is `c405218e-a25c-...` a steward?"; they
+can review "is `alice@example.com` a steward?". The token's `sub`
+remains the per-token CACHE key (token identity); the email is only
+the topaz LOOKUP identifier. IdPs without a stable/verified email
+claim can set `USER_ENTITLEMENT_CLAIM=sub` and key `users.yaml` by
+sub, accepting the readability cost.
 
 The `default` cell is the picker's starting selection on login. It
 must be a cell the user is entitled to (validated at CI time —

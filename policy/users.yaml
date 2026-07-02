@@ -4,10 +4,14 @@
 # listed user is entitled to everything the listed groups grant.
 # `git blame` gives the audit trail — who granted what, when.
 #
-# `id` MUST match the `sub` claim the target IdP issues. For
-# Keycloak: it's the UUID Keycloak assigns per user (visible under
-# Users → user → Details); for PingSSO / real SSO: it's the
-# federated identifier your SSO team can tell you.
+# `id` matches whichever JWT claim `USER_ENTITLEMENT_CLAIM` selects
+# on the cortex-bff side — `email` by DEFAULT, not `sub`. Email is
+# used because a users.yaml keyed by Keycloak's opaque `sub` UUID
+# is not human-reviewable, which defeats the entire git-assertion
+# discipline (nobody can PR-review "is c405218e-... a steward?").
+# If your IdP lacks a stable/verified email claim, set
+# USER_ENTITLEMENT_CLAIM=sub on cortex-bff and key this file by sub
+# instead (accepting the readability cost).
 #
 # `default` picks the initial (persona, domain) cell the cortex-ui
 # picker starts on for this user. Must be a cell the user's groups

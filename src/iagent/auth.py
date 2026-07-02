@@ -45,6 +45,27 @@ USER_DOMAINS_CLAIM = os.getenv("USER_DOMAINS_CLAIM", "entitled_domains")
 # continues to populate `persona` + `entitled_domains`.
 TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "").strip()
 
+# Which JWT claim identifies the user in the topaz Directory / policy/
+# users.yaml. Defaults to `email`, NOT `sub`, deliberately:
+#
+#   * ADR-0026's whole premise is human-asserted entitlements in git.
+#     A `users.yaml` keyed by Keycloak `sub` (an opaque UUID) is not
+#     human-authorable — nobody can read or review "is
+#     c405218e-a25c-... entitled to DATA_STEWARD?". Keyed by email it
+#     IS reviewable, which is the entire point of the git-assertion
+#     discipline.
+#   * The ADR's own users.yaml examples key by email; the earlier
+#     "id MUST match sub" line was an over-specification, reconciled
+#     here to "id matches USER_ENTITLEMENT_CLAIM (email by default)".
+#
+# Caveat: the IdP must issue a verified, stable `email` claim, and
+# entitlements re-key if a user's email changes. For IdPs where email
+# is absent or mutable, set USER_ENTITLEMENT_CLAIM=sub and key
+# users.yaml by sub (accepting the readability cost). The token's
+# `sub` is still the CACHE key regardless — this env only controls
+# the topaz LOOKUP identifier.
+USER_ENTITLEMENT_CLAIM = os.getenv("USER_ENTITLEMENT_CLAIM", "email")
+
 
 # Capture A per ADR-0025 § "Capture A — entitlement_source fidelity flag
 # on produced_for".
@@ -202,8 +223,16 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             jti = payload.get("jti") or user_id  # fall back to sub if
                                                   # IdP doesn't issue jti
             exp = float(payload.get("exp") or 0)
+            # Topaz lookup identifier — the human-legible claim (email
+            # by default) that policy/users.yaml keys on, NOT the sub.
+            # See USER_ENTITLEMENT_CLAIM. Falls back to sub if the
+            # configured claim is absent so a missing email doesn't
+            # blank every user's entitlements silently.
+            lookup_key = payload.get(USER_ENTITLEMENT_CLAIM) or user_id
             try:
-                entitlements = cache.get(sub=user_id, jti=jti, exp=exp)
+                entitlements = cache.get(
+                    sub=user_id, jti=jti, exp=exp, lookup_key=lookup_key
+                )
                 # When topaz did return a real matrix (not empty),
                 # override the entitlement_source flag to record
                 # topaz as the authoritative source. Empty matrix from

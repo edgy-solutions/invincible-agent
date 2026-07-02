@@ -310,14 +310,26 @@ class EntitlementCache:
         self._entries: dict[tuple[str, str], _CachedEntry] = {}
         self._lock = threading.Lock()
 
-    def get(self, sub: str, jti: str, exp: float) -> Entitlements:
+    def get(
+        self,
+        sub: str,
+        jti: str,
+        exp: float,
+        lookup_key: str | None = None,
+    ) -> Entitlements:
         """Return cached matrix or fetch fresh.
 
-        Uses `(sub, jti)` as the key. `exp` is the JWT's expiry
-        (UNIX seconds); entries beyond expiry are evicted lazily.
+        `(sub, jti)` is the CACHE key (token identity). `lookup_key`
+        is the identifier passed to topaz for the entitlement lookup
+        — defaults to `sub` when not given, but callers pass the
+        `email` (or whatever USER_ENTITLEMENT_CLAIM resolves to) so
+        the topaz Directory can be keyed by a human-legible id that
+        matches policy/users.yaml. `exp` is the JWT's expiry (UNIX
+        seconds); entries beyond expiry are evicted lazily.
         """
         key = (sub, jti)
         now = time.time()
+        topaz_subject = lookup_key or sub
 
         with self._lock:
             entry = self._entries.get(key)
@@ -333,7 +345,7 @@ class EntitlementCache:
         # Redundant simultaneous fetches for the same key are cheap
         # (both hit topaz once each; whichever finishes first wins the
         # cache slot).
-        fresh = self._client.get_entitlements(sub)
+        fresh = self._client.get_entitlements(topaz_subject)
 
         with self._lock:
             self._entries[key] = _CachedEntry(
