@@ -1,0 +1,19 @@
+# Canonical persona vocabulary — sourced from ADR-0009's persona enum.
+#
+# Each persona named here becomes a topaz object of type `persona`
+# via the sync tool. Groups grant entitlement to (persona, domain)
+# CELLS whose components must exist in this vocabulary — the sync
+# tool refuses to apply a group grant referencing a persona not
+# listed here, giving a topaz-side positive control against typos
+# in groups.yaml.
+#
+# Adding a persona: append to this list AND to the corresponding
+# enum in ADR-0009 (they must stay in sync — the code-side
+# consumer of the persona claim is the source of truth for what
+# personas the router recognizes; this file mirrors it into topaz).
+personas:
+  - DATA_STEWARD
+  - DATA_ENGINEER
+  - ARCHITECT
+  - MECHANIC
+  - ANALYST

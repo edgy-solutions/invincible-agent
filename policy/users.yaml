@@ -1,0 +1,45 @@
+# User → group memberships.
+#
+# Every entry here is a named human's PR-reviewed decision that the
+# listed user is entitled to everything the listed groups grant.
+# `git blame` gives the audit trail — who granted what, when.
+#
+# `id` MUST match the `sub` claim the target IdP issues. For
+# Keycloak: it's the UUID Keycloak assigns per user (visible under
+# Users → user → Details); for PingSSO / real SSO: it's the
+# federated identifier your SSO team can tell you.
+#
+# `default` picks the initial (persona, domain) cell the cortex-ui
+# picker starts on for this user. Must be a cell the user's groups
+# actually grant — the sync tool rejects a default outside the
+# user's entitlement matrix per [[verification-must-fail]].
+#
+# Sandbox seeds: alice / bob / carol are the demo accounts already
+# present in sandbox Keycloak. Alice is the power-user profile for
+# exercising the multi-persona × multi-domain path.
+users:
+  - id: alice@edgy-solutions.com
+    display_name: Alice (demo - power user)
+    groups:
+      - aviation-engineers
+      - defense-engineers
+      - enterprise-architects
+    default:
+      persona: DATA_ENGINEER
+      domains: [AVIATION]
+
+  - id: bob@edgy-solutions.com
+    display_name: Bob (demo - steward)
+    groups:
+      - aviation-stewards
+    default:
+      persona: DATA_STEWARD
+      domains: [AVIATION]
+
+  - id: carol@edgy-solutions.com
+    display_name: Carol (demo - mechanic)
+    groups:
+      - aviation-mechanics
+    default:
+      persona: MECHANIC
+      domains: [AVIATION]

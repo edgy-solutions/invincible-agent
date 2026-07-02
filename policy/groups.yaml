@@ -1,0 +1,30 @@
+# Group taxonomy — each group grants entitlement to one or more
+# (persona, domain) cells. Users are assigned to groups in
+# users.yaml; assigning a user to a group grants them everything
+# that group grants.
+#
+# Adding a group here (or a new `grants:` entry to an existing
+# group) IS the assertion. Every line has a named human via
+# `git blame`.
+groups:
+  aviation-stewards:
+    grants:
+      - {persona: DATA_STEWARD, domain: AVIATION}
+
+  aviation-engineers:
+    grants:
+      - {persona: DATA_ENGINEER, domain: AVIATION}
+
+  defense-engineers:
+    grants:
+      - {persona: DATA_ENGINEER, domain: DEFENSE}
+
+  aviation-mechanics:
+    grants:
+      - {persona: MECHANIC, domain: AVIATION}
+
+  enterprise-architects:
+    grants:
+      - {persona: ARCHITECT, domain: AVIATION}
+      - {persona: ARCHITECT, domain: DEFENSE}
+      - {persona: ARCHITECT, domain: ENTERPRISE}

@@ -1,0 +1,11 @@
+# Canonical domain vocabulary — sourced from ADR-0009's domain enum.
+#
+# Same discipline as personas.yaml: adding a domain requires updating
+# ADR-0009 first (which is the code-side source of truth for what
+# domains the router recognizes) and this file mirrors it into topaz.
+domains:
+  - AVIATION
+  - DEFENSE
+  - ENTERPRISE
+  - DATA_ENGINEERING
+  - MAINTENANCE
