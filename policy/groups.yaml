@@ -28,3 +28,17 @@ groups:
       - {persona: ARCHITECT, domain: AVIATION}
       - {persona: ARCHITECT, domain: DEFENSE}
       - {persona: ARCHITECT, domain: ENTERPRISE}
+
+  # DATA_ENGINEERING-domain group — grants access to the DataHub
+  # catalog's instance plane (the catalog serves the DATA_ENGINEERING
+  # domain; the 2026-07-02 stopgap gates query_metadata on holding a
+  # DATA_ENGINEERING cell). Ratified domain-based catalog gate per
+  # ADR-0025's amendment. Add users here DELIBERATELY (a chosen,
+  # PR-reviewed grant) to give them catalog access — NOT reactively
+  # when someone hits a denial. Both catalog-governance personas
+  # (steward + engineer) are granted the DATA_ENGINEERING domain;
+  # finer view-vs-edit distinction is the per-asset can_view successor.
+  data-engineers:
+    grants:
+      - {persona: DATA_ENGINEER, domain: DATA_ENGINEERING}
+      - {persona: DATA_STEWARD, domain: DATA_ENGINEERING}
