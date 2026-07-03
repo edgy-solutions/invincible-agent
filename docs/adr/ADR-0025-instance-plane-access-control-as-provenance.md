@@ -217,6 +217,96 @@ this" has exactly one true answer, and where the next exploit cannot
 live in the gap between two deciders who each assumed the other was on
 duty.
 
+## Amendment 2026-07-03 — two identity namespaces + worksites-through-single-decider
+
+Source: the **enforcement-surface eval** (the seven-worksite inventory
+of where a resource is read or a verb is dispatched). Its job was to be
+the enforcement arc's worksite map. Two things it *exposed* belong in
+this ADR before the arc opens; two things it *raises* are recorded below
+as named-deferred. After that the eval's job is done — the arc opens
+against this amendment, **not a re-survey** (the standing survey risk:
+"strengthen 0025 with the eval" must not become enumerate-everything-authz
+v2 while the fenced-and-ready arc slips another cycle).
+
+### Two identity namespaces — asset-URN and ontology-IRI
+
+The eval half-shows a gap it doesn't flag: its Weaviate/Jena/resolver
+worksites have **no DataHub URN to gate on**. The resolver-pool vectors
+and the Jena TBox classes are ontology-level, not asset-level — they
+don't correspond to a catalog asset, they *are* the vocabulary. So there
+are two identity namespaces, and 0025's draft only covered one:
+
+- **asset-resources** — have DataHub URNs (the customer data, catalog
+  entries). Governed by catalog **`can_view`** (domain-granularity
+  stopgap today; per-asset successor per the 2026-07-02 amendment). The
+  **to-be-ingested-is-to-be-cataloged** rule resolves this side: anything
+  that enters the mesh as data acquires a URN, so the asset namespace has
+  no ungoverned holes to fall through.
+- **ontology-resources** — classes, **verb IRIs**, resolver pools: the
+  *vocabulary itself*. They carry IRIs but no catalog URN. Governed by
+  **their IRI as the identity** — the verb IRIs *are* the operation-URNs
+  this ADR already established — at the **domain granularity the
+  persona×domain matrix already provides**. "Who may traverse the
+  ontology / see which verbs exist / resolve against which classes" is a
+  *different* governance question from "who may see Customer 360," and
+  the routing layer's `entitled_domains` scoping of verbs is *already*
+  ontology-resource governance done informally.
+
+Naming both means the enforcement arc, when it reaches the Jena/resolver
+worksites, finds an identity to key on (**the IRI**) instead of either
+inventing a second identity scheme on the spot (a new head) or leaving
+the vocabulary permanently ungoverned under "routing-scope-is-relevance-
+not-enforcement." **Two namespaces, both URN/IRI-keyed, both named — not
+one namespace that silently doesn't cover half the worksites.**
+
+### The seven worksites are enforcement POINTS, not deciders
+
+The eval lists seven worksites as a flat inventory, which reads as "seven
+places to add checks" — the **multiple-heads disease waiting to happen**
+(seven hands that could each drift). `[[single-authz-decider]]` (above)
+is the cure, but the eval doesn't *apply* it to the worksite list, so a
+well-meaning implementer builds seven independent gates and rebuilds the
+disease. Restated through single-decider, each worksite's job is exactly
+three steps — and **not a fourth**:
+
+1. **resolve** its local object to canonical identity — a **URN** for an
+   asset-resource, an **IRI** for an ontology-resource;
+2. **ask** the one decider (Topaz): `can_view(user, asset)` for
+   asset-resources, the persona×domain cell check for ontology-resources;
+3. **honor** the answer.
+
+**No worksite evaluates policy locally.** The catalog stopgap is the
+**grandfathered exception** (in-code predicate, retiring to a Topaz call
+as the arc's first workstream); every *other* worksite is born ask-only.
+The inventory is seven hands that resolve-and-ask, not seven heads that
+decide.
+
+### Named-deferred (recorded with triggers, NOT built now)
+
+- **Verb-dimension governance is a TRIGGER, not a task.** The eval is
+  right that verbs should be governable (they carry IRIs; they're the
+  operation-URNs). But that is the *destination*, premature as immediate
+  scope. **Trigger = the first MUTATING verb / the publish arc.** Until
+  then the enforcement arc scopes to the **resource dimension** and does
+  NOT fan out into per-verb read-granularity — read-time verb visibility
+  is the ontology-resource domain-check above; write-time verb authority
+  waits for the mutating-verb trigger. Recording it as a trigger keeps
+  the arc from expanding into per-verb work before it's earned.
+- **Orphan-scrub seam (deny-on-dangling).** Sibling to the DataHub→Topaz
+  staleness seam already named under single-decider (attribute sync with
+  `valid_as_of` + deny-on-unknown). Its counterpart failure is a Zanzibar
+  relation pointing at an asset or subject that **no longer exists** — a
+  phantom grant that must evaluate **conservatively (deny)**, not linger.
+  The scrub gets the same disciplines as every seam: readback,
+  staleness/dangling visibility, honest-failure (a dangling reference is
+  a denied one, never a silently-permissive one). Named here so it isn't
+  under-specified into silent drift.
+
+The eval was the map; **this amendment is the coordinate system.** The
+next action is opening the enforcement arc against it (the sequence
+stands: step 6 → abstention arc → visualizer → enforcement) — not
+producing eval v2.
+
 ## Related
 
 - [ADR-0009 — Sunset classification axes](ADR-0009-sunset-classification-axes.md):
@@ -611,6 +701,16 @@ this ADR** so they don't accidentally get built in this session:
   enforcement session decides whether the per-engine decorator
   comes alongside central-gateway (defense in depth) or
   replaces it (single point of enforcement).
+- **Verb-dimension governance (TRIGGERED, not scheduled).** Per the
+  2026-07-03 amendment: verbs are governable by IRI, but the trigger
+  is the **first mutating verb / the publish arc**, not a task in the
+  enforcement session. The session scopes to the resource dimension;
+  it does not build per-verb read-granularity.
+- **Orphan-scrub seam (deny-on-dangling).** Per the 2026-07-03
+  amendment: the dangling-reference counterpart to the DataHub→Topaz
+  staleness seam. A Zanzibar relation to a deleted asset/subject
+  evaluates conservatively (deny). Named seam, disciplines attached;
+  built in the enforcement session, not before.
 
 ## Open questions
 
