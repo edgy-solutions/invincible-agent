@@ -26,18 +26,51 @@
 # NOT `@edgy-solutions.com`. The lookup keys on USER_ENTITLEMENT_CLAIM
 # (email); a domain mismatch here silently blanks the user's matrix.
 users:
+  # ── Catalog access (data-engineers) — the 2026-07-03 grant ──────────
+  # First deliberate human assertion of DATA_ENGINEERING-catalog access
+  # after the domain-based gate was ratified (ADR-0025 amendment). Each
+  # grant below carries its HONEST reason: a ROLE grant (the account
+  # genuinely does catalog work) vs a FIXTURE grant (granted only so a
+  # demo scenario has a catalog-entitled actor — named as a fixture, not
+  # a claim about the persona). bob + carol are deliberately NOT granted:
+  # their honest denials are the other half of the demo (access control
+  # visibly working), so leaving them out is itself an assertion.
+
+  - id: agent-user@example.com
+    display_name: Invincible (agent-user)
+    groups:
+      - data-engineers      # ROLE grant: agent-user is the service/demo
+                            # account whose job includes querying the
+                            # DATA_ENGINEERING catalog. Genuine role, not
+                            # a fixture — it needs this to do its work.
+    default:
+      persona: DATA_ENGINEER
+      domains: [DATA_ENGINEERING]
+
   - id: alice@example.com
     display_name: Alice (demo - power user)
     groups:
       - aviation-engineers
       - defense-engineers
       - enterprise-architects
+      - data-engineers      # FIXTURE grant: added so demo scenarios that
+                            # need a catalog-entitled power user have one.
+                            # NOT an assertion that alice-the-persona owns
+                            # DATA_ENGINEERING catalog governance — she's a
+                            # test fixture wearing the entitlement. If the
+                            # demo stops needing a catalog-entitled alice,
+                            # this line comes out.
     default:
       persona: DATA_ENGINEER
       domains: [AVIATION]
 
   - id: bob@example.com
     display_name: Bob (demo - steward)
+    # NO data-engineers: deliberate. Bob is an AVIATION steward; he is
+    # NOT entitled to the DATA_ENGINEERING catalog, and his honest "Not
+    # entitled" denial is a demo asset, not a gap. Do not add
+    # data-engineers to make a denial go away — that's the whack-a-mole
+    # the ADR-0025 amendment forbids.
     groups:
       - aviation-stewards
     default:
@@ -46,6 +79,8 @@ users:
 
   - id: carol@example.com
     display_name: Carol (demo - mechanic)
+    # NO data-engineers: deliberate. Carol is a mechanic; catalog access
+    # is not her role. Her denial is the other honest half of the demo.
     groups:
       - aviation-mechanics
     default:
