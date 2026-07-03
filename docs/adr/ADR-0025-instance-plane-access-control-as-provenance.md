@@ -60,6 +60,36 @@ Topaz **`can_view`** on catalog reads — the same shape as `can_read`,
 one surface over. The stopgap's domain-granularity gate is the
 explicitly-interim predecessor.
 
+*Ratified interim predicate (2026-07-02, deliberate — not a
+fix-pressure side effect):* catalog access is gated **domain-based**
+— the caller must hold a cell in the catalog's served domain
+(`DATA_ENGINEERING`). This is coherent with the matrix + instance-
+plane model: the DataHub catalog IS the `DATA_ENGINEERING` domain's
+instance plane, and a user's cell is `(persona × domain)` — there is
+no domain-less steward, so denying an aviation steward the DE catalog
+is correct, not backwards. The persona *within* the domain (steward
+vs engineer, view vs edit) is finer-grained access = the per-asset
+`can_view` successor's job, not the coarse gate's. Catalog access is
+granted by adding users to the `data-engineers` group in
+`policy/users.yaml` (a chosen, PR-reviewed policy per
+`[[optimistic-defaults-are-dishonest]]` + the assertions-are-asserted
+discipline) — NOT by granting `DATA_ENGINEERING` reactively to
+whoever hits a denial, which would let the gate's predicate launder
+itself into the asserted entitlements file.
+
+*How the gate retires (this is the important part):* the stopgap
+gate is **decision logic living in the wrong layer** — a policy
+predicate (`entitled_domains ∋ DATA_ENGINEERING`) hardcoded in
+application code inside `query_metadata`. It does NOT retire by
+changing its predicate; it retires by the predicate **becoming a
+Topaz call**. The enforcement point survives — `query_metadata`
+keeps guarding — but it stops *evaluating policy itself* and starts
+*asking Topaz* (`is(user, "can_view", asset)`). Enforcement point
+stays; decision logic migrates to the one place decision logic lives.
+See "Single-decider principle" below — the stopgap is the single
+grandfathered exception whose migration is the enforcement arc's
+literal first workstream.
+
 **Expansion 2 — enforcement requires a DENY primitive that survives
 fallback (deny-overrides-allow).** The bypass exists because the
 system cannot represent the difference between two routing misses:
@@ -84,6 +114,94 @@ Both expansions fold into the **same fenced, hop-by-hop enforcement
 session** (Non-goals below) — this amendment records scope, it does
 NOT license an emergency sprawl. The stopgap stopped the bleed so the
 arc can be done properly.
+
+### Single-decider principle — four heads become one head, three suppliers, many hands
+
+The exploit exposed a **multiple-heads-of-authorization** hazard: at
+least four places can each say yes/no to "may this caller see this
+asset," each with its own model and drift surface —
+(1) **DataHub's own access control** (per-asset policies, its own
+users/roles); (2) **Topaz** (the declared policy engine: persona
+cells, data-plane `can_read`, the coming catalog `can_view`);
+(3) **the agent-tool gates** (the stopgap's in-code domain check, the
+routing layer's `entitled_domains` scope, per-engine checks); and
+implicitly (4) **the underlying data platforms** (warehouse grants,
+S3 policies) that DataHub reflects. This is the **two-authz-truths
+problem from ADR-0026** (why persona left Keycloak — "capability in
+Keycloak and Topaz drift silently") scaled to N systems. Every pair
+of heads is a divergence surface, and — worse — multiple heads *invite
+the exact bypass just lived through*: enforcement assumed to be
+"somewhere else" (routing thought it filtered, the fallback thought
+the catalog checked, the catalog checked nothing). The
+surely-someone-else-guards-this assumption is the project's signature
+failure wearing a security badge.
+
+The resolution — already implied by ADR-0025's ABAC thesis and
+ADR-0026's single-authz-store rule, stated here explicitly for authz:
+
+- **Topaz DECIDES.** One policy engine, one place "may this caller
+  see this asset" is evaluated — the matrix, the relations, the deny
+  primitive, the deontic conflict rules. Already decided by 0025+0026.
+- **DataHub INFORMS — it does not decide for agent traffic.** DataHub
+  is the **attribute source of record for resource attributes**
+  (owner, tags incl. `pii`, domain, lineage). Its facts flow *into*
+  Topaz via the DataHub→Topaz directory sync (the Zanzibar-relation
+  seeding already in the enforcement arc's scope); Topaz evaluates
+  policy *over* those facts. DataHub's own access control keeps
+  guarding **DataHub's own UI users**; for the agent mesh, DataHub is
+  upstream data, not a co-decider. The tempting-but-wrong move is to
+  *also* enforce via DataHub's policies for agent traffic — that
+  re-creates two deciders and the drift is live.
+- **git-asserted YAML informs** (subject attributes) and **request
+  context informs** (environment attributes). The ABAC three-category
+  model: every source feeds the *one* evaluation.
+- **Enforcement points only ASK.** An enforcement point is code that
+  *calls* the decider and *honors* the answer (the FastAPI dep, the
+  central-gateway check, per-engine guards). A *decider* is code that
+  evaluates policy *itself*. The stopgap is currently the second kind
+  (predicate hardcoded in `query_metadata`) — structurally a fourth
+  head. It is **grandfathered as the single named exception** because
+  it is labeled interim and its migration to a Topaz call is the
+  enforcement arc's first workstream.
+
+**Standing rule for the enforcement arc (and after):** *no new policy
+predicate is ever written in application code.* Every new "may X do
+Y" question becomes a Topaz check; every attribute it needs becomes a
+directory sync or a request input. The stopgap is grandfathered;
+anything after it that hardcodes a predicate is a new head and gets
+rejected in review. See `[[single-authz-decider]]`.
+
+Two sharp edges this creates, named so they don't surprise the arc:
+
+- **The DataHub→Topaz sync becomes load-bearing; staleness is the new
+  drift.** Once DataHub feeds Topaz, `pii` on Customer 360 matters
+  only insofar as it's synced — an asset tagged at 2pm whose sync
+  runs at 3pm is unguarded-by-that-tag for an hour. Not a reason to
+  co-decide; a reason the sync gets the same disciplines as
+  everything else: **readback verification, staleness visibility**
+  (when did this asset's attributes last sync = `valid_as_of` for
+  authz facts), and **honest failure** (sync broken ≠ silently
+  permissive — an asset whose attributes are *unknown* evaluates
+  conservatively, per deny-overrides-allow). The sync is the seam
+  where two systems' truths meet; seams get probes.
+- **The routing-layer `entitled_domains` filter stays, renamed as
+  relevance scope, explicitly NOT an enforcement point.** It narrows
+  what's worth searching; it guarantees nothing (the exploit proved
+  it). Scope-exclusion and prohibition are different facts — which is
+  why the deny primitive exists and why the
+  `fallback_reason=domain_scope_excluded` capture (Part 0 of the
+  decision-path visualizer) keeps its behavior visible without
+  pretending it's a guard.
+
+The one-sentence version: **one decider (Topaz), authoritative
+attribute sources feeding it (DataHub for resource facts, git-asserted
+YAML for subject facts, request context for environment), and
+enforcement points that only ever ASK — with the stopgap grandfathered
+as the single named exception whose retirement is the enforcement
+arc's first act.** That is the only shape where "who is allowed to see
+this" has exactly one true answer, and where the next exploit cannot
+live in the gap between two deciders who each assumed the other was on
+duty.
 
 ## Related
 
