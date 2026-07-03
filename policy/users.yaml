@@ -36,7 +36,7 @@ users:
   # their honest denials are the other half of the demo (access control
   # visibly working), so leaving them out is itself an assertion.
 
-  - id: agent-user@example.com
+  - id: agent@example.com
     display_name: Invincible (agent-user)
     groups:
       - data-engineers      # ROLE grant: agent-user is the service/demo
