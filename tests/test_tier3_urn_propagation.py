@@ -145,12 +145,14 @@ def test_resolve_subject_extracts_instance_id_from_provenance(supervisor_mod):
             _FakeCtx(), "Fetch revenue summary", "DATA_ENGINEERING"
         )
 
-    # Tuple shape: (subject_uri, confidence, reasoning, instance_id)
-    assert len(result) == 4, (
-        f"Tier-3 fix changes _resolve_subject's return tuple to length 4 "
-        f"(adds instance_id). Got tuple of length {len(result)}: {result!r}"
+    # Tuple shape: (subject_uri, confidence, reasoning, instance_id,
+    # subject_candidates). 2026-07-02 (decision-path Part 0) added the
+    # 5th element — the resolver candidate pool with scores.
+    assert len(result) == 5, (
+        f"_resolve_subject returns (uri, conf, reasoning, instance_id, "
+        f"candidates) — length 5. Got tuple of length {len(result)}: {result!r}"
     )
-    subject_uri, confidence, reasoning, instance_id = result
+    subject_uri, confidence, reasoning, instance_id, _candidates = result
     assert subject_uri == "http://invincible-agent/idp#Table"
     assert confidence == 0.99
     assert "engine_d" in reasoning
@@ -178,7 +180,7 @@ def test_resolve_subject_empty_instance_id_when_no_provenance(supervisor_mod):
             _FakeCtx(), "What procedure data module covers X", "MAINTENANCE"
         )
 
-    _, _, _, instance_id = result
+    _, _, _, instance_id, _ = result
     assert instance_id == "", (
         f"When provenance is None, instance_id must be empty string "
         f"(not None). Got {instance_id!r}."
@@ -207,7 +209,7 @@ def test_resolve_subject_empty_instance_id_when_instance_resolved_false(supervis
             _FakeCtx(), "Fetch absent_table_xyz", "DATA_ENGINEERING"
         )
 
-    _, _, _, instance_id = result
+    _, _, _, instance_id, _ = result
     assert instance_id == "", (
         f"When provenance.instance_resolved=False, instance_id must be "
         f"empty (not None). This is the structural negative-control "
@@ -227,8 +229,8 @@ def test_resolve_subject_empty_instance_id_on_resolve_failure(supervisor_mod):
             _FakeCtx(), "Anything", "MAINTENANCE"
         )
 
-    assert len(result) == 4
-    subject_uri, confidence, reasoning, instance_id = result
+    assert len(result) == 5
+    subject_uri, confidence, reasoning, instance_id, _candidates = result
     assert subject_uri == "UNKNOWN"
     assert confidence == 0.0
     assert "unreachable" in reasoning

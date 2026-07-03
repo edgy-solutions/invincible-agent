@@ -539,6 +539,15 @@ class SemanticResolutionResponse(BaseModel):
     confidence_score: float
     reasoning: str | None = None
     provenance: dict | None = None
+    # 2026-07-02 (decision-path visualizer Part 0): the FULL subject-
+    # class candidate pool the resolver considered, each with its
+    # Weaviate match score — winner AND losers. Previously computed and
+    # discarded; this is the capture-or-lose-forever data the
+    # PROV-contamination class of bug needs (see the resolver stage of
+    # the decision-path panel). Empty when resolution came from the
+    # instance-preemption path (no class contest) or the UNKNOWN
+    # fallback (no candidates at all). Shape: [{uri, label, score}].
+    candidates: list[dict] = Field(default_factory=list)
 
 class LegacyTableDossier(BaseModel):
     table_name: str
@@ -735,16 +744,34 @@ def _weaviate_hybrid_search_sync(
             print(f"embed_query failed, falling back to BM25 for OntologyClass: {e}")
             response = collection.query.bm25(
                 query=query, limit=limit, filters=filters,
+                # 2026-07-02 (decision-path visualizer Part 0): extract
+                # the match score so the LOSING candidates carry their
+                # scores out of /resolve. Previously discarded — which
+                # is exactly the data the PROV-contamination diagnosis
+                # needed (prov#Bundle at 0.66 beating idp#Pipeline) and
+                # had to fish out of a manual Weaviate query because the
+                # pipeline threw it away. Same MetadataQuery(score=True)
+                # pattern the predicate search already uses.
+                return_metadata=wvc.query.MetadataQuery(score=True),
             )
         else:
             response = collection.query.hybrid(
                 query=query, vector=query_vector, limit=limit, filters=filters,
+                return_metadata=wvc.query.MetadataQuery(score=True),
             )
         return [
             {
                 "uri": obj.properties["uri"],
                 "label": obj.properties["label"],
                 "description": obj.properties.get("definition", ""),
+                # score may be None if Weaviate didn't populate it (e.g.
+                # a pure-BM25 path on a scoreless config); keep the key
+                # present so downstream capture is uniform.
+                "score": (
+                    float(obj.metadata.score)
+                    if obj.metadata is not None and obj.metadata.score is not None
+                    else None
+                ),
             }
             for obj in response.objects
         ]
@@ -1406,19 +1433,32 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                     f"LLM guess: {result.resolved_uri}."
                 ),
                 provenance=instance_provenance,
+                # The class contest DID run before instance preemption
+                # overrode it — carry the pool so the decision path can
+                # show "LLM guessed X from these candidates; instance
+                # resolution then overrode to Y".
+                candidates=candidates,
             )
         return SemanticResolutionResponse(
             resolved_uri=str(result.resolved_uri),
             confidence_score=result.confidence_score,
             reasoning=result.reasoning,
             provenance=instance_provenance,
+            candidates=candidates,
         )
 
     # Step 5: Return structured response (no identifier extracted).
+    # This is the common class-contest path — the LLM picked
+    # result.resolved_uri from `candidates`. Carry the full pool with
+    # scores so the decision-path resolver stage can show the winner
+    # AND the losers (the PROV-contamination diagnosis lived exactly
+    # here: the winner was prov#Bundle at 0.66, and the losers-with-
+    # scores are what made "contaminated pool" a glance).
     return SemanticResolutionResponse(
         resolved_uri=str(result.resolved_uri),
         confidence_score=result.confidence_score,
         reasoning=result.reasoning,
+        candidates=candidates,
     )
 
 

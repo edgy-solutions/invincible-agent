@@ -278,7 +278,10 @@ def _resolve_subject(
             "will see subject_uri=UNKNOWN",
             user_query, exc,
         )
-        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "")
+        # 5-tuple: empty candidates on the unreachable path (no pool
+        # was computed). Keeps the return arity uniform with the
+        # success paths — the caller unpacks 5.
+        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [])
 
     provenance = data.get("provenance") or {}
     return (
@@ -286,6 +289,12 @@ def _resolve_subject(
         float(data.get("confidence_score") or 0.0),
         str(data.get("reasoning") or ""),
         str(provenance.get("instance_id") or ""),
+        # 2026-07-02 (decision-path visualizer Part 0): the full
+        # subject-class candidate pool with scores — winner AND losers.
+        # /resolve now returns this (previously computed + discarded).
+        # Threaded into telemetry so the decision-path resolver stage
+        # can render what lost and by how much.
+        list(data.get("candidates") or []),
     )
 
 
@@ -367,7 +376,7 @@ def _classify_route(
     # [[failure-mode-pluralism-in-fixes]] for the fix-sequencing
     # rationale (this is Bug A; PROV contamination is Bug B,
     # diagnosed separately).
-    subject_uri, subject_conf, subject_reason, subject_instance_id = _resolve_subject(
+    subject_uri, subject_conf, subject_reason, subject_instance_id, subject_candidates = _resolve_subject(
         context,
         user_query,
         routing_domain,
@@ -390,6 +399,14 @@ def _classify_route(
             "subject_uri": "UNKNOWN",
             "subject_confidence": subject_conf,
             "subject_reasoning": subject_reason,
+            "subject_candidates": subject_candidates,
+            # Structured fallback reason (decision-path Part 0): the
+            # subject didn't ground at all. Distinct from "grounded but
+            # no verb" and — critically — from "verbs exist but your
+            # domain scope excluded them" (domain_scope_excluded), the
+            # deny primitive's data shadow. See the fallback_reason
+            # enum vocabulary in the module docstring.
+            "fallback_reason": "subject_unknown",
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
             "verb_reasoning": (
@@ -419,18 +436,48 @@ def _classify_route(
     # operate on this subject's class chain. Route to generalist
     # fallback without burning an LLM call on /classify_predicate.
     if subject_uri != "UNKNOWN" and compatible_verbs is not None and not compatible_verbs:
+        # Structured fallback reason (decision-path Part 0): distinguish
+        # "no verb exists for this subject" from "verbs exist but the
+        # caller's domain scope excluded them all" — the deny primitive's
+        # data shadow (ADR-0025 amendment). We detect it cheaply: only on
+        # this empty-fallback path (rare), re-ask Neo4j UNSCOPED. If the
+        # unscoped compat-walk returns verbs the scoped one didn't, the
+        # emptiness was caused by domain scoping, not by genuine
+        # unsupportedness. This is the difference between a relevance-miss
+        # (fallback is fine) and a scope-exclusion (which, once the deny
+        # primitive lands, must NOT silently fall back).
+        fb_reason = "no_compatible_verbs"
+        if entitled_domains:
+            unscoped_verbs, _unscoped_err = _find_compatible_verbs(
+                context, subject_uri, entitled_domains=[],
+            )
+            if unscoped_verbs:
+                fb_reason = "domain_scope_excluded"
+                context.log.warning(
+                    "routing_decision subject_uri=%s domain_scope_excluded: "
+                    "%d verb(s) exist unscoped but entitled_domains=%s "
+                    "excluded them all. This is the deny-primitive's data "
+                    "shadow — relevance-scope exclusion masquerading as "
+                    "no-match. (ADR-0025 amendment.)",
+                    subject_uri, len(unscoped_verbs), entitled_domains,
+                )
         context.log.info(
             "routing_decision subject_uri=%s subject_conf=%s "
-            "no_compatible_verbs_in_neo4j → generalist fallback",
-            subject_uri, subject_conf,
+            "fallback_reason=%s → generalist fallback",
+            subject_uri, subject_conf, fb_reason,
         )
         return _ROUTING_NO_MATCH, None, {
             "subject_uri": subject_uri,
             "subject_confidence": subject_conf,
             "subject_reasoning": subject_reason,
+            "subject_candidates": subject_candidates,
+            "fallback_reason": fb_reason,
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
-            "verb_reasoning": "Neo4j marks zero verbs as compatible with this subject.",
+            "verb_reasoning": (
+                "Neo4j marks zero verbs as compatible with this subject "
+                f"(fallback_reason={fb_reason})."
+            ),
             "candidate_verbs": [],
             "neo4j_find_error": find_err,
         }
@@ -461,6 +508,8 @@ def _classify_route(
         return _ROUTING_INFRA_ERROR, None, {
             "subject_uri": subject_uri,
             "subject_confidence": subject_conf,
+            "subject_candidates": subject_candidates,
+            "fallback_reason": "infra_error",
             "compatible_verb_iris": compatible_verb_iris,
             "error": str(exc),
         }
@@ -564,6 +613,16 @@ def _classify_route(
         "subject_uri": subject_uri,
         "subject_confidence": subject_conf,
         "subject_reasoning": subject_reason,
+        # Resolver candidate pool with scores (decision-path Part 0).
+        "subject_candidates": subject_candidates,
+        # Structured fallback reason. MATCHED path leaves it None (no
+        # fallback); classify-returned-UNKNOWN sets no_verb_classified
+        # below. subject_unknown / no_compatible_verbs /
+        # domain_scope_excluded / infra_error are set in the earlier
+        # short-circuit branches.
+        "fallback_reason": (
+            None if verb_iri != "UNKNOWN" else "no_verb_classified"
+        ),
         # Resolved instance URN (e.g. urn:li:dataset:... for catalog
         # assets, urn:instance:... for maintenance instances) from
         # /resolve.provenance.instance_id. Empty string when no
@@ -782,6 +841,20 @@ def _log_subtask_route_assets(
         ),
         "candidate_count": MetadataValue.int(
             len(telemetry.get("compatible_verb_iris") or [])
+        ),
+        # Decision-path Part 0 captures: the resolver candidate pool
+        # (winners AND losers with scores) as JSON, and the structured
+        # fallback_reason. candidate_count above stays (cheap glance);
+        # subject_candidates is the full pool the visualizer's resolver
+        # stage renders. fallback_reason is the deny-primitive's data
+        # shadow — subject_unknown | no_compatible_verbs |
+        # domain_scope_excluded | no_verb_classified | infra_error, or
+        # empty on the matched path.
+        "subject_candidates": MetadataValue.text(
+            json.dumps(telemetry.get("subject_candidates") or [])
+        ),
+        "fallback_reason": MetadataValue.text(
+            str(telemetry.get("fallback_reason") or "")
         ),
         "sub_query": MetadataValue.text(sub_query or ""),
     }
