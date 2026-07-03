@@ -243,14 +243,30 @@ are two identity namespaces, and 0025's draft only covered one:
   that enters the mesh as data acquires a URN, so the asset namespace has
   no ungoverned holes to fall through.
 - **ontology-resources** — classes, **verb IRIs**, resolver pools: the
-  *vocabulary itself*. They carry IRIs but no catalog URN. Governed by
-  **their IRI as the identity** — the verb IRIs *are* the operation-URNs
-  this ADR already established — at the **domain granularity the
-  persona×domain matrix already provides**. "Who may traverse the
-  ontology / see which verbs exist / resolve against which classes" is a
-  *different* governance question from "who may see Customer 360," and
-  the routing layer's `entitled_domains` scoping of verbs is *already*
-  ontology-resource governance done informally.
+  *vocabulary itself*. They carry IRIs but no catalog URN. **Identity** =
+  their **IRI** (the verb IRIs *are* the operation-URNs this ADR already
+  established); **granularity** = the **domain** the persona×domain matrix
+  already provides. "Who may traverse the ontology / see which verbs
+  exist / resolve against which classes" is a *different* governance
+  question from "who may see Customer 360."
+
+  **Enforcement is the arc's WORK, not today's behavior — say so
+  explicitly so it isn't silently assumed.** Today the routing layer's
+  `entitled_domains` verb-scoping is a **relevance filter**: it narrows
+  what's worth searching and *guarantees nothing* (the same status the
+  single-decider section pins for `entitled_domains` generally — the
+  exploit proved relevance-scope is not a guard). The arc's job is to
+  turn ontology-resource access into a **real Topaz check at the resolver
+  / routing enforcement point** — the enforcement point RESOLVES the verb
+  to its IRI and ASKS Topaz (a `can_invoke`/`can_view`-shaped decision at
+  domain granularity), then honors the answer, exactly like the asset
+  side. The trap to refuse: *"the domain filter already does that."* The
+  domain filter is precisely the thing that does **not** enforce; naming
+  ontology-resource enforcement as arc work is what keeps it from being
+  left as an assumed-already-handled hole (the routing-scope-is-relevance-
+  not-enforcement gap the exploit taught). This is the read-time verb
+  dimension; the *write*-time verb dimension waits for the mutating-verb
+  trigger below.
 
 Naming both means the enforcement arc, when it reaches the Jena/resolver
 worksites, finds an identity to key on (**the IRI**) instead of either
