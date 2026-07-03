@@ -110,6 +110,20 @@ banked pre-emptively in
 `[[project_defeasible_freshness_deontic_conflict]]`; prohibitions
 "arrived ahead of schedule," demonstrated by the leak.
 
+*Enforcement-arc fold-in (implementation note):* the interim
+`fallback_reason=domain_scope_excluded` capture (decision-path Part 0)
+detects scope-exclusion CALLER-SIDE — when the scoped
+`/find_compatible_verbs` walk returns empty, the supervisor re-asks
+Neo4j UNSCOPED and compares. That is correct and honest but costs a
+second query on every fallback and carries a tiny time-of-check gap
+between the two walks. When the enforcement arc touches
+`/find_compatible_verbs` anyway (it will, for the deny primitive), the
+durable shape is the endpoint **reporting what it filtered in one
+pass** (pre-filter vs post-filter verb sets, or an explicit
+`excluded_by_domain` list) rather than the caller re-deriving it with a
+second unscoped call. Fold the caller-side re-check into the endpoint
+at that point; do not add it as separate work now.
+
 Both expansions fold into the **same fenced, hop-by-hop enforcement
 session** (Non-goals below) — this amendment records scope, it does
 NOT license an emergency sprawl. The stopgap stopped the bleed so the
