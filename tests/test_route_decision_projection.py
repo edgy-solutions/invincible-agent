@@ -39,7 +39,10 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from iagent.gateway import _project_route_decision  # noqa: E402
+from iagent.gateway import (  # noqa: E402
+    _project_route_decision,
+    _project_graph_trace_alternates,
+)
 
 
 def _mat(**fields) -> dict:
@@ -211,3 +214,57 @@ def test_missing_candidates_is_empty_list_not_crash():
     result = _project_route_decision(mat)
     assert result is not None
     assert result.get("candidates") == []
+
+
+# ---------------------------------------------------------------------------
+# VERB-LEG alternates (the Instance-4 mirror on the verb leg). The full
+# compatible-verb set is captured in `compatible_verbs`; the projection
+# used to draw ONLY the picked branch. The diagram needs the untaken verbs.
+# ---------------------------------------------------------------------------
+def _graph_trace_mat(picked: str, compatible_verbs: list[dict]) -> dict:
+    import json as _json
+    return _mat(
+        subject_uri="http://invincible-agent/idp#Dashboard",
+        picked_verb_iri=picked,
+        compatible_verbs=_json.dumps(compatible_verbs),
+    )
+
+
+def test_verb_alternates_exclude_the_picked_verb():
+    """The untaken compatible verbs are surfaced; the PICKED verb is not
+    among them (it's the taken branch, drawn by _project_graph_trace)."""
+    mat = _graph_trace_mat(
+        picked="mesh:lookupOwnership",
+        compatible_verbs=[
+            {"verb_iri": "mesh:lookupOwnership", "output_uri": "mesh#OwnershipFact", "hops": 1},
+            {"verb_iri": "mesh:traceLineage", "output_uri": "mesh#LineageFact", "hops": 1},
+            {"verb_iri": "mesh:describeAsset", "output_uri": "mesh#AssetProfile", "hops": 0},
+        ],
+    )
+    alts = _project_graph_trace_alternates(mat)
+    alt_verbs = {a["via_verb"] for a in alts}
+    assert alt_verbs == {"mesh:traceLineage", "mesh:describeAsset"}, (
+        "verb-leg alternates must carry the untaken compatible verbs and "
+        "exclude the picked one — the branches-not-taken the diagram draws"
+    )
+    assert all(a["role"] == "alternate_verb" for a in alts)
+
+
+def test_verb_alternates_empty_when_only_picked_fit():
+    """The honest 'only one verb fit': a single compatible verb (the
+    picked one) yields ZERO alternates — the diagram draws an unbranched
+    path, never a fabricated fork."""
+    mat = _graph_trace_mat(
+        picked="mesh:lookupOwnership",
+        compatible_verbs=[
+            {"verb_iri": "mesh:lookupOwnership", "output_uri": "mesh#OwnershipFact", "hops": 1},
+        ],
+    )
+    assert _project_graph_trace_alternates(mat) == []
+
+
+def test_verb_alternates_empty_on_missing_compatible_verbs():
+    """No compatible_verbs captured (old materialization) → empty, not a
+    crash. Render-only-what-was-captured."""
+    mat = _mat(subject_uri="x", picked_verb_iri="mesh:foo")
+    assert _project_graph_trace_alternates(mat) == []

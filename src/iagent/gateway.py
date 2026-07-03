@@ -829,6 +829,49 @@ def _project_graph_trace(mat: dict) -> list[dict] | None:
     return nodes
 
 
+def _project_graph_trace_alternates(mat: dict) -> list[dict]:
+    """Verb-leg alternates for the decision-path diagram — the Instance-4
+    mirror on the verb leg.
+
+    ``compatible_verbs`` holds the FULL conjunctive Cypher∩Weaviate set the
+    walk surfaced; ``_project_graph_trace`` (above) draws only the PICKED
+    branch — "the answer's actual path" — and deliberately dropped the
+    rest. The decision-path diagram needs the UNTAKEN compatible verbs
+    too: "alternates shown" is the whole reason it's worth drawing (the
+    losing branch is where the debugging lives). The fact was captured
+    upstream and discarded at the render seam — same shape as the subject
+    candidate pool before Part 1, one leg over.
+
+    Emits one ``alternate_verb`` node per non-picked compatible verb:
+    where that verb WOULD have led (its output class). Render-only-what-
+    was-captured — only verbs actually in the compatible set, never
+    invented. Empty when there was no alternative (the honest "only one
+    verb fit"), which the diagram draws as a single unbranched path.
+    """
+    md = _metadata_dict(mat)
+    picked_verb_iri = md.get("picked_verb_iri") or ""
+    raw = md.get("compatible_verbs") or "[]"
+    try:
+        verbs = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+
+    alts: list[dict] = []
+    for v in verbs:
+        v_iri = v.get("verb_iri") or ""
+        if not v_iri or v_iri == picked_verb_iri:
+            continue
+        v_out = v.get("output_uri") or ""
+        alts.append({
+            "uri": v_out or v_iri,
+            "label": _label_from_uri(v_out) if v_out else _label_from_uri(v_iri),
+            "role": "alternate_verb",
+            "via_verb": v_iri,
+            "hops": int(v.get("hops") or 0),
+        })
+    return alts
+
+
 def _perror(
     message: str,
     *,
@@ -1723,13 +1766,25 @@ async def generate_dagster_stream(
             ):
                 trace_nodes = _project_graph_trace(mat)
                 if trace_nodes:
+                    # Verb-leg alternates (the untaken compatible verbs) —
+                    # carried as a SIBLING field so the existing text-trail
+                    # panel (reads `.nodes`) is untouched while the
+                    # decision-path diagram can draw the branches not taken.
+                    alternates = _project_graph_trace_alternates(mat)
                     logger.info(
-                        "📡 Emitting SSE 'graph_trace' for run %s: %d nodes",
-                        run_id, len(trace_nodes),
+                        "📡 Emitting SSE 'graph_trace' for run %s: %d nodes, "
+                        "%d verb-alternates",
+                        run_id, len(trace_nodes), len(alternates),
                     )
-                    yield _sse("graph_trace", json.dumps({"nodes": trace_nodes}))
-                    # Hop 1: accumulate into bundle.
+                    yield _sse("graph_trace", json.dumps({
+                        "nodes": trace_nodes,
+                        "alternates": alternates,
+                    }))
+                    # Hop 1: accumulate into bundle (nodes unchanged;
+                    # alternates as a sibling so the durable write stays
+                    # backward-compatible).
                     _artifact_bundle["graph_trace"] = trace_nodes
+                    _artifact_bundle["graph_trace_alternates"] = alternates
                 emitted_steps.add("graph_trace_emitted")
 
             elif (
