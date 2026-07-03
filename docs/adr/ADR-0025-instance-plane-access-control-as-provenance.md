@@ -24,6 +24,67 @@ absence at decision time is unrecoverable later, per
 discipline applied at retrieval call sites the substrate already
 touches.
 
+## Amendment 2026-07-02 — two scope expansions, triggered by a live exploit
+
+The fenced enforcement session (below) had its trigger fired early
+and loudly: an honest agent probe **demonstrated a working access-
+control bypass on PII-tagged catalog metadata**. A
+`DATA_ENGINEER·DEFENSE` user's routing "denial" was laundered by
+Engine A's generalist fallback, which re-queried Engine D's
+`query_metadata` with a **hardcoded `persona=DATA_STEWARD`**; the
+catalog enforced nothing (confirmed: any persona incl. a garbage
+`NOBODY`, any/no domain → full owner + PII-tag + lineage at 0.9
+conf), and the UI presented the leaked data with **"No citations"**
+— sensitive real data with no provenance trail, the exact inversion
+the honesty regime exists to prevent. See
+`[[project_adr0026_topaz_authz]]` for the full trace. A domain-
+granularity **stopgap** shipped 2026-07-02 (gate `query_metadata` on
+the caller's real `entitled_domains`; kill the hardcoded steward;
+thread real identity through the supervisor→Engine A fallback). The
+stopgap stops the bleed; it does NOT replace the enforcement session.
+
+The exploit proved **two scope expansions** this ADR must record —
+both are enforcement-session scope, not new decisions:
+
+**Expansion 1 — the metadata catalog is an enforcement surface, not
+just data rows.** This ADR's planning gated the *data plane*
+(`CortexDataClient` → central-gateway → Topaz `can_read` on the
+dataset). But an asset's owner, PII tags, lineage, and description
+are facts *about the instance* — often as sensitive as the rows
+(knowing a `customers_gold` PII table exists, who owns it, and what
+feeds it is reconnaissance without a single row). Metadata IS
+provenance (this ADR's own thesis), so the catalog path
+(`query_metadata`, and by inspection `resolve_instance` / `find_tools`
+which must be audited) is in scope. The durable model is per-asset
+Topaz **`can_view`** on catalog reads — the same shape as `can_read`,
+one surface over. The stopgap's domain-granularity gate is the
+explicitly-interim predecessor.
+
+**Expansion 2 — enforcement requires a DENY primitive that survives
+fallback (deny-overrides-allow).** The bypass exists because the
+system cannot represent the difference between two routing misses:
+*"no specialist knows this"* (fallback to generalist is correct) and
+*"you are not permitted this"* (fallback is the bypass). Both
+currently produce the same signal — no route — and the generalist
+treats every no-route as the first kind. That is not a bug in the
+fallback; it is a **missing concept in the policy model**: permission
+(`can_read`, `can_view`, `can_assume`) exists, but there is no
+**prohibition** primitive, so a denial can't propagate — it looks
+like absence, and absence gets helpfully routed around. The
+enforcement session must add a deny that follows the query through
+**every** path, with an explicit **deny-overrides-allow** conflict
+rule (rather than letting evaluation order decide which authority
+wins — "which authority wins by accident of eval order" is the authz
+version of the assumed-contract bug). This is the deontic prior art
+banked pre-emptively in
+`[[project_defeasible_freshness_deontic_conflict]]`; prohibitions
+"arrived ahead of schedule," demonstrated by the leak.
+
+Both expansions fold into the **same fenced, hop-by-hop enforcement
+session** (Non-goals below) — this amendment records scope, it does
+NOT license an emergency sprawl. The stopgap stopped the bleed so the
+arc can be done properly.
+
 ## Related
 
 - [ADR-0009 — Sunset classification axes](ADR-0009-sunset-classification-axes.md):

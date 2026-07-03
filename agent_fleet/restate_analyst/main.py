@@ -482,6 +482,25 @@ async def analyze(ctx: Context, request: dict) -> dict:
 
         task_domain = request.get("domain", "ALL")
 
+        # 2026-07-02 SECURITY: the REAL caller identity, threaded from
+        # auth → supervisor → here. `search_datahub` MUST forward these
+        # to Engine D rather than asserting a hardcoded privileged
+        # persona. Absent identity → LEAST-PRIVILEGED, never steward
+        # (`[[optimistic-defaults-are-dishonest]]` with an access blast
+        # radius). See ADR-0025 "catalog is an enforcement surface".
+        #
+        #   caller_persona: the answerer/caller persona the supervisor
+        #     already propagates (config.user_persona). Falls back to
+        #     "" (least-privileged), NOT DATA_STEWARD.
+        #   caller_entitled_domains: the caller's domain scope. Empty
+        #     means "no entitlement asserted" → Engine D's gate denies.
+        caller_persona = (
+            request.get("user_persona")
+            or request.get("persona")
+            or ""  # least-privileged on absence — never DATA_STEWARD
+        )
+        caller_entitled_domains = request.get("entitled_domains") or []
+
         # Phase 3 source attribution (closing the Engine A gap from
         # commit 20ed5f9, which covered Engines W and E only). Each tool
         # that retrieves data with an attributable URN appends a Source
@@ -560,7 +579,23 @@ async def analyze(ctx: Context, request: dict) -> dict:
             import os
             DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
             try:
-                payload = {"user_query": query, "persona": "DATA_STEWARD", "domain": task_domain}
+                # 2026-07-02 SECURITY: forward the REAL caller identity
+                # (persona + entitled_domains), NOT a hardcoded
+                # DATA_STEWARD. The prior `persona="DATA_STEWARD"` here
+                # was the laundering step of a confirmed PII-metadata
+                # bypass: the routing layer "denied" a non-entitled
+                # caller, this fallback re-queried the catalog as the
+                # most privileged persona, and Engine D enforced
+                # nothing. Engine D's query_metadata now gates on
+                # entitled_domains; forwarding the real (possibly empty)
+                # scope makes that gate meaningful. Empty scope → Engine
+                # D denies (least-privileged), which is correct.
+                payload = {
+                    "user_query": query,
+                    "persona": caller_persona,
+                    "domain": task_domain,
+                    "entitled_domains": caller_entitled_domains,
+                }
                 if entity_type:
                     payload["entity_type"] = entity_type
                 resp = requests.post(

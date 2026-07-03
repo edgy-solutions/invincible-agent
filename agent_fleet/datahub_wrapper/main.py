@@ -318,9 +318,40 @@ def _extract_custom_properties(entity: Dict[str, Any]) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 class MetadataQueryRequest(BaseModel):
     user_query: str
+    # 2026-07-02 SECURITY: `persona` and `domain` were ACCEPTED BUT
+    # IGNORED — query_metadata enforced no access control at all, so
+    # any caller (any persona incl. garbage, any domain) got full
+    # PII-tagged catalog metadata. Confirmed live: a
+    # DATA_ENGINEER·DEFENSE user's routing "denial" was laundered by
+    # Engine A's generalist fallback, which called this endpoint with
+    # a HARDCODED `persona=DATA_STEWARD`. See ADR-0025 "Catalog is an
+    # enforcement surface" amendment + `[[project_adr0026_topaz_authz]]`.
+    #
+    # `entitled_domains` is the caller's REAL domain scope (threaded
+    # from auth → supervisor → Engine A). The whole DataHub catalog is
+    # the DATA_ENGINEERING domain (Engine D registers
+    # domains=["DATA_ENGINEERING"]), so the coarse honest gate is: the
+    # caller must be entitled to this engine's served domain.
+    #
+    # INTERIM POSTURE (explicitly): this is domain-granularity access.
+    # The successor is per-asset Topaz `can_view` (ADR-0025 enforcement
+    # session). Domain-gate stops the live PII leak today; can_view is
+    # the durable model.
+    #
+    # Default is EMPTY, which the gate treats as DENY (least-privileged
+    # per `[[optimistic-defaults-are-dishonest]]`) — a request with no
+    # asserted entitlement gets nothing, never everything.
     persona: str = "DATA_STEWARD"
     domain: str = "DATA_ENGINEERING"
+    entitled_domains: List[str] = []
     entity_type: Optional[str] = None
+
+
+# The domain this DataHub catalog serves. Engine D registers
+# domains=["DATA_ENGINEERING"]; the coarse access gate checks the
+# caller's entitled_domains against this. Env-overridable for
+# deployments that scope the catalog differently.
+_ENGINE_D_SERVED_DOMAIN = os.getenv("ENGINE_D_SERVED_DOMAIN", "DATA_ENGINEERING")
 
 
 # Recipe v2 instance-resolution contract.
@@ -824,9 +855,54 @@ async def find_tools(ontology_uri: str):
 async def query_metadata(request: MetadataQueryRequest):
     """
     Active agent endpoint for the DATA_STEWARD persona.
-    Takes a natural language query, dynamically applies platform filters, 
+    Takes a natural language query, dynamically applies platform filters,
     searches DataHub, and returns formatted metadata context.
     """
+    # ── SECURITY GATE (2026-07-02, interim domain-granularity) ──────
+    # Deny BEFORE any DataHub query if the caller is not entitled to
+    # this catalog's served domain. The whole catalog is
+    # DATA_ENGINEERING; a caller whose entitled_domains doesn't include
+    # it gets an honest "not entitled" answer, not the metadata.
+    #
+    # Empty entitled_domains → DENY (least-privileged). This is the
+    # fail-closed default that closes the confirmed bypass: previously
+    # every caller (any persona incl. garbage, any/no domain) got full
+    # PII-tagged metadata. Now a request must carry an entitlement that
+    # includes the served domain.
+    #
+    # This is a coarse INTERIM gate. Successor = per-asset Topaz
+    # `can_view` (ADR-0025 enforcement session). Deny is honest, not
+    # silent: the response says entitlement is required, distinct from
+    # "no assets matched".
+    entitled = [d.upper() for d in (request.entitled_domains or [])]
+    if _ENGINE_D_SERVED_DOMAIN.upper() not in entitled:
+        logging.warning(
+            "QUERY_METADATA DENIED: caller not entitled to served domain "
+            "%s. entitled_domains=%s persona=%s query=%r",
+            _ENGINE_D_SERVED_DOMAIN,
+            entitled,
+            request.persona,
+            request.user_query[:120],
+        )
+        return ExpertResponse(
+            confidence_score=0.0,
+            referenced_uris=[],
+            matched_assets=[],
+            data=DataStewardResponse(
+                short_answer=(
+                    f"Not entitled: this catalog serves the "
+                    f"{_ENGINE_D_SERVED_DOMAIN} domain, and your access "
+                    f"scope ({entitled or 'none'}) does not include it. "
+                    f"No metadata was retrieved. Request "
+                    f"{_ENGINE_D_SERVED_DOMAIN} entitlement to query it."
+                ),
+                safety_warnings=[
+                    f"access_denied: served_domain={_ENGINE_D_SERVED_DOMAIN} "
+                    f"not in entitled_domains"
+                ],
+            ),
+        )
+
     query_upper = request.user_query.upper()
     or_filters = []
     

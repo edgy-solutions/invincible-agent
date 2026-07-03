@@ -656,6 +656,18 @@ def _call_engine_a_fallback(
         "answerer_persona": config.user_persona,
         "persona": config.user_persona,
         "domain": "UNKNOWN",  # no scoped domain — generalist fallback
+        # 2026-07-02 SECURITY: thread the caller's REAL entitled_domains
+        # into the generalist fallback. Previously omitted — so when
+        # Engine A's search_datahub queried the catalog, it had no
+        # caller scope to forward and (worse) hardcoded DATA_STEWARD.
+        # That let the generalist fallback launder catalog metadata the
+        # routing layer had domain-scoped away — a confirmed PII-metadata
+        # bypass. Engine A now forwards this to Engine D's query_metadata
+        # gate; empty scope → Engine D denies (least-privileged). The
+        # generalist being domain-AGNOSTIC for ROUTING does NOT make it
+        # domain-agnostic for ACCESS. See ADR-0025 "catalog is an
+        # enforcement surface".
+        "entitled_domains": list(config.entitled_domains),
         "dynamic_schema_map": "",
         "user_id": config.user_id,
         # ADR-0008 fallback context — Engine A's handler reads these to
