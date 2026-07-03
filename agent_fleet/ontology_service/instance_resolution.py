@@ -38,6 +38,7 @@ populated, even on abstain (so the log says WHY we abstained).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -146,4 +147,135 @@ def decide(
                 for c in above_floor[:3]
             ],
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Structural abstention gate (ADR-0026 abstention-gate arc, 2026-07-03)
+# ---------------------------------------------------------------------------
+# THE PROBLEM this closes: when the LLM extracts an `instance_identifier`
+# but the phone-book fan-out finds nothing, the resolver used to fall back
+# to the LLM's CLASS guess unconditionally. So whether a query naming a
+# non-existent specific individual (e.g. "foo.bar.zzz_nope") ABSTAINS or
+# gets a confident-but-wrong class answer rode entirely on the LLM's
+# sampling — the no-margin, LLM-mediated gate.
+#
+# THE RULING (see [[project_abstention_gate_llm_mediated]]): the
+# discriminator between "you named a real-looking individual that doesn't
+# exist" (abstain, actionably) and "you used a generic term the extractor
+# over-eagerly flagged as an identifier" (class-fallback is correct) is
+# STRUCTURAL — never another LLM judgment (that would rebuild the no-margin
+# gate one layer up). It is policy over two DETERMINISTIC signals:
+#   1. Identifier FORM  — does the token look like a specific named
+#      individual (namespace-qualified / dotted / coded), or a plain
+#      generic word?  (`is_instance_shaped`)
+#   2. Recorded RESOLUTION FACT — did the providers get asked and cleanly
+#      return nothing (`instance_match == "empty"`), as opposed to an
+#      infra non-answer (timeout / error / no_providers)?
+#
+# Both signals are facts already on the table (the form of the extracted
+# identifier; the provenance the decision table above recorded). The gate
+# is a pure function over them — no cluster, no model, exhaustively
+# testable. This is ALSO the shared form-discrimination primitive Hole 2
+# ([[resolve-instance-provider-gap]], the identifier-form-mismatch /
+# token-subset matching) will consume — built once here, on purpose, so
+# the form check is not written twice.
+
+# `instance_match` values that mean "providers answered cleanly and the
+# registry genuinely does not know this token." Distinct from the infra
+# non-answers (timeout / error / no_providers) where we did NOT get a
+# trustworthy "no" — those must NOT be reported to the user as not-found.
+_GENUINE_NOT_FOUND_MATCHES = frozenset({"empty"})
+
+# Structural markers of a specific named individual (vs a generic class
+# term). Namespace colons (urn:li:dataset:…) and dotted qualification
+# (foo.bar.baz) are the unambiguous ones; a coded single token bearing
+# digits or an ALLCAPS/hyphenated segment (NSN-123, DMC-XYZ_A) is the
+# next tier. A plain natural-language word or phrase ("mechanics",
+# "customer records") is deliberately NOT instance-shaped.
+_DOTTED_QUALIFIED = re.compile(r"\w\.\w")
+_CODED_SEGMENT = re.compile(r"[A-Z0-9]{2,}[-_/]")
+
+
+def is_instance_shaped(identifier: str) -> bool:
+    """Deterministic FORM discriminator (signal #1 of the abstention gate).
+
+    True when ``identifier`` carries the STRUCTURE of a specific named
+    individual — a namespace-qualified URN, a dotted qualified name, or a
+    coded token (embedded digits / ALLCAPS-hyphen segment). False for a
+    plain natural-language word or phrase, which is what a generic class
+    term looks like when an over-eager extractor mislabels it as an
+    identifier.
+
+    Conservative by design: the safe failure direction is a FALSE
+    (generic-looking → class-fallback → current LLM-mediated behavior).
+    A false-positive here would wrongly abstain on a real class query, so
+    we only return True on unambiguous structure. Multi-word phrases are
+    treated as generic (they degrade to class-fallback), which is the
+    intended conservative posture — this gate exists to catch the
+    clearly-coded ``foo.bar.zzz_nope`` shape, not to abstain broadly.
+    """
+    s = (identifier or "").strip()
+    if not s:
+        return False
+    # A namespace colon is unambiguous and can't contain whitespace.
+    if ":" in s and " " not in s:
+        return True
+    # Remaining structural signals only apply to a single (whitespace-
+    # free) token; a phrase with spaces reads as natural language.
+    if " " in s:
+        return False
+    if _DOTTED_QUALIFIED.search(s):
+        return True
+    if any(ch.isdigit() for ch in s):
+        return True
+    if _CODED_SEGMENT.search(s):
+        return True
+    return False
+
+
+def decide_instance_abstention(
+    identifier: Optional[str],
+    instance_subject: Optional[str],
+    instance_match: str,
+) -> Optional[str]:
+    """The structural abstention gate — policy over the two recorded facts.
+
+    Returns ``"instance_not_found"`` when the query named a specific
+    individual (form: ``is_instance_shaped``) that the phone book was
+    asked about and genuinely does not know (fact:
+    ``instance_match == "empty"``). In that case the caller must ABSTAIN
+    with an actionable message rather than fall back to the LLM's class
+    guess.
+
+    Returns ``None`` — keep the LLM class guess (current behavior) — in
+    every other case:
+      * the instance actually resolved (not an abstention at all),
+      * an INFRA non-answer (timeout / error / no_providers): we did not
+        get a trustworthy "no", so we must not tell the user "no provider
+        knows it",
+      * the identifier is NOT instance-shaped: a generic term the
+        extractor over-eagerly flagged — class-fallback is the correct
+        answer, and abstaining would wrongly refuse a valid class query.
+
+    NO LLM. NO network. A pure decision over (form, recorded-fact).
+    """
+    if instance_subject is not None:
+        return None  # resolved upstream — nothing to abstain about
+    if instance_match not in _GENUINE_NOT_FOUND_MATCHES:
+        return None  # infra non-answer, not a clean not-found
+    if not is_instance_shaped(identifier or ""):
+        return None  # generic term mislabeled as identifier → class-fallback
+    return "instance_not_found"
+
+
+def instance_not_found_message(identifier: str) -> str:
+    """The ACTIONABLE abstention text (honest-empty is only honest if it
+    tells the user what to do). Names the exact token and the next step —
+    a bare "UNKNOWN" would leave the user with nowhere to go."""
+    return (
+        f"No provider in the mesh recognizes '{identifier}'. It has the "
+        f"form of a specific named item, but the instance registry "
+        f"returned no match. Check that the identifier is exact, or ask "
+        f"about its general category instead of the specific instance."
     )

@@ -265,14 +265,24 @@ TEST_CASES: list[RouteCase] = [
         domain="DATA_ENGINEERING",
         expect_instance_provider="engine_d",
     ),
-    # R3 — ghost name: providers all return empty (above their own
-    # relevance threshold). Fall through to normal class resolution, which
-    # will likely UNKNOWN → generalist. This row is the proof that empty
-    # answers are first-class.
+    # R3 — ghost name: an instance-SHAPED identifier (dotted qualified
+    # name) the providers all return empty for. This is the abstention-
+    # gate arc's integration guard (2026-07-03). BEFORE the gate, /resolve
+    # fell back to the LLM's class guess and this row passed by LLM-LUCK —
+    # "will likely UNKNOWN" was the honest description, and the abstention
+    # rode on classify's sampling. NOW the gate is STRUCTURAL: the
+    # identifier's FORM (dotted) + the recorded FACT (instance_match=empty)
+    # make /resolve return UNKNOWN deterministically, so the router
+    # short-circuits to NO_MATCH WITHOUT calling /classify_predicate.
+    # `expect_classify_called=False` is the lock: it asserts the LLM is
+    # NOT consulted for the abstention (the whole point — the no-margin
+    # LLM-mediated gate is gone). Sibling to R4's Contract-B guard below,
+    # but for the instance-not-found dimension rather than zero-verbs.
     RouteCase(
         query="Tell me about foo.bar.zzz_nope",
         expected_subject_substring=None,
         expected_verb_iri="UNKNOWN",
+        expect_classify_called=False,  # structural abstention: no LLM call
         min_confidence=0.0,
         domain="DATA_ENGINEERING",
     ),

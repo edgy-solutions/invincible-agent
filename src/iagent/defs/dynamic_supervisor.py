@@ -283,10 +283,11 @@ def _resolve_subject(
             "will see subject_uri=UNKNOWN",
             user_query, exc,
         )
-        # 5-tuple: empty candidates on the unreachable path (no pool
-        # was computed). Keeps the return arity uniform with the
-        # success paths — the caller unpacks 5.
-        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [])
+        # 6-tuple: empty candidates on the unreachable path (no pool
+        # was computed), abstention_reason=None (an infra reach failure
+        # is NOT a structural instance-not-found). Keeps arity uniform
+        # with the success path — the caller unpacks 6.
+        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [], None)
 
     provenance = data.get("provenance") or {}
     return (
@@ -300,6 +301,15 @@ def _resolve_subject(
         # Threaded into telemetry so the decision-path resolver stage
         # can render what lost and by how much.
         list(data.get("candidates") or []),
+        # 2026-07-03 (abstention-gate arc): Engine O's STRUCTURAL gate
+        # sets provenance.abstention_reason="instance_not_found" when the
+        # query named a specific individual (form) the phone book was
+        # asked about and genuinely doesn't know (fact). Surfaced here so
+        # the UNKNOWN branch below distinguishes "you named X, no provider
+        # knows it" (instance_not_found) from a plain unresolved subject
+        # (subject_unknown) — and carries the actionable message
+        # (already in `reasoning`) instead of a bare UNKNOWN.
+        str(provenance.get("abstention_reason") or "") or None,
     )
 
 
@@ -381,7 +391,10 @@ def _classify_route(
     # [[failure-mode-pluralism-in-fixes]] for the fix-sequencing
     # rationale (this is Bug A; PROV contamination is Bug B,
     # diagnosed separately).
-    subject_uri, subject_conf, subject_reason, subject_instance_id, subject_candidates = _resolve_subject(
+    (
+        subject_uri, subject_conf, subject_reason, subject_instance_id,
+        subject_candidates, subject_abstention_reason,
+    ) = _resolve_subject(
         context,
         user_query,
         routing_domain,
@@ -394,11 +407,22 @@ def _classify_route(
     # (would be unconstrained and could emit a confident wrong verb).
     # The honest answer is the generalist; route there directly.
     if subject_uri == "UNKNOWN":
+        # Abstention-gate arc (2026-07-03): Engine O's structural gate may
+        # have marked this UNKNOWN as an INSTANCE-NOT-FOUND — the query
+        # named a specific individual (form) the phone book was asked
+        # about and genuinely doesn't know (fact). That's a distinct,
+        # closed-enum fallback_reason from a plain unresolved subject, and
+        # it carries an ACTIONABLE message ("you named X; no provider
+        # knows it") that Engine O already put in `subject_reason`. A bare
+        # UNKNOWN would leave the user nowhere to go; honest-empty is only
+        # honest if it says what to do.
+        is_instance_not_found = subject_abstention_reason == "instance_not_found"
+        _fb_reason = "instance_not_found" if is_instance_not_found else "subject_unknown"
         context.log.info(
             "routing_decision subject_uri=UNKNOWN subject_conf=%s "
-            "→ generalist fallback (ADR-0019 Contract B: no LLM call "
-            "without subject grounding)",
-            subject_conf,
+            "fallback_reason=%s → generalist fallback (ADR-0019 Contract "
+            "B: no LLM call without subject grounding)",
+            subject_conf, _fb_reason,
         )
         return _ROUTING_NO_MATCH, None, {
             "subject_uri": "UNKNOWN",
@@ -407,19 +431,29 @@ def _classify_route(
             "subject_candidates": subject_candidates,
             # Structured fallback reason (decision-path Part 0): the
             # subject didn't ground at all. Distinct from "grounded but
-            # no verb" and — critically — from "verbs exist but your
-            # domain scope excluded them" (domain_scope_excluded), the
-            # deny primitive's data shadow. See the fallback_reason
-            # enum vocabulary in the module docstring.
-            "fallback_reason": "subject_unknown",
+            # no verb", from "verbs exist but your domain scope excluded
+            # them" (domain_scope_excluded, the deny primitive's data
+            # shadow), and — new (abstention-gate arc) — from
+            # "instance_not_found" (a NAMED individual the registry
+            # doesn't know, decided structurally, not by LLM sampling).
+            # See the fallback_reason enum vocabulary in the module
+            # docstring — this is a closed-enum ADDITION, not a reuse.
+            "fallback_reason": _fb_reason,
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
             "verb_reasoning": (
-                "ADR-0019 Contract B: /resolve returned UNKNOWN, so the "
-                "router short-circuits to the generalist without asking "
-                "the LLM to pick a verb. Confident specialist routing "
-                "without subject grounding is the regression shape "
-                "ADR-0019 deletes."
+                # Instance-not-found carries Engine O's actionable message
+                # through verbatim; the generic UNKNOWN keeps the
+                # ADR-0019 Contract-B rationale.
+                subject_reason
+                if is_instance_not_found
+                else (
+                    "ADR-0019 Contract B: /resolve returned UNKNOWN, so the "
+                    "router short-circuits to the generalist without asking "
+                    "the LLM to pick a verb. Confident specialist routing "
+                    "without subject grounding is the regression shape "
+                    "ADR-0019 deletes."
+                )
             ),
             "candidate_verbs": [],
             "compatible_verb_iris": [],
@@ -622,8 +656,8 @@ def _classify_route(
         "subject_candidates": subject_candidates,
         # Structured fallback reason. MATCHED path leaves it None (no
         # fallback); classify-returned-UNKNOWN sets no_verb_classified
-        # below. subject_unknown / no_compatible_verbs /
-        # domain_scope_excluded / infra_error are set in the earlier
+        # below. subject_unknown / instance_not_found / no_compatible_verbs
+        # / domain_scope_excluded / infra_error are set in the earlier
         # short-circuit branches.
         "fallback_reason": (
             None if verb_iri != "UNKNOWN" else "no_verb_classified"
@@ -851,10 +885,13 @@ def _log_subtask_route_assets(
         # (winners AND losers with scores) as JSON, and the structured
         # fallback_reason. candidate_count above stays (cheap glance);
         # subject_candidates is the full pool the visualizer's resolver
-        # stage renders. fallback_reason is the deny-primitive's data
-        # shadow — subject_unknown | no_compatible_verbs |
-        # domain_scope_excluded | no_verb_classified | infra_error, or
-        # empty on the matched path.
+        # stage renders. fallback_reason is a CLOSED enum (extended, never
+        # collapsed into an existing value): subject_unknown |
+        # instance_not_found | no_compatible_verbs | domain_scope_excluded
+        # | no_verb_classified | infra_error, or empty on the matched
+        # path. instance_not_found (abstention-gate arc, 2026-07-03) is a
+        # NAMED individual the registry doesn't know, decided structurally
+        # — distinct from subject_unknown (the class itself didn't ground).
         "subject_candidates": MetadataValue.text(
             json.dumps(telemetry.get("subject_candidates") or [])
         ),

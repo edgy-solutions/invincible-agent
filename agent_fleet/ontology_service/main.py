@@ -1014,6 +1014,8 @@ try:
     from agent_fleet.ontology_service.instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        decide_instance_abstention as _ir_abstention,
+        instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
     )
@@ -1021,6 +1023,8 @@ except ImportError:
     from instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        decide_instance_abstention as _ir_abstention,
+        instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
         DEFAULT_MIN_SCORE as _IR_DEFAULT_MIN,
     )
@@ -1439,6 +1443,37 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 # resolution then overrode to Y".
                 candidates=candidates,
             )
+
+        # STRUCTURAL ABSTENTION GATE (ADR-0026 abstention-gate arc).
+        # The instance didn't resolve. Before this gate, we fell straight
+        # through to the LLM's class guess (`result.resolved_uri`) — so
+        # whether a query naming a NON-EXISTENT specific individual
+        # (foo.bar.zzz_nope) abstained or got a confident-wrong class
+        # answer rode on the LLM's sampling. The gate replaces that
+        # LLM-mediated abstention with a deterministic decision over two
+        # recorded facts: the identifier's FORM and the resolution
+        # ``instance_match``. When it fires, we emit UNKNOWN (the router's
+        # honest short-circuit) with an ACTIONABLE message — NOT another
+        # LLM re-judgment. See [[project_abstention_gate_llm_mediated]].
+        if _ir_abstention(
+            identifier=identifier,
+            instance_subject=instance_subject,   # None on this branch
+            instance_match=str(instance_provenance.get("instance_match") or ""),
+        ) == "instance_not_found":
+            instance_provenance["abstention_reason"] = "instance_not_found"
+            return SemanticResolutionResponse(
+                resolved_uri="UNKNOWN",
+                confidence_score=0.0,
+                reasoning=_ir_not_found_msg(identifier),
+                provenance=instance_provenance,
+                candidates=candidates,
+            )
+
+        # Gate did NOT fire: either a generic term the extractor
+        # over-eagerly flagged (not instance-shaped → the class contest is
+        # the right answer) or an infra non-answer (timeout/error/
+        # no_providers — we didn't get a trustworthy "no", so we must not
+        # tell the user "no provider knows it"). Keep the LLM's class guess.
         return SemanticResolutionResponse(
             resolved_uri=str(result.resolved_uri),
             confidence_score=result.confidence_score,
