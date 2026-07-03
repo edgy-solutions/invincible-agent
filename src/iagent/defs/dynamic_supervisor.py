@@ -1153,6 +1153,19 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # was driving (response shape) in practice.
         "persona": answerer_persona,
         "domain": routing_domain,
+        # 2026-07-03 SECURITY-CORRECTNESS: thread the caller's REAL
+        # entitled_domains on the SPECIALIST dispatch too. The stopgap
+        # (2026-07-02) added this to _call_engine_a_fallback but MISSED
+        # this specialist path — so an ENTITLED caller (alice picking
+        # DATA_ENGINEER·DATA_ENGINEERING) whose ownership query routes
+        # to Engine A via the lookupOwnership verb had her scope
+        # dropped, Engine A's search_datahub sent empty entitled_domains
+        # to query_metadata, and the gate denied her (empty = fail-
+        # closed). Failed CLOSED (no leak) but wrongly denies the
+        # entitled. Engines that call the catalog (Engine A's
+        # search_datahub) read this to forward the caller's real scope
+        # to query_metadata's gate.
+        "entitled_domains": list(config.entitled_domains),
         "dynamic_schema_map": dynamic_schema_map,
         "user_id": config.user_id,
         # Hand the matched predicate to the engine for observability /
