@@ -43,7 +43,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from neo4j import GraphDatabase
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2521,6 +2521,151 @@ async def get_node_details(node_id: str, current_user: User = Depends(get_curren
             "_metadata": {"uri": node_id, "status": "ERROR"},
             "error": str(exc)
         }
+
+
+# ══════════════════════════════════════════════════════════
+# Decision subgraph — the two-layer diff map's data foundation.
+#
+# The decision-path MAP (not the summary card) draws the decision's
+# neighborhood as a spatial graph and OVERLAYS the captured decision on
+# the LIVE graph, rendering their DIVERGENCE honestly:
+#   captured ∩ live  → solid, on-path
+#   captured − live  → ghosted (the decision traversed a node that has
+#                      since changed — the staleness/defeasibility signal;
+#                      the spatial form of valid_as_of)
+#   live − captured  → dim context (present now, not part of the decision)
+#
+# This endpoint supplies the BASE layer: a BOUNDED live read of the
+# decision's neighborhood — the captured class nodes plus their immediate
+# (1-hop) structural context. NOT the whole graph, NOT click-to-expand
+# (that's the deferred interactive explorer). The frontend already holds
+# the captured decision (routing.candidates, graph_trace, alternates) and
+# computes the diff against what this returns.
+#
+# HONESTY RULE — three states, never two. `available=true` means the live
+# read succeeded and the diff is trustworthy. `available=false` is the
+# COULDN'T-CHECK state (Neo4j unreachable): the frontend must show the
+# captured decision LABELED "current graph state unavailable — cannot
+# verify what changed", NEVER silently present captured-as-current. "I
+# diffed and nothing changed" and "I couldn't diff" are different facts.
+# ══════════════════════════════════════════════════════════
+
+
+class DecisionSubgraphRequest(BaseModel):
+    """The captured decision's node identities, sent by the frontend. The
+    match key is IDENTITY (uri/iri) — strict; a renamed/re-URI'd node is a
+    DIFFERENT node and must read as gone, never fuzzy-matched to a
+    successor (that would conceal a divergence)."""
+    class_uris: list[str] = Field(default_factory=list)
+    verb_iris: list[str] = Field(default_factory=list)
+
+
+class DecisionSubgraphResponse(BaseModel):
+    available: bool                       # False = couldn't-check (live read failed)
+    reason: str = ""                      # why unavailable (couldn't-check detail)
+    live_nodes: list[dict] = Field(default_factory=list)   # {uri, labels} existing NOW
+    live_edges: list[dict] = Field(default_factory=list)   # {source, target, type}
+    context_nodes: list[dict] = Field(default_factory=list)  # 1-hop, not in captured set
+
+
+def _parse_decision_subgraph(
+    records: list[dict], captured_uris: set[str]
+) -> dict:
+    """PURE: fold flat (node, relationship, neighbor) rows into the base-
+    layer shape. One row per (captured node × its relationship); a node
+    with no relationships still appears (OPTIONAL MATCH → null rel).
+
+    Returns {live_nodes, live_edges, context_nodes}. Bounded to 1 hop:
+    context_nodes are the immediate neighbors NOT in the captured set
+    (drawn dim). Edges are de-duped by (source, target, type). The diff
+    (matched/diverged) is the frontend's job — this only reports what the
+    live graph actually holds, faithfully.
+    """
+    live_uris: dict[str, list[str]] = {}
+    edges: dict[tuple[str, str, str], None] = {}
+    context: dict[str, None] = {}
+
+    for row in records:
+        uri = row.get("uri")
+        if not uri:
+            continue
+        live_uris.setdefault(uri, row.get("labels") or [])
+
+        rel_type = row.get("rel_type")
+        neighbor = row.get("neighbor_uri")
+        if not rel_type or not neighbor:
+            continue
+        # Orient the edge by direction so the drawn arrow matches the graph.
+        if row.get("outgoing"):
+            src, tgt = uri, neighbor
+        else:
+            src, tgt = neighbor, uri
+        edges[(src, tgt, rel_type)] = None
+        # A neighbor outside the captured set is 1-hop context (dim).
+        if neighbor not in captured_uris:
+            context[neighbor] = None
+
+    return {
+        "live_nodes": [{"uri": u, "labels": lbls} for u, lbls in live_uris.items()],
+        "live_edges": [
+            {"source": s, "target": t, "type": ty} for (s, t, ty) in edges
+        ],
+        "context_nodes": [{"uri": u} for u in context],
+    }
+
+
+@app.post("/decision_subgraph", response_model=DecisionSubgraphResponse)
+async def decision_subgraph(
+    req: DecisionSubgraphRequest,
+    current_user: User = Depends(get_current_user),
+) -> DecisionSubgraphResponse:
+    """Base layer for the decision-path map: a BOUNDED live Neo4j read of
+    the decision's neighborhood. See the section header for the honesty
+    contract (three states; couldn't-check must not degrade to captured-
+    as-current)."""
+    captured = {u for u in req.class_uris if u}
+    if not captured:
+        # Nothing to diff against — honestly empty, but the read DID
+        # succeed (available=true; there's just no neighborhood).
+        return DecisionSubgraphResponse(available=True)
+
+    # Bounded: only the captured class nodes and their 1-hop OntologyClass
+    # neighbors (subClassOf + verb edges). No unbounded expansion.
+    cypher = """
+    MATCH (n:OntologyClass)
+    WHERE n.uri IN $uris
+    OPTIONAL MATCH (n)-[r]-(m:OntologyClass)
+    RETURN n.uri AS uri,
+           labels(n) AS labels,
+           type(r) AS rel_type,
+           m.uri AS neighbor_uri,
+           (startNode(r).uri = n.uri) AS outgoing
+    """
+    try:
+        with neo4j_driver.session() as session:
+            result = session.run(cypher, uris=list(captured))
+            records = [
+                {
+                    "uri": rec.get("uri"),
+                    "labels": rec.get("labels"),
+                    "rel_type": rec.get("rel_type"),
+                    "neighbor_uri": rec.get("neighbor_uri"),
+                    "outgoing": rec.get("outgoing"),
+                }
+                for rec in result
+            ]
+        parsed = _parse_decision_subgraph(records, captured)
+        return DecisionSubgraphResponse(available=True, **parsed)
+    except Exception as exc:  # noqa: BLE001
+        # COULDN'T-CHECK. Do NOT fabricate a base layer. Report the live
+        # read failed so the frontend labels the map "captured-only,
+        # cannot verify what changed" rather than presenting historical
+        # structure as current.
+        logger.error("decision_subgraph live read failed: %s", exc)
+        return DecisionSubgraphResponse(
+            available=False,
+            reason=f"live graph read failed: {exc}",
+        )
 
 
 # ══════════════════════════════════════════════════════════
