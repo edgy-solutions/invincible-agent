@@ -530,6 +530,19 @@ def _project_route_decision(mat: dict) -> dict | None:
     verb_iri = md.get("verb_iri") or "UNKNOWN"
     handler_endpoint = md.get("handler_endpoint") or ""
 
+    # Decision-path visualizer (Part 1): the resolver candidate pool —
+    # winner AND losers, each with a score — is captured by the supervisor
+    # as a JSON-text metadata value. Carry it through the render seam so
+    # the visualizer can render losers first-class. "Render only what was
+    # captured" requires the capture to REACH the boundary; an absent pool
+    # projects to [] (honestly "no losers recorded"), never a crash.
+    try:
+        candidates = json.loads(md.get("subject_candidates") or "[]")
+        if not isinstance(candidates, list):
+            candidates = []
+    except (ValueError, TypeError):
+        candidates = []
+
     # Specialist detection: route_status=="matched" is the supervisor's
     # authoritative "yes, we dispatched to a specialist endpoint" signal.
     # handler_endpoint being non-empty is a belt-and-suspenders check.
@@ -573,6 +586,9 @@ def _project_route_decision(mat: dict) -> dict | None:
             },
             "route_status": route_status,
             "fallback": False,
+            # The candidates the winner beat — the visualizer shows the
+            # contest, not just the winner (losers first-class).
+            "candidates": candidates,
         }
 
     # Fallback projection — surface that the pipeline GENUINELY fell
@@ -580,7 +596,19 @@ def _project_route_decision(mat: dict) -> dict | None:
     # was honest-by-omission but read to users as "system is broken").
     # The fallback IS what happened; saying so directly is the more
     # informative form of "surface what the pipeline did".
-    fallback_reason = (
+    #
+    # PREFER THE STRUCTURED REASON. The supervisor captured a closed-enum
+    # fallback_reason (subject_unknown | instance_not_found |
+    # no_compatible_verbs | domain_scope_excluded | no_verb_classified |
+    # infra_error). Pass THAT through verbatim — re-deriving a coarser
+    # vocabulary here is a [[resolution-discard-pattern]] instance at the
+    # render seam: it flattened instance_not_found → "no_subject" and
+    # domain_scope_excluded → "no_compatible_verbs", destroying exactly
+    # the distinctions the abstention arc and the PII-exploit made
+    # structural. The heuristic below is retained ONLY as backward-compat
+    # for pre-Part-0 materializations that carry no structured reason.
+    structured_reason = md.get("fallback_reason") or ""
+    fallback_reason = structured_reason or (
         "infra_error" if route_status == "infra_error"
         else ("no_compatible_verbs" if (subject_uri != "UNKNOWN" and verb_iri == "UNKNOWN")
               else ("no_subject" if subject_uri == "UNKNOWN"
@@ -610,6 +638,9 @@ def _project_route_decision(mat: dict) -> dict | None:
         "route_status": route_status,
         "fallback": True,
         "fallback_reason": fallback_reason,
+        # The resolver pool that failed to ground — losers first-class,
+        # so "why did nothing win" is visible with scores.
+        "candidates": candidates,
     }
 
 
