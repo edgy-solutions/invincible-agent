@@ -28,14 +28,19 @@ KEYCLOAK_URL = os.getenv("KEYCLOAK_REALM_URL", "http://localhost:8080/realms/inv
 # This tells FastAPI how to extract the Bearer token from the Authorization header.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{KEYCLOAK_URL}/protocol/openid-connect/token")
 
-# Per ADR-0009 the user persona is sourced from identity-provider claims, not
-# from query-text classification. PingSSO does not currently carry a `persona`
-# claim; we read whichever claim *is* present (in priority order) and fall back
-# to a sane default so engines can boot without claim expansion. Override via
-# env if the IdP team wires a different claim name.
-USER_PERSONA_CLAIM = os.getenv("USER_PERSONA_CLAIM", "persona")
-USER_PERSONA_FALLBACK = os.getenv("USER_PERSONA_FALLBACK", "MECHANIC")
-USER_DOMAINS_CLAIM = os.getenv("USER_DOMAINS_CLAIM", "entitled_domains")
+# 2026-07-03 — ADR-0026 step 6: the JWT-claim persona path is RETIRED.
+# Persona + entitled_domains are now sourced SOLELY from Topaz
+# (the entitlement matrix, keyed by USER_ENTITLEMENT_CLAIM below).
+# The old `USER_PERSONA_CLAIM` / `USER_PERSONA_FALLBACK` /
+# `USER_DOMAINS_CLAIM` machinery is deleted — it manufactured an
+# identity claim (MECHANIC) from an ABSENT fact, which is exactly the
+# `[[optimistic-defaults-are-dishonest]]` shape that caused the
+# original persona confusion. A user with zero Topaz entitlements now
+# gets HONEST-EMPTY (persona=None, entitled_domains=[]) — least
+# privilege, never a fabricated persona. The empty state stays
+# representationally distinct (None, not a coalesced string default)
+# all the way to the artifact's produced_for. See ADR-0026 step 6
+# + `[[single-authz-decider]]`.
 
 # Topaz Directory service URL for ADR-0026 entitlement enrichment.
 # When set, `get_current_user` fetches the caller's (persona, domain)
@@ -68,42 +73,40 @@ USER_ENTITLEMENT_CLAIM = os.getenv("USER_ENTITLEMENT_CLAIM", "email")
 
 
 # Capture A per ADR-0025 § "Capture A — entitlement_source fidelity flag
-# on produced_for".
+# on produced_for". Records WHERE the persona / entitlements came from,
+# captured at token-read time (capture-or-lose-forever per
+# `[[verify-subtle-acceptance-by-inspection]]`).
 #
-# The persona / entitlements VALUE the User carries is the same value
-# downstream code uses today (fallback when the claim is absent, claim
-# value when present). The new `entitlement_source` field records WHICH
-# ORIGIN the value came from — information that exists ONLY at the
-# moment the JWT is read, and is unrecoverable later
-# (capture-or-lose-forever per `[[verify-subtle-acceptance-by-inspection]]`).
+# Post ADR-0026 step 6 (2026-07-03) the JWT-claim origins are gone;
+# there are exactly two truthful states:
+#   "topaz" — Topaz returned a non-empty entitlement matrix for this
+#             caller. persona/domains derive from it.
+#   "none"  — Topaz returned an EMPTY matrix (unseeded user). HONEST-
+#             EMPTY: persona=None, entitled_domains=[]. NOT a fabricated
+#             default — least privilege, representationally distinct.
 #
-# Vocabulary:
-#   "claim"    — both persona and domains claims were present.
-#   "fallback" — neither was present (the PingSSO production baseline
-#                per `[[pingsso-claim-gap]]`).
-#   "partial"  — exactly one was present, the other fell back
-#                (transitional / misconfigured state).
-#
-# Per `[[optimistic-defaults-are-dishonest]]`: the field is REQUIRED on
-# the User model — no default. Defaulting to "claim" would silently
-# mask the fallback path (which is the production baseline) and
-# convert silence into a success signal. Required input forces
-# get_current_user to compute the value at the moment the JWT is read.
-EntitlementSource = Literal["claim", "fallback", "partial", "topaz"]
+# Per `[[optimistic-defaults-are-dishonest]]`: REQUIRED on the User
+# model — no default. A forgotten value is a ValidationError, not a
+# silent "topaz". (The legacy "claim"/"fallback"/"partial" values are
+# retired with the JWT-claim path.)
+EntitlementSource = Literal["topaz", "none"]
 
 
 class User(BaseModel):
     id: str
     email: str
     roles: List[str] = []
-    # Per ADR-0009: caller-side persona. Drives entitlements, scope filtering,
-    # UI defaults, and (when the matched predicate is persona-agnostic) the
-    # answerer persona. Sourced from JWT claims with a documented fallback.
-    persona: str = USER_PERSONA_FALLBACK
-    # Per ADR-0009: domain scopes the caller is entitled to query. Empty list
-    # means no entitled-domains claim was present in the JWT; downstream code
-    # should treat that as "no scope filter applied" rather than "no access"
-    # until the IdP team expands the claim set.
+    # Per ADR-0009: caller-side persona. Post ADR-0026 step 6, sourced
+    # SOLELY from the Topaz entitlement matrix (the default cell's
+    # persona, else the first cell's). `None` — NOT a fabricated
+    # default — when the caller has zero Topaz entitlements. The
+    # None stays representationally distinct all the way to
+    # produced_for; no layer coalesces it to a string default.
+    persona: Optional[str] = None
+    # Per ADR-0009: domain scopes the caller is entitled to. Derived
+    # from the Topaz entitlement matrix; empty list = no entitled
+    # domains (honest-empty), not "no filter". Downstream gates treat
+    # empty as least-privilege (deny privileged, allow generalist).
     entitled_domains: List[str] = []
     # Capture A per ADR-0025: which origin did the persona / entitlements
     # come from? REQUIRED — no default per
@@ -168,42 +171,6 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         realm_access = payload.get("realm_access", {})
         roles = realm_access.get("roles", [])
 
-        # Capture A per ADR-0025: record WHICH ORIGIN the persona /
-        # entitlements came from, BEFORE the fallback is applied. After
-        # `or USER_PERSONA_FALLBACK` runs, the information that the
-        # claim was absent is gone — capture-or-lose-forever per
-        # `[[verify-subtle-acceptance-by-inspection]]`. The presence
-        # check must happen on the raw payload dict, not on the
-        # post-fallback value.
-        persona_claim_present = USER_PERSONA_CLAIM in payload
-        domains_claim_present = USER_DOMAINS_CLAIM in payload
-
-        # Per ADR-0009: try the configured persona claim; default to the
-        # fallback if the IdP doesn't issue it yet. Normalize to upper-case
-        # to match the answerer-persona vocabulary engines already use.
-        persona_claim = payload.get(USER_PERSONA_CLAIM)
-        persona = (persona_claim or USER_PERSONA_FALLBACK).upper()
-
-        # Per ADR-0009: entitled domains list — defaults to empty when the
-        # IdP doesn't issue the claim. Downstream `/find_tool` callers treat
-        # an empty list as "no domain scope filter" until claim expansion.
-        entitled_raw = payload.get(USER_DOMAINS_CLAIM, [])
-        if isinstance(entitled_raw, str):
-            entitled_raw = [s.strip() for s in entitled_raw.split(",") if s.strip()]
-        entitled_domains = [str(d).upper() for d in entitled_raw if d]
-
-        # Capture A: compute entitlement_source from the presence
-        # checks captured above. Three legitimate values; per
-        # `[[optimistic-defaults-are-dishonest]]` the User model
-        # REQUIRES this explicitly — a forgotten value would be a
-        # ValidationError, not a silent default.
-        if persona_claim_present and domains_claim_present:
-            entitlement_source: EntitlementSource = "claim"
-        elif not persona_claim_present and not domains_claim_present:
-            entitlement_source = "fallback"
-        else:
-            entitlement_source = "partial"
-
         if not user_id or not email:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -211,12 +178,10 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # ADR-0026 step 3: enrich with topaz entitlement matrix.
-        # Per-token cache keyed by (sub, jti) with TTL = token exp.
-        # When TOPAZ_DIRECTORY_URL is unset (legacy cluster), skip
-        # topaz and return the User with an empty Entitlements — the
-        # JWT-claim path above still populates persona + entitled_domains
-        # for downstream code that hasn't switched to the matrix yet.
+        # ADR-0026 step 6: Topaz is the SOLE source of persona +
+        # entitled_domains. Fetch the matrix first, then DERIVE
+        # everything from it. No JWT-claim persona reads remain.
+        # Per-token cache keyed by (sub, jti), TTL = token exp.
         entitlements = Entitlements()
         cache = _get_entitlement_cache()
         if cache is not None:
@@ -225,29 +190,17 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             exp = float(payload.get("exp") or 0)
             # Topaz lookup identifier — the human-legible claim (email
             # by default) that policy/users.yaml keys on, NOT the sub.
-            # See USER_ENTITLEMENT_CLAIM. Falls back to sub if the
-            # configured claim is absent so a missing email doesn't
-            # blank every user's entitlements silently.
+            # Falls back to sub if the configured claim is absent.
             lookup_key = payload.get(USER_ENTITLEMENT_CLAIM) or user_id
             try:
                 entitlements = cache.get(
                     sub=user_id, jti=jti, exp=exp, lookup_key=lookup_key
                 )
-                # When topaz did return a real matrix (not empty),
-                # override the entitlement_source flag to record
-                # topaz as the authoritative source. Empty matrix from
-                # topaz means the user isn't seeded — leave the JWT-
-                # claim provenance flag in place.
-                if entitlements.cells:
-                    entitlement_source = "topaz"
             except AuthorizationUnavailable:
-                # ADR-0026 posture: on cache-miss + topaz-unreachable
-                # we DENY, not fall back to legacy claim path. Cache
-                # itself served a stale-but-valid matrix under a
-                # cached token, so this branch only fires for FRESH
-                # tokens during a topaz outage. Distinct 503 lets the
-                # caller distinguish "auth is down" from "you're
-                # denied" per the ADR.
+                # Authz is a GATE, not a trailing step: on cache-miss +
+                # topaz-unreachable we DENY (503), never fall back to a
+                # fabricated persona. Distinct 503 lets the caller tell
+                # "auth is down" from "you're denied" per ADR-0026.
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={
@@ -261,6 +214,28 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
                         ),
                     },
                 )
+
+        # Derive persona + entitled_domains from the matrix. HONEST-
+        # EMPTY when the user has zero cells: persona=None (NOT a
+        # fabricated default — null stays null all the way to
+        # produced_for), entitled_domains=[]. Least privilege.
+        if entitlements.default is not None:
+            persona: Optional[str] = entitlements.default.persona
+        elif entitlements.cells:
+            persona = entitlements.cells[0].persona
+        else:
+            persona = None  # honest-empty — never MECHANIC/ANALYST/etc.
+
+        # All domains the caller is entitled to across their cells.
+        entitled_domains = sorted(
+            {c.domain for c in entitlements.cells}
+        )
+
+        # Capture A: two truthful states now — topaz (has cells) or
+        # none (unseeded, honest-empty). Required on the User model.
+        entitlement_source: EntitlementSource = (
+            "topaz" if entitlements.cells else "none"
+        )
 
         return User(
             id=user_id,

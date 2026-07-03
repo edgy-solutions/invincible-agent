@@ -909,7 +909,7 @@ async def _launch_supervisor_job(
     # the matched predicate is persona-agnostic.
     # Step F'.6: candidate_verb dropped — supervisor now sends user_query
     # directly to /search_predicates (Weaviate hybrid).
-    user_persona: str = "MECHANIC",
+    user_persona: str | None = None,
     entitled_domains: list[str] | None = None,
     entity_refs: list[str] | None = None,
 ) -> str | None:
@@ -1299,7 +1299,7 @@ async def generate_dagster_stream(
     # JWT (see auth.User), threaded down from the /orchestrate route so we
     # don't re-decode the token mid-stream. Defaults match the auth fallback
     # so legacy callers that haven't been migrated still work.
-    user_persona: str = "MECHANIC",
+    user_persona: str | None = None,
     entitled_domains: list[str] | None = None,
     # Capture A per ADR-0025: WHICH origin the persona / entitled_domains
     # came from. Threaded down from /orchestrate so the produced_for dict
@@ -2133,9 +2133,13 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
         effective_domains = ds
         effective_source = "picker"
     else:
-        # No override — pick the default cell, then fall back to
-        # legacy JWT path only when the user has no seeded entitlements
-        # at all (legacy cluster or unsseeded user).
+        # No override — pick the default cell, then the first cell, then
+        # HONEST-EMPTY (ADR-0026 step 6): a caller with zero entitlements
+        # gets persona=None + no domains — NOT a fabricated fallback.
+        # `current_user.persona` is itself None here (Topaz-derived), so
+        # the None flows through honestly; nothing coalesces it. The
+        # generalist handles the query without a persona; any privileged
+        # path hits the real gate and denies with an actionable message.
         if ent.default is not None:
             effective_persona = ent.default.persona
             effective_domains = [ent.default.domain]
@@ -2145,9 +2149,11 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
             effective_domains = ent.domains_for(ent.cells[0].persona)
             effective_source = "first-cell"
         else:
-            effective_persona = current_user.persona
-            effective_domains = current_user.entitled_domains
-            effective_source = "jwt-legacy"
+            # honest-empty — persona is None (current_user.persona is
+            # None post step-6), domains empty. Least privilege.
+            effective_persona = current_user.persona  # None
+            effective_domains = current_user.entitled_domains  # []
+            effective_source = "none"
 
     logger.info(
         "orchestrate: user=%s persona=%s domains=%s source=%s "

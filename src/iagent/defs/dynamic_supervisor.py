@@ -12,7 +12,7 @@ import requests
 import sys
 import logging
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("iagent.supervisor")
 
@@ -99,7 +99,12 @@ class SupervisorQueryConfig(Config):
     task_plan_json: str = ""  # Optional pre-computed plan from BFF
     user_id: str = "default_testing_user"
     # ADR-0009 Step F'.2 / F'.3 additions:
-    user_persona: str = "MECHANIC"
+    # ADR-0026 step 6: honest-empty. None when the caller has zero
+    # Topaz entitlements — NOT a fabricated MECHANIC default. Flows
+    # through as null so produced_for stays honest; the answerer voice
+    # (owner_persona / engine-side) still defaults for the RESPONSE
+    # shape, but the CALLER persona recorded in provenance stays None.
+    user_persona: Optional[str] = None
     entitled_domains: List[str] = []
     entity_refs: List[str] = []
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
