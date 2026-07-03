@@ -29,7 +29,10 @@ _SRC = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from iagent.gateway import _parse_decision_subgraph  # noqa: E402
+from iagent.gateway import (  # noqa: E402
+    _parse_decision_subgraph,
+    _parse_ancestor_chain,
+)
 
 
 def _row(uri, labels=None, rel_type=None, neighbor_uri=None, outgoing=None):
@@ -149,6 +152,60 @@ def test_couldnt_check_on_live_read_failure(monkeypatch):
     )
     assert resp.live_nodes == [] and resp.context_nodes == []
     assert "failed" in resp.reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# The ancestor-chain walk (the map's structural prerequisite). The
+# projection caps the captured decision at ONE ancestor + a "+N hops"
+# count; the map needs every intermediate subClassOf class as a REAL node.
+# ---------------------------------------------------------------------------
+def test_ancestor_chain_full_walk_intermediate_hops_are_real_nodes():
+    """A deep walk Dashboard → Dataset → Resource → Thing: every
+    intermediate class must be a real chain node, not collapsed to a
+    badge. The ordered spine is subject-first."""
+    path_rows = [{
+        "nodes": [
+            {"uri": "idp#Dashboard", "labels": ["OntologyClass"]},
+            {"uri": "idp#Dataset", "labels": ["OntologyClass"]},
+            {"uri": "idp#Resource", "labels": ["OntologyClass"]},
+            {"uri": "idp#Thing", "labels": ["OntologyClass"]},
+        ],
+        "edges": [
+            {"source": "idp#Dashboard", "target": "idp#Dataset"},
+            {"source": "idp#Dataset", "target": "idp#Resource"},
+            {"source": "idp#Resource", "target": "idp#Thing"},
+        ],
+    }]
+    out = _parse_ancestor_chain(path_rows)
+    chain_uris = {n["uri"] for n in out["chain_nodes"]}
+    assert chain_uris == {"idp#Dashboard", "idp#Dataset", "idp#Resource", "idp#Thing"}, (
+        "every intermediate subClassOf class must be a REAL node — the "
+        "map's structure is the intermediate hops, not a +N badge"
+    )
+    assert out["ordered_chain"] == [
+        "idp#Dashboard", "idp#Dataset", "idp#Resource", "idp#Thing",
+    ], "spine is ordered subject-first for the vertical render"
+    assert all(e["type"] == "subClassOf" for e in out["chain_edges"])
+    assert len(out["chain_edges"]) == 3
+
+
+def test_ancestor_chain_longest_path_is_the_spine():
+    """A branching hierarchy (two parents at some level) → all nodes
+    union'd, and the LONGEST path is the canonical ordered spine."""
+    path_rows = [
+        {"nodes": [{"uri": "A"}, {"uri": "B"}], "edges": [{"source": "A", "target": "B"}]},
+        {"nodes": [{"uri": "A"}, {"uri": "C"}, {"uri": "D"}],
+         "edges": [{"source": "A", "target": "C"}, {"source": "C", "target": "D"}]},
+    ]
+    out = _parse_ancestor_chain(path_rows)
+    assert {n["uri"] for n in out["chain_nodes"]} == {"A", "B", "C", "D"}
+    assert out["ordered_chain"] == ["A", "C", "D"]  # the longer path
+
+
+def test_ancestor_chain_empty_when_no_paths():
+    out = _parse_ancestor_chain([])
+    assert out["chain_nodes"] == []
+    assert out["ordered_chain"] == []
 
 
 def test_empty_captured_is_available_but_empty(monkeypatch):

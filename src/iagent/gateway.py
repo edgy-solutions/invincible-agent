@@ -2558,6 +2558,14 @@ class DecisionSubgraphRequest(BaseModel):
     successor (that would conceal a divergence)."""
     class_uris: list[str] = Field(default_factory=list)
     verb_iris: list[str] = Field(default_factory=list)
+    # The resolved subject — the anchor for the FULL subClassOf ancestor
+    # walk. The captured decision (from _project_graph_trace) caps the
+    # ancestor chain at ONE node + a "+N hops" count; for the summary
+    # panels that's fine, but the MAP is a spatial render of the STRUCTURE,
+    # where the intermediate hops ARE the structure. So the map's base-
+    # layer read walks the real chain from here rather than inheriting the
+    # projection's cap. Empty → no ancestor walk (falls back to 1-hop).
+    subject_uri: str = ""
 
 
 class DecisionSubgraphResponse(BaseModel):
@@ -2566,6 +2574,11 @@ class DecisionSubgraphResponse(BaseModel):
     live_nodes: list[dict] = Field(default_factory=list)   # {uri, labels} existing NOW
     live_edges: list[dict] = Field(default_factory=list)   # {source, target, type}
     context_nodes: list[dict] = Field(default_factory=list)  # 1-hop, not in captured set
+    # The FULL subClassOf ancestor chain from the subject up, ordered
+    # (subject first). The map draws this as the vertical structural spine
+    # — every intermediate class a REAL node, not a "+N hops" badge. Empty
+    # when no subject_uri was given or the subject has no ancestors.
+    ancestor_chain: list[str] = Field(default_factory=list)
 
 
 def _parse_decision_subgraph(
@@ -2614,6 +2627,45 @@ def _parse_decision_subgraph(
     }
 
 
+def _parse_ancestor_chain(path_rows: list[dict]) -> dict:
+    """PURE: fold subClassOf-path rows into the ordered ancestor spine +
+    its nodes/edges. Each row is one path from the subject:
+    {nodes: [{uri, labels}, ...], edges: [{source, target}, ...]}, ordered
+    subject→…→ancestor. Multiple rows = a branching hierarchy.
+
+    Returns {chain_nodes, chain_edges, ordered_chain}. `ordered_chain` is
+    the LONGEST path's uris in order (subject first) — the spine the map
+    draws vertically. nodes/edges are the union across all paths (a class
+    with two parents contributes both edges). This is what makes the
+    intermediate hops REAL nodes instead of a "+N hops" badge."""
+    nodes: dict[str, list[str]] = {}
+    edges: dict[tuple[str, str], None] = {}
+    ordered: list[str] = []
+
+    for row in path_rows:
+        row_nodes = row.get("nodes") or []
+        for n in row_nodes:
+            uri = n.get("uri")
+            if uri:
+                nodes.setdefault(uri, n.get("labels") or [])
+        for e in (row.get("edges") or []):
+            s, t = e.get("source"), e.get("target")
+            if s and t:
+                edges[(s, t)] = None
+        # Track the longest path as the canonical ordered spine.
+        row_uris = [n.get("uri") for n in row_nodes if n.get("uri")]
+        if len(row_uris) > len(ordered):
+            ordered = row_uris
+
+    return {
+        "chain_nodes": [{"uri": u, "labels": lbls} for u, lbls in nodes.items()],
+        "chain_edges": [
+            {"source": s, "target": t, "type": "subClassOf"} for (s, t) in edges
+        ],
+        "ordered_chain": ordered,
+    }
+
+
 @app.post("/decision_subgraph", response_model=DecisionSubgraphResponse)
 async def decision_subgraph(
     req: DecisionSubgraphRequest,
@@ -2641,6 +2693,17 @@ async def decision_subgraph(
            m.uri AS neighbor_uri,
            (startNode(r).uri = n.uri) AS outgoing
     """
+    # The FULL subClassOf ancestor walk from the subject (variable-length,
+    # bounded *0..8). This is the fix for the projection's one-ancestor
+    # cap: the map needs every intermediate class as a real node, because
+    # for a spatial render of the structure the intermediate hops ARE the
+    # structure. `subClassOf` is the substrate's relationship type (same as
+    # the compat-walk's [:subClassOf*0..N]).
+    chain_cypher = """
+    MATCH p = (s:OntologyClass {uri: $subject})-[:subClassOf*0..8]->(a:OntologyClass)
+    RETURN [n IN nodes(p) | {uri: n.uri, labels: labels(n)}] AS nodes,
+           [r IN relationships(p) | {source: startNode(r).uri, target: endNode(r).uri}] AS edges
+    """
     try:
         with neo4j_driver.session() as session:
             result = session.run(cypher, uris=list(captured))
@@ -2654,8 +2717,36 @@ async def decision_subgraph(
                 }
                 for rec in result
             ]
+            chain_rows: list[dict] = []
+            if req.subject_uri:
+                chain_result = session.run(chain_cypher, subject=req.subject_uri)
+                chain_rows = [
+                    {"nodes": rec.get("nodes"), "edges": rec.get("edges")}
+                    for rec in chain_result
+                ]
         parsed = _parse_decision_subgraph(records, captured)
-        return DecisionSubgraphResponse(available=True, **parsed)
+        chain = _parse_ancestor_chain(chain_rows)
+
+        # Merge the ancestor spine into the live layer — the intermediate
+        # ancestors become REAL live nodes/edges (not a badge). De-dupe
+        # against the 1-hop nodes/edges already present.
+        seen_nodes = {n["uri"] for n in parsed["live_nodes"]}
+        for n in chain["chain_nodes"]:
+            if n["uri"] not in seen_nodes:
+                parsed["live_nodes"].append(n)
+                seen_nodes.add(n["uri"])
+        seen_edges = {(e["source"], e["target"], e["type"]) for e in parsed["live_edges"]}
+        for e in chain["chain_edges"]:
+            key = (e["source"], e["target"], e["type"])
+            if key not in seen_edges:
+                parsed["live_edges"].append(e)
+                seen_edges.add(key)
+
+        return DecisionSubgraphResponse(
+            available=True,
+            ancestor_chain=chain["ordered_chain"],
+            **parsed,
+        )
     except Exception as exc:  # noqa: BLE001
         # COULDN'T-CHECK. Do NOT fabricate a base layer. Report the live
         # read failed so the frontend labels the map "captured-only,
