@@ -45,14 +45,15 @@ TEST_USER = "__hop1_probe_user"
 
 
 def _can_read(user: str, dataset_urn: str) -> bool:
-    """General can_read permission check (the cell-specific one in
-    topaz_sync is hardcoded to cells; hop 1 checks the dataset type)."""
+    """can_read check via the v3 directory `/check` endpoint (evaluates a
+    relation OR a permission name). `can_read` is the dataset permission
+    (reader | owner) declared in the manifest."""
     r = httpx.post(
-        f"{TOPAZ_URL.rstrip('/')}/api/v3/directory/check/permission",
+        f"{TOPAZ_URL.rstrip('/')}/api/v3/directory/check",
         json={
             "object_type": "dataset",
             "object_id": dataset_urn,
-            "permission": "can_read",
+            "relation": "can_read",
             "subject_type": "user",
             "subject_id": user,
         },
