@@ -344,6 +344,12 @@ class MetadataQueryRequest(BaseModel):
     persona: str = "DATA_STEWARD"
     domain: str = "DATA_ENGINEERING"
     entitled_domains: List[str] = []
+    # ADR-0025 hop 2: the caller's ENTITLEMENT KEY (email), threaded from
+    # auth → supervisor → Engine A. The SUBJECT of the Topaz can_view ask
+    # that supersedes the in-code entitled_domains gate. Empty → the ask
+    # denies (Topaz has no `user:` object for ""), matching the least-
+    # privileged posture of an empty entitled_domains.
+    caller_email: str = ""
     entity_type: Optional[str] = None
 
 
@@ -352,6 +358,62 @@ class MetadataQueryRequest(BaseModel):
 # caller's entitled_domains against this. Env-overridable for
 # deployments that scope the catalog differently.
 _ENGINE_D_SERVED_DOMAIN = os.getenv("ENGINE_D_SERVED_DOMAIN", "DATA_ENGINEERING")
+
+# ── ADR-0025 hop 2: the ASK that supersedes the in-code domain gate ──────
+# When ENABLE_AGENTIC_AUTH is ON, query_metadata ASKS Topaz can_view instead
+# of evaluating entitled_domains in-code. Single-decider: the predicate lives
+# in catalog_domain_view.rego (package invincible_agent.catalog.can_view),
+# NOT here. The flag stays OFF until every enforcement point is migrated + the
+# directory is seeded (hop 1) — it flips LAST. OFF → the in-code gate holds,
+# behavior unchanged (dark launch).
+ENABLE_AGENTIC_AUTH = os.getenv("ENABLE_AGENTIC_AUTH", "false").lower() in ("true", "1", "yes")
+TOPAZ_AUTHORIZER_URL = os.getenv("TOPAZ_AUTHORIZER_URL", "http://topaz-svc:8383")
+_CATALOG_VIEW_POLICY_PATH = "invincible_agent.catalog.can_view"
+
+
+async def _topaz_can_view(caller_email: str, domain: str) -> bool:
+    """Ask Topaz whether ``caller_email`` may view the ``domain`` catalog.
+
+    The single-decider ASK: Topaz DERIVES readership from the caller's own
+    seeded cells (catalog_domain_view.rego walks persona×domain grants) —
+    query_metadata does not evaluate any policy predicate. The subject is
+    passed in resourceContext (this Topaz has no identity→user resolution
+    objects; identityContext is present only to satisfy request validation).
+
+    Fail-CLOSED: any error, timeout, or unreachable authorizer returns False.
+    An auth-service problem must DENY the PII catalog, never open it — the
+    inverse of the fail-open bug the ADR-0025 amendment names.
+    """
+    payload = {
+        "identityContext": {
+            "identity": caller_email or "anonymous",
+            "type": "IDENTITY_TYPE_MANUAL",
+        },
+        "resourceContext": {"user_id": caller_email, "domain": domain},
+        "policyContext": {
+            "path": _CATALOG_VIEW_POLICY_PATH,
+            "decisions": ["allowed"],
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(
+                f"{TOPAZ_AUTHORIZER_URL}/api/v2/authz/is", json=payload
+            )
+            r.raise_for_status()
+            for d in r.json().get("decisions", []):
+                if d.get("decision") == "allowed":
+                    return bool(d.get("is", False))
+        return False
+    except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
+        logging.error(
+            "QUERY_METADATA: Topaz can_view ask FAILED for %r/%s "
+            "(fail-closed DENY): %r",
+            caller_email,
+            domain,
+            e,
+        )
+        return False
 
 
 # Recipe v2 instance-resolution contract.
@@ -858,28 +920,35 @@ async def query_metadata(request: MetadataQueryRequest):
     Takes a natural language query, dynamically applies platform filters,
     searches DataHub, and returns formatted metadata context.
     """
-    # ── SECURITY GATE (2026-07-02, interim domain-granularity) ──────
-    # Deny BEFORE any DataHub query if the caller is not entitled to
-    # this catalog's served domain. The whole catalog is
-    # DATA_ENGINEERING; a caller whose entitled_domains doesn't include
-    # it gets an honest "not entitled" answer, not the metadata.
+    # ── ACCESS GATE — deny BEFORE any DataHub query ─────────────────
+    # Two paths, selected by ENABLE_AGENTIC_AUTH (ADR-0025 hop 2):
     #
-    # Empty entitled_domains → DENY (least-privileged). This is the
-    # fail-closed default that closes the confirmed bypass: previously
-    # every caller (any persona incl. garbage, any/no domain) got full
-    # PII-tagged metadata. Now a request must carry an entitlement that
-    # includes the served domain.
+    #   ON  → ASK Topaz can_view(caller_email, served_domain). Topaz is the
+    #         single decider; the predicate lives in catalog_domain_view.rego
+    #         (it derives readership from the caller's seeded cells). This is
+    #         the migration of the in-code predicate to an ASK.
+    #   OFF → the 2026-07-02 in-code gate: served_domain ∈ entitled_domains.
+    #         Unchanged behavior; the flag flips LAST (after all enforcement
+    #         points migrate + the directory is seeded). Dark launch.
     #
-    # This is a coarse INTERIM gate. Successor = per-asset Topaz
-    # `can_view` (ADR-0025 enforcement session). Deny is honest, not
-    # silent: the response says entitlement is required, distinct from
-    # "no assets matched".
+    # Either way: empty/denied → an HONEST "not entitled" answer (fail-CLOSED,
+    # least-privileged), distinct from "no assets matched". This closes the
+    # confirmed bypass where any caller got full PII-tagged metadata.
     entitled = [d.upper() for d in (request.entitled_domains or [])]
-    if _ENGINE_D_SERVED_DOMAIN.upper() not in entitled:
+    if ENABLE_AGENTIC_AUTH:
+        allowed = await _topaz_can_view(request.caller_email, _ENGINE_D_SERVED_DOMAIN)
+        gate_basis = "topaz_can_view"
+    else:
+        allowed = _ENGINE_D_SERVED_DOMAIN.upper() in entitled
+        gate_basis = "in_code_entitled_domains"
+
+    if not allowed:
         logging.warning(
-            "QUERY_METADATA DENIED: caller not entitled to served domain "
-            "%s. entitled_domains=%s persona=%s query=%r",
+            "QUERY_METADATA DENIED (%s): served_domain=%s caller_email=%r "
+            "entitled_domains=%s persona=%s query=%r",
+            gate_basis,
             _ENGINE_D_SERVED_DOMAIN,
+            request.caller_email,
             entitled,
             request.persona,
             request.user_query[:120],
@@ -892,13 +961,13 @@ async def query_metadata(request: MetadataQueryRequest):
                 short_answer=(
                     f"Not entitled: this catalog serves the "
                     f"{_ENGINE_D_SERVED_DOMAIN} domain, and your access "
-                    f"scope ({entitled or 'none'}) does not include it. "
+                    f"scope does not include it. "
                     f"No metadata was retrieved. Request "
                     f"{_ENGINE_D_SERVED_DOMAIN} entitlement to query it."
                 ),
                 safety_warnings=[
                     f"access_denied: served_domain={_ENGINE_D_SERVED_DOMAIN} "
-                    f"not in entitled_domains"
+                    f"basis={gate_basis}"
                 ],
             ),
         )

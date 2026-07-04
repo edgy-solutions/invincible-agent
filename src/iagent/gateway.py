@@ -995,6 +995,10 @@ async def _launch_supervisor_job(
     domain: str = "MAINTENANCE",
     task_plan_json: str = "",
     user_id: str = "default_testing_user",
+    # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
+    # runConfig key so the generalist-fallback subtask can hand it to
+    # Engine D's query_metadata for the Topaz can_view ask.
+    user_email: str = "",
     # Per ADR-0009 Step F'.2: thread user-context fields into the supervisor
     # so the supervisor's per-subtask predicate lookup (Step F'.3) can scope
     # by entitled_domains and use user_persona as the answerer fallback when
@@ -1060,6 +1064,7 @@ async def _launch_supervisor_job(
         "domain": domain,
         "task_plan_json": task_plan_json,
         "user_id": user_id,
+        "user_email": user_email,
         # ADR-0009 Step F'.2 additions:
         "user_persona": user_persona,
         "entitled_domains": entitled_domains,
@@ -1387,6 +1392,9 @@ async def _get_ui_payload_output(run_id: str) -> dict:
 async def generate_dagster_stream(
     request: InterviewRequest,
     user_id: str = "default_testing_user",
+    # ADR-0025 hop 2: caller's entitlement key (email); threaded to Engine D
+    # so query_metadata asks Topaz can_view. Parallels entitled_domains.
+    user_email: str = "",
     # Per ADR-0009 Step F'.2: user persona + entitled_domains come from the
     # JWT (see auth.User), threaded down from the /orchestrate route so we
     # don't re-decode the token mid-stream. Defaults match the auth fallback
@@ -1648,6 +1656,7 @@ async def generate_dagster_stream(
         domain=domain,
         task_plan_json=task_plan_json,
         user_id=user_id,
+        user_email=user_email,
         user_persona=user_persona,
         entitled_domains=entitled_domains,
         entity_refs=entity_refs,
@@ -2274,6 +2283,13 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
             generate_dagster_stream(
                 request,
                 user_id=current_user.id,
+                # ADR-0025 hop 2: the caller's ENTITLEMENT KEY (email — what
+                # policy/users.yaml + the seeded Topaz `user` objects key on;
+                # NOT the sub in user_id). Threaded so Engine D's
+                # query_metadata can ASK Topaz can_view about this subject.
+                # Parallels entitled_domains all the way down; "" when absent
+                # → Topaz denies (least-privileged).
+                user_email=current_user.email,
                 user_persona=effective_persona,
                 entitled_domains=effective_domains,
                 # Capture A per ADR-0025: thread the JWT-read-time

@@ -500,6 +500,11 @@ async def analyze(ctx: Context, request: dict) -> dict:
             or ""  # least-privileged on absence — never DATA_STEWARD
         )
         caller_entitled_domains = request.get("entitled_domains") or []
+        # ADR-0025 hop 2: the caller's entitlement key (email), threaded
+        # alongside entitled_domains. Forwarded to Engine D so query_metadata
+        # asks Topaz can_view about THIS subject. "" on absence → Engine D
+        # denies (least-privileged), same posture as empty entitled_domains.
+        caller_email = request.get("user_email") or ""
 
         # Phase 3 source attribution (closing the Engine A gap from
         # commit 20ed5f9, which covered Engines W and E only). Each tool
@@ -595,6 +600,8 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     "persona": caller_persona,
                     "domain": task_domain,
                     "entitled_domains": caller_entitled_domains,
+                    # ADR-0025 hop 2: subject for Engine D's Topaz can_view ask.
+                    "caller_email": caller_email,
                 }
                 if entity_type:
                     payload["entity_type"] = entity_type

@@ -98,6 +98,11 @@ class SupervisorQueryConfig(Config):
     domain: str = "MAINTENANCE"  # legacy, no longer routes
     task_plan_json: str = ""  # Optional pre-computed plan from BFF
     user_id: str = "default_testing_user"
+    # ADR-0025 hop 2: caller's entitlement key (email — what the seeded
+    # Topaz `user` objects + policy/users.yaml key on; NOT the sub in
+    # user_id). Forwarded to Engine A's generalist fallback so it can hand
+    # it to Engine D's query_metadata Topaz can_view ask. Empty → denied.
+    user_email: str = ""
     # ADR-0009 Step F'.2 / F'.3 additions:
     # ADR-0026 step 6: honest-empty. None when the caller has zero
     # Topaz entitlements — NOT a fabricated MECHANIC default. Flows
@@ -842,6 +847,10 @@ def _call_engine_a_fallback(
         # domain-agnostic for ACCESS. See ADR-0025 "catalog is an
         # enforcement surface".
         "entitled_domains": list(config.entitled_domains),
+        # ADR-0025 hop 2: the caller's entitlement key travels WITH
+        # entitled_domains so Engine D can ask Topaz can_view about this
+        # exact subject (not a re-derived or defaulted identity).
+        "user_email": config.user_email,
         "dynamic_schema_map": "",
         "user_id": config.user_id,
         # ADR-0008 fallback context — Engine A's handler reads these to
