@@ -351,6 +351,36 @@ def _find_compatible_verbs(
         return None, str(exc)
 
 
+def _filter_verbs_by_arity(
+    compatible_verbs: list[dict], query_is_set: bool
+) -> tuple[list[dict], list[dict]]:
+    """Structural arity gate — query-shape verb eligibility.
+
+    When the query is SET-shaped (subject resolved to a CLASS, no specific
+    instance), a single-asset verb cannot answer it. Remove verbs that
+    POSITIVELY declare ``arity == "single"``; KEEP "set" / "any" / null
+    (null = unclassified → never excluded, so an incomplete backfill never
+    over-restricts). Only the set-query direction is gated (conservative);
+    instance/single queries keep every verb. Returns ``(kept, dropped)``.
+
+    PURE — no LLM, no network. That is the entire point: arity is decided
+    structurally UPSTREAM of the classifier, so the LLM never gets to pick
+    a wrong-arity verb (it was never a candidate). Same discipline as the
+    domain scope already applied in ``find_compatible_verbs`` — a second
+    structural constraint composing into (domain ∩ arity) eligibility.
+    """
+    if not query_is_set or not compatible_verbs:
+        return compatible_verbs, []
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for v in compatible_verbs:
+        if str(v.get("arity") or "").lower() == "single":
+            dropped.append(v)
+        else:
+            kept.append(v)
+    return kept, dropped
+
+
 def _classify_route(
     context,
     user_query: str,
@@ -462,6 +492,34 @@ def _classify_route(
     compatible_verbs, find_err = _find_compatible_verbs(
         context, subject_uri, entitled_domains,
     )
+
+    # ARITY GATE (query-shape eligibility, ADR-0008 follow-up). Query-arity
+    # comes from the abstention arc's own signal: the subject resolved to a
+    # CLASS with no specific instance (subject_instance_id empty) → a
+    # SET/collection query → single-asset verbs cannot answer it. Remove
+    # verbs that POSITIVELY declare arity="single" BEFORE the classifier
+    # sees them, so a set-query can never resolve to a single-asset verb
+    # (the `show me data about customers → describeAsset → assets:[]`
+    # defect). Verbs with arity set/any/null are kept (null = unclassified
+    # → never over-excluded during backfill). Runs only when subject !=
+    # UNKNOWN (abstention already short-circuited nothing-resolved above),
+    # so "no instance" here means class-only/set, NEVER abstention — the
+    # two gates read the resolution signal consistently. Deterministic, no
+    # LLM; composes with the domain scope into the (domain ∩ arity)
+    # eligibility intersection the enforcement arc extends with permission.
+    if compatible_verbs:
+        query_is_set = not subject_instance_id
+        compatible_verbs, _arity_dropped = _filter_verbs_by_arity(
+            compatible_verbs, query_is_set,
+        )
+        if _arity_dropped:
+            context.log.info(
+                "arity_gate subject_uri=%s set_query=%s dropped %d single-asset "
+                "verb(s) from candidacy: %s",
+                subject_uri, query_is_set, len(_arity_dropped),
+                [v.get("verb_iri") for v in _arity_dropped],
+            )
+
     # compatible_verbs is None on Neo4j error → fall through unconstrained.
     # Empty list with valid Neo4j = subject is genuinely unsupported.
     compatible_verb_iris = (

@@ -2219,6 +2219,14 @@ class CompatibleVerb(BaseModel):
     cost_class: str | None = None
     requires_human_approval: bool = False
     hops: int = 0
+    # ARITY (query-shape eligibility, ADR-0008 follow-up). A DECLARED fact
+    # about the verb's input cardinality: "set" (operates on the collection
+    # — enumerateCatalog), "single" (operates on one asset — describeAsset),
+    # or "any"/null (neutral). Asserted at registration, NEVER inferred from
+    # definition prose. The supervisor gates verb eligibility on
+    # (query-arity from instance_resolved) so a set-query never resolves to
+    # a single-asset verb. null → treated as "any" (never excluded).
+    arity: str | None = None
 
 
 class FindCompatibleVerbsResponse(BaseModel):
@@ -2252,6 +2260,7 @@ RETURN DISTINCT
     coalesce(r.domains, [])       AS domains,
     r.cost_class                  AS cost_class,
     coalesce(r.requires_human_approval, false) AS requires_human_approval,
+    r.arity                       AS arity,
     length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops
 ORDER BY hops ASC, verb_iri ASC
 """
@@ -2322,6 +2331,7 @@ async def find_compatible_verbs(
             domains=verb_domains,
             cost_class=row.get("cost_class"),
             requires_human_approval=bool(row.get("requires_human_approval", False)),
+            arity=row.get("arity"),
             hops=int(row.get("hops") or 0),
         ))
 
