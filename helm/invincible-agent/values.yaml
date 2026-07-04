@@ -1080,6 +1080,18 @@ keycloak:
 # ==========================================================================
 # Authorization (Topaz FGA)
 # ==========================================================================
+# Topaz seed CronJob (ADR-0025 enforcement hop-1) — durable keep-current of
+# the authz directory (both syncs, readback-gated). DEFAULT-DISABLED so it
+# never surprise-runs/prunes; enable when ready. One-off run:
+#   kubectl create job --from=cronjob/<release>-topaz-seed manual-seed -n <ns>
+topazSeed:
+  enabled: false
+  schedule: "0 * * * *"            # hourly keep-current when enabled
+  image: "ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest"
+  imagePullPolicy: Always
+  topazDirectoryUrl: "http://topaz-svc:9393"
+  datahubGmsUrl: "http://datahub-datahub-gms:8080/api/graphql"
+
 topaz:
   enabled: true
   image:

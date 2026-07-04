@@ -1,0 +1,72 @@
+{{- /*
+Topaz seed CronJob (ADR-0025 enforcement hop-1) — the DURABLE automation of
+the authorization-directory sync, and the fix for the manual-run fragility
+that hid the readback bug.
+
+WHY THIS EXISTS AS AUTOMATION (not a script someone remembers to run): the
+enforcement arc's premise is "Topaz decides on what's seeded", which means
+the seed must stay CURRENT — a manually-seeded authz directory goes stale
+the moment DataHub changes and nobody re-runs the sync, and Topaz then
+decides on wrong relations with no signal. Automation also makes the
+readback failure IMPOSSIBLE TO IGNORE: `set -e` + a non-zero exit
+(main() returns 4 on readback failure) fails the Job loudly, unlike a
+manual run where a crash-at-readback-after-apply got tolerated (which is
+exactly how the original readback bug hid).
+
+Runs BOTH syncs with the fixed readback as a GATING step:
+  1. topaz_sync         — ADR-0026 persona/cell grants (git-asserted policy/).
+  2. datahub_topaz_sync — asset owner relations (DataHub-sourced).
+
+DEFAULT-DISABLED (`topazSeed.enabled: false`) so it never surprise-runs and
+never surprise-prunes the authz directory. Enable in values when ready for
+keep-current; a one-off run is `kubectl create job --from=cronjob/…`.
+ENABLE_AGENTIC_AUTH stays OFF regardless — seeding changes no behavior until
+the flag flips and the enforcement points migrate.
+*/ -}}
+{{- if .Values.topazSeed.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "invincible-agent.fullname" . }}-topaz-seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: topaz-seed
+    app.kubernetes.io/part-of: enforcement
+spec:
+  schedule: {{ .Values.topazSeed.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0          # a failure is a real signal, not flakiness
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: topaz-seed
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: topaz-seed
+              image: {{ .Values.topazSeed.image | quote }}
+              imagePullPolicy: {{ .Values.topazSeed.imagePullPolicy }}
+              env:
+                - name: TOPAZ_DIRECTORY_URL
+                  value: {{ .Values.topazSeed.topazDirectoryUrl | quote }}
+                - name: DATAHUB_GMS_URL
+                  value: {{ .Values.topazSeed.datahubGmsUrl | quote }}
+                - name: PYTHONPATH
+                  value: "/app/policy/sync"
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -e
+                  cd /app
+                  echo "===== PERSONA SYNC (topaz_sync) ====="
+                  python policy/sync/topaz_sync.py --topaz-url "$TOPAZ_DIRECTORY_URL" --policy-dir policy
+                  echo ""
+                  echo "===== ASSET SYNC (datahub_topaz_sync) ====="
+                  python policy/sync/datahub_topaz_sync.py
+                  echo ""
+                  echo "===== SEED COMPLETE — both syncs applied + readbacks passed ====="
+{{- end }}
