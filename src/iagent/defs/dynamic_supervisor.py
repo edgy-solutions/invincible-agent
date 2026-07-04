@@ -916,6 +916,16 @@ def _log_subtask_route_assets(
         "fallback_reason": MetadataValue.text(
             str(telemetry.get("fallback_reason") or "")
         ),
+        # Acting-persona provenance — the CALLER persona + domain the
+        # decision was computed under (persona-driven verb eligibility).
+        # The premise that makes a same-query-different-verb divergence
+        # self-explaining. Distinct from owner_persona (answerer-side).
+        "acting_persona": MetadataValue.text(
+            str(telemetry.get("acting_persona") or "")
+        ),
+        "acting_domains": MetadataValue.text(
+            ",".join(telemetry.get("acting_domains") or [])
+        ),
         "sub_query": MetadataValue.text(sub_query or ""),
     }
     if predicate:
@@ -1101,6 +1111,15 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # value from a real /resolve, /find_compatible_verbs, or
     # /classify_predicate response — projected, not invented.
     # ------------------------------------------------------------------
+    # Acting-persona provenance (ADR-0009 / ADR-0025): the CALLER persona +
+    # domain the decision was computed under. Persona-driven routing means
+    # the same query can pick different verbs under different personas — so
+    # this is the missing premise that makes a divergence self-explaining
+    # ("describeAsset as DATA_STEWARD" vs "enumerateCatalog as
+    # DATA_ENGINEER"). Distinct from owner_persona (the answerer-side).
+    # Captured on the decision record, not just the live HUD.
+    telemetry["acting_persona"] = config.user_persona or ""
+    telemetry["acting_domains"] = list(config.entitled_domains or [])
     try:
         _log_subtask_route_assets(
             context,

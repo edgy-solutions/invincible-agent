@@ -530,6 +530,15 @@ def _project_route_decision(mat: dict) -> dict | None:
     verb_iri = md.get("verb_iri") or "UNKNOWN"
     handler_endpoint = md.get("handler_endpoint") or ""
 
+    # Acting-persona provenance — the CALLER persona + domain this decision
+    # was computed under (persona-driven routing). The framing that makes a
+    # same-query-different-verb divergence self-explaining. Distinct from
+    # action.owner_persona (the answerer-side "voice").
+    acting = {
+        "persona": md.get("acting_persona") or None,
+        "domains": [d for d in (md.get("acting_domains") or "").split(",") if d],
+    }
+
     # Decision-path visualizer (Part 1): the resolver candidate pool —
     # winner AND losers, each with a score — is captured by the supervisor
     # as a JSON-text metadata value. Carry it through the render seam so
@@ -586,6 +595,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             },
             "route_status": route_status,
             "fallback": False,
+            "acting": acting,
             # The candidates the winner beat — the visualizer shows the
             # contest, not just the winner (losers first-class).
             "candidates": candidates,
@@ -637,6 +647,7 @@ def _project_route_decision(mat: dict) -> dict | None:
         },
         "route_status": route_status,
         "fallback": True,
+        "acting": acting,
         "fallback_reason": fallback_reason,
         # The resolver pool that failed to ground — losers first-class,
         # so "why did nothing win" is visible with scores.
