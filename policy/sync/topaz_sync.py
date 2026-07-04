@@ -416,25 +416,45 @@ class TopazClient:
 
     # -- permission check (readback verification) -------------------------
 
+    def check(
+        self,
+        object_type: str,
+        object_id: str,
+        relation: str,
+        subject_id: str,
+        subject_type: str = "user",
+    ) -> bool:
+        """General permission/relation check via `/api/v3/directory/check`
+        (evaluates relations AND permissions — pass the permission name as
+        `relation`). This is the WORKING endpoint; the `/check/permission`
+        path 404s on this Topaz version — which had silently broken the
+        cell readback below (it RAISED and crashed the sync at readback,
+        after apply, so the positive control never ran — a dead
+        verification in the authz sync, `[[verification-reference-independence]]`
+        4th instance). One general check, both syncs use it (cell
+        assume-grants here, dataset can_read in the enforcement sync)."""
+        r = self._client.post(
+            "/api/v3/directory/check",
+            json={
+                "object_type": object_type,
+                "object_id": object_id,
+                "relation": relation,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+            },
+        )
+        r.raise_for_status()
+        return bool(r.json().get("check", False))
+
     def check_permission(
         self,
         user_id: str,
         cell_id: str,
         permission: str = "can_assume",
     ) -> bool:
-        payload = {
-            "object_type": "cell",
-            "object_id": cell_id,
-            "permission": permission,
-            "subject_type": "user",
-            "subject_id": user_id,
-        }
-        r = self._client.post(
-            "/api/v3/directory/check/permission",
-            json=payload,
-        )
-        r.raise_for_status()
-        return bool(r.json().get("check", False))
+        """ADR-0026 cell readback: does the user hold this persona×domain
+        cell? Delegates to the general `check`."""
+        return self.check("cell", cell_id, permission, user_id)
 
 
 # ---------------------------------------------------------------------------

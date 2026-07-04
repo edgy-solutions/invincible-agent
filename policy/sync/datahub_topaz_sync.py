@@ -263,6 +263,27 @@ def sync_assets(client, assets: list[AssetRecord], *, prune: bool = True):
     return plan
 
 
+def readback_assets(client, assets: list[AssetRecord]) -> tuple[int, int]:
+    """Positive control for the enforcement seed — every seeded owner must
+    resolve `can_read` TRUE on its dataset. Returns (checked, failures); a
+    missing relation FAILS LOUD (`[[verification-must-fail]]`). Uses the
+    general `client.check` (the working `/check` endpoint — the sibling to
+    the ADR-0026 cell readback that was 404-dead). This is the sync's own
+    reference: it confirms the relations it WROTE resolve. (The reference-
+    INDEPENDENT check — that a REAL user's REAL token resolves — is the
+    real-token / browser probe, `[[verification-reference-independence]]`;
+    both matter, this catches an inert apply, that catches a mis-keyed
+    identity.)"""
+    checked = failures = 0
+    for a in assets:
+        for owner in a.owners:
+            checked += 1
+            if not client.check("dataset", a.urn, "can_read", owner):
+                print(f"  [FAIL] {owner} can_read {a.urn}")
+                failures += 1
+    return checked, failures
+
+
 def main() -> int:
     """CLI: fetch DataHub assets and sync their owner relations into Topaz.
     Env: DATAHUB_GMS_URL, TOPAZ_DIRECTORY_URL."""
@@ -283,7 +304,23 @@ def main() -> int:
             f"+{len(plan.add_relations)} owner relations, "
             f"-{len(plan.del_objects)} objects, -{len(plan.del_relations)} relations"
         )
+        # Positive control — the relations we wrote must actually grant
+        # can_read. A dead readback (like the ADR-0026 one was) is worse
+        # than none when you're seeding an authorization directory.
+        print("===== Readback (positive control) =====")
+        checked, failures = readback_assets(client, assets)
+        print(f"  checked={checked}  failures={failures}")
+        if failures > 0:
+            print(
+                "FAIL: seeded owner relations don't resolve can_read — the "
+                "apply lied. NOT safe to enable enforcement.",
+                file=sys.stderr,
+            )
+            return 4
     return 0
+
+
+import sys  # noqa: E402
 
 
 if __name__ == "__main__":
