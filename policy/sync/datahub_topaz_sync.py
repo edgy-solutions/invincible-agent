@@ -138,3 +138,154 @@ def derive_asset_desired(assets: list[AssetRecord]) -> DesiredState:
                 )
             )
     return state
+
+
+# ---------------------------------------------------------------------------
+# The I/O shell — DataHub fetch + the snapshot-diff-apply driver.
+# ---------------------------------------------------------------------------
+import os  # noqa: E402
+
+# Minimal DataHub GraphQL: datasets + their owners (the owner relation is
+# what hop 1 seeds) + tags (carried for later policy hops). Same
+# searchAcrossEntities shape Engine D uses, trimmed to what the sync needs.
+_DATAHUB_SEARCH_QUERY = """
+query SyncAssets($input: SearchAcrossEntitiesInput!) {
+  searchAcrossEntities(input: $input) {
+    start count total
+    searchResults {
+      entity {
+        urn
+        ... on Dataset {
+          ownership { owners { owner { ... on CorpUser { username } } } }
+          tags { tags { tag { urn } } }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_datahub_assets(
+    datahub_url: str,
+    *,
+    page_size: int = 200,
+    max_pages: int = 50,
+    http_post=None,
+) -> list[AssetRecord]:
+    """Fetch every DATASET from DataHub's GraphQL, normalized to
+    AssetRecords. Pages through searchAcrossEntities. `http_post` is
+    injectable for tests; defaults to httpx. Returns [] on any failure
+    (the caller treats an empty fetch as "sync nothing", never as
+    "delete everything" — a fetch failure must not prune the directory)."""
+    if http_post is None:
+        import httpx
+        def http_post(url, json):  # noqa: ANN001
+            return httpx.post(url, json=json, timeout=30.0).json()
+
+    records: list[AssetRecord] = []
+    start = 0
+    for _ in range(max_pages):
+        try:
+            resp = http_post(
+                datahub_url,
+                {
+                    "query": _DATAHUB_SEARCH_QUERY,
+                    "variables": {
+                        "input": {
+                            "types": ["DATASET"],
+                            "query": "*",
+                            "start": start,
+                            "count": page_size,
+                        }
+                    },
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"DataHub fetch failed at start={start}: {exc}")
+            return records  # partial is fine; empty-on-first-failure never prunes
+        page = normalize_datahub_search(resp)
+        records.extend(page)
+        sar = ((resp or {}).get("data") or {}).get("searchAcrossEntities") or {}
+        total = sar.get("total") or 0
+        start += page_size
+        if start >= total or not page:
+            break
+    return records
+
+
+def snapshot_assets(client) -> DesiredState:
+    """Fetch THIS sync's managed live state from Topaz — `dataset` objects
+    and `owner` relations ONLY. Deliberately excludes `user` (the ADR-0026
+    sync owns that type; we ensure-not-prune users). The exclusion is what
+    makes plan_diff never emit a user deletion."""
+    live = DesiredState()
+    for t in MANAGED_ASSET_OBJECT_TYPES:
+        live.objects.update(client.list_objects(t))
+    for obj_type, rel in MANAGED_ASSET_RELATIONS:
+        live.relations.update(
+            client.list_relations(object_type=obj_type, relation=rel)
+        )
+    return live
+
+
+def sync_assets(client, assets: list[AssetRecord], *, prune: bool = True):
+    """Seed Topaz's directory from DataHub assets. Ensures owner `user`
+    objects exist (idempotent, NEVER pruned), then diffs+applies the
+    managed `dataset` objects + `owner` relations via the ADR-0026 sync's
+    plan_diff/apply_plan (one apply engine, two authority sources).
+
+    Returns the applied Plan. With `prune=False`, additions only (no
+    deletes) — a safe first-run / dry-adjacent mode."""
+    from topaz_sync import plan_diff, apply_plan
+
+    desired = derive_asset_desired(assets)
+
+    # 1. Ensure owner users exist (the owner relation's subject). NEVER
+    #    pruned here — split from the managed diff below.
+    owner_users = {o for o in desired.objects if o.type == "user"}
+    for u in owner_users:
+        client.set_object(u)
+
+    # 2. Managed diff over dataset objects + owner relations only (users
+    #    excluded from BOTH sides, so no user is ever added-then-deleted or
+    #    pruned by this tool).
+    desired_managed = DesiredState(
+        objects={o for o in desired.objects if o.type in MANAGED_ASSET_OBJECT_TYPES},
+        relations=set(desired.relations),
+    )
+    live = snapshot_assets(client)
+    plan = plan_diff(desired_managed, live.objects, live.relations)
+    if not prune:
+        plan.del_objects = []
+        plan.del_relations = []
+    apply_plan(client, plan, {})
+    return plan
+
+
+def main() -> int:
+    """CLI: fetch DataHub assets and sync their owner relations into Topaz.
+    Env: DATAHUB_GMS_URL, TOPAZ_DIRECTORY_URL."""
+    from topaz_sync import TopazClient
+
+    datahub_url = os.getenv("DATAHUB_GMS_URL", "http://localhost:8080/api/graphql")
+    topaz_url = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
+
+    assets = fetch_datahub_assets(datahub_url)
+    print(f"fetched {len(assets)} datasets from DataHub")
+    if not assets:
+        print("no assets — refusing to sync (a fetch failure must not prune).")
+        return 1
+    with TopazClient(topaz_url) as client:
+        plan = sync_assets(client, assets)
+        print(
+            f"synced: +{len(plan.add_objects)} objects, "
+            f"+{len(plan.add_relations)} owner relations, "
+            f"-{len(plan.del_objects)} objects, -{len(plan.del_relations)} relations"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

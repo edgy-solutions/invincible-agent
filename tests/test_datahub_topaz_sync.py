@@ -128,6 +128,81 @@ def test_derive_multiple_owners_all_related():
     assert owner_subjects == {"alice", "bob"}
 
 
+class _FakeTopaz:
+    """In-memory Topaz directory — records object/relation writes so the
+    driver's logic (ensure-users, diff, apply) is testable without a live
+    directory. Implements the TopazClient surface the driver uses."""
+    def __init__(self):
+        self.objects: set = set()      # DirObject
+        self.relations: set = set()    # DirRelation
+        self.deleted_objects: list = []
+
+    def set_object(self, obj, display_name=""):
+        self.objects.add(obj)
+
+    def set_relation(self, rel):
+        self.relations.add(rel)
+
+    def delete_object(self, obj, with_relations=True):
+        self.deleted_objects.append(obj)
+        self.objects.discard(obj)
+
+    def delete_relation(self, rel):
+        self.relations.discard(rel)
+
+    def list_objects(self, obj_type):
+        return [o for o in self.objects if o.type == obj_type]
+
+    def list_relations(self, object_type, relation):
+        return [
+            r for r in self.relations
+            if r.object_type == object_type and r.relation == relation
+        ]
+
+
+def test_sync_seeds_dataset_objects_and_owner_relations():
+    from datahub_topaz_sync import sync_assets
+    client = _FakeTopaz()
+    sync_assets(client, [
+        AssetRecord(urn="urn:li:dataset:(a,x,PROD)", owners=("alice",)),
+    ])
+    assert DirObject("dataset", "urn:li:dataset:(a,x,PROD)") in client.objects
+    assert DirObject("user", "alice") in client.objects  # owner user ENSURED
+    assert DirRelation(
+        object_type="dataset", object_id="urn:li:dataset:(a,x,PROD)",
+        relation="owner", subject_type="user", subject_id="alice",
+    ) in client.relations
+
+
+def test_sync_never_prunes_user_objects():
+    """The boundary guarantee: this sync manages dataset+owner; a `user`
+    object present in the directory (owned by the ADR-0026 sync) must NEVER
+    be deleted here, even if no current asset references it."""
+    from datahub_topaz_sync import sync_assets
+    client = _FakeTopaz()
+    client.objects.add(DirObject("user", "bob"))          # ADR-0026-owned user
+    client.objects.add(DirObject("dataset", "urn:stale")) # a stale dataset
+    sync_assets(client, [
+        AssetRecord(urn="urn:li:dataset:(a,x,PROD)", owners=("alice",)),
+    ])
+    # bob (a user) is untouched; the stale dataset IS pruned (managed type).
+    assert DirObject("user", "bob") in client.objects, (
+        "the asset sync must never prune user objects — the ADR-0026 sync "
+        "owns the user type; two syncs pruning one type would fight"
+    )
+    assert DirObject("dataset", "urn:stale") not in client.objects
+    assert DirObject("user", "bob") not in client.deleted_objects
+
+
+def test_fetch_returns_empty_on_datahub_failure():
+    """A fetch failure returns [] (partial), and main() refuses to sync on
+    empty — a DataHub outage must NEVER prune the directory to empty."""
+    from datahub_topaz_sync import fetch_datahub_assets
+    def _boom(url, json):
+        raise RuntimeError("datahub down")
+    assert fetch_datahub_assets("http://x", http_post=_boom) == []
+
+
 def test_derive_never_touches_persona_types():
     """Boundary guard: this sync manages `dataset`/`owner` only. It must
     never emit persona/cell/group objects (the ADR-0026 sync owns those) —
