@@ -862,13 +862,20 @@ def _project_graph_trace_alternates(mat: dict) -> list[dict]:
         if not v_iri or v_iri == picked_verb_iri:
             continue
         v_out = v.get("output_uri") or ""
-        alts.append({
+        alt = {
             "uri": v_out or v_iri,
             "label": _label_from_uri(v_out) if v_out else _label_from_uri(v_iri),
             "role": "alternate_verb",
             "via_verb": v_iri,
             "hops": int(v.get("hops") or 0),
-        })
+        }
+        # Per-alternate semantic score (Weaviate hybrid query→verb match),
+        # threaded from classify so the map's alternate fan sorts + labels
+        # by score instead of rendering anonymous dashed lines. Absent on
+        # pre-thread materializations (the map falls back to compat order).
+        if v.get("classify_score") is not None:
+            alt["score"] = float(v["classify_score"])
+        alts.append(alt)
     return alts
 
 

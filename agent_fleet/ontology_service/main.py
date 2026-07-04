@@ -2387,6 +2387,12 @@ class ClassifyPredicateResponse(BaseModel):
     predicate: dict | None = None
     # For audit: the candidate verbs the LLM was permitted to choose from.
     candidate_verb_iris: list[str] = Field(default_factory=list)
+    # Per-candidate semantic scores (Weaviate hybrid query→verb match) —
+    # the "how close was each runner-up predicate" signal the decision-path
+    # map draws as the alternate fan. Shape: [{verb_iri, score}]. Same axis
+    # as the chosen verb's confidence context; captured so the map can sort
+    # and label the alternates instead of showing anonymous dashed lines.
+    candidate_scores: list[dict] = Field(default_factory=list)
     # Contract B observability: True when the LLM was actually invoked,
     # False when /classify_predicate short-circuited (subject resolved +
     # zero compatible verbs → NO_MATCH without burning an LLM call). The
@@ -2723,6 +2729,13 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         reasoning=result.reasoning,
         predicate=matched_predicate,
         candidate_verb_iris=candidate_iris,
+        # Per-candidate semantic scores (Weaviate hybrid), for the map's
+        # alternate fan. One entry per candidate verb, in ranked order.
+        candidate_scores=[
+            {"verb_iri": c.get("verb_iri"), "score": c.get("score")}
+            for c in candidates
+            if c.get("verb_iri")
+        ],
     )
 
 

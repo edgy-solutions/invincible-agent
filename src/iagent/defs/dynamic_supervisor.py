@@ -559,6 +559,24 @@ def _classify_route(
     predicate = data.get("predicate")
     candidates = list(data.get("candidate_verb_iris") or [])
 
+    # Per-candidate semantic scores (Weaviate hybrid query→verb match) from
+    # classify. Merge them into the compatible_verbs records by verb_iri so
+    # the decision-path map's alternate fan can SORT and LABEL by score
+    # instead of rendering anonymous dashed lines — the verb-leg score
+    # counterpart to the subject candidate pool. (Instance-4 lesson: the
+    # signal exists upstream; thread it, don't let the consumer go mute.)
+    candidate_scores = list(data.get("candidate_scores") or [])
+    if compatible_verbs and candidate_scores:
+        _score_by_verb = {
+            s.get("verb_iri"): s.get("score")
+            for s in candidate_scores
+            if s.get("verb_iri")
+        }
+        for cv in compatible_verbs:
+            vi = cv.get("verb_iri")
+            if vi in _score_by_verb and _score_by_verb[vi] is not None:
+                cv["classify_score"] = float(_score_by_verb[vi])
+
     # When the LLM picked a compatible verb but /classify_predicate
     # couldn't materialize a full predicate dict (Weaviate-vs-Neo4j sync
     # gap), fill it in from the Neo4j-returned compatible_verbs record so

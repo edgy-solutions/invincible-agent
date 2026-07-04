@@ -250,6 +250,28 @@ def test_verb_alternates_exclude_the_picked_verb():
     assert all(a["role"] == "alternate_verb" for a in alts)
 
 
+def test_verb_alternates_carry_classify_score():
+    """The per-alternate semantic score (threaded from classify) must ride
+    each alternate so the map's fan sorts + labels by score. Absent
+    classify_score → the alternate has no score (map falls back to compat
+    order), never a fabricated 0."""
+    mat = _graph_trace_mat(
+        picked="mesh:lookupOwnership",
+        compatible_verbs=[
+            {"verb_iri": "mesh:lookupOwnership", "output_uri": "mesh#OwnershipFact", "hops": 1, "classify_score": 0.83},
+            {"verb_iri": "mesh:filterByTag", "output_uri": "mesh#TagResult", "hops": 0, "classify_score": 0.41},
+            {"verb_iri": "mesh:traceLineage", "output_uri": "mesh#Lineage", "hops": 1},  # no score captured
+        ],
+    )
+    alts = _project_graph_trace_alternates(mat)
+    by_verb = {a["via_verb"]: a for a in alts}
+    assert by_verb["mesh:filterByTag"]["score"] == 0.41
+    assert "score" not in by_verb["mesh:traceLineage"], (
+        "no captured score → no fabricated score; the map degrades to "
+        "compat order, it doesn't invent a number"
+    )
+
+
 def test_verb_alternates_empty_when_only_picked_fit():
     """The honest 'only one verb fit': a single compatible verb (the
     picked one) yields ZERO alternates — the diagram draws an unbranched
