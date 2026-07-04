@@ -290,4 +290,73 @@ data:
             "permission": "can_assume"
         })
     }
+
+  # ================================================================
+  # catalog_domain_view.rego — ADR-0025 enforcement hop 2.
+  #
+  # The successor to query_metadata's IN-CODE domain gate (the
+  # 2026-07-02 stopgap: `served_domain in entitled_domains`, evaluated
+  # in Python — a policy predicate living in application code, which
+  # the single-decider tenet forbids). Hop 2 moves that predicate HERE
+  # so Topaz is the single decider and query_metadata only ASKS.
+  #
+  # DEEP-DERIVE, not thin-relocate: this rule reads Topaz's OWN seeded
+  # cells via check_permission — it does NOT trust a caller-supplied
+  # entitled_domains list. So the decision can't drift from its source
+  # (the git-asserted (persona,domain) grants the persona sync
+  # materialized). "entitled to domain D" == "holds ANY (persona, D)
+  # cell", derived by iterating the persona vocabulary. The cells this
+  # walks are exactly the ones hop-1's persona sync seeded (11/0) — no
+  # new relations; the source fact is already present, so flipping the
+  # gate to ask Topaz can't lock out an already-entitled caller.
+  #
+  #   input.resource.user_id — the caller's ENTITLEMENT KEY (email by
+  #                           default, matching policy/users.yaml and
+  #                           the seeded `user` objects — NOT the JWT
+  #                           sub; see auth.USER_ENTITLEMENT_CLAIM).
+  #                           Passed EXPLICITLY in resourceContext, not
+  #                           via identityContext: this Topaz has no
+  #                           `identity`→`user` resolution objects
+  #                           seeded (the sync writes `user` objects +
+  #                           cells directly), so `input.user.id` is
+  #                           empty. The enforcement point already holds
+  #                           the caller's VERIFIED email (from the JWT,
+  #                           threaded through config) — it asserts the
+  #                           subject; Topaz still DECIDES whether that
+  #                           subject holds the cell. Verified 2026-07-04
+  #                           against the live directory (alice's cell
+  #                           resolves True, bob's False).
+  #   input.resource.domain — the domain the catalog serves
+  #                           (DATA_ENGINEERING).
+  #
+  # Decision key: "allowed" (boolean). Called via POST
+  # /api/v2/authz/is, policyContext.path =
+  # "invincible_agent.catalog.can_view", decisions = ["allowed"].
+  # ================================================================
+  catalog_domain_view.rego: |
+    package invincible_agent.catalog.can_view
+
+    import future.keywords.if
+    import future.keywords.in
+
+    default allowed := false
+
+    # Persona vocabulary — MIRRORS policy/personas.yaml (ADR-0009
+    # enum). Adding a persona: update BOTH, the same discipline
+    # personas.yaml already documents for its own list. A persona
+    # missing here can't grant catalog access even with a seeded cell
+    # (fail-CLOSED), so drift surfaces as an honest denial, never a
+    # leak.
+    personas := ["DATA_STEWARD", "DATA_ENGINEER", "ARCHITECT", "MECHANIC", "ANALYST"]
+
+    allowed if {
+        some p in personas
+        ds.check({
+            "object_type": "cell",
+            "object_id": sprintf("%s:%s", [p, input.resource.domain]),
+            "relation": "can_assume",
+            "subject_type": "user",
+            "subject_id": input.resource.user_id
+        })
+    }
 {{- end }}

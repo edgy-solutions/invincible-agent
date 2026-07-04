@@ -95,4 +95,10 @@ spec:
                 path: manifest.yaml
               - key: data_broker.rego
                 path: data_broker.rego
+              # ADR-0025 hop 2: the catalog domain-view policy query_metadata
+              # ASKS (successor to its in-code gate). MUST be listed here or
+              # the bundle at /policies never loads it — the same reason
+              # persona_entitlement.rego (absent from this list) stays dormant.
+              - key: catalog_domain_view.rego
+                path: catalog_domain_view.rego
 {{- end }}
