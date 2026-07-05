@@ -1312,6 +1312,16 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # search_datahub) read this to forward the caller's real scope
         # to query_metadata's gate.
         "entitled_domains": list(config.entitled_domains),
+        # ADR-0025 hop 2: the caller's ENTITLEMENT KEY travels WITH
+        # entitled_domains on the SPECIALIST path too — the EXACT twin of
+        # the miss the comment above documents. The email was first added
+        # only to the generalist fallback (_call_engine_a_fallback); this
+        # specialist dispatch (alice's DATA_ENGINEER ownership queries route
+        # here) MUST carry it as well or Engine A's search_datahub sends an
+        # empty caller_email to query_metadata's Topaz ask and the entitled
+        # caller is fail-CLOSED denied. Caught by the flag-on seal: bob
+        # (fallback path) threaded, alice (this path) came through empty.
+        "user_email": config.user_email,
         "dynamic_schema_map": dynamic_schema_map,
         "user_id": config.user_id,
         # Hand the matched predicate to the engine for observability /
