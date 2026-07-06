@@ -1,5 +1,6 @@
 import os
 import asyncio
+import httpx
 from typing import Dict, Any
 
 from restate import Context, Service
@@ -36,6 +37,52 @@ except ImportError:
         from embed import embed_query
 
 from baml_client import b
+
+
+# ADR-0025 engines arc — Engine W's per-document READ gate (single decider).
+# ENABLE_AGENTIC_AUTH dark-launches the result-filter: OFF → no filtering (all
+# retrieved chunks flow to synthesis, current behavior); ON → each chunk is
+# gated on its source document's can_read. Flips LAST (after all enforcement
+# points migrate), exactly like the DA-read / query_metadata gates. Deploying
+# the filter code with the flag OFF is therefore a no-op (safe) — it does NOT
+# deny-all an un-seeded document directory until the flag is turned on.
+TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
+ENABLE_AGENTIC_AUTH = os.getenv("ENABLE_AGENTIC_AUTH", "false").lower() in ("true", "1", "yes")
+
+
+def _can_read_document(caller_email: str, source_id: str) -> bool:
+    """Ask Topaz whether ``caller_email`` may READ the source ``document``.
+
+    The single-decider ASK for Engine W's result-filter: DENY-BY-DEFAULT,
+    explicit owner/reader grant only (the same `can_read = reader | owner`
+    shape the sealed DA-read gate proved, on the `document` namespace).
+    Entitlement / persona / domain are NEVER sufficient — a chunk's source
+    document requires an explicit grant (asset_grants.yaml → grant_sync).
+
+    FAIL-CLOSED on empty caller/source, an UNRESOLVABLE source, or ANY error
+    → the chunk is DROPPED, never synthesized. An ungated-because-
+    unidentifiable chunk is exactly the leak this gate exists to prevent, so
+    "can't identify the source" resolves to deny, not allow.
+    """
+    if not caller_email or not source_id:
+        return False
+    try:
+        r = httpx.post(
+            f"{TOPAZ_DIRECTORY_URL}/api/v3/directory/check",
+            json={
+                "object_type": "document",
+                "object_id": source_id,
+                "relation": "can_read",
+                "subject_type": "user",
+                "subject_id": caller_email,
+            },
+            timeout=5.0,
+        )
+        r.raise_for_status()
+        return bool(r.json().get("check", False))
+    except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
+        print(f"[Engine W] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
+        return False
 
 # Initialize runtime BAML configuration
 b = init_baml_client(b)
@@ -84,6 +131,18 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
     domain = request.get("domain", "MAINTENANCE").upper()
     domain_label = domain.replace(" ", "_").replace("-", "_")
     doc_collection_name = os.getenv("WEAVIATE_DOC_COLLECTION", "DocumentChunks")
+
+    # ADR-0025 engines arc (Engine W): the caller's ENTITLEMENT KEY (email),
+    # threaded from auth → supervisor's specialist dispatch (which already
+    # carries `user_email`) → the /query_knowledge proxy (full-payload
+    # forward) → here. This is the SUBJECT of the per-chunk can_read gate that
+    # the result-filter applies before synthesis (a chunk whose source
+    # document the caller isn't granted must never reach the LLM). Engine W
+    # started with NO caller identity (only query+domain) — reading it here is
+    # the identity-reaches-the-enforcement-point prerequisite. Empty when
+    # absent → the gate denies (fail-closed).
+    caller_email = request.get("user_email") or ""
+    print(f"[Engine W] query_knowledge caller_email={caller_email!r} domain={domain}")
 
     # Safely fetch the persistent client without blocking the async loop
     weaviate_client = await asyncio.to_thread(get_weaviate_client)
@@ -239,13 +298,47 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                 return f"No relevant information found for '{semantic_query}' in the {domain} domain."
 
             results = []
+            dropped = 0
             for idx, obj in enumerate(response.objects):
                 text = obj.properties.get("text", "")
                 doc_id = obj.properties.get("doc_id", "Unknown Document")
+                # RESULT-FILTER — runs BEFORE synthesis (this string is the
+                # LLM's tool result). Gate each chunk on can_read of its SOURCE
+                # DOCUMENT; drop ungated chunks so the smolagent NEVER sees
+                # them — a chunk in `results` is a chunk the LLM can synthesize
+                # into the answer, so filtering here (not after) is what makes
+                # this a real gate and not a fig leaf. The source identity is
+                # stamped at ingest (source_url/uri/doc_id); an UNRESOLVABLE
+                # source fails CLOSED (dropped), because an unidentifiable
+                # chunk can't be gated and letting it through is the leak.
+                # NB the "strict domain segregation" filter above is RELEVANCE
+                # scope, NOT enforcement — this can_read gate is the enforcement,
+                # and it runs regardless of what segregation already did.
+                source_id = (
+                    obj.properties.get("source_url")
+                    or obj.properties.get("uri")
+                    or obj.properties.get("doc_id")
+                )
+                if source_id == "Unknown Document":
+                    source_id = None
+                if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, source_id):
+                    dropped += 1
+                    continue
                 results.append(f"--- Excerpt {idx + 1} (Source: {doc_id}) ---\n{text}")
                 # Accumulate the source record for the engine's response.
                 _collect_weaviate_source(obj, semantic_query)
 
+            if dropped:
+                print(
+                    f"[Engine W] result-filter DROPPED {dropped} ungated/unresolvable "
+                    f"chunk(s) BEFORE synthesis (caller={caller_email!r})"
+                )
+            if not results:
+                return (
+                    f"No accessible information found for '{semantic_query}' in the "
+                    f"{domain} domain. Matching documents exist but you are not granted "
+                    f"read access to them — request access to the specific document."
+                )
             return "\n\n".join(results)
         except Exception as e:
             return f"Error executing semantic search: {str(e)}"
@@ -376,13 +469,44 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                     return f"No relevant information found for '{semantic_query}' in the {domain} domain."
 
                 results = []
+                dropped = 0
                 for idx, obj in enumerate(response.objects):
                     text = obj.properties.get("text", "")
                     doc_id = obj.properties.get("doc_id", "Unknown Document")
+                    # RESULT-FILTER (before synthesis) — THIS is the LIVE tool
+                    # (the CodeAgent below is given `search_knowledge_base_local`,
+                    # NOT the outer `search_knowledge_base`). Gate each chunk on
+                    # can_read of its source document; drop ungated/unresolvable
+                    # chunks so the smolagent never sees them. Unresolvable
+                    # source fails CLOSED. Same gate as the outer tool — BOTH
+                    # retrieval paths must filter (the multi-path discipline:
+                    # this engine has two retrieval tools, and only the one the
+                    # agent actually calls being gated is the whole point).
+                    source_id = (
+                        obj.properties.get("source_url")
+                        or obj.properties.get("uri")
+                        or obj.properties.get("doc_id")
+                    )
+                    if source_id == "Unknown Document":
+                        source_id = None
+                    if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, source_id):
+                        dropped += 1
+                        continue
                     results.append(
                         f"--- Excerpt {idx + 1} (Source: {doc_id}) ---\n{text}"
                     )
                     _collect_local(obj, semantic_query)
+                if dropped:
+                    print(
+                        f"[Engine W] result-filter DROPPED {dropped} ungated/unresolvable "
+                        f"chunk(s) BEFORE synthesis (caller={caller_email!r})"
+                    )
+                if not results:
+                    return (
+                        f"No accessible information found for '{semantic_query}' in the "
+                        f"{domain} domain. Matching documents exist but you are not granted "
+                        f"read access to them — request access to the specific document."
+                    )
                 return "\n\n".join(results)
             except Exception as e:
                 return f"Error executing semantic search: {str(e)}"

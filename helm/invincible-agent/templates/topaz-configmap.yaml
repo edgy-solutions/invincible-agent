@@ -164,6 +164,24 @@ data:
           can_read: reader | owner
           can_write: owner
 
+      # ADR-0025 engines arc — `document` is a THIRD resource namespace
+      # (asset-URN datasets, ontology-IRI verbs/classes, and now
+      # document-id source documents). Engine W's chunks come from
+      # documents (technical manuals), identified by doc_id/source_url —
+      # NOT DataHub dataset URNs. Same deny-by-default shape as `dataset`
+      # (explicit owner/reader grants; entitlement is NEVER sufficient),
+      # a DISTINCT namespace per the ADR-0025 two-namespaces amendment.
+      # Engine W's per-chunk result-filter checks can_read on the chunk's
+      # source `document` before synthesis; grants come from
+      # asset_grants.yaml (grant_sync) exactly like dataset reader grants.
+      document:
+        relations:
+          owner: user
+          reader: user
+        permissions:
+          can_read: reader | owner
+          can_write: owner
+
       # ---------------------------------------------------------------
       # ADR-0026 additions — persona/entitlement authorization.
       #
