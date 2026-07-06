@@ -231,11 +231,33 @@ data:
     default allowed_columns := []
     default row_filters := ""
 
+    # ADR-0025 DA-read gate — DENY-BY-DEFAULT (governing invariant: access
+    # regulates persona/domain). A subject may read an asset ONLY via an
+    # EXPLICIT grant — owner or an explicit `reader` relation a human
+    # asserted (manifest: can_read = reader | owner). Entitlement / persona /
+    # domain are ELIGIBILITY, never sufficient, and are NOT consulted here:
+    # "cleared for the domain" is not "granted this asset" (need-to-know).
+    # At this classification (TS/SCI / government / proprietary / PII) an
+    # over-grant is a SPILL, so the only safe error is deny-until-granted.
+    # owner-OR-entitled is REJECTED as a model, not deferred.
+    #
+    # TWO corrections vs the prior (dormant-broken) form, both from hop 2:
+    #   * ds.check — NOT ds.check_relation, which is DEAD on this Topaz build
+    #     (v2->v3 unification; the twin of the readback /check/permission and
+    #     the ds.check_permission deaths). The dormant gate returned false
+    #     for a real owner via the authorizer.
+    #   * subject key from input.resource.user_id — input.user.id is EMPTY on
+    #     this Topaz (no identity->user resolution objects seeded). The
+    #     enforcement point passes the caller's VERIFIED identity in
+    #     resourceContext. can_read is a PERMISSION (reader|owner); ds.check
+    #     evaluates it, mirroring the working REST /check.
     allowed if {
-        ds.check_relation({
-            "subject": {"type": "user", "key": input.user.id},
-            "object": {"type": "dataset", "key": input.resource.asset_key},
-            "relation": "can_read"
+        ds.check({
+            "object_type": "dataset",
+            "object_id": input.resource.asset_key,
+            "relation": "can_read",
+            "subject_type": "user",
+            "subject_id": input.resource.user_id
         })
     }
 
