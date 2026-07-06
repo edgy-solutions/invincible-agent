@@ -152,6 +152,21 @@ Anchors: sender `dag-tools/dag_tools/central_gateway/main.py`
 → silent deny-all. If you change either side, check the other against this
 table.
 
+### The config contract (enforcement point ⇄ helm) — env var NAMES must agree
+An enforcement point's Topaz URL comes from an env var *the chart provides*;
+code and chart must agree on the **name**. `central_gateway` reads
+`TOPAZ_AUTHORIZER_URL` (the mesh convention — also `auth.py`,
+`datahub_wrapper`), falling back to legacy `TOPAZ_URL`, defaulting to
+`http://topaz-svc:8383`; helm sets `TOPAZ_AUTHORIZER_URL`
+(`values.yaml`). **Historical bug (fixed, `cb47d63`):** code read `TOPAZ_URL`
+(bad default `https://localhost:8383`) while helm set `TOPAZ_AUTHORIZER_URL`
+— a NAME mismatch, so the gate was unreachable and fail-closed denied every
+read (broken-closed at the config layer — invisible deny-all). This is a
+cross-repo *config*-contract, distinct from the payload contract above and
+the same class: two internally-consistent repos disagreeing at the boundary.
+Anchor: `central_gateway/main.py` (`TOPAZ_URL = os.getenv(...)`) ⇄
+`helm/invincible-agent/values.yaml`.
+
 ### The catalog-metadata contract (query_metadata ⇄ catalog_domain_view)
 `query_metadata` sends `resourceContext.user_id`=email +
 `resourceContext.domain`=served domain; `catalog_domain_view.rego` reads
@@ -240,3 +255,73 @@ Memory: `identity-reaches-enforcement-point` (multi-path corollary).
 | auth-blind engines | (future) | per-engine | not yet — each inherits invariants §3, esp. #4 |
 
 Directory seeded + kept current by the CronJob (both syncs, readback-gated).
+
+---
+
+## 6. Deploying with a REAL access-control overlay (fixed engine vs swappable overlay)
+
+The sandbox's access control (the configmap rego, the seeded alice/bob/
+customers_gold relations, the Keycloak `@example.com` users) is **test data**,
+not the model. A real deployment (corporate IdP, real DataHub, real
+governance, classified data) swaps the OVERLAY and does NOT touch the ENGINE.
+Single-decider is what makes this a config+policy swap, not a rewrite:
+because no enforcement point evaluates policy (they only ASK), the policy is
+an overlay in one place. **This boundary is a verified property, not an
+assumption — checked by inspection 2026-07-06.**
+
+**FIXED — the engine (do NOT change per-deployment):**
+- The enforcement points (`central_gateway`, `query_metadata`, cortex-bff
+  entitlements) — they only ASK Topaz and honor the answer; they contain no
+  policy. Verified: no hardcoded domain/persona literals in the DA-read path.
+- `data_broker.rego` — **fully generic**: `ds.check(dataset, can_read, user)`
+  over whatever relations are in the directory. No baked vocabulary. The
+  data-read gate is pure overlay-evaluator.
+- The ReBAC schema TYPES (`manifest.yaml`) and the single-decider / ABAC
+  plumbing.
+
+**SWAPPABLE — the overlay (per-deployment config):**
+- **Directory CONTENTS** — from the real DataHub (owner/tag/domain facts) and
+  the real governance process (subject entitlements). Point the syncs at real
+  sources; the same rego evaluates real relations.
+- **Attribute-source configs** — `DATAHUB_GMS_URL`, the `policy/*.yaml` source
+  (or its replacement), `ENGINE_D_SERVED_DOMAIN`.
+- **IdP config** — `KEYCLOAK_REALM_URL` → the real IdP (e.g. PingSSO, note the
+  `pingsso-claim-gap`), `USER_ENTITLEMENT_CLAIM` → whatever claim the real IdP
+  issues as the stable entitlement key.
+- **The rego POLICY** — swappable, but see the two test-isms below that must
+  be cleaned for a *fully* generic overlay.
+
+**TEST-ISMS to clean before a real overlay is fully generic** (found by
+inspection — fix these so the fixed layer has zero deployment-specifics):
+1. **`catalog_domain_view.rego` hardcodes the persona vocabulary**
+   (`personas := ["DATA_STEWARD", …]`). At a deployment with different
+   personas the *policy* changes. Interim (Option-A) tradeoff with a named
+   trigger; the generic form derives the persona set from the directory
+   rather than a literal list. (The DA-read gate `data_broker.rego` does NOT
+   have this — only the catalog gate.)
+2. **`central_gateway` hardcodes the claim name** `unverified_claims.get("email")`
+   rather than reading a configurable claim (as `auth.py`'s
+   `USER_ENTITLEMENT_CLAIM` does). At a deployment whose entitlement claim
+   isn't `email`, this enforcement point needs a change. One-line fix: read
+   the claim name from env, mirroring `auth.py`.
+
+**MODEL-EXTENSION for a classified deployment (added within the same
+plumbing, not a rewrite):** the current model evaluates *ownership +
+domain-entitlement*. A TS/SCI/proprietary deployment adds
+**classification / clearance / compartment** attributes — a `classification`
+on the resource (from the real DataHub), a `clearance` on the subject (from
+the real IdP/governance), a compartment relation — evaluated by the SAME
+single-decider (a `can_read` that also requires clearance ≥ classification
+AND compartment membership), fed by the SAME ABAC sources. Deny-by-default +
+explicit-grant (§0) is unchanged; classification becomes an additional
+necessary condition (a guardrail), never a substitute for the explicit grant.
+This is *extend the model*, not *rebuild for classification* — which is only
+true because the plumbing is decider-pluggable, and that is the property this
+section verifies.
+
+**The one-line deploy rule:** to deploy with a real overlay, swap the
+**directory source** (real DataHub + real governance), the **attribute/IdP
+config**, and the **rego policy** (cleaning the two test-isms) — and do NOT
+touch the enforcement points. If a future change to an enforcement point is
+needed to onboard a deployment, that is a test-ism leaking into the fixed
+layer — fix it in the fixed layer, don't fork per-deployment.
