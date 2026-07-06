@@ -382,6 +382,65 @@ anchored to code + probes so drift surfaces. Memory:
 `access-regulates-persona-domain` (governing), `broken-closed-hides-brokenness`,
 `topaz-v2-v3-api-split`, `identity-reaches-enforcement-point`.
 
+## Amendment 2026-07-06b — documents are cataloged ASSETS, not a bespoke namespace (lineage-integrity correction)
+
+Building Engine W's per-document gate surfaced a framing error worth
+correcting on the record, because it's a **provenance-integrity** gap, not a
+mere plumbing detail. The "Two identity namespaces" amendment above
+(asset-URN, ontology-IRI) was extended in the engines arc with an implicit
+THIRD "document" namespace (doc_id-keyed, its own governance). **That framing
+is wrong and is corrected here.**
+
+**The gap (real, not aesthetic):** an ML model cataloged in DataHub that
+CONSUMES a document and PRODUCES a cataloged dataset yields, in DataHub
+lineage, output with a **phantom root** — data materializing from nothing —
+because the document input is NOT cataloged (doc-tools ingests it into
+Weaviate only). A lineage graph with a phantom root LIES about provenance,
+which is the exact dishonesty this ADR's access-as-provenance thesis exists
+to eliminate. The Weaviate-only ingestion is a **gap** (a violation of the
+ingest-registers-a-catalog-entry rule), NOT a principled namespace boundary.
+The earlier "documents are their own namespace" argued from the current
+plumbing and mistook the accident for the ontology.
+
+**The corrected model — a document has TWO FACES under ONE canonical identity:**
+(a) a **cataloged asset** with lineage, ownership, classification (belongs in
+the catalog exactly like a dataset, so lineage is honest and governance flows
+from the catalog); (b) **retrievable content** (chunks in Weaviate, the
+search/synthesis surface). SAME asset. The document's `doc_id` IS (or resolves
+to) its catalog URN, so the retrieval surface and the governance surface refer
+to one cataloged thing. **Documents therefore UNIFY into the asset-resource
+namespace** — they are assets that happen to be chunked for retrieval, NOT a
+governance-orphan third namespace. This retires the bespoke doc_id governance
+story: a document's ownership/classification comes from the catalog the same
+way a dataset's does (the governance source documents were said to "lack" —
+they were never missing it, documents were just never cataloged).
+
+**Forward-compatibility (why Engine W's seal is NOT blocked and does NOT
+re-key later):** the Engine W gate gates on `chunk.doc_id → can_read(document:doc_id)`.
+The doc_ids are ALREADY IRI-shaped
+(`http://edgy-solutions.com/ontology/mil#wpn-m0004-1-1680-TNG`) — already a
+canonical global identity, already the right shape to BE a catalog URN. The
+2026-07-06 Engine W seed keyed the Topaz `document` objects on those EXACT
+IRIs (verified byte-for-byte; the seal's correct discrimination proves the
+keys match). So when document cataloging lands, those same IRIs become the
+catalog URNs and **nothing re-keys — the gate keeps gating on the same
+identity, now also cataloged.** Cataloging ADDS the catalog entry + lineage
+edges; it does not disturb the gate. (Consistency outlier to normalize when
+cataloging lands: `MFG-PROC-002` is a bare code, not IRI-shaped, unlike the
+`mil#wpn-*` documents — it needs a canonical URN.)
+
+**Filed as a triggered arc (NOT this session's work):** the
+**document-cataloging arc** — doc-tools registers each document as a catalog
+asset at ingest (the ingest-registers-catalog rule it currently violates),
+IRI as catalog URN, lineage edges (document → consumed-by → model → produces →
+dataset) recorded, ownership/classification catalog-sourced. This fixes the
+phantom-root lineage and gives documents native catalog governance. **Trigger:**
+real/classified deployment (where document classification + honest lineage are
+requirements); the document-side analogue of the DataHub→Topaz governance sync
+already filed for datasets. Does NOT block the Engine W seal (the gate gates on
+the doc_id identity now; cataloging makes that identity also a cataloged asset
+later). Memory: `project_document_cataloging_arc`.
+
 ## Related
 
 - [ADR-0009 — Sunset classification axes](ADR-0009-sunset-classification-axes.md):

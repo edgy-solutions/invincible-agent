@@ -164,16 +164,24 @@ data:
           can_read: reader | owner
           can_write: owner
 
-      # ADR-0025 engines arc — `document` is a THIRD resource namespace
-      # (asset-URN datasets, ontology-IRI verbs/classes, and now
-      # document-id source documents). Engine W's chunks come from
-      # documents (technical manuals), identified by doc_id/source_url —
-      # NOT DataHub dataset URNs. Same deny-by-default shape as `dataset`
-      # (explicit owner/reader grants; entitlement is NEVER sufficient),
-      # a DISTINCT namespace per the ADR-0025 two-namespaces amendment.
-      # Engine W's per-chunk result-filter checks can_read on the chunk's
-      # source `document` before synthesis; grants come from
-      # asset_grants.yaml (grant_sync) exactly like dataset reader grants.
+      # ADR-0025 engines arc — the `document` type gates Engine W's source
+      # documents (technical manuals), identified by their `doc_id` (an IRI
+      # like http://edgy-solutions.com/ontology/mil#wpn-m0004-...). Same
+      # deny-by-default shape as `dataset` (explicit owner/reader grants;
+      # entitlement NEVER sufficient); Engine W's per-chunk result-filter
+      # checks can_read on the chunk's source `document` BEFORE synthesis.
+      #
+      # NOT a permanent separate namespace. Per ADR-0025 Amendment 2026-07-06b
+      # (lineage-integrity correction), lineage-participating documents are
+      # first-class CATALOGED ASSETS that unify into the asset-resource
+      # namespace — a document that feeds a cataloged ML pipeline whose output
+      # is cataloged must itself be cataloged, or DataHub lineage shows a
+      # phantom root. This `document` type is the INTERIM: the doc_id IRIs are
+      # already catalog-URN-shaped, so when the document-cataloging arc lands
+      # (doc-tools registers documents at ingest), those SAME IRIs become the
+      # catalog URNs and the gate does NOT re-key — cataloging adds the catalog
+      # entry + lineage, not a new identity. Grants: interim manual/`asset_grants`
+      # (extend grant_sync to documents); catalog-sourced once the arc lands.
       document:
         relations:
           owner: user
