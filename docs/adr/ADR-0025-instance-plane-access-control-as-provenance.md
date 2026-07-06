@@ -323,6 +323,65 @@ next action is opening the enforcement arc against it (the sequence
 stands: step 6 → abstention arc → visualizer → enforcement) — not
 producing eval v2.
 
+## Amendment 2026-07-06 — the governing invariant, made explicit by the classification
+
+The enforcement arc reached the data plane (`data_broker` DA-read gate),
+and a stated classification collapsed a design choice that had looked open:
+**this system will hold TS/SCI, government-owned, proprietary, and PII
+data.** That fixes the direction of the safe error — an over-grant is a
+*spill* (unrecoverable, reportable) — and turns the arc's accumulated
+instincts into a single governing invariant, recorded here as the sentence
+every remaining hop checks against.
+
+**Access control regulates persona and domain — the outer gate releases,
+the inner routing layer refines what it released, never the reverse.**
+Access is the enclosing boundary; persona/domain (routing, comprehension,
+presentation) operate only on what access already cleared. Concretely:
+
+- **Deny-by-default; grant-by-explicit-per-asset-assertion; never
+  derive-by-entitlement.** A subject reads an asset ONLY via an explicit,
+  asserted, auditable `owner`/`reader` relation. Entitlement / persona /
+  domain establish *eligibility to be granted* (necessary), NEVER the grant
+  (sufficient). "Cleared for the domain" ≠ "granted this asset" — need-to-know.
+- **`owner-OR-entitled` is REJECTED as a model, not deferred.** Deriving
+  data-read from domain-entitlement collapses need-to-know into
+  clearance-level; with per-dataset domains null it degenerates to "any
+  DATA_ENGINEER reads all PII." No point in time makes it safe at this
+  classification. `alice`-can't-read-without-a-grant is *correct* behavior
+  and the stronger demo (need-to-know enforced, not clearance-implies-access).
+- **`permission` is the ENCLOSING gate, not a co-equal term.** The routing
+  eligibility intersection is `(domain ∩ arity ∩ argument-fit)`; the access
+  gate *wraps* it. Correction to the verb-eligibility framing that listed
+  permission as a fourth peer constraint.
+- **Domain, once per-dataset domains exist, is a GUARDRAIL on grant
+  validity** (no cross-compartment `reader`) — an ABAC attribute the
+  decision may consult — never a substitute for a grant.
+- **Prove the NEGATIVE.** A gate broken in the deny direction is invisible
+  (denial doesn't alarm) — "denies everyone" is consistent with a working
+  AND a non-functional gate. Every data-plane gate ships with a
+  DISCRIMINATING allow-side proof (authorized-subject allowed on the granted
+  asset; same subject denied on a non-granted asset; other subject denied on
+  the granted asset). This failure mode has bitten the arc three times
+  (hop-1 readback, hop-2 builtin, `data_broker` misalignment).
+
+*Landed under this amendment:* `data_broker.rego` rebuilt deny-by-default
+(owner/explicit-reader, `ds.check`, subject from `resource_context.user_id`)
+and its live caller `dag-tools/central_gateway` aligned to send the caller's
+**email** as `resource_context.user_id` + `asset_key` (it had sent the `sub`
+in `identity_context` with `asset` — three-way misalignment silently denying
+everyone). Proven discriminating including the deny→grant→allow model (an
+explicit per-asset `reader` grant flips only that subject on only that
+asset). The **HITL grant flow** is therefore the PRIMARY data-access
+mechanism (deny → request → human-asserts → grant), and the reserved
+`access_decision` capture (Capture B) is its audit trail.
+
+The cross-repo topology, boundary contracts (the seams where every auth bug
+lived), and the full invariant list are mapped in
+[docs/architecture/authorization.md](../architecture/authorization.md) —
+anchored to code + probes so drift surfaces. Memory:
+`access-regulates-persona-domain` (governing), `broken-closed-hides-brokenness`,
+`topaz-v2-v3-api-split`, `identity-reaches-enforcement-point`.
+
 ## Related
 
 - [ADR-0009 — Sunset classification axes](ADR-0009-sunset-classification-axes.md):
