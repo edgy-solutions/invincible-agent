@@ -68,5 +68,13 @@ spec:
                   echo "===== ASSET SYNC (datahub_topaz_sync) ====="
                   python policy/sync/datahub_topaz_sync.py
                   echo ""
-                  echo "===== SEED COMPLETE — both syncs applied + readbacks passed ====="
+                  echo "===== GRANT SYNC (grant_sync — git-asserted reader grants) ====="
+                  # AFTER the asset sync: reader grants reference dataset objects,
+                  # and grant_sync REFUSES a grant to an asset not yet in the
+                  # directory (deny-on-dangling). Exits 2 (malformed) / 3
+                  # (dangling) / 4 (readback) — `set -e` fails the Job loudly, so
+                  # a bad grant file cannot silently seed a broken grant.
+                  python policy/sync/grant_sync.py
+                  echo ""
+                  echo "===== SEED COMPLETE — three syncs applied + readbacks passed ====="
 {{- end }}

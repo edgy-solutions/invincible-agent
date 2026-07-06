@@ -111,8 +111,11 @@ fail-closed, `ALLOW_MOCK_AUTH` fail-open removed — dag-tools `60cf283`).
 |---|---|---|---|
 | DataHub | `dataset` objects + `owner` relations | RESOURCE | `policy/sync/datahub_topaz_sync.py` |
 | git YAML | `persona`/`cell`/`group`/`member` + `user` | SUBJECT entitlement | `policy/sync/topaz_sync.py` (from `policy/{personas,groups,users,domains}.yaml`) |
+| git YAML | `dataset` `reader` relations | per-asset GRANT (auditable) | `policy/sync/grant_sync.py` (from `policy/asset_grants.yaml`) |
 
-Both run, readback-gated, from the seed CronJob
+Three syncs, DISJOINT relation scope (none prunes another's): entitlement
+cells, DataHub `owner`, git-asserted `reader` grants. All run, readback-gated,
+from the seed CronJob
 `helm/invincible-agent/templates/topaz-seed-cronjob.yaml` (default-disabled).
 DataHub supplies *resource* attributes; git supplies *subject* attributes;
 the request supplies *environment* — Topaz decides on all three. No source
@@ -226,14 +229,20 @@ Memory: `identity-reaches-enforcement-point` (multi-path corollary).
   tags, not domains). When present, domain is a **guardrail** on grant
   validity (no cross-compartment reader) — an ABAC attribute the decision may
   consult — **never** access-sufficient.
-- **HITL grant flow = the PRIMARY data-access mechanism.** Deny-by-default
-  means people get data access via explicit grant: deny → request →
-  human-asserts → grant, recorded auditable (git-asserted `reader` relations,
-  or the HITL dashboard writing the relation + provenance). First manual
-  rehearsal done (alice → `reader` → customers_gold, proven discriminating).
-  Spec of a grant assertion (gathered from the rehearsal): subject (email),
-  asset (URN), relation (`reader`), asserter (human), recorded-where
-  (directory + provenance). Memory `project_hitl_grant_dashboard_spec`.
+- **Auditable grant mechanism — the git-asserted core is BUILT**
+  (`grant_sync.py` ← `policy/asset_grants.yaml`). Deny-by-default means people
+  get data access via explicit grant: deny → request → human-asserts → grant,
+  recorded auditable. The git side is done: a `reader` grant is a PR-reviewed
+  `asset_grants.yaml` entry (required `granted_by` + `reason`; git-blame is the
+  audit trail), synced to Topaz, readback-gated; removing the entry REVOKES.
+  **Prove-the-negative on the grant path** (the mechanism CREATES access): a
+  MALFORMED (anonymous) or DANGLING (asset-absent) grant is REFUSED, nothing
+  applied (exit 2 / 3). Proven live: deny→git-grant→allow (alice), and both
+  refusals. The **HITL dashboard** is the human-facing front end that still
+  remains — it produces an assertion of this exact shape (or writes the
+  relation + provenance directly). Spec: subject (email), asset (URN), relation
+  (`reader`), asserter (human), reason, recorded-where (git + directory).
+  Memory `project_hitl_grant_dashboard_spec`.
 - **`access_decision` provenance capture** (ADR-0025) = the legally-required
   audit trail ("why was this subject permitted to read this asset, when").
 - **`ENABLE_AGENTIC_AUTH` flips LAST**, after all enforcement points migrate

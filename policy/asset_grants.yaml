@@ -1,0 +1,32 @@
+# Per-asset READ grants — the auditable, git-asserted grant mechanism.
+#
+# Deny-by-default (the governing invariant): a subject reads an asset ONLY via
+# an EXPLICIT grant. Entitlement / persona / domain are eligibility, NEVER the
+# grant — "cleared for the domain" is not "granted this asset" (need-to-know).
+# At TS/SCI/proprietary/PII, an UNAUDITABLE grant is a grant that shouldn't
+# exist, so grants live HERE (PR-reviewed, git-blame = who/when) not in manual
+# directory writes. `grant_sync.py` flows these into Topaz as `reader`
+# relations; removing an entry REVOKES the grant (git is the source of truth).
+#
+# Every entry REQUIRES an accountable human (`granted_by`) and a `reason` —
+# an anonymous or unexplained grant is REFUSED by the sync (prove-the-negative
+# on the grant path). `subject` is the entitlement key (email, matching the
+# seeded `user` objects); `asset` is the dataset URN; the relation is `reader`.
+#
+# Add a grant DELIBERATELY (a chosen, reviewed decision), NOT reactively when
+# someone hits a denial — the honest denial + a reviewed grant is the model;
+# reactive granting launders the gate's predicate into the grant file. This is
+# the git side of the deny→request→grant→allow loop; the HITL dashboard is the
+# human-facing front end that ultimately produces an assertion of this shape.
+
+grants:
+  # First auditable grant — supersedes the 2026-07-06 manual directory-write
+  # rehearsal (alice→reader→customers_gold) with a git-blame-able assertion.
+  - subject: alice@example.com
+    asset: "urn:li:dataset:(urn:li:dataPlatform:snowflake,gold.sales.customers_gold,PROD)"
+    granted_by: cnogradi
+    reason: >-
+      Demo power-user: alice reads the gold customer table to exercise the
+      allow-side of the sealed DA-read gate. Fixture grant (not a claim that
+      alice-the-persona owns this data) — remove when the demo no longer needs
+      a granted reader.
