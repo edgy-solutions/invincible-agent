@@ -3,6 +3,7 @@ import sys
 import asyncio
 import json
 import logging
+import httpx
 from typing import Dict, Any
 from pathlib import Path
 
@@ -65,6 +66,44 @@ except ImportError:
 # Import from standard shared schemas & the ones just generated in Step 1
 from baml_client import b
 from baml_py import baml_py
+
+
+# ADR-0025 engines arc — Engine E's per-document READ gate. IDENTICAL to Engine
+# W's `_can_read_document` (both gate DocumentChunks on the SAME `document`
+# namespace / IRIs / grants) — this is the PORT of W's proven filter to E's
+# `search_manual_text` tool (tool 1 of 3). Candidate for a shared authz-client
+# module; duplicated for now so E is self-contained (separate deployment).
+# ENABLE_AGENTIC_AUTH dark-launches it (OFF → no filtering, current behavior;
+# flips LAST with all engines).
+TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
+ENABLE_AGENTIC_AUTH = os.getenv("ENABLE_AGENTIC_AUTH", "false").lower() in ("true", "1", "yes")
+
+
+def _can_read_document(caller_email: str, source_id: str) -> bool:
+    """Ask Topaz whether ``caller_email`` may READ the source ``document``.
+    DENY-BY-DEFAULT, explicit owner/reader grant only (same gate/objects/grants
+    as Engine W — shared `document` namespace). FAIL-CLOSED on empty
+    caller/source, unresolvable source, or ANY error → the chunk is DROPPED,
+    never synthesized (an unidentifiable chunk is the leak)."""
+    if not caller_email or not source_id:
+        return False
+    try:
+        r = httpx.post(
+            f"{TOPAZ_DIRECTORY_URL}/api/v3/directory/check",
+            json={
+                "object_type": "document",
+                "object_id": source_id,
+                "relation": "can_read",
+                "subject_type": "user",
+                "subject_id": caller_email,
+            },
+            timeout=5.0,
+        )
+        r.raise_for_status()
+        return bool(r.json().get("check", False))
+    except Exception as e:  # noqa: BLE001 — fail-closed on ANY failure
+        print(f"[Engine E] can_read check FAILED (fail-closed deny) src={source_id!r}: {e}")
+        return False
 
 # Initialize runtime BAML configuration logic
 try:
@@ -156,6 +195,12 @@ async def query_graph(ctx: Context, request: Dict[str, Any]) -> Dict[str, Any]:
     # (e.g. response filtering) but does not currently change the prompt.
     user_persona = (request.get("user_persona") or persona_str).upper()
     user_id = request.get("user_id")
+    # ADR-0025 engines arc: the caller's ENTITLEMENT KEY (email), threaded from
+    # the supervisor's specialist dispatch (same payload W reads) → the subject
+    # of the per-document can_read gate the search_manual_text result-filter
+    # applies before synthesis. Empty when absent → gate denies (fail-closed).
+    caller_email = request.get("user_email") or ""
+    print(f"[Engine E] query_graph caller_email={caller_email!r}")
 
     system_prompt = PERSONA_PROMPTS.get(persona_str, PERSONA_PROMPTS["MECHANIC"])
     
@@ -439,11 +484,38 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     return "No relevant manual text found for this query in the current domain."
 
                 results = []
+                dropped = 0
                 for obj in response.objects:
+                    # RESULT-FILTER (before synthesis) — tool 1 of E's 3 paths,
+                    # the PORT of W's gate: this return string is the LLM's tool
+                    # result, so gating each chunk on its source document's
+                    # can_read here (and dropping ungated) means the smolagent
+                    # never sees them. Unresolvable source fails CLOSED. The
+                    # domain filter above is RELEVANCE, not enforcement.
+                    source_id = (
+                        obj.properties.get("source_url")
+                        or obj.properties.get("uri")
+                        or obj.properties.get("doc_id")
+                    )
+                    if source_id == "Unknown Document":
+                        source_id = None
+                    if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, source_id):
+                        dropped += 1
+                        continue
                     results.append(obj.properties.get("text", ""))
                     # Accumulate the source for the engine's response.
                     _collect_weaviate_source(obj, semantic_query)
 
+                if dropped:
+                    print(
+                        f"[Engine E] search_manual_text DROPPED {dropped} ungated/unresolvable "
+                        f"chunk(s) BEFORE synthesis (caller={caller_email!r})"
+                    )
+                if not results:
+                    return (
+                        "No accessible manual text found for this query in the current domain "
+                        "— matching documents exist but you are not granted read access to them."
+                    )
                 return "\n\n---\n\n".join(results)
             except Exception as e:
                 return f"Error executing semantic search: {str(e)}"
