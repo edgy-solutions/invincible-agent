@@ -455,6 +455,12 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
         #     distinct `[Engine E CALIB]` tag so a real deployment routes it to a
         #     need-to-know sink, not the general app log.
         calib_events: list = []
+        # Struggle stats captured from the agent's OWN step memory (the
+        # execution_trace built from `agent.logs` is empty in smolagents 1.24 —
+        # that attribute no longer exists — so parse/exec errors were invisible).
+        # Populated by run_smolagent from agent.memory.steps; content-free
+        # (COUNTS + a final-answer bool only, never step observations/output).
+        run_stats: dict = {"n_steps": 0, "step_errors": 0, "reached_final": False}
 
         def _calib(**event) -> None:
             # Defensive: strip any accidental content-bearing key so a future
@@ -787,29 +793,38 @@ print(result)
                 # Run the agent in a thread pool since smolagents is synchronous
                 result = await asyncio.to_thread(agent.run, final_prompt)
                 
-                # We also want to capture the internal reasoning steps to display in the UI!
-                # Smolagents logs its steps in `agent.logs`
+                # Capture the internal reasoning steps for the UI trace AND the
+                # calibration struggle stats. smolagents 1.24 exposes them on
+                # `agent.memory.steps` (the old `agent.logs` attribute is gone —
+                # the previous block silently produced an EMPTY trace, which also
+                # blinded the calibration parse-error count). Each ActionStep has
+                # .error (parse/exec failure), .is_final_answer, .tool_calls.
                 formatted_trace = "--- Agent Execution Trace ---\n"
-                if hasattr(agent, 'logs'):
-                    for log_entry in agent.logs:
-                        if isinstance(log_entry, dict):
-                            formatted_trace += f"Step: {log_entry.get('step', 'N/A')}\n"
-                            if 'thought' in log_entry:
-                                formatted_trace += f"Thought: {log_entry['thought']}\n"
-                            if 'tool_call' in log_entry:
-                                formatted_trace += f"Action: {log_entry['tool_call']}\n"
-                            if 'tool_result' in log_entry:
-                                formatted_trace += f"Result: {log_entry['tool_result']}\n"
-                        else:
-                            formatted_trace += f"Step: {getattr(log_entry, 'step', 'N/A')}\n"
-                            if hasattr(log_entry, 'thought') and getattr(log_entry, 'thought'):
-                                formatted_trace += f"Thought: {getattr(log_entry, 'thought')}\n"
-                            if hasattr(log_entry, 'tool_call') and getattr(log_entry, 'tool_call'):
-                                formatted_trace += f"Action: {getattr(log_entry, 'tool_call')}\n"
-                            if hasattr(log_entry, 'tool_result') and getattr(log_entry, 'tool_result'):
-                                formatted_trace += f"Result: {getattr(log_entry, 'tool_result')}\n"
+                try:
+                    steps = getattr(getattr(agent, "memory", None), "steps", []) or []
+                    for st in steps:
+                        # Only ActionSteps carry error/tool_calls; skip task/plan steps.
+                        if not hasattr(st, "error"):
+                            continue
+                        run_stats["n_steps"] += 1
+                        if getattr(st, "error", None):
+                            run_stats["step_errors"] += 1   # parse OR execution error
+                        if getattr(st, "is_final_answer", False):
+                            run_stats["reached_final"] = True
+                        # UI trace (shown to the authorized caller) — code + result.
+                        code = getattr(st, "code_action", None)
+                        if code:
+                            formatted_trace += f"Action:\n{code}\n"
+                        err = getattr(st, "error", None)
+                        if err:
+                            formatted_trace += f"Error: {err}\n"
+                        obs = getattr(st, "observations", None)
+                        if obs:
+                            formatted_trace += f"Result: {obs}\n"
                         formatted_trace += "-" * 40 + "\n"
-                        
+                except Exception as trace_err:  # noqa: BLE001 — trace is best-effort
+                    formatted_trace += f"(trace capture skipped: {trace_err})\n"
+
                 return str(result), formatted_trace
             except Exception as e:
                 import traceback
@@ -830,19 +845,27 @@ print(result)
         # execution trace is COUNTED, never logged (it can echo fetched content).
         try:
             tool_errors = sum(1 for e in calib_events if e.get("error"))
-            trace_str = execution_trace or ""
-            parse_errors = trace_str.count("Error in code parsing") + trace_str.count("InterpreterError")
+            # STEP_ERRORS come from the agent's OWN step memory (parse OR exec
+            # errors) — the reliable struggle source. The old trace.count() read
+            # an empty string and silently reported 0 during heavy struggle.
+            step_errors = run_stats.get("step_errors", 0)
+            n_steps = run_stats.get("n_steps", 0)
+            reached_final = run_stats.get("reached_final", False)
             calib_record = {
                 "engine": "E",
                 "caller": caller_email,
                 "domain": domain_label,
-                "intent": user_query,          # the caller's own NL request (intent)
+                "intent": user_query,          # caller's NL request (may be null → harness/caller sent no user_query)
                 "auth_enabled": ENABLE_AGENTIC_AUTH,
                 "ops": calib_events,           # realized DSL op-sequence (content-free)
                 "n_ops": len(calib_events),
-                "tool_errors": tool_errors,
-                "parse_errors": parse_errors,
-                "struggle": tool_errors + parse_errors,   # coverage/fluency-gap signal
+                "n_steps": n_steps,
+                "reached_final": reached_final,
+                "tool_errors": tool_errors,    # DSL calls that returned an error
+                "step_errors": step_errors,    # agent code steps that failed (parse/exec)
+                # coverage/fluency-gap signal: DSL errors + failed code steps, and
+                # a run that never reached a final answer is itself a struggle.
+                "struggle": tool_errors + step_errors + (0 if reached_final else 1),
             }
             # NOTE: this record references intended queries → treat as NEED-TO-KNOW
             # at the classification of what it references. Distinct tag so a real
