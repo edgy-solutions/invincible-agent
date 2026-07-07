@@ -44,7 +44,9 @@ litellm:
       # ai1 (192.168.1.126) — large model: gpt-oss-128k:120b.
       - model_name: gpt-oss-128k:120b
         litellm_params:
-          model: ollama/gpt-oss-128k:120b
+          # ollama_chat/ enables tool_calls parsing (ollama/ = /api/generate drops
+          # them). See values.yaml note + engine-E harness arc (2026-07-07).
+          model: ollama_chat/gpt-oss-128k:120b
           api_base: http://192.168.1.126:11434
           api_key: "any"
       # ai2 (192.168.1.169) — secondary host for embeddings + lighter

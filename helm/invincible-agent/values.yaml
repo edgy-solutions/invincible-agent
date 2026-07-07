@@ -1227,7 +1227,15 @@ litellm:
       # ai1 (Strix Halo + R97000 PRO, 192.168.1.126) — large model host.
       - model_name: gpt-oss-128k:120b
         litellm_params:
-          model: ollama/gpt-oss-128k:120b
+          # ollama_chat/ (NOT ollama/) — the ollama/ prefix routes to Ollama's
+          # /api/generate (completion) endpoint which SILENTLY DROPS tool_calls
+          # (model emits the call as prose in `content`, tool_calls stays empty);
+          # ollama_chat/ routes to /api/chat which parses tool_calls correctly.
+          # Proven 2026-07-07: same LiteLLM 1.89.2, same backend — ollama/ → 0
+          # tool_calls, ollama_chat/ → clean find_nodes call. Enables native
+          # tool-calling FLEET-WIDE (ToolCallingAgent); content path unchanged
+          # (no-tools calls return identical content). See engine-E harness arc.
+          model: ollama_chat/gpt-oss-128k:120b
           api_base: http://192.168.1.126:11434
           api_key: "any"
       # ai2 (Strix Halo + R97000 PRO, 192.168.1.169) — secondary inference
