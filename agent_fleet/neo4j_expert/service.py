@@ -435,7 +435,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 )
 
         @tool
-        def find_nodes(label: str, name_contains: str = None) -> str:
+        def find_nodes(label: str, name_contains: str = None) -> list:
             """Find graph nodes of a given TYPE, returning their IDENTITIES
             (uri + label) — NOT their content. Use this to DISCOVER what exists,
             then call fetch_content() with the uris you need.
@@ -445,22 +445,24 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     "Hazard", "DataModule", "WorkInstruction", "WorkPackage".
                 name_contains: optional case-insensitive substring filter on the
                     node's name/label.
-            Returns: JSON list of {uri, label} identities (domain-scoped, LIMIT 50).
+            Returns: a Python list of {"uri":..., "label":...} dicts you can
+                iterate directly (e.g. uris = [n["uri"] for n in result]).
+                Domain-scoped, LIMIT 50.
             """
             if not _valid_ident(label) or not _valid_ident(domain_label):
-                return f"Invalid label {label!r} — use one node type like 'Procedure'."
+                return [{"error": f"Invalid label {label!r} — use one node type like 'Procedure'."}]
             cypher = (
                 f"MATCH (n:`{label}`:`{domain_label}`) "
                 + ("WHERE toLower(coalesce(n.label,'')) CONTAINS toLower($name) " if name_contains else "")
                 + "RETURN n.uri AS uri, coalesce(n.label, n.uri) AS label LIMIT 50"
             )
             try:
-                return json.dumps(_run_read(cypher, {"name": name_contains} if name_contains else {}), default=str)
+                return _run_read(cypher, {"name": name_contains} if name_contains else {})
             except Exception as e:  # noqa: BLE001
-                return f"find_nodes error: {e}"
+                return [{"error": f"find_nodes error: {e}"}]
 
         @tool
-        def traverse(from_uri: str, relationship: str = None, to_label: str = None) -> str:
+        def traverse(from_uri: str, relationship: str = None, to_label: str = None) -> list:
             """Follow relationships ONE hop from a node (by uri) to connected
             nodes, returning their IDENTITIES (uri + label + relationship) —
             NOT content. Bounded to one hop by design.
@@ -469,12 +471,13 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 from_uri: the starting node's uri (from find_nodes).
                 relationship: optional relationship type to follow (e.g. "HAS_PART").
                 to_label: optional node type to filter the destination.
-            Returns: JSON list of {uri, label, relationship}.
+            Returns: a Python list of {"uri":..., "label":..., "relationship":...}
+                dicts you can iterate directly.
             """
             if to_label and not _valid_ident(to_label):
-                return f"Invalid to_label {to_label!r}."
+                return [{"error": f"Invalid to_label {to_label!r}."}]
             if relationship and not _valid_ident(relationship):
-                return f"Invalid relationship {relationship!r}."
+                return [{"error": f"Invalid relationship {relationship!r}."}]
             rel = f":`{relationship}`" if relationship else ""
             tgt = f":`{to_label}`" if to_label else ""
             cypher = (
@@ -482,19 +485,20 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 "RETURN m.uri AS uri, coalesce(m.label, m.uri) AS label, type(r) AS relationship LIMIT 50"
             )
             try:
-                return json.dumps(_run_read(cypher, {"uri": from_uri}), default=str)
+                return _run_read(cypher, {"uri": from_uri})
             except Exception as e:  # noqa: BLE001
-                return f"traverse error: {e}"
+                return [{"error": f"traverse error: {e}"}]
 
         @tool
-        def fetch_content(uris: list) -> str:
+        def fetch_content(uris: list) -> dict:
             """Fetch the CONTENT of specific nodes by uri — but ONLY for nodes
             you are GRANTED to read. Ungated nodes are omitted (listed under
             'denied_not_granted'). Pass uris from find_nodes()/traverse().
 
             Args:
                 uris: list of node uri strings.
-            Returns: JSON {granted: {uri: {props}}, denied_not_granted: [uri]}.
+            Returns: a Python dict {"granted": {uri: {props}},
+                "denied_not_granted": [uri]} you can use directly.
             """
             if not isinstance(uris, list):
                 uris = [uris]
@@ -518,10 +522,10 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
             if denied:
                 out["denied_not_granted"] = denied
                 print(f"[Engine E] fetch_content DENIED {len(denied)} ungated node(s) (caller={caller_email!r})")
-            return json.dumps(out, default=str)
+            return out
 
         @tool
-        def count_accessible(label: str, name_contains: str = None) -> str:
+        def count_accessible(label: str, name_contains: str = None) -> dict:
             """Count nodes of a TYPE that YOU are granted to read (gate-then-
             aggregate). The count reflects ONLY your accessible set — never the
             full set — so it cannot reveal the size of data you lack access to.
@@ -533,7 +537,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
             Returns: JSON {label, accessible_count}.
             """
             if not _valid_ident(label) or not _valid_ident(domain_label):
-                return f"Invalid label {label!r}."
+                return {"error": f"Invalid label {label!r}."}
             cypher = (
                 f"MATCH (n:`{label}`:`{domain_label}`) "
                 + ("WHERE toLower(coalesce(n.label,'')) CONTAINS toLower($name) " if name_contains else "")
@@ -542,13 +546,13 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
             try:
                 rows = _run_read(cypher, {"name": name_contains} if name_contains else {})
             except Exception as e:  # noqa: BLE001
-                return f"count_accessible error: {e}"
+                return {"error": f"count_accessible error: {e}"}
             # GATE-THEN-AGGREGATE: count only the caller's granted uris.
             if ENABLE_AGENTIC_AUTH:
                 n = sum(1 for r in rows if _can_read_document(caller_email, r.get("uri")))
             else:
                 n = len(rows)
-            return json.dumps({"label": label, "accessible_count": n})
+            return {"label": label, "accessible_count": n}
 
         @tool
         def search_manual_text(semantic_query: str, metadata_filters: dict = None) -> str:
