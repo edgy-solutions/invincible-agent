@@ -526,7 +526,10 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
             aggregate). The count reflects ONLY your accessible set — never the
             full set — so it cannot reveal the size of data you lack access to.
 
-            Args: label, name_contains (as find_nodes).
+            Args:
+                label: the node type to count (e.g. "Procedure", "Part").
+                name_contains: optional case-insensitive substring filter on the
+                    node's name/label.
             Returns: JSON {label, accessible_count}.
             """
             if not _valid_ident(label) or not _valid_ident(domain_label):
