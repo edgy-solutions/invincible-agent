@@ -228,15 +228,26 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
     domain_constraints = f"""
 {schema_injection}
 
-    STRICT DATA SEGREGATION: You are operating strictly within the {domain} domain.
-    
-    CRITICAL RULE: Every single node you query MUST explicitly include the `:{domain_label}` label.
-    Example of a correct query: MATCH (n:Procedure:{domain_label})
-    Example of an INCORRECT query: MATCH (n:Procedure)
-    
-    Do not guess which node types exist. Use your `get_graph_schema` tool to discover available labels, but ALWAYS append `:{domain_label}` to your queries.
-    
-    Optimization Update: When searching for specific part numbers or gauge references, ALWAYS prioritize the `search_manual_text` tool before attempting complex Cypher traversal, as part numbers are often embedded in unstructured manual text.
+    You are operating within the {domain} domain (queries are automatically
+    scoped to it).
+
+    HOW TO QUERY THE GRAPH — use these STRUCTURED tools (you do NOT write raw
+    Cypher; these are Cypher-shaped operations):
+      • find_nodes(label, name_contains) — DISCOVER nodes of a type; returns
+        their {{uri, label}} IDENTITIES (not their content).
+        e.g. find_nodes("Procedure", "rotor removal"), find_nodes("Hazard").
+      • traverse(from_uri, relationship, to_label) — follow ONE hop from a node
+        to connected nodes' identities.
+        e.g. traverse("<a-uri>", "HAS_PART", "Part").
+      • fetch_content(uris) — get the CONTENT of nodes, but ONLY those you are
+        granted to read (ungated ones are omitted). Pass uris from find_nodes.
+      • count_accessible(label, name_contains) — count nodes you can read.
+
+    THE WORKFLOW: find_nodes / traverse to DISCOVER identities → fetch_content
+    with those uris to READ the content you're permitted. Use get_graph_schema
+    to see available labels (e.g. Procedure, Part, Tool, Hazard, DataModule,
+    WorkInstruction, WorkPackage). Use search_manual_text for conceptual,
+    symptom, or how-to questions where the answer is in unstructured manual text.
     """
     
     system_prompt_with_segregation = system_prompt + "\n" + domain_constraints
@@ -281,7 +292,8 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
     grounding_rule = (
         "\n\n"
         "CRITICAL GROUNDING RULE: You must NEVER invent, guess, or extrapolate facts. "
-        "Use only what the tools return (execute_cypher, get_graph_schema, "
+        "Use only what the tools return (find_nodes, traverse, fetch_content, "
+        "count_accessible, get_graph_schema, "
         "search_manual_text). If a specific field the user asked about is genuinely "
         "absent from the tool result, state it is not available — but do NOT claim a "
         "field is missing if the tool returned it.\n\n"
@@ -396,56 +408,144 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
 
     try:
 
+        # ADR-0025 engines arc — TOOL 2: the DENY-BY-CONSTRUCTION query DSL.
+        # Replaces the old `execute_cypher` (arbitrary Cypher → could project
+        # `RETURN n.instructionText`, `count(n)` over ungated, unbounded paths).
+        # The LLM now emits a BOUNDED, Cypher-flavored API. Unsafe queries are
+        # INEXPRESSIBLE: discovery (find_nodes/traverse) returns only gateable
+        # IDENTITIES (uri+label, never content); CONTENT flows ONLY through
+        # fetch_content, which gates each node on can_read (shared `document`
+        # namespace with W); aggregation (count_accessible) is GATE-THEN-
+        # AGGREGATE (counts only the caller's granted set → no existence/
+        # quantity oracle). The rendered Cypher is PARAMETERIZED ($name/$uri);
+        # the ONLY interpolation is `label`/`domain_label`, each validated
+        # against a strict identifier regex → no injection. Certifiable by
+        # reading THIS API surface: no operation projects ungated content.
+        import re as _re
+        _LABEL_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+        def _valid_ident(s: str) -> bool:
+            return bool(s) and bool(_LABEL_RE.match(str(s)))
+
+        def _run_read(cypher: str, params: dict):
+            drv = get_neo4j_driver()
+            with drv.session() as session:
+                return session.execute_read(
+                    lambda tx: [dict(r) for r in tx.run(cypher, **params)]
+                )
+
         @tool
-        def execute_cypher(query: str) -> str:
-            """
-            Executes a Cypher read query against the Neo4j military graph database.
-
-            CRITICAL DATABASE SCHEMA & RULES:
-            You are querying a graph of military technical manuals (S1000D, IADS, DITA, MIL-STD-40051).
-            The graph was imported via Neosemantics with handleVocabUris: 'IGNORE'.
-
-            DO NOT USE URI PREFIXES:
-            Do NOT prefix labels or properties with `mil:` or any other namespace.
-            Correct: MATCH (p:Procedure)
-            Incorrect: MATCH (p:`mil:Procedure`)
-
-            CASE SENSITIVITY:
-            Neo4j CONTAINS is CASE-SENSITIVE. Always use toLower() for text matching:
-            CORRECT:   WHERE toLower(p.name) CONTAINS 'fuel pump'
-            INCORRECT: WHERE p.name CONTAINS 'fuel pump'
-
-            STARTING STRATEGY:
-            Start broad. First discover what exists with a simple query like:
-            MATCH (p:Procedure) RETURN p.name LIMIT 20
-            Then refine based on actual data.
+        def find_nodes(label: str, name_contains: str = None) -> str:
+            """Find graph nodes of a given TYPE, returning their IDENTITIES
+            (uri + label) — NOT their content. Use this to DISCOVER what exists,
+            then call fetch_content() with the uris you need.
 
             Args:
-                query: The raw Cypher string to execute. Limit queries via `LIMIT 50` to prevent payload overflow.
-
-            Returns:
-                JSON stringified results from the Neo4j session.
+                label: the node type — e.g. "Procedure", "Part", "Tool",
+                    "Hazard", "DataModule", "WorkInstruction", "WorkPackage".
+                name_contains: optional case-insensitive substring filter on the
+                    node's name/label.
+            Returns: JSON list of {uri, label} identities (domain-scoped, LIMIT 50).
             """
-            # Phase 3 source attribution: delegate to the module-level
-            # tools.execute_cypher (the actual Neo4j call), then walk
-            # the parsed JSON result for URI/IRI fields and feed each
-            # into the closure-scoped sources_collected. The wrapper
-            # docstring is intentionally identical to the underlying
-            # tool so the smolagent prompt sees no change.
-            result_json = _module_execute_cypher(query)
+            if not _valid_ident(label) or not _valid_ident(domain_label):
+                return f"Invalid label {label!r} — use one node type like 'Procedure'."
+            cypher = (
+                f"MATCH (n:`{label}`:`{domain_label}`) "
+                + ("WHERE toLower(coalesce(n.label,'')) CONTAINS toLower($name) " if name_contains else "")
+                + "RETURN n.uri AS uri, coalesce(n.label, n.uri) AS label LIMIT 50"
+            )
             try:
-                records = json.loads(result_json)
-            except (TypeError, ValueError):
-                # Underlying tool returned an error string (e.g.
-                # "Neo4j Query Error: ..."). Just pass it through —
-                # no URIs to collect, no harm done.
-                return result_json
+                return json.dumps(_run_read(cypher, {"name": name_contains} if name_contains else {}), default=str)
+            except Exception as e:  # noqa: BLE001
+                return f"find_nodes error: {e}"
+
+        @tool
+        def traverse(from_uri: str, relationship: str = None, to_label: str = None) -> str:
+            """Follow relationships ONE hop from a node (by uri) to connected
+            nodes, returning their IDENTITIES (uri + label + relationship) —
+            NOT content. Bounded to one hop by design.
+
+            Args:
+                from_uri: the starting node's uri (from find_nodes).
+                relationship: optional relationship type to follow (e.g. "HAS_PART").
+                to_label: optional node type to filter the destination.
+            Returns: JSON list of {uri, label, relationship}.
+            """
+            if to_label and not _valid_ident(to_label):
+                return f"Invalid to_label {to_label!r}."
+            if relationship and not _valid_ident(relationship):
+                return f"Invalid relationship {relationship!r}."
+            rel = f":`{relationship}`" if relationship else ""
+            tgt = f":`{to_label}`" if to_label else ""
+            cypher = (
+                f"MATCH (n {{uri:$uri}})-[r{rel}]-(m{tgt}) "
+                "RETURN m.uri AS uri, coalesce(m.label, m.uri) AS label, type(r) AS relationship LIMIT 50"
+            )
             try:
-                for u in _walk_for_uris(records):
-                    _collect_cypher_source(u, query)
-            except Exception as walk_err:
-                print(f"Cypher source-collection walk failed (non-fatal): {walk_err}")
-            return result_json
+                return json.dumps(_run_read(cypher, {"uri": from_uri}), default=str)
+            except Exception as e:  # noqa: BLE001
+                return f"traverse error: {e}"
+
+        @tool
+        def fetch_content(uris: list) -> str:
+            """Fetch the CONTENT of specific nodes by uri — but ONLY for nodes
+            you are GRANTED to read. Ungated nodes are omitted (listed under
+            'denied_not_granted'). Pass uris from find_nodes()/traverse().
+
+            Args:
+                uris: list of node uri strings.
+            Returns: JSON {granted: {uri: {props}}, denied_not_granted: [uri]}.
+            """
+            if not isinstance(uris, list):
+                uris = [uris]
+            granted, denied = {}, []
+            for uri in uris:
+                if not isinstance(uri, str) or not uri:
+                    continue
+                # GATE before returning any content — shared document namespace
+                # with W; fail-closed. This is the ONLY content path in the DSL.
+                if ENABLE_AGENTIC_AUTH and not _can_read_document(caller_email, uri):
+                    denied.append(uri)
+                    continue
+                try:
+                    rows = _run_read("MATCH (n {uri:$uri}) RETURN properties(n) AS props LIMIT 1", {"uri": uri})
+                    if rows:
+                        granted[uri] = rows[0].get("props", {})
+                        _collect_cypher_source(uri, "fetch_content")
+                except Exception:  # noqa: BLE001
+                    denied.append(uri)
+            out = {"granted": granted}
+            if denied:
+                out["denied_not_granted"] = denied
+                print(f"[Engine E] fetch_content DENIED {len(denied)} ungated node(s) (caller={caller_email!r})")
+            return json.dumps(out, default=str)
+
+        @tool
+        def count_accessible(label: str, name_contains: str = None) -> str:
+            """Count nodes of a TYPE that YOU are granted to read (gate-then-
+            aggregate). The count reflects ONLY your accessible set — never the
+            full set — so it cannot reveal the size of data you lack access to.
+
+            Args: label, name_contains (as find_nodes).
+            Returns: JSON {label, accessible_count}.
+            """
+            if not _valid_ident(label) or not _valid_ident(domain_label):
+                return f"Invalid label {label!r}."
+            cypher = (
+                f"MATCH (n:`{label}`:`{domain_label}`) "
+                + ("WHERE toLower(coalesce(n.label,'')) CONTAINS toLower($name) " if name_contains else "")
+                + "RETURN n.uri AS uri LIMIT 500"
+            )
+            try:
+                rows = _run_read(cypher, {"name": name_contains} if name_contains else {})
+            except Exception as e:  # noqa: BLE001
+                return f"count_accessible error: {e}"
+            # GATE-THEN-AGGREGATE: count only the caller's granted uris.
+            if ENABLE_AGENTIC_AUTH:
+                n = sum(1 for r in rows if _can_read_document(caller_email, r.get("uri")))
+            else:
+                n = len(rows)
+            return json.dumps({"label": label, "accessible_count": n})
 
         @tool
         def search_manual_text(semantic_query: str, metadata_filters: dict = None) -> str:
@@ -590,7 +690,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 
                 # Instantiate the agent giving it ONLY the Neo4j tools and persona
                 agent = CodeAgent(
-                    tools=[execute_cypher, get_graph_schema, search_manual_text],
+                    tools=[find_nodes, traverse, fetch_content, count_accessible, get_graph_schema, search_manual_text],
                     model=model,
                     add_base_tools=False
                 )
