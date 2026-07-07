@@ -434,6 +434,39 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     lambda tx: [dict(r) for r in tx.run(cypher, **params)]
                 )
 
+        # ── DSL CALIBRATION LOG (per-request, CONTENT-FREE by construction) ──────
+        # Purpose: measure the DSL's WIDTH and the agent's FLUENCY with it — the
+        # one open judgment deny-by-construction carries. With raw Cypher removed
+        # there is no rejected-query stream to diff against "ran"; a coverage gap
+        # therefore manifests as STRUGGLE (tool errors, shape-misuse, retries),
+        # not as a rejected query. So we capture the realized op-sequence, the
+        # gate decisions, and the struggle signal — and calibrate the DSL against
+        # real query patterns rather than the known-query set it was built on.
+        #
+        # LEAK DISCIPLINE (this log sits right next to what it protects):
+        #   • NEVER record content payloads (props/text/instructionText). Content
+        #     in the log would be a SECOND uncontrolled copy past the gate — a
+        #     side-channel leak. We record ONLY op names, non-content args
+        #     (label/intent/uri identities), and gate-decision COUNTS + denied
+        #     identities. Enforced by construction: no event carries `props`.
+        #   • The log is itself a GATED resource, classified at the level of what
+        #     it references — an intended query encodes existence-oracle knowledge
+        #     (the tool-3 finding, now at the query layer). Emitted under a
+        #     distinct `[Engine E CALIB]` tag so a real deployment routes it to a
+        #     need-to-know sink, not the general app log.
+        calib_events: list = []
+
+        def _calib(**event) -> None:
+            # Defensive: strip any accidental content-bearing key so a future
+            # edit can't silently turn this into a leak. Only the allow-listed
+            # metadata keys survive.
+            _ALLOWED = {
+                "op", "label", "name_filter", "to_label", "rel", "from_uri",
+                "intent", "requested_n", "result_n", "granted_n", "denied_n",
+                "denied_uris", "kept_n", "dropped_n", "accessible_count", "error",
+            }
+            calib_events.append({k: v for k, v in event.items() if k in _ALLOWED})
+
         @tool
         def find_nodes(label: str, name_contains: str = None) -> list:
             """Find graph nodes of a given TYPE, returning their IDENTITIES
@@ -450,6 +483,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 Domain-scoped, LIMIT 50.
             """
             if not _valid_ident(label) or not _valid_ident(domain_label):
+                _calib(op="find_nodes", label=label, error=True)
                 return [{"error": f"Invalid label {label!r} — use one node type like 'Procedure'."}]
             cypher = (
                 f"MATCH (n:`{label}`:`{domain_label}`) "
@@ -457,8 +491,11 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 + "RETURN n.uri AS uri, coalesce(n.label, n.uri) AS label LIMIT 50"
             )
             try:
-                return _run_read(cypher, {"name": name_contains} if name_contains else {})
+                rows = _run_read(cypher, {"name": name_contains} if name_contains else {})
+                _calib(op="find_nodes", label=label, name_filter=bool(name_contains), result_n=len(rows))
+                return rows
             except Exception as e:  # noqa: BLE001
+                _calib(op="find_nodes", label=label, error=True)
                 return [{"error": f"find_nodes error: {e}"}]
 
         @tool
@@ -475,8 +512,10 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 dicts you can iterate directly.
             """
             if to_label and not _valid_ident(to_label):
+                _calib(op="traverse", from_uri=from_uri, error=True)
                 return [{"error": f"Invalid to_label {to_label!r}."}]
             if relationship and not _valid_ident(relationship):
+                _calib(op="traverse", from_uri=from_uri, error=True)
                 return [{"error": f"Invalid relationship {relationship!r}."}]
             rel = f":`{relationship}`" if relationship else ""
             tgt = f":`{to_label}`" if to_label else ""
@@ -485,8 +524,11 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 "RETURN m.uri AS uri, coalesce(m.label, m.uri) AS label, type(r) AS relationship LIMIT 50"
             )
             try:
-                return _run_read(cypher, {"uri": from_uri})
+                rows = _run_read(cypher, {"uri": from_uri})
+                _calib(op="traverse", from_uri=from_uri, rel=relationship, to_label=to_label, result_n=len(rows))
+                return rows
             except Exception as e:  # noqa: BLE001
+                _calib(op="traverse", from_uri=from_uri, error=True)
                 return [{"error": f"traverse error: {e}"}]
 
         @tool
@@ -497,8 +539,14 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
 
             Args:
                 uris: list of node uri strings.
-            Returns: a Python dict {"granted": {uri: {props}},
-                "denied_not_granted": [uri]} you can use directly.
+            Returns: a Python dict with TWO keys — NOT a list. It is keyed by uri,
+                so DO NOT zip() it against your uris. Shape:
+                  {"granted": {uri: {props...}}, "denied_not_granted": [uri, ...]}
+                USAGE (iterate the granted map by uri):
+                  result = fetch_content(uris)
+                  for uri, props in result["granted"].items():
+                      print(uri, props)         # props is this node's content
+                  # result.get("denied_not_granted", []) = uris you may NOT read
             """
             if not isinstance(uris, list):
                 uris = [uris]
@@ -522,6 +570,9 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
             if denied:
                 out["denied_not_granted"] = denied
                 print(f"[Engine E] fetch_content DENIED {len(denied)} ungated node(s) (caller={caller_email!r})")
+            # CONTENT-FREE calibration: counts + denied IDENTITIES only, never props.
+            _calib(op="fetch_content", requested_n=len(uris), granted_n=len(granted),
+                   denied_n=len(denied), denied_uris=denied)
             return out
 
         @tool
@@ -534,9 +585,10 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 label: the node type to count (e.g. "Procedure", "Part").
                 name_contains: optional case-insensitive substring filter on the
                     node's name/label.
-            Returns: JSON {label, accessible_count}.
+            Returns: a Python dict {"label": ..., "accessible_count": int}.
             """
             if not _valid_ident(label) or not _valid_ident(domain_label):
+                _calib(op="count_accessible", label=label, error=True)
                 return {"error": f"Invalid label {label!r}."}
             cypher = (
                 f"MATCH (n:`{label}`:`{domain_label}`) "
@@ -546,12 +598,14 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
             try:
                 rows = _run_read(cypher, {"name": name_contains} if name_contains else {})
             except Exception as e:  # noqa: BLE001
+                _calib(op="count_accessible", label=label, error=True)
                 return {"error": f"count_accessible error: {e}"}
             # GATE-THEN-AGGREGATE: count only the caller's granted uris.
             if ENABLE_AGENTIC_AUTH:
                 n = sum(1 for r in rows if _can_read_document(caller_email, r.get("uri")))
             else:
                 n = len(rows)
+            _calib(op="count_accessible", label=label, accessible_count=n)
             return {"label": label, "accessible_count": n}
 
         @tool
@@ -638,6 +692,10 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                         f"[Engine E] search_manual_text DROPPED {dropped} ungated/unresolvable "
                         f"chunk(s) BEFORE synthesis (caller={caller_email!r})"
                     )
+                # CONTENT-FREE calibration: intent (the NL query) + kept/dropped
+                # counts only — never the chunk text itself.
+                _calib(op="search_manual_text", intent=semantic_query,
+                       kept_n=len(results), dropped_n=dropped)
                 if not results:
                     return (
                         "No accessible manual text found for this query in the current domain "
@@ -645,6 +703,7 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     )
                 return "\n\n---\n\n".join(results)
             except Exception as e:
+                _calib(op="search_manual_text", intent=semantic_query, error=True)
                 return f"Error executing semantic search: {str(e)}"
 
         @safe_observe(as_type="retrieval", name="mem0_context_retrieval")
@@ -759,6 +818,38 @@ print(result)
                 raise e
         # Standard 120s timeout from the orchestrator allows for extended searching
         raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
+
+        # ── EMIT DSL CALIBRATION RECORD (content-free; classified; need-to-know) ──
+        # The op-sequence IS the realized intent (deny-by-construction leaves no
+        # rejected-query stream). Coverage/fluency gaps show up as STRUGGLE:
+        #   • tool_errors  — DSL calls that returned an error (bad label/args)
+        #   • parse_errors — smolagents "code parsing" failures (the agent could
+        #     not express its step in valid DSL-driving code): the fluency signal
+        #     that just caught the zip()-over-a-dict shape-misuse live.
+        # Only integers + already-collected content-free events are emitted; the
+        # execution trace is COUNTED, never logged (it can echo fetched content).
+        try:
+            tool_errors = sum(1 for e in calib_events if e.get("error"))
+            trace_str = execution_trace or ""
+            parse_errors = trace_str.count("Error in code parsing") + trace_str.count("InterpreterError")
+            calib_record = {
+                "engine": "E",
+                "caller": caller_email,
+                "domain": domain_label,
+                "intent": user_query,          # the caller's own NL request (intent)
+                "auth_enabled": ENABLE_AGENTIC_AUTH,
+                "ops": calib_events,           # realized DSL op-sequence (content-free)
+                "n_ops": len(calib_events),
+                "tool_errors": tool_errors,
+                "parse_errors": parse_errors,
+                "struggle": tool_errors + parse_errors,   # coverage/fluency-gap signal
+            }
+            # NOTE: this record references intended queries → treat as NEED-TO-KNOW
+            # at the classification of what it references. Distinct tag so a real
+            # deployment routes it to a gated calibration sink, not the app log.
+            print("[Engine E CALIB] " + json.dumps(calib_record, default=str))
+        except Exception as _calib_err:  # noqa: BLE001 — calibration must never break delivery
+            print(f"[Engine E CALIB] emit skipped: {_calib_err}")
 
         # --------------------------------------------------------------------------
         # Run 2: BAML Strict Formatting
