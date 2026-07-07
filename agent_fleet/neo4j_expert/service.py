@@ -760,11 +760,27 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 # Initialize the LLM (configurable via env var, defaults to lightweight model)
                 model = get_smolagent_model()
                 
+                # Calibration STEP CALLBACK — the reliable struggle source.
+                # step_callbacks fire DURING the run (once per ActionStep), so
+                # counts survive even when the run later RAISES (max-steps / a
+                # final parse failure) — the exact path that made a post-run
+                # memory.steps read return 0. Content-free: counts + a bool only.
+                def _on_action_step(memory_step, agent=None):
+                    try:
+                        run_stats["n_steps"] += 1
+                        if getattr(memory_step, "error", None):
+                            run_stats["step_errors"] += 1   # parse OR execution error
+                        if getattr(memory_step, "is_final_answer", False):
+                            run_stats["reached_final"] = True
+                    except Exception:  # noqa: BLE001 — calibration must never break the run
+                        pass
+
                 # Instantiate the agent giving it ONLY the Neo4j tools and persona
                 agent = CodeAgent(
                     tools=[find_nodes, traverse, fetch_content, count_accessible, get_graph_schema, search_manual_text],
                     model=model,
-                    add_base_tools=False
+                    add_base_tools=False,
+                    step_callbacks=[_on_action_step],
                 )
                 
                 # 🚨 FIX: Add the syntax reminder back in!
@@ -793,12 +809,11 @@ print(result)
                 # Run the agent in a thread pool since smolagents is synchronous
                 result = await asyncio.to_thread(agent.run, final_prompt)
                 
-                # Capture the internal reasoning steps for the UI trace AND the
-                # calibration struggle stats. smolagents 1.24 exposes them on
-                # `agent.memory.steps` (the old `agent.logs` attribute is gone —
-                # the previous block silently produced an EMPTY trace, which also
-                # blinded the calibration parse-error count). Each ActionStep has
-                # .error (parse/exec failure), .is_final_answer, .tool_calls.
+                # Build the UI trace from `agent.memory.steps` (smolagents 1.24;
+                # the old `agent.logs` attribute is gone — the previous block
+                # silently produced an EMPTY trace). Struggle STATS come from the
+                # step callback above, NOT here, so they survive a run that raises
+                # before this post-run read. Best-effort; wrapped.
                 formatted_trace = "--- Agent Execution Trace ---\n"
                 try:
                     steps = getattr(getattr(agent, "memory", None), "steps", []) or []
@@ -806,11 +821,6 @@ print(result)
                         # Only ActionSteps carry error/tool_calls; skip task/plan steps.
                         if not hasattr(st, "error"):
                             continue
-                        run_stats["n_steps"] += 1
-                        if getattr(st, "error", None):
-                            run_stats["step_errors"] += 1   # parse OR execution error
-                        if getattr(st, "is_final_answer", False):
-                            run_stats["reached_final"] = True
                         # UI trace (shown to the authorized caller) — code + result.
                         code = getattr(st, "code_action", None)
                         if code:
@@ -831,48 +841,50 @@ print(result)
                 error_trace = traceback.format_exc()
                 print(f"ERROR in run_smolagent: {error_trace}")
                 raise e
-        # Standard 120s timeout from the orchestrator allows for extended searching
-        raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
-
         # ── EMIT DSL CALIBRATION RECORD (content-free; classified; need-to-know) ──
         # The op-sequence IS the realized intent (deny-by-construction leaves no
         # rejected-query stream). Coverage/fluency gaps show up as STRUGGLE:
-        #   • tool_errors  — DSL calls that returned an error (bad label/args)
-        #   • parse_errors — smolagents "code parsing" failures (the agent could
-        #     not express its step in valid DSL-driving code): the fluency signal
-        #     that just caught the zip()-over-a-dict shape-misuse live.
-        # Only integers + already-collected content-free events are emitted; the
-        # execution trace is COUNTED, never logged (it can echo fetched content).
+        #   • tool_errors — DSL calls that returned an error (bad label/args)
+        #   • step_errors — agent code steps that failed (parse/exec), from the
+        #     step callback: the fluency signal (prose-glued code, bad tags, the
+        #     zip()-over-a-dict shape-misuse) the instrument exists to surface.
+        #   • not reaching a final answer is itself a struggle (+1).
+        # Only integers + already-collected content-free events are emitted; step
+        # observations (which carry tool RESULTS = content) never touch this.
+        # Emitted from a FINALLY so a run that RAISES (max-steps / hard parse
+        # failure) — exactly when the struggle data matters MOST — still records.
+        def _emit_calib() -> None:
+            try:
+                tool_errors = sum(1 for e in calib_events if e.get("error"))
+                step_errors = run_stats.get("step_errors", 0)
+                n_steps = run_stats.get("n_steps", 0)
+                reached_final = run_stats.get("reached_final", False)
+                calib_record = {
+                    "engine": "E",
+                    "caller": caller_email,
+                    "domain": domain_label,
+                    "intent": user_query,      # caller's NL request (may be null → no user_query sent)
+                    "auth_enabled": ENABLE_AGENTIC_AUTH,
+                    "ops": calib_events,       # realized DSL op-sequence (content-free)
+                    "n_ops": len(calib_events),
+                    "n_steps": n_steps,
+                    "reached_final": reached_final,
+                    "tool_errors": tool_errors,
+                    "step_errors": step_errors,
+                    "struggle": tool_errors + step_errors + (0 if reached_final else 1),
+                }
+                # References intended queries → NEED-TO-KNOW, classified at the
+                # level of what it references. Distinct tag routes it to a gated
+                # calibration sink in a real deployment, not the app log.
+                print("[Engine E CALIB] " + json.dumps(calib_record, default=str))
+            except Exception as _calib_err:  # noqa: BLE001 — calibration must never break delivery
+                print(f"[Engine E CALIB] emit skipped: {_calib_err}")
+
+        # Standard 120s timeout from the orchestrator allows for extended searching
         try:
-            tool_errors = sum(1 for e in calib_events if e.get("error"))
-            # STEP_ERRORS come from the agent's OWN step memory (parse OR exec
-            # errors) — the reliable struggle source. The old trace.count() read
-            # an empty string and silently reported 0 during heavy struggle.
-            step_errors = run_stats.get("step_errors", 0)
-            n_steps = run_stats.get("n_steps", 0)
-            reached_final = run_stats.get("reached_final", False)
-            calib_record = {
-                "engine": "E",
-                "caller": caller_email,
-                "domain": domain_label,
-                "intent": user_query,          # caller's NL request (may be null → harness/caller sent no user_query)
-                "auth_enabled": ENABLE_AGENTIC_AUTH,
-                "ops": calib_events,           # realized DSL op-sequence (content-free)
-                "n_ops": len(calib_events),
-                "n_steps": n_steps,
-                "reached_final": reached_final,
-                "tool_errors": tool_errors,    # DSL calls that returned an error
-                "step_errors": step_errors,    # agent code steps that failed (parse/exec)
-                # coverage/fluency-gap signal: DSL errors + failed code steps, and
-                # a run that never reached a final answer is itself a struggle.
-                "struggle": tool_errors + step_errors + (0 if reached_final else 1),
-            }
-            # NOTE: this record references intended queries → treat as NEED-TO-KNOW
-            # at the classification of what it references. Distinct tag so a real
-            # deployment routes it to a gated calibration sink, not the app log.
-            print("[Engine E CALIB] " + json.dumps(calib_record, default=str))
-        except Exception as _calib_err:  # noqa: BLE001 — calibration must never break delivery
-            print(f"[Engine E CALIB] emit skipped: {_calib_err}")
+            raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
+        finally:
+            _emit_calib()
 
         # --------------------------------------------------------------------------
         # Run 2: BAML Strict Formatting
