@@ -43,14 +43,17 @@ from smolagents import CodeAgent
 try:
     from utils.weaviate_utils import get_weaviate_client
     from utils.mem0_utils import get_mem0_memory
+    from utils.embed import embed_query
 except ImportError:
     try:
         from agent_fleet.utils.weaviate_utils import get_weaviate_client
         from agent_fleet.utils.mem0_utils import get_mem0_memory
+        from agent_fleet.utils.embed import embed_query
     except ImportError:
         # Fallback for flat layout in container
         from weaviate_utils import get_weaviate_client
         from mem0_utils import get_mem0_memory
+        from embed import embed_query
 
 try:
     # Workspace root (Container)
@@ -473,12 +476,29 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                 # source-attribution accumulator can populate `relevance`
                 # (Phase 3 of grounding panel).
                 metadata_query = wvc.query.MetadataQuery(score=True, certainty=True, distance=True)
-                response = collection.query.near_text(
-                    query=semantic_query,
-                    limit=3,
-                    filters=final_filter,
-                    return_metadata=metadata_query,
-                )
+                # Compute the query vector via embed_query() (LiteLLM /embeddings)
+                # instead of Weaviate's near_text vectorizer — code owns the
+                # contract, NOT infra (same fix W made). E's near_text pointed at
+                # an Ollama vectorizer (192.168.1.119:11434) UNREACHABLE from the
+                # cluster ("no route to host"), so search_manual_text always
+                # errored and retrieved nothing. Aligned to W's proven
+                # embed_query + near_vector path with a BM25 fallback.
+                try:
+                    query_vector = embed_query(semantic_query)
+                    response = collection.query.near_vector(
+                        near_vector=query_vector,
+                        limit=3,
+                        filters=final_filter,
+                        return_metadata=metadata_query,
+                    )
+                except Exception as embed_err:
+                    print(f"embed_query failed in Engine E; BM25 fallback: {embed_err}")
+                    response = collection.query.bm25(
+                        query=semantic_query,
+                        limit=3,
+                        filters=final_filter,
+                        return_metadata=metadata_query,
+                    )
 
                 if not response.objects:
                     return "No relevant manual text found for this query in the current domain."
