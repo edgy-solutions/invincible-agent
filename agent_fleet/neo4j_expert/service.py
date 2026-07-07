@@ -30,7 +30,7 @@ except ImportError:
         pass
 
 from restate import Context, Service
-from smolagents import CodeAgent
+from smolagents import CodeAgent, ToolCallingAgent
 
 # ---------------------------------------------------------------------------
 # Fleet-standard utilities — memoized Weaviate client + shared mem0 singleton.
@@ -775,36 +775,38 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
                     except Exception:  # noqa: BLE001 — calibration must never break the run
                         pass
 
-                # Instantiate the agent giving it ONLY the Neo4j tools and persona
-                agent = CodeAgent(
+                # Instantiate the agent giving it ONLY the Neo4j tools and persona.
+                # ToolCallingAgent (structured tool-calls) — NOT CodeAgent (free-form
+                # Python in <code> tags). The calibration diagnostic proved gpt-oss
+                # fumbles the CodeAgent ENVELOPE (parse errors, placeholder
+                # final_answer), NOT the DSL (Cypher 12/12 + DSL 12/12 fluent
+                # envelope-free); the fix is the lower-load structured format the
+                # model drives cleanly — unblocked by the litellm ollama_chat/ route
+                # (ollama/ silently dropped tool_calls). The DSL @tool defs are
+                # unchanged; the agent now CALLS them as tools instead of writing
+                # code that calls them (this also sidesteps the dict-shape fumble —
+                # no code to misuse). step_callbacks still fire per ActionStep, so
+                # the calibration instrument is unchanged.
+                agent = ToolCallingAgent(
                     tools=[find_nodes, traverse, fetch_content, count_accessible, get_graph_schema, search_manual_text],
                     model=model,
                     add_base_tools=False,
                     step_callbacks=[_on_action_step],
                 )
-                
-                # 🚨 FIX: Add the syntax reminder back in!
-                syntax_reminder = """
-CRITICAL SYNTAX REQUIREMENT:
-You are a Code Agent. You MUST wrap ALL of your Python code strictly inside <code> and </code> tags.
-DO NOT put your thoughts, explanations, or Markdown text inside the <code> tags. Only valid Python code belongs inside the tags.
-If your search results contain image references or file paths (e.g., `image_path`), you MUST include those exact file paths and their figure titles in your `final_answer` payload so the downstream formatter can render them.
 
-Example of BAD formatting:
-<code>
-I will now search the database.
-result = search("query")
-</code>
-
-Example of GOOD formatting:
-I will now search the database.
-<code>
-result = search("query")
-print(result)
-</code>
+                # Tool-calling guidance (replaces the CodeAgent <code>-tag reminder,
+                # which no longer applies — the agent emits structured tool-calls).
+                tool_reminder = """
+HOW TO ANSWER: call the provided tools in sequence, then call final_answer with
+your answer. Typical flow: find_nodes/traverse to DISCOVER node identities →
+fetch_content(uris=[...]) to READ the content you are permitted (ungated nodes
+are omitted under 'denied_not_granted') → final_answer summarizing what you found.
+Use only what the tools return; never invent data. If tool results contain image
+references or file paths (e.g. image_path) plus figure titles, include those exact
+paths and titles in your final_answer so the downstream formatter can render them.
 """
-                
-                final_prompt = f"{system_prompt_with_memory}\n\n{syntax_reminder}\n\nUser Query: {user_query}"
+
+                final_prompt = f"{system_prompt_with_memory}\n\n{tool_reminder}\n\nUser Query: {user_query}"
                 
                 # Run the agent in a thread pool since smolagents is synchronous
                 result = await asyncio.to_thread(agent.run, final_prompt)
