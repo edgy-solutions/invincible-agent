@@ -484,6 +484,15 @@ class PlanRequest(BaseModel):
 class ResolveRequest(BaseModel):
     """Incoming request to the /resolve endpoint."""
     query: str
+    # ADR-0025 ontology-IRI namespace (2026-07-08): the caller's ENTITLEMENT KEY
+    # (email) — the subject of the per-IRI can_view gate that filters the
+    # OntologyClass candidate pool BEFORE BAML classifies it (select-from-
+    # authorized-set: the LLM can't pick a class it was never shown). Threaded
+    # from the supervisor's JWT, same as the smolagents engines thread user_email.
+    # Empty when absent → the gate (when ENABLE_AGENTIC_AUTH is on) treats the
+    # caller as ungranted → deny-by-default on compartmented classes. Identity
+    # MUST reach this seam before the gate can discriminate on the subject.
+    user_email: str = ""
     # Legacy single-domain field — kept for backward compat with any
     # direct callers (curl tests, /classes endpoint, etc.). The
     # supervisor's `_resolve_subject` was the only production caller

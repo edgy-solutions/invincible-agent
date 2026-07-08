@@ -203,6 +203,7 @@ def _resolve_subject(
     domain: str,
     entity_refs: List[str] | None = None,
     domains: List[str] | None = None,
+    user_email: str = "",
 ) -> tuple[str, float, str]:
     """Ask Engine O's /resolve for the subject ontology class.
 
@@ -264,6 +265,12 @@ def _resolve_subject(
             payload["domains"] = list(domains)
         if entity_refs:
             payload["entity_refs"] = list(entity_refs)
+        # ADR-0025 ontology-IRI namespace: thread the caller's entitlement key
+        # (email) so Engine O's can_view candidate-filter can discriminate on the
+        # subject. Empty is honest-absent → deny-by-default on compartmented
+        # classes at the seam. Identity-reaches-enforcement-point prereq.
+        if user_email:
+            payload["user_email"] = user_email
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/resolve",
             json=payload,
@@ -392,6 +399,7 @@ def _classify_route(
     entitled_domains: List[str],
     routing_domain: str,
     entity_refs: List[str] | None = None,
+    user_email: str = "",
 ) -> tuple[str, Dict[str, Any] | None, dict]:
     """Three-stage SPO routing per ADR-0018 + ADR-0019: /resolve →
     /find_compatible_verbs → /classify_predicate.
@@ -435,6 +443,7 @@ def _classify_route(
         routing_domain,
         entity_refs=entity_refs,
         domains=list(entitled_domains) if entitled_domains else None,
+        user_email=user_email,
     )
 
     # ADR-0019 Contract B — UNKNOWN-subject short-circuit. No
@@ -1162,6 +1171,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         list(config.entitled_domains),
         routing_domain=routing_domain,
         entity_refs=list(config.entity_refs) if config.entity_refs else None,
+        user_email=config.user_email,
     )
 
     # ------------------------------------------------------------------
