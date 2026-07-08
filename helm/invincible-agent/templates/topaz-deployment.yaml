@@ -101,4 +101,11 @@ spec:
               # persona_entitlement.rego (absent from this list) stays dormant.
               - key: catalog_domain_view.rego
                 path: catalog_domain_view.rego
+              # ADR-0025 ontology-IRI namespace: Engine O's ontology-class
+              # visibility policy (can_view). MUST be listed here or the bundle
+              # at /policies never loads it (dormant-policy gotcha — same as
+              # catalog_domain_view above; persona_entitlement.rego stays absent
+              # on purpose). Sealed 2026-07-08.
+              - key: ontology_can_view.rego
+                path: ontology_can_view.rego
 {{- end }}

@@ -19,66 +19,6 @@
 
 ---
 
-## Access Control — authorization between retrieval and synthesis
-
-Agentic systems leak because they authorize the **action**, not the **content
-the model sees**. An agent with tool access can be prompted — by injection,
-jailbreak, or ordinary ambiguity — into surfacing data the caller was never
-cleared for, because the permission check happens at the *tool call*, not on
-the *content flowing back through it*. [MCP](https://modelcontextprotocol.io/)
-standardizes **how** agents reach tools and data; it does not govern **which
-content within a response** a given caller may see. That layer — above the
-tool-access model — is where this system enforces, and it is the differentiator.
-
-**The gate sits between retrieval and synthesis.** The model never receives
-content the caller isn't authorized to see, so it *cannot* surface it —
-regardless of prompt, jailbreak, or model behavior. Enforcement is by
-construction, not by trusting the model:
-
-- **Content-level, pre-synthesis.** Each engine filters retrieved rows /
-  document chunks / graph nodes / ontology classes against the caller's grants
-  **before** the model synthesizes — the model is handed only the authorized
-  subset. (Data rows via the central-gateway/Topaz gate; document chunks via
-  Engine W's before-synthesis result-filter; graph content via Engine E; the
-  ontology-class candidate pool via Engine O.)
-- **Deny-by-default, explicit per-asset grants.** A caller reads an asset only
-  via an *explicit, auditable* grant (owner, or an asserted `reader`/`viewer`
-  relation). Entitlement / persona / domain are *eligibility* (necessary),
-  never the grant (sufficient) — need-to-know, not clearance-implies-access.
-- **Deny-by-construction where the surface is dangerous.** The graph-query
-  interface is a bounded, Cypher-flavored API, not free-text Cypher: unsafe
-  queries are *inexpressible*, not filtered-after — there is no parser at the
-  security boundary to be incomplete.
-- **Single decider.** One authorization authority ([Topaz](https://www.topaz.sh/),
-  ReBAC); every enforcement point *asks* and honors the answer — no policy
-  predicate in application code, no drift between where a decision is made and
-  where it's enforced.
-- **Compartment / classification-ready as a deployment overlay.** The same
-  system runs unclassified or fully-classified by config. Compartment
-  assignment and the default-for-unassigned are per-deployment *overlay*, not
-  code — a classified deployment can compartment the entire vocabulary and make
-  the ontology itself secret, with no rewrite.
-
-Designed to be **certifiable**: enforcement lives at the data / query layer,
-provable to a reviewer by reading a bounded surface, rather than resting on an
-application-completeness claim. The gates are proven by **discriminating,
-composed-path seals** on live data, both directions — an authorized caller sees
-exactly their granted content, the ungated content is dropped *before
-synthesis*, and a different caller is denied. (The data-plane, document, and
-graph gates are sealed today; the ontology-class gate follows the same pattern
-and is being sealed. Per-gate status and the seal evidence are in the
-architecture doc. Enforcement is dark-launched behind a flag that flips last,
-after every engine's gate is proven.)
-
-> **How it works** →
-> [`docs/architecture/authorization.md`](docs/architecture/authorization.md)
-> (the topology of who *decides* / *asks* / *informs*, the cross-repo boundary
-> contracts, and the invariants). **The decisions** →
-> [`docs/adr/`](docs/adr/) (ADR-0025 instance-plane access control, ADR-0026
-> persona/entitlement authorization).
-
----
-
 ## Architecture
 
 <p align="center">
@@ -213,6 +153,66 @@ no longer hardcodes "what calls what" — engines self-register their
 verbs into Weaviate at startup (`register_engine_to_mesh`), and the
 supervisor looks up the right engine per subtask via hybrid vector
 search filtered by the caller's `entitled_domains` claim from Keycloak.
+
+---
+
+## Access Control — authorization between retrieval and synthesis
+
+Agentic systems leak because they authorize the **action**, not the **content
+the model sees**. An agent with tool access can be prompted — by injection,
+jailbreak, or ordinary ambiguity — into surfacing data the caller was never
+cleared for, because the permission check happens at the *tool call*, not on
+the *content flowing back through it*. [MCP](https://modelcontextprotocol.io/)
+standardizes **how** agents reach tools and data; it does not govern **which
+content within a response** a given caller may see. That layer — above the
+tool-access model — is where this system enforces, and it is the differentiator.
+
+**The gate sits between retrieval and synthesis.** The model never receives
+content the caller isn't authorized to see, so it *cannot* surface it —
+regardless of prompt, jailbreak, or model behavior. Enforcement is by
+construction, not by trusting the model:
+
+- **Content-level, pre-synthesis.** Each engine filters retrieved rows /
+  document chunks / graph nodes / ontology classes against the caller's grants
+  **before** the model synthesizes — the model is handed only the authorized
+  subset. (Data rows via the central-gateway/Topaz gate; document chunks via
+  Engine W's before-synthesis result-filter; graph content via Engine E; the
+  ontology-class candidate pool via Engine O.)
+- **Deny-by-default, explicit per-asset grants.** A caller reads an asset only
+  via an *explicit, auditable* grant (owner, or an asserted `reader`/`viewer`
+  relation). Entitlement / persona / domain are *eligibility* (necessary),
+  never the grant (sufficient) — need-to-know, not clearance-implies-access.
+- **Deny-by-construction where the surface is dangerous.** The graph-query
+  interface is a bounded, Cypher-flavored API, not free-text Cypher: unsafe
+  queries are *inexpressible*, not filtered-after — there is no parser at the
+  security boundary to be incomplete.
+- **Single decider.** One authorization authority ([Topaz](https://www.topaz.sh/),
+  ReBAC); every enforcement point *asks* and honors the answer — no policy
+  predicate in application code, no drift between where a decision is made and
+  where it's enforced.
+- **Compartment / classification-ready as a deployment overlay.** The same
+  system runs unclassified or fully-classified by config. Compartment
+  assignment and the default-for-unassigned are per-deployment *overlay*, not
+  code — a classified deployment can compartment the entire vocabulary and make
+  the ontology itself secret, with no rewrite.
+
+Designed to be **certifiable**: enforcement lives at the data / query layer,
+provable to a reviewer by reading a bounded surface, rather than resting on an
+application-completeness claim. The gates are proven by **discriminating,
+composed-path seals** on live data, both directions — an authorized caller sees
+exactly their granted content, the ungated content is dropped *before
+synthesis*, and a different caller is denied. (The data-plane, document, and
+graph gates are sealed today; the ontology-class gate follows the same pattern
+and is being sealed. Per-gate status and the seal evidence are in the
+architecture doc. Enforcement is dark-launched behind a flag that flips last,
+after every engine's gate is proven.)
+
+> **How it works** →
+> [`docs/architecture/authorization.md`](docs/architecture/authorization.md)
+> (the topology of who *decides* / *asks* / *informs*, the cross-repo boundary
+> contracts, and the invariants). **The decisions** →
+> [`docs/adr/`](docs/adr/) (ADR-0025 instance-plane access control, ADR-0026
+> persona/entitlement authorization).
 
 ---
 

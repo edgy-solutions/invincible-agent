@@ -37,8 +37,10 @@ compartments:
   # Demo fixture: a compartment whose member class's EXISTENCE is need-to-know.
   # alice may see it; everyone else gets the class filtered from /resolve's pool
   # (it never reaches BAML, so /resolve can't return it) — the existence gate.
-  # NOTE: replace the IRI with a real OntologyClass IRI present in the Weaviate
-  # collection at seal time so the discriminating seal has a live candidate.
+  # The assigned class is a REAL OntologyClass (present in Weaviate/Neo4j,
+  # domain MANUFACTURING) so the discriminating seal has a live candidate that
+  # genuinely recalls — the empty-input-law guard (a gate that filters a pool
+  # where the sensitive class was never a candidate hasn't filtered anything).
   RESTRICTED_PROGRAMS:
     granted_by: cnogradi
     reason: >-
@@ -48,4 +50,7 @@ compartments:
     grant_to:
       - alice@example.com
     classes:
-      - "http://edgy-solutions.com/ontology/mil#CompartmentedProgram"
+      # Procedure — a genuine live candidate: /resolve recalls it at conf 0.92
+      # for "maintenance procedure" queries, so the seal has a real class to drop
+      # from the pre-BAML pool (empty-input-law guard: a real recalled candidate).
+      - "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/Procedure"
