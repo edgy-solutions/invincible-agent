@@ -2309,6 +2309,11 @@ class CompatibleVerb(BaseModel):
     # (query-arity from instance_resolved) so a set-query never resolves to
     # a single-asset verb. null → treated as "any" (never excluded).
     arity: str | None = None
+    # ARGUMENT-FIT (eligibility intersection's 4th term). DECLARED argument
+    # keys the verb cannot run without (e.g. ["tag"]); the supervisor drops the
+    # verb for a query that cannot supply them. Asserted at registration, never
+    # inferred. Empty/absent → unconstrained (never excluded — like null arity).
+    required_args: list[str] = Field(default_factory=list)
 
 
 class FindCompatibleVerbsResponse(BaseModel):
@@ -2343,6 +2348,7 @@ RETURN DISTINCT
     r.cost_class                  AS cost_class,
     coalesce(r.requires_human_approval, false) AS requires_human_approval,
     r.arity                       AS arity,
+    r.required_args               AS required_args,
     length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops
 ORDER BY hops ASC, verb_iri ASC
 """
@@ -2397,6 +2403,13 @@ async def find_compatible_verbs(
     verbs: list[CompatibleVerb] = []
     for row in rows:
         verb_domains = [d.upper() for d in (row.get("domains") or [])]
+        # required_args: robust to native list (Neo4j array) OR comma-joined
+        # string (some registrars serialize lists as CSV for parity).
+        _raw_req = row.get("required_args")
+        if isinstance(_raw_req, str):
+            verb_required_args = [a.strip() for a in _raw_req.split(",") if a.strip()]
+        else:
+            verb_required_args = [str(a).strip() for a in (_raw_req or []) if str(a).strip()]
         # Scope filter: same semantics as /search_predicates. Empty entitled
         # = pass through; empty verb domains = domain-agnostic (always
         # keep); intersection > 0 = compatible.
@@ -2414,6 +2427,7 @@ async def find_compatible_verbs(
             cost_class=row.get("cost_class"),
             requires_human_approval=bool(row.get("requires_human_approval", False)),
             arity=row.get("arity"),
+            required_args=verb_required_args,
             hops=int(row.get("hops") or 0),
         ))
 

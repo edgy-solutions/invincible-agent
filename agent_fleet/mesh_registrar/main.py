@@ -118,6 +118,13 @@ class RegistrationManifest(BaseModel):
     )
     verb_synonyms: list[str] = Field(default_factory=list)
     verb_anti_synonyms: list[str] = Field(default_factory=list)
+    # ADR argument-fit: argument KEYS this verb cannot run without (e.g.
+    # ["tag"] for a filterByTag). The eligibility intersection's argument-fit
+    # term drops the verb for a query that cannot supply these. Empty (default)
+    # = unconstrained → never excluded (conservative, like a null `arity`). The
+    # value→arg-key resolver (does the query supply arg X? — needs the arg's
+    # vocabulary, e.g. DataHub tags) travels with the concrete verb, not here.
+    required_args: list[str] = Field(default_factory=list)
     cost_class: str = Field(default="medium")
     requires_human_approval: bool = Field(default=False)
     version: str = Field(default="0.1.0")
@@ -258,6 +265,7 @@ def _emit_to_datahub(manifest: RegistrationManifest, tool_urn: str) -> dict:
         "mesh_requires_human_approval": str(manifest.requires_human_approval).lower(),
         "mesh_verb_synonyms":           ",".join(manifest.verb_synonyms),
         "mesh_verb_anti_synonyms":      ",".join(manifest.verb_anti_synonyms),
+        "mesh_required_args":           ",".join(manifest.required_args),
         "mesh_version":                 manifest.version,
         "mesh_registrar_version":       REGISTRAR_VERSION,
         "mesh_provider":                provider,

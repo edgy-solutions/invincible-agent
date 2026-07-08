@@ -393,6 +393,45 @@ def _filter_verbs_by_arity(
     return kept, dropped
 
 
+def _filter_verbs_by_argument_fit(
+    compatible_verbs: list[dict], available_args: set[str] | None
+) -> tuple[list[dict], list[dict]]:
+    """Structural ARGUMENT-FIT gate — the last term of the verb-eligibility
+    intersection (domain ∩ arity ∩ argument-fit ∩ permission).
+
+    A verb that POSITIVELY declares ``required_args`` (argument keys it cannot
+    run without — e.g. filterByTag needs "tag") is ineligible for a query that
+    does not PROVIDE those args: it was never a candidate, so the classifier can
+    never pick a verb it can't satisfy. Drop a verb iff its ``required_args`` are
+    a NON-empty set NOT ⊆ the query's ``available_args``. Verbs with empty/absent
+    ``required_args`` are ALWAYS kept (unconstrained).
+
+    CONSERVATIVE, exactly like the arity gate: ``available_args is None`` means
+    "no typed-argument signal for this query" → NEVER exclude (return everything).
+    So until (a) verbs declare ``required_args`` AND (b) the query surfaces a
+    typed-arg set, this gate is INERT — it can only ever remove a verb we are
+    CONFIDENT cannot be satisfied, never over-restrict on a missing signal (the
+    same "null = never excluded, incomplete backfill never over-restricts"
+    discipline the arity gate uses). PURE — no LLM, no network.
+
+    ``available_args`` is the extension point: today the supervisor has only
+    untyped ``entity_refs`` (values, not arg keys), so it passes ``None`` (inert).
+    When a typed-argument extraction lands (arg-key → value), pass its key set
+    here and the gate activates with zero change to this logic or its callers.
+    """
+    if available_args is None or not compatible_verbs:
+        return compatible_verbs, []
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for v in compatible_verbs:
+        required = {str(a) for a in (v.get("required_args") or []) if str(a).strip()}
+        if required and not required.issubset(available_args):
+            dropped.append(v)
+        else:
+            kept.append(v)
+    return kept, dropped
+
+
 def _classify_route(
     context,
     user_query: str,
@@ -532,6 +571,32 @@ def _classify_route(
                 "verb(s) from candidacy: %s",
                 subject_uri, query_is_set, len(_arity_dropped),
                 [v.get("verb_iri") for v in _arity_dropped],
+            )
+
+        # ARGUMENT-FIT GATE — the last term of the eligibility intersection
+        # (domain ∩ arity ∩ argument-fit ∩ permission). Drops verbs whose
+        # POSITIVELY-declared required_args the query cannot supply. Composes
+        # after arity, same pure-structural discipline.
+        #
+        # available_args is None TODAY (INERT — proven inert by the routing
+        # fixtures): the supervisor has only untyped entity_refs (VALUES), and
+        # resolving a value to a typed arg-key ("is this entity_ref a tag?")
+        # needs a vocabulary (e.g. the DataHub tag-vocab) that arrives WITH the
+        # concrete arg-requiring verb. That resolver is the PLUGGABLE piece — it
+        # is NOT baked here as a naive entity_refs string-match (which would be
+        # wrong once a real tag-verb registers). The filter takes an already-
+        # resolved arg-KEY set; wiring the resolver later populates it with zero
+        # change to this call or the filter. Until then: None → excludes nothing.
+        available_args = None  # ← resolver (value→arg-key, needs vocab) plugs in here
+        compatible_verbs, _argfit_dropped = _filter_verbs_by_argument_fit(
+            compatible_verbs, available_args,
+        )
+        if _argfit_dropped:
+            context.log.info(
+                "argument_fit_gate subject_uri=%s dropped %d verb(s) lacking "
+                "required args: %s",
+                subject_uri, len(_argfit_dropped),
+                [v.get("verb_iri") for v in _argfit_dropped],
             )
 
     # compatible_verbs is None on Neo4j error → fall through unconstrained.
