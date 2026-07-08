@@ -4,7 +4,7 @@ import httpx
 from typing import Dict, Any
 
 from restate import Context, Service
-from smolagents import CodeAgent, tool
+from smolagents import CodeAgent, ToolCallingAgent, tool
 import weaviate
 from weaviate.connect import ConnectionParams
 import weaviate.classes as wvc
@@ -512,7 +512,15 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
                 return f"Error executing semantic search: {str(e)}"
 
         model = get_smolagent_model()
-        agent = CodeAgent(
+        # ToolCallingAgent (structured tool-calls) — NOT CodeAgent (free-form
+        # Python in <code> tags). gpt-oss intermittently fumbles the CodeAgent
+        # envelope (prose-glued-to-code parse errors -> empty answers); the
+        # structured format is low-load enough that it doesn't. Proven on E/A.
+        # The search_knowledge_base_local GATE (per-document result-filter before
+        # synthesis) is unchanged — the agent CALLS the tool instead of writing
+        # code that calls it; the gate still runs inside the tool. Requires the
+        # litellm ollama_chat/ route (ollama/ dropped tool_calls).
+        agent = ToolCallingAgent(
             tools=[search_knowledge_base_local],
             model=model,
             add_base_tools=False
@@ -528,26 +536,15 @@ async def query_knowledge(ctx: Context, request: Dict[str, Any]) -> Dict[str, An
 {weaviate_schema_string}
         """
 
-        syntax_reminder = """
-CRITICAL SYNTAX REQUIREMENT:
-You are a Code Agent. You MUST wrap ALL of your Python code strictly inside <code> and </code> tags.
-DO NOT put your thoughts, explanations, or Markdown text inside the <code> tags. Only valid Python code belongs inside the tags.
-
-Example of BAD formatting:
-<code>
-I will now search the database.
-result = search("query")
-</code>
-
-Example of GOOD formatting:
-I will now search the database.
-<code>
-result = search("query")
-print(result)
-</code>
+        tool_reminder = """
+HOW TO ANSWER: call search_knowledge_base_local to retrieve relevant passages,
+then call final_answer with your summary. Use only what the tool returns — never
+invent information. If the tool returns no results, say the information is
+unavailable. ALWAYS include the Source Document IDs from the results in your
+final answer so the user knows where the information came from.
 """
 
-        full_query = f"{system_prompt}\n{syntax_reminder}\n\nUser Query: {user_query}"
+        full_query = f"{system_prompt}\n{tool_reminder}\n\nUser Query: {user_query}"
         agent_response = str(await asyncio.to_thread(agent.run, full_query))
         # Both pieces of state cross the ctx.run boundary together. On
         # replay the entire dict (including local_sources) is returned
