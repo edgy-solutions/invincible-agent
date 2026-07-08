@@ -254,16 +254,67 @@ Memory: `identity-reaches-enforcement-point` (multi-path corollary).
 
 ---
 
-## 5. Enforcement-arc status (2026-07-06)
+## 5. Content-level enforcement — the before-synthesis gates
+
+The data-plane gate (§1–2) governs *data rows*. The differentiated property —
+**the model never receives content the caller isn't authorized to see** — is
+enforced by a *result-filter before synthesis* inside each retrieval engine:
+the engine drops ungated items from what it retrieved **before** the LLM
+synthesizes, so an ungated item is never in the model's context to leak
+(prompt-injection / jailbreak cannot surface what was never handed to the
+model). This is the same single-decider model on the *content* namespace: the
+engine ASKS Topaz, Topaz DECIDES, git-asserted grants INFORM.
+
+| namespace | engine · seam | asks | grant source | anchor |
+|---|---|---|---|---|
+| **data rows** | central_gateway (data plane) | `can_read` (data_broker) | DataHub owner + `asset_grants` reader | `dag-tools/…/central_gateway/main.py` |
+| **document chunks** | Engine W — result-filter *before synthesis* | `can_read` on the chunk's source `document` | per-document grants | `agent_fleet/weaviate_expert/service.py` (`_can_read_document`) |
+| **graph content** | Engine E — `fetch_content` is the ONLY content path; gates each node; DENY-BY-CONSTRUCTION query DSL (no free-text Cypher) | `can_read` on the node's `document` | shared with W (same IRIs) | `agent_fleet/neo4j_expert/service.py` |
+| **ontology classes** | Engine O — candidate-pool filter *before BAML classifies* (select-from-authorized-set) | `can_view` on the `ontology_class` (compartment) | `ontology_compartments.yaml` | `agent_fleet/ontology_service/main.py` (`_can_view_class`) |
+
+All flag-gated behind `ENABLE_AGENTIC_AUTH` (dark-launch; flips LAST). Each is a
+**result-filter, not a pre-check**: the gate goes on top of the engine's
+existing relevance/domain retrieval, and verifies the *input to synthesis* was
+filtered — not the output ("the answer didn't mention it" is synthesis-luck;
+"the candidate was removed from the pool the model saw" is enforcement).
+
+### Seal evidence — the credibility anchor (discriminating, composed-path, live)
+
+Each gate is proven by a **composed-path seal**: driven end-to-end on live
+data, both directions, both sides non-empty (a granted item actually kept AND
+an ungated item actually dropped — the empty-input law: a filter over an empty
+pool proves nothing).
+
+- **Engine E (graph)** — flag-on, `alice`: `fetch_content DENIED 14 ungated
+  node(s)` while her granted content returned; DSL audit shows no operation can
+  project ungated content (raw Cypher inexpressible). Deny-by-construction +
+  runtime, both.
+- **Engine W (documents)** — flag-on, `alice` granted `wpn-howtouse`:
+  `result-filter DROPPED 11 ungated chunk(s) BEFORE synthesis`, granted chunk
+  kept and cited (conf 0.98). Mixed case, both sides live.
+- **DA data-read** — owner (`alice@company.com`) ALLOW / non-owner
+  (`bob@company.com`) DENY / empty-identity fail-closed, replicating the gate's
+  exact authorizer call. Re-verified after the fleet infra change (the
+  regression-gate-after-infra-change discipline).
+- **Engine O (ontology)** — built; seal in progress (demo config: granted-sees
+  / ungated-dropped-before-BAML; **plus** a classified spot-check —
+  `default_visibility=deny` → an unassigned class invisible to an ungranted
+  caller — proving fail-closed, not just designed).
+
+## 5b. Enforcement-arc status
 
 | gate | policy | caller | state |
 |---|---|---|---|
 | catalog metadata | catalog_domain_view | query_metadata | migrated, sealed both verdicts, flag-gated (off) |
-| DA data-read | data_broker | central_gateway | fixed deny-by-default + aligned + deployed; proven discriminating incl. allow-side (grant); full-e2e DA-read drive is the remaining seal |
-| verb-invoke | (future) | routing | not yet — the eligibility intersection is routing; permission wraps it |
-| auth-blind engines | (future) | per-engine | not yet — each inherits invariants §3, esp. #4 |
+| DA data-read | data_broker | central_gateway | deny-by-default + aligned + deployed; sealed discriminating (owner/non-owner/empty); re-verified post-infra-change 2026-07-08 |
+| document content | _can_read_document | Engine W | sealed — DROPPED-11 / granted-kept, before-synthesis, flag-gated (off) |
+| graph content | _can_read_document + DSL | Engine E | sealed — DENIED-14 + deny-by-construction DSL, flag-gated (off) |
+| ontology-class visibility | ontology_can_view | Engine O | BUILT (compartment overlay + rego + sync); seal in progress |
+| verb-invoke (argument-fit) | (future) | routing | the eligibility intersection is routing; permission wraps it |
 
-Directory seeded + kept current by the CronJob (both syncs, readback-gated).
+Directory seeded + kept current by the CronJob (four syncs, disjoint scope,
+readback-gated). The terminal `ENABLE_AGENTIC_AUTH` flip (all engines together,
+coupled with in-code fallback deletion) is the last step.
 
 ---
 
