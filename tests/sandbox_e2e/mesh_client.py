@@ -105,8 +105,20 @@ async def orchestrate(
                     if print_status and label and label != last_status_label:
                         last_status_label = label
                         print(f"  [{elapsed:5.1f}s] {label}")
-                elif cur_event in ("final_response", "complete", "result"):
+                elif cur_event in ("final_response", "complete", "result", "final_payload"):
+                    # `final_payload` is the CURRENT cortex-bff answer event
+                    # (components[].markdown_content); the older
+                    # final_response/complete/result names are kept for back-compat.
+                    # (Stale-harness fix 2026-07-07: the suite was checking only the
+                    # old names and reporting FALSE-NEGATIVE FAILs on correct answers.)
                     final_payload = payload
+                    # Also surface the answer text so the len(text)>200 check works
+                    # regardless of which event shape delivered it.
+                    if isinstance(payload, dict):
+                        for comp in (payload.get("components") or []):
+                            md = comp.get("markdown_content") if isinstance(comp, dict) else None
+                            if md:
+                                final_text = (final_text or "") + md
                     if print_status:
                         print(f"  [{elapsed:5.1f}s] <{cur_event}>")
                 elif cur_event in ("text", "delta"):
