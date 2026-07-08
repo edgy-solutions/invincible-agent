@@ -64,7 +64,16 @@ meshRegistrar:
 # --------------------------------------------------------------------------
 agentFleet:
   env:
-    # LLM endpoint — ai1 Ollama, IP-resolved (no LAN DNS for `ai1`)
+    # LLM endpoint — ai1 Ollama, IP-resolved (no LAN DNS for `ai1`).
+    # ⚠️ DEPLOYED REALITY: the sandbox is deployed base + the
+    # `values-sandbox-litellm-rehearsal.yaml` overlay, which OVERRIDES these to
+    # SMOLAGENTS_PROVIDER=openai + OPENAI_BASE_URL=http://iagent-litellm:4000/v1
+    # (route through the LiteLLM proxy). Do NOT reason about the model path from
+    # THIS block alone — the running cluster uses the proxy path. The proxy's
+    # model_list routes gpt-oss via `ollama_chat/` (NOT `ollama/`, which drops
+    # tool_calls — see values.yaml note). ToolCallingAgent engines require that
+    # proxy+ollama_chat/ path. This `ollama`/direct block is the base default;
+    # the overlay is the truth in this cluster.
     SMOLAGENTS_PROVIDER: "ollama"
     SMOLAGENTS_MODEL: "gpt-oss-128k:120b"
     OLLAMA_BASE_URL: "http://192.168.1.126:11434/v1"  # verified reachable from sandbox pods

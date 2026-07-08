@@ -85,7 +85,7 @@ except ImportError:
 
 # Smolagents imports — only used inside the Restate handler.
 # ---------------------------------------------------------------------------
-from smolagents import CodeAgent
+from smolagents import CodeAgent, ToolCallingAgent
 try:
     from llm_utils import get_smolagent_model
 except ImportError:
@@ -865,25 +865,12 @@ async def analyze(ctx: Context, request: dict) -> dict:
                         prompt_extension = f"\n\n### Relevant Past Experience\n{memory_strings}"
                         agent_prompt += prompt_extension
 
-                syntax_reminder = """
-CRITICAL SYNTAX REQUIREMENT:
-You are a Code Agent. You MUST wrap ALL of your Python code strictly inside <code> and </code> tags.
-DO NOT put your thoughts, explanations, or Markdown text inside the <code> tags. Only valid Python code belongs inside the tags.
-
-Example of BAD formatting:
-<code>
-I will now search the database.
-result = search("query")
-</code>
-
-Example of GOOD formatting:
-I will now search the database.
-<code>
-result = search("query")
-print(result)
-</code>
+                tool_reminder = """
+HOW TO ANSWER: call the provided tools to gather what you need, then call
+final_answer with your answer. Call one tool at a time; use each tool's result
+to decide the next call. Use only what the tools return — never invent data.
 """
-                agent_prompt += f"\n\n{syntax_reminder}"
+                agent_prompt += f"\n\n{tool_reminder}"
 
                 model = get_smolagent_model()
                 
@@ -896,7 +883,14 @@ print(result)
                     except Exception:
                         pass
                 
-                agent = CodeAgent(tools=all_tools, model=model)
+                # ToolCallingAgent (structured tool-calls) — NOT CodeAgent
+                # (free-form Python in <code> tags). gpt-oss intermittently
+                # fumbles the CodeAgent envelope (prose-glued-to-code parse
+                # errors -> empty answers, the mesh-suite regression); the
+                # structured tool-call format is low-load enough that it doesn't.
+                # Proven on Engine E (1 step-error vs CodeAgent's 7). Requires the
+                # litellm ollama_chat/ route (ollama/ dropped tool_calls).
+                agent = ToolCallingAgent(tools=all_tools, model=model)
                 
                 result = await asyncio.to_thread(agent.run, agent_prompt)
 
