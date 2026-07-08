@@ -296,10 +296,15 @@ pool proves nothing).
   (`bob@company.com`) DENY / empty-identity fail-closed, replicating the gate's
   exact authorizer call. Re-verified after the fleet infra change (the
   regression-gate-after-infra-change discipline).
-- **Engine O (ontology)** — built; seal in progress (demo config: granted-sees
-  / ungated-dropped-before-BAML; **plus** a classified spot-check —
-  `default_visibility=deny` → an unassigned class invisible to an ungranted
-  caller — proving fail-closed, not just designed).
+- **Engine O (ontology)** — SEALED 2026-07-08. Live through `/resolve`, flag-on,
+  sensitive class `MaintenanceReferenceOntology/Procedure` (recalls at conf 0.92):
+  `ontology-visibility gate DROPPED 1 ungated class(es) BEFORE classification
+  (caller='bob@example.com')`; `bob` (ungranted) had it removed from the pre-BAML
+  pool (resolved elsewhere), `alice` (granted) 0 dropped (kept it) — discriminating
+  on subject, input-to-synthesis filtered. **Classified spot-check proven** (decider
+  4-way): `default_visibility=deny` → an unassigned class invisible to an ungranted
+  caller (fail-closed, compartment-everything-makes-it-secret — proven, not just
+  designed). Sync readback `checked=1 failures=0` against live Topaz.
 
 ## 5b. Enforcement-arc status
 
@@ -309,7 +314,7 @@ pool proves nothing).
 | DA data-read | data_broker | central_gateway | deny-by-default + aligned + deployed; sealed discriminating (owner/non-owner/empty); re-verified post-infra-change 2026-07-08 |
 | document content | _can_read_document | Engine W | sealed — DROPPED-11 / granted-kept, before-synthesis, flag-gated (off) |
 | graph content | _can_read_document + DSL | Engine E | sealed — DENIED-14 + deny-by-construction DSL, flag-gated (off) |
-| ontology-class visibility | ontology_can_view | Engine O | BUILT (compartment overlay + rego + sync); seal in progress |
+| ontology-class visibility | ontology_can_view | Engine O | SEALED 2026-07-08 — DROPPED-1 discriminating (bob dropped / alice kept) + classified fail-closed spot-check, flag-gated (off) |
 | verb-invoke (argument-fit) | (future) | routing | the eligibility intersection is routing; permission wraps it |
 
 Directory seeded + kept current by the CronJob (four syncs, disjoint scope,

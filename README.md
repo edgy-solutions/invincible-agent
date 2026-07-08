@@ -201,11 +201,10 @@ provable to a reviewer by reading a bounded surface, rather than resting on an
 application-completeness claim. The gates are proven by **discriminating,
 composed-path seals** on live data, both directions — an authorized caller sees
 exactly their granted content, the ungated content is dropped *before
-synthesis*, and a different caller is denied. (The data-plane, document, and
-graph gates are sealed today; the ontology-class gate follows the same pattern
-and is being sealed. Per-gate status and the seal evidence are in the
-architecture doc. Enforcement is dark-launched behind a flag that flips last,
-after every engine's gate is proven.)
+synthesis*, and a different caller is denied. (All four content gates —
+data-plane, document, graph, and ontology-class — are sealed; per-gate status
+and the seal evidence are in the architecture doc. Enforcement is dark-launched
+behind a flag that flips last, after every engine's gate is proven.)
 
 > **How it works** →
 > [`docs/architecture/authorization.md`](docs/architecture/authorization.md)
