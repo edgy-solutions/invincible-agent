@@ -190,6 +190,27 @@ data:
           can_read: reader | owner
           can_write: owner
 
+      # ADR-0025 ontology-IRI namespace (2026-07-08) — Engine O's ontology
+      # class/IRI VISIBILITY gate. Same deny-by-default, Topaz-decided,
+      # git-asserted, overlay-configurable model as `dataset`/`document`, on a
+      # third namespace (the ontology vocabulary). An IRI is visible iff the
+      # caller is a `viewer` — granted either directly or (usual case) via
+      # membership in the group that IS the IRI's COMPARTMENT (compartments are
+      # reused `group`s). `restricted` is a presence MARKER the sync sets on
+      # every compartment-assigned IRI so the rego can distinguish UNASSIGNED
+      # (no marker → governed by the per-deployment default_visibility) from
+      # ASSIGNED-BUT-UNGRANTED (marker present, viewer absent → deny). This is
+      # what makes "compartment general vocabulary to make the whole ontology
+      # secret" a per-deployment OVERLAY config, not a data/code change:
+      # default_visibility=deny + assign-everything = fully secret; same manifest.
+      marker: {}
+      ontology_class:
+        relations:
+          viewer: user | group#member
+          restricted: marker
+        permissions:
+          can_view: viewer
+
       # ---------------------------------------------------------------
       # ADR-0026 additions — persona/entitlement authorization.
       #
@@ -405,6 +426,65 @@ data:
             "relation": "can_assume",
             "subject_type": "user",
             "subject_id": input.resource.user_id
+        })
+    }
+
+  # ================================================================
+  # ontology_can_view.rego — ADR-0025 ontology-IRI VISIBILITY gate.
+  #
+  # Engine O's /resolve filters its OntologyClass candidate pool through this
+  # BEFORE BAML classifies (select-from-authorized-set: the LLM can't pick a
+  # class it was never shown). Deny-by-default; Topaz is the single decider;
+  # the git-asserted `ontology_compartments.yaml` overlay INFORMS (via the
+  # compartment sync), this policy DECIDES, the gate only ASKS.
+  #
+  # can_view(caller, IRI) is TRUE iff:
+  #   (a) the caller is a `viewer` of the IRI — directly or via membership in
+  #       the group that is the IRI's compartment (ds.check on can_view); OR
+  #   (b) the IRI is UNASSIGNED (no `restricted` marker) AND the deployment's
+  #       default_visibility is "releasable".
+  # The DEFAULT_VISIBILITY is a per-deployment POLICY INPUT (resource_context),
+  # NOT hardcoded — that is the configurable-default the ruling required:
+  #   * demo/unclassified: default_visibility="releasable" → ordinary vocabulary
+  #     resolves for everyone; only compartment-assigned (marked) classes gate.
+  #   * classified: default_visibility="deny" → rule (b) never fires, so an
+  #     UNASSIGNED class is invisible to an ungranted caller (fail-CLOSED). Assign
+  #     ALL vocabulary to compartments and the whole ontology is secret — same
+  #     manifest + policy, different overlay. forgot-to-classify fails SAFE.
+  # Marker discipline: the sync sets `restricted marker:REGISTRY` on every
+  # compartment-assigned IRI, so rule (b) applies ONLY to genuinely-unassigned
+  # IRIs — never leaking an assigned-but-ungranted (compartmented) class.
+  ontology_can_view.rego: |
+    package invincible_agent.ontology.can_view
+
+    import future.keywords.if
+
+    default allowed := false
+
+    # (a) explicit compartment grant — caller is a viewer of the IRI (direct
+    #     or via the compartment group's membership; manifest can_view = viewer).
+    allowed if {
+        ds.check({
+            "object_type": "ontology_class",
+            "object_id": input.resource.iri,
+            "relation": "can_view",
+            "subject_type": "user",
+            "subject_id": input.resource.user_id
+        })
+    }
+
+    # (b) releasable default — ONLY for IRIs with no `restricted` marker
+    #     (genuinely unassigned) AND only when the deployment default is
+    #     releasable. Never fires for a compartment-assigned class (marker
+    #     present), so a restricted class is never leaked by the default.
+    allowed if {
+        input.resource.default_visibility == "releasable"
+        not ds.check({
+            "object_type": "ontology_class",
+            "object_id": input.resource.iri,
+            "relation": "restricted",
+            "subject_type": "marker",
+            "subject_id": "REGISTRY"
         })
     }
 {{- end }}

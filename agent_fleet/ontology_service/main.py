@@ -174,6 +174,63 @@ IOF_CONSTRUCT = rdflib.Namespace(
 import os
 import httpx
 
+# ─── ADR-0025 ontology-IRI visibility gate ──────────────────────────────────
+# Filters the OntologyClass candidate pool through Topaz can_view BEFORE BAML
+# classifies (select-from-authorized-set). Single-decider: Topaz decides via the
+# ontology_can_view rego; this only ASKS. Flag-gated (dark-launch OFF); when off,
+# _can_view_class returns True (no filtering) so behavior is unchanged.
+ENABLE_AGENTIC_AUTH = os.getenv("ENABLE_AGENTIC_AUTH", "false").lower() in ("true", "1", "yes")
+# Authorizer (Is API) — same endpoint the DA-read gate uses (central_gateway).
+TOPAZ_AUTHORIZER_URL = os.getenv("TOPAZ_AUTHORIZER_URL") or os.getenv("TOPAZ_URL") or "http://topaz-svc:8383"
+# The per-deployment default for classes with NO compartment assignment. Passed
+# to the rego as a POLICY INPUT (not hardcoded): "releasable" (demo/unclassified
+# — ordinary vocabulary visible to all) or "deny" (classified — unassigned class
+# invisible, fail-CLOSED; assign everything to compartments → whole ontology
+# secret). THIS is the configurable-default the compartment ruling requires.
+ONTOLOGY_DEFAULT_VISIBILITY = os.getenv("ONTOLOGY_DEFAULT_VISIBILITY", "releasable").lower()
+
+
+def _can_view_class(caller_email: str, iri: str) -> bool:
+    """Ask Topaz whether ``caller_email`` may SEE ontology class ``iri``.
+
+    Single-decider: evaluates the ``invincible_agent.ontology.can_view`` rego
+    (compartment grant OR unassigned+releasable). Fail-CLOSED (deny) on any
+    error — a security gate must not fail open. No-op (True) when the flag is
+    off, so /resolve is unaffected until ENABLE_AGENTIC_AUTH flips.
+    """
+    if not ENABLE_AGENTIC_AUTH:
+        return True
+    if not iri:
+        return False
+    try:
+        resp = httpx.post(
+            f"{TOPAZ_AUTHORIZER_URL}/api/v2/authz/is",
+            headers={"Content-Type": "application/json"},
+            json={
+                # identity_context is required by the authorizer's request
+                # validation even though the decision reads resource_context
+                # (input.user.id is empty — no identity→user objects seeded).
+                "identity_context": {"identity": caller_email or "anonymous",
+                                     "type": "IDENTITY_TYPE_MANUAL"},
+                "policy_context": {"path": "invincible_agent.ontology.can_view",
+                                   "decisions": ["allowed"]},
+                "resource_context": {
+                    "iri": iri,
+                    "user_id": caller_email,
+                    "default_visibility": ONTOLOGY_DEFAULT_VISIBILITY,
+                },
+            },
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        decisions = resp.json().get("decisions") or []
+        return bool(next((d.get("is") for d in decisions
+                          if d.get("decision") == "allowed"), False))
+    except Exception as e:  # noqa: BLE001 — fail-closed on any error
+        logging.warning("ontology can_view check failed for iri=%s (fail-closed deny): %s", iri, e)
+        return False
+
+
 _JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
 _JENA_USERNAME = os.getenv("JENA_USERNAME", "admin")
 _JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
@@ -1346,7 +1403,23 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 "label": row.get("label"),
                 "description": row.get("definition") or "No definition provided."
             })
-            
+
+    # ── Step 1.55: ONTOLOGY-IRI VISIBILITY GATE (ADR-0025, select-from-
+    # authorized-set). Filter the candidate pool to the classes the caller may
+    # SEE, BEFORE BAML classifies — so the LLM cannot pick (and /resolve cannot
+    # return) a class the caller isn't granted. Single-decider: Topaz's
+    # ontology_can_view rego decides (compartment grant OR unassigned+releasable);
+    # deny-by-default; fail-CLOSED. No-op when ENABLE_AGENTIC_AUTH is off. Covers
+    # BOTH recall paths (Weaviate + SPARQL fallback). This is the ontology-namespace
+    # sibling of Engine W's before-synthesis chunk filter.
+    if ENABLE_AGENTIC_AUTH and candidates:
+        _visible = [c for c in candidates if _can_view_class(request.user_email, c.get("uri", ""))]
+        _dropped = len(candidates) - len(_visible)
+        if _dropped:
+            print(f"[Engine O] ontology-visibility gate DROPPED {_dropped} ungated "
+                  f"class(es) BEFORE classification (caller={request.user_email!r})")
+        candidates = _visible
+
     # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
     # fallback returned zero candidates). Before declaring UNKNOWN,
     # try the phone book — when the caller supplied entity_refs from

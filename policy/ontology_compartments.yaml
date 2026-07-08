@@ -1,0 +1,51 @@
+# Ontology-IRI COMPARTMENTS — the git-asserted, auditable overlay that governs
+# which ontology classes (vocabulary IRIs) a caller may SEE (ADR-0025 ontology-IRI
+# namespace, ruling 2026-07-08).
+#
+# SAME model as asset_grants.yaml / documents, on a third namespace: deny-by-
+# default, Topaz-decided (the ontology_can_view rego), git-asserted + auditable,
+# and OVERLAY-CONFIGURABLE per deployment. `ontology_compartment_sync.py` flows
+# these into Topaz as `ontology_class` `viewer` + `restricted` relations; removing
+# an entry REVOKES it (git is the source of truth).
+#
+# WHY compartments and not "sensitive class list": vocabulary sensitivity is not
+# intrinsic — "Procedure" is a harmless category label in an unclassified system
+# and compartment-revealing intelligence in a classified one. So compartment
+# ASSIGNMENT is a per-deployment decision that lives HERE (overlay), and the
+# DEFAULT for unassigned classes is a per-deployment SETTING (below), NOT baked
+# into code or ontology data. A classified deployment sets default_visibility:deny
+# and assigns ALL vocabulary to compartments → the whole ontology is secret, with
+# the SAME manifest/rego/code — only this file changes.
+
+# Default for classes NOT assigned to any compartment below. Passed to the rego
+# as a POLICY INPUT (ONTOLOGY_DEFAULT_VISIBILITY env on Engine O), not hardcoded:
+#   releasable — demo/unclassified: ordinary vocabulary resolves for everyone;
+#                only the compartment-assigned classes gate. (forgot-to-classify
+#                fails OPEN — acceptable when the vocabulary isn't secret).
+#   deny       — classified: an unassigned class is INVISIBLE to an ungranted
+#                caller (fail-CLOSED). Assign everything below → whole ontology
+#                secret. (forgot-to-classify fails SAFE = over-gated).
+default_visibility: releasable
+
+# A compartment groups classes whose EXISTENCE is sensitive together, and names
+# who may see them. `grant_to` are entitlement keys (emails, matching seeded
+# `user` objects) for the demo; a real deployment may grant a group (group#member)
+# to reuse groups.yaml. `classes` are the exact OntologyClass IRIs assigned to the
+# compartment. Every compartment REQUIRES an accountable `granted_by` + `reason`
+# (prove-the-negative on the grant path — the sync REFUSES an unexplained entry).
+compartments:
+  # Demo fixture: a compartment whose member class's EXISTENCE is need-to-know.
+  # alice may see it; everyone else gets the class filtered from /resolve's pool
+  # (it never reaches BAML, so /resolve can't return it) — the existence gate.
+  # NOTE: replace the IRI with a real OntologyClass IRI present in the Weaviate
+  # collection at seal time so the discriminating seal has a live candidate.
+  RESTRICTED_PROGRAMS:
+    granted_by: cnogradi
+    reason: >-
+      Demo fixture: exercises the ontology-visibility gate's deny side. The
+      assigned class's existence is treated as compartment-revealing; alice is
+      granted, so the seal shows granted-sees / ungranted-cannot-see, both live.
+    grant_to:
+      - alice@example.com
+    classes:
+      - "http://edgy-solutions.com/ontology/mil#CompartmentedProgram"
