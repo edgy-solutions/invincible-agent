@@ -275,7 +275,31 @@ async def act_on_human_task(
     )
     logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
                 task_id, current_user.authz_id, req.decision, n)
-    return {"task_id": task_id, "decision": req.decision, "rows_resolved": n}
+
+    # FULFILLMENT (workflow_ack): resolve the Restate promise the suspended
+    # workflow is awaiting -> it RESUMES from exactly where it paused. Only an
+    # AUTHORIZED caller reaches here (can_act passed above), so an unauthorized
+    # /act NEVER resolves the promise — the workflow stays suspended, waiting for
+    # the right approver (Situation B: unauthorized-act is a denied action, not a
+    # teardown). Best-effort: the projection is already resolved; a resume failure
+    # is logged, not surfaced as an act failure.
+    resumed = False
+    if match.get("kind") == "workflow_ack" and match.get("workflow_id"):
+        status = "APPROVED" if req.decision == "approved" else "REJECTED"
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                rr = await client.post(
+                    f"{_RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{match['workflow_id']}/approve",
+                    json={"task_id": task_id, "status": status, "comments": req.comment},
+                )
+                resumed = rr.status_code == 200
+                if not resumed:
+                    logger.warning("workflow resume non-200: task_id=%s wf=%s code=%s",
+                                   task_id, match["workflow_id"], rr.status_code)
+        except Exception as exc:
+            logger.warning("workflow resume failed: task_id=%s wf=%s err=%s",
+                           task_id, match["workflow_id"], exc)
+    return {"task_id": task_id, "decision": req.decision, "rows_resolved": n, "workflow_resumed": resumed}
 
 
 # Neo4j Driver Setup

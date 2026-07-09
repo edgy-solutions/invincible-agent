@@ -1067,6 +1067,16 @@ def _execute_service_task(task: dict) -> dict:
     This function runs inside ``ctx.run()`` for durable execution — if the
     pod crashes mid-flight, Restate replays and skips this step if it
     already completed.
+
+    SUSPEND-VS-FAIL RULING (Situation C — the DoS-safe default): a mid-workflow
+    ACCESS DENIAL (401/403) is a FAILURE, not a transient error. It MUST raise a
+    Restate TerminalError so the workflow FAILS and RELEASES its durable state —
+    never a retryable error that Restate would RETRY FOREVER and PARK (holding the
+    durable execution open = the exact DoS surface: an actor who can trigger
+    workflows that hit denials could accumulate parked state). A denial is NOT the
+    designed-await that legitimately suspends (that's the UserTask branch); it's a
+    failure, and failures release state. Transient errors (5xx / network) stay
+    RETRYABLE via raise_for_status — those SHOULD retry.
     """
     agent_endpoint = task["agent_endpoint"]
     payload = {
@@ -1074,7 +1084,56 @@ def _execute_service_task(task: dict) -> dict:
         "task_id": task["id"],
         "task_type": "service_task",
     }
+    if task.get("user_jwt"):
+        payload["user_jwt"] = task["user_jwt"]
     resp = requests.post(agent_endpoint, json=payload, timeout=AGENT_HTTP_TIMEOUT)
+    if resp.status_code in (401, 403):
+        # TERMINAL — fail-and-release, do NOT retry-and-park. Situation C.
+        raise restate.TerminalError(
+            f"access denied ({resp.status_code}) on service task "
+            f"{task['id']!r} -> {agent_endpoint}; failing workflow (state released)",
+            status_code=403,
+        )
+    resp.raise_for_status()  # 5xx / network stay RETRYABLE (transient, should retry)
+    return resp.json()
+
+
+CORTEX_BFF_URL = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090")
+
+
+def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
+    """Register a visible HumanTask for a UserTask's approval audience — the
+    Situation-B designed-await made observable. cortex-bff resolves the audience's
+    authorized actors from Topaz and materializes one queue row per actor; the
+    workflow then suspends on the promise until one of them acts. Runs inside
+    ctx.run() (durable, replay-safe). The task def MUST declare `audience`
+    (e.g. 'promotion:DATA_ENGINEERING'). Payload is CLEARANCE-SAFE (reference +
+    summary, never compartmented content)."""
+    task_id = task["id"]
+    audience = task.get("audience")
+    if not audience:
+        # CONFIG error, not transient — a UserTask with no audience can never be
+        # approved (nobody is authorized). Fail TERMINALLY (release state), never
+        # retry-and-park. Same DoS-safe discipline as an access denial.
+        raise restate.TerminalError(
+            f"user_task {task_id!r} has no `audience` — cannot register a HumanTask",
+            status_code=400,
+        )
+    body = {
+        "kind": "workflow_ack",
+        "task_id": task_id,
+        "workflow_id": workflow_id,
+        "audience": audience,
+        "title": task.get("title") or task.get("name") or "Approve step",
+        "summary": task.get("summary") or f"Approve workflow step {task_id}",
+        "requested_by": task.get("requested_by", ""),
+        "subject_ref": task.get("subject_ref"),
+    }
+    headers = {"Authorization": f"Bearer {user_jwt}"} if user_jwt else {}
+    resp = requests.post(
+        f"{CORTEX_BFF_URL}/internal/human_tasks/register",
+        json=body, headers=headers, timeout=AGENT_HTTP_TIMEOUT,
+    )
     resp.raise_for_status()
     return resp.json()
 
@@ -1105,15 +1164,23 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     """
     workflow_id = request["workflow_id"]
     tasks = request.get("tasks", [])
+    user_jwt = request.get("user_jwt", "")
     results: list[dict] = []
 
     for task in tasks:
         task_id = task["id"]
         task_type = task.get("type", "service_task")
         task_name = task.get("name", task_id)
+        # Thread the initiator JWT so a service task can authenticate to a gated
+        # engine (and hit a REAL Topaz denial — Situation C), and so UserTask
+        # registration can authenticate to cortex-bff.
+        task = {**task, "user_jwt": user_jwt}
 
         if task_type == "service_task":
             # ---- Durable HTTP call — replay-safe ----
+            # A mid-run ACCESS DENIAL raises TerminalError inside _execute_service_task
+            # -> this ctx.run fails TERMINALLY -> the workflow fails and RELEASES
+            # state (Situation C, DoS-safe). A transient error retries (correct).
             result = await ctx.run(
                 f"exec_{task_id}",
                 lambda t=task: _execute_service_task(t),
@@ -1127,10 +1194,21 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
             })
 
         elif task_type == "user_task":
-            # ---- Durable promise — zero-cost waiting ----
-            # The workflow suspends here indefinitely.  No polling, no
-            # CPU, no memory.  Restate holds a few bytes of journal
-            # state until a human resolves the promise.
+            # ---- Situation B: designed await on an authorized human ----
+            # FIRST register the visible HumanTask (durable) so the authorized
+            # approver(s) can SEE it, THEN suspend on the promise. Registration
+            # is required — a UserTask with no audience is a config error (the
+            # KeyError fails the workflow loudly rather than suspending invisibly).
+            await ctx.run(
+                f"register_{task_id}",
+                lambda t=task: _register_human_task(workflow_id, t, user_jwt),
+            )
+            # The workflow suspends here indefinitely. No polling, no CPU, no
+            # memory. Restate holds a few bytes of journal state until an
+            # AUTHORIZED human resolves the promise (via /human_tasks/{id}/act ->
+            # the approve handler). An UNAUTHORIZED /act is denied at cortex-bff's
+            # can_act gate and never reaches here — the workflow stays suspended,
+            # correctly waiting for the right approver (not torn down).
             promise_name = f"approval_{task_id}"
             approval = await ctx.promise(promise_name, type_hint=dict).value()
             results.append({
@@ -1723,6 +1801,10 @@ class WorkflowStartRequest(BaseModel):
     """Request to start a BPMN workflow run."""
     workflow_id: str
     tasks: list[dict]
+    # Initiator JWT — threaded into the run so service tasks can authenticate to
+    # gated engines (and hit real Topaz denials) and UserTasks can register their
+    # HumanTask against cortex-bff. Optional (empty = unauthenticated internal run).
+    user_jwt: str = ""
 
 
 class ApprovalRequest(BaseModel):
@@ -1744,7 +1826,8 @@ async def start_workflow(req: WorkflowStartRequest) -> JSONResponse:
     try:
         resp = requests.post(
             f"{RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{req.workflow_id}/run",
-            json={"workflow_id": req.workflow_id, "tasks": req.tasks},
+            json={"workflow_id": req.workflow_id, "tasks": req.tasks,
+                  "user_jwt": req.user_jwt},
             headers={"Content-Type": "application/json"},
             timeout=30,
         )
