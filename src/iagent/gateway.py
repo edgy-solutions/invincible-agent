@@ -2511,13 +2511,21 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
             generate_dagster_stream(
                 request,
                 user_id=current_user.id,
-                # ADR-0025 hop 2: the caller's ENTITLEMENT KEY (email — what
-                # policy/users.yaml + the seeded Topaz `user` objects key on;
-                # NOT the sub in user_id). Threaded so Engine D's
-                # query_metadata can ASK Topaz can_view about this subject.
-                # Parallels entitled_domains all the way down; "" when absent
-                # → Topaz denies (least-privileged).
-                user_email=current_user.email,
+                # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
+                # caller's AUTHORIZATION IDENTITY (authz_id — the
+                # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
+                # `user` objects key on; NOT the sub in user_id, NOT necessarily
+                # email). In sandbox authz_id == email (transparent); at
+                # work-deploy USER_ENTITLEMENT_CLAIM=<employee-id claim> re-keys
+                # this and the entitlement lookup TOGETHER with one knob. Threaded
+                # so Engine D's query_metadata + Engine O's resolve ASK Topaz
+                # about the SAME subject the matrix was looked up by (no
+                # email-vs-employee-id divergence). The downstream param name is
+                # still `user_email` but it CARRIES authz_id — a full param rename
+                # (user_email→authz_id through supervisor/Engine D/Engine O) is the
+                # honesty follow-up; the VALUE is the load-bearing fix. "" when
+                # absent → Topaz denies (least-privileged).
+                user_email=current_user.authz_id,
                 user_persona=effective_persona,
                 entitled_domains=effective_domains,
                 # Capture A per ADR-0025: thread the JWT-read-time
