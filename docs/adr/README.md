@@ -77,3 +77,6 @@ the decision probably isn't ADR-worthy — it's permanent.
 | [0011](ADR-0011-multi-spo-routing.md) | Multi-SPO routing in NL (design exploration) | Proposed |
 | [0023](ADR-0023-iagent-answer-artifact-graph-cqrs.md) | iagent AnswerArtifact as a graph-native CQRS object (Neo4j write + Electric read) | Proposed |
 | [0024](ADR-0024-standards-composition-bpmn-calm-odps-odcs.md) | Standards composition (BPMN / CALM / ODPS / ODCS) + publish/promotion (one-way emit; PublishedArtifact thin reference; SUPERSEDES chain; honest dangling) | Partially Proposed (publish 2026-06-27); Reserved (standards) |
+| [0025](ADR-0025-instance-plane-access-control-as-provenance.md) | Instance-plane access control as provenance (ABAC over Topaz; captured on Source/CITES; carried by Artifact) | Proposed (+ amendments) |
+| [0026](ADR-0026-persona-entitlement-topaz-authorization.md) | Persona & entitlement authorization via Topaz (matrix, git-asserted, per-prompt declared) | Proposed |
+| [0027](ADR-0027-composable-approval-policy.md) | Composable multi-dimensional approval policy (grant-issuance governance over the single decider; auto-checked attributes vs human approvals; multi-approval extends HITL) | Accepted (architecture) — single-dimension built, composable deferred |
