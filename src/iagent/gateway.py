@@ -195,6 +195,17 @@ class HumanTaskActRequest(_BaseModel):
     comment: str = ""
 
 
+class AccessRequestRequest(_BaseModel):
+    """Case-1 access request: a caller DENIED read on an asset asks for it. This
+    is ASYNC — it creates a request HumanTask and returns immediately; it does NOT
+    suspend anything (the DoS ruling: query denials deny-and-stop + offer an async
+    request, never park state). `asset` is the dataset URN; `domain` selects the
+    approver audience (access_grant:<domain>)."""
+    asset: str
+    reason: str = ""
+    domain: str = "DATA_ENGINEERING"
+
+
 @app.post("/internal/human_tasks/register")
 async def register_human_task(
     req: HumanTaskRegisterRequest,
@@ -220,6 +231,44 @@ async def register_human_task(
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
+
+
+@app.post("/access_requests")
+async def create_access_request(
+    req: AccessRequestRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Case-1: a caller denied read on an asset requests access. ASYNC — creates a
+    request HumanTask routed to the domain's access-grant approvers and RETURNS
+    IMMEDIATELY. Nothing suspends (no Restate workflow, no held state) — the DoS
+    ruling for query denials. The grant SUBJECT is the caller's authz_id (recorded
+    in the payload for the fulfillment); an approver later writes the grant."""
+    import uuid as _uuid
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    audience = f"access_grant:{req.domain}"
+    task_id = "access-" + _uuid.uuid4().hex[:10]
+    try:
+        result = await run_in_threadpool(
+            lambda: human_tasks.register_task(
+                kind="access_request", task_id=task_id, audience=audience,
+                title=f"Grant read access to {current_user.email}",
+                summary=(f"{current_user.email} requests READ access to {req.asset}. "
+                         f"Reason: {req.reason or '(none given)'}"),
+                requested_by=current_user.email,        # display: who asked
+                subject_ref=req.asset,                  # the resource
+                # fulfillment reads these: the grant SUBJECT (authz_id, Topaz's key)
+                # and the ASSET. Clearance-safe (a URN + a request, not content).
+                payload={"subject": current_user.authz_id, "asset": req.asset,
+                         "domain": req.domain},
+            )
+        )
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    logger.info("access_request created: task_id=%s subject=%s asset=%s approvers=%d",
+                task_id, current_user.authz_id, req.asset, len(result.get("recipients", [])))
+    return {"request_id": task_id, "status": "pending",
+            "approvers": len(result.get("recipients", []))}
 
 
 @app.get("/me/human_tasks")
@@ -299,7 +348,32 @@ async def act_on_human_task(
         except Exception as exc:
             logger.warning("workflow resume failed: task_id=%s wf=%s err=%s",
                            task_id, match["workflow_id"], exc)
-    return {"task_id": task_id, "decision": req.decision, "rows_resolved": n, "workflow_resumed": resumed}
+
+    # FULFILLMENT (access_request — Case 1, ASYNC): approving writes a git-asserted
+    # reader grant (asset_grants.yaml assertion, granted_by = THIS approver) and
+    # flows it through the SEALED grant_sync -> Topaz -> the DA-read gate opens ->
+    # the requester succeeds on a FRESH request (nothing suspended to resume). This
+    # is the automation of the manual alice->reader->customers_gold rehearsal.
+    granted = False
+    grant_detail: dict = {}
+    if match.get("kind") == "access_request" and req.decision == "approved":
+        payload = match.get("payload") or {}
+        subject = payload.get("subject")
+        asset = payload.get("asset")
+        if subject and asset:
+            grant_detail = await run_in_threadpool(
+                lambda: human_tasks.write_grant_and_sync(
+                    subject=subject, asset=asset,
+                    granted_by=current_user.authz_id,
+                    reason=(req.comment or f"HITL access grant approved by {current_user.email}"),
+                )
+            )
+            granted = bool(grant_detail.get("ok"))
+            if not granted:
+                logger.warning("access grant sync failed: task_id=%s exit=%s",
+                               task_id, grant_detail.get("exit_code"))
+    return {"task_id": task_id, "decision": req.decision, "rows_resolved": n,
+            "workflow_resumed": resumed, "grant_written": granted}
 
 
 # Neo4j Driver Setup

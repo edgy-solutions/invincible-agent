@@ -208,6 +208,59 @@ def list_tasks_for(caller_id: str, *, status: str = "pending") -> list[dict[str,
             return [dict(r) for r in cur.fetchall()]
 
 
+# ── Case-1 fulfillment: write an asset_grants.yaml assertion + grant_sync ─────
+
+_ASSET_GRANTS_FILE = os.getenv("ASSET_GRANTS_FILE", "/app/policy/asset_grants.yaml")
+_GRANT_SYNC = os.getenv("GRANT_SYNC_PY", "/app/policy/sync/grant_sync.py")
+
+
+def write_grant_and_sync(*, subject: str, asset: str, granted_by: str,
+                         reason: str) -> dict[str, Any]:
+    """Case-1 fulfillment: append a git-asserted reader grant to asset_grants.yaml
+    (subject may READ asset, granted_by a named human) and flow it to Topaz via
+    the SEALED grant_sync (reused VERBATIM — same validate/prove-the-negative/
+    readback). Returns {ok, exit_code, output}.
+
+    AUDIT NOTE (load-bearing, not hardening): the git-blame audit the grant core
+    guarantees requires this asset_grants.yaml change to be COMMITTED TO GIT with
+    the APPROVER as the author. This sandbox path writes the file + syncs to prove
+    the deny->grant->allow loop; a grant that enforces WITHOUT a git commit is not
+    git-blame-auditable = the unauditable grant the core forbids at classification.
+    Committing (approver-attributed) is an AUDIT-COMPLETING REQUIREMENT before
+    classification use, filed with real-grant-seeding-before-the-flip."""
+    import yaml as _yaml
+    import subprocess
+
+    with open(_ASSET_GRANTS_FILE) as f:
+        data = _yaml.safe_load(f) or {}
+    grants = data.get("grants") or []
+    # Idempotent: a duplicate (subject, asset) is a no-op, not a second grant.
+    if not any(g.get("subject") == subject and g.get("asset") == asset for g in grants):
+        grants.append({
+            "subject": subject, "asset": asset,
+            "granted_by": granted_by, "reason": reason,
+        })
+        data["grants"] = grants
+        with open(_ASSET_GRANTS_FILE, "w") as f:
+            # block style, no default_style — avoids the safe_dump block-scalar
+            # flattening gotcha; the single-line reason needs no block scalar.
+            _yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+
+    env = dict(os.environ)
+    env["ASSET_GRANTS_FILE"] = _ASSET_GRANTS_FILE
+    env["PYTHONPATH"] = "/app/policy/sync:" + env.get("PYTHONPATH", "")
+    if _TOPAZ_DIRECTORY_URL:
+        env["TOPAZ_DIRECTORY_URL"] = _TOPAZ_DIRECTORY_URL
+    proc = subprocess.run(
+        ["python", _GRANT_SYNC], env=env, capture_output=True, text=True, timeout=60,
+    )
+    return {
+        "ok": proc.returncode == 0,
+        "exit_code": proc.returncode,  # 0 ok · 2 malformed · 3 dangling · 4 readback
+        "output": (proc.stdout or "")[-800:] + (proc.stderr or "")[-400:],
+    }
+
+
 def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
                        comment: str = "") -> int:
     """Mark ALL recipient rows of a logical task resolved (one human acted for the

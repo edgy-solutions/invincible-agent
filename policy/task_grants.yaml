@@ -49,3 +49,16 @@ audiences:
       live, through the same Topaz single-decider as the four content gates.
     grant_to:
       - alice@example.com
+
+  # Case-1 (access-grants): who may APPROVE per-asset read-access requests in the
+  # DATA_ENGINEERING domain. alice (a DATA_STEWARD for DATA_ENGINEERING) is the
+  # approver; approving writes an asset_grants.yaml reader grant (granted_by=alice)
+  # through the sealed grant_sync. Same fifth-namespace can_act gate as promotions.
+  access_grant:DATA_ENGINEERING:
+    granted_by: cnogradi
+    reason: >-
+      Demo fixture: alice (DATA_STEWARD - DATA_ENGINEERING) approves per-asset read
+      access requests for DATA_ENGINEERING assets. Approving automates the manual
+      alice->reader->customers_gold rehearsal into a self-service HITL flow.
+    grant_to:
+      - alice@example.com
