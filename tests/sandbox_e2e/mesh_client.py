@@ -153,11 +153,34 @@ async def fire(message: str, *, session_prefix: str = "e2e",
         token = await get_token(client)
         claims = decode_jwt_claims(token)
         if print_status:
-            print(
-                f"[auth] user={claims.get('preferred_username')} "
-                f"persona={claims.get('persona')} "
-                f"domains={claims.get('entitled_domains')}"
-            )
+            # Show the TOPAZ-RESOLVED entitlement matrix (the enforcement
+            # truth), NOT the JWT `persona`/`entitled_domains` claims. ADR-0026
+            # step 6 retired the JWT-claim path — Keycloak still ISSUES those
+            # claims but nothing reads them; displaying them here previously
+            # made a correctly-seeded user (alice) look unseeded (domains=None)
+            # and gave a stale extra domain for another (agent's MAINTENANCE),
+            # costing real debugging time on the 2026-07-08 cross-engine seal.
+            # /me/entitlements is exactly what get_current_user resolves.
+            try:
+                r = await client.get(
+                    f"{BFF_URL}/me/entitlements",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=15.0,
+                )
+                ent = r.json()
+                cells = ent.get("cells", [])
+                domains = sorted({c["domain"] for c in cells})
+                print(
+                    f"[auth] user={claims.get('preferred_username')} "
+                    f"email={ent.get('email')} source={ent.get('source')} "
+                    f"cells={len(cells)} domains={domains}"
+                )
+            except Exception as e:
+                print(
+                    f"[auth] user={claims.get('preferred_username')} "
+                    f"(/me/entitlements unavailable: {e}; NOT falling back to "
+                    f"retired JWT claims)"
+                )
         return await orchestrate(
             client, token, message,
             session_prefix=session_prefix,
