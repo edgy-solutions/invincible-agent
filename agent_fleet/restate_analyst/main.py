@@ -1084,8 +1084,10 @@ def _execute_service_task(task: dict) -> dict:
         "task_id": task["id"],
         "task_type": "service_task",
     }
+    headers = {}
     if task.get("user_jwt"):
-        payload["user_jwt"] = task["user_jwt"]
+        payload["user_jwt"] = task["user_jwt"]           # body form (engine ContextVar auth)
+        headers["Authorization"] = f"Bearer {task['user_jwt']}"  # header form (cortex-bff get_current_user)
     # General body-passthrough: a ServiceTask may specify (or override) the exact
     # request body its endpoint needs — a real capability (endpoints differ in the
     # shape they expect), not a test hook. When the body drives a Topaz-gated
@@ -1093,7 +1095,7 @@ def _execute_service_task(task: dict) -> dict:
     # 401/403 that the denial handling above turns into a terminal fail-and-release.
     if isinstance(task.get("service_payload"), dict):
         payload.update(task["service_payload"])
-    resp = requests.post(agent_endpoint, json=payload, timeout=AGENT_HTTP_TIMEOUT)
+    resp = requests.post(agent_endpoint, json=payload, headers=headers, timeout=AGENT_HTTP_TIMEOUT)
     if resp.status_code in (401, 403):
         # TERMINAL — fail-and-release, do NOT retry-and-park. Situation C.
         raise restate.TerminalError(
