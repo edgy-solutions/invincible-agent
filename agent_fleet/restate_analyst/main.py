@@ -350,16 +350,29 @@ except ImportError:
     )
 
 
-def _resolve_ontology(task_description: str) -> dict:
+def _resolve_ontology(task_description: str, user_email: str = "") -> dict:
     """Call Engine O to resolve the task description into semantic context.
 
     This function is executed inside ``ctx.run()`` for durable execution —
     if the pod crashes mid-flight, Restate will replay and skip this step
     if it already completed successfully.
+
+    ADR-0025 ontology-IRI namespace: thread the caller's entitlement key
+    (email) so Engine O's ``can_view`` candidate-filter discriminates on THIS
+    subject here too — this is the SECOND call to O's ``/resolve`` gate (the
+    supervisor's ``_resolve_subject`` is the first). The composed-path seal
+    caught this path dropping identity (``caller=''``) when the supervisor's
+    resolution returned UNKNOWN and Engine A re-resolved: the multi-path
+    corollary of [[identity-reaches-enforcement-point]] — every call to an
+    enforcement point must carry the subject, not just the primary one. Empty
+    is honest-absent → deny-by-default on compartmented classes (fail-closed).
     """
+    payload: dict = {"query": task_description}
+    if user_email:
+        payload["user_email"] = user_email
     resp = requests.post(
         ONTOLOGY_RESOLVE_URL,
-        json={"query": task_description},
+        json=payload,
         timeout=ONTOLOGY_TIMEOUT,
     )
     resp.raise_for_status()
@@ -432,6 +445,10 @@ async def analyze(ctx: Context, request: dict) -> dict:
     # 2026-06-26 demo investigation closed at the source.
     supplied_subject_uri = (request.get("resolved_subject_uri") or "").strip()
     supplied_instance_id = (request.get("resolved_instance_id") or "").strip()
+    # ADR-0025: the caller's entitlement key (email), needed BEFORE the resolve
+    # branch so the legacy re-resolve threads identity to O's /resolve gate.
+    # (Also read again below at its Engine-D forwarding site; same value.)
+    resolve_caller_email = request.get("user_email") or ""
     if supplied_subject_uri:
         semantic_ctx = {
             "resolved_uri": supplied_subject_uri,
@@ -442,10 +459,12 @@ async def analyze(ctx: Context, request: dict) -> dict:
     else:
         # Legacy path: no supervisor-supplied context (older callers,
         # direct test probes, the generalist fallback launched via
-        # /analyze_proxy with no routing). Re-resolve via Engine O.
+        # /analyze_proxy with no routing). Re-resolve via Engine O —
+        # threading the caller's email so O's can_view gate discriminates
+        # on THIS subject (composed-path seal: this path was caller='').
         semantic_ctx = await ctx.run(
             "resolve_ontology",
-            lambda: _resolve_ontology(task.task_description),
+            lambda: _resolve_ontology(task.task_description, resolve_caller_email),
         )
 
     # --------------------------------------------------------------------------
