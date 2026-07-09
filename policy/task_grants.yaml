@@ -1,0 +1,51 @@
+# HumanTask AUDIENCES — the git-asserted, auditable overlay that governs WHO may
+# ACT on (approve/reject) a class of human-in-the-loop tasks (the HITL substrate's
+# FIFTH namespace, uniform with asset_grants.yaml / ontology_compartments.yaml).
+#
+# SAME model as the other four content namespaces: deny-by-default, Topaz-decided
+# (the task_audience `can_act` permission), git-asserted + auditable (git-blame),
+# and OVERLAY-CONFIGURABLE per deployment. `task_grant_sync.py` flows these into
+# Topaz as `task_audience` `actor` relations; removing an entry REVOKES it.
+#
+# WHY a fifth namespace and not an ad-hoc role check: "who may approve a promotion
+# in compartment X" is exactly the kind of access decision that wants the SAME
+# single-decider (Topaz), deny-by-default, git-blame audit trail as every other
+# gate. A local role check would be a PARALLEL decider that can drift — the exact
+# two-authz-truths bug the enforcement arc rejected. The HumanTask queue is the
+# sealed enforcement model instantiated on a new resource kind (tasks).
+#
+# EXISTENCE-OF-A-TASK IS SENSITIVE (existence-oracle, like ontology-class
+# existence): a task "approve promotion of AnswerArtifact X" reveals X exists and
+# is pending. `can_act`/`can_view` are deny-by-default so an unauthorized caller
+# neither sees nor can act on a task whose very existence is need-to-know. The task
+# PAYLOAD is clearance-bounded (reference + clearance-safe summary, never
+# compartmented content) so the queue itself cannot leak.
+
+# An AUDIENCE groups tasks whose approval authority is the same, and names who may
+# act. `grant_to` are entitlement keys (emails, matching seeded `user` objects) or
+# groups (group#member, reusing groups.yaml). Every audience REQUIRES an
+# accountable `granted_by` + `reason` (prove-the-negative on the grant path — the
+# sync REFUSES an unexplained entry, same as asset_grants / ontology_compartments).
+#
+# Audience KEY convention: "<task_kind>:<compartment>" — e.g. a promotion approval
+# in the DATA_ENGINEERING domain is audience "promotion:DATA_ENGINEERING". A
+# workflow's UserTask declares which audience its approval belongs to; registration
+# resolves the audience's actors from Topaz and materializes one queue row per
+# authorized actor (so the Electric replication filter and the Topaz can_act gate
+# derive from the SAME decision — two layers, one truth).
+audiences:
+  # Demo fixture (Case 2, ADR-0024 Part B): approve promotion of an AnswerArtifact
+  # in the DATA_ENGINEERING domain before the one-way publish emit. alice is a
+  # granted approver; bob/carol are deliberately NOT — their inability to see or
+  # act on the task is the deny side of the seal (existence-oracle: they don't even
+  # receive the task in their subscription), the same honest-denial-as-demo-asset
+  # posture as the content gates.
+  promotion:DATA_ENGINEERING:
+    granted_by: cnogradi
+    reason: >-
+      Demo fixture: exercises the HITL queue's fifth-namespace can_act gate. alice
+      (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) may approve promotions in this
+      domain; the seal shows authorized-sees-and-acts / unauthorized-neither, both
+      live, through the same Topaz single-decider as the four content gates.
+    grant_to:
+      - alice@example.com

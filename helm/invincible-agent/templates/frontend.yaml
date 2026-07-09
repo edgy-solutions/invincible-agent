@@ -112,6 +112,14 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            # HITL substrate: cortex-bff writes the human_task_projection into the
+            # SAME Electric-replicated Postgres the projector uses. Constructed from
+            # the shared configmap's BPMN_POSTGRES_* + the secret's
+            # BPMN_POSTGRES_PASSWORD (both already on this pod via envFrom), exactly
+            # as templates/projector.yaml does — one secret, one place. Absent → the
+            # HITL substrate is dormant (migration no-ops), never a boot blocker.
+            - name: PROJECTOR_POSTGRES_DSN
+              value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
             # 2026-07-01: default the Electric proxy's upstream URL from
             # the release name so clusters with a release name other
             # than "iagent" (e.g. "invincible-agent" at work) don't hit

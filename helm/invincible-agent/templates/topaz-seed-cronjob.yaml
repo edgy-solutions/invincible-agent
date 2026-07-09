@@ -76,5 +76,14 @@ spec:
                   # a bad grant file cannot silently seed a broken grant.
                   python policy/sync/grant_sync.py
                   echo ""
-                  echo "===== SEED COMPLETE — three syncs applied + readbacks passed ====="
+                  echo "===== ONTOLOGY COMPARTMENT SYNC (ontology_compartment_sync) ====="
+                  python policy/sync/ontology_compartment_sync.py
+                  echo ""
+                  echo "===== TASK GRANT SYNC (task_grant_sync — HITL fifth namespace) ====="
+                  # task_audience `actor` relations from policy/task_grants.yaml.
+                  # Disjoint scope from the other syncs; exits 2 (malformed) / 4
+                  # (readback) — `set -e` fails the Job loudly on a bad overlay.
+                  python policy/sync/task_grant_sync.py
+                  echo ""
+                  echo "===== SEED COMPLETE — five syncs applied + readbacks passed ====="
 {{- end }}

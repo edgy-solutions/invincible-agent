@@ -94,7 +94,18 @@ EntitlementSource = Literal["topaz", "none"]
 
 class User(BaseModel):
     id: str
-    email: str
+    email: str  # DISPLAY / AUDIT only — never an authorization key (use authz_id).
+    # The AUTHORIZATION identity — the key Topaz/policy is seeded by, resolved
+    # from USER_ENTITLEMENT_CLAIM (email by default; employee-ID at work-deploy),
+    # falling back to `sub` when the claim is absent. This is what every
+    # authorization decision keys on (Topaz subject, projection filters, can_act).
+    # Separating the two roles — authorize on the stable/authoritative/IdP-native
+    # identifier, show humans the email — is what makes the identity key a single
+    # overlay parameter: at work-deploy only USER_ENTITLEMENT_CLAIM changes (to the
+    # PingSSO employee-ID claim) and every authz decision re-keys with it, no
+    # per-site edits. In the sandbox authz_id == email, so the abstraction is
+    # behaviourally transparent today.
+    authz_id: str
     roles: List[str] = []
     # Per ADR-0009: caller-side persona. Post ADR-0026 step 6, sourced
     # SOLELY from the Topaz entitlement matrix (the default cell's
@@ -178,6 +189,14 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # The AUTHORIZATION identity: the claim Topaz/policy is keyed by
+        # (USER_ENTITLEMENT_CLAIM — email in sandbox, employee-ID at work-deploy),
+        # `sub` on absence. ONE knob controls every authz decision; `email` is
+        # display/audit only. Also the entitlement-matrix lookup key below, so the
+        # matrix and the enforcement gates key on the SAME identity (no divergence
+        # when the claim is switched).
+        authz_id = payload.get(USER_ENTITLEMENT_CLAIM) or user_id
+
         # ADR-0026 step 6: Topaz is the SOLE source of persona +
         # entitled_domains. Fetch the matrix first, then DERIVE
         # everything from it. No JWT-claim persona reads remain.
@@ -188,10 +207,10 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             jti = payload.get("jti") or user_id  # fall back to sub if
                                                   # IdP doesn't issue jti
             exp = float(payload.get("exp") or 0)
-            # Topaz lookup identifier — the human-legible claim (email
-            # by default) that policy/users.yaml keys on, NOT the sub.
-            # Falls back to sub if the configured claim is absent.
-            lookup_key = payload.get(USER_ENTITLEMENT_CLAIM) or user_id
+            # Topaz lookup identifier == the authorization identity (authz_id):
+            # the claim policy/users.yaml keys on, NOT the sub. Same value the
+            # enforcement gates key on, so matrix + gates never diverge.
+            lookup_key = authz_id
             try:
                 entitlements = cache.get(
                     sub=user_id, jti=jti, exp=exp, lookup_key=lookup_key
@@ -240,6 +259,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         return User(
             id=user_id,
             email=email,
+            authz_id=authz_id,
             roles=roles,
             persona=persona,
             entitled_domains=entitled_domains,

@@ -211,6 +211,24 @@ data:
         permissions:
           can_view: viewer
 
+      # HITL substrate (2026-07-09) — the HumanTask queue's FIFTH namespace.
+      # "May this caller ACT on (approve/reject) this task's audience" is a
+      # can_act decision asked of the SAME Topaz single-decider, deny-by-default,
+      # git-asserted (policy/task_grants.yaml → task_grant_sync.py), uniform with
+      # dataset/document/ontology_class. A `task_audience` is an approval-authority
+      # class (key "<task_kind>:<compartment>", e.g. "promotion:DATA_ENGINEERING");
+      # a caller may act iff they are an `actor` — granted directly or via a group
+      # (reusing groups.yaml membership). No marker needed: deny-by-default IS the
+      # posture (no actor grant → can_act false → the task is invisible + unactable,
+      # the existence-oracle-safe default). Registration resolves an audience's
+      # actors from Topaz and materializes one queue row per actor, so the Electric
+      # replication filter and this can_act gate derive from ONE decision.
+      task_audience:
+        relations:
+          actor: user | group#member
+        permissions:
+          can_act: actor
+
       # ---------------------------------------------------------------
       # ADR-0026 additions — persona/entitlement authorization.
       #

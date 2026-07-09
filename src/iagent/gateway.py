@@ -35,7 +35,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Any
+from typing import AsyncGenerator, Any, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -79,6 +79,18 @@ _ELECTRIC_UPSTREAM_URL = os.getenv("ELECTRIC_UPSTREAM_URL", "http://iagent-elect
 async def lifespan(application: FastAPI):
     """Startup/shutdown lifecycle — verify DB connection on boot."""
     await init_db()
+    # HITL substrate: ensure the human_task_projection table exists in the
+    # Electric-replicated Postgres. Non-fatal when PROJECTOR_POSTGRES_DSN is
+    # unset (local/dev boot) — the substrate is dormant, never a boot blocker.
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import human_tasks
+        await run_in_threadpool(human_tasks.apply_migration)
+        logger.info("human_task_projection migration applied")
+    except human_tasks.HumanTaskConfigError as exc:
+        logger.info("HITL substrate dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("human_task migration failed (HITL dormant): %s", exc)
     yield
 
 
@@ -147,6 +159,124 @@ async def get_me_entitlements(current_user: User = Depends(get_current_user)):
         ),
         "source": ent.source,
     }
+
+
+# ── HITL HumanTask queue (the enforcement model's FIFTH namespace) ───────────
+# The queue is access-controlled by the SAME Topaz single-decider as the four
+# content namespaces: who may VIEW/ACT on a task is `can_act` on the task's
+# `task_audience` (policy/task_grants.yaml). Two viewability layers derive from
+# ONE truth: the Electric /electric/shape proxy filters human_task_projection by
+# recipient_id=<verified caller authz_id> (replication layer), and /act re-checks
+# Topaz can_act (application layer) — the projection rows exist BECAUSE Topaz
+# authorized them, so the two cannot diverge. Keyed on authz_id end-to-end (email
+# in sandbox, employee-ID at work-deploy) — display uses .email, authz uses authz_id.
+
+from pydantic import BaseModel as _BaseModel  # noqa: E402
+
+
+class HumanTaskRegisterRequest(_BaseModel):
+    """Register a HumanTask. Called by a suspending workflow (Slice 1b) — or, at
+    the foundation checkpoint, directly — to fan a task out to its audience's
+    authorized actors. Fields are CLEARANCE-SAFE (reference + summary, never
+    compartmented content)."""
+    kind: str = "workflow_ack"
+    task_id: str
+    audience: str
+    title: str
+    summary: str
+    requested_by: str
+    workflow_id: Optional[str] = None
+    subject_ref: Optional[str] = None
+    payload: Optional[dict] = None
+
+
+class HumanTaskActRequest(_BaseModel):
+    decision: str  # "approved" | "rejected"
+    comment: str = ""
+
+
+@app.post("/internal/human_tasks/register")
+async def register_human_task(
+    req: HumanTaskRegisterRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Register a task and materialize one queue row per Topaz-authorized actor.
+    INTERNAL seam — Slice 1b restricts callers to the workflow/service identity;
+    at the foundation checkpoint it is exercised directly to prove the identity
+    bridge. Returns the resolved recipient set (the Topaz decision)."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    try:
+        result = await run_in_threadpool(
+            lambda: human_tasks.register_task(
+                kind=req.kind, task_id=req.task_id, audience=req.audience,
+                title=req.title, summary=req.summary, requested_by=req.requested_by,
+                workflow_id=req.workflow_id, subject_ref=req.subject_ref,
+                payload=req.payload,
+            )
+        )
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
+                req.task_id, req.audience, len(result.get("recipients", [])))
+    return result
+
+
+@app.get("/me/human_tasks")
+async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
+    """The caller's pending queue (REST initial-load; the live path is the
+    Electric subscription). Filtered by recipient_id=caller.authz_id — the SAME key
+    the Electric proxy injects, so REST and streaming agree by construction."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    try:
+        tasks = await run_in_threadpool(lambda: human_tasks.list_tasks_for(current_user.authz_id))
+    except human_tasks.HumanTaskConfigError:
+        tasks = []
+    # `email` is DISPLAY only; the queue was filtered on authz_id above.
+    return {"email": current_user.email, "tasks": tasks}
+
+
+@app.post("/human_tasks/{task_id}/act")
+async def act_on_human_task(
+    task_id: str,
+    req: HumanTaskActRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Approve/reject a task. Application-layer gate: RE-CHECK Topaz `can_act` for
+    this caller on the task's audience (deny-by-default) BEFORE acting. Slice 1b
+    adds the Restate `approve` call that resumes the suspended workflow; the
+    foundation validates the gate + resolution bookkeeping."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    if req.decision not in ("approved", "rejected"):
+        raise HTTPException(status_code=400, detail={"error": "bad_decision"})
+    # Look up the task's audience (from any of the caller's recipient rows) to
+    # re-check. Keyed on authz_id — same as the replication filter.
+    try:
+        rows = await run_in_threadpool(
+            lambda: human_tasks.list_tasks_for(current_user.authz_id, status="pending")
+        )
+    except human_tasks.HumanTaskConfigError:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
+    match = next((t for t in rows if t["task_id"] == task_id), None)
+    if match is None:
+        # Not in the caller's queue at all — deny-by-default, existence-oracle
+        # safe: don't reveal whether the task exists for someone else.
+        raise HTTPException(status_code=404, detail={"error": "task_not_found"})
+    audience = match["audience"]
+    allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, current_user.authz_id))
+    if not allowed:
+        raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
+    n = await run_in_threadpool(
+        lambda: human_tasks.mark_task_resolved(
+            task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+        )
+    )
+    logger.info("human_task acted: task_id=%s by=%s decision=%s rows=%d",
+                task_id, current_user.authz_id, req.decision, n)
+    return {"task_id": task_id, "decision": req.decision, "rows_resolved": n}
+
 
 # Neo4j Driver Setup
 _NEO4J_URI = os.getenv("NEO4J_URI", "bolt://neo4j:7687")
@@ -3219,6 +3349,25 @@ def _escape_sql_string_literal(s: str) -> str:
     return s.replace("'", "''")
 
 
+# HITL: the human_task_projection viewability column is recipient_id — the caller's
+# AUTHZ IDENTITY (authz_id = the USER_ENTITLEMENT_CLAIM key: email in sandbox,
+# employee-ID at work-deploy), a server-verified JWT-derived claim — NOT the UUID
+# sub, NOT necessarily an email. Validate against a CONSERVATIVE identity allowlist
+# (alphanumerics + the chars real emails/employee-IDs use) that REJECTS every SQL-
+# breaking character (quotes, whitespace, semicolons, backslash), then PostgreSQL-
+# escape as a backstop. Validate-then-escape, two layers — same trusted-middle
+# discipline as the sub filter (a server-verified value, never a client param).
+# The allowlist is the strong layer: a filter-breaking value is rejected before it
+# reaches the query; the quote-doubling is belt-and-suspenders.
+_IDENTITY_RE = _re_for_uuid.compile(r"^[A-Za-z0-9._%+@-]{1,254}$")
+
+
+def _escape_identity_literal(s: str) -> str:
+    if not _IDENTITY_RE.match(s):
+        raise ValueError(f"verified authz identity has illegal characters: {s!r}")
+    return s.replace("'", "''")
+
+
 _ELECTRIC_FORWARD_HEADERS = {
     "electric-handle",
     "electric-offset",
@@ -3251,26 +3400,39 @@ async def electric_shape_proxy(
     #    CANNOT be spoofed.
     verified_user_id = current_user.id
 
-    # 2. Build the upstream WHERE clause. Electric's WHERE parser
-    #    supports a subset of PostgreSQL expressions and does NOT
-    #    accept the `->>` JSONB path operator. We filter on a
-    #    GENERATED ALWAYS AS (produced_for->>'user_id') STORED column
-    #    added to `answer_artifact_projection` (see migration
-    #    sql/create_answer_artifact_projection.sql) — the extraction
-    #    happens at write time, the filter is a plain text equality.
-    escaped = _escape_sql_string_literal(verified_user_id)
-    server_where = f"produced_for_user_id = '{escaped}'"
-
-    # 3. Pass through Electric params, EXCEPT any client-supplied
-    #    `where` (always overridden by the server-injected clause).
+    # 2. Pass through Electric params, EXCEPT any client-supplied `where`
+    #    (always overridden by the server-injected clause). Read the requested
+    #    table first — the WHERE column is per-table.
     upstream_params: dict[str, str] = {}
     for key, value in request.query_params.multi_items():
         if key.lower() == "where":
             # Client cannot influence the WHERE clause. Silently drop.
             continue
         upstream_params[key] = value
+    table = upstream_params.get("table") or "answer_artifact_projection"
+    upstream_params["table"] = table
+
+    # 3. Build the server-verified WHERE clause, per table. Electric's WHERE
+    #    parser supports a subset of PostgreSQL and does NOT accept the `->>`
+    #    JSONB operator, so each filter references a plain column populated at
+    #    write time.
+    #      - human_task_projection: recipient_id = <verified caller AUTHZ_ID>.
+    #        The HITL queue is keyed on the authz identity (Topaz's key) end-to-end,
+    #        so the replication filter and the Topaz can_act gate derive from ONE
+    #        truth and there is no sub<->email bridge to mis-route. authz_id == email
+    #        in sandbox; at work-deploy it becomes the employee-ID claim, and this
+    #        filter re-keys with the knob (no code change here).
+    #      - answer_artifact_projection (default): produced_for_user_id = <sub>
+    #        (interim per-user ownership isolation, NOT Topaz authz — unchanged).
+    # NOTE the `else` catches EVERY non-task table -> every table gets a
+    # server-side WHERE; there is no branch that serves a table UNFILTERED.
+    if table == "human_task_projection":
+        escaped_id = _escape_identity_literal(current_user.authz_id)
+        server_where = f"recipient_id = '{escaped_id}'"
+    else:
+        escaped = _escape_sql_string_literal(verified_user_id)
+        server_where = f"produced_for_user_id = '{escaped}'"
     upstream_params["where"] = server_where
-    upstream_params.setdefault("table", "answer_artifact_projection")
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
 
