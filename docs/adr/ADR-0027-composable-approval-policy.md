@@ -100,6 +100,17 @@ DataHub owns (owner, classification) to *choose* the approver per-classification
    The distinction is forced by the nature of the dimension (a fact vs a
    decision) and it determines the mechanism. Decide the taxonomy now even if the
    specific dimensions come later.
+   **PRECEDENCE (decided now): auto-checked necessary-conditions gate FIRST, human
+   approvals are routed ONLY for requests that pass them.** Two reasons, one of
+   them a classification requirement: (a) fail-fast — don't route a task to the
+   safety officer for a request that already auto-fails clearance; (b) EXISTENCE-
+   ORACLE — routing a task that reveals "<subject> requested <compartmented-thing>"
+   to an approver is itself a disclosure, so a request that auto-fails need-to-know
+   must be DENIED BEFORE any human-approval task is created (the task's very
+   existence would leak; see [[project_ontology_visibility_compartment_scoped]] /
+   [[feedback_deny_by_construction_calibration]]). Auto-checks are the cheap,
+   silent, deny-before-routing gate; human approvals are sought only on the
+   surviving set.
 
 4. **Multi-approval EXTENDS the HITL substrate; it does not replace it.** "Safety
    officer AND data owner AND domain owner must approve" = **N HumanTasks that
@@ -108,6 +119,17 @@ DataHub owns (owner, classification) to *choose* the approver per-classification
    the one-abstraction-two-fulfillments design) plus a **join** ("all required
    approvals gathered"), NOT a new system. The join is new logic; the task
    substrate, the fifth namespace, and the fulfillment dispatch are reused.
+   **The join-completion decision is a TOPAZ POLICY EVALUATION, not an external
+   orchestrator.** "Are all required approvals present" is decided by the single
+   decider reading the approval relations (each approval a relation Topaz holds),
+   NOT by a separate service that tracks partial state and decides when to issue.
+   This closes the seam Decision 1 forbids: a "grant-issuance orchestrator" that
+   tracks approvals and decides completion IS a second decider wearing a different
+   name — reject it. The individual approvals are captured as durable facts (the
+   HumanTask records + the approval relations); the *decision that the set is
+   complete and the grant is authorized* is Topaz evaluating those facts. What
+   lives outside Topaz is only the plumbing (route tasks, write approval
+   relations, trigger a re-evaluation) — never the completion *decision*.
 
 5. **DataHub is the source of truth for the facts the policy consumes.** Owner
    and classification/compartment come from DataHub → Topaz (Layer 1). The
@@ -120,10 +142,22 @@ DataHub owns (owner, classification) to *choose* the approver per-classification
 
 6. **Fail-closed applies to the policy engine itself.** An approval policy that
    cannot be evaluated — a required approver unresolvable, an attribute source
-   unreachable, a join incomplete — **fails closed: no grant**, never fails open.
-   The arc's governing invariant ([[access-regulates-persona-domain]],
-   [[broken-closed-hides-brokenness]]) applied to the new layer. A missing
-   dimension is a DENY, not a skip.
+   unreachable — **fails closed: no grant**, never fails open. The arc's governing
+   invariant ([[access-regulates-persona-domain]], [[broken-closed-hides-brokenness]])
+   applied to the new layer. A missing dimension is a DENY, not a skip.
+   **Distinguish an INCOMPLETE-PENDING join from an INCOMPLETE-UNSATISFIABLE one**
+   (both yield no grant, but they are different states): incomplete-PENDING is the
+   NORMAL in-progress state — 2 of 3 approvals gathered, waiting on the third — no
+   grant YET, correctly, and BOUNDED (it must have an expiry, per Decision 4's
+   deferred join semantics). Incomplete-UNSATISFIABLE is an ERROR state — a
+   required approver can never approve (left the org, revoked authority, an
+   auto-condition became permanently false) — the join can NEVER complete, so it
+   must **fail-closed AND TERMINATE + release** (no grant, cleaned up), NOT sit
+   pending forever. A join that can never complete but parks state indefinitely is
+   the held-state / DoS surface the HITL work spent its rigor eliminating
+   ([[hitl-suspend-vs-fail-ruling]], [[lifecycle-state-observable]]) — an
+   unsatisfiable join is the multi-approval analogue of a mid-workflow denial:
+   fail-and-release, never park.
 
 ## What this does NOT decide (deferred, with triggers)
 
@@ -175,6 +209,14 @@ These need real requirements; specifying them now would be premature over-design
 - The capability arrives onto decided ground: when a real multi-approver /
   attribute-gated requirement lands (the triggers), the build composes the
   existing primitives under these invariants rather than re-deriving them.
+- **The approval history and policy state are THEMSELVES governed viewability
+  surfaces**, gated by the enforcement model like everything else — "who approved
+  what, when, why" (the audit trail) and "what approval policies are in effect"
+  are access-controlled reads (an auditor sees approval history; a requester sees
+  only their own request's status; a task's existence is need-to-know per Decision
+  3's existence-oracle point). The approval *records* are not an ungoverned log —
+  they are a resource under the same deny-by-default model. Naming it so the future
+  build doesn't leave the approval trail open by default.
 
 ## Non-goals (this session)
 
