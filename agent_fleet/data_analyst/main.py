@@ -91,6 +91,44 @@ data_analyst_service = Service("DataAnalystService")
 async def health():
     return {"status": "ok"}
 
+
+def _is_access_denied(exc: Exception) -> bool:
+    """True iff `exc` is a data-plane ACCESS DENIAL (central-gateway can_read
+    403) — as opposed to an empty result, a URN-not-found, a data-plane
+    outage, or a code fumble. Keyed on the gate's SPECIFIC 403 so the UI
+    surfaces 'request access' ONLY for real authorization denials, never for
+    fumbles/empties (a fumble isn't fixed by requesting access)."""
+    resp = getattr(exc, "response", None)
+    if resp is not None and getattr(resp, "status_code", None) == 403:
+        return True
+    s = str(exc).lower()
+    return "403" in s and ("forbidden" in s or "not authorized" in s or "/authorize" in s)
+
+
+def _access_denied_response(assets: list, subject: str, sources: list) -> dict:
+    """The STRUCTURED access-denied engine response (Bug 2). Distinct
+    `status` so the pipeline/UI can offer the HITL request-access flow
+    (/access_requests) rather than rendering an empty chart that hides the
+    denial. Carries the denied asset + the subject the request is filed for."""
+    asset = assets[0] if assets else ""
+    msg = (
+        "Access denied: you are not authorized to read this dataset"
+        + (f" ({asset})" if asset else "")
+        + ". You can request access."
+    )
+    return {
+        "status": "access_denied",
+        "denied_assets": assets,
+        "subject": subject or "",
+        "message": msg,
+        # `data` too, so the existing pipeline (which reads engine_response
+        # data) degrades gracefully to the denial text even before the
+        # access_denied signal is projected to the UI (Bug 2B/2C).
+        "data": msg,
+        "sources": sources,
+    }
+
+
 @data_analyst_service.handler()
 async def analyze_data(ctx: Context, request: dict) -> dict:
     # NB: require_topaz_auth_decorator was removed from this handler. It
@@ -256,6 +294,11 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
                     )
                 return
 
+    # Bug 2: structured access-denial capture. The tool appends the denied
+    # URN here on a gate 403; the handler surfaces it as status="access_denied"
+    # (distinct from success/error/empty) so the UI can offer request-access.
+    access_denials: list = []
+
     @tool
     def query_datahub_asset(urn: str, sql_query: str) -> str:
         """
@@ -286,7 +329,22 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             originator_email=originator_email,
         )
 
-        lazy_df = client.get_dataframe(urn)
+        try:
+            lazy_df = client.get_dataframe(urn)
+        except Exception as e:
+            # Distinguish a data-plane ACCESS DENIAL (gate 403) from every
+            # other failure. Record it STRUCTURALLY so the handler surfaces
+            # `status="access_denied"` (→ UI request-access flow), and tell
+            # the agent NOT to retry (an authz deny won't yield to retries).
+            if _is_access_denied(e):
+                if urn not in access_denials:
+                    access_denials.append(urn)
+                raise PermissionError(
+                    f"ACCESS_DENIED reading {urn}: you are not authorized. "
+                    f"This is an authorization denial, not a data error — do "
+                    f"NOT retry; report that access is denied."
+                ) from e
+            raise
         dataset = lazy_df.collect()
 
         # DuckDB sees `dataset` because it picks up registered Python
@@ -322,6 +380,11 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         # responsive.
         agent_result = await asyncio.to_thread(agent.run, augmented_prompt)
     except Exception as e:
+        # A gate access-denial surfaces STRUCTURALLY even if the agent's
+        # error path fired — check it before the generic error so the UI
+        # offers request-access, not a generic "something went wrong".
+        if access_denials:
+            return _access_denied_response(access_denials, originator_email, sources_collected)
         # Even on error, return any sources we did manage to capture —
         # the agent may have queried successfully before something else
         # blew up downstream (e.g. SQL syntax issue on a follow-up call).
@@ -333,6 +396,14 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # gateway projects into the typed `sources` SSE event; cortex-ui
     # SourcesTrail renders. Same field-name contract Engines A/W/E
     # ship.
+
+    # If the data access was DENIED (gate 403), surface it STRUCTURALLY
+    # regardless of the agent's prose ("I'm unable to access…") — the UI
+    # needs the typed access_denied signal to offer request-access, not an
+    # empty chart that hides the denial.
+    if access_denials:
+        return _access_denied_response(access_denials, originator_email, sources_collected)
+
     return {
         "status": "success",
         "data": agent_result,
