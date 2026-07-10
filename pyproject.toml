@@ -17,7 +17,7 @@ dependencies = [
     "requests",
     "pyjwt[crypto]",
     "cryptography",
-    "dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@61cbfa92926b8322e5b31e825fd9c9a2796fe805",
+    "dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@master",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff

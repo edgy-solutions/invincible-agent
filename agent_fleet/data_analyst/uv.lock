@@ -409,7 +409,7 @@ wheels = [
 [[package]]
 name = "dag-tools"
 version = "0.1.0"
-source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=master#c002b77fcfbe22bc309aec91b91f7f0be1a3c565" }
+source = { git = "https://github.com/edgy-solutions/dag-tools.git?rev=61cbfa92926b8322e5b31e825fd9c9a2796fe805#61cbfa92926b8322e5b31e825fd9c9a2796fe805" }
 dependencies = [
     { name = "clickhouse-connect" },
     { name = "connectorx" },
@@ -447,7 +447,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "acryl-datahub" },
-    { name = "dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=master" },
+    { name = "dag-tools", git = "https://github.com/edgy-solutions/dag-tools.git?rev=61cbfa92926b8322e5b31e825fd9c9a2796fe805" },
     { name = "duckdb" },
     { name = "fastapi" },
     { name = "httpx" },
