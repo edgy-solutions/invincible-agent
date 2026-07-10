@@ -97,7 +97,14 @@ thesis rather than being disconnected features.
    scoped (they are the user's). So the canvas's composition offerings are governed
    by the enforcement model BY CONSTRUCTION — do NOT build a separate canvas
    access-control. The uniform-model payoff again (routing, the HITL queue, and now
-   the canvas are the same eligibility intersection).
+   the canvas are the same eligibility intersection). **Honesty on "by
+   construction":** the canvas inherits the enforcement model's permission-filtering
+   in WHATEVER ACTIVATION STATE it's in — it neither adds nor bypasses. The
+   permission dimension is itself `ENABLE_AGENTIC_AUTH`-gated / terminal-flip-pending
+   (built + sealed, staged-off in sandbox until the work-deploy flip), so the canvas
+   permission-filters exactly WHEN and WHERE the enforcement does — not sooner. "By
+   construction" means "inherits enforcement's state," NOT "live gating on the canvas
+   before it's live anywhere."
 
 4. **The answer SUMMARY is a captured fact** (the headline-at-answer-time), a v1
    prerequisite regardless of canvas depth — the card needs a stable, captured
@@ -118,8 +125,11 @@ now is premature over-design.
   of subjects, not one) are DEFERRED. Honest failure-honesty: a heterogeneous set
   (no common subject-type, or no set-arity verb) yields "these can't be aggregated"
   — the system tells the truth about what's composable rather than forcing a
-  nonsense combination. *Trigger:* v1 ships and usage shows people want to compose
-  sets.
+  nonsense combination. *Trigger (a recognizable BEHAVIOR, not "when it feels
+  right"):* v1 has shipped AND users are manually re-asking a question that combines
+  several already-pinned answers — the hand-rolled workaround IS the demand signal
+  for computed aggregation. (Named as a behavior because "usage shows want" is the
+  softest of this ADR's triggers and could otherwise never cleanly fire.)
 - **Use 3 — workflow-seeding (the strategic center, DIRECTIONAL).** Answers as
   step-templates or data-inputs for the ADR-0024 workflow builder: an answer is a
   *worked example of a step* (it carries the verb, the subject, the result, the
