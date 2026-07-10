@@ -366,12 +366,47 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         return result_df.write_json()
 
     model = get_smolagent_model()
+    # A/B TOGGLE (DA_STRUCTURED_OUTPUTS, default OFF, DA-only, reversible):
+    # smolagents 1.24 native structured generation. Moves the agent's action
+    # CODE into a JSON field so gpt-oss isn't juggling markdown-envelope +
+    # Python-syntax + logic simultaneously (the "structure tax" behind the
+    # CodeAgent <code>-envelope fumble). This is a MODEL-PATH change — gated so
+    # it flips back with zero blast radius. The open question the live A/B
+    # settles: does gpt-oss HONOR json-schema constraining through our
+    # litellm->ollama chain? An INERT flag (provider silently ignores it) shows
+    # up as NO change in the fumble rate, not an error. If inert, BAML is the
+    # fallback for this same class-2 (CodeAgent-by-necessity) slot.
+    _use_structured = os.getenv("DA_STRUCTURED_OUTPUTS", "").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
     agent = CodeAgent(
         tools=[query_datahub_asset],
         model=model,
-        additional_authorized_imports=["duckdb", "polars", "json"]
+        additional_authorized_imports=["duckdb", "polars", "json"],
+        use_structured_outputs_internally=_use_structured,
     )
+    print(f"DA_AGENT_CONFIG use_structured_outputs_internally={_use_structured}",
+          flush=True)
     
+    def _emit_fumble_metric(outcome: str) -> None:
+        # A/B FUMBLE METRIC: count smolagents step ERRORS (parse/exec failures
+        # — the <code>-envelope fumble) from the agent's memory. The fumble
+        # usually RECOVERS (retries), so a successful run still carries the
+        # fumble count in its step errors — this is the rate we A/B on
+        # (flag-on vs a FRESHLY-measured flag-off baseline, over MANY runs
+        # because it's stochastic). One clean grep-able line per run.
+        try:
+            _steps = getattr(getattr(agent, "memory", None), "steps", []) or []
+            _errs = sum(1 for s in _steps if getattr(s, "error", None))
+            print(
+                f"DA_FUMBLE_METRIC structured={_use_structured} outcome={outcome} "
+                f"steps={len(_steps)} step_errors={_errs}",
+                flush=True,
+            )
+        except Exception as _me:  # never let instrumentation break the handler
+            print(f"DA_FUMBLE_METRIC compute_failed structured={_use_structured} "
+                  f"outcome={outcome} err={_me}", flush=True)
+
     try:
         # agent.run() is synchronous and blocks for the LLM round-trips
         # (often 30s+ on slow Ollama backends). Hypercorn is single-event-loop,
@@ -379,7 +414,12 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         # invocations. Offload to a worker thread so the event loop stays
         # responsive.
         agent_result = await asyncio.to_thread(agent.run, augmented_prompt)
+        _emit_fumble_metric("ok")
     except Exception as e:
+        # Count the fumble even on a TOTAL failure (agent.run raised) — the
+        # memory still holds the errored steps; a run that never recovered is
+        # the worst fumble and must not be invisible to the A/B.
+        _emit_fumble_metric("raised")
         # A gate access-denial surfaces STRUCTURALLY even if the agent's
         # error path fired — check it before the generic error so the UI
         # offers request-access, not a generic "something went wrong".
