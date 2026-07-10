@@ -13,7 +13,7 @@ dependencies = [
     "polars",
     "httpx",
     "python-dotenv",
-    "dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@master",
+    "dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@61cbfa92926b8322e5b31e825fd9c9a2796fe805",
     "pyjwt[crypto]",
     "acryl-datahub",
 ]
