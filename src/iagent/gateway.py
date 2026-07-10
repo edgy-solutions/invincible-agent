@@ -725,6 +725,57 @@ def _label_from_uri(uri: str | None) -> str:
     return "".join(spaced).strip()
 
 
+def _compose_answer_summary(routing: dict | None) -> str:
+    """Compose the answer's factual S·P headline from the captured
+    routing facts — the summary the answer-first left column leads with.
+
+    THIS IS DETERMINISTIC FORMATTING OF ALREADY-CAPTURED FACTS, NOT an
+    LLM summary. Per ADR-0028 Decision 4 and the codebase's own
+    synthesis-is-theater principle (see the cortex-ui Artifact type's
+    resolved_intent note): the summary is a CAPTURED FACT, composed once
+    HERE at the write point (where `routing` is final), stored on the
+    Neo4j node, projected to its own column, and read VERBATIM by the
+    card — never re-derived on read, never LLM prose.
+
+    Two branches, both reading fields already on `routing`:
+
+    - **SPO-rich** → ``"{subject label} · {verb label}"`` (S·P). Both are
+      display labels already namespace-stripped + CamelCase-spaced by
+      `_label_from_uri` (`enumerateCatalog` → "enumerate Catalog"), so
+      the headline reads clean, not leaky-internal. GUARANTEED-CORRECT:
+      it's the captured routing facts formatted, archetype-blind, with
+      no extraction logic to get wrong.
+
+    - **fallback / thin-SPO** → ``"No direct match — {reason}"`` from the
+      structured `fallback_reason` (subject_unknown | instance_not_found
+      | no_compatible_verbs | domain_scope_excluded | no_verb_classified
+      | infra_error), humanized. Fallback answers get an HONEST headline,
+      not a blank.
+
+    v1 ships S·P. Object-enrichment (S·P·O — e.g. "… · owned by Analytics
+    team") is deferred to v1.1 as PER-ARCHETYPE key-fact extraction at
+    THIS SAME point (rendered_output is available here too), each
+    extractor individually verifiable — NOT rushed onto the v1 critical
+    path where a wrong extractor would ship a LYING headline. A terse-
+    but-true S·P beats a rich-but-possibly-wrong S·P·O for a headline you
+    navigate by.
+    """
+    if not routing:
+        return ""
+    about = routing.get("about") or {}
+    action = routing.get("action") or {}
+    if routing.get("fallback"):
+        reason = (routing.get("fallback_reason") or "").replace("_", " ").strip()
+        return f"No direct match — {reason}" if reason else "No direct match"
+    subject = (about.get("label") or "").strip()
+    verb = (action.get("label") or "").strip()
+    if subject and verb:
+        return f"{subject} · {verb}"
+    # One side missing (partial routing) — return whichever we have
+    # rather than a misleading "X · " with a dangling separator.
+    return subject or verb
+
+
 def _project_route_decision(mat: dict) -> dict | None:
     """Project a subtask_routing_decision materialization into the
     RouteDecision payload shape the cortex-ui typed event consumes.
@@ -2263,9 +2314,15 @@ async def generate_dagster_stream(
 
         _writer = get_writer()
         if _writer is not None:
+            # Compose the factual S·P headline HERE — the single write
+            # point where `routing` (SPO + fallback_reason) is final and
+            # the artifact is about to persist. Captured on the bundle,
+            # written to the node, projected, read verbatim. See
+            # `_compose_answer_summary`.
             _bundle_obj = AnswerArtifactBundle(
                 id=_artifact_bundle["id"],
                 question_text=_artifact_bundle["question_text"],
+                summary=_compose_answer_summary(_artifact_bundle["routing"]),
                 message_id=_artifact_bundle["message_id"],
                 valid_as_of=_artifact_bundle["valid_as_of"],
                 status=_artifact_bundle["status"],

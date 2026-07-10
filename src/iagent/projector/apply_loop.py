@@ -359,6 +359,7 @@ class ApplyLoop:
                   .durability_status,
                   .message_id,
                   .question_text,
+                  .summary,
                   .resolved_intent,
                   .routing_inline,
                   .rendered_output,
@@ -458,7 +459,7 @@ class ApplyLoop:
                     INSERT INTO answer_artifact_projection (
                         id, kind, watermark, created_at, updated_at,
                         valid_as_of, valid_until, status, durability_status,
-                        message_id, question_text, resolved_intent,
+                        message_id, question_text, summary, resolved_intent,
                         routing, sources, graph_trace, rendered_output,
                         produced_by, produced_for, derived_from_artifact_id,
                         produced_for_user_id
@@ -466,7 +467,8 @@ class ApplyLoop:
                         %(id)s, %(kind)s, %(watermark)s, %(created_at)s,
                         %(updated_at)s, %(valid_as_of)s, %(valid_until)s,
                         %(status)s, %(durability_status)s, %(message_id)s,
-                        %(question_text)s, %(resolved_intent)s, %(routing)s,
+                        %(question_text)s, %(summary)s, %(resolved_intent)s,
+                        %(routing)s,
                         %(sources)s, %(graph_trace)s, %(rendered_output)s,
                         %(produced_by)s, %(produced_for)s,
                         %(derived_from_artifact_id)s,
@@ -489,6 +491,7 @@ class ApplyLoop:
                         durability_status = EXCLUDED.durability_status,
                         message_id = EXCLUDED.message_id,
                         question_text = EXCLUDED.question_text,
+                        summary = EXCLUDED.summary,
                         resolved_intent = EXCLUDED.resolved_intent,
                         routing = EXCLUDED.routing,
                         sources = EXCLUDED.sources,
@@ -525,6 +528,11 @@ class ApplyLoop:
                         "durability_status": art["durability_status"],
                         "message_id": art["message_id"],
                         "question_text": art["question_text"],
+                        # Factual S·P headline the writer composed at the
+                        # gateway write point; the projector flows it
+                        # verbatim into its own column (honest-absent ""
+                        # for legacy rows that predate the field).
+                        "summary": art.get("summary") or "",
                         "resolved_intent": json.dumps(resolved_intent),
                         "routing": (
                             json.dumps(routing)

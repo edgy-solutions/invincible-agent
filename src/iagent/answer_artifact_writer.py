@@ -134,6 +134,24 @@ class AnswerArtifactBundle:
     rendered_output: Optional[Dict[str, Any]] = None
     derived_from_artifact_id: Optional[str] = None
     valid_until: Optional[int] = None
+    # Factual S·P headline composed at write time from the captured
+    # routing facts (subject label · verb label; fallback → the
+    # structured fallback_reason). Per ADR-0028 Decision 4 and the
+    # code's own synthesis-is-theater principle: the summary is a
+    # CAPTURED FACT composed once at write, stored on the node, read
+    # verbatim — NEVER an LLM prose summary, NEVER re-derived on read.
+    # v1 ships S·P (guaranteed-correct, archetype-blind); object
+    # enrichment (S·P·O) is a per-archetype follow-up at the SAME write
+    # point (line ~2266 in gateway, where rendered_output is available).
+    #
+    # DEFAULTED to "" — UNLIKE `status`, an empty summary is NOT an
+    # optimistic-default-hides-failure trap ([[optimistic-defaults-are-
+    # dishonest]] targets multi-valued fields whose default silently
+    # lies about a FAILURE; "" here is honest-absent — no headline
+    # captured — and the card degrades to `question_text`). The default
+    # keeps probe/repair call sites compatible; the gateway ALWAYS
+    # composes it on the production path.
+    summary: str = ""
 
 
 # ── Result of a write attempt ──
@@ -435,6 +453,7 @@ class AnswerArtifactWriter:
               a.valid_as_of = $valid_as_of,
               a.valid_until = $valid_until,
               a.question_text = $question_text,
+              a.summary = $summary,
               a.message_id = $message_id,
               a.resolved_intent = $resolved_intent,
               a.routing_inline = $routing_inline,
@@ -449,6 +468,7 @@ class AnswerArtifactWriter:
             valid_as_of=bundle.valid_as_of,
             valid_until=bundle.valid_until,
             question_text=bundle.question_text,
+            summary=bundle.summary,
             message_id=bundle.message_id,
             # Neo4j properties can't be nested dicts — serialize the
             # sub-objects to JSON strings. The projector (Hop 2) will
