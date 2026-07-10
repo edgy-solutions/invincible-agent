@@ -30,3 +30,15 @@ grants:
       allow-side of the sealed DA-read gate. Fixture grant (not a claim that
       alice-the-persona owns this data) — remove when the demo no longer needs
       a granted reader.
+  # 2026-07-10 — durable form of the runtime grant made after the Bug-1
+  # identity-threading fix sealed the DA-read gate. Written live via
+  # write_grant_and_sync (ephemeral in the pod) then committed HERE so a
+  # full git-sync doesn't prune it. Deliberate + user-authorized (test
+  # sandbox), NOT reactive-on-denial.
+  - subject: alice@example.com
+    asset: "urn:li:dataset:(urn:li:dataPlatform:dagster,mesh_demo_customers,PROD)"
+    granted_by: cnogradi
+    reason: >-
+      Demo: alice reads the mesh_demo_customers dataset (region breakdown) to
+      exercise the end-to-end DA-read allow path through the now-working gate.
+      Fixture grant — remove when the demo no longer needs a granted reader.
