@@ -767,7 +767,17 @@ def _compose_answer_summary(routing: dict | None) -> str:
     if routing.get("fallback"):
         reason = (routing.get("fallback_reason") or "").replace("_", " ").strip()
         return f"No direct match — {reason}" if reason else "No direct match"
-    subject = (about.get("label") or "").strip()
+    # Prefer the resolved INSTANCE label (the specific thing, e.g.
+    # "Customer 360") over the CLASS label (the category, e.g.
+    # "Dashboard") — the instance is what makes the headline a FINDABLE
+    # identifier rather than a category label (many answers share a class).
+    # Three-branch honesty:
+    #   - instance resolved → instance · verb  ("Customer 360 · lookup Ownership")
+    #   - type/set query (no instance)         → class · verb  ("Dataset · filter By Tag")
+    #     (correct for a category query, NOT a degradation)
+    #   - nothing resolved (fallback)          → handled above
+    instance = (about.get("instance_label") or "").strip()
+    subject = instance or (about.get("label") or "").strip()
     verb = (action.get("label") or "").strip()
     if subject and verb:
         return f"{subject} · {verb}"
@@ -858,6 +868,11 @@ def _project_route_decision(mat: dict) -> dict | None:
                 "confidence": float(md.get("subject_confidence") or 0.0),
                 "instance_resolved": bool(md.get("subject_instance_id")),
                 "instance_identifier": md.get("subject_instance_id") or "",
+                # Friendly instance label ("Customer 360") — the summary
+                # leads with this (instance · verb) when present; empty for
+                # set/type-level queries. Threaded from the resolver's
+                # provenance (previously discarded at the supervisor tuple).
+                "instance_label": md.get("subject_instance_label") or "",
             },
             "action": {
                 "label": _label_from_uri(verb_iri),
@@ -910,6 +925,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             "confidence": float(md.get("subject_confidence") or 0.0),
             "instance_resolved": bool(md.get("subject_instance_id")),
             "instance_identifier": md.get("subject_instance_id") or "",
+            "instance_label": md.get("subject_instance_label") or "",
         },
         "action": {
             "label": _label_from_uri(verb_iri) if verb_iri != "UNKNOWN" else "General search",

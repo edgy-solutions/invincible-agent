@@ -204,7 +204,7 @@ def _resolve_subject(
     entity_refs: List[str] | None = None,
     domains: List[str] | None = None,
     user_email: str = "",
-) -> tuple[str, float, str]:
+) -> tuple[str, float, str, str, list, str | None, str]:
     """Ask Engine O's /resolve for the subject ontology class.
 
     /resolve does vector-recall (Weaviate hybrid over OntologyClass) +
@@ -295,11 +295,12 @@ def _resolve_subject(
             "will see subject_uri=UNKNOWN",
             user_query, exc,
         )
-        # 6-tuple: empty candidates on the unreachable path (no pool
+        # 7-tuple: empty candidates on the unreachable path (no pool
         # was computed), abstention_reason=None (an infra reach failure
-        # is NOT a structural instance-not-found). Keeps arity uniform
-        # with the success path — the caller unpacks 6.
-        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [], None)
+        # is NOT a structural instance-not-found), instance_label="" (no
+        # instance resolved). Keeps arity uniform with the success path —
+        # the caller unpacks 7.
+        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [], None, "")
 
     provenance = data.get("provenance") or {}
     return (
@@ -322,6 +323,16 @@ def _resolve_subject(
         # (subject_unknown) — and carries the actionable message
         # (already in `reasoning`) instead of a bare UNKNOWN.
         str(provenance.get("abstention_reason") or "") or None,
+        # 2026-07-10 (answer-first instance headline): the FRIENDLY label
+        # of the resolved instance (e.g. "Customer 360"), which the
+        # resolver returns in provenance ALONGSIDE the URN but the
+        # supervisor previously discarded at this tuple — a
+        # [[resolution-discard-pattern]] instance. Threaded so the answer
+        # summary can lead with the specific thing (instance · verb) not
+        # the category (class · verb). Empty when no instance resolved
+        # (set/type-level query) → summary correctly falls back to the
+        # class label.
+        str(provenance.get("instance_label") or ""),
     )
 
 
@@ -475,7 +486,7 @@ def _classify_route(
     # diagnosed separately).
     (
         subject_uri, subject_conf, subject_reason, subject_instance_id,
-        subject_candidates, subject_abstention_reason,
+        subject_candidates, subject_abstention_reason, subject_instance_label,
     ) = _resolve_subject(
         context,
         user_query,
@@ -825,6 +836,10 @@ def _classify_route(
         # query the SAME URN that /resolve produced rather than
         # fabricating one. See Tier-3 fix (state doc 2026-06-16).
         "subject_instance_id": subject_instance_id,
+        # The friendly instance label (e.g. "Customer 360") alongside the
+        # URN — so the answer summary can lead with instance · verb. Empty
+        # for set/type-level queries (no specific instance resolved).
+        "subject_instance_label": subject_instance_label,
         "compatible_verb_iris": compatible_verb_iris,
         # Full /find_compatible_verbs response (one dict per candidate verb)
         # surfaced for the subtask_graph_trace asset materialization in
@@ -1021,6 +1036,9 @@ def _log_subtask_route_assets(
         ),
         "subject_instance_id": MetadataValue.text(
             telemetry.get("subject_instance_id") or ""
+        ),
+        "subject_instance_label": MetadataValue.text(
+            telemetry.get("subject_instance_label") or ""
         ),
         "verb_iri": MetadataValue.text(
             telemetry.get("verb_iri") or "UNKNOWN"
