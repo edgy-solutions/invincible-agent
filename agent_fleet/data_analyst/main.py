@@ -111,6 +111,12 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # central-gateway so user-level deny lists / row-level filters apply
     # even though we're using a service-account JWT for the actual call.
     originator_sub = request.get("user_id") or None
+    # The end user's authz_id / entitlement key (email in sandbox). The
+    # supervisor already sends this as `user_email` (= current_user.authz_id
+    # post-consolidation); DA previously DROPPED it. It's the key the
+    # email-keyed central-gateway can_read gate needs — threaded to the
+    # CortexDataClient below as originator_email → X-Originator-Email.
+    originator_email = request.get("user_email") or None
 
     # Tier-3 fix (2026-06-16): the supervisor now threads the resolved
     # instance URN through to this handler so DA queries the SAME URN
@@ -271,6 +277,13 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             broker_url=broker_url,
             jwt_token=user_jwt,
             originator_sub=originator_sub,
+            # The end user's authz_id / entitlement key (email in sandbox).
+            # The central-gateway's can_read topaz check is email-keyed, so
+            # it MUST see the ORIGINATING USER's email — not the M2M service
+            # token's (empty) email. Without this the DA-read gate denied
+            # everyone (broken-closed: allow-path never worked). Threaded
+            # via X-Originator-Email. See originator_email below.
+            originator_email=originator_email,
         )
 
         lazy_df = client.get_dataframe(urn)
