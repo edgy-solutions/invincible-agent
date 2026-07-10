@@ -1195,6 +1195,43 @@ def _log_subtask_sources_asset(
     )
 
 
+def _log_subtask_access_denied_asset(
+    context,
+    *,
+    engine_response: Dict[str, Any],
+    sub_query: str,
+) -> None:
+    """Materialize a subtask_access_denied Dagster asset when an engine's
+    response is a STRUCTURED access denial (Bug 2). The gateway projects
+    this into a typed `access_denied` SSE event so the UI surfaces a
+    'request access' state wired to the HITL /access_requests flow — the
+    SPECIFIC denial signal, distinct from empty results / fumbles / errors.
+
+    Engine contract: `status == "access_denied"`, with `denied_assets`
+    (list[str] URNs) and `subject` (the authz_id the request is filed for).
+    Emitted ONLY for that exact status — never for success/error — so the
+    UI's request-access prompt fires only for real authorization denials.
+    """
+    if not isinstance(engine_response, dict):
+        return
+    if engine_response.get("status") != "access_denied":
+        return
+    denied = engine_response.get("denied_assets") or []
+    context.log_event(
+        AssetMaterialization(
+            asset_key=["subtask_access_denied"],
+            metadata={
+                "denied_assets_json": MetadataValue.text(
+                    json.dumps(denied[:20] if isinstance(denied, list) else [])
+                ),
+                "subject": MetadataValue.text(engine_response.get("subject") or ""),
+                "sub_query": MetadataValue.text(sub_query or ""),
+                "message": MetadataValue.text(engine_response.get("message") or ""),
+            },
+        )
+    )
+
+
 @op(ins={"task_def": In(Dict[str, Any])}, out=Out(Dict[str, Any]))
 def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -1527,6 +1564,19 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         context.log.warning(
             "Failed to log subtask_sources materialization "
             "(non-fatal — routing/answer continue): %s", src_err,
+        )
+
+    # Bug 2: if the engine reported a STRUCTURED access denial, materialize
+    # it so the gateway projects a typed access_denied SSE event → the UI's
+    # request-access flow. No-op for any other status.
+    try:
+        _log_subtask_access_denied_asset(
+            context, engine_response=data, sub_query=sub_query,
+        )
+    except Exception as ad_err:  # pragma: no cover — best-effort
+        context.log.warning(
+            "Failed to log subtask_access_denied materialization "
+            "(non-fatal): %s", ad_err,
         )
 
     _inject_predicate_output_uri(data, predicate)

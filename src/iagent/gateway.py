@@ -1068,6 +1068,34 @@ def _enrich_sources_with_has_figures(sources: list[dict]) -> None:
         )
 
 
+def _project_access_denied(mat: dict) -> dict | None:
+    """Project a subtask_access_denied materialization into the typed
+    access_denied event the cortex-ui consumes to surface the request-
+    access flow. Shape: { denied_assets: [urn], subject, message }.
+
+    Returns None if the materialization carries no denied asset (so a
+    malformed/empty materialization never triggers a spurious request-
+    access prompt — the prompt fires ONLY on a real denial with an asset).
+    """
+    md = _metadata_dict(mat)
+    raw = md.get("denied_assets_json")
+    assets: list = []
+    if raw:
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                assets = [str(a) for a in parsed if a]
+        except Exception:
+            assets = []
+    if not assets:
+        return None
+    return {
+        "denied_assets": assets,
+        "subject": md.get("subject") or "",
+        "message": md.get("message") or "Access denied. You can request access.",
+    }
+
+
 def _project_graph_trace(mat: dict) -> list[dict] | None:
     """Project a subtask_graph_trace materialization into GraphTraceNode
     list shape. The walk shown to the user:
@@ -2137,6 +2165,32 @@ async def generate_dagster_stream(
                     # Hop 1: accumulate into bundle.
                     _artifact_bundle["sources"] = projected_sources
                 emitted_steps.add("sources_emitted")
+
+            elif (
+                path == ["subtask_access_denied"]
+                and "access_denied_emitted" not in emitted_steps
+            ):
+                # Bug 2: the data-plane can_read gate denied THIS user for
+                # the asset (the specific 403 signal, not an empty result or
+                # a code fumble). Emit a TYPED access_denied event so the UI
+                # surfaces the request-access flow (→ /access_requests)
+                # instead of an empty chart that hides the denial.
+                denial = _project_access_denied(mat)
+                if denial:
+                    # Attach the acting DOMAIN (from the routing already
+                    # projected this run — route_decision arrives before the
+                    # engine denial) so the UI's access-request routes to the
+                    # right approver audience (access_grant:<domain>).
+                    _routing = _artifact_bundle.get("routing") or {}
+                    _acting = (_routing.get("acting") or {}) if isinstance(_routing, dict) else {}
+                    _domains = _acting.get("domains") or []
+                    denial["domain"] = _domains[0] if _domains else ""
+                    logger.info(
+                        "📡 Emitting SSE 'access_denied' for run %s: %s domain=%s",
+                        run_id, denial.get("denied_assets"), denial.get("domain"),
+                    )
+                    yield _sse("access_denied", json.dumps(denial))
+                emitted_steps.add("access_denied_emitted")
 
         # Map Dagster step transitions onto typed pipeline_stage events.
         # The mapping projects the supervisor's REAL step keys (Dagster
