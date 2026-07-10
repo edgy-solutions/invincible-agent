@@ -205,6 +205,21 @@ dataAnalyst:
   # the image being rebuilt first.
   env:
     ENGINE_DA_PUBLIC_URL: "http://iagent-data-analyst:8089/analyze_data"
+    # 2026-07-10: smolagents 1.24 native structured generation. DA is
+    # CodeAgent-by-necessity (duckdb/polars code-exec) so it can't drop the
+    # fumble-prone free-form-code envelope by switching to ToolCallingAgent;
+    # this flag moves the action code into a JSON field (response_format=
+    # CODEAGENT_RESPONSE_FORMAT) so gpt-oss stops fumbling the <code> envelope.
+    # PROVEN on the sandbox by a live A/B (direct /analyze_data, N=6/arm, same
+    # query+URN, freshly-measured baseline): flag OFF fumbled 6/6 runs (1.17
+    # step_errors/run, 23% step-error rate, 4-6 steps); flag ON fumbled 0/6
+    # (0 errors, constant 3 steps, ~40% faster). gpt-oss HONORS the json-schema
+    # constraint through litellm->ollama (an inert flag would have spiked
+    # json.loads failures instead). Sandbox-scoped until validated on other
+    # deployments; promote to values.yaml (global default) after that.
+    # Preferred over a BAML integration (bigger hammer, same effect); BAML was
+    # the fallback only if this proved inert. Reversible: set to "0".
+    DA_STRUCTURED_OUTPUTS: "1"
 
 engineA:
   enabled: true
