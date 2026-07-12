@@ -91,6 +91,17 @@ async def lifespan(application: FastAPI):
         logger.info("HITL substrate dormant (no PG DSN): %s", exc)
     except Exception as exc:
         logger.warning("human_task migration failed (HITL dormant): %s", exc)
+    # ADR-0028 canvas persistence: ensure the user_canvas table exists (same
+    # Postgres, non-fatal when the DSN is unset).
+    try:
+        from starlette.concurrency import run_in_threadpool
+        from . import user_canvas
+        await run_in_threadpool(user_canvas.apply_migration)
+        logger.info("user_canvas migration applied")
+    except user_canvas.CanvasConfigError as exc:
+        logger.info("canvas persistence dormant (no PG DSN): %s", exc)
+    except Exception as exc:
+        logger.warning("user_canvas migration failed (persistence dormant): %s", exc)
     yield
 
 
@@ -284,6 +295,49 @@ async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
         tasks = []
     # `email` is DISPLAY only; the queue was filtered on authz_id above.
     return {"email": current_user.email, "tasks": tasks}
+
+
+# ── ADR-0028 canvas persistence ──────────────────────────────────────────────
+class CanvasesBody(_BaseModel):
+    """The user's full custom-canvas set (CustomCanvas[]), stored verbatim as
+    jsonb. The GLOBAL canvas is derived and never sent."""
+    canvases: list = []
+
+
+@app.get("/me/canvases")
+async def get_my_canvases(current_user: User = Depends(get_current_user)):
+    """The caller's stored custom canvases (durable, cross-device). Empty when
+    persistence is unconfigured — the client falls back to its localStorage."""
+    from starlette.concurrency import run_in_threadpool
+    from . import user_canvas
+    try:
+        canvases = await run_in_threadpool(
+            lambda: user_canvas.get_canvases(current_user.authz_id)
+        )
+    except user_canvas.CanvasConfigError:
+        canvases = []
+    return {"canvases": canvases}
+
+
+@app.put("/me/canvases")
+async def put_my_canvases(
+    body: CanvasesBody, current_user: User = Depends(get_current_user)
+):
+    """Upsert the caller's full canvas set (last-write-wins per user, keyed on
+    authz_id). 503 when persistence is unconfigured so the client keeps its
+    local copy rather than silently losing writes."""
+    from starlette.concurrency import run_in_threadpool
+    from . import user_canvas
+    try:
+        await run_in_threadpool(
+            lambda: user_canvas.save_canvases(current_user.authz_id, body.canvases)
+        )
+    except user_canvas.CanvasConfigError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "canvas_unconfigured", "message": str(exc)},
+        )
+    return {"ok": True}
 
 
 @app.post("/human_tasks/{task_id}/act")
