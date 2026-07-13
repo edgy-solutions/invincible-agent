@@ -289,6 +289,15 @@ engineF:
 # --------------------------------------------------------------------------
 postgresql:
   enabled: true
+  # Inherit imageStyle=bitnami + tag from values.yaml, but override the
+  # repository to bitnamilegacy: sandbox pulls DIRECT from docker.io, where the
+  # pinned 17.5.0-debian-12-r2 tag lives at bitnamilegacy/ (bitnami/postgresql
+  # is :latest-only there post-2025-08 migration). Work keeps values.yaml's
+  # bitnami/ path (resolved against its Artifactory mirror).
+  image:
+    registry: "docker.io"
+    repository: "bitnamilegacy/postgresql"
+    tag: "17.5.0-debian-12-r2"
   auth:
     postgresPassword: "changeme-postgres-sandbox"  # CHANGE BEFORE DEPLOY
     password: "changeme-iagent-sandbox"            # CHANGE BEFORE DEPLOY

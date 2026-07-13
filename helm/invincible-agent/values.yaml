@@ -36,16 +36,22 @@ postgresql:
   #
   # Both styles enable wal_level=logical + slot/sender bumps that
   # Electric needs. Auth / db creation are equivalent.
-  imageStyle: "postgres"
+  imageStyle: "bitnami"
   image:
     # `registry` non-empty wins over global.imageRegistry. Leave blank
-    # to inherit global.imageRegistry. Default: docker.io because
-    # postgres lives at docker.io/library/postgres (registry name is
-    # inferred from what `docker pull postgres:16` resolves to).
+    # to inherit global.imageRegistry.
+    # DEFAULT = Bitnami 17.5.0 (the version work runs bundled; validated on
+    # sandbox 2026-07-13). NOTE the source path: after Bitnami's 2025-08 Docker
+    # Hub migration the pinned `-r2` tag exists on docker.io ONLY at
+    # `bitnamilegacy/postgresql` (bitnami/postgresql there is `:latest`-only).
+    # Work pulls from Artifactory where the mirror seeds it under `bitnami/`
+    # (see scripts/mirror-to-artifactory.ps1). A docker.io-direct deploy
+    # (e.g. sandbox) must override repository -> `bitnamilegacy/postgresql`
+    # (see values-sandbox.yaml). For the official image instead:
+    # imageStyle: postgres, repository: library/postgres, tag: "17".
     registry: "docker.io"
-    repository: "library/postgres"
-    tag: "16"
-    # For Bitnami: repository: "bitnami/postgresql", tag: "16"
+    repository: "bitnami/postgresql"
+    tag: "17.5.0-debian-12-r2"
   auth:
     postgresPassword: "changeme-postgres"
     username: "iagent"
@@ -75,7 +81,7 @@ restate:
   image:
     registry: "docker.io"
     repository: "restatedev/restate"
-    tag: "1.1"
+    tag: "1.6.2"   # pin to the sandbox-tested + mirrored version (was stale "1.1"); see scripts/mirror-to-artifactory.ps1
     pullPolicy: IfNotPresent
   replicas: 1
   resources:
@@ -1024,7 +1030,7 @@ fuseki:
   image:
     registry: "docker.io"
     repository: "secoresearch/fuseki"
-    tag: "latest"
+    tag: "5.5.0"   # pin to sandbox-tested + mirrored version (was "latest" — no :latest exists in the airgapped mirror)
   auth:
     adminPassword: "changeme-fuseki"
   persistence:
@@ -1051,7 +1057,7 @@ keycloak:
   image:
     registry: "quay.io"
     repository: "keycloak/keycloak"
-    tag: "latest"
+    tag: "26.6.4"   # pin to the version the LIVE sandbox runs (its :latest resolves to 26.6.4); mirror must push 26.6.4 too
   auth:
     adminUser: "admin"
     adminPassword: "changeme-keycloak"
@@ -1301,12 +1307,12 @@ utilImages:
   curl:
     registry: "docker.io"
     repository: "curlimages/curl"
-    tag: "latest"
+    tag: "8.11.0"   # pin to sandbox-tested + mirrored version (was "latest" — no :latest exists in the airgapped mirror)
   # `postgres-client` — used by the db-init hook (wait-for-db + apply-schema).
   postgresClient:
     registry: "docker.io"
     repository: "library/postgres"
-    tag: "15-alpine"
+    tag: "15-alpine"   # matches what the LIVE sandbox runs for the throwaway psql client; mirror must carry library/postgres:15-alpine
   # `mc` (MinIO client) — used by the minio-bucket-init hook to `mc mb` the
   # buckets declared in `minioBucketInit.buckets`. Version-aligned with the
   # mirrored minio server (see scripts/mirror-to-artifactory.ps1).

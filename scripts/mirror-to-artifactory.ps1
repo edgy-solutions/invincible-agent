@@ -238,7 +238,7 @@ $ExternalImages = @(
     # tested. To roll a new version: bump here, redeploy sandbox
     # against that tag, validate, then redeploy work.
     # ------------------------------------------------------------------
-    @{ src='quay.io/keycloak/keycloak:26.6.3';                         dst='keycloak/keycloak:26.6.3' },
+    @{ src='quay.io/keycloak/keycloak:26.6.4';                         dst='keycloak/keycloak:26.6.4' },
     @{ src='docker.io/restatedev/restate:1.6.2';                       dst='restatedev/restate:1.6.2' },
     @{ src='neo4j:5.26.0';                                             dst='library/neo4j:5.26.0' },
     @{ src='semitechnologies/weaviate:1.27.0';                         dst='semitechnologies/weaviate:1.27.0' },
@@ -273,6 +273,23 @@ $ExternalImages = @(
     # sidecars to engines that need them — clickhouse for analytics,
     # minio for object store, redis for cache).
     @{ src='postgres:16';                                              dst='library/postgres:16' },
+    # postgres:15-alpine — the throwaway psql CLIENT (utilImages.postgresClient:
+    # db-init wait-for-db/apply-schema + electric postgres-client). The LIVE sandbox
+    # runs 15-alpine for this; kept distinct from the SERVER so work == sandbox.
+    @{ src='postgres:15-alpine';                                       dst='library/postgres:15-alpine' },
+    # bitnami/postgresql:17.5.0-debian-12-r2 — the bundled Postgres SERVER at work
+    # (postgresql.imageStyle=bitnami). Distinct flavor from the official client above:
+    # POSTGRESQL_* env, /bitnami/postgresql data dir, wal_level via env. Validated on
+    # sandbox before pinning (major-version + flavor = regression-gate boundary).
+    # SOURCE = bitnamiLEGACY: after Bitnami's 2025-08 Docker Hub migration, the free
+    # Debian tags moved to docker.io/bitnamilegacy/* (read-only archive; bitnami/* now
+    # carries only Secure Images / :latest). This exact -r2 tag exists ONLY at
+    # bitnamilegacy now. Dest keeps the bitnami/ path so the chart's
+    # repository=bitnami/postgresql resolves in Artifactory. Once mirrored it's frozen
+    # (airgapped work is insulated from bitnamilegacy later disappearing). DEPRECATION
+    # RISK: bitnamilegacy gets no security updates — plan a move to Bitnami Secure
+    # Images (subscription) or the official library/postgres (chart supports both).
+    @{ src='docker.io/bitnamilegacy/postgresql:17.5.0-debian-12-r2';   dst='bitnami/postgresql:17.5.0-debian-12-r2' },
     @{ src='redis:7-alpine';                                           dst='library/redis:7-alpine' },
     @{ src='minio/minio:RELEASE.2025-09-07T16-13-09Z';                 dst='minio/minio:RELEASE.2025-09-07T16-13-09Z' },
     # minio/mc — MinIO client, used by the helm chart's pre-install/pre-

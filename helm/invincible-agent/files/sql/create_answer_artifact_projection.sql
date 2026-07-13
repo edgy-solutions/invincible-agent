@@ -95,6 +95,17 @@ ALTER TABLE answer_artifact_projection
 CREATE INDEX IF NOT EXISTS idx_aap_produced_for_user_id
     ON answer_artifact_projection (produced_for_user_id);
 
+-- 2026-07-09: the answer's factual S·P headline (ADR-0028 Decision 4).
+-- Composed once at the gateway write point from the captured routing
+-- facts (subject label · verb label; fallback → structured
+-- fallback_reason) — NOT an LLM summary, never re-derived on read. The
+-- card in the answer-first left column leads with it. Nullable: rows
+-- that predate the field carry NULL (honest-absent — no headline
+-- captured); the projector writes "" for those and the card degrades
+-- to question_text. IDEMPOTENT via IF NOT EXISTS.
+ALTER TABLE answer_artifact_projection
+    ADD COLUMN IF NOT EXISTS summary TEXT;
+
 -- ── Projector cursor (internal resumable state, NOT synced) ──
 --
 -- Decision 4 (Option C revised): the `GET /projector/watermark` HTTP
