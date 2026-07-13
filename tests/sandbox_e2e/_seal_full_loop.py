@@ -22,7 +22,25 @@ import httpx
 
 import mesh_client as mc
 
-QUERY = os.getenv("SEAL_QUERY", "show me data about customers")
+# LEG 1 IS A ROUTER TEST, NOT A POSTGRES/HITL TEST — and it is inherently flaky on
+# gpt-oss. Getting a DA-read denial requires the LLM to BOTH resolve a gated dataset
+# INSTANCE and classify the analyzeDataset VERB. Naming the dataset (below) improves
+# the odds vs a generic phrasing, but does NOT make it deterministic: gpt-oss still
+# fumbles instance-resolution (subject falls back to the "Dataset" CLASS) and verb-
+# classification (no_verb_classified -> Engine A generalist fallback -> no gate ->
+# no denial). That brittleness is banked (resolve_phrasing_sensitivity,
+# resolve_instance_provider_gap, recipe_v2_preemption) and is ORTHOGONAL to Postgres.
+#
+# => For a DETERMINISTIC proof of the HITL/human_task_projection Postgres path
+#    (register -> alice-sees -> act -> grant), use _seal_hitl_direct.py, which
+#    injects a known gated asset and does NOT depend on the router. This full-loop
+#    seal remains the ROUTER-INCLUSIVE end-to-end happy path; treat a LEG-1 RED as
+#    "the router didn't route today", not a HITL/Postgres regression, and confirm
+#    via _seal_hitl_direct.py.
+QUERY = os.getenv(
+    "SEAL_QUERY",
+    "show me the data in the mesh_demo_customers dataset",
+)
 
 
 async def token(client, user, pw):
