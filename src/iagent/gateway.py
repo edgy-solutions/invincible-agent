@@ -340,6 +340,43 @@ async def put_my_canvases(
     return {"ok": True}
 
 
+# ── ADR-0028 canvas GRAPH lineage edges (proxy to Engine D's gated endpoint) ──
+class LineageEdgesProxyBody(_BaseModel):
+    """The current answers' resolved subjects: [{answer_id, urn}]."""
+    subjects: list = []
+
+
+@app.post("/canvas/lineage_edges")
+async def canvas_lineage_edges(
+    body: LineageEdgesProxyBody, current_user: User = Depends(get_current_user)
+):
+    """Directed 1-hop DataHub lineage edges among the caller's answered subjects,
+    for canvas GRAPH mode. The gateway is deliberately NOT a DataHub client —
+    DataHub access stays in Engine D (the wrapper), behind its catalog-metadata
+    gate (single boundary, one gated path). We thread the caller's entitlement
+    (domains + email) so that gate applies; lineage the caller isn't entitled to
+    see is never returned. Honest-empty on any failure."""
+    import httpx
+    from urllib.parse import urlparse
+    ent = current_user.entitlements
+    entitled_domains = sorted({c.domain for c in ent.cells})
+    u = urlparse(os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085"))
+    target = f"{u.scheme}://{u.netloc}/lineage_edges"
+    payload = {
+        "subjects": body.subjects,
+        "entitled_domains": entitled_domains,
+        "caller_email": current_user.authz_id,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(target, json=payload)
+            r.raise_for_status()
+            return r.json()
+    except Exception as exc:
+        logger.warning("canvas lineage proxy → Engine D failed (honest-empty): %r", exc)
+        return {"edges": []}
+
+
 @app.post("/human_tasks/{task_id}/act")
 async def act_on_human_task(
     task_id: str,

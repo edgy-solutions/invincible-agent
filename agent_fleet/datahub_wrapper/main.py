@@ -636,6 +636,115 @@ def health() -> dict:
     return {"status": "ok", "service": "datahub_wrapper", "port": 8085}
 
 
+# ── ADR-0028 canvas lineage edges (deterministic, non-agentic, GATED) ─────────
+# Direct 1-hop DataHub lineage among the caller's ANSWERED subjects, so the
+# canvas GRAPH mode can draw DIRECTED lineage edges. This is a STRUCTURAL query
+# (no LLM in the path — we know exactly what we want), but it stays behind Engine
+# D's metadata gate: lineage is CATALOG METADATA, so it inherits the SAME domain
+# can_view gate as query_metadata (NOT the data-plane can_read — that gates
+# reading dataset CONTENTS). DataHub access stays in ONE gated boundary (Engine
+# D); the gateway proxies here, never calls GMS itself.
+#
+# Enforcement properties: (1) denied → honest empty (no lineage without
+# entitlement). (2) edges are ONLY returned between subjects the caller already
+# has answers about (both endpoints in `subjects`) — an un-answered / unreadable
+# upstream is NEVER revealed. Transitive lineage (a path THROUGH an unseen
+# intermediate) is deliberately NOT done here — that's the existence-oracle
+# question to settle before extending past 1-hop.
+class LineageSubject(BaseModel):
+    answer_id: str
+    urn: str
+
+
+class LineageEdgesRequest(BaseModel):
+    subjects: List[LineageSubject] = []
+    entitled_domains: List[str] = []
+    caller_email: str = ""
+
+
+async def _fetch_direct_upstreams(client: httpx.AsyncClient, urn: str) -> List[str]:
+    """A dataset's DIRECT (1-hop) upstream dataset URNs via GMS lineage."""
+    query = """
+    query Up($urn: String!) {
+      dataset(urn: $urn) {
+        upstream: relationships(input: {types: ["DownstreamOf"], direction: OUTGOING, count: 50, start: 0}) {
+          relationships { entity { urn } }
+        }
+      }
+    }
+    """
+    headers = {}
+    if DATAHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
+    try:
+        r = await client.post(
+            DATAHUB_GMS_URL,
+            json={"query": query, "variables": {"urn": urn}},
+            headers=headers,
+        )
+        r.raise_for_status()
+        rels = (
+            (((r.json().get("data") or {}).get("dataset") or {}).get("upstream") or {})
+            .get("relationships")
+            or []
+        )
+        return [
+            rel["entity"]["urn"]
+            for rel in rels
+            if isinstance(rel.get("entity"), dict) and rel["entity"].get("urn")
+        ]
+    except Exception as e:  # noqa: BLE001 — a lineage miss is empty, never fatal
+        logging.warning("lineage_edges: upstream fetch failed for %s: %r", urn, e)
+        return []
+
+
+@app.post("/lineage_edges")
+async def lineage_edges(req: LineageEdgesRequest) -> dict:
+    # SAME gate as query_metadata (lineage = catalog metadata → domain can_view).
+    entitled = [d.upper() for d in (req.entitled_domains or [])]
+    if ENABLE_AGENTIC_AUTH:
+        allowed = await _topaz_can_view(req.caller_email, _ENGINE_D_SERVED_DOMAIN)
+    else:
+        allowed = _ENGINE_D_SERVED_DOMAIN.upper() in entitled
+    if not allowed:
+        logging.warning(
+            "LINEAGE_EDGES DENIED: caller_email=%r entitled=%s",
+            req.caller_email,
+            entitled,
+        )
+        return {"edges": []}  # honest empty — no lineage without entitlement
+
+    by_urn: Dict[str, List[str]] = {}
+    for s in req.subjects:
+        if s.urn:
+            by_urn.setdefault(s.urn, []).append(s.answer_id)
+    urns = list(by_urn.keys())
+    if len(urns) < 2:
+        return {"edges": []}
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        results = await asyncio.gather(
+            *[_fetch_direct_upstreams(client, u) for u in urns]
+        )
+    upstreams = {u: set(ups) for u, ups in zip(urns, results)}
+
+    edges: List[dict] = []
+    for u_down, downstream_answers in by_urn.items():
+        for u_up in upstreams.get(u_down, ()):
+            if u_up == u_down or u_up not in by_urn:
+                continue  # ONLY edges between answered subjects (no reveal)
+            for a_up in by_urn[u_up]:
+                for a_down in downstream_answers:
+                    edges.append(
+                        {"from": a_up, "to": a_down, "kind": "lineage", "directed": True}
+                    )
+    logging.info(
+        "LINEAGE_EDGES: %d subjects → %d edges (caller=%r)",
+        len(urns), len(edges), req.caller_email,
+    )
+    return {"edges": edges}
+
+
 @app.get("/tables")
 async def get_tables() -> dict:
     """Legacy endpoint — now deprecated in favor of /query_metadata."""
