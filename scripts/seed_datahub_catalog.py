@@ -89,6 +89,10 @@ from datahub.metadata.schema_classes import (
 
 
 GMS = os.getenv("DATAHUB_GMS_URL", "http://localhost:18090")
+# DataHub personal access token — required when METADATA_SERVICE_AUTH_ENABLED=true
+# (the correct posture). Accepts DATAHUB_GMS_TOKEN or DATAHUB_TOKEN; empty = no auth
+# header (only works if the metadata service is running unauthenticated).
+GMS_TOKEN = os.getenv("DATAHUB_GMS_TOKEN", "") or os.getenv("DATAHUB_TOKEN", "")
 NOW_MS = 1780400000000  # fixed timestamp so the seed is deterministic
 DAY_MS = 24 * 60 * 60 * 1000
 STALE = NOW_MS - 45 * DAY_MS    # >30 days ago
@@ -471,7 +475,7 @@ def emit_chart(emitter: DatahubRestEmitter, c: dict) -> None:
 
 def main() -> int:
     print(f"[seed] connecting to GMS at {GMS}")
-    emitter = DatahubRestEmitter(gms_server=GMS, retry_max_times=2, retry_status_codes=[429, 502, 503, 504])
+    emitter = DatahubRestEmitter(gms_server=GMS, token=GMS_TOKEN or None, retry_max_times=2, retry_status_codes=[429, 502, 503, 504])
     emitter.test_connection()
     print("[seed] connection OK")
 
