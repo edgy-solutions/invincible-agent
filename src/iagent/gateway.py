@@ -3752,7 +3752,15 @@ async def electric_shape_proxy(
     # server-side WHERE; there is no branch that serves a table UNFILTERED.
     if table == "human_task_projection":
         escaped_id = _escape_identity_literal(current_user.authz_id)
-        server_where = f"recipient_id = '{escaped_id}'"
+        # Scope the inbox stream to PENDING rows only, so it agrees with the REST
+        # snapshot (/me/human_tasks filters status='pending'). Without this the shape
+        # streamed EVERY row for the recipient incl. resolved ones; a resolved task
+        # could linger client-side as a stale 'pending' (the badge showing N, then
+        # dropping to the real count when the inbox opened and replacePending ran the
+        # REST reconcile). With status in the WHERE, resolving a task moves it OUT of
+        # the shape -> Electric emits a delete -> it drops cleanly, no flicker. status
+        # is a plain column (Electric's WHERE subset handles column = literal + AND).
+        server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
     else:
         escaped = _escape_sql_string_literal(verified_user_id)
         server_where = f"produced_for_user_id = '{escaped}'"
