@@ -184,12 +184,13 @@ steps:
     # verb is implicit (approve/promote); the audience IS the authorized set.
     # register-durable -> suspend on approval_{id} -> can_act -> resolve. UNCHANGED.
 
-  - kind: <SPO-operation OR direct-call — see §4>   # the publish emit
-    id: publish_artifact
-    subject: "{artifact_urn}"
-    verb:    "mesh:publishArtifact"
-    expected_output: "mesh:PublishedProduct"
+  - kind: direct_call                     # Slice 1: behavior-identical to the sealed
+    id: publish_artifact                  # service_task (see §4). TRANSITIONAL (§6.3).
+    endpoint: "{publish_endpoint}"        # the emit POST, unchanged from today
+    capability: "mesh:publishArtifact"    # Topaz gates it: can_invoke(caller, capability)
     # executes as the initiator (§3b); a denial fails-and-releases (Situation C).
+    # FOLLOW-UP (§6.2): promote `mesh:publishArtifact` to a real verb -> becomes a
+    # `kind: spo_operation` step routed through the stage-2 verifier, closing the hatch.
 
 observable_state:
   visible:  [domain_stages, approve_promotion.status]   # per 3-audience tiers (Slice 3)
@@ -234,10 +235,13 @@ without breaking the seal. Re-homing the human-await into the SPO document + car
 publish as a behavior-identical `direct_call` does exactly that and nothing else. The
 verb-registration is a separate, independently-sealable change (does the publish emit
 still fire, now gated by `can_publish`?). Bundling them would hide which one moved the
-result. **The existence of `direct_call` is itself a finding to pin in the ADR:** the
-model needs an explicit, discouraged, audited escape hatch for infrastructural actions
-that are not (yet) mesh verbs — with the standing rule that any `direct_call` is a
-candidate for promotion to a real verb.
+result. **The existence of `direct_call` is a finding to pin in the ADR — as a GATE,
+not a norm (see §6 ruling 3):** `direct_call` is TRANSITIONAL. It may escape the verb
+ontology (an action that isn't yet a mesh verb) but it must NOT escape the single
+decider — it declares a `capability` and Topaz gates it (`can_invoke`). Slice 1's
+`direct_call` is behavior-identical to today's ungated `service_task` (so the seal
+holds), and the ADR pins that every `direct_call` is closed by either promotion to a
+real verb OR capability-gating. The model must not bless a permanently-ungated step.
 
 ---
 
@@ -256,6 +260,16 @@ candidate for promotion to a real verb.
    approves + the workflow resumes; bob/carol neither see nor act (403/absent) + the
    workflow stays suspended. This is the existing `_seal_full_loop.py` discipline
    pointed at the promotion audience through the new definition.
+5. **Seal the stage-2 verifier — its FIRST outing, so prove BOTH paths (the new
+   enforcement point introduced by this design).** This is the one new gate Slice 1
+   adds; per broken-closed discipline it does not get to be assumed:
+   - **DENY path (the load-bearing new proof):** a step declaring a verb the caller is
+     NOT eligible for (out of the caller's `domain ∩ arity ∩ argument-fit ∩ permission`
+     set) **fails-and-releases** — `TerminalError`, NO held/parked invocation state
+     (observe the Restate lifecycle: terminal, not retrying — [[lifecycle-state-observable]]).
+     This is the "a workflow can't launder access" property proven, not asserted.
+   - **ALLOW path:** a declared, eligible verb (the promotion workflow's own steps)
+     dispatches and executes. Both sides non-empty, same discipline as every gate.
 
 **Explicitly deferred (NOT Slice 1):**
 - `spo_operation` for publish / registering `publishArtifact` as a verb (§4 follow-up).
@@ -271,23 +285,40 @@ learning the design-first sequencing exists to surface.
 
 ---
 
-## 6. Open questions for review (decide before/with implementation)
+## 6. Rulings (RESOLVED 2026-07-13)
 
-1. **Delegated authority (§3b).** Slice 1 runs post-approval steps as the *initiator*
-   (preserves the seal). Is "approval confers authority for the subsequent step"
-   (approver-identity or a derived grant) a wanted future model, or should steps
-   always be initiator-bounded? Recommendation: initiator-bounded for Slice 1; open a
-   separate ADR amendment if delegated authority is wanted.
-2. **`publish` as verb vs `direct_call` (§4).** Confirm the recommendation: ship
-   `direct_call` in Slice 1, register `publishArtifact` as a verb as the immediate
-   next change. (The alternative — do the verb registration *inside* Slice 1 — couples
-   two changes; not recommended.)
-3. **`direct_call` as a permanent model citizen?** Is an audited escape hatch for
-   non-verb infrastructural actions acceptable in the model (with a "promote to verb"
-   standing rule), or should the model forbid it and require every step be a real
-   verb? Recommendation: allow it, discouraged + audited — real systems have
-   lifecycle actions that aren't query verbs.
-4. **Definition storage.** `policy/workflows/*.yaml` (git, reviewed like grants) —
-   confirm this is the right home (vs a DB table). Recommendation: git, for the same
-   auditability/classification-composition reasons grants are in git.
+1. **Delegated authority — RULED: initiator-bounded for Slice 1; delegated authority
+   is a SEPARATE decision, and its shape is filed.** Steps run as the initiator (the
+   sealed precedent). Do NOT smuggle delegated authority into the re-expression slice.
+   When it IS opened, the correct shape is **"the approval ISSUES A GRANT that
+   authorizes the step" — NOT "the step impersonates the approver."** Grant-issuance is
+   the [[ADR-0027]] model (approval → grant → the gate opens), reusing machinery already
+   built; impersonation is a distinct, worse pattern. Delegated authority is a
+   privilege-escalation-BY-DESIGN surface (the approver's authority carries into a step
+   the initiator couldn't run) — it needs its own ADR ruling AND its own seal. Filed as:
+   *delegated authority = approval issues a grant.*
+2. **`publish` as verb vs `direct_call` — RULED: `direct_call` in Slice 1;
+   verb-registration is the immediate, independently-sealable follow-up.** Change one
+   thing at a time: Slice 1 proves the definition language drives the identical sealed
+   path; registering `publishArtifact` and routing it through stage-2 is a separate
+   change sealed on its own ("does the emit still fire, now gated by `can_publish`?").
+3. **`direct_call` is TRANSITIONAL, not a permanent ungoverned citizen — the escape
+   hatch escapes the VERB ONTOLOGY, not the GATE (RULED — sharper than the earlier
+   draft).** It is acceptable for an action to not-yet-be-a-mesh-verb (real systems
+   have lifecycle actions); it is NOT acceptable for a step to be *ungoverned*. So every
+   `direct_call` MUST be authorized on the single decider — it declares a `capability`
+   and Topaz gates it (`can_invoke(caller, capability/endpoint)`), preserving the
+   single-decider property even for non-verb actions. A permanently-ungated step kind is
+   the exact bypass class the model exists to eliminate (in-code fallbacks, second
+   deciders, ungated paths — each "seemed pragmatic," each had to be hunted down).
+   **Slice-1 pragmatics:** Slice 1's `direct_call` is behavior-identical to today's
+   ungated `service_task` so the seal holds; the ADR **pins that `direct_call` is
+   transitional-and-must-become-gated** — closed by EITHER verb-registration (ruling 2)
+   OR capability-gating. The ADR must NOT bless a permanently-ungated step kind.
+   ("Discouraged + audited" is a norm; what the model needs is a GATE.)
+4. **Definition storage — RULED: git (`policy/workflows/*.yaml`).** Same story as
+   `asset_grants.yaml` / `task_grants.yaml` / `ontology_compartments.yaml`: git-blame
+   auditability, classification-composition (the workflow's `classification` sits with
+   the grants that gate its observers), and a policy-artifact review path. A DB table
+   gives none of that. This uniformity is what makes the system certifiable.
 ```

@@ -115,6 +115,16 @@ WorkflowDefinition {
       # multi-approval = N such steps JOINED, join decided by Topaz rego (ADR-0027) —
       # NOT a parallel approval engine.
 
+    direct_call step (TRANSITIONAL — escapes the verb ontology, NOT the gate):
+      { endpoint, capability }
+      # for infrastructural actions not (yet) a mesh verb (e.g. a publish emit).
+      # STILL GATED on the single decider: Topaz can_invoke(caller, capability).
+      # A direct_call is a promotion candidate — it is CLOSED by either registering
+      # its action as a real verb (-> spo_operation) or by capability-gating. The
+      # model MUST NOT contain a permanently-ungated step kind (that is the bypass
+      # class — in-code fallbacks / second deciders / ungated paths — the model exists
+      # to eliminate). See Decision 6.
+
     (timer / event steps as needed)
 
   observable_state       # which steps/fields are OBSERVABLE vs internal (Decision 4)
@@ -184,13 +194,33 @@ step, not a person). So invoking the router from a workflow step needs a **step
 call-shape** that is not "pretend it's a user query." Getting that shape right is
 the load-bearing engineering task of the first slice; everything builds on it.
 
+**Refinement (a step is PRE-RESOLVED — the precise seam):** a query starts from NL and
+must *resolve* to `(subject, verb)` (stages 1 + 3); a step *declares* them, so it is
+already resolved. A step therefore does NOT invoke the NL-resolution half — it invokes
+**stage 2 (the structural eligibility gate) as a VERIFIER**, then dispatches. This is
+strictly better than "invoke the router as a query": no stochastic re-interpretation of
+a declared step (fatal for a repeatable workflow), and enforcement is literal at the
+dispatch seam — the declared verb must be in the caller's eligible set or the step
+**fails-and-releases** (`TerminalError`, Situation C; a denial is a failure, never a
+suspend).
+
 **The upside, stated as a decided property:** a step executed by the same router
 that answers queries **inherits the full eligibility intersection — domain ∩ arity ∩
 argument-fit ∩ permission** ([[feedback_verb_eligibility_intersection]]). Therefore
 **workflow steps are access-governed by construction**, exactly like the canvas's
 SPO composition ([[ADR-0028]]) — the enforcement model reaches the workflow layer
-*for free*, with no separate workflow-authz surface. This is a significant property
-and a reason the SPO-step choice is correct beyond elegance.
+*for free*, with no separate workflow-authz surface. **The load-bearing consequence:
+a workflow CANNOT be used to launder access.** You cannot declare a step with a verb
+you are not eligible for and have it execute — the stage-2 verifier catches it against
+the *caller's* identity. A workflow is **bounded by its initiator's grants, by
+construction, at every step** (identity = the initiator, the sealed precedent: the
+runner already threads `user_jwt` into every task; starting a workflow cannot grant
+authority the initiator lacks). That is the property that makes workflows safe at
+classification. **Delegated authority** (an approver's authority carrying into a later
+step) is a DEFERRED, separate decision — and when opened, its shape is **"the approval
+ISSUES A GRANT that authorizes the step" (the [[ADR-0027]] grant-issuance model), NOT
+"the step impersonates the approver"**; it is a privilege-escalation-by-design surface
+needing its own ruling AND its own seal.
 
 ### 6. The conversation→Dagster-job compile feature — retired
 
