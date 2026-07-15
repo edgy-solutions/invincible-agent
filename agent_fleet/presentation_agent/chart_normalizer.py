@@ -23,6 +23,38 @@ import re
 from typing import Any, Optional
 
 
+def chart_data_is_empty(chart_data: Any) -> bool:
+    """True when ``chart_data`` carries NO renderable rows.
+
+    This is the STRUCTURAL signal for the honest-fallback (Engine F): a chart
+    that came back with nothing chartable — the query ran and produced no rows,
+    or the SQL errored and recovery left the widget empty — should render the
+    agent's honest TEXT answer (KNOWLEDGE_DOCUMENT), not an empty CHART_WIDGET
+    that reads as "not renderable". Empty = ``None`` / ``""`` / ``[]`` / ``"[]"``
+    / a string that doesn't parse to a non-empty collection. Purely the payload's
+    shape — NEVER an LLM "does this look like a refusal" inference.
+    """
+    if chart_data is None:
+        return True
+    if isinstance(chart_data, (list, dict)):
+        return len(chart_data) == 0
+    if isinstance(chart_data, str):
+        s = chart_data.strip()
+        if not s:
+            return True
+        try:
+            parsed = json.loads(s)
+        except Exception:
+            try:
+                parsed = json.loads(s.replace("'", '"'))
+            except Exception:
+                return True  # unparseable -> not renderable -> treat as empty
+        if isinstance(parsed, (list, dict)):
+            return len(parsed) == 0
+        return not bool(parsed)
+    return False
+
+
 def normalize_chart_data_to_recharts(raw_data: Any) -> Optional[str]:
     """Coerce an arbitrary chart payload into the exact shape
     ``cortex-ui/src/components/mesh/ChartWidget.tsx`` reads:

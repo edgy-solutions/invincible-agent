@@ -231,10 +231,12 @@ def _render_document_deterministic(
 # the FastAPI / BAML / uvicorn import chain.
 try:
     from chart_normalizer import (  # type: ignore[no-redef]
+        chart_data_is_empty as _chart_data_is_empty,
         normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 except ImportError:
     from agent_fleet.presentation_agent.chart_normalizer import (
+        chart_data_is_empty as _chart_data_is_empty,
         normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 
@@ -288,6 +290,40 @@ async def _render_archetype_hardened(
             normalized = _normalize_chart_data_to_recharts(baml_chart_data)
             if normalized is not None:
                 component["chart_data"] = normalized
+
+        # HONEST FALLBACK (structural, not inference). When the chart came back
+        # with NO renderable rows (the query produced nothing, or the SQL errored
+        # and the agent recovered) AND the agent already wrote an honest text
+        # answer, render THAT text as a KNOWLEDGE_DOCUMENT — so the honesty the
+        # pipeline already computed reaches the user, instead of an empty widget
+        # that reads as a malfunction ("CHART DATA NOT RENDERABLE"). Keyed on the
+        # payload's SHAPE (empty chart_data + a present final_answer/summary),
+        # never an LLM "does this look like a refusal". _render_document_
+        # deterministic carries the agent's `summary` VERBATIM and drops the
+        # failed sql_query — so the failure-path payload is coherent (it doesn't
+        # ship a failed query as if it had executed).
+        if _chart_data_is_empty(component.get("chart_data")):
+            agent_response = _extract_agent_response(raw_data)
+            honest_text = ""
+            if isinstance(agent_response, dict):
+                honest_text = (
+                    agent_response.get("summary")
+                    or agent_response.get("summary_text")
+                    or ""
+                )
+            if honest_text:
+                logger.info(
+                    "render_ui: CHART_WIDGET empty + agent text present -> "
+                    "KNOWLEDGE_DOCUMENT honest fallback (subject=%s)",
+                    component.get("subject_concept"),
+                )
+                return (
+                    _render_document_deterministic(
+                        raw_data, persona,
+                        subject_concept=component.get("subject_concept"),
+                    ),
+                    True,
+                )
 
     return {"components": [component]}, True
 

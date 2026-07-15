@@ -23,8 +23,41 @@ import json
 import pytest
 
 from agent_fleet.presentation_agent.chart_normalizer import (
+    chart_data_is_empty as _chart_data_is_empty,
     normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
 )
+
+
+# ---------------------------------------------------------------------------
+# chart_data_is_empty — the STRUCTURAL signal for Engine F's honest fallback.
+# An empty chart + a present text answer should render the text, not a
+# "CHART DATA NOT RENDERABLE" empty widget. This pins "what counts as empty".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cd", [
+    None, "", "   ", "[]", "[ ]", [], {}, "{}",
+    "not json at all", "SELECT * FROM dataset",  # unparseable -> not renderable
+])
+def test_chart_data_is_empty_true(cd):
+    assert _chart_data_is_empty(cd) is True
+
+
+@pytest.mark.parametrize("cd", [
+    '[{"name": "US-East", "value": 3}]',
+    [{"name": "US-East", "value": 3}],
+    "[{'name': 'APAC', 'value': 2}]",       # python-repr, still non-empty
+    '[{"region": "EU", "count": 1}]',
+])
+def test_chart_data_is_empty_false(cd):
+    assert _chart_data_is_empty(cd) is False
+
+
+def test_chart_data_is_empty_matches_the_production_case():
+    """The exact rendered_output from the 'sales by region' incident: the SUM(sales)
+    SQL errored (no such column), recovery left chart_data '[]' -> empty -> the
+    honest text answer should be shown instead."""
+    assert _chart_data_is_empty("[]") is True
 
 
 # ---------------------------------------------------------------------------
