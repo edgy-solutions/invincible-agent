@@ -13,16 +13,16 @@ readback failure IMPOSSIBLE TO IGNORE: `set -e` + a non-zero exit
 manual run where a crash-at-readback-after-apply got tolerated (which is
 exactly how the original readback bug hid).
 
-POLICY SOURCE (`topazSeed.policySource.type`) — where the five DATA files
+POLICY SOURCE (`topazSeed.policySource.type`) — where the six DATA files
 (users, groups, asset_grants, task_grants, ontology_compartments) come from:
   image     — /app/policy baked into topazSeed.image (sandbox default).
-  configMap — a ConfigMap holding the five files, applied out-of-band
+  configMap — a ConfigMap holding the six files, applied out-of-band
               (e.g. by a private policy repo's CI).
   git       — an initContainer clones a PRIVATE policy repo on EVERY run;
               merging to the tracked ref converges the cluster on the next
               schedule tick. GitOps for entitlements with no extra
               controllers — the CronJob *is* the reconcile loop.
-In the non-image modes the run COMPOSES a working policy dir. The five data
+In the non-image modes the run COMPOSES a working policy dir. The six data
 files MUST come from the overlay — a missing file is FATAL, because falling
 back to the image's sandbox copy would silently seed sandbox users into a
 real cluster. The enum files (personas.yaml / domains.yaml) come from the
@@ -48,7 +48,7 @@ overlay refuses whole (fail-closed) instead of applying four syncs and
 dying on the fifth. A failed clone likewise fails the Job before any
 apply — an unreachable repo can never prune the directory.
 
-Runs all five syncs with the fixed readback as a GATING step (see the
+Runs all six syncs with the fixed readback as a GATING step (see the
 script below for the order rationale).
 
 DEFAULT-DISABLED (`topazSeed.enabled: false`) so it never surprise-runs and
@@ -205,7 +205,7 @@ spec:
                   # Data files are DEPLOYMENT assertions — always from the overlay.
                   # Missing file = FATAL: falling back to the image's sandbox copy
                   # would silently seed sandbox users into this cluster.
-                  for f in users.yaml groups.yaml asset_grants.yaml task_grants.yaml ontology_compartments.yaml; do
+                  for f in users.yaml groups.yaml asset_grants.yaml task_grants.yaml ontology_compartments.yaml capability_grants.yaml; do
                     if [ ! -f "$OVERLAY/$f" ]; then
                       echo "FATAL: policy overlay is missing $f — refusing (no fallback to the image's sandbox copy)" >&2
                       exit 2
@@ -217,7 +217,8 @@ spec:
                   export ASSET_GRANTS_FILE="$POLICY_DIR/asset_grants.yaml"
                   export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
                   export ONTOLOGY_COMPARTMENTS_FILE="$POLICY_DIR/ontology_compartments.yaml"
-                  echo "===== VALIDATE (all five files, BEFORE any apply) ====="
+                  export CAPABILITY_GRANTS_FILE="$POLICY_DIR/capability_grants.yaml"
+                  echo "===== VALIDATE (all six files, BEFORE any apply) ====="
                   # Fail-closed gate: a malformed overlay refuses the WHOLE run
                   # here, instead of applying four syncs and dying on the fifth.
                   python policy/sync/validate_policy.py --policy-dir "$POLICY_DIR"
@@ -252,7 +253,15 @@ spec:
                   # (readback) — `set -e` fails the Job loudly on a bad overlay.
                   python policy/sync/task_grant_sync.py
                   echo ""
-                  echo "===== SEED COMPLETE — five syncs applied + readbacks passed ====="
+                  echo "===== CAPABILITY GRANT SYNC (capability_grant_sync — ADR-0029 sixth namespace) ====="
+                  # capability `invoker` relations from policy/capability_grants.yaml.
+                  # Disjoint scope from the other syncs; exits 2 (malformed) / 4
+                  # (readback) — `set -e` fails the Job loudly on a bad overlay.
+                  # Runs AFTER the manifest load (topaz_sync --load-manifest) so the
+                  # `capability` object type exists before set_object.
+                  python policy/sync/capability_grant_sync.py
+                  echo ""
+                  echo "===== SEED COMPLETE — six syncs applied + readbacks passed ====="
               {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
               volumeMounts:
                 {{- if eq $mode "git" }}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Network-free validation of ALL FIVE git-asserted policy files.
+"""Network-free validation of ALL SIX git-asserted policy files.
 
-WHY THIS EXISTS. The five syncs each validate their own file — but only
+WHY THIS EXISTS. The six syncs each validate their own file — but only
 at apply time, one sync at a time. topaz_sync failing stops the seed
 chain, yet a malformed task_grants.yaml would only surface AFTER four
 other syncs had already applied. This tool front-loads every pure
@@ -56,14 +56,16 @@ from topaz_sync import PolicyBundle
 from grant_sync import load_grants
 from task_grant_sync import load_audiences
 from ontology_compartment_sync import load_compartments
+from capability_grant_sync import load_capabilities
 
-# The five DATA files a deployment asserts (enums excluded — product-owned).
+# The six DATA files a deployment asserts (enums excluded — product-owned).
 DATA_FILES = (
     "users.yaml",
     "groups.yaml",
     "asset_grants.yaml",
     "task_grants.yaml",
     "ontology_compartments.yaml",
+    "capability_grants.yaml",
 )
 
 
@@ -92,7 +94,7 @@ def validate(
     enums_dir: Path,
     overlay_enums: list[str] | None = None,
 ) -> list[str]:
-    """PURE (filesystem-only): validate all five data files against the
+    """PURE (filesystem-only): validate all six data files against the
     enums. `overlay_enums` names the enum files the OVERLAY asserts
     (read from policy_dir instead of enums_dir). Returns the full error
     list — empty means valid."""
@@ -122,6 +124,7 @@ def validate(
     grants_raw = _read_yaml(policy_dir / "asset_grants.yaml", errors)
     tasks_raw = _read_yaml(policy_dir / "task_grants.yaml", errors)
     comps_raw = _read_yaml(policy_dir / "ontology_compartments.yaml", errors)
+    caps_raw = _read_yaml(policy_dir / "capability_grants.yaml", errors)
 
     # Entitlement matrix — the PolicyBundle cross-validation is the
     # same one topaz_sync runs before any write.
@@ -151,17 +154,21 @@ def validate(
     print(f"  ontology_compartments.yaml: {len(comps)} compartment(s), "
           f"default_visibility={default_visibility}")
 
+    caps, cap_errors = load_capabilities(caps_raw)
+    errors.extend(f"capability_grants.yaml: {e}" for e in cap_errors)
+    print(f"  capability_grants.yaml: {len(caps)} capability(ies)")
+
     return errors
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Validate all five policy data files (no network).",
+        description="Validate all six policy data files (no network).",
     )
     parser.add_argument(
         "--policy-dir",
         default="policy",
-        help="Directory holding the five DATA files (default: %(default)s).",
+        help="Directory holding the six DATA files (default: %(default)s).",
     )
     parser.add_argument(
         "--enums-from",

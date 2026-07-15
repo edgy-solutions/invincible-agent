@@ -1,0 +1,47 @@
+# CAPABILITY invoker grants — the git-asserted, auditable overlay that governs WHO
+# may INVOKE a transitional `direct_call` capability (the workflow substrate's SIXTH
+# namespace, uniform with asset_grants.yaml / ontology_compartments.yaml /
+# task_grants.yaml).
+#
+# WHY THIS NAMESPACE (ADR-0029 Slice 1, RULING Q3). A workflow `direct_call` step is
+# a TRANSITIONAL escape hatch: an infrastructural action not (yet) a mesh verb. It
+# may escape the verb ONTOLOGY but NEVER the GATE — it is decided by the SAME single
+# decider (Topaz `capability` `can_invoke`), deny-by-default, git-asserted +
+# auditable (git-blame), the same as every other gate. The schema makes `capability`
+# REQUIRED so a permanently-ungated step is inexpressible; THIS file is where the
+# capability's invokers are declared. A `direct_call` is a promotion candidate:
+# close the hatch by registering the action as a real mesh verb (→ `spo_operation`,
+# verified through /find_compatible_verbs) — or keep it here, capability-gated.
+#
+# SAME model as the five content/task namespaces: `capability_grant_sync.py` flows
+# these into Topaz as `capability` `invoker` relations; removing an entry REVOKES
+# the ability to invoke (deny-by-default — an ungranted caller fails-and-releases at
+# execution, per Situation C, never parks). Disjoint prune scope from the other five
+# syncs: this tool owns `capability` `invoker` relations ONLY.
+#
+# PROVE-THE-NEGATIVE ON THE GRANT PATH. A capability is REFUSED (nothing applied,
+# non-zero exit) when MALFORMED — missing `granted_by` (accountable human), `reason`,
+# or `grant_to`. An unexplained or targetless capability grant is not a grant; a
+# broken overlay does not partially apply. An INVOKE is an EFFECT (a mutation, not a
+# read) — an unaudited effect-grant is exactly what "an unauditable grant shouldn't
+# exist" forbids, so the audit trail here is load-bearing, not ceremonial.
+#
+# capability KEY = the capability IRI (the Topaz `capability` object_id), e.g.
+# "mesh:publishArtifact". `grant_to` are entitlement keys (emails, matching seeded
+# `user` objects) or groups (group#member, reusing groups.yaml).
+capabilities:
+  # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
+  # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
+  # invoke the one-way publish after an approved promotion; bob/carol are deliberately
+  # NOT — bob's fail-and-release at the direct_call is the deny side of the Slice-1
+  # seal, through the same Topaz single-decider as the content gates.
+  mesh:publishArtifact:
+    granted_by: cnogradi
+    reason: >-
+      Demo fixture: exercises the capability `can_invoke` gate (ADR-0029 Slice-1
+      direct_call, RULING Q3). alice may invoke mesh:publishArtifact — the promotion
+      workflow's publish emit — after an approved promotion; the seal shows
+      authorized-invokes / unauthorized-fails-and-releases, both live, through the
+      same single decider as the four content gates and the task audiences.
+    grant_to:
+      - alice@example.com
