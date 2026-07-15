@@ -1,0 +1,40 @@
+# SPO-native re-expression of the sealed HITL Case-2 promotion workflow
+# (ADR-0029 Slice 1). Git-asserted + reviewed like asset_grants.yaml /
+# task_grants.yaml, so classification + grants compose. Executed on the Restate
+# BPMNWorkflowRunner. Steps execute as the workflow INITIATOR (sealed precedent).
+#
+# Slice-1 scope: prove the definition LANGUAGE drives the IDENTICAL sealed path.
+# {placeholders} are bound at trigger time (the answer being promoted).
+id: promote_answer_artifact
+name: "Promote an AnswerArtifact (DATA_ENGINEERING) before publish"
+classification: DATA_ENGINEERING          # gates who may OBSERVE (3-audience tiers)
+
+participants:
+  - role: initiator                       # identity all steps execute as
+  - role: approver                        # resolved from the audience
+
+domain_stages: [awaiting_approval, publishing, published]
+
+steps:
+  # 1:1 with today's sealed user_task — register durable HumanTask -> suspend on
+  # approval_{id} -> Topaz can_act -> resolve. UNCHANGED mechanics.
+  - kind: human_await
+    id: approve_promotion
+    audience: "promotion:DATA_ENGINEERING"   # alice granted `actor`; bob/carol not
+    subject_ref: "{artifact_urn}"            # the artifact being promoted
+    title: "Approve promotion of {artifact_label}"
+    summary: "Promote this answer artifact to the published catalog"
+
+  # The publish emit. Slice-1: direct_call, behavior-identical to today's ungated
+  # service_task (so the seal holds) BUT gated — capability is REQUIRED and Topaz
+  # decides can_invoke(caller, capability). FOLLOW-UP: promote mesh:publishArtifact
+  # to a real verb -> becomes a `kind: spo_operation` through the stage-2 verifier,
+  # closing the escape hatch.
+  - kind: direct_call
+    id: publish_artifact
+    endpoint: "{publish_endpoint}"
+    capability: "mesh:publishArtifact"
+
+observable_state:
+  visible: [domain_stages, approve_promotion.status]   # per 3-audience tiers (Slice 3)
+  internal: [publish_artifact.result]
