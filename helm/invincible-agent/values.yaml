@@ -1327,4 +1327,16 @@ utilImages:
 secrets:
   openaiApiKey: ""
   hfToken: ""
+  # DataHub personal access token — consumed by Engine D, mesh-registrar, and the
+  # dag-tools io-manager when the metadata service runs with
+  # METADATA_SERVICE_AUTH_ENABLED=true (the correct posture). Populate at DEPLOY
+  # time (NOT committed — this repo is public), e.g. `--set secrets.datahubToken=<PAT>`
+  # or a sealed/external secret. Mint a NO-EXPIRY token (a PERSONAL PAT expires):
+  #   POST <frontend>/logIn {username:datahub,password:<root>} -> cookie
+  #   POST /api/v2/graphql mutation createAccessToken(input:{
+  #     type: PERSONAL, actorUrn:"urn:li:corpuser:datahub",
+  #     duration: NO_EXPIRY, name:"mesh-service"}){accessToken}
+  # After rotating DataHub's datahub-auth-secrets, existing tokens are invalidated
+  # (the signing key changed) — re-mint. Pin datahub-auth-secrets in the datahub
+  # release to stop upgrades from rotating them.
   datahubToken: ""

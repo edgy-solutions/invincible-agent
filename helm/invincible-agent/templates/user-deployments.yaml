@@ -125,6 +125,17 @@ spec:
                 secretKeyRef:
                   name: {{ $.Release.Name }}-secrets
                   key: BPMN_POSTGRES_PASSWORD
+            # DataHub PAT for the io-manager's materialize-time catalog emit
+            # (CortexPolarsIOManager._emit_to_datahub, when the metadata service
+            # runs with METADATA_SERVICE_AUTH_ENABLED=true — the correct posture).
+            # optional:true → empty/absent secret key = no auth header, so a
+            # cluster without the token (or an unauthenticated GMS) still boots.
+            - name: DATAHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Release.Name }}-secrets
+                  key: DATAHUB_TOKEN
+                  optional: true
             {{- with $deploy.codeLocation.env }}
             {{- range $k, $v := . }}
             - name: {{ $k }}
