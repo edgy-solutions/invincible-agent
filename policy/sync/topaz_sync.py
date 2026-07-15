@@ -238,6 +238,25 @@ def derive_desired(bundle: PolicyBundle) -> DesiredState:
                     subject_relation="member",
                 )
             )
+            # Walkable vocabulary edge (de-hardcode phase 1): reify
+            # cell→domain membership so policy can WALK from the domain
+            # (manifest: domain.can_view = cell->can_assume) instead of
+            # ENUMERATING personas to construct candidate cell IDs —
+            # the structural reason catalog_domain_view.rego hardcodes
+            # the persona list today. Set semantics keep this correct
+            # under multi-group grants: the relation survives as long
+            # as ANY group grants the cell, and pruning it when the
+            # last grant goes is what revokes the walkable path
+            # (prune=revoke covers the new edge from day one).
+            state.relations.add(
+                DirRelation(
+                    object_type="domain",
+                    object_id=grant.domain,
+                    relation="cell",
+                    subject_type="cell",
+                    subject_id=cell_id,
+                )
+            )
 
     # User objects + user→group member relations.
     for user in bundle.users:
@@ -462,32 +481,41 @@ class TopazClient:
 # diff against desired.
 # ---------------------------------------------------------------------------
 
+# THIS sync's prune scope (module-level like the other syncs' MANAGED_*
+# constants — disjoint from datahub/grant/ontology/task syncs, no two
+# prune the same relation). ("domain", "cell") is the walkable
+# vocabulary edge (de-hardcode phase 1): it MUST stay in scope or a
+# revoked cell keeps granting domain-view through the walk.
+MANAGED_TYPES = ["persona", "domain", "group", "cell", "user"]
+MANAGED_RELATIONS = [
+    ("group", "member"),
+    ("cell", "assumable_by"),
+    ("domain", "cell"),
+]
+
 
 def snapshot_live(client: TopazClient) -> tuple[set[DirObject], set[DirRelation]]:
     """Fetch every managed object + relation from topaz.
 
     Managed types (this sync tool asserts ownership over):
         - persona, domain, group, cell, user objects
-        - relations of type `member` (on group) and `assumable_by`
-          (on cell)
+        - relations of type `member` (on group), `assumable_by`
+          (on cell), and `cell` (on domain — the walkable vocabulary
+          edge, de-hardcode phase 1; it MUST be in prune scope or a
+          revoked cell would keep granting domain-view through the
+          walk after its assumable_by is gone)
 
     Anything OUTSIDE those types is left alone (e.g. ADR-0025's
     `dataset` objects + `owner`/`reader` relations are untouched).
     This is the boundary between what ADR-0026 owns and what ADR-0025
     owns in the same topaz store.
     """
-    managed_types = ["persona", "domain", "group", "cell", "user"]
-    managed_relations = [
-        ("group", "member"),
-        ("cell", "assumable_by"),
-    ]
-
     live_objects: set[DirObject] = set()
-    for t in managed_types:
+    for t in MANAGED_TYPES:
         live_objects.update(client.list_objects(t))
 
     live_relations: set[DirRelation] = set()
-    for obj_type, rel in managed_relations:
+    for obj_type, rel in MANAGED_RELATIONS:
         live_relations.update(
             client.list_relations(object_type=obj_type, relation=rel)
         )
@@ -571,6 +599,19 @@ def apply_plan(client: TopazClient, plan: Plan, users_by_id: dict[str, UserSpec]
         client.set_relation(rel)
 
 
+def derive_entitled_domains(bundle: PolicyBundle) -> set[tuple[str, str]]:
+    """PURE: every (user_id, domain) pair the YAML entitles — the union
+    of domains across each user's groups' grants. This is the expected
+    allow-set for the domain can_view readback below (the walkable
+    vocabulary edge, de-hardcode phase 1)."""
+    pairs: set[tuple[str, str]] = set()
+    for user in bundle.users:
+        for group_name in user.groups:
+            for grant in bundle.groups[group_name].grants:
+                pairs.add((user.id, grant.domain))
+    return pairs
+
+
 def readback_verify(
     client: TopazClient,
     bundle: PolicyBundle,
@@ -578,8 +619,14 @@ def readback_verify(
     """Positive control per [[verification-must-fail]].
 
     For every asserted (user, cell) grant, check that topaz's
-    permission-evaluation returns TRUE. Prints per-check status;
-    returns (checked, failures).
+    permission-evaluation returns TRUE. Then, for every entitled
+    (user, domain) pair, check `can_view` on the DOMAIN — the walkable
+    edge (domain→cell→assumable_by) this sync now seeds. Proving the
+    NEW edge's allow path here, while catalog_domain_view.rego still
+    carries traffic on its hardcoded persona list, is what makes the
+    phase-2 rego swap land on verified relations instead of opening a
+    fail-closed window. Prints per-check status; returns
+    (checked, failures).
     """
     checked = 0
     failures = 0
@@ -594,6 +641,27 @@ def readback_verify(
                 print(f"  [{mark}] {user.id}  can_assume  cell:{cell_id}")
                 if not ok:
                     failures += 1
+
+    # Walkable-edge positive control (de-hardcode phase 1). An HTTP
+    # error here (e.g. a directory still running a manifest WITHOUT
+    # domain.can_view) is a loud FAILURE, not a crash — a raise
+    # mid-readback would skip the remaining checks and bury the report
+    # in a traceback, the exact crash-at-readback-after-apply shape
+    # that hid the original readback bug.
+    for user_id, domain in sorted(derive_entitled_domains(bundle)):
+        checked += 1
+        try:
+            ok = client.check("domain", domain, "can_view", user_id)
+        except httpx.HTTPError as e:
+            ok = False
+            print(
+                f"  [ERR ] domain can_view check errored ({e}) — is the "
+                f"chart-0.3.11 manifest (domain.can_view) loaded?"
+            )
+        mark = "OK  " if ok else "FAIL"
+        print(f"  [{mark}] {user_id}  can_view  domain:{domain}")
+        if not ok:
+            failures += 1
     return checked, failures
 
 

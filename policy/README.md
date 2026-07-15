@@ -69,12 +69,16 @@ its own repo, with its own approvers and git-blame. The split is:
     in code evaluates specific domain values; the labels must match the
     deployment's data tagging at ingest. A private deployment
     overriding it is the NORMAL move (`overlayEnums: [domains.yaml]`).
-  - `personas.yaml` is CODE-COUPLED: `catalog_domain_view.rego`
-    (topaz-configmap) iterates a hardcoded persona list to derive
-    domain entitlement. Overriding with a SUBSET is safe; ADDING a
-    persona in an overlay half-works (entitlements grant it, catalog
-    domain-view misses its cells → wrong fail-closed denial) — adding
-    stays a product change until that rego is de-hardcoded.
+  - `personas.yaml` is CODE-COUPLED for one more rev:
+    `catalog_domain_view.rego` (topaz-configmap) iterates a hardcoded
+    persona list to derive domain entitlement. Overriding with a
+    SUBSET is safe; ADDING a persona in an overlay half-works
+    (entitlements grant it, catalog domain-view misses its cells →
+    wrong fail-closed denial). De-hardcode phase 1 (chart 0.3.11)
+    already seeds + readback-verifies the walkable replacement edge
+    (`domain:<D> #cell` + `can_view = cell->can_assume`); phase 2
+    swaps the rego onto it, after which ADDING personas via the
+    overlay becomes safe too.
   Both directions fail loud: asserted-but-missing is FATAL, and an
   overlay carrying an UNASSERTED enum file is FATAL too (two-truths
   guard).

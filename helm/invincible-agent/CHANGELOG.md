@@ -49,6 +49,23 @@ loop; no extra GitOps controllers.
   DataHub is unchanged.
 - **`imagePullSecrets` on the seed pod** — was missing; a private
   registry (work posture) would have ImagePullBackOff'd the CronJob.
+- **Walkable vocabulary edge (persona de-hardcode, phase 1 of 2)** —
+  `catalog_domain_view.rego` hardcodes the persona list because rego
+  cannot LIST objects of a type: "holds ANY (persona, D) cell" required
+  CONSTRUCTING candidate cell IDs, hence enumerating personas. This rev
+  makes the question walkable instead: the manifest gives `domain` a
+  `cell` relation + `can_view: cell->can_assume`, and `topaz_sync.py`
+  seeds `domain:<D> #cell @cell:<P>:<D>` per granted cell — in prune
+  scope (revoking the last grant for a cell prunes its edge) and
+  readback-verified (`can_view` per entitled (user, domain), HTTP
+  errors counted as loud failures, never a mid-readback crash). The
+  rego is deliberately UNTOUCHED — zero behavior change; its allow
+  path is proven while the old list still carries traffic. Phase 2
+  (next rev) swaps the rego's persona loop for a single `ds.check` on
+  `domain…can_view` and re-runs the catalog seal discriminating
+  (entitled allows / unentitled denies / a novel work-overlay persona
+  entitles through the walk) — after which `overlayEnums:
+  [personas.yaml]` becomes fully safe including ADDING personas.
 
 ## 0.3.10 — 2026-07-02
 

@@ -141,16 +141,21 @@ granted what*; a persona's *behavior* (voice, owned verbs) is coupled in registr
 + BAML and isn't perfectly aligned.
 
 ### Adding a persona
-- Unlike domains, the persona vocabulary is **genuinely code-coupled**:
+- Unlike domains, the persona vocabulary is **code-coupled (for one more rev)**:
   `catalog_domain_view.rego` (topaz-configmap) iterates a **hardcoded persona list**
-  to derive "entitled to domain D = holds ANY (persona, D) cell". An overlay may
-  assert `personas.yaml` (`overlayEnums: [personas.yaml]`) to run a **SUBSET** —
-  iterating absent personas just checks empty cells, safe. But **ADDING** a persona
-  in an overlay half-works: `/me/entitlements` and the `can_assume` gate are
-  data-driven and grant it, while catalog domain-view silently misses its cells →
-  wrong fail-closed denial. So a NEW persona label is a **product PR** (rego + image
-  `personas.yaml`) until that rego is de-hardcoded. No recompile otherwise
-  (`PersonaTarget` is `@@dynamic`).
+  to derive "entitled to domain D = holds ANY (persona, D) cell" — a workaround for
+  rego's inability to LIST objects of a type. An overlay may assert `personas.yaml`
+  (`overlayEnums: [personas.yaml]`) to run a **SUBSET** — iterating absent personas
+  just checks empty cells, safe. But **ADDING** a persona in an overlay half-works:
+  `/me/entitlements` and the `can_assume` gate are data-driven and grant it, while
+  catalog domain-view silently misses its cells → wrong fail-closed denial.
+- **De-hardcode status:** phase 1 (chart 0.3.11) seeds the walkable edge —
+  `domain:<D> #cell @cell:<P>:<D>` + manifest `domain.can_view = cell->can_assume`,
+  prune-scoped and readback-verified on every sync run, rego untouched. Phase 2
+  (next rev) swaps the rego's loop for a single `ds.check` on `domain…can_view` and
+  re-seals the catalog discriminating (entitled / unentitled / novel overlay
+  persona). Until phase 2 lands, a NEW persona label remains a **product PR**. No
+  recompile otherwise (`PersonaTarget` is `@@dynamic`).
 - **Granting** it is the DATA overlay (`groups.yaml`/`users.yaml`) — in-image (sandbox)
   or your private policy repo (work). Entitlement is per `(persona, domain)` pair.
 - To make it **own verbs** (frame answers in its voice): also set `owner_persona` at

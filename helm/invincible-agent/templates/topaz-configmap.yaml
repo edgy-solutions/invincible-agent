@@ -247,17 +247,38 @@ data:
       # and evaluate to false, which is the honest default (see ADR-0026
       # "cell not entitled → 403 with `cell_not_entitled` code").
       #
-      # persona and domain are declared as bare types (no relations)
-      # so the CI sync tool can enforce that every cell's key components
-      # exist as canonical vocabulary objects — a Topaz-side positive
-      # control that complements the YAML validator on the git side per
+      # persona is declared as a bare type (no relations) so the sync
+      # tool can enforce that every cell's key components exist as
+      # canonical vocabulary objects — a Topaz-side positive control
+      # that complements the YAML validator on the git side per
       # `[[verification-must-fail]]`.
       #
       # Cell key format: "<PERSONA>:<DOMAIN>" — colon-delimited,
       # matching the canonical enum casing from ADR-0009 (uppercase).
       # Example: cell:DATA_ENGINEER:AVIATION
       persona: {}
-      domain: {}
+      # domain carries the WALKABLE vocabulary edge (de-hardcode
+      # phase 1). Why: rego cannot LIST objects of a type — bare
+      # objects are unreachable from policy, which is why
+      # catalog_domain_view.rego had to hardcode the persona list just
+      # to CONSTRUCT candidate cell IDs. Reifying cell→domain
+      # membership as a real relation makes the question walkable
+      # instead of enumerable:
+      #     domain:<D> #cell @cell:<P>:<D>     (written by topaz_sync)
+      #     can_view = cell->can_assume         ("can assume any cell
+      #                                          belonging to this domain")
+      # Phase 2 (next rev) swaps catalog_domain_view.rego's persona
+      # loop for a single ds.check on domain…can_view — after this
+      # edge is seeded AND readback-verified in every cluster (the
+      # sync's readback proves the allow path while the old rego still
+      # carries traffic). Then personas.yaml joins domains.yaml as pure
+      # deployment-owned data (overlayEnums-safe, including ADDING
+      # personas).
+      domain:
+        relations:
+          cell: cell
+        permissions:
+          can_view: cell->can_assume
       group:
         relations:
           member: user
@@ -434,6 +455,22 @@ data:
     # missing here can't grant catalog access even with a seeded cell
     # (fail-CLOSED), so drift surfaces as an honest denial, never a
     # leak.
+    #
+    # DE-HARDCODE PHASE 2 PENDING: this list exists only because rego
+    # cannot LIST objects of a type, so "holds ANY (persona, D) cell"
+    # requires CONSTRUCTING candidate cell IDs. As of chart 0.3.11 the
+    # sync seeds a walkable edge instead — domain:<D> #cell @cell:<P>:<D>
+    # with manifest permission domain.can_view = cell->can_assume — and
+    # readback-verifies its allow path on every run. Once every target
+    # cluster has run that seed, replace this whole rule with a single
+    #     ds.check({object_type:"domain", object_id:input.resource.domain,
+    #               relation:"can_view", subject_type:"user",
+    #               subject_id:input.resource.user_id})
+    # and delete this list. DO NOT swap before the seed has run — the
+    # walk finds nothing until the relations exist (fail-closed
+    # deny-all window). Phase-2 seal: entitled allows, unentitled
+    # denies, AND a novel (work-overlay) persona entitles through the
+    # walk.
     personas := ["DATA_STEWARD", "DATA_ENGINEER", "ARCHITECT", "MECHANIC", "ANALYST"]
 
     allowed if {
