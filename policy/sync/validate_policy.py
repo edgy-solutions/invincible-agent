@@ -24,14 +24,21 @@ WHAT IT CANNOT CHECK (stays with the live syncs): dangling-asset grants
 (needs the directory's dataset objects — grant_sync's deny-on-dangling)
 and every readback. This gate is necessary, not sufficient.
 
-ENUMS SPLIT (`--enums-from`). personas.yaml / domains.yaml are canonical
-product vocabulary (ADR-0009) — they version with the product image, not
-with a deployment's policy repo. An overlay repo holds only the five
-data files and validates against the product's enums:
+ENUMS SPLIT (`--enums-from` / `--overlay-enums`). personas.yaml /
+domains.yaml come from the product image by default, but a deployment
+may ASSERT ownership of either (mirrors the chart's
+`topazSeed.policySource.overlayEnums`). The two are not symmetric:
+domains.yaml is a deployment's classification vocabulary (labels must
+match its data tagging at ingest — overriding is normal); personas.yaml
+is code-coupled (catalog_domain_view.rego iterates a hardcoded persona
+list — subset-safe, ADDING a persona is still a product change). An
+enum file present in --policy-dir but NOT asserted is an ERROR — an
+ignored-but-authoritative-looking file is the two-truths trap.
 
     # inside the product image (work policy repo mounted at /overlay):
     python policy/sync/validate_policy.py \\
-        --policy-dir /overlay --enums-from /app/policy
+        --policy-dir /overlay --enums-from /app/policy \\
+        --overlay-enums domains.yaml
 
 Exit: 0 valid · 2 any error (all errors listed, none silently dropped).
 """
@@ -79,13 +86,35 @@ def _read_yaml(path: Path, errors: list[str]) -> dict:
     return data
 
 
-def validate(policy_dir: Path, enums_dir: Path) -> list[str]:
+def validate(
+    policy_dir: Path,
+    enums_dir: Path,
+    overlay_enums: list[str] | None = None,
+) -> list[str]:
     """PURE (filesystem-only): validate all five data files against the
-    enums. Returns the full error list — empty means valid."""
+    enums. `overlay_enums` names the enum files the OVERLAY asserts
+    (read from policy_dir instead of enums_dir). Returns the full error
+    list — empty means valid."""
     errors: list[str] = []
+    overlay_enums = overlay_enums or []
 
-    personas = _read_yaml(enums_dir / "personas.yaml", errors).get("personas", [])
-    domains = _read_yaml(enums_dir / "domains.yaml", errors).get("domains", [])
+    def _enum_source(name: str) -> Path:
+        return policy_dir if name in overlay_enums else enums_dir
+
+    # Two-truths guard (only meaningful when the dirs differ): an enum
+    # file sitting in the overlay WITHOUT being asserted would look
+    # authoritative while being ignored — refuse it.
+    if policy_dir != enums_dir:
+        for name in ("personas.yaml", "domains.yaml"):
+            if name not in overlay_enums and (policy_dir / name).is_file():
+                errors.append(
+                    f"{name}: present in the overlay but NOT asserted via "
+                    f"--overlay-enums — an ignored-but-authoritative-looking "
+                    f"enum is the two-truths trap; assert it or delete it"
+                )
+
+    personas = _read_yaml(_enum_source("personas.yaml") / "personas.yaml", errors).get("personas", [])
+    domains = _read_yaml(_enum_source("domains.yaml") / "domains.yaml", errors).get("domains", [])
 
     users_raw = _read_yaml(policy_dir / "users.yaml", errors)
     groups_raw = _read_yaml(policy_dir / "groups.yaml", errors)
@@ -142,14 +171,29 @@ def main() -> int:
             "against the PRODUCT's enums: --enums-from /app/policy."
         ),
     )
+    parser.add_argument(
+        "--overlay-enums",
+        action="append",
+        default=[],
+        choices=["personas.yaml", "domains.yaml"],
+        metavar="FILE",
+        help=(
+            "Enum file the OVERLAY asserts (repeatable) — read from "
+            "--policy-dir instead of --enums-from. Mirrors the chart's "
+            "topazSeed.policySource.overlayEnums. domains.yaml: normal "
+            "for private deployments. personas.yaml: subset-safe only "
+            "(catalog_domain_view.rego hardcodes the persona list)."
+        ),
+    )
     args = parser.parse_args()
 
     policy_dir = Path(args.policy_dir).resolve()
     enums_dir = Path(args.enums_from).resolve() if args.enums_from else policy_dir
     print(f"===== Validate policy data from {policy_dir} "
-          f"(enums from {enums_dir}) =====")
+          f"(enums from {enums_dir}"
+          f"{'; overlay-asserted: ' + ', '.join(args.overlay_enums) if args.overlay_enums else ''}) =====")
 
-    errors = validate(policy_dir, enums_dir)
+    errors = validate(policy_dir, enums_dir, args.overlay_enums)
     if errors:
         print(f"REFUSED — {len(errors)} error(s); nothing should be applied:",
               file=sys.stderr)

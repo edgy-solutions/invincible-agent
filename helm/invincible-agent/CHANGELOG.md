@@ -15,14 +15,22 @@ loop; no extra GitOps controllers.
 
 - **`topazSeed.policySource`** (`type: image | configMap | git`) — where
   `users/groups/asset_grants/task_grants/ontology_compartments.yaml`
-  come from. Non-image modes COMPOSE the working policy dir:
-  `personas.yaml`/`domains.yaml` always from the image (canonical
-  ADR-0009 vocabulary — deployments must not fork the enums); all five
+  come from. Non-image modes COMPOSE the working policy dir: all five
   data files must come from the overlay — a missing file is FATAL
   (falling back to the image's sandbox copy would silently seed sandbox
   users into a real cluster). `git` mode clones via an initContainer
   (optional PAT auth through `GIT_ASKPASS`; a failed clone fails the Job
   before any write, so an unreachable repo can never prune).
+- **`topazSeed.policySource.overlayEnums`** — enum files the overlay
+  ASSERTS instead of the image (default `[]` = image-canonical).
+  `domains.yaml` is a deployment's classification vocabulary (labels
+  must match its data tagging at ingest — the shipped set is sandbox
+  demo labels, so private deployments are EXPECTED to assert it);
+  `personas.yaml` is code-coupled (`catalog_domain_view.rego` hardcodes
+  the persona list) — subset-safe, ADDING a persona remains a product
+  change. Fail-loud both ways: asserted-but-missing FATAL,
+  present-but-unasserted FATAL (two-truths guard). Mirrored in
+  `validate_policy.py --overlay-enums` for overlay-repo PR CI.
 - **`topazSeed.loadManifest`** (default `true`) — the seed run now
   passes `--load-manifest` with the chart-shipped
   `<release>-topaz-config` manifest on every run (idempotent). Retires

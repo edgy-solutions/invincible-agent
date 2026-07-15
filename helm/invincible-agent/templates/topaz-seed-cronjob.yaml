@@ -22,11 +22,29 @@ POLICY SOURCE (`topazSeed.policySource.type`) — where the five DATA files
               merging to the tracked ref converges the cluster on the next
               schedule tick. GitOps for entitlements with no extra
               controllers — the CronJob *is* the reconcile loop.
-In the non-image modes the run COMPOSES a working policy dir: personas.yaml
-+ domains.yaml always come from the image (canonical ADR-0009 vocabulary —
-a deployment must not fork the enums) while all five data files MUST come
-from the overlay — a missing file is FATAL, because falling back to the
-image's sandbox copy would silently seed sandbox users into a real cluster.
+In the non-image modes the run COMPOSES a working policy dir. The five data
+files MUST come from the overlay — a missing file is FATAL, because falling
+back to the image's sandbox copy would silently seed sandbox users into a
+real cluster. The enum files (personas.yaml / domains.yaml) come from the
+image by default, and a deployment may ASSERT ownership of either via
+`policySource.overlayEnums` (then the overlay MUST provide it, and the
+image copy is ignored). The two enums are not symmetric:
+  domains.yaml  — a deployment's CLASSIFICATION vocabulary. Nothing in code
+                  evaluates specific domain values; what matters is that the
+                  labels match the deployment's data tagging at ingest (see
+                  docs/architecture/personas-and-domains.md). Overriding is
+                  the NORMAL private-deployment move.
+  personas.yaml — CODE-COUPLED: catalog_domain_view.rego iterates a
+                  hardcoded persona list to derive domain entitlement.
+                  Overriding with a SUBSET is safe; ADDING a persona in an
+                  overlay half-works (entitlements grant it, catalog
+                  domain-view misses its cells → wrong fail-closed denial)
+                  — adding stays a product change until that rego is
+                  de-hardcoded.
+Both directions fail loud: an enum file asserted in overlayEnums but absent
+from the overlay is FATAL, and an enum file present in the overlay but NOT
+asserted is FATAL too — a file that LOOKS authoritative while being ignored
+is the two-truths trap this chart kills everywhere else.
 Either way validate_policy.py gates the run BEFORE any write, so a broken
 overlay refuses whole (fail-closed) instead of applying four syncs and
 dying on the fifth. A failed clone likewise fails the Job before any
@@ -52,6 +70,15 @@ the flag flips and the enforcement points migrate.
 {{- end }}
 {{- if and (eq $mode "git") (not $src.git.repoUrl) }}
 {{- fail "topazSeed.policySource.git.repoUrl is required when type=git" }}
+{{- end }}
+{{- $overlayEnums := $src.overlayEnums | default (list) }}
+{{- range $overlayEnums }}
+{{- if not (has . (list "personas.yaml" "domains.yaml")) }}
+{{- fail (printf "topazSeed.policySource.overlayEnums may only contain personas.yaml and/or domains.yaml, got %q" .) }}
+{{- end }}
+{{- end }}
+{{- if and $overlayEnums (eq $mode "image") }}
+{{- fail "topazSeed.policySource.overlayEnums requires policySource.type configMap|git — image mode has no overlay to assert enums from" }}
 {{- end }}
 apiVersion: batch/v1
 kind: CronJob
@@ -157,8 +184,26 @@ spec:
                   OVERLAY=/overlay
                   {{- end }}
                   mkdir -p /work/policy
-                  # Enums are PRODUCT vocabulary (ADR-0009) — always from the image.
-                  cp /app/policy/personas.yaml /app/policy/domains.yaml /work/policy/
+                  # Enum files: image-canonical UNLESS the deployment asserts
+                  # ownership via policySource.overlayEnums (see header note —
+                  # domains are deployment vocabulary; personas are code-coupled,
+                  # subset-safe only). Fail loud in BOTH directions: asserted-
+                  # but-missing and present-but-unasserted are each FATAL.
+                  {{- range list "personas.yaml" "domains.yaml" }}
+                  {{- if has . $overlayEnums }}
+                  if [ ! -f "$OVERLAY/{{ . }}" ]; then
+                    echo "FATAL: policySource.overlayEnums asserts {{ . }} but the overlay does not provide it" >&2
+                    exit 2
+                  fi
+                  cp "$OVERLAY/{{ . }}" /work/policy/
+                  {{- else }}
+                  if [ -f "$OVERLAY/{{ . }}" ]; then
+                    echo "FATAL: overlay contains {{ . }} but policySource.overlayEnums does not assert it — an ignored-but-authoritative-looking enum is the two-truths trap; add it to overlayEnums or delete the file" >&2
+                    exit 2
+                  fi
+                  cp /app/policy/{{ . }} /work/policy/
+                  {{- end }}
+                  {{- end }}
                   # Data files are DEPLOYMENT assertions — always from the overlay.
                   # Missing file = FATAL: falling back to the image's sandbox copy
                   # would silently seed sandbox users into this cluster.

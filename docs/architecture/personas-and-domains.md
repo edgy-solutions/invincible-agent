@@ -85,15 +85,25 @@ the data's biggest domain (`SUSTAINMENT`) can't be granted today. `SUSTAINMENT` 
 ontology — `prime_databases.py` tags the MRO *extension* TTLs `MAINTENANCE` while the
 bulk sustainment ontology came in as `SUSTAINMENT`.
 
-### Adding a domain (config, no recompile — but it's a PRODUCT change)
-The domain VOCABULARY is canonical and image-only (`topazSeed.policySource` never
-overrides `domains.yaml` — see the grant recipe below). So a NEW label is a PR to the
-product image, not a private overlay:
-1. Add the label to the image's `policy/domains.yaml` (mirror in ADR-0009 per the
-   file's own discipline — a doc note; the BAML enum is `@@dynamic`, nothing to rebuild).
-2. Ensure **ingestion tags data with the same label** (`prime_databases.py`
+### Adding a domain (config, no recompile — deployment-assertable)
+The domain vocabulary is a deployment's CLASSIFICATION label set. Nothing in code
+evaluates specific domain values structurally (the couplings are cosmetic: a
+`"MAINTENANCE"` routing fallback and a DataHub schema-map convenience keyed to the
+`DATA_ENGINEERING` label, both in `dynamic_supervisor.py`). What binds is
+**label ↔ data-tagging consistency**, and the data tagging is deployment-side too.
+Two paths:
+- **Sandbox / in-image policy:** add the label to `policy/domains.yaml` (mirror in
+  ADR-0009 per the file's own discipline; the BAML enum is `@@dynamic`, nothing to
+  rebuild).
+- **Private deployment (chart ≥ 0.3.11):** assert `domains.yaml` in YOUR overlay —
+  `topazSeed.policySource.overlayEnums: [domains.yaml]` — and carry the file in the
+  policy repo. The shipped set is sandbox demo labels (see the snapshot above:
+  aviation/defense/enterprise have zero data), so a private deployment asserting its
+  own is the EXPECTED move, not an exception.
+Either way:
+1. Ensure **ingestion tags data with the same label** (`prime_databases.py`
    `extra_metadata={"domain": "<SEMANTIC>"}` or S3 `x-amz-meta-domain`).
-3. Grant it in the DATA overlay (`groups.yaml`/`users.yaml`) — in-image for sandbox, in
+2. Grant it in the DATA overlay (`groups.yaml`/`users.yaml`) — in-image for sandbox, in
    your private policy repo for work (reconciled by the seed CronJob). See the recipe.
 
 ---
@@ -118,7 +128,7 @@ in.
 ### Surfaces (no hardcoded dup enum, but the vocabulary is spread out)
 | Surface | What it is | Coupling |
 |---|---|---|
-| **`policy/personas.yaml`** | the canonical enum: `DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST` | **image-only VOCABULARY** (grants live in the overlay's `groups.yaml`/`users.yaml`) |
+| **`policy/personas.yaml`** | the canonical enum: `DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST` | image-default; overlay-assertable via `overlayEnums` but **CODE-COUPLED** — `catalog_domain_view.rego` hardcodes this list (subset-safe; **adding** needs a product change) |
 | BAML `enum PersonaTarget` | `@@dynamic` — injected at runtime | **not** a dup; nothing to edit |
 | Verb `owner_persona` | set at verb registration (`mesh_registrar`) | must match the enum; empty in current data |
 | JWT persona claim (Keycloak) | where the caller persona originates | must match the enum |
@@ -131,9 +141,16 @@ granted what*; a persona's *behavior* (voice, owned verbs) is coupled in registr
 + BAML and isn't perfectly aligned.
 
 ### Adding a persona
-- The persona VOCABULARY (`personas.yaml`) is canonical + image-only (like domains) — a
-  NEW persona LABEL is a **product PR** to the image, never a private overlay. No
-  recompile (`PersonaTarget` is `@@dynamic`).
+- Unlike domains, the persona vocabulary is **genuinely code-coupled**:
+  `catalog_domain_view.rego` (topaz-configmap) iterates a **hardcoded persona list**
+  to derive "entitled to domain D = holds ANY (persona, D) cell". An overlay may
+  assert `personas.yaml` (`overlayEnums: [personas.yaml]`) to run a **SUBSET** —
+  iterating absent personas just checks empty cells, safe. But **ADDING** a persona
+  in an overlay half-works: `/me/entitlements` and the `can_assume` gate are
+  data-driven and grant it, while catalog domain-view silently misses its cells →
+  wrong fail-closed denial. So a NEW persona label is a **product PR** (rego + image
+  `personas.yaml`) until that rego is de-hardcoded. No recompile otherwise
+  (`PersonaTarget` is `@@dynamic`).
 - **Granting** it is the DATA overlay (`groups.yaml`/`users.yaml`) — in-image (sandbox)
   or your private policy repo (work). Entitlement is per `(persona, domain)` pair.
 - To make it **own verbs** (frame answers in its voice): also set `owner_persona` at
@@ -147,11 +164,17 @@ granted what*; a persona's *behavior* (voice, owned verbs) is coupled in registr
 Since chart 0.3.11 (`topazSeed.policySource`), the entitlement files split in two — and
 this changes *where* you make a change:
 
-- **`personas.yaml` + `domains.yaml` = the canonical ADR-0009 VOCABULARY, ALWAYS from
-  the product image — NOT deployment-overridable.** Adding a new persona/domain LABEL
-  (e.g. `SUSTAINMENT`, `MESH`, `MANUFACTURING`) is a **PRODUCT change**: a PR to the
-  invincible-agent image's `policy/domains.yaml` / `policy/personas.yaml` (+ mirror
-  ADR-0009). A private deployment **cannot** invent a new label in its own overlay.
+- **`personas.yaml` + `domains.yaml` = the VOCABULARY — image-default,
+  deployment-ASSERTABLE** via `topazSeed.policySource.overlayEnums`. Asymmetric:
+  - **`domains.yaml`: assert it.** It's your deployment's classification label set
+    (the shipped one is sandbox demo labels); `overlayEnums: [domains.yaml]` and
+    carry your own (e.g. `SUSTAINMENT`, `MESH`, `MANUFACTURING`) in the overlay repo.
+    Labels must match your data tagging at ingest.
+  - **`personas.yaml`: subset-only.** `catalog_domain_view.rego` hardcodes the
+    persona list — an overlay may run FEWER personas, but ADDING one is still a
+    product PR (rego + image enum) or catalog domain-view wrongly denies its cells.
+  Guards are fail-loud both ways: an enum file asserted but missing from the overlay
+  is FATAL; an enum file present in the overlay but NOT asserted is FATAL (two-truths).
 - **The five DATA files** (`users.yaml`, `groups.yaml`, `asset_grants.yaml`,
   `task_grants.yaml`, `ontology_compartments.yaml`) = the GRANTS (who gets what). These
   come from the deployment's overlay, chosen by `topazSeed.policySource.type`:
@@ -177,11 +200,12 @@ Confirm after login with `GET /me/entitlements`.
       - {persona: DATA_ENGINEER, domain: MANUFACTURING}
       # AVIATION/DEFENSE/ENTERPRISE — demo labels, no data; add if you want them
 ```
-> Every domain named here must already exist in the image's `domains.yaml` (canonical).
-> `SUSTAINMENT`/`MESH`/`MANUFACTURING` aren't in the shipped enum yet — land that
-> **product PR first** or the overlay validation fails. Entitlement is per
-> `(persona, domain)` pair; add lines for other personas (`ARCHITECT`, `DATA_STEWARD`)
-> for their capabilities too.
+> Every domain named here must exist in the EFFECTIVE `domains.yaml` — the image's,
+> or YOURS if you asserted it (`overlayEnums: [domains.yaml]`, the normal work move).
+> `SUSTAINMENT`/`MESH`/`MANUFACTURING` aren't in the shipped enum: either assert your
+> own `domains.yaml` in the overlay (work) or land the product PR (sandbox).
+> Entitlement is per `(persona, domain)` pair; add lines for other personas
+> (`ARCHITECT`, `DATA_STEWARD`) for their capabilities too.
 
 **`users.yaml`** — that's you:
 ```yaml
@@ -209,13 +233,16 @@ Confirm after login with `GET /me/entitlements`.
     enabled: true
     policySource:
       type: git
+      overlayEnums: [domains.yaml]   # work's classification labels ≠ the demo set
       git: { repoUrl: "https://git.example.com/org/iagent-policy.git", ref: "main", path: "policy" }
   ```
-  Put the five DATA files in that PRIVATE repo (personas/domains stay in the image).
-  **Merge to `ref` → the seed CronJob converges the cluster on the next tick — no manual
-  sync.** Gate every change in that repo's PR CI with
-  `policy/sync/validate_policy.py --policy-dir <overlay> --enums-from /app/policy`
-  (fail-closed, network-free) so a broken overlay never reaches a seed run.
+  Put the five DATA files — plus any enum file you asserted in `overlayEnums` — in
+  that PRIVATE repo (unasserted enums stay in the image; personas: subset-only, see
+  above). **Merge to `ref` → the seed CronJob converges the cluster on the next tick —
+  no manual sync.** Gate every change in that repo's PR CI with
+  `policy/sync/validate_policy.py --policy-dir <overlay> --enums-from /app/policy
+  --overlay-enums domains.yaml` (fail-closed, network-free) so a broken overlay never
+  reaches a seed run.
 
 ### Gotchas
 - **The `id` must match the JWT's authz_id claim exactly** — else the grant exists

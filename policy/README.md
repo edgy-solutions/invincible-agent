@@ -55,13 +55,29 @@ deployment (an org with its own users, groups, and grants) must not
 edit them here — its entitlements are its own PR-reviewed decision, in
 its own repo, with its own approvers and git-blame. The split is:
 
-- **Product-owned (this repo, ships in the image):** `personas.yaml`,
-  `domains.yaml` (canonical ADR-0009 enums), the `sync/` scripts, and
-  the Topaz manifest. These version together with the chart/image —
-  never fork them into a deployment repo.
+- **Product-owned (this repo, ships in the image):** the `sync/`
+  scripts and the Topaz manifest. These version together with the
+  chart/image — never fork them into a deployment repo.
 - **Deployment-owned (private policy repo):** the five DATA files —
   `users.yaml`, `groups.yaml`, `asset_grants.yaml`, `task_grants.yaml`,
   `ontology_compartments.yaml`.
+- **Enums (`personas.yaml` / `domains.yaml`): image-default,
+  deployment-ASSERTABLE** via `topazSeed.policySource.overlayEnums`.
+  The two are not symmetric — see
+  `docs/architecture/personas-and-domains.md`:
+  - `domains.yaml` is a deployment's CLASSIFICATION vocabulary. Nothing
+    in code evaluates specific domain values; the labels must match the
+    deployment's data tagging at ingest. A private deployment
+    overriding it is the NORMAL move (`overlayEnums: [domains.yaml]`).
+  - `personas.yaml` is CODE-COUPLED: `catalog_domain_view.rego`
+    (topaz-configmap) iterates a hardcoded persona list to derive
+    domain entitlement. Overriding with a SUBSET is safe; ADDING a
+    persona in an overlay half-works (entitlements grant it, catalog
+    domain-view misses its cells → wrong fail-closed denial) — adding
+    stays a product change until that rego is de-hardcoded.
+  Both directions fail loud: asserted-but-missing is FATAL, and an
+  overlay carrying an UNASSERTED enum file is FATAL too (two-truths
+  guard).
 
 The seed CronJob composes the two at run time
 (`topazSeed.policySource`):
@@ -94,7 +110,8 @@ running the validator from the product image:
 docker run --rm -v "$PWD/policy:/overlay:ro" \
     <cortex-bff image ref> \
     python policy/sync/validate_policy.py \
-    --policy-dir /overlay --enums-from /app/policy
+    --policy-dir /overlay --enums-from /app/policy \
+    --overlay-enums domains.yaml     # mirror your overlayEnums setting
 ```
 
 `policySource.type: configMap` is the no-git-access-from-cluster

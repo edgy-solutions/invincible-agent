@@ -1104,10 +1104,10 @@ topazSeed:
   loadManifest: true
   # WHERE the five policy DATA files come from (users.yaml, groups.yaml,
   # asset_grants.yaml, task_grants.yaml, ontology_compartments.yaml).
-  # personas.yaml / domains.yaml are ALWAYS taken from the product image —
-  # canonical ADR-0009 vocabulary, never deployment-overridable — and a
-  # data file missing from an overlay FAILS the run (no silent fallback
-  # to the image's sandbox copy).
+  # A data file missing from an overlay FAILS the run (no silent fallback
+  # to the image's sandbox copy). personas.yaml / domains.yaml come from
+  # the product image by default; a deployment may assert ownership of
+  # either via `overlayEnums` below.
   #   image     — /app/policy baked into topazSeed.image (sandbox default).
   #   configMap — a ConfigMap holding the five files, applied out-of-band
   #               (e.g. by a private policy repo's CI pipeline).
@@ -1117,6 +1117,17 @@ topazSeed:
   #               controllers — the CronJob IS the reconcile loop.
   policySource:
     type: image
+    # Enum files the OVERLAY asserts instead of the image (only meaningful
+    # with type configMap|git). Listed => the overlay MUST provide it and
+    # the image copy is ignored; unlisted => image-canonical, and an
+    # overlay carrying the file anyway FAILS the run (two-truths guard).
+    #   domains.yaml  — a deployment's CLASSIFICATION vocabulary; labels
+    #                   must match the deployment's data tagging at ingest.
+    #                   Overriding is the normal private-deployment move.
+    #   personas.yaml — CODE-COUPLED (catalog_domain_view.rego iterates a
+    #                   hardcoded persona list). SUBSET-safe; ADDING a
+    #                   persona needs a product change to that rego first.
+    overlayEnums: []                # e.g. [domains.yaml]
     configMap:
       name: ""                      # required when type=configMap
     git:
