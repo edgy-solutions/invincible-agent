@@ -180,8 +180,13 @@ def fetch_datahub_assets(
     "delete everything" — a fetch failure must not prune the directory)."""
     if http_post is None:
         import httpx
+        # DATAHUB_TOKEN (optional): work clusters run DataHub with a PAT
+        # (same posture as mesh-registrar / user-deployments). Sandbox
+        # DataHub is tokenless — empty/unset sends no header, unchanged.
+        token = os.getenv("DATAHUB_TOKEN", "").strip()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
         def http_post(url, json):  # noqa: ANN001
-            return httpx.post(url, json=json, timeout=30.0).json()
+            return httpx.post(url, json=json, timeout=30.0, headers=headers).json()
 
     records: list[AssetRecord] = []
     start = 0

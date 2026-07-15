@@ -48,6 +48,59 @@ python policy/sync/topaz_sync.py \
 Idempotent — same input twice is a no-op. `--load-manifest` on a
 cluster with an existing (identical) manifest is safe.
 
+## Private deployments — the policy-overlay path (chart ≥ 0.3.11)
+
+The files in THIS directory are the **sandbox** assertion. A private
+deployment (an org with its own users, groups, and grants) must not
+edit them here — its entitlements are its own PR-reviewed decision, in
+its own repo, with its own approvers and git-blame. The split is:
+
+- **Product-owned (this repo, ships in the image):** `personas.yaml`,
+  `domains.yaml` (canonical ADR-0009 enums), the `sync/` scripts, and
+  the Topaz manifest. These version together with the chart/image —
+  never fork them into a deployment repo.
+- **Deployment-owned (private policy repo):** the five DATA files —
+  `users.yaml`, `groups.yaml`, `asset_grants.yaml`, `task_grants.yaml`,
+  `ontology_compartments.yaml`.
+
+The seed CronJob composes the two at run time
+(`topazSeed.policySource`):
+
+```yaml
+# values overlay for a private cluster:
+topazSeed:
+  enabled: true
+  schedule: "*/10 * * * *"       # merge-to-main converges within 10 min
+  policySource:
+    type: git
+    git:
+      repoUrl: "https://git.example.com/org/iagent-policy.git"
+      ref: main
+      path: policy
+      authSecretName: iagent-policy-repo   # keys: username, password (PAT)
+```
+
+Every run clones the tracked ref, takes the enums from the image and
+the five data files from the clone (a missing data file is FATAL — no
+fallback to the sandbox copy), validates ALL five with
+`sync/validate_policy.py` before any write, then runs the five syncs
+readback-gated. Merge → next tick → cluster converged. Immediate
+apply: `kubectl create job --from=cronjob/<release>-topaz-seed seed-now`.
+
+The private repo's PR CI can validate without any cluster access by
+running the validator from the product image:
+
+```bash
+docker run --rm -v "$PWD/policy:/overlay:ro" \
+    <cortex-bff image ref> \
+    python policy/sync/validate_policy.py \
+    --policy-dir /overlay --enums-from /app/policy
+```
+
+`policySource.type: configMap` is the no-git-access-from-cluster
+alternative: the policy repo's CI applies the five files as a
+ConfigMap and triggers the one-off Job itself.
+
 ## History note — the retired `topaz.seed` values path
 
 Chart 0.3.9 shipped an in-cluster `topaz-seed-job.yaml` that read

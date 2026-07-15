@@ -13,9 +13,27 @@ readback failure IMPOSSIBLE TO IGNORE: `set -e` + a non-zero exit
 manual run where a crash-at-readback-after-apply got tolerated (which is
 exactly how the original readback bug hid).
 
-Runs BOTH syncs with the fixed readback as a GATING step:
-  1. topaz_sync         — ADR-0026 persona/cell grants (git-asserted policy/).
-  2. datahub_topaz_sync — asset owner relations (DataHub-sourced).
+POLICY SOURCE (`topazSeed.policySource.type`) — where the five DATA files
+(users, groups, asset_grants, task_grants, ontology_compartments) come from:
+  image     — /app/policy baked into topazSeed.image (sandbox default).
+  configMap — a ConfigMap holding the five files, applied out-of-band
+              (e.g. by a private policy repo's CI).
+  git       — an initContainer clones a PRIVATE policy repo on EVERY run;
+              merging to the tracked ref converges the cluster on the next
+              schedule tick. GitOps for entitlements with no extra
+              controllers — the CronJob *is* the reconcile loop.
+In the non-image modes the run COMPOSES a working policy dir: personas.yaml
++ domains.yaml always come from the image (canonical ADR-0009 vocabulary —
+a deployment must not fork the enums) while all five data files MUST come
+from the overlay — a missing file is FATAL, because falling back to the
+image's sandbox copy would silently seed sandbox users into a real cluster.
+Either way validate_policy.py gates the run BEFORE any write, so a broken
+overlay refuses whole (fail-closed) instead of applying four syncs and
+dying on the fifth. A failed clone likewise fails the Job before any
+apply — an unreachable repo can never prune the directory.
+
+Runs all five syncs with the fixed readback as a GATING step (see the
+script below for the order rationale).
 
 DEFAULT-DISABLED (`topazSeed.enabled: false`) so it never surprise-runs and
 never surprise-prunes the authz directory. Enable in values when ready for
@@ -24,10 +42,25 @@ ENABLE_AGENTIC_AUTH stays OFF regardless — seeding changes no behavior until
 the flag flips and the enforcement points migrate.
 */ -}}
 {{- if .Values.topazSeed.enabled }}
+{{- $src := .Values.topazSeed.policySource }}
+{{- $mode := $src.type | default "image" }}
+{{- if not (has $mode (list "image" "configMap" "git")) }}
+{{- fail (printf "topazSeed.policySource.type must be one of image|configMap|git, got %q" $mode) }}
+{{- end }}
+{{- if and (eq $mode "configMap") (not $src.configMap.name) }}
+{{- fail "topazSeed.policySource.configMap.name is required when type=configMap" }}
+{{- end }}
+{{- if and (eq $mode "git") (not $src.git.repoUrl) }}
+{{- fail "topazSeed.policySource.git.repoUrl is required when type=git" }}
+{{- end }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "invincible-agent.fullname" . }}-topaz-seed
+  # NOTE: was `include "invincible-agent.fullname"` — a helper this chart
+  # never defined. Latent because the CronJob is default-disabled (helm
+  # only evaluates the include once enabled). Release.Name matches every
+  # other resource here and the documented `cronjob/<release>-topaz-seed`.
+  name: {{ .Release.Name }}-topaz-seed
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/component: topaz-seed
@@ -46,6 +79,50 @@ spec:
             app.kubernetes.io/component: topaz-seed
         spec:
           restartPolicy: Never
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if eq $mode "git" }}
+          initContainers:
+            # Clone the private policy repo fresh on every run — the
+            # tracked ref's HEAD is what gets asserted. Auth (optional)
+            # is username/password (PAT) via GIT_ASKPASS so credentials
+            # never appear in process args or on-disk config.
+            - name: fetch-policy
+              image: {{ $src.git.image | quote }}
+              env:
+                - name: GIT_REPO_URL
+                  value: {{ $src.git.repoUrl | quote }}
+                - name: GIT_REF
+                  value: {{ $src.git.ref | default "main" | quote }}
+                {{- if $src.git.authSecretName }}
+                - name: GIT_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $src.git.authSecretName | quote }}
+                      key: username
+                - name: GIT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $src.git.authSecretName | quote }}
+                      key: password
+                {{- end }}
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -e
+                  if [ -n "${GIT_USERNAME:-}" ]; then
+                    printf '#!/bin/sh\ncase "$1" in\n  Username*) echo "$GIT_USERNAME" ;;\n  Password*) echo "$GIT_PASSWORD" ;;\nesac\n' > /tmp/askpass.sh
+                    chmod +x /tmp/askpass.sh
+                    export GIT_ASKPASS=/tmp/askpass.sh
+                  fi
+                  git clone --depth 1 --branch "$GIT_REF" -- "$GIT_REPO_URL" /overlay-src/repo
+                  echo "policy overlay at commit: $(git -C /overlay-src/repo rev-parse HEAD)"
+              volumeMounts:
+                - name: overlay-src
+                  mountPath: /overlay-src
+          {{- end }}
           containers:
             - name: topaz-seed
               image: {{ .Values.topazSeed.image | quote }}
@@ -55,6 +132,14 @@ spec:
                   value: {{ .Values.topazSeed.topazDirectoryUrl | quote }}
                 - name: DATAHUB_GMS_URL
                   value: {{ .Values.topazSeed.datahubGmsUrl | quote }}
+                # Optional DataHub PAT (work posture) — empty/absent sends
+                # no header, so tokenless sandbox DataHub is unchanged.
+                - name: DATAHUB_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Release.Name }}-secrets
+                      key: DATAHUB_TOKEN
+                      optional: true
                 - name: PYTHONPATH
                   value: "/app/policy/sync"
               command: ["sh", "-c"]
@@ -62,8 +147,47 @@ spec:
                 - |
                   set -e
                   cd /app
+                  {{- if eq $mode "image" }}
+                  POLICY_DIR=/app/policy
+                  {{- else }}
+                  echo "===== COMPOSE policy dir (enums from image, data from overlay) ====="
+                  {{- if eq $mode "git" }}
+                  OVERLAY="/overlay-src/repo/{{ $src.git.path | default "policy" }}"
+                  {{- else }}
+                  OVERLAY=/overlay
+                  {{- end }}
+                  mkdir -p /work/policy
+                  # Enums are PRODUCT vocabulary (ADR-0009) — always from the image.
+                  cp /app/policy/personas.yaml /app/policy/domains.yaml /work/policy/
+                  # Data files are DEPLOYMENT assertions — always from the overlay.
+                  # Missing file = FATAL: falling back to the image's sandbox copy
+                  # would silently seed sandbox users into this cluster.
+                  for f in users.yaml groups.yaml asset_grants.yaml task_grants.yaml ontology_compartments.yaml; do
+                    if [ ! -f "$OVERLAY/$f" ]; then
+                      echo "FATAL: policy overlay is missing $f — refusing (no fallback to the image's sandbox copy)" >&2
+                      exit 2
+                    fi
+                    cp "$OVERLAY/$f" /work/policy/
+                  done
+                  POLICY_DIR=/work/policy
+                  {{- end }}
+                  export ASSET_GRANTS_FILE="$POLICY_DIR/asset_grants.yaml"
+                  export TASK_GRANTS_FILE="$POLICY_DIR/task_grants.yaml"
+                  export ONTOLOGY_COMPARTMENTS_FILE="$POLICY_DIR/ontology_compartments.yaml"
+                  echo "===== VALIDATE (all five files, BEFORE any apply) ====="
+                  # Fail-closed gate: a malformed overlay refuses the WHOLE run
+                  # here, instead of applying four syncs and dying on the fifth.
+                  python policy/sync/validate_policy.py --policy-dir "$POLICY_DIR"
+                  echo ""
                   echo "===== PERSONA SYNC (topaz_sync) ====="
-                  python policy/sync/topaz_sync.py --topaz-url "$TOPAZ_DIRECTORY_URL" --policy-dir policy
+                  {{- if .Values.topazSeed.loadManifest }}
+                  # --load-manifest is idempotent; carrying it on every run
+                  # retires the fresh-cluster manual extract-and-load step and
+                  # picks up chart-shipped manifest updates automatically.
+                  python policy/sync/topaz_sync.py --topaz-url "$TOPAZ_DIRECTORY_URL" --policy-dir "$POLICY_DIR" --load-manifest /topaz-config/manifest.yaml
+                  {{- else }}
+                  python policy/sync/topaz_sync.py --topaz-url "$TOPAZ_DIRECTORY_URL" --policy-dir "$POLICY_DIR"
+                  {{- end }}
                   echo ""
                   echo "===== ASSET SYNC (datahub_topaz_sync) ====="
                   python policy/sync/datahub_topaz_sync.py
@@ -86,4 +210,50 @@ spec:
                   python policy/sync/task_grant_sync.py
                   echo ""
                   echo "===== SEED COMPLETE — five syncs applied + readbacks passed ====="
+              {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
+              volumeMounts:
+                {{- if eq $mode "git" }}
+                - name: overlay-src
+                  mountPath: /overlay-src
+                  readOnly: true
+                {{- end }}
+                {{- if eq $mode "configMap" }}
+                - name: overlay
+                  mountPath: /overlay
+                  readOnly: true
+                {{- end }}
+                {{- if ne $mode "image" }}
+                - name: work
+                  mountPath: /work
+                {{- end }}
+                {{- if .Values.topazSeed.loadManifest }}
+                - name: topaz-manifest
+                  mountPath: /topaz-config
+                  readOnly: true
+                {{- end }}
+              {{- end }}
+          {{- if or (ne $mode "image") .Values.topazSeed.loadManifest }}
+          volumes:
+            {{- if eq $mode "git" }}
+            - name: overlay-src
+              emptyDir: {}
+            {{- end }}
+            {{- if eq $mode "configMap" }}
+            - name: overlay
+              configMap:
+                name: {{ $src.configMap.name | quote }}
+            {{- end }}
+            {{- if ne $mode "image" }}
+            - name: work
+              emptyDir: {}
+            {{- end }}
+            {{- if .Values.topazSeed.loadManifest }}
+            - name: topaz-manifest
+              configMap:
+                name: {{ .Release.Name }}-topaz-config
+                items:
+                  - key: manifest.yaml
+                    path: manifest.yaml
+            {{- end }}
+          {{- end }}
 {{- end }}

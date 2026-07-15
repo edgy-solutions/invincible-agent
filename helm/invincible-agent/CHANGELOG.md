@@ -1,5 +1,47 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.11 — 2026-07-15
+
+Patch bump. Private-deployment policy overlays: the topaz-seed CronJob
+can now source the five policy DATA files from a private git repo (or a
+ConfigMap) instead of the baked-in `/app/policy`, so an org's
+entitlements live in its own PR-reviewed repo (ADR-0026 git-assertion,
+org-side audit trail) while the sync scripts + canonical enums keep
+versioning with the product image. Merging to the tracked ref converges
+the cluster on the next schedule tick — the CronJob is the reconcile
+loop; no extra GitOps controllers.
+
+### Add
+
+- **`topazSeed.policySource`** (`type: image | configMap | git`) — where
+  `users/groups/asset_grants/task_grants/ontology_compartments.yaml`
+  come from. Non-image modes COMPOSE the working policy dir:
+  `personas.yaml`/`domains.yaml` always from the image (canonical
+  ADR-0009 vocabulary — deployments must not fork the enums); all five
+  data files must come from the overlay — a missing file is FATAL
+  (falling back to the image's sandbox copy would silently seed sandbox
+  users into a real cluster). `git` mode clones via an initContainer
+  (optional PAT auth through `GIT_ASKPASS`; a failed clone fails the Job
+  before any write, so an unreachable repo can never prune).
+- **`topazSeed.loadManifest`** (default `true`) — the seed run now
+  passes `--load-manifest` with the chart-shipped
+  `<release>-topaz-config` manifest on every run (idempotent). Retires
+  the fresh-cluster manual extract-and-port-forward step from the
+  runbook.
+- **`policy/sync/validate_policy.py`** — network-free validation of all
+  five data files, reusing each sync's own loaders (one definition of
+  "valid"). Runs as a fail-closed gate at the top of the seed script
+  (a malformed overlay refuses the WHOLE run instead of applying four
+  syncs and dying on the fifth) and in a private policy repo's PR CI
+  via `--policy-dir <overlay> --enums-from /app/policy`.
+- **`DATAHUB_TOKEN` on the asset sync** — `datahub_topaz_sync.py` sends
+  `Authorization: Bearer` when the env var is set (wired from
+  `<release>-secrets`, `optional: true`). Work clusters run DataHub
+  with a PAT; without this the seed job 401s. Tokenless sandbox
+  DataHub is unchanged.
+- **`imagePullSecrets` on the seed pod** — was missing; a private
+  registry (work posture) would have ImagePullBackOff'd the CronJob.
+
 ## 0.3.10 — 2026-07-02
 
 Patch bump. Coupled-interim retirement: the `topaz.seed` values path

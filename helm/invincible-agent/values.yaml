@@ -1097,6 +1097,34 @@ topazSeed:
   imagePullPolicy: Always
   topazDirectoryUrl: "http://topaz-svc:9393"
   datahubGmsUrl: "http://datahub-datahub-gms:8080/api/graphql"
+  # Load the chart-shipped ReBAC manifest (<release>-topaz-config) before
+  # every sync run. Idempotent — retires the fresh-cluster manual
+  # extract-manifest-and-port-forward step and picks up chart-shipped
+  # manifest updates automatically. Leave on.
+  loadManifest: true
+  # WHERE the five policy DATA files come from (users.yaml, groups.yaml,
+  # asset_grants.yaml, task_grants.yaml, ontology_compartments.yaml).
+  # personas.yaml / domains.yaml are ALWAYS taken from the product image —
+  # canonical ADR-0009 vocabulary, never deployment-overridable — and a
+  # data file missing from an overlay FAILS the run (no silent fallback
+  # to the image's sandbox copy).
+  #   image     — /app/policy baked into topazSeed.image (sandbox default).
+  #   configMap — a ConfigMap holding the five files, applied out-of-band
+  #               (e.g. by a private policy repo's CI pipeline).
+  #   git       — an initContainer clones a PRIVATE policy repo on every
+  #               run; merging to `ref` converges the cluster on the next
+  #               schedule tick. GitOps for entitlements with no extra
+  #               controllers — the CronJob IS the reconcile loop.
+  policySource:
+    type: image
+    configMap:
+      name: ""                      # required when type=configMap
+    git:
+      repoUrl: ""                   # required when type=git, e.g. https://git.example.com/org/iagent-policy.git
+      ref: "main"                   # branch/tag the cluster tracks
+      path: "policy"                # subdirectory holding the five data files
+      authSecretName: ""            # optional Secret w/ keys `username`+`password` (PAT); omit for anonymous clone
+      image: "alpine/git:v2.45.2"   # clone-only helper image
 
 topaz:
   enabled: true
