@@ -229,6 +229,19 @@ data:
         permissions:
           can_act: actor
 
+      # ADR-0029 Slice 1 — the direct_call capability gate. A direct_call step is
+      # a TRANSITIONAL workflow action not (yet) a mesh verb; it escapes the verb
+      # ontology but NOT the gate — it is decided by the SAME single decider,
+      # can_invoke(caller, capability). deny-by-default: no invoker grant ->
+      # can_invoke false -> the step fails-and-releases, never dispatches. Close
+      # the hatch by promoting the action to a real verb (spo_operation, through
+      # /find_compatible_verbs) or by granting the capability here.
+      capability:
+        relations:
+          invoker: user | group#member
+        permissions:
+          can_invoke: invoker
+
       # ---------------------------------------------------------------
       # ADR-0026 additions — persona/entitlement authorization.
       #
