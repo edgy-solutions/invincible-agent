@@ -17,15 +17,19 @@ are a point-in-time snapshot of the sandbox; re-query before relying on them.
   Manufacturing share the same graph). The BAML `Domain` and `PersonaTarget` enums
   are `@@dynamic` (injected at runtime) — there is **no hardcoded enum to
   recompile**.
-- **`policy/domains.yaml` and `policy/personas.yaml` are the source of truth for
-  *grants*** (they're the enums `topaz_sync.py` validates against). But the same
-  labels also live on other surfaces (ingested data, verb registrations, the JWT
-  claim), and **all surfaces must spell the label identically** or entitlement
-  silently won't match data.
-- **The demo policy drifted from the real data.** The sandbox policy grants
-  `AVIATION / DEFENSE / ENTERPRISE` (which have **zero** data); the actual ingested
-  ontology is mostly `SUSTAINMENT` (which **isn't grantable** because it's not in
-  `domains.yaml`). Align the policy with the data before granting.
+- **`domains.yaml` / `personas.yaml` are the canonical VOCABULARY** (the enums
+  `topaz_sync.py` validates against) — image-default, but **deployment-assertable via
+  `topazSeed.policySource.overlayEnums`** (chart 0.3.12: the catalog rego *walks the
+  directory*, so there is no hardcoded list — a persona/domain the product never
+  shipped entitles correctly through the walk). The same labels also live on other
+  surfaces (ingested data, verb registrations, the JWT claim), and **all surfaces must
+  spell the label identically** or entitlement silently won't match data.
+- **The SHIPPED default is sandbox demo labels — a private deployment asserts its own.**
+  The image ships `AVIATION / DEFENSE / ENTERPRISE` (zero data); the real ingested
+  ontology is mostly `SUSTAINMENT`. `SUSTAINMENT` isn't in the shipped enum, so at work
+  you **assert your own `domains.yaml` in your policy overlay** (`overlayEnums:
+  [domains.yaml]`, the normal work move) — not "fix the sandbox demo," just carry your
+  real labels. The data-tagging at ingest must use those same labels.
 
 ---
 
@@ -69,18 +73,20 @@ Explicit per TTL file, in precedence order (`ontology_assets.py:ingest_ontology_
    domain fails loud.
 
 ### Live domain snapshot (Weaviate `OntologyClass`, 2026-07-14 sandbox)
-| Domain | Live classes | In `policy/domains.yaml`? |
+| Domain | Live classes | In the SHIPPED `domains.yaml`? |
 |---|---|---|
-| **SUSTAINMENT** | **866** | ❌ not grantable |
+| **SUSTAINMENT** | **866** | ❌ (assert via `overlayEnums`) |
 | MAINTENANCE | 59 | ✅ |
-| MESH | 22 | ❌ |
+| MESH | 22 | ❌ (assert via `overlayEnums`) |
 | DATA_ENGINEERING | 6 | ✅ |
-| MANUFACTURING | 1 | ❌ |
-| AVIATION / DEFENSE / ENTERPRISE | 0 each | ✅ (empty) |
+| MANUFACTURING | 1 | ❌ (assert via `overlayEnums`) |
+| AVIATION / DEFENSE / ENTERPRISE | 0 each | ✅ (shipped, but empty) |
 | TRAINING | 0 (never ingested) | ❌ |
 
-**Reading:** the policy's aviation/defense/enterprise are demo cruft with no data;
-the data's biggest domain (`SUSTAINMENT`) can't be granted today. `SUSTAINMENT` and
+**Reading:** the ✅/❌ is "in the *shipped* default," NOT "grantable" — a private
+deployment asserts its own set via `overlayEnums`. So the shipped
+aviation/defense/enterprise are demo cruft with no data, and the data's biggest domain
+(`SUSTAINMENT`) is simply one you'd carry in your overlay. `SUSTAINMENT` and
 `MAINTENANCE` are **distinct** live domains (866 vs 59) even though both use the MRO
 ontology — `prime_databases.py` tags the MRO *extension* TTLs `MAINTENANCE` while the
 bulk sustainment ontology came in as `SUSTAINMENT`.
