@@ -232,11 +232,13 @@ def _render_document_deterministic(
 try:
     from chart_normalizer import (  # type: ignore[no-redef]
         chart_data_is_empty as _chart_data_is_empty,
+        honest_text_from_response as _honest_text_from_response,
         normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 except ImportError:
     from agent_fleet.presentation_agent.chart_normalizer import (
         chart_data_is_empty as _chart_data_is_empty,
+        honest_text_from_response as _honest_text_from_response,
         normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 
@@ -303,14 +305,7 @@ async def _render_archetype_hardened(
         # failed sql_query — so the failure-path payload is coherent (it doesn't
         # ship a failed query as if it had executed).
         if _chart_data_is_empty(component.get("chart_data")):
-            agent_response = _extract_agent_response(raw_data)
-            honest_text = ""
-            if isinstance(agent_response, dict):
-                honest_text = (
-                    agent_response.get("summary")
-                    or agent_response.get("summary_text")
-                    or ""
-                )
+            honest_text = _honest_text_from_response(_extract_agent_response(raw_data))
             if honest_text:
                 logger.info(
                     "render_ui: CHART_WIDGET empty + agent text present -> "
@@ -318,10 +313,19 @@ async def _render_archetype_hardened(
                     component.get("subject_concept"),
                 )
                 return (
-                    _render_document_deterministic(
-                        raw_data, persona,
-                        subject_concept=component.get("subject_concept"),
-                    ),
+                    {
+                        "components": [
+                            {
+                                "archetype": "KNOWLEDGE_DOCUMENT",
+                                "source_persona": persona,
+                                "subject_concept": component.get("subject_concept"),
+                                # DA's final_answer VERBATIM (synthesis-is-theater —
+                                # the honest text exists; render it, don't re-derive).
+                                # No sql_query -> the failure-path payload is coherent.
+                                "markdown_content": honest_text,
+                            }
+                        ]
+                    },
                     True,
                 )
 

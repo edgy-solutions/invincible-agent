@@ -55,6 +55,28 @@ def chart_data_is_empty(chart_data: Any) -> bool:
     return False
 
 
+def honest_text_from_response(agent_response: Any) -> str:
+    """Extract the agent's honest TEXT answer for the empty-chart fallback.
+
+    Engine DA returns ``{status, data, sources}`` where ``data`` is the
+    agent_result — a text ``final_answer`` when the query couldn't be charted
+    (e.g. no such column). Other engines carry it as ``summary`` /
+    ``summary_text``. Returns the text VERBATIM (synthesis-is-theater — the honest
+    text already exists; render it, don't re-derive), or ``""`` when there's no
+    text (the caller then keeps the empty chart — nothing to fall back to).
+    """
+    if not isinstance(agent_response, dict):
+        return ""
+    for key in ("summary", "summary_text"):
+        v = agent_response.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    data = agent_response.get("data")
+    if isinstance(data, str) and data.strip():
+        return data
+    return ""
+
+
 def normalize_chart_data_to_recharts(raw_data: Any) -> Optional[str]:
     """Coerce an arbitrary chart payload into the exact shape
     ``cortex-ui/src/components/mesh/ChartWidget.tsx`` reads:

@@ -24,8 +24,33 @@ import pytest
 
 from agent_fleet.presentation_agent.chart_normalizer import (
     chart_data_is_empty as _chart_data_is_empty,
+    honest_text_from_response as _honest_text_from_response,
     normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
 )
+
+
+# ---------------------------------------------------------------------------
+# honest_text_from_response — pull the agent's verbatim final_answer for the
+# empty-chart fallback. Engine DA carries it in `data` (a string); others in
+# `summary`. This is the field that was missed on the first cut of the fix.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("resp,expected", [
+    ({"summary": "hello"}, "hello"),
+    ({"summary_text": "hi"}, "hi"),
+    # The exact Engine DA shape from the 'sales by region' incident:
+    ({"status": "success",
+      "data": "The dataset 'mesh_demo_customers' does not contain a 'sales' column."},
+     "The dataset 'mesh_demo_customers' does not contain a 'sales' column."),
+    ({"summary": "", "data": "fallback text"}, "fallback text"),  # empty summary -> data
+    ({"data": {"rows": 1}}, ""),   # data not a string -> nothing to render
+    ({"data": "   "}, ""),          # whitespace-only -> nothing
+    ({}, ""),
+    (None, ""),
+])
+def test_honest_text_from_response(resp, expected):
+    assert _honest_text_from_response(resp) == expected
 
 
 # ---------------------------------------------------------------------------
