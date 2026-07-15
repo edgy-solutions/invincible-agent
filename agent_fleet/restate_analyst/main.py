@@ -1147,6 +1147,111 @@ def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
     return resp.json()
 
 
+async def _run_definition(
+    ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict
+) -> dict:
+    """ADR-0029 Slice 1 — execute a git-asserted SPO-native WorkflowDefinition.
+
+    ADDITIVE path alongside the sealed inline-task loop (which is UNTOUCHED; it
+    retires only after this seals). Per step kind:
+
+      * ``human_await``  — the SEALED HITL mechanics VERBATIM: register a durable
+        HumanTask (so the authorized approver sees it) THEN suspend on
+        ``approval_{id}``; the ``approve`` handler resolves the SAME promise, so
+        the loop is byte-identical to the sealed ``user_task`` path.
+      * ``spo_operation`` — PRE-RESOLVED. Verify the DECLARED verb against the
+        caller's eligibility (stage-2, Engine O ``/find_compatible_verbs``), then
+        dispatch. An ineligible verb -> fail-and-release BEFORE any engine call.
+      * ``direct_call``  — Topaz ``can_invoke(caller, capability)`` BEFORE the POST.
+
+    A denial (``StepFailAndRelease``) becomes a ``restate.TerminalError`` INSIDE the
+    durable step -> the workflow FAILS and RELEASES its journal (Situation C — a
+    denial is a failure, never a suspend/park). A transient 5xx stays retryable
+    (the executor's ``raise_for_status`` propagates un-caught).
+    """
+    try:
+        from workflow_definition import WorkflowDefinition  # type: ignore[no-redef]
+        from spo_step_executor import (  # type: ignore[no-redef]
+            StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
+        )
+    except ImportError:
+        from agent_fleet.restate_analyst.workflow_definition import WorkflowDefinition
+        from agent_fleet.restate_analyst.spo_step_executor import (
+            StepFailAndRelease, dispatch_spo_step, execute_direct_call, verify_spo_step,
+        )
+
+    wf = WorkflowDefinition.model_validate(definition)  # validate the git-asserted def
+    user_jwt = request.get("user_jwt", "")
+    identity = {
+        "authz_id": request.get("authz_id") or request.get("caller_email") or "",
+        "entitled_domains": list(request.get("entitled_domains") or []),
+        "persona": request.get("user_persona"),
+        "user_jwt": user_jwt,
+    }
+    results: list[dict] = []
+
+    for step in wf.steps:
+        if step.kind == "human_await":
+            task = {
+                "id": step.id,
+                "audience": step.audience,
+                "title": step.title,
+                "summary": step.summary,
+                "subject_ref": step.subject_ref,
+                "requested_by": step.requested_by or identity["authz_id"],
+                "user_jwt": user_jwt,
+            }
+            # SEALED mechanics: durable register BEFORE suspend, then the promise.
+            await ctx.run(
+                f"register_{step.id}",
+                lambda t=task: _register_human_task(workflow_id, t, user_jwt),
+            )
+            approval = await ctx.promise(f"approval_{step.id}", type_hint=dict).value()
+            results.append({
+                "step_id": step.id, "kind": "human_await",
+                "status": approval.get("status", "APPROVED"), "approval": approval,
+            })
+
+        elif step.kind == "spo_operation":
+            def _do_spo(s=step, ident=identity):
+                try:
+                    verb = verify_spo_step(s.subject, s.verb, ident["entitled_domains"])
+                    return dispatch_spo_step(
+                        verb, s.subject, ident,
+                        rendered_intent=f"workflow {wf.id}: {s.verb} on {s.subject}",
+                    )
+                except StepFailAndRelease as e:
+                    # Denial -> TERMINAL (fail-and-release), never retry-and-park.
+                    raise restate.TerminalError(str(e), status_code=e.status_code)
+            result = await ctx.run(f"exec_{step.id}", _do_spo)
+            results.append({
+                "step_id": step.id, "kind": "spo_operation",
+                "status": "SUCCESS", "result": result,
+            })
+
+        elif step.kind == "direct_call":
+            def _do_dc(s=step, ident=identity):
+                try:
+                    return execute_direct_call(
+                        {"id": s.id, "endpoint": s.endpoint, "capability": s.capability},
+                        ident,
+                    )
+                except StepFailAndRelease as e:
+                    raise restate.TerminalError(str(e), status_code=e.status_code)
+            result = await ctx.run(f"exec_{step.id}", _do_dc)
+            results.append({
+                "step_id": step.id, "kind": "direct_call",
+                "status": "SUCCESS", "result": result,
+            })
+
+    return {
+        "workflow_id": workflow_id,
+        "definition_id": wf.id,
+        "status": "COMPLETED",
+        "step_results": results,
+    }
+
+
 @bpmn_workflow.main()
 async def run(ctx: WorkflowContext, request: dict) -> dict:
     """Process a list of BPMN tasks sequentially with durable execution.
@@ -1172,6 +1277,11 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         A dict with the workflow_id, overall status, and per-task results.
     """
     workflow_id = request["workflow_id"]
+    # ADR-0029 Slice 1 (ADDITIVE): a git-asserted SPO-native WorkflowDefinition
+    # drives the run when `definition` is present. The sealed inline-task loop
+    # below is UNTOUCHED — it retires only after the definition path seals.
+    if request.get("definition"):
+        return await _run_definition(ctx, workflow_id, request["definition"], request)
     tasks = request.get("tasks", [])
     user_jwt = request.get("user_jwt", "")
     results: list[dict] = []
