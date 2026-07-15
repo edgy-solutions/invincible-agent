@@ -1143,7 +1143,19 @@ def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
         f"{CORTEX_BFF_URL}/internal/human_tasks/register",
         json=body, headers=headers, timeout=AGENT_HTTP_TIMEOUT,
     )
-    resp.raise_for_status()
+    if resp.status_code in (401, 403):
+        # SUSPEND-VS-FAIL (Situation C), same discipline as _execute_service_task: a
+        # persistent auth DENIAL on the register is a FAILURE, not a transient error.
+        # A 401 (the initiator's token rejected) or 403 won't heal on retry — a bare
+        # raise_for_status here would make ctx.run RETRY FOREVER and PARK the durable
+        # execution (the exact DoS surface a denial must release, not hold). 5xx /
+        # network stay RETRYABLE below (cortex-bff momentarily down SHOULD retry).
+        raise restate.TerminalError(
+            f"access denied ({resp.status_code}) registering HumanTask {task_id!r} "
+            f"(audience {audience!r}) -> {CORTEX_BFF_URL}; failing workflow (state released)",
+            status_code=403,
+        )
+    resp.raise_for_status()  # 5xx / network stay RETRYABLE (transient, should retry)
     return resp.json()
 
 
