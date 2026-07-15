@@ -85,12 +85,16 @@ the data's biggest domain (`SUSTAINMENT`) can't be granted today. `SUSTAINMENT` 
 ontology — `prime_databases.py` tags the MRO *extension* TTLs `MAINTENANCE` while the
 bulk sustainment ontology came in as `SUSTAINMENT`.
 
-### Adding a domain (config, no recompile)
-1. Add the label to `policy/domains.yaml` (mirror in ADR-0009 per the file's own
-   discipline — a doc note; the BAML enum is `@@dynamic`, nothing to rebuild).
+### Adding a domain (config, no recompile — but it's a PRODUCT change)
+The domain VOCABULARY is canonical and image-only (`topazSeed.policySource` never
+overrides `domains.yaml` — see the grant recipe below). So a NEW label is a PR to the
+product image, not a private overlay:
+1. Add the label to the image's `policy/domains.yaml` (mirror in ADR-0009 per the
+   file's own discipline — a doc note; the BAML enum is `@@dynamic`, nothing to rebuild).
 2. Ensure **ingestion tags data with the same label** (`prime_databases.py`
    `extra_metadata={"domain": "<SEMANTIC>"}` or S3 `x-amz-meta-domain`).
-3. Grant it in `groups.yaml`/`users.yaml`, re-run `topaz_sync.py`.
+3. Grant it in the DATA overlay (`groups.yaml`/`users.yaml`) — in-image for sandbox, in
+   your private policy repo for work (reconciled by the seed CronJob). See the recipe.
 
 ---
 
@@ -114,7 +118,7 @@ in.
 ### Surfaces (no hardcoded dup enum, but the vocabulary is spread out)
 | Surface | What it is | Coupling |
 |---|---|---|
-| **`policy/personas.yaml`** | the entitlement enum: `DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST` | **source of truth for grants** |
+| **`policy/personas.yaml`** | the canonical enum: `DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST` | **image-only VOCABULARY** (grants live in the overlay's `groups.yaml`/`users.yaml`) |
 | BAML `enum PersonaTarget` | `@@dynamic` — injected at runtime | **not** a dup; nothing to edit |
 | Verb `owner_persona` | set at verb registration (`mesh_registrar`) | must match the enum; empty in current data |
 | JWT persona claim (Keycloak) | where the caller persona originates | must match the enum |
@@ -127,8 +131,11 @@ granted what*; a persona's *behavior* (voice, owned verbs) is coupled in registr
 + BAML and isn't perfectly aligned.
 
 ### Adding a persona
-- For **access**: `personas.yaml` + `groups.yaml` only (the enum the sync validates).
-  No recompile (`PersonaTarget` is `@@dynamic`).
+- The persona VOCABULARY (`personas.yaml`) is canonical + image-only (like domains) — a
+  NEW persona LABEL is a **product PR** to the image, never a private overlay. No
+  recompile (`PersonaTarget` is `@@dynamic`).
+- **Granting** it is the DATA overlay (`groups.yaml`/`users.yaml`) — in-image (sandbox)
+  or your private policy repo (work). Entitlement is per `(persona, domain)` pair.
 - To make it **own verbs** (frame answers in its voice): also set `owner_persona` at
   verb registration. Optional — unset = falls back to the caller.
 
@@ -136,41 +143,47 @@ granted what*; a persona's *behavior* (voice, owned verbs) is coupled in registr
 
 ## Granting yourself (recipe)
 
+### Two layers: canonical VOCABULARY (image) vs grant DATA (overlay)
+Since chart 0.3.11 (`topazSeed.policySource`), the entitlement files split in two — and
+this changes *where* you make a change:
+
+- **`personas.yaml` + `domains.yaml` = the canonical ADR-0009 VOCABULARY, ALWAYS from
+  the product image — NOT deployment-overridable.** Adding a new persona/domain LABEL
+  (e.g. `SUSTAINMENT`, `MESH`, `MANUFACTURING`) is a **PRODUCT change**: a PR to the
+  invincible-agent image's `policy/domains.yaml` / `policy/personas.yaml` (+ mirror
+  ADR-0009). A private deployment **cannot** invent a new label in its own overlay.
+- **The five DATA files** (`users.yaml`, `groups.yaml`, `asset_grants.yaml`,
+  `task_grants.yaml`, `ontology_compartments.yaml`) = the GRANTS (who gets what). These
+  come from the deployment's overlay, chosen by `topazSeed.policySource.type`:
+  `image` (baked in — sandbox default), `configMap`, or **`git` (an initContainer
+  clones a PRIVATE policy repo every run — GitOps for entitlements, the CronJob IS the
+  reconcile loop, no extra controllers)**. A data file MISSING from an overlay **FAILS
+  the run** (no silent fallback to the image's sandbox copy).
+
 **Work vs sandbox key:** `authz_id` = **email** in sandbox, **employee-id** at
 work-deploy. Every `id:` / `grant_to:` must be the value the JWT actually carries.
 Confirm after login with `GET /me/entitlements`.
 
-**1. `policy/domains.yaml`** — make the real domains grantable:
-```yaml
-domains:
-  - AVIATION          # demo, no data
-  - DEFENSE           # demo, no data
-  - ENTERPRISE        # demo, no data
-  - DATA_ENGINEERING
-  - MAINTENANCE
-  - SUSTAINMENT        # add (bulk of live data)
-  - MESH               # add
-  - MANUFACTURING      # add
-  # - TRAINING         # add only when training data is ingested
-```
+### The grant DATA (edit these — in-image for sandbox; in your policy repo for work)
 
-**2. `policy/groups.yaml`** — a group granting a persona across every domain:
+**`groups.yaml`** — a group granting a persona across every domain:
 ```yaml
   all-domains:
     grants:
-      - {persona: DATA_ENGINEER, domain: AVIATION}
-      - {persona: DATA_ENGINEER, domain: DEFENSE}
-      - {persona: DATA_ENGINEER, domain: ENTERPRISE}
       - {persona: DATA_ENGINEER, domain: DATA_ENGINEERING}
       - {persona: DATA_ENGINEER, domain: MAINTENANCE}
       - {persona: DATA_ENGINEER, domain: SUSTAINMENT}
       - {persona: DATA_ENGINEER, domain: MESH}
       - {persona: DATA_ENGINEER, domain: MANUFACTURING}
+      # AVIATION/DEFENSE/ENTERPRISE — demo labels, no data; add if you want them
 ```
-(Entitlement is per `(persona, domain)` pair — add lines for other personas, e.g.
-`ARCHITECT` / `DATA_STEWARD`, if you want their capabilities too.)
+> Every domain named here must already exist in the image's `domains.yaml` (canonical).
+> `SUSTAINMENT`/`MESH`/`MANUFACTURING` aren't in the shipped enum yet — land that
+> **product PR first** or the overlay validation fails. Entitlement is per
+> `(persona, domain)` pair; add lines for other personas (`ARCHITECT`, `DATA_STEWARD`)
+> for their capabilities too.
 
-**3. `policy/users.yaml`**:
+**`users.yaml`** — that's you:
 ```yaml
   - id: <YOUR-AUTHZ-ID>          # employee-id at work, email in sandbox
     display_name: <Your Name>
@@ -178,15 +191,31 @@ domains:
       - all-domains
     default:
       persona: DATA_ENGINEER
-      domains: [SUSTAINMENT, MAINTENANCE, MESH, DATA_ENGINEERING, MANUFACTURING]
+      domains: [SUSTAINMENT, MAINTENANCE, MESH, DATA_ENGINEERING]
 ```
 
-**4. Sync** (single writer; idempotent; diff-based deletion; readback-gated):
-```bash
-kubectl port-forward -n <ns> svc/topaz-svc 9393:9393 &
-python policy/sync/topaz_sync.py --topaz-url http://localhost:9393 --policy-dir policy/
-# fresh cluster only: --load-manifest /tmp/topaz-manifest.yaml   (see policy/README.md)
-```
+### Applying it — two deploy paths
+- **Sandbox / dev (in-image policy):** manual, single writer, readback-gated:
+  ```bash
+  kubectl port-forward -n <ns> svc/topaz-svc 9393:9393 &
+  python policy/sync/topaz_sync.py --topaz-url http://localhost:9393 --policy-dir policy/
+  ```
+  Or `topazSeed.enabled=true` with `policySource.type=image` — the CronJob runs the same
+  sync on a schedule. `topazSeed.loadManifest:true` loads the ReBAC manifest every run,
+  **retiring the old manual `--load-manifest` extract-and-port-forward step**.
+- **Work / private (git overlay, reconciled):** set
+  ```yaml
+  topazSeed:
+    enabled: true
+    policySource:
+      type: git
+      git: { repoUrl: "https://git.example.com/org/iagent-policy.git", ref: "main", path: "policy" }
+  ```
+  Put the five DATA files in that PRIVATE repo (personas/domains stay in the image).
+  **Merge to `ref` → the seed CronJob converges the cluster on the next tick — no manual
+  sync.** Gate every change in that repo's PR CI with
+  `policy/sync/validate_policy.py --policy-dir <overlay> --enums-from /app/policy`
+  (fail-closed, network-free) so a broken overlay never reaches a seed run.
 
 ### Gotchas
 - **The `id` must match the JWT's authz_id claim exactly** — else the grant exists
