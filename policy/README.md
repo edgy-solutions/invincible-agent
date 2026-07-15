@@ -69,16 +69,15 @@ its own repo, with its own approvers and git-blame. The split is:
     in code evaluates specific domain values; the labels must match the
     deployment's data tagging at ingest. A private deployment
     overriding it is the NORMAL move (`overlayEnums: [domains.yaml]`).
-  - `personas.yaml` is CODE-COUPLED for one more rev:
-    `catalog_domain_view.rego` (topaz-configmap) iterates a hardcoded
-    persona list to derive domain entitlement. Overriding with a
-    SUBSET is safe; ADDING a persona in an overlay half-works
-    (entitlements grant it, catalog domain-view misses its cells →
-    wrong fail-closed denial). De-hardcode phase 1 (chart 0.3.11)
-    already seeds + readback-verifies the walkable replacement edge
-    (`domain:<D> #cell` + `can_view = cell->can_assume`); phase 2
-    swaps the rego onto it, after which ADDING personas via the
-    overlay becomes safe too.
+  - `personas.yaml` is fully assertable since chart 0.3.12, ADDING
+    personas included: `catalog_domain_view.rego` walks the directory
+    (`domain.can_view = cell->can_assume` over the `domain:<D> #cell`
+    edges the sync seeds, prunes, and readback-verifies) instead of
+    enumerating a hardcoded persona list — the effective
+    `personas.yaml` is the ONLY vocabulary source. The labels must
+    still match what verb registrations / JWT claims carry. Sealed by
+    `tests/sandbox_e2e/_seal_walkable_domain_view.py` (entitled /
+    unentitled / novel-persona through the walk).
   Both directions fail loud: asserted-but-missing is FATAL, and an
   overlay carrying an UNASSERTED enum file is FATAL too (two-truths
   guard).

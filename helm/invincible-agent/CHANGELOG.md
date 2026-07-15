@@ -1,5 +1,47 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.12 — 2026-07-15
+
+Patch bump. Persona de-hardcode **phase 2**: `catalog_domain_view.rego`
+drops its hardcoded persona list for a single `ds.check` on
+`domain…can_view` — the walkable edge 0.3.11 seeds, prunes, and
+readback-verifies. The enumeration is GONE, not parameterized: the
+persona vocabulary now lives only in the directory, seeded from the
+EFFECTIVE `personas.yaml`, so a deployment-overlay persona
+(`overlayEnums: [personas.yaml]`) entitles identically to a shipped one
+— including personas the product never shipped. With this, BOTH
+vocabularies (domains 0.3.11, personas 0.3.12) are deployment-owned
+data with loud-refusal validation.
+
+### Change
+
+- **`catalog_domain_view.rego`** — persona-enumerating loop → one
+  `ds.check({object_type: "domain", …, relation: "can_view"})`.
+  Fail-closed default unchanged. PRECONDITION (release-ordered): the
+  0.3.11 seed must have run against the directory before this rego
+  serves — the sync's `can_view` readback going green on a cluster is
+  the evidence its walk has edges to find.
+
+### Add
+
+- **`tests/sandbox_e2e/_seal_walkable_domain_view.py`** — the
+  discriminating live seal, runnable in BOTH worlds: `--expect-novel
+  denied` pre-swap (proves the half-works bug: novel persona's grant +
+  directory walk TRUE, authorizer FALSE) and `--expect-novel allowed`
+  post-swap (entitled allows / unentitled denies / NOVEL persona
+  entitles through the walk — the case the hardcoded list could never
+  pass). Seeds its novel-persona overlay through the real sync and
+  reverts by diff-prune.
+
+### Migration
+
+Upgrade normally; the seed CronJob (or a manual sync) MUST have run at
+least once on chart ≥ 0.3.11 before/with this upgrade — orderly helm
+upgrades satisfy this automatically since the same release carries
+manifest-before-sync ordering. A cluster whose directory never received
+the 0.3.11 manifest+edges would fail-closed deny catalog domain-view
+until its first seed run (loud, not silent).
+
 ## 0.3.11 — 2026-07-15
 
 Patch bump. Private-deployment policy overlays: the topaz-seed CronJob

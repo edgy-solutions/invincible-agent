@@ -409,14 +409,20 @@ data:
   # so Topaz is the single decider and query_metadata only ASKS.
   #
   # DEEP-DERIVE, not thin-relocate: this rule reads Topaz's OWN seeded
-  # cells via check_permission — it does NOT trust a caller-supplied
-  # entitled_domains list. So the decision can't drift from its source
-  # (the git-asserted (persona,domain) grants the persona sync
-  # materialized). "entitled to domain D" == "holds ANY (persona, D)
-  # cell", derived by iterating the persona vocabulary. The cells this
-  # walks are exactly the ones hop-1's persona sync seeded (11/0) — no
-  # new relations; the source fact is already present, so flipping the
-  # gate to ask Topaz can't lock out an already-entitled caller.
+  # relations — it does NOT trust a caller-supplied entitled_domains
+  # list. So the decision can't drift from its source (the git-asserted
+  # (persona,domain) grants the persona sync materialized).
+  # "entitled to domain D" == "holds ANY (persona, D) cell", answered
+  # by ONE walk on the domain's can_view permission (manifest:
+  # can_view = cell->can_assume over the domain:<D> #cell @cell:<P>:<D>
+  # edges topaz_sync seeds + readback-verifies since chart 0.3.11).
+  # No persona enumeration: the vocabulary lives ONLY in the directory,
+  # seeded from the EFFECTIVE personas.yaml — so a deployment-overlay
+  # persona (topazSeed.policySource.overlayEnums) entitles identically
+  # to a shipped one. The previous revision hardcoded the persona list
+  # here purely because rego cannot LIST objects of a type; that
+  # enumeration is now GONE, not parameterized (the safest list is no
+  # list).
   #
   #   input.resource.user_id — the caller's ENTITLEMENT KEY (email by
   #                           default, matching policy/users.yaml and
@@ -445,40 +451,33 @@ data:
     package invincible_agent.catalog.can_view
 
     import future.keywords.if
-    import future.keywords.in
 
     default allowed := false
 
-    # Persona vocabulary — MIRRORS policy/personas.yaml (ADR-0009
-    # enum). Adding a persona: update BOTH, the same discipline
-    # personas.yaml already documents for its own list. A persona
-    # missing here can't grant catalog access even with a seeded cell
-    # (fail-CLOSED), so drift surfaces as an honest denial, never a
-    # leak.
+    # Walkable derivation (de-hardcode phase 2, chart 0.3.12). ONE
+    # check on the domain's can_view permission; the manifest defines
+    #     domain.can_view = cell->can_assume
+    # over the domain:<D> #cell @cell:<P>:<D> edges the persona sync
+    # seeds, prunes, and readback-verifies on every run (chart 0.3.11).
+    # PRECONDITION (already release-ordered): the 0.3.11 seed must have
+    # run against this directory before this rego serves — the sync's
+    # can_view readback going green is the evidence. Fail-CLOSED: no
+    # edge → deny.
     #
-    # DE-HARDCODE PHASE 2 PENDING: this list exists only because rego
-    # cannot LIST objects of a type, so "holds ANY (persona, D) cell"
-    # requires CONSTRUCTING candidate cell IDs. As of chart 0.3.11 the
-    # sync seeds a walkable edge instead — domain:<D> #cell @cell:<P>:<D>
-    # with manifest permission domain.can_view = cell->can_assume — and
-    # readback-verifies its allow path on every run. Once every target
-    # cluster has run that seed, replace this whole rule with a single
-    #     ds.check({object_type:"domain", object_id:input.resource.domain,
-    #               relation:"can_view", subject_type:"user",
-    #               subject_id:input.resource.user_id})
-    # and delete this list. DO NOT swap before the seed has run — the
-    # walk finds nothing until the relations exist (fail-closed
-    # deny-all window). Phase-2 seal: entitled allows, unentitled
-    # denies, AND a novel (work-overlay) persona entitles through the
-    # walk.
-    personas := ["DATA_STEWARD", "DATA_ENGINEER", "ARCHITECT", "MECHANIC", "ANALYST"]
-
+    # This replaces a HARDCODED persona list (a workaround for rego's
+    # inability to list objects of a type — enumeration was the only
+    # way to construct candidate cell IDs). With the walk, the persona
+    # vocabulary lives ONLY in the directory, seeded from the EFFECTIVE
+    # personas.yaml — a deployment-overlay persona entitles identically
+    # to a shipped one. Sealed live by
+    # tests/sandbox_e2e/_seal_walkable_domain_view.py: entitled allows,
+    # unentitled denies, and a NOVEL (never-shipped) persona entitles
+    # through the walk — the case the hardcoded list could never pass.
     allowed if {
-        some p in personas
         ds.check({
-            "object_type": "cell",
-            "object_id": sprintf("%s:%s", [p, input.resource.domain]),
-            "relation": "can_assume",
+            "object_type": "domain",
+            "object_id": input.resource.domain,
+            "relation": "can_view",
             "subject_type": "user",
             "subject_id": input.resource.user_id
         })

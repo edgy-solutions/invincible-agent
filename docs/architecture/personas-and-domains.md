@@ -128,7 +128,7 @@ in.
 ### Surfaces (no hardcoded dup enum, but the vocabulary is spread out)
 | Surface | What it is | Coupling |
 |---|---|---|
-| **`policy/personas.yaml`** | the canonical enum: `DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST` | image-default; overlay-assertable via `overlayEnums` but **CODE-COUPLED** — `catalog_domain_view.rego` hardcodes this list (subset-safe; **adding** needs a product change) |
+| **`policy/personas.yaml`** | the canonical enum: `DATA_STEWARD, DATA_ENGINEER, ARCHITECT, MECHANIC, ANALYST` | image-default; fully overlay-assertable via `overlayEnums` since chart 0.3.12 (the catalog rego walks the directory — no hardcoded list; adding personas included) |
 | BAML `enum PersonaTarget` | `@@dynamic` — injected at runtime | **not** a dup; nothing to edit |
 | Verb `owner_persona` | set at verb registration (`mesh_registrar`) | must match the enum; empty in current data |
 | JWT persona claim (Keycloak) | where the caller persona originates | must match the enum |
@@ -141,21 +141,22 @@ granted what*; a persona's *behavior* (voice, owned verbs) is coupled in registr
 + BAML and isn't perfectly aligned.
 
 ### Adding a persona
-- Unlike domains, the persona vocabulary is **code-coupled (for one more rev)**:
-  `catalog_domain_view.rego` (topaz-configmap) iterates a **hardcoded persona list**
-  to derive "entitled to domain D = holds ANY (persona, D) cell" — a workaround for
-  rego's inability to LIST objects of a type. An overlay may assert `personas.yaml`
-  (`overlayEnums: [personas.yaml]`) to run a **SUBSET** — iterating absent personas
-  just checks empty cells, safe. But **ADDING** a persona in an overlay half-works:
-  `/me/entitlements` and the `can_assume` gate are data-driven and grant it, while
-  catalog domain-view silently misses its cells → wrong fail-closed denial.
-- **De-hardcode status:** phase 1 (chart 0.3.11) seeds the walkable edge —
-  `domain:<D> #cell @cell:<P>:<D>` + manifest `domain.can_view = cell->can_assume`,
-  prune-scoped and readback-verified on every sync run, rego untouched. Phase 2
-  (next rev) swaps the rego's loop for a single `ds.check` on `domain…can_view` and
-  re-seals the catalog discriminating (entitled / unentitled / novel overlay
-  persona). Until phase 2 lands, a NEW persona label remains a **product PR**. No
-  recompile otherwise (`PersonaTarget` is `@@dynamic`).
+- **Deployment-owned data since chart 0.3.12** — same as domains: assert
+  `personas.yaml` in your overlay (`overlayEnums: [domains.yaml, personas.yaml]`)
+  and grant cells for the new persona in `groups.yaml`. The catalog rego walks the
+  directory (`domain.can_view = cell->can_assume` over the `domain:<D> #cell`
+  edges the sync seeds/prunes/readback-verifies) — no hardcoded persona list
+  anywhere; the effective `personas.yaml` is the only vocabulary source. Sealed by
+  `tests/sandbox_e2e/_seal_walkable_domain_view.py`, whose third leg proves a
+  persona the product never shipped entitles through the walk.
+- **History (why this ever needed fixing):** rego cannot LIST objects of a type, so
+  the pre-0.3.12 rego enumerated a hardcoded persona list to construct candidate
+  cell IDs — an overlay-ADDED persona half-worked (`/me/entitlements` +
+  `can_assume` granted it; catalog domain-view missed its cells → wrong
+  fail-closed denial). Phase 1 (0.3.11) seeded the walkable edge with the rego
+  untouched; phase 2 (0.3.12) swapped the rego onto it.
+- No recompile anywhere (`PersonaTarget` is `@@dynamic`); the label must match what
+  verb registrations / JWT claims carry, same consistency contract as domains.
 - **Granting** it is the DATA overlay (`groups.yaml`/`users.yaml`) — in-image (sandbox)
   or your private policy repo (work). Entitlement is per `(persona, domain)` pair.
 - To make it **own verbs** (frame answers in its voice): also set `owner_persona` at
@@ -175,9 +176,10 @@ this changes *where* you make a change:
     (the shipped one is sandbox demo labels); `overlayEnums: [domains.yaml]` and
     carry your own (e.g. `SUSTAINMENT`, `MESH`, `MANUFACTURING`) in the overlay repo.
     Labels must match your data tagging at ingest.
-  - **`personas.yaml`: subset-only.** `catalog_domain_view.rego` hardcodes the
-    persona list — an overlay may run FEWER personas, but ADDING one is still a
-    product PR (rego + image enum) or catalog domain-view wrongly denies its cells.
+  - **`personas.yaml`: assert it too if your role taxonomy differs** (chart ≥
+    0.3.12 — the catalog rego walks the directory, so overlay personas including
+    NEW ones entitle identically to shipped ones). Labels must match what verb
+    registrations / JWT claims carry.
   Guards are fail-loud both ways: an enum file asserted but missing from the overlay
   is FATAL; an enum file present in the overlay but NOT asserted is FATAL (two-truths).
 - **The five DATA files** (`users.yaml`, `groups.yaml`, `asset_grants.yaml`,

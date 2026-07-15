@@ -34,13 +34,11 @@ image copy is ignored). The two enums are not symmetric:
                   labels match the deployment's data tagging at ingest (see
                   docs/architecture/personas-and-domains.md). Overriding is
                   the NORMAL private-deployment move.
-  personas.yaml — CODE-COUPLED: catalog_domain_view.rego iterates a
-                  hardcoded persona list to derive domain entitlement.
-                  Overriding with a SUBSET is safe; ADDING a persona in an
-                  overlay half-works (entitlements grant it, catalog
-                  domain-view misses its cells → wrong fail-closed denial)
-                  — adding stays a product change until that rego is
-                  de-hardcoded.
+  personas.yaml — fully assertable since chart 0.3.12, ADDING personas
+                  included: catalog_domain_view.rego walks the directory
+                  (domain.can_view = cell->can_assume over the edges this
+                  seed writes) instead of enumerating a hardcoded list, so
+                  the effective personas.yaml is the ONLY vocabulary source.
 Both directions fail loud: an enum file asserted in overlayEnums but absent
 from the overlay is FATAL, and an enum file present in the overlay but NOT
 asserted is FATAL too — a file that LOOKS authoritative while being ignored

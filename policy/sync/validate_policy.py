@@ -27,13 +27,14 @@ and every readback. This gate is necessary, not sufficient.
 ENUMS SPLIT (`--enums-from` / `--overlay-enums`). personas.yaml /
 domains.yaml come from the product image by default, but a deployment
 may ASSERT ownership of either (mirrors the chart's
-`topazSeed.policySource.overlayEnums`). The two are not symmetric:
-domains.yaml is a deployment's classification vocabulary (labels must
-match its data tagging at ingest — overriding is normal); personas.yaml
-is code-coupled (catalog_domain_view.rego iterates a hardcoded persona
-list — subset-safe, ADDING a persona is still a product change). An
-enum file present in --policy-dir but NOT asserted is an ERROR — an
-ignored-but-authoritative-looking file is the two-truths trap.
+`topazSeed.policySource.overlayEnums`): domains.yaml is a deployment's
+classification vocabulary (labels must match its data tagging at
+ingest); personas.yaml is fully assertable since chart 0.3.12 — the
+catalog rego walks the directory (domain.can_view) instead of
+enumerating a hardcoded persona list, so ADDING personas via overlay
+works too. An enum file present in --policy-dir but NOT asserted is an
+ERROR — an ignored-but-authoritative-looking file is the two-truths
+trap.
 
     # inside the product image (work policy repo mounted at /overlay):
     python policy/sync/validate_policy.py \\
@@ -180,9 +181,9 @@ def main() -> int:
         help=(
             "Enum file the OVERLAY asserts (repeatable) — read from "
             "--policy-dir instead of --enums-from. Mirrors the chart's "
-            "topazSeed.policySource.overlayEnums. domains.yaml: normal "
-            "for private deployments. personas.yaml: subset-safe only "
-            "(catalog_domain_view.rego hardcodes the persona list)."
+            "topazSeed.policySource.overlayEnums. Both enums are fully "
+            "assertable (personas since chart 0.3.12 — the catalog rego "
+            "walks the directory, no hardcoded list)."
         ),
     )
     args = parser.parse_args()

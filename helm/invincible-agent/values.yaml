@@ -1124,10 +1124,12 @@ topazSeed:
     #   domains.yaml  — a deployment's CLASSIFICATION vocabulary; labels
     #                   must match the deployment's data tagging at ingest.
     #                   Overriding is the normal private-deployment move.
-    #   personas.yaml — CODE-COUPLED (catalog_domain_view.rego iterates a
-    #                   hardcoded persona list). SUBSET-safe; ADDING a
-    #                   persona needs a product change to that rego first.
-    overlayEnums: []                # e.g. [domains.yaml]
+    #   personas.yaml — fully assertable since chart 0.3.12 (the catalog
+    #                   rego walks the directory instead of enumerating a
+    #                   hardcoded list) — ADDING personas included. The
+    #                   labels must still match what verb registrations /
+    #                   JWT claims carry (see personas-and-domains.md).
+    overlayEnums: []                # e.g. [domains.yaml] or [domains.yaml, personas.yaml]
     configMap:
       name: ""                      # required when type=configMap
     git:
