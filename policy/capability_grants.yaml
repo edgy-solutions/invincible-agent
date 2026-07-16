@@ -27,8 +27,12 @@
 # exist" forbids, so the audit trail here is load-bearing, not ceremonial.
 #
 # capability KEY = the capability IRI (the Topaz `capability` object_id), e.g.
-# "mesh:publishArtifact". `grant_to` are entitlement keys (emails, matching seeded
-# `user` objects) or groups (group#member, reusing groups.yaml).
+# "mesh:publishArtifact". `grant_to` = entitlement keys (emails/employee-ids,
+# matching seeded `user` objects) — USERS ONLY. Group names are NOT resolved here
+# (the sync writes user subjects unconditionally; a group name would seed a phantom
+# `user:<group>` object that passes readback while granting nothing to the group's
+# actual members — a silent wrong-grant). Group-based capability audiences would
+# need `invoker: user | group#member` in the manifest + sync support first.
 capabilities:
   # ADR-0029 Slice-1 demo fixture: the promotion workflow's publish emit. alice
   # (DATA_ENGINEER/DATA_STEWARD · DATA_ENGINEERING) is the initiator authorized to
