@@ -89,6 +89,42 @@ Four layers, each catching what the earlier one structurally can't. The intervie
 left to guard only permission (per-initiator, per-run), which is the only thing that legitimately
 varies between authoring and execution.
 
+**Secrecy vs entitlement — the two-layer resolution (sharpened by review).** "Author over the
+workflow's domain, not the author's grants" raises: *how does an author author well in a domain
+whose vocabulary they cannot see?* The answer resolves ruling A tighter than a blanket "authoring
+is ungated":
+
+- **Secrecy (compartments) gates the menu AUTOMATICALLY — via the author's threaded identity.**
+  The subject menu comes from Engine O, whose candidate pool is compartment-gated per-caller by
+  the sealed `can_view` filter (the ontology-visibility gate that drops Procedure from bob's
+  pool). Thread the author's identity into the subject-source and the menu becomes *the author's
+  visible slice of the ontology* — the interview can only author over what the author can SEE.
+  An author with no grant on a compartment gets a menu without that compartment's classes: not
+  forbidden, just uninformed — the honest outcome, because *showing* the vocabulary would be the
+  existence-oracle the gate exists to prevent. **No separate `can_author` gate is needed for the
+  compartmented case — the existing `can_view` gate already bounds the offering.**
+- **Entitlement (domains) intentionally does NOT gate authoring.** Domain-entitlement is a
+  routing/persona concern, not a secrecy one; releasable-by-definition vocabulary reveals nothing
+  by being seen. So alice (DATA_ENGINEERING) authoring over *releasable* MAINTENANCE vocabulary in
+  a domain she is not entitled to is fine — the definition is a reusable artifact, and the
+  *initiator's* entitlements are what get checked at run (pre-flight + dispatch).
+
+**Load-bearing implementation requirement (now an ENFORCEMENT property, not a nicety):** the
+interview MUST thread the author's identity to its subject-source calls (`authorized_subjects`
+takes `caller_email`), or the self-gating silently vanishes and the interview leaks compartmented
+vocabulary into menus. **The composed-path seal must prove it** — an author *without* a compartment
+grant gets menus *without* that compartment's classes (the interview's own discriminating seal,
+same shape as Engine O's; both sides non-empty: a granted author sees the class, an ungranted one
+does not).
+
+**FINDING — this is a next-increment requirement, not a done thing (design §7):** the current
+`/classes` endpoint does **NOT** apply `can_view` (it returns raw SPARQL rows, ignoring identity),
+so a `/classes`-based subject source would leak compartmented classes the moment the store is
+populated. The subject-source the next increment picks must be **`can_view`-applying** (route
+through the same filtered candidate-pool path the `/resolve` seal uses, or add the filter), not
+just live-ontology-derived. Identity is threaded in `authorized_subjects` now so the property holds
+the moment the source is correct.
+
 ### Decision B — when is the interview done? (termination)
 
 **RULED: the interview terminates when the accumulated steps assemble into a `WorkflowDefinition`
@@ -185,24 +221,42 @@ core module + a thin driver), so the enforceable innovation is unit-tested witho
 - **Deferred:** retiring the old BPMN interrogator + `BpmnCatalog` (staged, after the V2 interview
   runs); the interview later authoring ODCS/ODPS models (the greenfield future, ADR-0029 Decision 2).
 
-## 7. Live-integration findings (2026-07-15, sandbox — from a composed-path probe)
+## 7. Live-integration findings (2026-07-15, sandbox — composed-path probe + store-vs-query discrimination)
 
-The pure core is unit-tested (12/12); a live probe of the two Engine O seams against sandbox found:
+The pure core is unit-tested (12/12); a live probe of the two Engine O seams, plus a
+store-vs-query discrimination on the empty subject menu, found:
 
-- **VERB question — LIVE + correct.** `POST /find_compatible_verbs {subject_uri:mesh#AgentTask,
-  entitled_domains:[]}` → `["mesh:analyzeWithCodeAgent"]` with the full annotation
-  (`output_uri`, `endpoint_url`, `owner_persona`, `domains`) `_parse_verbs` consumes. The novel
-  half — the predicate the old interview never asked — works end-to-end against the real engine.
-- **SUBJECT source — `/classes` returns EMPTY in sandbox (count 0 for every query/domain tried:
-  MAINTENANCE, DATA_ENGINEERING, MANUFACTURING; empty and non-empty queries alike).** The shape
-  is right (`{classes, count, domain}`, so `_parse_classes` is correct), but the endpoint is
-  backed by a hardcoded `_SPARQL_MAINTENANCE_CLASSES` query that yields nothing against the
-  current ontology. The old BPMN interview's subject-set fetch used the same endpoint, so its
-  subject menu was likely empty too (or worked against a different ontology state). **NEXT-
-  INCREMENT ACTION: pick a reliable subject-set source before wiring the LLM** — candidates: a
-  class-list endpoint that actually returns the loaded ontology's classes, and/or Engine D
-  `GET /tables` for dataset/data-source subjects (the survey's list-data-sources seam, currently
-  unused). The verb half is unaffected — it keys off a resolved `subject_uri`, which the resolve
-  path or a working subject list supplies. This is a presence-in-repo-≠-presence-in-running catch:
-  the endpoint exists and parses, but returns nothing live — resolve it with a composed-path seal
-  (real subject menu → verb menu → validating definition) when the driver lands.
+- **VERB question — LIVE + correct.** `POST /find_compatible_verbs {subject_uri:mesh#AgentTask}`
+  → `["mesh:analyzeWithCodeAgent"]` with the full annotation (`output_uri`, `endpoint_url`,
+  `owner_persona`, `domains`) `_parse_verbs` consumes. The novel half — the predicate the old
+  interview never asked — works end-to-end against the real engine.
+- **SUBJECT source `/classes` returns EMPTY — and the discrimination says INGEST GAP, not
+  query-wrong (fix = a doc-tools run, NOT code).** `/classes` returns count 0 for every
+  query/domain. The store-vs-query check (run BEFORE touching code):
+  - `/resolve('maintenance procedure')` recalls `MaintenanceReferenceOntology/Procedure` at
+    **conf 0.96** → the ontology IS present in the VECTOR store (Weaviate).
+  - Fuseki (via the working `/ds/sparql` endpoint) has **ZERO triples total** → the RDF/Jena
+    graph the SPARQL queries is genuinely EMPTY. So it is present-in-vector, absent-in-Fuseki:
+    a **partial ingestion** — the doc-tools RDF→Jena half never (re-)populated Fuseki (consistent
+    with a substrate reset that wasn't re-primed). **The query is fine (querying an empty store);
+    the fix is an ingest run, not a rewrite.**
+  - The query name (`_SPARQL_MAINTENANCE_CLASSES`) is a **smell** but half-wrong: its WHERE clause
+    is GENERIC (`?c a owl:Class ; rdfs:label ?l`), NOT maintenance-filtered — and it IGNORES the
+    `domain` param entirely (no `?domain` binding). So a de-hardcode is a minor future cleanup;
+    the *blocker* is the empty store.
+  - **Secondary smell (not the blocker):** the pod's `JENA_SPARQL_ENDPOINT` seen was `/ds/query`,
+    which 404s; the working endpoint is `/ds/sparql`. Worth a config check once the store is
+    ingested (an empty store hides it today).
+- **`/classes` does NOT apply `can_view`** (`ontology_service/main.py:2205` — raw SPARQL rows, no
+  identity filter), and **nothing else consumes `/classes`** (the old interview was its sole
+  reader — which is why nobody noticed it was subject-less). So `/classes` is doubly-inadequate
+  as the SPO subject source: empty AND unfiltered.
+
+**NEXT-INCREMENT ACTION (item 1, before wiring the LLM):** (a) run the doc-tools RDF ingest to
+populate Fuseki (unblocks the menu); (b) route the subject menu through a **`can_view`-applying**
+source (the `/resolve` candidate-pool path, or add the filter to a class-list endpoint) so
+ruling A's self-gating holds — `authorized_subjects` already threads `caller_email` for this;
+(c) optionally add Engine D `GET /tables` for dataset subjects. The verb half is unaffected (it
+keys off a resolved `subject_uri`). Prove all of it with a composed-path seal: a granted author
+sees a compartment's classes in the menu, an ungranted author does not, and a real
+subject→verb→validating-definition round-trip matches the Slice-1 promotion YAML.

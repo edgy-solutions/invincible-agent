@@ -85,10 +85,36 @@ def _parse_verbs(payload: dict) -> list[dict]:
     return out
 
 
-def authorized_subjects(engine_o_url: str = ENGINE_O_URL_DEFAULT, *, domain: str = "MAINTENANCE") -> list[dict]:
-    """Fetch the authorized SUBJECT set (ontology classes) from Engine O. The pick key is
-    each entry's ``uri``; ``validate_pick`` enforces the exact-match constraint."""
-    r = httpx.post(f"{engine_o_url}/classes", json={"query": "", "domain": domain}, timeout=_HTTP_TIMEOUT)
+def authorized_subjects(
+    caller_email: str,
+    *,
+    engine_o_url: str = ENGINE_O_URL_DEFAULT,
+    domain: str = "MAINTENANCE",
+) -> list[dict]:
+    """Fetch the authorized SUBJECT set (ontology classes) from Engine O, SCOPED TO WHAT
+    THE AUTHOR MAY SEE. ``caller_email`` is threaded so Engine O's per-IRI ``can_view``
+    compartment filter (the sealed ontology-visibility gate) bounds the menu: an author
+    without a compartment grant gets a menu WITHOUT that compartment's classes.
+
+    This threading is LOAD-BEARING for the self-gating property (design §2 Decision A):
+    secrecy (compartments) gates the interview's menu automatically via the caller's
+    identity — the interview can only author over what the author can SEE — so no separate
+    ``can_author`` gate is needed for the compartmented case. Drop the identity and the
+    interview would leak compartmented vocabulary into the menu.
+
+    REQUIREMENT ON THE SUBJECT-SOURCE ENDPOINT (design §7): it MUST apply ``can_view`` for
+    ``caller_email``. The current ``/classes`` endpoint does NOT — it returns raw SPARQL
+    rows ignoring identity, AND returns empty against the un-ingested Fuseki store. So the
+    next increment must route the subject menu through a ``can_view``-applying,
+    live-ontology-derived source; identity is threaded HERE now so the property holds the
+    moment the source is correct. The composed-path seal proves it (author without a
+    compartment grant → menu without that compartment's classes — the interview's own
+    discriminating seal, same shape as Engine O's)."""
+    r = httpx.post(
+        f"{engine_o_url}/classes",
+        json={"query": "", "domain": domain, "user_email": caller_email},
+        timeout=_HTTP_TIMEOUT,
+    )
     r.raise_for_status()
     return _parse_classes(r.json())
 
