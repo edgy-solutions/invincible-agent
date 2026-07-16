@@ -304,7 +304,17 @@ $ExternalImages = @(
     # curl + busybox used by init containers (wait-for-services, etc.).
     @{ src='curlimages/curl:8.11.0';                                   dst='curlimages/curl:8.11.0' },
     @{ src='busybox:1.37.0';                                           dst='library/busybox:1.37.0' },
-    @{ src='python:3.12-slim';                                         dst='library/python:3.12-slim' }
+    @{ src='python:3.12-slim';                                         dst='library/python:3.12-slim' },
+
+    # alpine/git — the topaz-seed CronJob's clone initContainer
+    # (topazSeed.policySource.type=git, chart >= 0.3.11): pulls the
+    # private policy repo's HEAD each schedule tick. Pin matches the
+    # chart default topazSeed.policySource.git.image. Only exercised
+    # when git-mode policy seeding is enabled; the work overlay must
+    # point topazSeed.policySource.git.image at this mirrored path
+    # (<RepoBase>/alpine/git:v2.45.2) or the seed pod ImagePullBackOffs
+    # before it ever clones.
+    @{ src='alpine/git:v2.45.2';                                       dst='alpine/git:v2.45.2' }
 )
 
 $Images = $IagentImages
