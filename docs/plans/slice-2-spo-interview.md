@@ -184,3 +184,25 @@ core module + a thin driver), so the enforceable innovation is unit-tested witho
   confirm it validates and matches the Slice-1 hand-written YAML). Needs `baml-cli generate`.
 - **Deferred:** retiring the old BPMN interrogator + `BpmnCatalog` (staged, after the V2 interview
   runs); the interview later authoring ODCS/ODPS models (the greenfield future, ADR-0029 Decision 2).
+
+## 7. Live-integration findings (2026-07-15, sandbox — from a composed-path probe)
+
+The pure core is unit-tested (12/12); a live probe of the two Engine O seams against sandbox found:
+
+- **VERB question — LIVE + correct.** `POST /find_compatible_verbs {subject_uri:mesh#AgentTask,
+  entitled_domains:[]}` → `["mesh:analyzeWithCodeAgent"]` with the full annotation
+  (`output_uri`, `endpoint_url`, `owner_persona`, `domains`) `_parse_verbs` consumes. The novel
+  half — the predicate the old interview never asked — works end-to-end against the real engine.
+- **SUBJECT source — `/classes` returns EMPTY in sandbox (count 0 for every query/domain tried:
+  MAINTENANCE, DATA_ENGINEERING, MANUFACTURING; empty and non-empty queries alike).** The shape
+  is right (`{classes, count, domain}`, so `_parse_classes` is correct), but the endpoint is
+  backed by a hardcoded `_SPARQL_MAINTENANCE_CLASSES` query that yields nothing against the
+  current ontology. The old BPMN interview's subject-set fetch used the same endpoint, so its
+  subject menu was likely empty too (or worked against a different ontology state). **NEXT-
+  INCREMENT ACTION: pick a reliable subject-set source before wiring the LLM** — candidates: a
+  class-list endpoint that actually returns the loaded ontology's classes, and/or Engine D
+  `GET /tables` for dataset/data-source subjects (the survey's list-data-sources seam, currently
+  unused). The verb half is unaffected — it keys off a resolved `subject_uri`, which the resolve
+  path or a working subject list supplies. This is a presence-in-repo-≠-presence-in-running catch:
+  the endpoint exists and parses, but returns nothing live — resolve it with a composed-path seal
+  (real subject menu → verb menu → validating definition) when the driver lands.
