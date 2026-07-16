@@ -19,9 +19,14 @@ Discipline:
       gate): every asserted (user, cell) grant MUST return TRUE from
       a topaz permission check; any relation asserted in YAML but
       missing from topaz fails the sync loudly.
-    * Diff-based deletion — if a user or group is removed from
-      YAML, the tool removes the corresponding topaz objects and
-      relations. `--dry-run` prints the diff without applying.
+    * Diff-based deletion — if a group is removed from YAML, the tool
+      removes the corresponding topaz objects and relations. Removing a
+      USER prunes their `member` relations (revoking every cell and
+      everything derived) but leaves the bare `user` object: user
+      objects are ENSURE-ONLY family-wide (see ENSURE_ONLY_TYPES) —
+      multiple syncs ensure them and none may prune the type, or the
+      syncs fight over identities that aren't in users.yaml (DataHub
+      owners, grantees). `--dry-run` prints the diff without applying.
 
 Usage:
     # Against a running sandbox via port-forward:
@@ -546,7 +551,12 @@ def snapshot_live(client: TopazClient) -> tuple[set[DirObject], set[DirRelation]
     """Fetch every managed object + relation from topaz.
 
     Managed types (this sync tool asserts ownership over):
-        - persona, domain, group, cell, user objects
+        - persona, domain, group, cell objects
+        - user objects for ADD-diffing only — snapshotted so upserts
+          diff cleanly, but NEVER pruned (ENSURE_ONLY_TYPES, enforced
+          in plan_diff): the DataHub asset sync and the grant syncs
+          ensure user objects too, and identities outside users.yaml
+          (owners, grantees) must survive this sync's ticks
         - relations of type `member` (on group), `assumable_by`
           (on cell), and `cell` (on domain — the walkable vocabulary
           edge, de-hardcode phase 1; it MUST be in prune scope or a
@@ -607,13 +617,30 @@ class Plan:
             print("  (no changes)", file=file)
 
 
+# Object types that are ENSURED by multiple syncs and therefore pruned by
+# NONE — enforced HERE, in the one diff engine every sync shares, so no
+# individual sync can reintroduce the fight. `user` objects are created by
+# the entitlement sync (users.yaml), the DataHub asset sync (owners), and
+# every grant sync (grantees). When the identity populations don't
+# coincide — work: E-number entitlements vs email-style DataHub owners —
+# a sync that prunes the TYPE deletes the other syncs' users every tick
+# (cascading their relations: a fail-closed authz gap until re-added) and
+# they get re-created minutes later. Revocation does NOT need object
+# pruning: removing a user from users.yaml still prunes their `member`
+# relations (cells and everything derived go with them), and a bare user
+# object is inert under deny-by-default.
+ENSURE_ONLY_TYPES = frozenset({"user"})
+
+
 def plan_diff(desired: DesiredState, live_objects, live_relations) -> Plan:
     return Plan(
         add_objects=sorted(
             desired.objects - live_objects, key=lambda o: (o.type, o.id)
         ),
         del_objects=sorted(
-            live_objects - desired.objects, key=lambda o: (o.type, o.id)
+            (o for o in live_objects - desired.objects
+             if o.type not in ENSURE_ONLY_TYPES),
+            key=lambda o: (o.type, o.id),
         ),
         add_relations=sorted(
             desired.relations - live_relations, key=str

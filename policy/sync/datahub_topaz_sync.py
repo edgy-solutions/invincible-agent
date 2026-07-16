@@ -20,13 +20,18 @@ retirement); introducing an `asset`/`can_view` scheme now would be the
 against. Hop 1 uses the primitive that already exists.
 
 BOUNDARY WITH THE ADR-0026 SYNC (`topaz_sync.py`). That tool owns the
-persona/entitlement types (persona, domain, group, cell, USER) and
+persona/entitlement types (persona, domain, group, cell) and
 deliberately leaves `dataset`/`owner`/`reader` alone. This tool is the
-mirror image: it owns `dataset` objects + `owner` relations and MUST NOT
-prune `user` objects (the ADR-0026 sync owns those). It only *ensures*
-owner users exist (idempotent set_object, never delete) so the `owner`
-relation has a valid subject. Two syncs pruning the same type would
-fight; the split keeps each authority source's writes isolated.
+mirror image: it owns `dataset` objects + `owner` relations. `user`
+objects are ENSURE-ONLY FAMILY-WIDE (plan_diff's ENSURE_ONLY_TYPES):
+multiple syncs ensure them — entitlements (users.yaml), THIS sync
+(DataHub owners), the grant syncs (grantees) — and NONE may prune the
+type. That invariant is load-bearing exactly when the identity
+populations don't coincide (work: E-number entitlements vs email-style
+DataHub owner usernames); a type-pruning sync would delete the other
+syncs' users every tick and they'd be re-created minutes later — churn
+plus a fail-closed ownership gap each tick. Two syncs pruning the same
+type would fight; ensure-only ends the fight structurally.
 
 THIS MODULE'S TESTED CORE is the two PURE transforms below
 (`normalize_datahub_search`, `derive_asset_desired`) — no network, no
