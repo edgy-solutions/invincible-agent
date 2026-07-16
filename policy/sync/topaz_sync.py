@@ -335,12 +335,34 @@ class TopazClient:
         r = self._client.post("/api/v3/directory/object", json=payload)
         self._raise_with_context(r, f"object {obj}")
 
+    def object_exists(self, obj_type: str, obj_id: str) -> bool:
+        """Point lookup by EXACT KEY — GET /object/{type}/{id}; 404 => False.
+
+        Unlike list_objects this never touches the store ITERATOR, so it
+        stays correct when listing is broken server-side (live E00000
+        list-500 at 9k+ stored datasets) AND it's O(1) per key instead of
+        paging the whole type. Prefer it wherever the question is "does
+        THIS object exist", not "what objects exist"."""
+        from urllib.parse import quote
+
+        r = self._client.get(
+            f"/api/v3/directory/object/{quote(obj_type, safe='')}/{quote(obj_id, safe='')}"
+        )
+        if r.status_code == 404:
+            return False
+        self._raise_with_context(r, f"existence check of object {obj_type}:{obj_id}")
+        return True
+
     def delete_object(self, obj: DirObject, with_relations: bool = True) -> None:
+        from urllib.parse import quote
+
         params: dict[str, str] = {}
         if with_relations:
             params["with_relations"] = "true"
+        # quote(id): DataHub URNs can carry '/' (s3 paths) — raw in the
+        # path segment it would misroute and no-op the prune as a 404.
         r = self._client.delete(
-            f"/api/v3/directory/object/{obj.type}/{obj.id}",
+            f"/api/v3/directory/object/{quote(obj.type, safe='')}/{quote(obj.id, safe='')}",
             params=params,
         )
         if r.status_code == 404:

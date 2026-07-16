@@ -110,6 +110,9 @@ class _FakeTopaz:
     def list_objects(self, obj_type):
         return [o for o in self.objects if o.type == obj_type]
 
+    def object_exists(self, obj_type, obj_id):
+        return DirObject(obj_type, obj_id) in self.objects
+
     def list_relations(self, object_type, relation):
         return [r for r in self.relations
                 if r.object_type == object_type and r.relation == relation]
@@ -137,6 +140,29 @@ def test_not_dangling_when_asset_present():
     client = _FakeTopaz()
     client.objects.add(DirObject("dataset", _GOLD))  # seeded by the DataHub sync
     assert find_dangling(client, [GrantRecord("alice@example.com", _GOLD, "cnogradi")]) == []
+
+
+def test_dangling_check_never_lists_datasets():
+    """Regression pin (work seed, 2026-07-16): find_dangling sat on
+    list_objects('dataset'), so topaz's store-iterator 500 at 9k+
+    datasets killed the grant sync — the domino AFTER the asset sync
+    had already survived the same 500 via degraded mode. The check
+    must use POINT lookups (object_exists) only: O(granted assets),
+    iterator-free."""
+    class _ListingBroken(_FakeTopaz):
+        def list_objects(self, obj_type):
+            raise AssertionError(
+                "find_dangling must not LIST datasets — point lookups only"
+            )
+
+    client = _ListingBroken()
+    client.objects.add(DirObject("dataset", _GOLD))
+    grants = [
+        GrantRecord("alice@example.com", _GOLD, "cnogradi"),
+        GrantRecord("bob@example.com", "urn:li:dataset:absent", "cnogradi"),
+    ]
+    dangling = find_dangling(client, grants)
+    assert len(dangling) == 1 and "urn:li:dataset:absent" in dangling[0]
 
 
 # ---------------------------------------------------------------------------

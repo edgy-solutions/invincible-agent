@@ -116,11 +116,21 @@ def find_dangling(client, grants: list[GrantRecord]) -> list[str]:
     """prove-the-negative (deny-on-dangling): a grant whose ASSET is not a
     `dataset` object in the directory is REFUSED — you cannot grant read on an
     asset that isn't there. Returns the offending grant descriptions. The live
-    dataset object set is the reference (seeded by datahub_topaz_sync)."""
-    live_datasets = {o.id for o in client.list_objects("dataset")}
+    dataset objects are the reference (seeded by datahub_topaz_sync).
+
+    POINT LOOKUPS, deliberately not a listing: the question is "does THIS
+    granted asset exist", so each unique asset is checked by exact key
+    (object_exists) — O(granted assets), not O(all datasets), and immune to
+    the store-iterator failure that a full list walks into at catalog scale
+    (live E00000 list-500 at 9k+ datasets; this call sitting on list_objects
+    was the domino that starved the ontology/task/capability syncs after the
+    asset sync had already survived the same 500 via its degraded mode)."""
+    exists: dict[str, bool] = {}
     dangling: list[str] = []
     for g in grants:
-        if g.asset not in live_datasets:
+        if g.asset not in exists:
+            exists[g.asset] = client.object_exists("dataset", g.asset)
+        if not exists[g.asset]:
             dangling.append(
                 f"DANGLING: {g.subject} → reader on {g.asset} (asset not in directory; "
                 f"granted_by={g.granted_by})"
