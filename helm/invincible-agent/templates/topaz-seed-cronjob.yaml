@@ -134,6 +134,13 @@ spec:
                   value: {{ $src.git.repoUrl | quote }}
                 - name: GIT_REF
                   value: {{ $src.git.ref | default "main" | quote }}
+                {{- if $src.git.caSecretName }}
+                # Internal-CA/self-signed git host: verify against the
+                # mounted bundle. Verification stays ON — see values.yaml
+                # for why there is no skip-verify option.
+                - name: GIT_SSL_CAINFO
+                  value: /git-ca/ca.crt
+                {{- end }}
                 {{- if $src.git.authSecretName }}
                 - name: GIT_USERNAME
                   valueFrom:
@@ -160,6 +167,11 @@ spec:
               volumeMounts:
                 - name: overlay-src
                   mountPath: /overlay-src
+                {{- if $src.git.caSecretName }}
+                - name: git-ca
+                  mountPath: /git-ca
+                  readOnly: true
+                {{- end }}
           {{- end }}
           containers:
             - name: topaz-seed
@@ -302,6 +314,14 @@ spec:
             {{- if eq $mode "git" }}
             - name: overlay-src
               emptyDir: {}
+            {{- if $src.git.caSecretName }}
+            - name: git-ca
+              secret:
+                secretName: {{ $src.git.caSecretName | quote }}
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            {{- end }}
             {{- end }}
             {{- if eq $mode "configMap" }}
             - name: overlay

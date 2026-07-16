@@ -1,5 +1,21 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.14 — 2026-07-15
+
+Patch bump. Internal-CA/self-signed git hosts for the policy overlay.
+
+### Add
+
+- **`topazSeed.policySource.git.caSecretName`** — a Secret (key
+  `ca.crt`) holding the CA bundle that signed the git host's TLS cert,
+  mounted read-only into the clone initContainer and passed via
+  `GIT_SSL_CAINFO`. Verification stays ON against YOUR CA. There is
+  deliberately NO skip-TLS-verify knob: this channel delivers the
+  authorization policy itself — an unverified clone would let a MITM
+  serve attacker-authored grants that the sync's readback would then
+  faithfully confirm (channel integrity is load-bearing for a policy
+  source in a way it isn't for ordinary artifact pulls).
+
 ## 0.3.13 — 2026-07-15
 
 Patch bump whose FIRST job is honesty about packaging: two helm changes

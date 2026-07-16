@@ -1148,6 +1148,17 @@ topazSeed:
       ref: "main"                   # branch/tag the cluster tracks
       path: "policy"                # subdirectory holding the five data files
       authSecretName: ""            # optional Secret w/ keys `username`+`password` (PAT); omit for anonymous clone
+      # Optional Secret holding the CA bundle (key `ca.crt`) that signed
+      # the git host's TLS cert — for INTERNAL/self-signed git servers:
+      #   kubectl create secret generic iagent-policy-git-ca \
+      #       --from-file=ca.crt=<internal-ca-or-selfsigned>.pem
+      # Mounted read-only into the clone initContainer and passed via
+      # GIT_SSL_CAINFO, so verification stays ON against YOUR CA. There
+      # is deliberately NO skip-TLS-verify knob: this channel delivers
+      # the authorization policy itself — an unverified clone would let
+      # a MITM serve attacker-authored grants that the readback would
+      # then faithfully confirm.
+      caSecretName: ""
       # Clone-only helper image. Structured form goes through the image
       # helper; registry defaults to docker.io explicitly (alpine/git is
       # not on ghcr, so it must NOT inherit global.imageRegistry unless
