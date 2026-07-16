@@ -356,7 +356,12 @@ class TopazClient:
             if page_token:
                 params["page.token"] = page_token
             r = self._client.get("/api/v3/directory/objects", params=params)
-            r.raise_for_status()
+            # Context matters doubly on LIST failures: the token names the
+            # page boundary where iteration broke (bisect from there with
+            # page.size=1) and topaz's body names the server-side error.
+            self._raise_with_context(
+                r, f"list of {obj_type} objects (page.token={page_token!r})"
+            )
             body = r.json()
             for o in body.get("results") or body.get("objects") or []:
                 out.append(DirObject(type=o["type"], id=o["id"]))
@@ -411,7 +416,11 @@ class TopazClient:
             if page_token:
                 params["page.token"] = page_token
             r = self._client.get("/api/v3/directory/relations", params=params)
-            r.raise_for_status()
+            self._raise_with_context(
+                r,
+                f"list of relations (object_type={object_type!r}, "
+                f"relation={relation!r}, page.token={page_token!r})",
+            )
             body = r.json()
             for x in body.get("results") or body.get("relations") or []:
                 out.append(

@@ -147,6 +147,52 @@ def test_network_errors_still_crash():
         raise AssertionError("ConnectError must propagate, not be skipped")
 
 
+def _list_error(status: int) -> httpx.HTTPStatusError:
+    resp = httpx.Response(
+        status,
+        text='{"code":13,"message":"internal error iterating store"}',
+        request=httpx.Request("GET", "http://topaz/api/v3/directory/objects"),
+    )
+    return httpx.HTTPStatusError("list failed", request=resp.request, response=resp)
+
+
+def test_snapshot_500_degrades_to_additions_only():
+    """Topaz list-500 mid-pagination (seen live at 9k+ datasets) must
+    NOT kill the seed: upsert everything, PAUSE prune, banner state set
+    — the four git-asserted syncs behind this one stay alive."""
+    class _ListBrokenTopaz(_RejectingTopaz):
+        def __init__(self):
+            super().__init__()
+            self.objects.add(DirObject("dataset", "urn:stale-should-survive"))
+
+        def list_objects(self, obj_type):
+            raise _list_error(500)
+
+    client = _ListBrokenTopaz()
+    plan, report = sync_assets(client, [GOOD])
+    assert report.snapshot_degraded, "degraded state must be reported"
+    # additions landed…
+    assert DirObject("dataset", GOOD.urn) in client.objects
+    # …and NOTHING was pruned (empty snapshot must never imply deletions).
+    assert DirObject("dataset", "urn:stale-should-survive") in client.objects
+    assert plan.del_objects == [] and plan.del_relations == []
+
+
+def test_snapshot_4xx_still_crashes():
+    """A 4xx on LIST is our bug (bad request shape) — degrading would
+    hide it forever behind the banner. Crash."""
+    class _List400Topaz(_RejectingTopaz):
+        def list_objects(self, obj_type):
+            raise _list_error(400)
+
+    try:
+        sync_assets(_List400Topaz(), [GOOD])
+    except httpx.HTTPStatusError:
+        pass
+    else:
+        raise AssertionError("4xx on list must propagate")
+
+
 def test_enriched_error_names_offender_and_reason():
     """TopazClient errors must NAME the item and carry topaz's body —
     the work crash was a bare '400 Bad Request' naming nothing."""

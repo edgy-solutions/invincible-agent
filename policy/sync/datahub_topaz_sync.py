@@ -255,6 +255,13 @@ class LenientApplyReport:
     rejected: list[tuple[str, str]] = field(default_factory=list)  # (item, reason)
     rejected_dataset_urns: set[str] = field(default_factory=set)
     rejected_owner_ids: set[str] = field(default_factory=set)
+    # Non-empty => the live-state SNAPSHOT failed server-side (topaz 5xx
+    # while LISTING, seen live: BoltDB list-500 mid-pagination at 9k+
+    # objects) and this run degraded to ADDITIONS-ONLY: upserts are
+    # idempotent so grants stay current, but PRUNE IS PAUSED — a dataset
+    # removed from DataHub keeps its owner's can_read until the 500 is
+    # fixed. Loud every tick; the value is the error text.
+    snapshot_degraded: str = ""
 
     @property
     def count(self) -> int:
@@ -305,7 +312,22 @@ def sync_assets(client, assets: list[AssetRecord], *, prune: bool = True):
         objects={o for o in desired.objects if o.type in MANAGED_ASSET_OBJECT_TYPES},
         relations=set(desired.relations),
     )
-    live = snapshot_assets(client)
+    # Snapshot the live state for the diff. A topaz 5xx while LISTING
+    # (seen live: 500 mid-pagination at 9k+ stored datasets) is a
+    # server-side read failure — degrading to additions-only keeps
+    # grants current (upserts are idempotent) and keeps the four
+    # git-asserted syncs BEHIND this one alive, at the honest, loudly
+    # reported cost of pausing prune. A 4xx here would be OUR bug and
+    # still crashes; so does a dead/unreachable directory.
+    import httpx as _httpx
+    try:
+        live = snapshot_assets(client)
+    except _httpx.HTTPStatusError as e:
+        if e.response.status_code < 500:
+            raise
+        report.snapshot_degraded = str(e)[:300]
+        live = DesiredState()
+        prune = False
     plan = plan_diff(desired_managed, live.objects, live.relations)
     if not prune:
         plan.del_objects = []
@@ -381,6 +403,19 @@ def main() -> int:
             f"-{len(plan.del_objects)} objects, -{len(plan.del_relations)} relations, "
             f"{report.count} rejected"
         )
+        if report.snapshot_degraded:
+            print("===== DEGRADED: SNAPSHOT FAILED — ADDITIONS-ONLY THIS TICK =====")
+            print(f"  topaz list error: {report.snapshot_degraded}")
+            print(
+                "  The live-state LISTING failed server-side, so the diff ran\n"
+                "  against an empty snapshot: all desired objects/relations were\n"
+                "  UPSERTED (idempotent) but PRUNE IS PAUSED — datasets removed\n"
+                "  from DataHub keep their owner's can_read until listing works\n"
+                "  again. This banner repeats EVERY tick while degraded; fix the\n"
+                "  underlying topaz list failure (bisect the failing page with\n"
+                "  page.size=1 from the token in the error above, or reset the\n"
+                "  directory PVC and let the seed rebuild from sources)."
+            )
         if report.rejected:
             print("===== REJECTED BY TOPAZ (resource facts the directory cannot represent) =====")
             for item, reason in report.rejected:
