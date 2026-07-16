@@ -1,0 +1,654 @@
+# Endpoint-gating audit manifest — the DECLARED gating posture of every agent-reachable
+# HTTP route across the fleet. Source of truth for tests/test_endpoint_gating_manifest.py:
+# a route in source but absent here FAILS CI (exceptions are declared, not accidental).
+#
+# Per route:
+#   identity      — the caller-identity field the handler USES for a gate, or `none`
+#   gate          — can_view | can_read | can_act | can_invoke | topaz-check |
+#                   delegates:<engine> | domain-scope | auth-only | none
+#   exposes       — gated-content | action | proxy | ui-state | health | render
+#   consumers     — who calls it today (or none-found)
+#   class         — gated | releasable_by_design | ungated_by_accident | delegates | internal
+#   justification — REQUIRED for releasable_by_design and ungated_by_accident
+#
+# Breadth pass 2026-07-15 (read-only audit, 4 agents). 72 HTTP routes. This pass FINDS the
+# exception population; it fixes nothing. `ungated_by_accident` rows are FINDINGS whose fixes
+# are a separate, worst-first, seal-per-fix increment (see docs/architecture/endpoint-gating-audit.md).
+# Dark-launched gates (behind ENABLE_AGENTIC_AUTH, default off) count as "gate present", not none.
+version: 1
+services:
+
+  ontology_service:
+    file: agent_fleet/ontology_service/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: GET
+        path: /personas
+        identity: none
+        gate: none
+        exposes: ui-state
+        consumers: [frontend]
+        class: releasable_by_design
+        justification: "releasable persona UI vocabulary"
+      - method: GET
+        path: /domains
+        identity: none
+        gate: none
+        exposes: ui-state
+        consumers: [frontend]
+        class: releasable_by_design
+        justification: "releasable domain-scope names (UI vocab); mild which-domains-exist"
+      - method: GET
+        path: /mesh/config
+        identity: none
+        gate: none
+        exposes: ui-state
+        consumers: [gateway.py]
+        class: releasable_by_design
+        justification: "UI config (personas dict + status ONLINE)"
+      - method: GET
+        path: /get_physical_assets
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [none-found]
+        class: ungated_by_accident
+        justification: "FINDING: existence-oracle — caller supplies a class IRI, receives linked physical DataAsset URNs (IRI->asset mapping); no identity, no gate"
+      - method: POST
+        path: /classes
+        identity: "OPTIONAL-IGNORED — user_email present but never read"
+        gate: none
+        exposes: gated-content
+        consumers: [old-interview restate_analyst:1438]
+        class: ungated_by_accident
+        justification: "ANCHOR (highest severity): bulk-enumerates every class uri/label/definition for a domain via raw SPARQL; no can_view; identity field ignored. The Slice-2 finding. Must become can_view-applying before the store is repopulated (empty store currently masks the leak)."
+      - method: POST
+        path: /classify_legacy_table
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [dagster/doc-tools]
+        class: ungated_by_accident
+        justification: "FINDING: returns a resolved class IRI; candidate pool from weaviate_hybrid_search is NOT run through the _can_view_class filter /resolve applies; no identity field"
+      - method: POST
+        path: /classify_predicate
+        identity: "entitled_domains (scope)"
+        gate: domain-scope
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: gated
+        justification: "domain-scope filter via predicate_hybrid_search; SECONDARY GAP: not per-IRI can_view, so leaks per-IRI existence within an entitled domain"
+      - method: POST
+        path: /find_compatible_verbs
+        identity: "entitled_domains (scope)"
+        gate: domain-scope
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py, spo_interview-slice2]
+        class: gated
+        justification: "domain-scope verb filter; SECONDARY GAP: subject IRI itself is un-gated existence-oracle; this is the SPO interview's verb-question source"
+      - method: POST
+        path: /search_predicates
+        identity: "entitled_domains (scope; user_id audit-only)"
+        gate: domain-scope
+        exposes: gated-content
+        consumers: [none-live]
+        class: gated
+        justification: "domain-scope filter; SECONDARY GAP: no per-IRI can_view"
+      - method: POST
+        path: /find_tool
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [none-found]
+        class: ungated_by_accident
+        justification: "FINDING: routing existence-oracle — verb edge + output_uri class IRI + endpoint; no identity, no gate, no domain filter (INTERNAL routing intent, but ungated)"
+      - method: POST
+        path: /find_path
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [none-found]
+        class: ungated_by_accident
+        justification: "FINDING: multi-hop verb paths expose verb_iri/output_uri/endpoint; no identity, no gate, no domain filter (INTERNAL routing intent, but ungated)"
+      - method: POST
+        path: /plan
+        identity: none
+        gate: none
+        exposes: render
+        consumers: [dynamic_supervisor.py]
+        class: releasable_by_design
+        justification: "BAML DecomposeQuery over the user's OWN query; touches no ontology graph, exposes no existence"
+      - method: POST
+        path: /resolve
+        identity: user_email
+        gate: "can_view (per-IRI, dark-launched)"
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py, restate_analyst/main.py]
+        class: gated
+        justification: "THE exemplar — the ONLY route wired to the per-IRI _can_view_class gate (flag-gated). The Slice-2 subject source should route through this gate."
+      - method: POST
+        path: /route_intent
+        identity: "OPTIONAL-IGNORED — persona/entitled_domains echoed, not gated"
+        gate: none
+        exposes: render
+        consumers: [gateway.py]
+        class: releasable_by_design
+        justification: "intent extraction (mode, entity_refs) from query; no ontology existence exposed"
+      - method: POST
+        path: /route_and_plan
+        identity: none
+        gate: none
+        exposes: render
+        consumers: [none-legacy]
+        class: releasable_by_design
+        justification: "legacy LLM classifier -> intent/domain/task_plan; no class IRIs returned"
+
+  datahub_wrapper:
+    file: agent_fleet/datahub_wrapper/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: GET
+        path: /dynamic_context
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: releasable_by_design
+        justification: "DataHub EntityType enum (schema shape), no asset data"
+      - method: GET
+        path: /tables
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [none-found]
+        class: releasable_by_design
+        justification: "dead stub: returns a static deprecation string, no data"
+      - method: GET
+        path: /find_tools
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [restate_analyst/orchestrator/discovery.py]
+        class: ungated_by_accident
+        justification: "FINDING (secondary): unauthenticated enumeration of the JIT tool registry incl. each tool endpoint_url; classify+gate or declare releasable"
+      - method: POST
+        path: /lineage_edges
+        identity: "caller_email + entitled_domains"
+        gate: "can_view (topaz dark-launched) + served_domain-in-entitled_domains (active)"
+        exposes: gated-content
+        consumers: [gateway.py /canvas/lineage_edges]
+        class: gated
+        justification: "1-hop edges between already-answered subjects; same gate as query_metadata"
+      - method: POST
+        path: /query_metadata
+        identity: "caller_email + entitled_domains"
+        gate: "can_view (topaz dark-launched) + served_domain-in-entitled_domains (active, fail-closed)"
+        exposes: gated-content
+        consumers: [restate_analyst/main.py]
+        class: gated
+        justification: "the reference data gate; active in-code path even with the flag off"
+      - method: POST
+        path: /resolve_instance
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [engine-o /resolve fan-out, dynamic_supervisor.py]
+        class: ungated_by_accident
+        justification: "FINDING: existence-oracle — identifier -> catalog URN/label/IRI (dataset/dashboard/chart names) for any token; NO identity field in the model, NO gate. Same-file query_metadata gates on caller_email; this resolution sibling threads neither. Identity dies here: provider model has no field to receive user_email."
+
+  neo4j_expert:
+    file: agent_fleet/neo4j_expert/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /query_graph
+        identity: "through (forwarded, consumed downstream)"
+        gate: "delegates:neo4j_expert/service.py per-node _can_read_document (dark-launched)"
+        exposes: gated-content
+        consumers: [supervisor specialist dispatch]
+        class: delegates
+        justification: "verbatim proxy; per-node can_read gate lives one hop down in service.py fetch_content (ENABLE_AGENTIC_AUTH)"
+      - method: POST
+        path: /resolve_dmc
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [engine-o /resolve fan-out]
+        class: ungated_by_accident
+        justification: "FINDING (lower sensitivity): DMC -> mil:* content-kind + techName for any DMC-shaped input; no identity, no gate"
+      - method: POST
+        path: /resolve_instance
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [engine-o /resolve fan-out]
+        class: ungated_by_accident
+        justification: "FINDING: graph existence-oracle — identifier -> node IRI/URN/label (equipment serials, tail numbers, WI titles, part/procedure numbers via Cypher); no identity field, no gate"
+
+  weaviate_expert:
+    file: agent_fleet/weaviate_expert/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /query_knowledge
+        identity: "through (forwarded, consumed downstream)"
+        gate: "delegates:weaviate_expert/service.py per-chunk _can_read_document (dark-launched)"
+        exposes: gated-content
+        consumers: [supervisor specialist dispatch]
+        class: delegates
+        justification: "verbatim proxy; per-chunk source can_read filter before synthesis, one hop down in service.py (ENABLE_AGENTIC_AUTH)"
+
+  restate_analyst:
+    file: agent_fleet/restate_analyst/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /analyze
+        identity: "Authorization -> user_jwt"
+        gate: "delegates (forwards to AnalystService -> Engine O/D gates)"
+        exposes: proxy
+        consumers: [dynamic_supervisor.py]
+        class: delegates
+        justification: "HTTP proxy to the AnalystService Restate handler; identity threaded, content gates downstream"
+      - method: POST
+        path: /workflow/start
+        identity: "user_jwt (optional, default empty)"
+        gate: "delegates (per-step gates in the runner)"
+        exposes: action
+        consumers: [none-found]
+        class: delegates
+        justification: "starts a BPMN workflow; the runner relies on per-step gates (service-task 401/403, direct_call can_invoke, spo_operation verify)"
+      - method: POST
+        path: /workflow/{workflow_id}/task/{task_id}/approve
+        identity: none
+        gate: none
+        exposes: action
+        consumers: [none-found gateway approves via Restate ingress]
+        class: ungated_by_accident
+        justification: "FINDING (high): approval bypass — request is status/comments only, NO caller identity, NO gate; resolves the approval promise unconditionally. Comment claims cortex-bff can_act gates it, but this HTTP route (and the Restate BPMNWorkflowRunner/approve handler at gateway.py:432) bypasses that. Approval authority enforced nowhere on this path."
+
+  data_analyst:
+    file: agent_fleet/data_analyst/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /analyze_data
+        identity: "Authorization -> user_jwt; originator_email threaded"
+        gate: "delegates:central-gateway can_read (X-Originator-Email, email-keyed 403)"
+        exposes: gated-content
+        consumers: [agent_routers.py supervisor]
+        class: delegates
+        justification: "data-plane can_read enforced in the central gateway via X-Originator-Email; engine-side Topaz authz explicitly removed (the DA-read seal)"
+
+  presentation_agent:
+    file: agent_fleet/presentation_agent/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /render_ui
+        identity: none
+        gate: "delegates (renders caller-held content; no independent fetch)"
+        exposes: render
+        consumers: [dynamic_supervisor.py, agent_routers.py]
+        class: delegates
+        justification: "renders caller-supplied raw_data verbatim; performs NO gated fetch, so gating is the caller's responsibility. NOTE: reflected-content surface if ever exposed to untrusted callers (add identity + a no-fetch assertion in the seal)"
+
+  mesh_registrar:
+    file: agent_fleet/mesh_registrar/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: GET
+        path: /v1/healthz
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /v1/register
+        identity: none
+        gate: none
+        exposes: action
+        consumers: [agent_fleet/utils/mesh_registration.py engine self-register]
+        class: ungated_by_accident
+        justification: "FINDING (high): unauthenticated MUTATION of the routing substrate (Neo4j+Weaviate verb->endpoint edges + DataHub MCP). Only check is Contract-D URI existence, never a caller identity. A routing-poisoning surface — anyone reachable can inject/override a verb->endpoint mapping. Needs a service-identity gate."
+
+  projector:
+    file: src/iagent/projector/app.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: GET
+        path: /projector/watermark
+        identity: none
+        gate: none
+        exposes: ui-state
+        consumers: [probes]
+        class: releasable_by_design
+        justification: "operational counters only (last_applied_watermark, apply_count); exposes NO artifact content"
+      - method: POST
+        path: /projector/poll
+        identity: none
+        gate: "env-flag (PROJECTOR_ENABLE_FORCE_POLL, default off -> 404 in prod)"
+        exposes: action
+        consumers: [tests]
+        class: internal
+        justification: "test affordance to force one apply batch; route not registered unless the env flag is truthy (default-off = 404 in prod)"
+
+  gateway:
+    file: src/iagent/gateway.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: GET
+        path: /mesh/config
+        identity: get_current_user
+        gate: auth-only
+        exposes: ui-state
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "auth-gated generic UI/persona config proxy; nothing per-user gated"
+      - method: GET
+        path: /me/entitlements
+        identity: get_current_user
+        gate: "auth + self-scoped"
+        exposes: ui-state
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "returns the caller's OWN (persona,domain) matrix"
+      - method: GET
+        path: /me/human_tasks
+        identity: get_current_user
+        gate: "auth + self-scoped (recipient_id=authz_id)"
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "caller's own HITL queue (self-scoped filter)"
+      - method: GET
+        path: /me/canvases
+        identity: get_current_user
+        gate: "auth + self-scoped"
+        exposes: ui-state
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "caller's own stored canvases"
+      - method: PUT
+        path: /me/canvases
+        identity: get_current_user
+        gate: "auth + self-scoped"
+        exposes: action
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "upserts the caller's own canvas set"
+      - method: POST
+        path: /access_requests
+        identity: get_current_user
+        gate: "auth; subject forced to caller authz_id; grant gated at approval"
+        exposes: action
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "self-service access request; the actual grant is gated downstream at approval"
+      - method: POST
+        path: /register_frontend_capabilities
+        identity: get_current_user
+        gate: auth-only
+        exposes: ui-state
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "logs a capability advertisement; benign"
+      - method: POST
+        path: /internal/human_tasks/register
+        identity: get_current_user
+        gate: auth-only
+        exposes: action
+        consumers: [workflow/service seam]
+        class: gated
+        justification: "auth-gated. FINDING (over-permissioned): caller is any authenticated user, not restricted to a service identity (docstring says it should be). Tighten to a service principal."
+      - method: POST
+        path: /canvas/lineage_edges
+        identity: "get_current_user -> caller_email + entitled_domains"
+        gate: "delegates:datahub_wrapper /lineage_edges"
+        exposes: gated-content
+        consumers: [cortex-ui GRAPH mode]
+        class: delegates
+        justification: "threads identity to Engine D whose catalog gate applies"
+      - method: POST
+        path: /human_tasks/{task_id}/act
+        identity: get_current_user
+        gate: "can_act (Topaz re-check) + queue-membership 404"
+        exposes: action
+        consumers: [cortex-ui]
+        class: gated
+        justification: "high-privilege: approve/reject -> resumes a Restate workflow / writes a grant; deny-by-default Topaz can_act"
+      - method: POST
+        path: /orchestrate
+        identity: "get_current_user -> user_email + entitled_domains + persona"
+        gate: "auth + ADR-0026 cell-entitlement (403 cell_not_entitled); content gate downstream"
+        exposes: action
+        consumers: [cortex-ui main chat]
+        class: delegates
+        justification: "primary surface; cell-entitlement checked here, per-asset content gate applied downstream with the threaded identity"
+      - method: POST
+        path: /interview/stream
+        identity: "get_current_user -> user_email + entitled_domains + persona"
+        gate: "auth + ADR-0026 cell-entitlement; content gate downstream"
+        exposes: action
+        consumers: [cortex-ui]
+        class: delegates
+        justification: "same as /orchestrate (streaming variant)"
+      - method: POST
+        path: /decision_subgraph
+        identity: get_current_user
+        gate: "auth-only (bounded to OntologyClass schema)"
+        exposes: gated-content
+        consumers: [cortex-ui decision-path map]
+        class: releasable_by_design
+        justification: "auth-gated ontology CLASS schema neighborhood (low sensitivity); NOTE: no entitlement filter — revisit if class existence becomes compartment-sensitive"
+      - method: GET
+        path: /federated_image
+        identity: "get_current_user -> entitled_domains"
+        gate: "auth + domain-scope"
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "streams procedure-diagram bytes from MinIO; domain-scope filter. WEAK SPOT: domain-only, no per-asset Topaz; non-convention buckets pass through"
+      - method: GET
+        path: /data_module/figures
+        identity: get_current_user
+        gate: auth-only
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "auth-gated figure metadata (incl S3 url) for any caller-supplied DataModule URI. FINDING: no domain/Topaz scope on the arbitrary URI (bytes themselves gated by /federated_image)"
+      - method: GET
+        path: /electric/shape
+        identity: "get_current_user -> authz_id + sub"
+        gate: "self-scoped WHERE injection (recipient_id=authz_id / produced_for_user_id=sub)"
+        exposes: gated-content
+        consumers: [cortex-ui Electric subscription]
+        class: gated
+        justification: "strips client WHERE, server-injects a self-scoped filter; ownership isolation (interim, not full Topaz ACL)"
+      - method: GET
+        path: /node_details/{node_id}
+        identity: get_current_user
+        gate: none
+        exposes: gated-content
+        consumers: [cortex-ui NodeInspector]
+        class: ungated_by_accident
+        justification: "FINDING: authenticated but NO content gate — raw Neo4j node ALL-properties for any caller-supplied id; effectively read-anything-in-the-graph. (Auth required, so lower severity than the unauthenticated routes.)"
+      - method: GET
+        path: /graph/node/{node_id}
+        identity: get_current_user
+        gate: none
+        exposes: gated-content
+        consumers: [cortex-ui NodeInspector]
+        class: ungated_by_accident
+        justification: "FINDING: same as /node_details — authenticated, no content gate, returns any node's full properties"
+      - method: POST
+        path: /compile
+        identity: get_current_user
+        gate: auth-only
+        exposes: action
+        consumers: [cortex-ui workflow builder]
+        class: gated
+        justification: "auth-gated. FINDING (over-permissioned): any authenticated user can upsert bpmn_catalog + trigger a Dagster ReloadWorkspace mutation. Privileged write with no authorization beyond auth."
+      - method: POST
+        path: /workflow/compile
+        identity: get_current_user
+        gate: auth-only
+        exposes: action
+        consumers: [cortex-ui]
+        class: gated
+        justification: "alias of /compile; same over-permissioned FINDING"
+      - method: POST
+        path: /bpmn/save
+        identity: none
+        gate: "410-retired"
+        exposes: action
+        consumers: [none — no live HTTP reader; /compile is the authenticated writer]
+        class: retired
+        justification: "RETIRED (ADR-0029 Slice 2, gateway.py returns 410). WAS an unauthenticated workflow-definition WRITE (audit HIGH, browser-facing) — CLOSED now as a standalone security fix; superseded by git-asserted policy/workflows/*.yaml. DELETED later, coupled to the SPO-interview replacement being sealed (with the models + auto-compile path)."
+      - method: GET
+        path: /bpmn/catalog
+        identity: none
+        gate: "410-retired"
+        exposes: gated-content
+        consumers: [none — Dagster reads the bpmn_catalog TABLE directly, not this HTTP route]
+        class: retired
+        justification: "RETIRED (ADR-0029 Slice 2, gateway.py returns 410). WAS an unauthenticated enumerate of ALL workflow definitions (audit HIGH, browser-facing) — CLOSED now. DELETED later with the Slice-2 cleanup."
+
+  domain_broker:
+    file: helm/invincible-agent/files/domain-broker.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /api/v1/internal/resolve
+        identity: none
+        gate: none
+        exposes: action
+        consumers: [central-gateway (external dag-tools)]
+        class: ungated_by_accident
+        justification: "FINDING (CRITICAL — credential exposure): returns raw physical DB credentials (Postgres/ClickHouse username+password, S3 keys) for a URN, to any caller who POSTs a known URN. No identity, no gate — the only protection is the /internal/ path name + network placement. A secret-minting surface protected by network isolation alone."
+
+  swarms_scraper:
+    file: agent_fleet/swarms_scraper/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /scrape
+        identity: none
+        gate: none
+        exposes: render
+        consumers: [agent_routers.py]
+        class: releasable_by_design
+        justification: "runs Swarms LLM extraction on the prompt; no data-plane tools, no gated fetch"
+
+  langgraph_support:
+    file: agent_fleet/langgraph_support/main.py
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: none
+        exposes: health
+        consumers: [k8s-probe]
+        class: releasable_by_design
+        justification: "liveness only"
+      - method: POST
+        path: /support
+        identity: "OPTIONAL-IGNORED — user_id is a checkpoint key, not authz"
+        gate: none
+        exposes: render
+        consumers: [agent_routers.py, dynamic_supervisor.py]
+        class: releasable_by_design
+        justification: "templated triage/respond placeholder; no data-plane access"
+
+  # core/authz.py is a GATE HELPER (require_topaz_auth dependency factory), not a FastAPI
+  # service — it defines NO routes (the @app.post in its docstring is a usage example). It
+  # is the reusable Topaz-check dependency the ungated routes above should adopt.
+  core_authz:
+    file: agent_fleet/core/authz.py
+    routes: []
