@@ -3308,54 +3308,37 @@ def _generate_boot_sequence(req: BpmnSaveRequest) -> str:
     )
 
 
-@app.post("/bpmn/save", response_model=BpmnSaveResponse)
-async def bpmn_save(req: BpmnSaveRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Upsert a BPMN workflow into bpmn_catalog.
-    Returns the Terminal Boot Sequence string for UI display.
-    """
-    # Check if workflow already exists
-    result = await db.execute(
-        select(BpmnCatalog).where(BpmnCatalog.workflow_id == req.workflow_id)
-    )
-    existing = result.scalar_one_or_none()
-
-    if existing:
-        existing.name = req.name
-        existing.bpmn_payload = req.bpmn_payload
-        existing.is_active = True
-    else:
-        row = BpmnCatalog(
-            workflow_id=req.workflow_id,
-            name=req.name,
-            bpmn_payload=req.bpmn_payload,
-        )
-        db.add(row)
-
-    await db.commit()
-
-    boot_seq = _generate_boot_sequence(req)
-    return BpmnSaveResponse(workflow_id=req.workflow_id, boot_sequence=boot_seq)
+# ── RETIRED (ADR-0029, Slice 2) ────────────────────────────────────────────
+# The BPMN interrogator's catalog write/read path is superseded by git-asserted
+# SPO WorkflowDefinition files (policy/workflows/*.yaml — authored via the SPO
+# interview, committed by a human; there is no endpoint write, Ruling C). These two
+# routes were ALSO unauthenticated (an anonymous workflow-definition write + an
+# anonymous enumerate — endpoint-gating audit HIGH findings on a public host), so they
+# are CLOSED NOW as a standalone security fix (a security fix and the refactor are
+# different commits on different clocks). They are DELETED later, coupled to the
+# Slice-2 replacement being sealed — together with BpmnSaveRequest/BpmnSaveResponse/
+# BpmnCatalogItem, _generate_boot_sequence, and the BpmnCatalog auto-compile path.
+# Kept PRESENT (not commented out) so they return a self-documenting 410 and remain a
+# declared `retired` row in the endpoint-gating manifest until that cleanup removes them.
+# NOTE: the unauthenticated workflow-APPROVE path (BPMNWorkflowRunner/approve) is a
+# SEPARATE finding on the KEPT runner — it is NOT addressed here and must not be
+# assumed-closed by this retirement.
+_BPMN_RETIRED_DETAIL = (
+    "This endpoint is retired (ADR-0029). BPMN workflow definitions are superseded by "
+    "git-asserted SPO WorkflowDefinition files (policy/workflows/*.yaml), authored via "
+    "the SPO interview and committed by a human. It was also unauthenticated; closed as a "
+    "security fix. Deletion is tracked in the Slice-2 cleanup."
+)
 
 
-@app.get("/bpmn/catalog", response_model=list[BpmnCatalogItem])
-async def bpmn_catalog(db: AsyncSession = Depends(get_db)):
-    """Return all active workflows from the bpmn_catalog table."""
-    result = await db.execute(
-        select(BpmnCatalog).where(BpmnCatalog.is_active == True)  # noqa: E712
-    )
-    rows = result.scalars().all()
-    return [
-        BpmnCatalogItem(
-            workflow_id=r.workflow_id,
-            name=r.name,
-            bpmn_payload=r.bpmn_payload,
-            is_active=r.is_active,
-            created_at=r.created_at.isoformat(),
-            updated_at=r.updated_at.isoformat(),
-        )
-        for r in rows
-    ]
+@app.post("/bpmn/save")
+async def bpmn_save_retired():
+    raise HTTPException(status_code=410, detail=_BPMN_RETIRED_DETAIL)
+
+
+@app.get("/bpmn/catalog")
+async def bpmn_catalog_retired():
+    raise HTTPException(status_code=410, detail=_BPMN_RETIRED_DETAIL)
 
 
 # ══════════════════════════════════════════════════════════
