@@ -1,5 +1,38 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.13 — 2026-07-15
+
+Patch bump whose FIRST job is honesty about packaging: two helm changes
+landed on master WITHOUT a version bump after the 0.3.12 package was
+cut, and the release workflow's `skip_existing: true` silently kept the
+stale package (its documented behavior — chart-releaser targeted
+`a8e12f1`). The PUBLISHED 0.3.12 therefore lacks both items below even
+though the repo's 0.3.12 tree has them. This release carries them; if
+you pulled 0.3.12 from the chart repo, upgrade to 0.3.13.
+
+### Add
+
+- **Capability grant sync in the seed CronJob (ADR-0029 sixth
+  namespace)** — `capability_grant_sync.py` runs as the sixth
+  readback-gated sync (`capability` `invoker` relations,
+  `can_invoke`); `capability_grants.yaml` is now the SIXTH REQUIRED
+  overlay data file (explicit-empty `capabilities: {}` is valid;
+  absence FATALs the compose — the same anti-spill posture as the
+  other five, since falling back to the image copy would leak the
+  sandbox's alice-grant into another cluster). Landed in the repo as
+  607dabb; first PACKAGED here.
+- **Seed images honor `global.imageRegistry`** — `topazSeed.image` and
+  `topazSeed.policySource.git.image` accept the chart's structured form
+  (`name/registry/repository/tag`, resolved via the
+  `invincible-agent.image` helper), so an airgapped/Artifactory cluster
+  needs only its existing `global.imageRegistry` override + a pinned
+  tag (and `git.image.registry` for the docker.io-sourced alpine/git,
+  which deliberately does NOT inherit the global registry — it isn't on
+  ghcr). Plain-string values (the 0.3.11 form) are honored verbatim.
+  The pod-level `imagePullSecrets` already covers both containers.
+  `alpine/git` added to `scripts/mirror-to-artifactory.ps1`'s external
+  inventory. Landed in the repo as d2f01b2; first PACKAGED here.
+
 ## 0.3.12 — 2026-07-15
 
 Patch bump. Persona de-hardcode **phase 2**: `catalog_domain_view.rego`
@@ -24,17 +57,6 @@ data with loud-refusal validation.
 
 ### Add
 
-- **Seed images honor `global.imageRegistry`** — `topazSeed.image` and
-  `topazSeed.policySource.git.image` accept the chart's structured form
-  (`name/registry/repository/tag`, resolved via the
-  `invincible-agent.image` helper), so an airgapped/Artifactory cluster
-  needs only its existing `global.imageRegistry` override + a pinned
-  tag (and `git.image.registry` for the docker.io-sourced alpine/git,
-  which deliberately does NOT inherit the global registry — it isn't on
-  ghcr). Plain-string values (the 0.3.11 form) are honored verbatim.
-  The pod-level `imagePullSecrets` already covers both containers.
-  `alpine/git` added to `scripts/mirror-to-artifactory.ps1`'s external
-  inventory.
 - **`tests/sandbox_e2e/_seal_walkable_domain_view.py`** — the
   discriminating live seal, runnable in BOTH worlds: `--expect-novel
   denied` pre-swap (proves the half-works bug: novel persona's grant +
