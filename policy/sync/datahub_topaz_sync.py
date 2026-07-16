@@ -234,23 +234,69 @@ def snapshot_assets(client) -> DesiredState:
     return live
 
 
+@dataclass
+class LenientApplyReport:
+    """What a per-item (lenient) apply could NOT write, and why.
+
+    WHY LENIENT — and why ONLY here. DataHub content is RESOURCE FACTS
+    (DataHub INFORMS; git ASSERTS): a URN topaz's directory cannot
+    represent (over-long id, rejected characters — real corporate
+    catalogs at 9k+ datasets hit these) is not a broken human assertion
+    to refuse, it's an upstream fact that can't be mirrored. The
+    all-or-crash apply turned ONE such URN into a dead seed Job — the
+    five git-asserted namespaces after this sync never reconciled. A
+    rejected item here is SKIPPED LOUDLY (named + topaz's reason, in
+    every tick's log), stays deny-by-default (no object → no grant is
+    expressible; a git-asserted reader grant on it fails grant_sync's
+    dangling check), and is retried next tick. The six git-asserted
+    syncs keep their strict refuse-whole semantics — leniency toward
+    upstream facts, never toward human assertions."""
+
+    rejected: list[tuple[str, str]] = field(default_factory=list)  # (item, reason)
+    rejected_dataset_urns: set[str] = field(default_factory=set)
+    rejected_owner_ids: set[str] = field(default_factory=set)
+
+    @property
+    def count(self) -> int:
+        return len(self.rejected)
+
+
+def _apply_lenient(fn, item, report: LenientApplyReport, *, urn: str = "", owner: str = "") -> None:
+    """Run one write; an HTTP-status rejection is collected (item named,
+    topaz's reason kept), anything else (network death, timeout) still
+    raises — a dead directory mid-apply is not a per-item condition."""
+    import httpx
+    try:
+        fn(item)
+    except httpx.HTTPStatusError as e:
+        reason = (e.response.text or str(e)).strip()[:200]
+        report.rejected.append((str(item), reason))
+        if urn:
+            report.rejected_dataset_urns.add(urn)
+        if owner:
+            report.rejected_owner_ids.add(owner)
+
+
 def sync_assets(client, assets: list[AssetRecord], *, prune: bool = True):
     """Seed Topaz's directory from DataHub assets. Ensures owner `user`
     objects exist (idempotent, NEVER pruned), then diffs+applies the
-    managed `dataset` objects + `owner` relations via the ADR-0026 sync's
-    plan_diff/apply_plan (one apply engine, two authority sources).
+    managed `dataset` objects + `owner` relations — PER ITEM, collecting
+    topaz rejections instead of crashing the seed (see
+    LenientApplyReport for why leniency is correct for resource facts
+    and only for them).
 
-    Returns the applied Plan. With `prune=False`, additions only (no
-    deletes) — a safe first-run / dry-adjacent mode."""
-    from topaz_sync import plan_diff, apply_plan
+    Returns (applied Plan, LenientApplyReport). With `prune=False`,
+    additions only (no deletes) — a safe first-run / dry-adjacent mode."""
+    from topaz_sync import plan_diff
 
     desired = derive_asset_desired(assets)
+    report = LenientApplyReport()
 
     # 1. Ensure owner users exist (the owner relation's subject). NEVER
     #    pruned here — split from the managed diff below.
     owner_users = {o for o in desired.objects if o.type == "user"}
-    for u in owner_users:
-        client.set_object(u)
+    for u in sorted(owner_users, key=str):
+        _apply_lenient(client.set_object, u, report, owner=u.id)
 
     # 2. Managed diff over dataset objects + owner relations only (users
     #    excluded from BOTH sides, so no user is ever added-then-deleted or
@@ -264,11 +310,25 @@ def sync_assets(client, assets: list[AssetRecord], *, prune: bool = True):
     if not prune:
         plan.del_objects = []
         plan.del_relations = []
-    apply_plan(client, plan, {})
-    return plan
+
+    # Same order as apply_plan (deletes first, then adds), per item.
+    for rel in plan.del_relations:
+        _apply_lenient(client.delete_relation, rel, report, urn=rel.object_id)
+    for obj in plan.del_objects:
+        _apply_lenient(client.delete_object, obj, report, urn=obj.id)
+    for obj in plan.add_objects:
+        _apply_lenient(client.set_object, obj, report, urn=obj.id)
+    for rel in plan.add_relations:
+        _apply_lenient(client.set_relation, rel, report, urn=rel.object_id)
+    return plan, report
 
 
-def readback_assets(client, assets: list[AssetRecord]) -> tuple[int, int]:
+def readback_assets(
+    client,
+    assets: list[AssetRecord],
+    skip_urns: set[str] | None = None,
+    skip_owners: set[str] | None = None,
+) -> tuple[int, int]:
     """Positive control for the enforcement seed — every seeded owner must
     resolve `can_read` TRUE on its dataset. Returns (checked, failures); a
     missing relation FAILS LOUD (`[[verification-must-fail]]`). Uses the
@@ -278,10 +338,21 @@ def readback_assets(client, assets: list[AssetRecord]) -> tuple[int, int]:
     INDEPENDENT check — that a REAL user's REAL token resolves — is the
     real-token / browser probe, `[[verification-reference-independence]]`;
     both matter, this catches an inert apply, that catches a mis-keyed
-    identity.)"""
+    identity.)
+
+    skip_urns / skip_owners: items the lenient apply REPORTED as
+    rejected — their absence is known-and-named, so checking them would
+    turn every already-reported skip into a spurious readback failure.
+    Everything NOT skipped is still verified."""
+    skip_urns = skip_urns or set()
+    skip_owners = skip_owners or set()
     checked = failures = 0
     for a in assets:
+        if a.urn in skip_urns:
+            continue
         for owner in a.owners:
+            if owner in skip_owners:
+                continue
             checked += 1
             if not client.check("dataset", a.urn, "can_read", owner):
                 print(f"  [FAIL] {owner} can_read {a.urn}")
@@ -303,17 +374,36 @@ def main() -> int:
         print("no assets — refusing to sync (a fetch failure must not prune).")
         return 1
     with TopazClient(topaz_url) as client:
-        plan = sync_assets(client, assets)
+        plan, report = sync_assets(client, assets)
         print(
             f"synced: +{len(plan.add_objects)} objects, "
             f"+{len(plan.add_relations)} owner relations, "
-            f"-{len(plan.del_objects)} objects, -{len(plan.del_relations)} relations"
+            f"-{len(plan.del_objects)} objects, -{len(plan.del_relations)} relations, "
+            f"{report.count} rejected"
         )
+        if report.rejected:
+            print("===== REJECTED BY TOPAZ (resource facts the directory cannot represent) =====")
+            for item, reason in report.rejected:
+                print(f"  [SKIP] {item}")
+                print(f"         topaz said: {reason}")
+            print(
+                f"  {report.count} item(s) skipped — loud but non-fatal: DataHub INFORMS\n"
+                f"  (resource facts), it does not assert. A skipped dataset stays\n"
+                f"  deny-by-default (no object => no grant is expressible, and a\n"
+                f"  git-asserted reader grant on it fails grant_sync's dangling check\n"
+                f"  loudly). Skipped items retry and re-report on every tick."
+            )
         # Positive control — the relations we wrote must actually grant
         # can_read. A dead readback (like the ADR-0026 one was) is worse
         # than none when you're seeding an authorization directory.
+        # Rejected items are excluded: their absence is known-and-named
+        # above, not a silent apply failure.
         print("===== Readback (positive control) =====")
-        checked, failures = readback_assets(client, assets)
+        checked, failures = readback_assets(
+            client, assets,
+            skip_urns=report.rejected_dataset_urns,
+            skip_owners=report.rejected_owner_ids,
+        )
         print(f"  checked={checked}  failures={failures}")
         if failures > 0:
             print(

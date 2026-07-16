@@ -306,6 +306,23 @@ class TopazClient:
 
     # -- objects ----------------------------------------------------------
 
+    @staticmethod
+    def _raise_with_context(r: httpx.Response, what: str) -> None:
+        """raise_for_status, but the error NAMES the offending item and
+        carries topaz's response body. Without this, a per-object 400 in
+        a bulk apply surfaces as a bare 'Client error 400 Bad Request'
+        with the rejected item lost — a diagnostic dead-end at scale
+        (the work seed's 9k-dataset asset sync was exactly that)."""
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise httpx.HTTPStatusError(
+                f"{e.response.status_code} while writing {what} — "
+                f"topaz said: {r.text.strip()[:300]}",
+                request=e.request,
+                response=e.response,
+            ) from None
+
     def set_object(self, obj: DirObject, display_name: str = "") -> None:
         payload = {
             "object": {
@@ -316,7 +333,7 @@ class TopazClient:
         if display_name:
             payload["object"]["display_name"] = display_name
         r = self._client.post("/api/v3/directory/object", json=payload)
-        r.raise_for_status()
+        self._raise_with_context(r, f"object {obj}")
 
     def delete_object(self, obj: DirObject, with_relations: bool = True) -> None:
         params: dict[str, str] = {}
@@ -328,7 +345,7 @@ class TopazClient:
         )
         if r.status_code == 404:
             return  # already gone
-        r.raise_for_status()
+        self._raise_with_context(r, f"delete of object {obj}")
 
     def list_objects(self, obj_type: str) -> list[DirObject]:
         # Uses pagination; walk until no page_token returned.
@@ -362,7 +379,7 @@ class TopazClient:
             }
         }
         r = self._client.post("/api/v3/directory/relation", json=payload)
-        r.raise_for_status()
+        self._raise_with_context(r, f"relation {rel}")
 
     def delete_relation(self, rel: DirRelation) -> None:
         params = {
@@ -376,7 +393,7 @@ class TopazClient:
         r = self._client.delete("/api/v3/directory/relation", params=params)
         if r.status_code == 404:
             return
-        r.raise_for_status()
+        self._raise_with_context(r, f"delete of relation {rel}")
 
     def list_relations(
         self,
