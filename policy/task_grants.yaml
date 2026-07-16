@@ -22,10 +22,17 @@
 # compartmented content) so the queue itself cannot leak.
 
 # An AUDIENCE groups tasks whose approval authority is the same, and names who may
-# act. `grant_to` are entitlement keys (emails, matching seeded `user` objects) or
-# groups (group#member, reusing groups.yaml). Every audience REQUIRES an
-# accountable `granted_by` + `reason` (prove-the-negative on the grant path — the
-# sync REFUSES an unexplained entry, same as asset_grants / ontology_compartments).
+# act. `grant_to` are entitlement keys (emails/employee-ids, matching seeded `user`
+# objects) — USERS ONLY. Group names are NOT resolved here (the sync writes user
+# subjects unconditionally; a group name would seed a phantom `user:<group>` that
+# passes readback while routing the approval task to NOBODY — the sharpest silent-
+# wrong-grant, since a workflow then suspends awaiting an approver who cannot exist).
+# `validate_policy` REFUSES a grant_to not in users.yaml. Group-based audiences are a
+# DEFERRED design decision (they split "who may act" across git + drifting group
+# membership — a real weakening of the git-blame audit story that needs its own
+# ruling; plus `actor: user | group#member` in the manifest + sync support). Every
+# audience REQUIRES an accountable `granted_by` + `reason` (prove-the-negative on the
+# grant path — the sync REFUSES an unexplained entry, same as the other grant files).
 #
 # Audience KEY convention: "<task_kind>:<compartment>" — e.g. a promotion approval
 # in the DATA_ENGINEERING domain is audience "promotion:DATA_ENGINEERING". A

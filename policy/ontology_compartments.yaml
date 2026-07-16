@@ -28,9 +28,15 @@
 default_visibility: releasable
 
 # A compartment groups classes whose EXISTENCE is sensitive together, and names
-# who may see them. `grant_to` are entitlement keys (emails, matching seeded
-# `user` objects) for the demo; a real deployment may grant a group (group#member)
-# to reuse groups.yaml. `classes` are the exact OntologyClass IRIs assigned to the
+# who may see them. `grant_to` are entitlement keys (emails/employee-ids, matching
+# seeded `user` objects) — USERS ONLY. Group names are NOT resolved here (the sync
+# writes user subjects unconditionally; a group name would seed a phantom
+# `user:<group>` that passes readback while granting visibility to nobody).
+# `validate_policy` REFUSES a grant_to not in users.yaml. Group-based compartments
+# are a DEFERRED design decision (they split "who may see" across git + drifting
+# group membership — needs its own audit-semantics ruling + `viewer: user |
+# group#member` in the manifest + sync support). `classes` are the exact
+# OntologyClass IRIs assigned to the
 # compartment. Every compartment REQUIRES an accountable `granted_by` + `reason`
 # (prove-the-negative on the grant path — the sync REFUSES an unexplained entry).
 compartments:

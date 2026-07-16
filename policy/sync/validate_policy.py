@@ -89,30 +89,32 @@ def _read_yaml(path: Path, errors: list[str]) -> dict:
     return data
 
 
-def unknown_user_grants(caps, known_users: set[str]) -> list[str]:
+def unknown_user_subjects(file_label: str, pairs, known_users: set[str]) -> list[str]:
     """AUTHOR-BUG GATE (validators catch author bugs; readbacks catch sync bugs —
-    neither substitutes for the other). ``capability_grant_sync`` writes ``user``
-    subjects UNCONDITIONALLY, so a ``grant_to`` that isn't a KNOWN user would seed a
-    phantom ``user:<name>`` object — a grant that PASSES readback (the relation
-    exists) while granting nothing to any real principal (silent-wrong-grant, the
-    grant-side of broken-closed). This refuses it LOUD at validation, the same
-    posture as the overlay-enum guards. Group grants are NOT supported (would need
-    ``invoker: user | group#member`` in the manifest + sync support first).
+    neither substitutes for the other). EVERY grant sync (asset/task/ontology/
+    capability) writes ``user`` subjects UNCONDITIONALLY, so a grantee that isn't a
+    KNOWN user seeds a phantom ``user:<name>`` object — a grant that PASSES readback
+    (the relation exists) while granting nothing to any real principal (silent-wrong-
+    grant, the grant-side of broken-closed). This refuses it LOUD at validation, the
+    same posture as the overlay-enum guards. Group grants are a DEFERRED design
+    decision (they split "who has access" across git + group membership, which drifts
+    without a grant-file change — a real weakening of the git-blame audit story that
+    needs its own ruling; plus ``user | group#member`` in the manifest + sync support).
+    Until then, USERS ONLY family-wide.
 
-    PURE — no filesystem. Returns one ``capability_grants.yaml: ...`` error per
-    grant_to entry that is not in ``known_users`` (empty when all resolve)."""
+    PURE — no filesystem. ``pairs`` = ``[(context, grantee), ...]``. Returns one
+    ``<file_label>: ...`` error per grantee not in ``known_users`` (empty when all
+    resolve)."""
     out: list[str] = []
-    for c in caps:
-        for grantee in c.grant_to:
-            if grantee not in known_users:
-                out.append(
-                    f"capability_grants.yaml: grant_to {grantee!r} for capability "
-                    f"{c.key!r} is NOT a known user (not in users.yaml) — group "
-                    f"grants are not supported (the sync writes `user` subjects; a "
-                    f"group name seeds a phantom user:{grantee} that passes readback "
-                    f"while granting nothing to the group's members). Add the user "
-                    f"to users.yaml or fix the entry."
-                )
+    for context, grantee in pairs:
+        if grantee not in known_users:
+            out.append(
+                f"{file_label}: grant subject {grantee!r} (for {context!r}) is NOT a "
+                f"known user (not in users.yaml) — group grants are not supported (the "
+                f"sync writes `user` subjects; a group name seeds a phantom "
+                f"user:{grantee} that passes readback while granting nothing to the "
+                f"group's members). Add the user to users.yaml or fix the entry."
+            )
     return out
 
 
@@ -183,14 +185,30 @@ def validate(
 
     caps, cap_errors = load_capabilities(caps_raw)
     errors.extend(f"capability_grants.yaml: {e}" for e in cap_errors)
+    print(f"  capability_grants.yaml: {len(caps)} capability(ies)")
+
+    # AUTHOR-BUG GATE, family-wide. ALL FOUR grant syncs write `user` subjects
+    # UNCONDITIONALLY, so a grantee that isn't a known user seeds a phantom
+    # `user:<name>` that PASSES readback while granting nothing (silent-wrong-grant).
+    # On task_grants this is the sharpest: an approval task routed to NOBODY while the
+    # file says it's covered — a workflow suspends awaiting an approver who cannot
+    # exist. Refuse it LOUD here. Group grants are a DEFERRED design decision (needs a
+    # membership-drift audit ruling + manifest `user | group#member` + sync support);
+    # until then, USERS ONLY across the family.
     known_users = {
         str(u.get("id", "")).strip()
         for u in users_raw.get("users", []) if isinstance(u, dict)
     }
     known_users.discard("")
     if known_users:  # skip if users.yaml didn't parse (that's already an error above)
-        errors.extend(unknown_user_grants(caps, known_users))
-    print(f"  capability_grants.yaml: {len(caps)} capability(ies)")
+        errors.extend(unknown_user_subjects("asset_grants.yaml",
+            [(g.asset, g.subject) for g in grants], known_users))
+        errors.extend(unknown_user_subjects("task_grants.yaml",
+            [(a.key, gt) for a in audiences for gt in a.grant_to], known_users))
+        errors.extend(unknown_user_subjects("ontology_compartments.yaml",
+            [(comp.name, gt) for comp in comps for gt in comp.grant_to], known_users))
+        errors.extend(unknown_user_subjects("capability_grants.yaml",
+            [(c.key, gt) for c in caps for gt in c.grant_to], known_users))
 
     return errors
 
