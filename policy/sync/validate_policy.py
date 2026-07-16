@@ -89,6 +89,33 @@ def _read_yaml(path: Path, errors: list[str]) -> dict:
     return data
 
 
+def unknown_user_grants(caps, known_users: set[str]) -> list[str]:
+    """AUTHOR-BUG GATE (validators catch author bugs; readbacks catch sync bugs —
+    neither substitutes for the other). ``capability_grant_sync`` writes ``user``
+    subjects UNCONDITIONALLY, so a ``grant_to`` that isn't a KNOWN user would seed a
+    phantom ``user:<name>`` object — a grant that PASSES readback (the relation
+    exists) while granting nothing to any real principal (silent-wrong-grant, the
+    grant-side of broken-closed). This refuses it LOUD at validation, the same
+    posture as the overlay-enum guards. Group grants are NOT supported (would need
+    ``invoker: user | group#member`` in the manifest + sync support first).
+
+    PURE — no filesystem. Returns one ``capability_grants.yaml: ...`` error per
+    grant_to entry that is not in ``known_users`` (empty when all resolve)."""
+    out: list[str] = []
+    for c in caps:
+        for grantee in c.grant_to:
+            if grantee not in known_users:
+                out.append(
+                    f"capability_grants.yaml: grant_to {grantee!r} for capability "
+                    f"{c.key!r} is NOT a known user (not in users.yaml) — group "
+                    f"grants are not supported (the sync writes `user` subjects; a "
+                    f"group name seeds a phantom user:{grantee} that passes readback "
+                    f"while granting nothing to the group's members). Add the user "
+                    f"to users.yaml or fix the entry."
+                )
+    return out
+
+
 def validate(
     policy_dir: Path,
     enums_dir: Path,
@@ -156,6 +183,13 @@ def validate(
 
     caps, cap_errors = load_capabilities(caps_raw)
     errors.extend(f"capability_grants.yaml: {e}" for e in cap_errors)
+    known_users = {
+        str(u.get("id", "")).strip()
+        for u in users_raw.get("users", []) if isinstance(u, dict)
+    }
+    known_users.discard("")
+    if known_users:  # skip if users.yaml didn't parse (that's already an error above)
+        errors.extend(unknown_user_grants(caps, known_users))
     print(f"  capability_grants.yaml: {len(caps)} capability(ies)")
 
     return errors
