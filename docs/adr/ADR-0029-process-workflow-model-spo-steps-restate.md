@@ -222,6 +222,41 @@ ISSUES A GRANT that authorizes the step" (the [[ADR-0027]] grant-issuance model)
 "the step impersonates the approver"**; it is a privilege-escalation-by-design surface
 needing its own ruling AND its own seal.
 
+**Pre-flight permission check — advisory fail-fast, sibling to the dispatch gate (RULED).**
+Dispatch-time enforcement (the stage-2 verifier at each step) is the SOLE AUTHORITATIVE
+gate. But a workflow whose steps are **statically declared** can be checked at *start*:
+if a declared step is already outside the initiator's eligible set, the workflow is
+predestined to fail, and it must **fail at start — before executing any step or routing
+any human-await task.** The harm this prevents is concrete: routing a HumanTask for an
+approval on a workflow that was always going to fail a later step consumes an authorized
+approver's attention on a doomed request — and at classification, *creating* that task is
+itself an existence-oracle emission (it reveals the workflow/subject exists) for a request
+that auto-fails anyway. This is [[ADR-0027]]'s **auto-checks-before-human-routing
+precedence** (auto-checked necessary-conditions are denied BEFORE any human-approval task
+is created) applied to workflow *execution*.
+
+Three properties keep this safe in a single-decider architecture, and must not drift:
+
+- **It never grants and never substitutes.** The pre-check asks the SAME decider (Topaz,
+  via the same stage-2 verifier) the SAME question, merely earlier. It is structurally
+  incapable of becoming a second decider or a bypass; its only power is to fail early. A
+  pre-check result is **never cached or carried as authorization** — dispatch re-asks,
+  authoritatively, at execution.
+- **When wrong, it is wrong in the SAFE direction.** A pre-check can only fail a workflow
+  at start that would have failed at step 4 anyway (over-caution — an availability cost,
+  never an over-grant); it can never let through what dispatch would deny. That asymmetry
+  is *why* an advisory check is admissible at all under a single decider.
+- **It covers statically-declared steps only.** A step whose subject/verb is fixed in the
+  definition is pre-checkable; a step whose subject comes from a prior step's output (if the
+  model ever grows dynamic subjects) is NOT, and falls through to the dispatch gate alone —
+  correct, because dispatch is authoritative. **Pre-flight-passed does NOT mean the whole
+  workflow is cleared** — only that no statically-declared step is already ineligible.
+
+Implementation (where the pre-check runs, how it batches the verifier calls) is a
+Slice-2-or-later design detail; this ruling fixes the *decision* — advisory, same-decider,
+safe-direction, static-scope — so it cannot later be quietly turned into a caching
+authorization layer.
+
 ### 6. The conversation→Dagster-job compile feature — retired
 
 The `ProcessInterviewer` → BPMN → auto-compile → `BpmnCatalog` → Dagster-cold-start
