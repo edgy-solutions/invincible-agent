@@ -24,6 +24,17 @@ data with loud-refusal validation.
 
 ### Add
 
+- **Seed images honor `global.imageRegistry`** — `topazSeed.image` and
+  `topazSeed.policySource.git.image` accept the chart's structured form
+  (`name/registry/repository/tag`, resolved via the
+  `invincible-agent.image` helper), so an airgapped/Artifactory cluster
+  needs only its existing `global.imageRegistry` override + a pinned
+  tag (and `git.image.registry` for the docker.io-sourced alpine/git,
+  which deliberately does NOT inherit the global registry — it isn't on
+  ghcr). Plain-string values (the 0.3.11 form) are honored verbatim.
+  The pod-level `imagePullSecrets` already covers both containers.
+  `alpine/git` added to `scripts/mirror-to-artifactory.ps1`'s external
+  inventory.
 - **`tests/sandbox_e2e/_seal_walkable_domain_view.py`** — the
   discriminating live seal, runnable in BOTH worlds: `--expect-novel
   denied` pre-swap (proves the half-works bug: novel persona's grant +

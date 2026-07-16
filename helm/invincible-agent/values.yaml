@@ -1093,7 +1093,18 @@ keycloak:
 topazSeed:
   enabled: false
   schedule: "0 * * * *"            # hourly keep-current when enabled
-  image: "ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest"
+  # Seed runner = the cortex-bff image (carries policy/sync + the
+  # canonical enums + the Topaz manifest, all version-locked). Structured
+  # form resolves via the invincible-agent.image helper, so it HONORS
+  # global.imageRegistry/global.imagePrefix (airgapped/Artifactory
+  # clusters need only the global override + a pinned tag). A plain
+  # string (legacy 0.3.11 form) is honored verbatim and BYPASSES the
+  # global registry.
+  image:
+    name: cortex-bff
+    registry: ""                   # non-empty wins over global.imageRegistry
+    repository: ""                 # non-empty replaces imagePrefix/name path
+    tag: "latest"                  # PIN at work (>= chart-0.3.12 build)
   imagePullPolicy: Always
   topazDirectoryUrl: "http://topaz-svc:9393"
   datahubGmsUrl: "http://datahub-datahub-gms:8080/api/graphql"
@@ -1137,7 +1148,16 @@ topazSeed:
       ref: "main"                   # branch/tag the cluster tracks
       path: "policy"                # subdirectory holding the five data files
       authSecretName: ""            # optional Secret w/ keys `username`+`password` (PAT); omit for anonymous clone
-      image: "alpine/git:v2.45.2"   # clone-only helper image
+      # Clone-only helper image. Structured form goes through the image
+      # helper; registry defaults to docker.io explicitly (alpine/git is
+      # not on ghcr, so it must NOT inherit global.imageRegistry unless
+      # you point it at a mirror — airgapped: set registry to your
+      # Artifactory repo-base; the mirror script carries alpine/git).
+      # Keep tag in lockstep with scripts/mirror-to-artifactory.ps1.
+      image:
+        registry: "docker.io"
+        repository: "alpine/git"
+        tag: "v2.45.2"
 
 topaz:
   enabled: true

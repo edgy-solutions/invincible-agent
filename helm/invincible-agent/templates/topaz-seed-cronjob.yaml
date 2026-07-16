@@ -69,6 +69,19 @@ the flag flips and the enforcement points migrate.
 {{- if and (eq $mode "git") (not $src.git.repoUrl) }}
 {{- fail "topazSeed.policySource.git.repoUrl is required when type=git" }}
 {{- end }}
+{{- /* Image resolution — both seed images honor global.imageRegistry via
+the invincible-agent.image helper when given in structured form (map with
+name/registry/repository/tag). A plain STRING is honored verbatim (legacy
+0.3.11 form) — it bypasses the global registry, so airgapped overlays
+should prefer the map form. */}}
+{{- $seedImg := .Values.topazSeed.image }}
+{{- if not (kindIs "string" $seedImg) }}
+{{- $seedImg = include "invincible-agent.image" (dict "name" ($seedImg.name | default "cortex-bff") "registry" $seedImg.registry "repository" $seedImg.repository "tag" ($seedImg.tag | default "latest") "root" .) }}
+{{- end }}
+{{- $gitImg := $src.git.image }}
+{{- if not (kindIs "string" $gitImg) }}
+{{- $gitImg = include "invincible-agent.image" (dict "registry" ($gitImg.registry | default "docker.io") "repository" ($gitImg.repository | default "alpine/git") "tag" ($gitImg.tag | default "v2.45.2") "root" .) }}
+{{- end }}
 {{- $overlayEnums := $src.overlayEnums | default (list) }}
 {{- range $overlayEnums }}
 {{- if not (has . (list "personas.yaml" "domains.yaml")) }}
@@ -115,7 +128,7 @@ spec:
             # is username/password (PAT) via GIT_ASKPASS so credentials
             # never appear in process args or on-disk config.
             - name: fetch-policy
-              image: {{ $src.git.image | quote }}
+              image: {{ $gitImg | quote }}
               env:
                 - name: GIT_REPO_URL
                   value: {{ $src.git.repoUrl | quote }}
@@ -150,7 +163,7 @@ spec:
           {{- end }}
           containers:
             - name: topaz-seed
-              image: {{ .Values.topazSeed.image | quote }}
+              image: {{ $seedImg | quote }}
               imagePullPolicy: {{ .Values.topazSeed.imagePullPolicy }}
               env:
                 - name: TOPAZ_DIRECTORY_URL
