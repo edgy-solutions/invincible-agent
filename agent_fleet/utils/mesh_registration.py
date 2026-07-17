@@ -53,6 +53,23 @@ logger = logging.getLogger("mesh_registration")
 #: it's skipping and returns.
 _TRUTHY = {"true", "1", "yes", "on"}
 
+def _gms_server_base(url: str) -> str:
+    """Normalize DATAHUB_GMS_URL for the REST emitter.
+
+    The env var is OVERLOADED across consumers: the GraphQL readers
+    (datahub_wrapper, policy/sync/datahub_topaz_sync) use it VERBATIM as
+    the GraphQL endpoint (``…/api/graphql``), while DatahubRestEmitter
+    wants the bare GMS server base and appends its own paths
+    (``/aspects``). Feeding the graphql-shaped value to the emitter
+    404s at ``/api/graphql/aspects`` — seen live at work-deploy, where
+    the shared agentFleet.env value is (correctly, for the readers) the
+    graphql form, and where MESH_REGISTRAR_URL wasn't set so this
+    direct-emit fallback actually ran (sandbox always took the
+    registrar path, which is why the collision stayed invisible).
+    Normalizing here lets ONE env value serve both consumers."""
+    return url.rstrip("/").removesuffix("/api/graphql").rstrip("/")
+
+
 #: Engines that go through this helper are tagged with this kind on the
 #: registration aspect, distinguishing them from SDK-tools at the consume
 #: side. Currently informational only; doc-tools doesn't branch on it.
@@ -369,7 +386,7 @@ def register_engine_to_mesh(
     )
 
     try:
-        emitter = DatahubRestEmitter(gms_server=gms_url, token=token)
+        emitter = DatahubRestEmitter(gms_server=_gms_server_base(gms_url), token=token)
         mcp = MetadataChangeProposalWrapper(entityUrn=urn, aspect=props)
         emitter.emit(mcp)
         logger.info(
@@ -540,7 +557,7 @@ def register_presentation_to_mesh(
     )
 
     try:
-        emitter = DatahubRestEmitter(gms_server=gms_url, token=token)
+        emitter = DatahubRestEmitter(gms_server=_gms_server_base(gms_url), token=token)
         mcp = MetadataChangeProposalWrapper(entityUrn=urn, aspect=props)
         emitter.emit(mcp)
         logger.info(
