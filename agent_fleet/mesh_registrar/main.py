@@ -47,7 +47,23 @@ NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://iagent-neo4j:7687")
 NEO4J_USERNAME = os.environ.get("NEO4J_USERNAME", "neo4j")
 NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD", "changeme-neo4j-sandbox")
 
-DATAHUB_GMS_URL = os.environ.get("DATAHUB_GMS_URL", "http://datahub-datahub-gms:8080")
+# Normalize the (overloaded) DATAHUB_GMS_URL for the REST emitter — the
+# SAME shape collision fixed in the engines' direct-emit fallback: the
+# shared agentFleet.env value is the GraphQL form (…/api/graphql, which
+# the GraphQL readers need verbatim) while DatahubRestEmitter wants the
+# bare GMS base and appends /aspects. Unnormalized, every governance
+# emit 404'd at /api/graphql/aspects — fail-soft (saga already
+# succeeded, routing unaffected) but the DataHub record never landed.
+# One definition of the normalizer, imported with the same in-image/
+# repo-root duality as utils.embed in v2_substrate.
+try:
+    from utils.mesh_registration import _gms_server_base
+except ImportError:
+    from agent_fleet.utils.mesh_registration import _gms_server_base
+
+DATAHUB_GMS_URL = _gms_server_base(
+    os.environ.get("DATAHUB_GMS_URL", "http://datahub-datahub-gms:8080")
+)
 DATAHUB_TOKEN = os.environ.get("DATAHUB_TOKEN", "")
 
 REGISTRAR_VERSION = "0.1.0"
