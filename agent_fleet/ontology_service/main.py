@@ -422,10 +422,15 @@ async def _get_active_ontology_classes(domain: str = "MAINTENANCE") -> str:
     for row in rows:
         uri = row.get("cls")
         label = row.get("label")
-        definition = row.get("definition") or "No definition available."
+        # Absent definitions render as NOTHING, not a filler sentence —
+        # 'No definition available.' repeated across hundreds of classes
+        # is pure token noise in the BAML prompt and teaches the model
+        # to pattern-match the filler instead of the names.
+        definition_text = row.get("definition")
+        definition = f": {definition_text}" if definition_text else ""
         example_text = row.get("example")
         example = f" Examples: {example_text}" if example_text else ""
-        lines.append(f"{uri} — {label}: {definition}{example}")
+        lines.append(f"{uri} — {label}{definition}{example}")
     return "\n".join(lines)
 
 
@@ -1401,7 +1406,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             candidates.append({
                 "uri": row.get("cls"),
                 "label": row.get("label"),
-                "description": row.get("definition") or "No definition provided."
+                "description": row.get("definition") or ""
             })
 
     # ── Step 1.55: ONTOLOGY-IRI VISIBILITY GATE (ADR-0025, select-from-
@@ -1964,7 +1969,7 @@ async def classify_legacy_table(request: LegacyTableDossier) -> TableClassificat
             candidates.append({
                 "uri": row.get("cls"),
                 "label": row.get("label"),
-                "description": row.get("definition") or "No definition provided."
+                "description": row.get("definition") or ""
             })
             
     # 1.6. Ultimate Fallback
