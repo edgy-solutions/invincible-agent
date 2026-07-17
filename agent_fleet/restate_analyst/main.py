@@ -172,7 +172,18 @@ _REASONING_RECURSIVE_LINEAGE = (
     "node whose upstream list is empty (for source-of-truth questions) "
     "or downstream list is empty (for ultimate-consumer questions). "
     "Then report the full path. If the asset has 3 layers of upstream, "
-    "you make 3 follow-up search_datahub calls — not 0, not 1.\n\n"
+    "you make 3 follow-up search_datahub calls — not 0, not 1.\n"
+    "PLATFORM-NAMED QUESTIONS ARE TRAVERSAL QUESTIONS. When the user "
+    "names a specific platform, database, or warehouse ('which <platform> "
+    "tables does X use'), the immediate upstream datasets are usually NOT "
+    "the answer — a BI tool's own virtual datasets sit between a "
+    "dashboard and the physical tables. Every result line carries "
+    "`platform=` (and lineage entries render as TYPE(platform):name): "
+    "keep walking upstream until the platform matches the one the user "
+    "named, or the upstream list is empty. Report ONLY datasets whose "
+    "platform= the tool actually showed as matching — if the walk ends "
+    "without reaching that platform, say so; never label a dataset with "
+    "a platform the tool did not return.\n\n"
 )
 
 _REASONING_CROSS_FEATURE = (

@@ -1266,6 +1266,24 @@ async def query_metadata(request: MetadataQueryRequest):
                 out.append(urn[len("urn:li:tag:"):])
         return out
 
+    def _platform_from_urn(urn: str) -> str:
+        """Best-effort platform label from an entity URN — datasets embed
+        `urn:li:dataPlatform:<p>`; chart/dashboard URNs open with `(<p>,`.
+        Returns '' when unparseable. WHY THE PLATFORM MUST BE VISIBLE:
+        without it, a BI-tool's virtual dataset and the physical
+        warehouse table behind it render identically (`DATASET:<name>`),
+        so the agent can neither tell an intermediate hop from a
+        terminal one nor honestly answer "which <platform> tables…"
+        questions — observed live: an agent reported a dashboard's
+        immediate (BI-layer) datasets AS the warehouse tables the user
+        asked about, asserting a platform the tool never returned."""
+        import re
+        m = re.search(r"urn:li:dataPlatform:([^,)]+)", urn)
+        if m:
+            return m.group(1)
+        m = re.match(r"urn:li:(?:chart|dashboard):\(([^,)]+),", urn)
+        return m.group(1) if m else ""
+
     def _lineage_names(entity_dict: Dict[str, Any], key: str) -> List[str]:
         rels = ((entity_dict.get(key) or {}).get("relationships")) or []
         out: List[str] = []
@@ -1274,8 +1292,9 @@ async def query_metadata(request: MetadataQueryRequest):
             etype = ent.get("type", "")
             props = ent.get("properties") or ent.get("info") or {}
             name = props.get("name") or ent.get("urn", "")
+            plat = _platform_from_urn(ent.get("urn", ""))
             if name:
-                out.append(f"{etype}:{name}")
+                out.append(f"{etype}({plat}):{name}" if plat else f"{etype}:{name}")
         return out
 
     def _last_updated(entity_dict: Dict[str, Any]) -> Optional[str]:
@@ -1315,6 +1334,9 @@ async def query_metadata(request: MetadataQueryRequest):
         last_updated = _last_updated(entity)
 
         line = f"[{entity_type}] {name}"
+        plat = _platform_from_urn(urn)
+        if plat:
+            line += f" | platform={plat}"
         if owners:
             line += f" | owner={','.join(owners)}"
         if last_updated:
