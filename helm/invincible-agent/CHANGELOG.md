@@ -1,5 +1,33 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.16 — 2026-07-17
+
+Patch bump. Neo4j wiring becomes single-truth: set `neo4j.auth.password`
+once and both the server and the fleet use it.
+
+### Fix
+
+- **Fleet NEO4J_PASSWORD derives from `neo4j.auth.password`** (or
+  `externalNeo4j.password`) via the previously-DEAD `neo4jPassword`
+  helper. Before: engines read `agentFleet.secrets.NEO4J_PASSWORD`,
+  whose chart default was the literal placeholder `"xxxxx"` — a second
+  truth that silently diverged from what the server booted with; the
+  operator set `neo4j.auth.password` and the fleet kept sending
+  `xxxxx`. An explicit `agentFleet.secrets.NEO4J_PASSWORD` still wins
+  (split-topology escape hatch). NOTE: neo4j only applies `NEO4J_AUTH`
+  on FIRST boot with an empty data dir — changing the password on an
+  initialized PVC needs `ALTER USER` in cypher-shell or a PVC reset.
+- **Duplicate `NEO4J_URI` key eliminated** — the shared ConfigMap
+  carried it twice (helper-derived + a stale `agentFleet.env` default
+  `"bolt://neo4j"`), and YAML last-wins pointed FRESH deploys at a
+  hostname that doesn't exist; sandbox survived only because its
+  overlay overrode the stale default. The stale env defaults are
+  removed; the helper-derived entries now carry `hasKey` guards so an
+  explicit `agentFleet.env` override never produces duplicates.
+- **`NEO4J_USER` alias derived too** — most of the fleet reads
+  `NEO4J_USERNAME`, `ontology_service` prefers `NEO4J_USER`; both now
+  come from the same helper.
+
 ## 0.3.15 — 2026-07-17
 
 Patch bump. `meshRegistrar.enabled` now wires the fleet, not just the

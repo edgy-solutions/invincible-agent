@@ -256,8 +256,13 @@ agentFleet:
     MESH_REGISTER_ON_STARTUP: "true"
     
     # 🔗 Storage Layer (Neo4j & Weaviate)
-    NEO4J_URI: "bolt://neo4j"
-    NEO4J_USER: "neo4j"
+    # NEO4J_URI / NEO4J_USER / NEO4J_USERNAME are DERIVED from neo4j.*
+    # (or externalNeo4j.*) by the shared ConfigMap since chart 0.3.16 —
+    # do not set them here unless the fleet talks to a DIFFERENT neo4j
+    # than the chart knows about (an explicit value here wins and
+    # suppresses the derived one). The old defaults ("bolt://neo4j")
+    # duplicated the derived keys and pointed fresh deploys at a
+    # hostname that doesn't exist.
     WEAVIATE_DOC_COLLECTION: "DocumentChunk"
 
     # 🔗 Global Timeouts
@@ -267,7 +272,12 @@ agentFleet:
     SUPERSET_URL: "http://superset:8088"
     
   secrets:
-    NEO4J_PASSWORD: "xxxxx"
+    # NEO4J_PASSWORD is DERIVED from neo4j.auth.password (or
+    # externalNeo4j.password) since chart 0.3.16 — set neo4j.auth.password
+    # ONCE and both the server and the fleet use it. Setting it here
+    # overrides the derivation (split-topology only). The old default was
+    # the literal placeholder "xxxxx", a second truth that silently
+    # diverged from the server's password.
     SUPERSET_ACCESS_TOKEN: ""
     # openaiApiKey: ""
     # hfToken: ""

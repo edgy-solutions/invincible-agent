@@ -141,14 +141,12 @@ agentFleet:
     # template-rendered values.
     KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
     JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/query"
-    # Same race: values.yaml's agentFleet.env defaults NEO4J_URI to bare
-    # `bolt://neo4j` which doesn't exist in the cluster (actual service is
-    # iagent-neo4j). The configmap template's correct rendering (line 23)
-    # gets clobbered by the agentFleet.env loop (line 54-58). Engine E was
-    # silently swallowing the DNS failure and the smolagent then concluded
-    # "knowledge graph was not accessible" — the exact symptom of run
-    # 850f43fa where TEST-1234 wasn't found despite being planted in Neo4j.
-    NEO4J_URI: "bolt://iagent-neo4j:7687"
+    # NEO4J_URI override RETIRED (chart 0.3.16): the configmap derives it
+    # from neo4j.*/externalNeo4j.* with hasKey guards, and the stale
+    # values.yaml default (`bolt://neo4j`, the duplicate-key race that
+    # made Engine E conclude "knowledge graph was not accessible" in run
+    # 850f43fa) is deleted. Set agentFleet.env.NEO4J_URI only to point
+    # the fleet at a DIFFERENT neo4j than the chart knows about.
 
     # Default Ollama model for BAML's `client Ollama`. Switch via configmap +
     # rolling restart (no rebuild). The 128k-context variant is the standing
@@ -171,7 +169,8 @@ agentFleet:
     PREDICATE_ANTI_SYNONYM_ALPHA: "0.50"
 
   secrets:
-    NEO4J_PASSWORD: "changeme-neo4j-sandbox"  # CHANGE BEFORE DEPLOY — must match neo4j.auth.password
+    # NEO4J_PASSWORD override RETIRED (chart 0.3.16): derived from
+    # neo4j.auth.password — ONE place to change, no must-match coupling.
 
 # --------------------------------------------------------------------------
 # Resource trimming for sandbox — limit blast radius alongside goatyardarchive
@@ -344,6 +343,24 @@ keycloak:
   auth:
     adminUser: "admin"
     adminPassword: "changeme-keycloak-sandbox"  # CHANGE
+  ingress:
+    # Keycloak ingress added 2026-06-04. Template (templates/keycloak.yaml)
+    # adds KC_PROXY_HEADERS=xforwarded + KC_HTTP_ENABLED=true when
+    # ingress.enabled, so Keycloak trusts Traefik's X-Forwarded-Proto
+    # header and the issuer URL in .well-known/openid-configuration
+    # flips to https when Traefik terminates TLS on the ingress —
+    # which is exactly what cortex-ui's OIDC client expects.
+    enabled: true
+    className: traefik
+    hosts:
+      - host: keycloak.edgy-solutions.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - hosts:
+          - keycloak.edgy-solutions.com
+        secretName: edgy-wildcard-tls
 
 topaz:
   enabled: true
@@ -497,25 +514,11 @@ cortexBff:
           - bff.edgy-solutions.com
         secretName: edgy-wildcard-tls
 
-keycloak:
-  ingress:
-    # Keycloak ingress added 2026-06-04. Template (templates/keycloak.yaml)
-    # adds KC_PROXY_HEADERS=xforwarded + KC_HTTP_ENABLED=true when
-    # ingress.enabled, so Keycloak trusts Traefik's X-Forwarded-Proto
-    # header and the issuer URL in .well-known/openid-configuration
-    # flips to https when Traefik terminates TLS on the ingress —
-    # which is exactly what cortex-ui's OIDC client expects.
-    enabled: true
-    className: traefik
-    hosts:
-      - host: keycloak.edgy-solutions.com
-        paths:
-          - path: /
-            pathType: Prefix
-    tls:
-      - hosts:
-          - keycloak.edgy-solutions.com
-        secretName: edgy-wildcard-tls
+# (keycloak.ingress moved into the SINGLE keycloak block above — this file
+# carried TWO top-level `keycloak:` keys and helm's YAML parser silently
+# takes last-wins, so the first block's auth.adminPassword override was
+# being DISCARDED on every render: keycloak ran on the chart-default
+# admin password while this file looked like it had changed it.)
 
 # --------------------------------------------------------------------------
 # Electric (ADR-0023 / Hop 3 substrate). Browser clients subscribe

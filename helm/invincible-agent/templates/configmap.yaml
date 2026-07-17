@@ -34,8 +34,24 @@ data:
   # serves /api/v3/directory/*.
   TOPAZ_DIRECTORY_URL: {{ .Values.externalTopaz.url | quote }}
   {{- end }}
+  {{- /* Neo4j client wiring — SINGLE TRUTH via the helpers (which read
+  neo4j.auth.* or externalNeo4j.*). agentFleet.env may override any of
+  these for split topologies; the hasKey guards keep the rendered CM
+  free of DUPLICATE KEYS (previously NEO4J_URI appeared twice — helper
+  line + a stale agentFleet.env default "bolt://neo4j" — and last-wins
+  pointed a fresh deploy at a hostname that doesn't exist; sandbox
+  survived only because its overlay overrode the stale default to the
+  correct value). NEO4J_USER is a spelling alias: most of the fleet
+  reads NEO4J_USERNAME, ontology_service prefers NEO4J_USER. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "NEO4J_URI") }}
   NEO4J_URI: {{ include "invincible-agent.neo4jUri" . | quote }}
+  {{- end }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "NEO4J_USERNAME") }}
   NEO4J_USERNAME: {{ include "invincible-agent.neo4jUsername" . | quote }}
+  {{- end }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "NEO4J_USER") }}
+  NEO4J_USER: {{ include "invincible-agent.neo4jUsername" . | quote }}
+  {{- end }}
   WEAVIATE_HTTP_HOST: "{{ .Release.Name }}-weaviate:8080"
   WEAVIATE_GRPC_HOST: "{{ .Release.Name }}-weaviate-grpc:50051"
   JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/query"
