@@ -1,5 +1,25 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.15 — 2026-07-17
+
+Patch bump. `meshRegistrar.enabled` now wires the fleet, not just the
+deployment.
+
+### Fix
+
+- **Registrar auto-wiring** — enabling mesh-registrar previously only
+  DEPLOYED the gateway; engines choose the registration path per-pod
+  from `MESH_REGISTRAR_URL`, which no committed file set (sandbox
+  carried it only in hand-supplied release values, while its overlay
+  comment claimed configmap.yaml pinned it — committed≠deployed drift).
+  Seen live at work-deploy: `enabled: true`, container running, zero
+  traffic — every engine silently took the legacy direct-GMS fallback.
+  The shared ConfigMap now auto-sets
+  `MESH_REGISTRAR_URL=http://<release>-mesh-registrar:8090` when
+  `meshRegistrar.enabled`; an explicit `agentFleet.env` value always
+  wins. Engines read it via ConfigMap — rollout-restart the fleet after
+  flipping it on.
+
 ## 0.3.14 — 2026-07-15
 
 Patch bump. Internal-CA/self-signed git hosts for the policy overlay.

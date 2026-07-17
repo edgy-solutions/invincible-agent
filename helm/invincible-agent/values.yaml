@@ -630,10 +630,15 @@ userDeployments:
 
 # ==========================================================================
 # mesh-registrar — Contract D registration gateway.
-# Engines opt into this path by setting MESH_REGISTRAR_URL on themselves
-# (typically via agentFleet.env so all engines pick it up). Disabled by
-# default until the SDK in registering engines is updated to use the
-# gateway path (see iagent_mesh.core._emit_to_registrar).
+# Since chart 0.3.15, `enabled: true` ALSO wires the fleet to it: the
+# shared ConfigMap auto-sets MESH_REGISTRAR_URL=http://<release>-mesh-
+# registrar:8090 (an explicit agentFleet.env.MESH_REGISTRAR_URL always
+# wins). Previously enabling only DEPLOYED the gateway — engines choose
+# the path per-pod from that env var, so the gateway sat idle while
+# every engine took the legacy direct-GMS fallback (seen live at
+# work-deploy). NOTE: engines read this via the ConfigMap, and ConfigMap
+# changes don't restart pods — rollout-restart the engines after
+# flipping this on.
 # ==========================================================================
 
 meshRegistrar:

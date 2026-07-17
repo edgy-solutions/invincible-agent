@@ -76,6 +76,18 @@ data:
   {{ $k }}: {{ $v | quote }}
   {{- end }}
   {{- end }}
+  {{- /* Registrar auto-wiring — enabling the mesh-registrar DEPLOYMENT
+  must also point the fleet AT it, or the gateway runs idle while every
+  engine silently takes the legacy direct-GMS fallback (the two-truths
+  trap seen live at work-deploy: meshRegistrar.enabled=true, container
+  running, zero traffic — engines register per-pod based on THIS env
+  var, not on the deployment existing). An explicit agentFleet.env
+  value always wins; sandbox historically carried this key only in
+  hand-supplied release values, which is exactly the committed-vs-
+  deployed drift this default retires. */}}
+  {{- if and .Values.meshRegistrar.enabled (not (hasKey (.Values.agentFleet.env | default dict) "MESH_REGISTRAR_URL")) }}
+  MESH_REGISTRAR_URL: "http://{{ .Release.Name }}-mesh-registrar:8090"
+  {{- end }}
 {{- if .Values.postgresql.enabled }}
 ---
 # InitDB ConfigMap — runs sql/create_bpmn_catalog.sql on first boot
