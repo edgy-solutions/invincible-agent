@@ -85,8 +85,18 @@ query SearchDataHub($input: SearchAcrossEntitiesInput!) {
           info { name description }
           ownership { owners { owner { ... on CorpUser { username } } } }
           tags { tags { tag { urn } } }
-          upstream: relationships(input: {types: ["Consumes"], direction: OUTGOING, count: 25, start: 0}) {
-            relationships { entity { urn type ... on Dataset { properties { name } } } }
+          # BOTH edge kinds, deliberately: BI-tool connectors (Superset
+          # et al.) link dashboard→chart via Contains; Consumes covers
+          # direct dashboard→dataset edges. With Consumes alone a
+          # dashboard rendered lineage-less even though each contained
+          # chart knew its upstream datasets — the agent couldn't walk
+          # dashboard→charts→datasets and answered honest-but-empty
+          # (UNAVAILABLE_IN_CATALOG) to lineage questions.
+          upstream: relationships(input: {types: ["Consumes", "Contains"], direction: OUTGOING, count: 25, start: 0}) {
+            relationships { entity { urn type
+              ... on Dataset { properties { name } }
+              ... on Chart { info { name } }
+            } }
           }
         }
         ... on Chart {

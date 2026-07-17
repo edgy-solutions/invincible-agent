@@ -864,7 +864,15 @@ async def analyze(ctx: Context, request: dict) -> dict:
                     f"    summary_text: str = Field(description=\"A conversational summary. STRICT RULE: You must ONLY state facts returned by the DataHub tool. DO NOT guess business purposes.\")\n"
                     f"    structured_data: Optional[Dict[str, Any]] = Field(description=\"MUST be a raw JSON object. STRICT RULE: If a dashboard description is missing, UNAVAILABLE_IN_CATALOG, or empty, you MUST write 'No description available'. Do not infer or invent descriptions. DO NOT stringify this.\")\n"
                     f"    output_uri: str = Field(description=\"MUST be the literal string '{verb_block['output_uri']}'. This is the declared output shape of the verb you were routed to handle (ADR-0017). Downstream presentation routing depends on this exact value — echo it verbatim, do not modify, do not omit.\")\n\n"
-                    f"Pass this dictionary to the final_answer() tool."
+                    # The argument-vs-call distinction is load-bearing: without
+                    # it, models emit the dict AS the tool call (keys
+                    # status/summary_text/... where 'name' belongs), smolagents
+                    # rejects it, and a full LLM round-trip is wasted on the
+                    # retry — observed live at step 7 of an 8-step run.
+                    f"Pass this dictionary to the final_answer() tool as its single "
+                    f"argument: call final_answer(answer=<the dictionary>). The "
+                    f"dictionary is the ARGUMENT of final_answer — it is never "
+                    f"itself the tool call."
                 )
 
                 if user_id:
