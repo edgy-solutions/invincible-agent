@@ -11,7 +11,22 @@ been since v0.2, ADR-0006 §Addendum) and prefer that over direct edge
 creation.
 """
 import os
+import sys
 from neo4j import GraphDatabase
+
+# DESTRUCTIVE-RUN GUARD. This module executes at import/top-level (no main()),
+# is HIBERNATED (see docstring), and is NON-IDEMPOTENT: it uses
+# apoc.create.relationship, so every run DUPLICATES the two verb edges.
+# mesh-registrar's saga has owned these edges since v0.2 (ADR-0006 §Addendum)
+# — prefer that. Refuse to run unless the originating incident truly recurred
+# and the operator explicitly acknowledges.
+if os.environ.get("ALLOW_HIBERNATED_RECREATE") != "1":
+    sys.exit(
+        "REFUSING TO RUN: HIBERNATED + NON-IDEMPOTENT (apoc.create duplicates "
+        "edges on re-run). mesh-registrar's saga owns these edges now "
+        "(ADR-0006). If the originating incident recurred, set "
+        "ALLOW_HIBERNATED_RECREATE=1."
+    )
 
 # The known props of each verb (captured pre-migration).
 # input_uri and output_uri are now the FULL IRI forms.

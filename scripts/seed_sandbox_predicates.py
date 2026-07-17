@@ -342,7 +342,25 @@ def seed_weaviate():
         client.close()
 
 
+def _refuse_unless_acked():
+    """DESTRUCTIVE-RUN GUARD. ensure_predicate_collection() DROPS the whole
+    Weaviate `Predicate` collection (client.collections.delete, line ~272)
+    and reinserts 4 skeleton rows. Against ANY cluster with live
+    registrations that WIPES every runtime-registered verb (mesh-registrar's
+    saga rows) — the exact registrations a debugging session is trying to
+    rebuild. This is a DataHub-LESS SANDBOX-only seed, never for a cluster
+    with real DataHub/registrations (e.g. work). Refuse unless the operator
+    explicitly acknowledges."""
+    if os.environ.get("ALLOW_DESTRUCTIVE_SANDBOX_SEED") != "1":
+        sys.exit(
+            "REFUSING TO RUN: this DROPS the Weaviate 'Predicate' collection "
+            "and wipes all runtime-registered verbs. Sandbox-only. If you "
+            "truly mean it, set ALLOW_DESTRUCTIVE_SANDBOX_SEED=1."
+        )
+
+
 def main():
+    _refuse_unless_acked()
     print("== Sandbox predicate seed ==")
     print(f"  Neo4j: {NEO4J_URI}")
     print(f"  Weaviate: http {WEAVIATE_HTTP_HOST}:{WEAVIATE_HTTP_PORT}, "
