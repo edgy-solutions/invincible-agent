@@ -1,5 +1,27 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.17 — 2026-07-17
+
+Patch bump. mesh-registrar gets the release Secret.
+
+### Fix
+
+- **mesh-registrar `envFrom` the full `<release>-secrets`**, like every
+  engine pod. It previously received ONLY a lone `DATAHUB_TOKEN`
+  secretKeyRef, so: (a) Predicate-row EMBEDDINGS ran keyless —
+  `utils/embed.py` (`LLM_API_KEY`/`OPENAI_API_KEY`) fell back to
+  `"any"`, and against an auth-enforcing gateway the embed call failed,
+  which the registrar fail-softs by writing rows WITHOUT vectors:
+  registration looked green while semantic verb search silently
+  degraded; (b) Neo4j writes fell back to `main.py`'s hardcoded
+  sandbox-default password — auth failure on any deployment with a
+  real password (e.g. an external neo4j at work), now that 0.3.16
+  derives the fleet `NEO4J_PASSWORD` into the Secret. Embedding config
+  is the same fleet-wide trio everything else uses:
+  `secrets.openaiApiKey` (or `agentFleet.secrets.LLM_API_KEY`) +
+  `agentFleet.env.OPENAI_BASE_URL`/`LLM_BASE_URL` +
+  `agentFleet.env.LLM_EMBED_MODEL` (default `nomic-embed-text`).
+
 ## 0.3.16 — 2026-07-17
 
 Patch bump. Neo4j wiring becomes single-truth: set `neo4j.auth.password`

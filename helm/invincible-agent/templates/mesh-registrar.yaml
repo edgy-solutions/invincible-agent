@@ -33,13 +33,19 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-config
+            # The full release Secret, same as the engine pods — the
+            # registrar EMBEDS Predicate rows (utils/embed.py reads
+            # LLM_API_KEY/OPENAI_API_KEY) and WRITES Neo4j (needs the
+            # derived NEO4J_PASSWORD). Previously only a lone
+            # DATAHUB_TOKEN secretKeyRef reached this pod: embeddings
+            # ran keyless (rows written WITHOUT vectors — semantic verb
+            # search silently degraded) and Neo4j writes fell back to a
+            # hardcoded sandbox default password (auth failure on any
+            # deployment with a real password, e.g. work's external
+            # neo4j). DATAHUB_TOKEN now arrives via this secretRef too.
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
           env:
-            - name: DATAHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
-                  key: DATAHUB_TOKEN
-                  optional: true
             # Restate ingress URL — used by the v0.2 saga registration
             # workflow. Resolves to the chart-managed Restate service
             # when `restate.enabled=true`, or to `externalRestate.ingressUrl`
