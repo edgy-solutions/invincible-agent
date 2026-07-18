@@ -1,5 +1,31 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.19 — 2026-07-18
+
+Patch bump. Engines now advertise REACHABLE self-endpoints at any
+release name.
+
+### Fix
+
+- **Engine self-advertisement URLs are release-aware.** Each engine
+  bakes an endpoint into its own verb registration, read from
+  `ENGINE_A_PUBLIC_URL` / `DATAHUB_WRAPPER_SVC_URL` /
+  `ENGINE_E_PUBLIC_URL` / `ENGINE_E_RESOLVE_INSTANCE_URL` /
+  `ENGINE_E_RESOLVE_DMC_URL` / `ENGINE_W_PUBLIC_URL` /
+  `ENGINE_DA_PUBLIC_URL` — env vars the chart never set, so they fell
+  to hardcoded SANDBOX defaults (`http://iagent-engine-*`). At a
+  release NOT named `iagent` (e.g. work's `invincible-agent`) those
+  hosts don't resolve, so every registered verb / `mesh:resolveInstance`
+  provider endpoint pointed at a nonexistent host (`Name or service not
+  known`): routing resolved the subject and found the verb, then
+  couldn't call it. These are a DISTINCT var set from the `*_SVC_URL`
+  vars (how OTHER services reach each engine, already release-aware) —
+  the self-advertisement half was missing. Now published release-aware
+  in the shared ConfigMap. **Rollout-restart the engines after upgrade**
+  so they re-register with the corrected URLs (the sandbox-named
+  endpoints are baked into existing Neo4j edges / Weaviate rows until
+  re-registration overwrites them).
+
 ## 0.3.18 — 2026-07-17
 
 Patch bump. Wipe+reprime becomes self-healing: `primeSubstrate.wipe`

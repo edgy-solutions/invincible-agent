@@ -66,7 +66,31 @@ data:
   NEO4J_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineE.port }}"
   PRESENTATION_AGENT_SVC_URL: "http://{{ .Release.Name }}-engine-f{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineF.port }}"
   WEAVIATE_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}"
-  
+
+  # ------------------------------------------------------------------
+  # Engine SELF-ADVERTISEMENT URLs — the endpoint each engine bakes into
+  # its OWN verb registration ("here is where to reach me"). These are a
+  # DISTINCT set of env-var names from the *_SVC_URL / *_URL vars above
+  # (which are how OTHER services reach each engine): the engines read
+  # ENGINE_*_PUBLIC_URL / DATAHUB_WRAPPER_SVC_URL / ENGINE_E_RESOLVE_*_URL
+  # and, when UNSET, default to hardcoded SANDBOX names (http://iagent-
+  # engine-*). At a non-`iagent` release (e.g. work's `invincible-agent`)
+  # those defaults are UNRESOLVABLE, so every registered verb / resolve-
+  # instance provider endpoint points at a host that doesn't exist
+  # (`Name or service not known`) — routing resolves the subject and
+  # finds the verb, then can't call it. Set them release-aware here so a
+  # fresh deploy registers reachable endpoints. (After changing these,
+  # rollout-restart the engines so they RE-register with the new URLs —
+  # the old sandbox-named endpoints are baked into existing Neo4j edges /
+  # Weaviate rows until re-registration overwrites them.)
+  ENGINE_A_PUBLIC_URL: "http://{{ .Release.Name }}-engine-a{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineA.port }}/analyze"
+  DATAHUB_WRAPPER_SVC_URL: "http://{{ .Release.Name }}-engine-d{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineD.port }}"
+  ENGINE_E_PUBLIC_URL: "http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineE.port }}/query_graph"
+  ENGINE_E_RESOLVE_INSTANCE_URL: "http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineE.port }}/resolve_instance"
+  ENGINE_E_RESOLVE_DMC_URL: "http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineE.port }}/resolve_dmc"
+  ENGINE_W_PUBLIC_URL: "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}/query_knowledge"
+  ENGINE_DA_PUBLIC_URL: "http://{{ .Release.Name }}-data-analyst{{ include "invincible-agent.svcDomain" . }}:{{ .Values.dataAnalyst.port }}/analyze_data"
+
   # Dagster Discovery
   # DAGSTER_WEBSERVER_URL: consumed by cortex-bff and src/iagent/gateway.py
   # (DAGSTER_URL / DAGSTER_HOST is the equivalent for the prime job).
