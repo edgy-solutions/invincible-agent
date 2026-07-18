@@ -1,5 +1,22 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.20 — 2026-07-18
+
+Patch bump. The self-healing reregister hook now restarts the Data
+Analyst engine too.
+
+### Fix
+
+- **Data Analyst added to the reregister restart set.** The
+  `primeSubstrate.reregisterEngines.deployments` list restarted
+  `engine-a/d/e/w/f` but omitted `data-analyst`, which self-registers
+  `mesh:analyzeDataset` on startup. After a wipe+reprime the other
+  catalog verbs came back (their engines were in the list) but
+  `analyzeDataset` did not — the class graph showed 8 of 9 verbs on
+  `idp:Dataset`. Now restarted with the rest so re-registration is
+  complete. Verb edges are runtime state; only an engine restart
+  rebuilds them.
+
 ## 0.3.19 — 2026-07-18
 
 Patch bump. Engines now advertise REACHABLE self-endpoints at any

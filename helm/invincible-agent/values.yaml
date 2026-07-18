@@ -849,6 +849,11 @@ primeSubstrate:
       - engine-e
       - engine-w
       - engine-f
+      # Data Analyst self-registers mesh:analyzeDataset on startup — it was
+      # omitted here, so wipe+reprime left analyzeDataset unregistered while
+      # every other catalog verb came back (the graph showed 8 of 9 verbs on
+      # idp:Dataset). Renders as <release>-data-analyst.
+      - data-analyst
     # The Neo4j node whose presence signals "the ontology ingest populated
     # the class graph" — restart is deferred until it exists so the
     # re-registering engines don't Contract-D-reject against an empty graph.
