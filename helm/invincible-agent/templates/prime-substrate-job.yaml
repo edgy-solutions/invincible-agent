@@ -173,14 +173,27 @@ spec:
             - setup/prime_databases.py
           args:
             {{- if .Values.primeSubstrate.wipe }}
-            # ABSOLUTELY DESTRUCTIVE — drops every Neo4j node, every
-            # Weaviate collection, every Jena graph in the connected
-            # cluster. The script's --i-mean-it gate is honored; the
-            # --namespace=<release-ns> argument prevents a typo from
-            # wiping the wrong cluster.
+            # Default --wipe clears ONLY the reproducible routing substrate
+            # (Neo4j OntologyClass + its edges, every Weaviate collection,
+            # the Jena graphs, the MinIO TTLs) and PRESERVES answer-durability
+            # data (AnswerArtifact/Actor/Source/WatermarkSequence) + the
+            # Postgres projections — so a routine wipe+reprime can NOT strand
+            # the projector's watermark cursor or delete answer history. The
+            # script's --i-mean-it gate is honored; --namespace=<release-ns>
+            # prevents a typo from wiping the wrong cluster.
             - "--wipe"
             - "--i-mean-it"
             - "--namespace={{ .Release.Namespace }}"
+            {{- if .Values.primeSubstrate.nuclear }}
+            # NUCLEAR — the strongest wipe. ALSO deletes the answer-durability
+            # graph AND resets the Postgres projection stores
+            # (answer_artifact_projection / human_task_projection truncated,
+            # projector_cursor rewound to 0) together with the Neo4j source,
+            # so scorched-earth still leaves a consistent state, never a
+            # stranded cursor. Destroys answer history. Needs
+            # PROJECTOR_POSTGRES_DSN (wired in env below).
+            - "--nuclear"
+            {{- end }}
             {{- end }}
             {{- if .Values.primeSubstrate.triggerIngest }}
             # Fire the dagster ingest_ontology_job per partition once
@@ -274,6 +287,16 @@ spec:
                   name: {{ .Release.Name }}-config
                   key: NEO4J_USERNAME
                   optional: true
+            # PROJECTOR_POSTGRES_DSN: consumed ONLY by a --nuclear wipe, to
+            # reset the Electric-replicated projection tables + projector
+            # cursor together with the Neo4j source (otherwise a nuclear
+            # leaves the cursor stranded above the reset watermark sequence).
+            # Same DSN template the projector Deployment uses; the $(VAR) refs
+            # resolve from the BPMN_POSTGRES_* config + BPMN_POSTGRES_PASSWORD
+            # secret this Job already envFrom's. Harmless on a non-nuclear run
+            # — the script only reads it under --nuclear.
+            - name: PROJECTOR_POSTGRES_DSN
+              value: "postgresql://$(BPMN_POSTGRES_USER):$(BPMN_POSTGRES_PASSWORD)@$(BPMN_POSTGRES_HOST):$(BPMN_POSTGRES_PORT)/$(BPMN_POSTGRES_DB)"
             {{- if .Values.primeSubstrate.namespaceAllowlist }}
             # PRIME_NAMESPACE_ALLOWLIST: comma-separated cluster identifiers
             # the script will allow `--wipe --namespace=` against. Only

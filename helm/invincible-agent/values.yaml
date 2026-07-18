@@ -718,11 +718,23 @@ primeSubstrate:
   # When true, the Job invokes the script with
   # `--wipe --i-mean-it --namespace=<release-ns>`. Triple-guarded by the
   # script itself; one mis-set boolean cannot wipe the wrong cluster.
-  # ABSOLUTELY DESTRUCTIVE — drops every Neo4j node, every Weaviate
-  # collection, every Jena graph in the cluster the Job runs against.
-  # Use only when you want a fresh-start re-prime; flip back to false
-  # after the wipe has run.
+  # ROUTING-SUBSTRATE ONLY: clears Neo4j OntologyClass + edges, every
+  # Weaviate collection, the Jena graphs, and the MinIO TTLs (the ingest
+  # rebuilds them). PRESERVES answer-durability data
+  # (AnswerArtifact/Actor/Source/WatermarkSequence) and the Postgres
+  # projections, so a wipe+reprime can't strand the projector cursor or
+  # delete answer history. Use for a fresh routing re-prime; flip back to
+  # false after it runs. For scorched-earth, ALSO set nuclear=true below.
   wipe: false
+  # When true (AND wipe=true), escalates to a NUCLEAR wipe: additionally
+  # deletes the answer-durability graph AND resets the Postgres projection
+  # stores (answer_artifact_projection / human_task_projection truncated,
+  # projector_cursor rewound to 0) TOGETHER with the Neo4j source — a
+  # consistent scorched-earth that never leaves a stranded cursor. DESTROYS
+  # all answer history. Requires the projector Postgres to be reachable
+  # (the Job wires PROJECTOR_POSTGRES_DSN from the same BPMN_POSTGRES_*
+  # config/secret the projector uses). No effect when wipe=false.
+  nuclear: false
   # Allowlist of cluster identifiers the script will accept for `--wipe`.
   # The script defaults to "sandbox,work,local" when this is unset. When
   # your release runs in a namespace OUTSIDE that list (e.g. "d4-sandbox",

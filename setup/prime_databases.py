@@ -646,15 +646,41 @@ def trigger_ingest_jobs() -> None:
 # Step 4: Guarded wipe
 # ============================================================================
 
-def wipe_databases(*, namespace: str) -> None:
-    """DANGEROUS. Drops Neo4j + Weaviate + Jena contents in the given namespace.
+def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
+    """DANGEROUS. Resets the substrate for the given namespace.
 
-    The guard: must pass --i-mean-it AND --namespace=<name>. The namespace
-    must match the deployed cluster (or be 'sandbox' / 'work' / 'local').
-    This is the architect's "guarded --wipe" — no typo can nuke the wrong
-    cluster.
+    TWO TIERS — the default preserves user/durability data so a routine
+    wipe+reprime can NEVER break the environment; --nuclear blows it all
+    away CONSISTENTLY.
+
+      DEFAULT (routing-substrate). Clears only the reproducible ROUTING/
+      ontology substrate — Neo4j `OntologyClass` nodes (and the verb +
+      subClassOf edges that hang off them), every Weaviate collection,
+      the Jena dataset, the MinIO TTLs. The ingest rebuilds all of it.
+      PRESERVED, untouched: the answer-durability graph in Neo4j
+      (`AnswerArtifact` / `Actor` / `Source` / `WatermarkSequence`) AND
+      the derived Postgres projection stores (answer_artifact_projection,
+      human_task_projection, projector_cursor). This is what a wipe+reprime
+      SHOULD do. The blanket `MATCH (n) DETACH DELETE n` this replaced
+      deleted `WatermarkSequence`, resetting the monotonic answer-watermark
+      sequence to 1 while the projector's Postgres cursor stayed parked at
+      its old high value — so every new answer landed BELOW the cursor and
+      never projected to the UI (the stranded-cursor bug, work 2026-07-18).
+      A routing wipe has no business touching answer history or the
+      sequence, so it no longer does.
+
+      NUCLEAR (--nuclear). Everything the default clears, PLUS the
+      durability graph (blanket `DETACH DELETE`) AND a reset of the derived
+      Postgres stores (truncate the projections, rewind the cursor to 0).
+      The source and its projection reset TOGETHER, so a scorched-earth
+      wipe still leaves a consistent empty state — never a stranded cursor.
+
+    The guard (both tiers): --i-mean-it AND --namespace=<name> in the
+    allowlist. --nuclear additionally requires --wipe. No typo can nuke the
+    wrong cluster; no default wipe can silently eat answer history.
     """
-    print(f"=== DANGER: wiping databases for namespace={namespace} ===")
+    tier = "NUCLEAR" if nuclear else "routing-substrate"
+    print(f"=== DANGER: {tier} wipe for namespace={namespace} ===")
 
     # Neo4j
     uri = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
@@ -663,11 +689,37 @@ def wipe_databases(*, namespace: str) -> None:
     try:
         driver = GraphDatabase.driver(uri, auth=(user, password))
         with driver.session() as session:
-            session.run("MATCH (n) DETACH DELETE n")
+            if nuclear:
+                session.run("MATCH (n) DETACH DELETE n")
+                print("[OK] Neo4j cleared (NUCLEAR — includes answer history "
+                      "+ WatermarkSequence).")
+            else:
+                # Routing substrate only. `OntologyClass` is the sole routing
+                # node label — the registrar / ingest MERGE it, and the verb
+                # (r.iri) + subClassOf edges are relationships between
+                # OntologyClass nodes, so DETACH removes them with it. The
+                # answer-durability labels (AnswerArtifact / Actor / Source /
+                # WatermarkSequence) are deliberately SPARED: deleting
+                # WatermarkSequence resets the answer-watermark sequence and
+                # strands the projector's Postgres cursor (see docstring).
+                # If a NEW routing node label is ever introduced, add it here.
+                session.run("MATCH (n:OntologyClass) DETACH DELETE n")
+                print("[OK] Neo4j routing substrate cleared (OntologyClass + "
+                      "its edges); answer-durability nodes preserved.")
         driver.close()
-        print("[OK] Neo4j cleared.")
     except Exception as e:
         print(f"[ERROR] Neo4j wipe: {e}")
+
+    # NUCLEAR only: reset the derived Postgres projection stores in the same
+    # breath as the Neo4j source just blanket-cleared above, so the two
+    # never disagree. A nuclear that skipped this would delete
+    # WatermarkSequence (sequence → 1) yet leave the Postgres cursor parked
+    # high — recreating the exact stranded-cursor bug this whole change
+    # exists to kill. RAISES on failure (a partial nuclear must not read as
+    # clean). The default (routing) tier never runs this — it preserves the
+    # projections outright.
+    if nuclear:
+        _reset_projection_postgres()
 
     # Weaviate — connect via the SAME split HTTP/gRPC form the chart
     # publishes (WEAVIATE_HTTP_HOST + WEAVIATE_GRPC_HOST) that the fleet's
@@ -803,6 +855,75 @@ def wipe_databases(*, namespace: str) -> None:
         print(f"[ERROR] MinIO wipe: {e}")
 
 
+def _reset_projection_postgres() -> None:
+    """NUCLEAR only. Rewind the Electric-replicated projection stores so the
+    derived Postgres resets TOGETHER with the Neo4j source.
+
+    Truncates ``answer_artifact_projection`` + ``human_task_projection`` and
+    rewinds ``projector_cursor.last_applied_watermark`` to 0. Without this, a
+    nuclear Neo4j wipe (which deletes ``WatermarkSequence``, resetting the
+    answer-watermark sequence to 1) leaves the projector cursor parked at its
+    old high value; every new answer then lands below the cursor and never
+    projects to the UI (the stranded-cursor bug, work 2026-07-18).
+
+    RAISES on any failure — a nuclear wipe that silently skips the projection
+    reset would recreate exactly that stranding, so it must NOT report clean.
+    Tables that don't exist yet (fresh cluster, pre-migration) are skipped
+    individually; that is not a failure.
+    """
+    dsn = os.environ.get("PROJECTOR_POSTGRES_DSN")
+    if not dsn:
+        raise RuntimeError(
+            "--nuclear requested but PROJECTOR_POSTGRES_DSN is not set — "
+            "refusing to report a nuclear wipe as complete while the derived "
+            "projection store (answer_artifact_projection / projector_cursor) "
+            "is left stranded. Wire PROJECTOR_POSTGRES_DSN into the prime Job "
+            "(same DSN the projector Deployment uses)."
+        )
+    try:
+        import psycopg
+    except Exception as e:
+        raise RuntimeError(
+            f"--nuclear requested but psycopg isn't importable in this image "
+            f"({e}) — cannot reset the projection store. Refusing to report a "
+            f"partial nuclear wipe as clean."
+        )
+    try:
+        with psycopg.connect(dsn, connect_timeout=10) as conn:
+            with conn.cursor() as cur:
+                def _exists(table: str) -> bool:
+                    cur.execute(
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_name = %s",
+                        (table,),
+                    )
+                    return cur.fetchone() is not None
+
+                for tbl in ("answer_artifact_projection", "human_task_projection"):
+                    if _exists(tbl):
+                        cur.execute(f"TRUNCATE {tbl}")
+                        print(f"  [OK] {tbl} truncated.")
+                    else:
+                        print(f"  [skip] {tbl} not present (fresh cluster).")
+                if _exists("projector_cursor"):
+                    cur.execute(
+                        "UPDATE projector_cursor "
+                        "SET last_applied_watermark = 0, apply_count = 0"
+                    )
+                    print("  [OK] projector_cursor rewound to 0.")
+                else:
+                    print("  [skip] projector_cursor not present (fresh cluster).")
+            conn.commit()
+        print("[OK] Projection Postgres reset (NUCLEAR).")
+    except Exception as e:
+        raise RuntimeError(
+            f"NUCLEAR projection-store reset FAILED: {e}. Neo4j may already be "
+            f"cleared but the Postgres projections are NOT reset — the projector "
+            f"cursor would strand new answers. Fix PROJECTOR_POSTGRES_DSN "
+            f"connectivity and re-run; do not treat this as a clean nuclear wipe."
+        )
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -825,9 +946,25 @@ def main() -> None:
                         help="Trigger dagster ingest_ontology_job for each partition after upload. "
                              "Off by default — the dagster sensor will pick up uploaded files OR "
                              "you can fire jobs manually from the Dagster UI.")
+    parser.add_argument("--nuclear", action="store_true",
+                        help="Strongest form of --wipe. In addition to the routing "
+                             "substrate, DELETES answer-durability nodes "
+                             "(AnswerArtifact/Actor/Source/WatermarkSequence) AND resets "
+                             "the Postgres projection stores (answer_artifact_projection / "
+                             "human_task_projection truncated, projector_cursor rewound). "
+                             "Requires --wipe. WITHOUT --nuclear, --wipe preserves all of "
+                             "that so the projector is never stranded and answer history "
+                             "survives a routine reprime.")
     args = parser.parse_args()
 
     parse_env()
+
+    # --nuclear is a modifier ON --wipe, never a standalone. Reject it early
+    # so an operator can't think they nuked when they passed nothing.
+    if args.nuclear and not args.wipe:
+        print("ERROR: --nuclear requires --wipe (it is the strongest form of "
+              "--wipe). Refusing to proceed.")
+        sys.exit(2)
 
     # ----- Guarded wipe -----
     if args.wipe:
@@ -858,7 +995,10 @@ def main() -> None:
                 f"want baked in."
             )
             sys.exit(2)
-        wipe_databases(namespace=args.namespace)
+        if args.nuclear:
+            print("=== NUCLEAR: answer-durability nodes + Postgres projections "
+                  "WILL be destroyed, not just the routing substrate ===")
+        wipe_databases(namespace=args.namespace, nuclear=args.nuclear)
 
     # ----- Pre-flight -----
     print("=== Prime Pre-Flight ===")

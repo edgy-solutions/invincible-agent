@@ -1,5 +1,38 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.21 — 2026-07-18
+
+Minor bump. The substrate wipe no longer breaks answer delivery, and a
+consistent scorched-earth option is added.
+
+### Fix
+
+- **Default `--wipe` is routing-substrate only; preserves user data.**
+  The prime wipe was a blanket `MATCH (n) DETACH DELETE n` that deleted
+  the answer-durability graph including `WatermarkSequence` — resetting
+  the monotonic answer-watermark sequence to 1 while the projector's
+  Postgres cursor stayed parked at its old high value. Every new answer
+  then landed *below* the cursor and never projected to the UI: the run
+  completed, the progress card showed, but no answer appeared and it
+  vanished on refresh (observed at work 2026-07-18). The default wipe now
+  clears only `OntologyClass` (+ its verb/subClassOf edges), Weaviate
+  collections, Jena graphs, and MinIO TTLs — the reproducible routing
+  substrate — and **preserves** `AnswerArtifact`/`Actor`/`Source`/
+  `WatermarkSequence` plus the Postgres projections. A wipe+reprime can no
+  longer strand the projector or delete answer history.
+
+### Add
+
+- **`primeSubstrate.nuclear`** (default `false`). When set with `wipe`,
+  escalates to a full scorched-earth: blanket Neo4j `DETACH DELETE` AND a
+  reset of the derived Postgres stores (`answer_artifact_projection` /
+  `human_task_projection` truncated, `projector_cursor` rewound to 0) in
+  the same pass — source and projection reset *together*, so even a
+  nuclear wipe never leaves a stranded cursor. The Job wires
+  `PROJECTOR_POSTGRES_DSN` (same template the projector uses) so the reset
+  can reach Postgres; the script RAISES if it can't, refusing to report a
+  partial nuclear as clean.
+
 ## 0.3.20 — 2026-07-18
 
 Patch bump. The self-healing reregister hook now restarts the Data
