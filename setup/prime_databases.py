@@ -669,23 +669,66 @@ def wipe_databases(*, namespace: str) -> None:
     except Exception as e:
         print(f"[ERROR] Neo4j wipe: {e}")
 
-    # Weaviate
-    if weaviate is not None:
-        weaviate_url = os.environ.get("WEAVIATE_URL", "http://localhost:8080")
+    # Weaviate — connect via the SAME split HTTP/gRPC form the chart
+    # publishes (WEAVIATE_HTTP_HOST + WEAVIATE_GRPC_HOST) that the fleet's
+    # create_weaviate_client() uses.
+    #
+    # PRE-FIX BUG (2026-07-18): this read WEAVIATE_URL — which the chart
+    # NEVER sets, so it defaulted to http://localhost:8080 — and used
+    # connect_to_local (single host). Against a split/external Weaviate
+    # (work: weaviate.<ns>:80 HTTP + weaviate-grpc.<ns>:50051 gRPC) that
+    # connection failed, the failure was caught NON-FATALLY, and the wipe
+    # SKIPPED WEAVIATE ENTIRELY while Neo4j/Jena cleared. Result: stale
+    # OntologyClass phantoms + a mis-configured Predicate collection
+    # survived every "wipe", and the operator had no way to know (a quiet
+    # [ERROR] line that read like the other non-fatal warnings).
+    #
+    # A wipe that silently skips a store is worse than one that errors, so
+    # a failure here now RAISES: the operator explicitly passed
+    # --wipe --i-mean-it, and a store that didn't clear must NOT be
+    # mistaken for success.
+    if weaviate is None:
+        raise RuntimeError(
+            "--wipe requested but the `weaviate` client isn't importable in "
+            "this image — refusing to report a partial wipe as complete."
+        )
+
+    def _weaviate_host_port(env_val, default_port):
+        clean = env_val.replace("http://", "").replace("https://", "").replace("grpc://", "")
+        host, _, port = clean.partition(":")
         try:
-            # weaviate-client v4 form
-            host_port = urlparse(weaviate_url).netloc or "localhost:8080"
-            host, _, port = host_port.partition(":")
-            client = weaviate.connect_to_local(host=host, port=int(port or 8080))
-            try:
-                for col_name in client.collections.list_all():
-                    client.collections.delete(col_name)
-                    print(f"  [OK] Weaviate collection {col_name} dropped.")
-            finally:
-                client.close()
-            print("[OK] Weaviate cleared.")
-        except Exception as e:
-            print(f"[ERROR] Weaviate wipe: {e}")
+            return host, int(port) if port else default_port
+        except ValueError:
+            return host, default_port
+
+    http_h, http_p = _weaviate_host_port(
+        os.environ.get("WEAVIATE_HTTP_HOST", "weaviate:8080"), 8080)
+    grpc_h, grpc_p = _weaviate_host_port(
+        os.environ.get("WEAVIATE_GRPC_HOST", "weaviate-grpc:50051"), 50051)
+    try:
+        client = weaviate.connect_to_custom(
+            http_host=http_h, http_port=http_p, http_secure=False,
+            grpc_host=grpc_h, grpc_port=grpc_p, grpc_secure=False,
+        )
+        try:
+            cols = list(client.collections.list_all())
+            for col_name in cols:
+                client.collections.delete(col_name)
+                print(f"  [OK] Weaviate collection {col_name} dropped.")
+            print(f"[OK] Weaviate cleared ({len(cols)} collection(s)) "
+                  f"at {http_h}:{http_p} / grpc {grpc_h}:{grpc_p}.")
+        finally:
+            client.close()
+    except Exception as e:
+        # FATAL — see the block comment above. A skipped Weaviate wipe is
+        # exactly the failure that hid stale phantoms across many wipes.
+        raise RuntimeError(
+            f"Weaviate wipe FAILED at http {http_h}:{http_p} / grpc "
+            f"{grpc_h}:{grpc_p}: {e}. The wipe is INCOMPLETE — Neo4j/Jena "
+            f"may already be cleared but Weaviate is NOT. Fix connectivity "
+            f"(WEAVIATE_HTTP_HOST / WEAVIATE_GRPC_HOST) and re-run; do not "
+            f"treat this prime as a clean wipe."
+        ) from e
 
     # Jena
     raw_host = os.environ.get("JENA_URL", "http://localhost:3030")
