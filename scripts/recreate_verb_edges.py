@@ -14,19 +14,20 @@ import os
 import sys
 from neo4j import GraphDatabase
 
-# DESTRUCTIVE-RUN GUARD. This module executes at import/top-level (no main()),
-# is HIBERNATED (see docstring), and is NON-IDEMPOTENT: it uses
-# apoc.create.relationship, so every run DUPLICATES the two verb edges.
-# mesh-registrar's saga has owned these edges since v0.2 (ADR-0006 §Addendum)
-# — prefer that. Refuse to run unless the originating incident truly recurred
-# and the operator explicitly acknowledges.
-if os.environ.get("ALLOW_HIBERNATED_RECREATE") != "1":
-    sys.exit(
-        "REFUSING TO RUN: HIBERNATED + NON-IDEMPOTENT (apoc.create duplicates "
-        "edges on re-run). mesh-registrar's saga owns these edges now "
-        "(ADR-0006). If the originating incident recurred, set "
-        "ALLOW_HIBERNATED_RECREATE=1."
-    )
+# DESTRUCTIVE-RUN GUARD (bootstrap-state-debt law; docs/principles/bootstrap-state-debt.md).
+# NON-REPRODUCIBLE MANUAL ACTION — never a fix. Executes at import/top-level (no main()),
+# is HIBERNATED, and NON-IDEMPOTENT (apoc.create.relationship DUPLICATES the verb edges on
+# every run). mesh-registrar's saga has owned these edges since v0.2 (ADR-0006 §Addendum) —
+# that is the reproducible home. A WORK-shaped target is refused OUTRIGHT (no flag); a
+# sandbox run also needs the ack flag AND the reproducible fix to land the same session.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _bootstrap_guard import refuse_unless_throwaway  # noqa: E402
+refuse_unless_throwaway(
+    "Neo4j verb edges (apoc.create -> NON-IDEMPOTENT, DUPLICATES on re-run; HIBERNATED)",
+    ack_env="ALLOW_HIBERNATED_RECREATE",
+    reproducible_home="the mesh-registrar saga (ADR-0006 Addendum — sole writer of verb edges)",
+    targets=[os.environ.get("NEO4J_URI", "")],
+)
 
 # The known props of each verb (captured pre-migration).
 # input_uri and output_uri are now the FULL IRI forms.

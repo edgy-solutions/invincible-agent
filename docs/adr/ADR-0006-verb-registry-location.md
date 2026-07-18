@@ -90,6 +90,16 @@ When DataHub and Neo4j diverge:
   DataHub. The reconciliation asset (below) detects but does not
   auto-fix. Operators have to decide per drift whether to re-propose
   through DataHub or remove the Neo4j-only edge.
+  **This ADR's source-authority principle is generalized and made
+  enforceable by the [bootstrap-state-debt law](../principles/bootstrap-state-debt.md):
+  deployed state must be reproducible from `helm install` alone, and a direct
+  durable-store mutation from a `scripts/` file is never a fix — it is debt that
+  reverts on the next re-prime/cutover. The law enforces this in three places (the
+  fresh-namespace bootstrap test, refuse-to-run guards on durable-mutating scripts, and
+  honest docstrings), so "manual edit as drift" is caught by machinery, not just noted
+  here as a cost. Test fixtures MERGE-ing edges directly (a Win above) remain fine —
+  they are acknowledged throwaways, the law's stated exception; what the law forbids is a
+  hand-run script standing in for the reproducible pipeline on a DEPLOYED cluster.**
 - **doc-tools' propose pipeline is a single point of failure for
   *new registrations*.** If doc-tools is down, no new tools land. But
   existing routes keep working.

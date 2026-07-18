@@ -343,20 +343,22 @@ def seed_weaviate():
 
 
 def _refuse_unless_acked():
-    """DESTRUCTIVE-RUN GUARD. ensure_predicate_collection() DROPS the whole
-    Weaviate `Predicate` collection (client.collections.delete, line ~272)
-    and reinserts 4 skeleton rows. Against ANY cluster with live
-    registrations that WIPES every runtime-registered verb (mesh-registrar's
-    saga rows) — the exact registrations a debugging session is trying to
-    rebuild. This is a DataHub-LESS SANDBOX-only seed, never for a cluster
-    with real DataHub/registrations (e.g. work). Refuse unless the operator
-    explicitly acknowledges."""
-    if os.environ.get("ALLOW_DESTRUCTIVE_SANDBOX_SEED") != "1":
-        sys.exit(
-            "REFUSING TO RUN: this DROPS the Weaviate 'Predicate' collection "
-            "and wipes all runtime-registered verbs. Sandbox-only. If you "
-            "truly mean it, set ALLOW_DESTRUCTIVE_SANDBOX_SEED=1."
-        )
+    """DESTRUCTIVE-RUN GUARD (bootstrap-state-debt law; docs/principles/bootstrap-state-debt.md).
+    NON-REPRODUCIBLE MANUAL ACTION — never a fix. ensure_predicate_collection() DROPS the
+    whole Weaviate `Predicate` collection (client.collections.delete, line ~272) and
+    reinserts 4 skeleton rows. Against ANY cluster with live registrations that WIPES every
+    runtime-registered verb (mesh-registrar saga rows) — the exact registrations a debugging
+    session is trying to rebuild. Verbs are reproducibly sourced via mesh-registrar ->
+    DataHub -> doc-tools (ADR-0006); this is a DataHub-less sandbox stopgap. A WORK-shaped
+    target is refused OUTRIGHT (no flag overrides); a sandbox run also needs the ack flag."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _bootstrap_guard import refuse_unless_throwaway
+    refuse_unless_throwaway(
+        "Weaviate 'Predicate' collection (DROPPED + recreated -> wipes all runtime-registered verbs)",
+        ack_env="ALLOW_DESTRUCTIVE_SANDBOX_SEED",
+        reproducible_home="a gated sandbox seed Job; verbs come from mesh-registrar->DataHub->doc-tools (ADR-0006)",
+        targets=[globals().get("NEO4J_URI", ""), str(globals().get("WEAVIATE_HTTP_HOST", ""))],
+    )
 
 
 def main():
