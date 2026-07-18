@@ -1,0 +1,201 @@
+{{- /*
+Engine re-registration hook — the self-healing half of a wipe+reprime.
+
+WHY THIS EXISTS. A substrate wipe clears two kinds of state with two
+different owners: TTL state (OntologyClass nodes + subClassOf edges,
+owned by the ontology ingest) and RUNTIME state (engine verb edges,
+owned by engine self-registration). The reprime rebuilds the TTL half
+via ingest — but nothing re-triggers registration, and prime
+FIRE-AND-FORGETS the ingest (launchPipelineExecution returns immediately).
+So a wipe+reprime leaves a perfect class graph with ZERO verbs, and
+routing silently degrades to the generalist with no error. This closes
+that ordering trap.
+
+HOW. A post-hook Job (weight ABOVE prime's, so helm runs it only after
+the prime Job completes) that:
+  1. WAITS for the ingest sentinel node in Neo4j (idp:Dataset by default)
+     — because prime returns before the async ingest finishes, a naive
+     restart would race an empty graph and the re-registering engines
+     would Contract-D-reject.
+  2. Rolling-restarts each registering engine via the in-cluster K8s API
+     (PATCH the pod-template restartedAt annotation — exactly what
+     `kubectl rollout restart` does), so they re-register their verbs.
+
+Reuses the prime image (has neo4j + requests already); no new image to
+mirror. Minimal namespaced RBAC (patch deployments in this namespace).
+*/ -}}
+{{- if and .Values.primeSubstrate.enabled .Values.primeSubstrate.reregisterEngines.enabled }}
+{{- $rr := .Values.primeSubstrate.reregisterEngines }}
+# --- RBAC (normal resources: applied in the main sync, so they exist
+# before the post-hook Job runs) ------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-engine-reregister
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-engine-reregister
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+rules:
+  # Just enough to trigger a rolling restart: read the deployments and
+  # patch their pod template. No create/delete, no other resources.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-engine-reregister
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-engine-reregister
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-engine-reregister
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-engine-reregister
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "engine-reregister" "root" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # Weight ABOVE prime's so helm runs this only after the prime Job
+    # (weight = primeSubstrate.hook.weight) has completed.
+    "helm.sh/hook-weight": {{ add (int .Values.primeSubstrate.hook.weight) 10 | quote }}
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.labels" . | nindent 8 }}
+        {{- include "invincible-agent.selectorLabels" (dict "component" "engine-reregister" "root" .) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Never
+      serviceAccountName: {{ .Release.Name }}-engine-reregister
+      containers:
+        - name: engine-reregister
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.primeSubstrate.image.registry "repository" .Values.primeSubstrate.image.repository "tag" .Values.primeSubstrate.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.primeSubstrate.image.pullPolicy }}
+          workingDir: /app
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            - name: POD_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: REREGISTER_DEPLOYMENTS
+              value: "{{ range $i, $c := $rr.deployments }}{{ if $i }},{{ end }}{{ $.Release.Name }}-{{ $c }}{{ end }}"
+            - name: SENTINEL_URI
+              value: {{ $rr.sentinelUri | quote }}
+            - name: SENTINEL_TIMEOUT
+              value: {{ $rr.sentinelTimeout | quote }}
+            - name: NEO4J_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Release.Name }}-config
+                  key: NEO4J_USERNAME
+                  optional: true
+          command:
+            - /app/.venv/bin/python
+            - -c
+            - |
+              import os, sys, json, time, datetime
+              import requests
+              from neo4j import GraphDatabase
+
+              ns = os.environ["POD_NAMESPACE"]
+              deploys = [d for d in os.environ["REREGISTER_DEPLOYMENTS"].split(",") if d]
+              sentinel = os.environ["SENTINEL_URI"]
+              timeout = int(os.environ.get("SENTINEL_TIMEOUT", "420"))
+
+              # 1) Wait for the ingest sentinel — prime fire-and-forgets the
+              #    async ingest, so the class graph may still be filling.
+              uri = os.environ["NEO4J_URI"]
+              user = os.environ.get("NEO4J_USERNAME") or os.environ.get("NEO4J_USER") or "neo4j"
+              pw = os.environ.get("NEO4J_PASSWORD", "")
+              drv = GraphDatabase.driver(uri, auth=(user, pw))
+              deadline = time.time() + timeout
+              ready = False
+              while time.time() < deadline:
+                  try:
+                      with drv.session() as s:
+                          n = s.run(
+                              "MATCH (c:OntologyClass {uri:$u}) RETURN count(c) AS n",
+                              u=sentinel,
+                          ).single()["n"]
+                      if n > 0:
+                          ready = True
+                          print(f"[ready] sentinel present: {sentinel}", flush=True)
+                          break
+                      print("[wait] ingest sentinel not present yet...", flush=True)
+                  except Exception as e:
+                      print(f"[wait] neo4j not ready: {type(e).__name__}", flush=True)
+                  time.sleep(10)
+              drv.close()
+              if not ready:
+                  print(
+                      "[WARN] sentinel timeout — restarting anyway; the "
+                      "DataHub->sensor registration path self-heals via "
+                      "retries once the classes land.",
+                      flush=True,
+                  )
+
+              # 2) Rolling-restart each registering engine via the K8s API
+              #    (same mechanism as `kubectl rollout restart`).
+              api = "https://kubernetes.default.svc"
+              tok = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+              ca = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              patch = {"spec": {"template": {"metadata": {"annotations": {
+                  "kubectl.kubernetes.io/restartedAt": now}}}}}
+              rc = 0
+              for d in deploys:
+                  r = requests.patch(
+                      f"{api}/apis/apps/v1/namespaces/{ns}/deployments/{d}",
+                      headers={"Authorization": f"Bearer {tok}",
+                               "Content-Type": "application/strategic-merge-patch+json"},
+                      data=json.dumps(patch), verify=ca, timeout=30,
+                  )
+                  if r.status_code < 300:
+                      print(f"[restart] {d}: OK", flush=True)
+                  elif r.status_code == 404:
+                      # A disabled engine is not an error — just skip it.
+                      print(f"[skip] {d}: not found (engine disabled?)", flush=True)
+                  else:
+                      print(f"[FAIL] {d}: HTTP {r.status_code} {r.text[:200]}", flush=True)
+                      rc = 1
+              print("[OK] engine re-registration triggered", flush=True)
+              sys.exit(rc)
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+{{- end }}

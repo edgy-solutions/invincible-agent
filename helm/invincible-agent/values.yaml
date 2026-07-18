@@ -819,6 +819,44 @@ primeSubstrate:
   hook:
     weight: "10"
     deletePolicy: "before-hook-creation"
+  # ------------------------------------------------------------------
+  # Self-healing engine re-registration after a wipe+reprime.
+  #
+  # A substrate wipe clears BOTH the TTL-owned state (OntologyClass nodes
+  # + subClassOf edges) AND the runtime-owned state (engine verb edges).
+  # The reprime's ingest rebuilds the TTL half — but verb edges are
+  # RUNTIME state that only re-forms when the engines restart and
+  # re-register, and prime FIRE-AND-FORGETS the ingest (it launches the
+  # dagster runs and returns). So a wipe+reprime WITHOUT this leaves a
+  # perfect class graph with ZERO verbs → routing silently degrades to
+  # the generalist (the exact symptom, no error).
+  #
+  # This companion post-hook (weight above prime's, so it runs after
+  # prime completes) WAITS for the ingest sentinel node in Neo4j, THEN
+  # rolling-restarts the registering engines via the in-cluster K8s API
+  # (same as `kubectl rollout restart`). No new image (reuses the prime
+  # image, which has neo4j + requests); minimal namespaced RBAC.
+  reregisterEngines:
+    # Default ON with prime so wipe+reprime is self-healing. No-op if the
+    # engine deployments don't exist; harmless on a non-wipe triggerIngest.
+    enabled: true
+    # The engine deployments that self-register verbs on startup. Engine O
+    # is the registry CONSUMER and is deliberately excluded. Names render
+    # as <release>-<entry>. Trim to your enabled engine set.
+    deployments:
+      - engine-a
+      - engine-d
+      - engine-e
+      - engine-w
+      - engine-f
+    # The Neo4j node whose presence signals "the ontology ingest populated
+    # the class graph" — restart is deferred until it exists so the
+    # re-registering engines don't Contract-D-reject against an empty graph.
+    sentinelUri: "http://invincible-agent/idp#Dataset"
+    # Max seconds to wait for the sentinel before restarting anyway. A
+    # timeout is best-effort, not failure: the DataHub→doc-tools sensor
+    # registration path self-heals via retries once the classes land.
+    sentinelTimeout: 420
 
 # ==========================================================================
 # Frontend Services

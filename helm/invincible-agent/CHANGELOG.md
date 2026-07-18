@@ -1,5 +1,31 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.18 — 2026-07-17
+
+Patch bump. Wipe+reprime becomes self-healing: `primeSubstrate.wipe`
+clears both TTL-owned state (OntologyClass nodes + subClassOf edges) and
+runtime-owned state (engine verb edges), but only the ingest rebuilt the
+former — the verb edges stayed gone until someone manually restarted the
+engines, and a class graph with zero verbs routes silently to the
+generalist with no error.
+
+### Add
+
+- **`primeSubstrate.reregisterEngines`** (default `enabled: true`) — a
+  companion post-hook (weight = `primeSubstrate.hook.weight` + 10, so it
+  runs after prime completes) that WAITS for the ingest sentinel node in
+  Neo4j (`idp:Dataset` by default — prime fire-and-forgets the async
+  ingest, so a naive restart would race an empty graph and the
+  re-registering engines would Contract-D-reject), then rolling-restarts
+  the registering engine deployments (A/D/E/W/F; Engine O excluded as the
+  registry consumer) via the in-cluster K8s API — the same mechanism as
+  `kubectl rollout restart`. Reuses the prime image (has `neo4j` +
+  `requests`), so no new image to mirror; ships minimal namespaced RBAC
+  (patch deployments in the release namespace only). Sentinel timeout is
+  best-effort, not fatal — the DataHub→doc-tools sensor path self-heals
+  registration via retries once the classes land. Set `enabled: false`
+  to opt out.
+
 ## 0.3.17 — 2026-07-17
 
 Patch bump. mesh-registrar gets the release Secret.
