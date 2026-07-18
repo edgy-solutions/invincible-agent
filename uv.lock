@@ -1055,6 +1055,7 @@ dependencies = [
     { name = "requests" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "weaviate-client" },
 ]
 
 [package.optional-dependencies]
@@ -1133,6 +1134,7 @@ requires-dist = [
     { name = "swarms", marker = "extra == 'agent-fleet'" },
     { name = "uvicorn", marker = "extra == 'agent-fleet'" },
     { name = "uvicorn", extras = ["standard"] },
+    { name = "weaviate-client", specifier = ">=4.5.4,<5.0" },
     { name = "weaviate-client", marker = "extra == 'agent-fleet'", specifier = ">=4.5.4" },
 ]
 provides-extras = ["agent-fleet"]

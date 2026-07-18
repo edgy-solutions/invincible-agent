@@ -25,6 +25,16 @@ dependencies = [
     # browser never talks to MinIO STS directly — consistent authz with the
     # rest of the data path.
     "boto3",
+    # weaviate-client is a MAIN dep (not just the agent-fleet extra / dev
+    # group) because setup/prime_databases.py runs in the dagster-control-
+    # plane image — built with `uv sync --no-dev` and NO `--extra` — and its
+    # --wipe path must connect to Weaviate to clear it. Without this the
+    # `import weaviate` failed silently (weaviate=None) and the wipe SKIPPED
+    # Weaviate entirely, leaving stale OntologyClass phantoms + a
+    # mis-configured Predicate collection across every "wipe". Constraint is
+    # the intersection of the extra (>=4.5.4) and dev (>=4.4,<5.0) pins so
+    # one resolved version serves all three.
+    "weaviate-client>=4.5.4,<5.0",
 ]
 
 [project.optional-dependencies]
