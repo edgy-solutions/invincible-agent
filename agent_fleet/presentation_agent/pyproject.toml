@@ -8,6 +8,18 @@ dependencies = [
     "pydantic",
     "baml-py==0.219.0",
     "python-dotenv",
+    # Required to register presentation capabilities
+    # (subject → mesh:rendersAs → archetype triples) via the DIRECT DataHub
+    # emit path — presentation registration has no mesh-registrar gateway
+    # fallback (see utils/mesh_registration.register_presentation_to_mesh),
+    # so without acryl-datahub the agent silently SKIPS registering every
+    # presentation handler (OwnershipFact→KNOWLEDGE_DOCUMENT,
+    # LineageTopology→PROCESS_TOPOLOGY, ...). The specialist verb outputs
+    # then have no renderer, generate_ui_payload emits an empty payload, and
+    # the answer card renders blank. A substrate wipe clears the once-seeded
+    # rendersAs triples, so the agent MUST be able to re-register them on
+    # startup — every other verb-registering engine already declares this.
+    "acryl-datahub",
 ]
 
 [build-system]
