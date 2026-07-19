@@ -710,17 +710,6 @@ def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
     except Exception as e:
         print(f"[ERROR] Neo4j wipe: {e}")
 
-    # NUCLEAR only: reset the derived Postgres projection stores in the same
-    # breath as the Neo4j source just blanket-cleared above, so the two
-    # never disagree. A nuclear that skipped this would delete
-    # WatermarkSequence (sequence → 1) yet leave the Postgres cursor parked
-    # high — recreating the exact stranded-cursor bug this whole change
-    # exists to kill. RAISES on failure (a partial nuclear must not read as
-    # clean). The default (routing) tier never runs this — it preserves the
-    # projections outright.
-    if nuclear:
-        _reset_projection_postgres()
-
     # Weaviate — connect via the SAME split HTTP/gRPC form the chart
     # publishes (WEAVIATE_HTTP_HOST + WEAVIATE_GRPC_HOST) that the fleet's
     # create_weaviate_client() uses.
@@ -831,28 +820,45 @@ def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
             aws_secret_access_key=secret_key,
             config=_minio_compat_config(),
         )
+        bucket_exists = True
         try:
             s3.head_bucket(Bucket=bucket)
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
             if code in ("404", "NoSuchBucket", "NotFound"):
                 print(f"[OK] MinIO bucket {bucket} doesn't exist; nothing to wipe.")
-                return
-            raise
+                # Don't return — the NUCLEAR Postgres reset below still needs
+                # to run. A missing bucket is a no-op, not a reason to abort
+                # the rest of the wipe.
+                bucket_exists = False
+            else:
+                raise
 
         # delete_objects caps at 1000 keys per batch; paginate.
-        paginator = s3.get_paginator("list_objects_v2")
         deleted = 0
-        for page in paginator.paginate(Bucket=bucket):
+        for page in ([] if not bucket_exists else s3.get_paginator("list_objects_v2").paginate(Bucket=bucket)):
             contents = page.get("Contents") or []
             if not contents:
                 continue
             batch = [{"Key": obj["Key"]} for obj in contents]
             s3.delete_objects(Bucket=bucket, Delete={"Objects": batch, "Quiet": True})
             deleted += len(batch)
-        print(f"[OK] MinIO bucket {bucket} cleared ({deleted} objects).")
+        if bucket_exists:
+            print(f"[OK] MinIO bucket {bucket} cleared ({deleted} objects).")
     except Exception as e:
         print(f"[ERROR] MinIO wipe: {e}")
+
+    # NUCLEAR only, and DELIBERATELY LAST: reset the derived Postgres
+    # projection stores after every substrate store has been cleared, so a
+    # Postgres hiccup can't abort the Neo4j/Weaviate/Jena/MinIO wipes (an
+    # earlier version ran this right after Neo4j and a missing-driver crash
+    # left Neo4j empty while the rest stayed stale). A nuclear that skipped
+    # this would delete WatermarkSequence (sequence → 1) yet leave the
+    # Postgres cursor parked high — recreating the exact stranded-cursor bug
+    # this whole change exists to kill. RAISES on failure. The default
+    # (routing) tier never runs this — it preserves the projections outright.
+    if nuclear:
+        _reset_projection_postgres()
 
 
 def _reset_projection_postgres() -> None:
@@ -880,48 +886,59 @@ def _reset_projection_postgres() -> None:
             "is left stranded. Wire PROJECTOR_POSTGRES_DSN into the prime Job "
             "(same DSN the projector Deployment uses)."
         )
+    # psycopg2 (NOT psycopg v3): psycopg2-binary is a MAIN [project] dependency
+    # so it is present in the slim prime image (uv sync --no-dev, no --extra);
+    # psycopg v3 lives only in the agent-fleet extra and is ABSENT here. The
+    # projector itself uses psycopg2 — match it. (A --nuclear run on an image
+    # that imported psycopg v3 crashed with ModuleNotFoundError after Neo4j was
+    # already cleared; work 2026-07-18.)
     try:
-        import psycopg
+        import psycopg2
     except Exception as e:
         raise RuntimeError(
-            f"--nuclear requested but psycopg isn't importable in this image "
+            f"--nuclear requested but psycopg2 isn't importable in this image "
             f"({e}) — cannot reset the projection store. Refusing to report a "
-            f"partial nuclear wipe as clean."
+            f"partial nuclear wipe as clean. psycopg2-binary is a main "
+            f"dependency; a prime image predating it is stale and must be rebuilt."
         )
+    conn = None
     try:
-        with psycopg.connect(dsn, connect_timeout=10) as conn:
-            with conn.cursor() as cur:
-                def _exists(table: str) -> bool:
-                    cur.execute(
-                        "SELECT 1 FROM information_schema.tables "
-                        "WHERE table_name = %s",
-                        (table,),
-                    )
-                    return cur.fetchone() is not None
+        conn = psycopg2.connect(dsn, connect_timeout=10)
+        with conn.cursor() as cur:
+            def _exists(table: str) -> bool:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_name = %s",
+                    (table,),
+                )
+                return cur.fetchone() is not None
 
-                for tbl in ("answer_artifact_projection", "human_task_projection"):
-                    if _exists(tbl):
-                        cur.execute(f"TRUNCATE {tbl}")
-                        print(f"  [OK] {tbl} truncated.")
-                    else:
-                        print(f"  [skip] {tbl} not present (fresh cluster).")
-                if _exists("projector_cursor"):
-                    cur.execute(
-                        "UPDATE projector_cursor "
-                        "SET last_applied_watermark = 0, apply_count = 0"
-                    )
-                    print("  [OK] projector_cursor rewound to 0.")
+            for tbl in ("answer_artifact_projection", "human_task_projection"):
+                if _exists(tbl):
+                    cur.execute(f"TRUNCATE {tbl}")
+                    print(f"  [OK] {tbl} truncated.")
                 else:
-                    print("  [skip] projector_cursor not present (fresh cluster).")
-            conn.commit()
+                    print(f"  [skip] {tbl} not present (fresh cluster).")
+            if _exists("projector_cursor"):
+                cur.execute(
+                    "UPDATE projector_cursor "
+                    "SET last_applied_watermark = 0, apply_count = 0"
+                )
+                print("  [OK] projector_cursor rewound to 0.")
+            else:
+                print("  [skip] projector_cursor not present (fresh cluster).")
+        conn.commit()
         print("[OK] Projection Postgres reset (NUCLEAR).")
     except Exception as e:
         raise RuntimeError(
-            f"NUCLEAR projection-store reset FAILED: {e}. Neo4j may already be "
-            f"cleared but the Postgres projections are NOT reset — the projector "
-            f"cursor would strand new answers. Fix PROJECTOR_POSTGRES_DSN "
+            f"NUCLEAR projection-store reset FAILED: {e}. The substrate stores "
+            f"are cleared but the Postgres projections are NOT reset — the "
+            f"projector cursor would strand new answers. Fix PROJECTOR_POSTGRES_DSN "
             f"connectivity and re-run; do not treat this as a clean nuclear wipe."
         )
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 # ============================================================================
