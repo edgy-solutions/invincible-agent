@@ -192,6 +192,63 @@ def compensate_neo4j_predicate_edge(
 _PREDICATE_COLLECTION = "Predicate"
 
 
+def _ensure_predicate_collection(weaviate_client: Any) -> None:
+    """Create the Weaviate ``Predicate`` collection WITH
+    ``IndexPropertyLength=true`` if it does not already exist.
+
+    The registrar is the FIRST writer to touch this collection after a
+    substrate wipe — it runs on engine self-registration, BEFORE the
+    doc-tools sensor's ``aitool_linker`` pass. A bare ``collections.get()``
+    followed by ``data.insert()`` (below) lets Weaviate AUTO-SCHEMA create
+    the collection with default config — i.e. WITHOUT the length index. Engine
+    O's ``/classify_predicate`` ORs a ``domains length == 0`` clause into its
+    domain-scope filter, and Weaviate rejects that clause unless property
+    length is indexed:
+
+        "Property length must be indexed to be filterable! add
+         IndexPropertyLength: true to the invertedIndexConfig in Predicate."
+
+    When it rejects, the predicate hybrid search returns empty and routing
+    silently degrades to the generalist for every entitled-domain caller
+    (work 2026-07-18: the doc-tools fold was in place but never fired because
+    the registrar had already auto-created the indexless collection). This
+    mirrors ``doc_tools/assets/aitool_linker._ensure_predicate_collection`` so
+    that WHICHEVER writer creates the collection first sets the index. No-op
+    when the collection already exists.
+    """
+    import weaviate.classes as wvc
+
+    if weaviate_client.collections.exists(_PREDICATE_COLLECTION):
+        return
+    weaviate_client.collections.create(
+        name=_PREDICATE_COLLECTION,
+        inverted_index_config=wvc.config.Configure.inverted_index(
+            index_property_length=True,
+        ),
+        properties=[
+            wvc.config.Property(name="verb_iri", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="verb_local", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="input_uri", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="output_uri", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="endpoint_url", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="owner_persona", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="domains", data_type=wvc.config.DataType.TEXT_ARRAY),
+            wvc.config.Property(name="cost_class", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="requires_human_approval", data_type=wvc.config.DataType.BOOL),
+            wvc.config.Property(name="search_text", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="synonyms", data_type=wvc.config.DataType.TEXT_ARRAY),
+            wvc.config.Property(name="anti_synonyms", data_type=wvc.config.DataType.TEXT_ARRAY),
+            wvc.config.Property(name="description", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="tool_urn", data_type=wvc.config.DataType.TEXT),
+        ],
+    )
+    logger.info(
+        "Created Weaviate %s collection with IndexPropertyLength=true "
+        "(registrar first-writer path).",
+        _PREDICATE_COLLECTION,
+    )
+
+
 def upsert_weaviate_predicate_row(
     *,
     weaviate_client: Any,
@@ -241,6 +298,10 @@ def upsert_weaviate_predicate_row(
     }
 
     deterministic_uuid = _deterministic_predicate_uuid(verb_iri, input_uri)
+    # Create the collection WITH the length index if absent, BEFORE the
+    # get()+insert below — otherwise Weaviate auto-schema creates it indexless
+    # and Engine O's domain-scope filter can never run (see helper docstring).
+    _ensure_predicate_collection(weaviate_client)
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
 
     # Compute the vector explicitly via embed_document(). Weaviate is dumb
