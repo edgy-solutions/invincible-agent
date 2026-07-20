@@ -261,15 +261,51 @@ async def _render_archetype_hardened(
     sql_query pass-through — what it can't be trusted to do reliably
     is rename keys to match a hardcoded React contract.
     """
-    if archetype == "PROCESS_TOPOLOGY":
-        ui = await b.RenderAsTopology(str_raw_data, persona)
-    elif archetype == "HAZARD_DECLARATION":
-        ui = await b.RenderAsHazard(str_raw_data, persona)
-    elif archetype == "ASSET_STATE_METRIC":
-        ui = await b.RenderAsMetric(str_raw_data, persona)
-    elif archetype == "CHART_WIDGET":
-        ui = await b.RenderAsChart(str_raw_data, persona)
-    else:
+    # A renderer FAILURE takes the same path as a renderer ABSENCE:
+    # `handled=False` -> the caller degrades to legacy DesignUI.
+    #
+    # WHY THIS TRY/EXCEPT EXISTS. "hardened" in this function's name means
+    # SHAPE-hardened (the CHART_WIDGET key conformance below), not
+    # FAILURE-hardened. Without this guard any exception from the BAML
+    # call propagates out of /render_ui as a 500, the supervisor's
+    # generate_ui_payload does raise_for_status(), the Dagster step FAILS,
+    # and the user gets a BLANK CARD -- even though the answer was already
+    # fully computed by the specialist. Observed live (work 2026-07-20): a
+    # lineage answer was retrieved correctly, then RenderAsTopology hit a
+    # 60s LLM timeout (408 from the gateway) and destroyed the completed
+    # answer on the way out.
+    #
+    # The presentation layer is COSMETIC. It must never be able to lose a
+    # computed answer. Degrading to a plainer rendering is always better
+    # than returning nothing, so every failure mode here -- timeout,
+    # gateway 5xx, parse/validation error -- degrades instead of raising.
+    #
+    # Deliberately NOT retried here: the archetype renderers are large
+    # structured generations, so a retry doubles worst-case latency before
+    # the user sees anything, and the fallback is both faster and
+    # guaranteed to produce output. A repeated warning here is the signal
+    # that the renderer's timeout budget is too tight for this archetype.
+    try:
+        if archetype == "PROCESS_TOPOLOGY":
+            ui = await b.RenderAsTopology(str_raw_data, persona)
+        elif archetype == "HAZARD_DECLARATION":
+            ui = await b.RenderAsHazard(str_raw_data, persona)
+        elif archetype == "ASSET_STATE_METRIC":
+            ui = await b.RenderAsMetric(str_raw_data, persona)
+        elif archetype == "CHART_WIDGET":
+            ui = await b.RenderAsChart(str_raw_data, persona)
+        else:
+            return None, False
+    except Exception as exc:  # noqa: BLE001 - cosmetic layer, never fatal
+        logger.warning(
+            "render_ui: hardened renderer for archetype=%s FAILED "
+            "(%s: %s). Degrading to legacy DesignUI so the already-computed "
+            "answer still reaches the user. If this repeats for the same "
+            "archetype, the renderer's LLM timeout budget is too tight for "
+            "the payload size -- raise it rather than letting every such "
+            "query fall back.",
+            archetype, type(exc).__name__, exc,
+        )
         return None, False
 
     component = ui.model_dump()
