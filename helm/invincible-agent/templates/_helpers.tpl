@@ -18,10 +18,35 @@ app.kubernetes.io/component: {{ .component }}
 {{- end }}
 
 {{/*
-Returns the global.clusterDomain suffix if set.
+In-cluster service domain suffix appended to every <release>-<svc> name.
+
+Defaults to the FQDN form `.<release-ns>.svc.cluster.local` — NOT empty.
+
+Why the default matters: a BARE service name (`<release>-engine-a`) has no
+dots, so it does NOT suffix-match a NO_PROXY entry of ".svc" or
+".svc.cluster.local". Under a corporate proxy the in-cluster call is then
+handed to the proxy and dies (`ProxyError ... Unable to connect to proxy`).
+This bit the supervisor's verb dispatch: engines registered a bare
+`endpoint_url`, so every specialist call was proxied and `execute_subtask`
+failed, which cascaded to no UI payload and a blank answer card. The
+dagsterUrl helper below already hardcodes the FQDN for exactly this reason;
+this helper defaulting to "" meant every engine URL silently lost that
+protection whenever global.clusterDomain wasn't set.
+
+The FQDN resolves identically inside the cluster whether or not a proxy is
+configured, so it is strictly safer as the default. global.clusterDomain
+remains an override for clusters whose domain isn't `cluster.local`.
+
+NOTE: endpoint_url is baked into the verb edge at REGISTRATION time —
+re-register (rollout restart the engines) after changing this, or existing
+edges keep the old form.
 */}}
 {{- define "invincible-agent.svcDomain" -}}
-{{- .Values.global.clusterDomain | default "" -}}
+{{- if .Values.global.clusterDomain -}}
+{{- .Values.global.clusterDomain -}}
+{{- else -}}
+.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}
 {{- end }}
 
 {{/*

@@ -1,5 +1,31 @@
 # invincible-agent helm chart — changelog
 
+## 0.3.22 — 2026-07-20
+
+Patch bump. In-cluster service URLs default to the FQDN form so a
+corporate proxy can't intercept them.
+
+### Fix
+
+- **`svcDomain` defaults to `.<release-ns>.svc.cluster.local` instead of
+  empty.** The helper returned `global.clusterDomain | default ""`, so
+  whenever that value was unset every service URL rendered BARE
+  (`<release>-engine-a:8081`). A bare name has no dots and therefore does
+  NOT suffix-match a `NO_PROXY` entry of `.svc` / `.svc.cluster.local`, so
+  under a corporate proxy the in-cluster call is handed to the proxy and
+  fails (`ProxyError: Unable to connect to proxy`). This broke the
+  supervisor's verb dispatch: engines registered a bare `endpoint_url`, so
+  the specialist call was proxied, `execute_subtask` failed, and the
+  cascade left no UI payload and a blank answer card — while routing
+  itself looked perfectly healthy. The `dagsterUrl` helper already
+  hardcoded the FQDN for this exact reason; `svcDomain` now matches it.
+  `global.clusterDomain` remains an override for non-`cluster.local`
+  domains.
+
+  **Operators must rollout-restart the engines after upgrading** —
+  `endpoint_url` is baked into the verb edge at registration time, so
+  existing edges keep the bare form until re-registration overwrites them.
+
 ## 0.3.21 — 2026-07-18
 
 Minor bump. The substrate wipe no longer breaks answer delivery, and a
