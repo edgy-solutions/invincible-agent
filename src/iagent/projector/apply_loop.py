@@ -187,6 +187,69 @@ class ApplyLoop:
             self._apply_count,
         )
 
+    def _resync_cursor_from_postgres(self) -> None:
+        """Re-read the cursor from Postgres before every apply batch.
+
+        Postgres is the SOURCE OF TRUTH for the cursor; the in-memory
+        value is only a write-through mirror. Trusting that mirror across
+        batches means an EXTERNAL reset of ``projector_cursor`` — a
+        ``--nuclear`` prime, an operator rewind, a restore from backup —
+        is INVISIBLE to an already-running process: the mirror keeps the
+        old high watermark, the batch query filters
+        ``watermark > <stale high>``, and every new artifact is skipped
+        FOREVER while the loop looks perfectly healthy (polling on
+        schedule, zero errors, apply_count frozen).
+
+        That exact shape cost hours to diagnose (work, 2026-07-20): the
+        answer was written to Neo4j at watermark 1, ``--nuclear`` had
+        reset Postgres to 0, and the projector ignored it because its RAM
+        still said 4. Nothing in any log said so — the UI just stayed
+        blank.
+
+        ``get_cursor_state()`` already reads Postgres for precisely this
+        reason ("a dead apply loop with a stale in-memory mirror would
+        still look live"). That honesty was applied to the ENDPOINT but
+        not to the APPLY PATH, which is the half that actually decides
+        what gets projected. One single-row SELECT per batch is the cost,
+        and it is the same cost that method already accepts.
+
+        A DOWNWARD move is logged LOUDLY: it means something reset the
+        cursor underneath us, and adopting it silently would hide the very
+        class of bug this method exists to kill.
+        """
+        with self._pg_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT last_applied_watermark, last_apply_at, "
+                    "apply_count FROM projector_cursor WHERE id = 1"
+                )
+                row = cur.fetchone()
+        if not row:
+            return
+        db_watermark = int(row[0])
+        if db_watermark == self._last_applied_watermark:
+            return
+        if db_watermark < self._last_applied_watermark:
+            logger.warning(
+                "projector cursor REGRESSED externally: in-memory=%d -> "
+                "postgres=%d. Adopting the Postgres value and re-applying "
+                "from there. Expected right after a --nuclear prime or an "
+                "operator rewind; if it repeats every batch, two writers "
+                "are fighting over projector_cursor.",
+                self._last_applied_watermark,
+                db_watermark,
+            )
+        else:
+            logger.info(
+                "projector cursor advanced externally: in-memory=%d -> "
+                "postgres=%d. Adopting the Postgres value.",
+                self._last_applied_watermark,
+                db_watermark,
+            )
+        self._last_applied_watermark = db_watermark
+        self._last_apply_at_ms = int(row[1])
+        self._apply_count = int(row[2])
+
     def get_cursor_state(self) -> CursorState:
         """Return the cursor as seen FROM POSTGRES.
 
@@ -298,6 +361,11 @@ class ApplyLoop:
         method is kept public for the Hop 2 phase probes, which run
         outside an event loop and don't trigger the concurrent shape.
         """
+        # Postgres is the SOURCE OF TRUTH for the cursor — re-read it
+        # before every batch so an external reset can't strand this
+        # process behind a stale in-RAM watermark. See the method
+        # docstring for the exact failure this prevents.
+        self._resync_cursor_from_postgres()
         rows = self._poll_neo4j()
         if not rows:
             return 0
