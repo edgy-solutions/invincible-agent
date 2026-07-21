@@ -247,6 +247,22 @@ def build_trace_lineage_answer(
             "outcome": outcome,
         }
 
+    # 0. No instance was resolved upstream — the router didn't identify WHICH
+    #    asset the question is about (phone-book miss / subject misclassified).
+    #    Distinct from not_found: we never had a name to look up, so do NOT
+    #    echo a searched string. An honest "which asset?" beats searching the
+    #    raw question and reporting "cannot locate '<entire prompt>'".
+    if resolve.get("outcome") == "no_instance":
+        return _payload(
+            OUTCOME_COULDNT_LOCATE,
+            summary=(
+                "I couldn't determine which specific asset your question is "
+                "about, so no lineage was traced. Name the asset exactly (for "
+                "example, the dashboard or dataset's exact catalog name) and "
+                "I'll trace its lineage."
+            ),
+        )
+
     # 1. Subject didn't resolve — do not walk a guessed asset.
     if resolve.get("outcome") == "not_found":
         return _payload(

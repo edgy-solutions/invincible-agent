@@ -1130,8 +1130,8 @@ to decide the next call. Use only what the tools return — never invent data.
             if raw_instance.startswith("urn:"):
                 resolve = {"outcome": "found", "urn": raw_instance, "candidate_count": 1}
                 asset_label = humanize_urn_label(raw_instance)
-            else:
-                asset_label = raw_instance or task.task_description
+            elif raw_instance:
+                asset_label = raw_instance
                 resolve = await _TEMPORARY_urn_resolution_belongs_on_engine_d(
                     asset_label=asset_label,
                     resolved_class_uri=semantic_ctx.get("resolved_uri", ""),
@@ -1141,6 +1141,18 @@ to decide the next call. Use only what the tools return — never invent data.
                     caller_entitled_domains=caller_entitled_domains,
                     caller_email=caller_email,
                 )
+            else:
+                # The router did NOT resolve an instance (phone-book miss, or the
+                # subject was misclassified upstream so no instance matched).
+                # Do NOT fall back to searching task.task_description — that is
+                # the whole user question, and searching the catalog for a
+                # sentence produced the "cannot locate an asset named '<entire
+                # prompt>'" answer. Fail honestly instead: the assembler emits a
+                # "couldn't identify which asset" message. This is a cosmetic
+                # floor over an upstream (instance-discovery) failure — it does
+                # NOT fix the misclassification, only stops it reading as garbage.
+                asset_label = ""
+                resolve = {"outcome": "no_instance"}
 
             # 3. Walk lineage ONLY when the subject resolved cleanly AND (if a
             #    platform was named) it was recognized. Otherwise the assembler

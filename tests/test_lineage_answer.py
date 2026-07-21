@@ -220,3 +220,15 @@ def test_humanize_drops_env_marker_and_takes_specific_segment():
 def test_humanize_handles_plain_token_and_empty():
     assert humanize_urn_label("not-a-urn") == "Not A Urn"
     assert humanize_urn_label("") == ""
+
+
+def test_no_instance_fails_honestly_without_echoing_the_prompt():
+    # THE fallback bug: when the router resolved no instance, the branch used
+    # to search task.task_description (the whole question) -> "cannot locate
+    # '<entire prompt>'". no_instance must NOT echo any searched string.
+    res = build_trace_lineage_answer(asset_label="", resolve={"outcome": "no_instance"},
+                                     platform_scope=SCOPE_WH, lineage_result=None)
+    assert res["outcome"] == OUTCOME_COULDNT_LOCATE
+    assert "couldn't determine which specific asset" in res["summary"]
+    assert "cannot locate" not in res["summary"].lower()
+    assert res["structured_data"]["nodes"] == []
