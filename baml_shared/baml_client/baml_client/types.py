@@ -103,7 +103,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (30)
+# Generated classes (31)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -244,6 +244,12 @@ class MetricUI(BaseModel):
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
     subject_concept: typing.Optional[str] = None
     metrics: typing.List["UIEntity"]
+
+class PlatformScope(BaseModel):
+    platforms: typing.List[str] = Field(description='Catalog platform slugs the user wants to restrict to, normalized to the KNOWN list (e.g. \'snowflake\', \'postgres\'). Empty when no platform was asked for. A platform the user named that is NOT in the known list does NOT go here — it goes in `unrecognized`.')
+    platform_mentioned: bool = Field(description='True iff the user named or clearly implied a specific platform to filter by (\'snowflake tables\', \'which warehouse feeds X\'). False for platform-agnostic lineage questions (\'what feeds X\', \'upstream of X\').')
+    unrecognized: typing.List[str] = Field(description='Any platform token the user named that is NOT in the known-platforms list. Lets the caller say \'that isn\'t a catalog platform\' instead of silently returning everything. Empty when the mentioned platform(s) are all recognized, or when none was mentioned.')
+    reasoning: str = Field(description='One sentence — for observability.')
 
 class PredicateClassification(BaseModel):
     resolved_verb_iri: typing.Union[Predicate, str] = Field(description='The verb IRI that best matches the user\'s intent given the resolved subject. Must be one of the IRIs provided in the dynamic enum.')

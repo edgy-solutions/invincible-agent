@@ -178,6 +178,20 @@ class BamlSyncClient:
                 "user_query": user_query,
             })
             return typing.cast(types.ExtractedIntent, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def ExtractPlatformScope(self, user_query: str,known_platforms: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.PlatformScope:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.ExtractPlatformScope(user_query=user_query,known_platforms=known_platforms,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="ExtractPlatformScope", args={
+                "user_query": user_query,"known_platforms": known_platforms,
+            })
+            return typing.cast(types.PlatformScope, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
@@ -385,6 +399,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.ExtractedIntent, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def ExtractPlatformScope(self, user_query: str,known_platforms: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.PlatformScope, types.PlatformScope]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="ExtractPlatformScope", args={
+            "user_query": user_query,"known_platforms": known_platforms,
+        })
+        return baml_py.BamlSyncStream[stream_types.PlatformScope, types.PlatformScope](
+          __result__,
+          lambda x: typing.cast(stream_types.PlatformScope, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.PlatformScope, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.GraphExpertResponse, types.GraphExpertResponse]:
@@ -543,6 +569,13 @@ class BamlHttpRequestClient:
             "user_query": user_query,
         }, mode="request")
         return __result__
+    def ExtractPlatformScope(self, user_query: str,known_platforms: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractPlatformScope", args={
+            "user_query": user_query,"known_platforms": known_platforms,
+        }, mode="request")
+        return __result__
     def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -654,6 +687,13 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractIntent", args={
             "user_query": user_query,
+        }, mode="stream")
+        return __result__
+    def ExtractPlatformScope(self, user_query: str,known_platforms: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractPlatformScope", args={
+            "user_query": user_query,"known_platforms": known_platforms,
         }, mode="stream")
         return __result__
     def FormatGraphResponse(self, raw_text: str,persona: str,

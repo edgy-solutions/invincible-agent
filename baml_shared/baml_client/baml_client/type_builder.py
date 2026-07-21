@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","PredicateClassification","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","PlatformScope","PredicateClassification","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -79,7 +79,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 30
+    # Generated classes 31
     # #########################################################################
 
     @property
@@ -173,6 +173,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def MetricUI(self) -> "MetricUIViewer":
         return MetricUIViewer(self)
+
+    @property
+    def PlatformScope(self) -> "PlatformScopeViewer":
+        return PlatformScopeViewer(self)
 
     @property
     def PredicateClassification(self) -> "PredicateClassificationViewer":
@@ -776,7 +780,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 30
+# Generated classes 31
 # #########################################################################
 
 class AgentResponseAst:
@@ -1932,6 +1936,57 @@ class MetricUIProperties:
     @property
     def metrics(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("metrics"))
+    
+    
+
+
+class PlatformScopeAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("PlatformScope")
+        self._properties: typing.Set[str] = set([  "platforms",  "platform_mentioned",  "unrecognized",  "reasoning",  ])
+        self._props = PlatformScopeProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "PlatformScopeProperties":
+        return self._props
+
+
+class PlatformScopeViewer(PlatformScopeAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class PlatformScopeProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def platforms(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("platforms"))
+    
+    @property
+    def platform_mentioned(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("platform_mentioned"))
+    
+    @property
+    def unrecognized(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("unrecognized"))
+    
+    @property
+    def reasoning(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
     
     
 

@@ -85,6 +85,9 @@ type_map = {
     "types.MetricUI": types.MetricUI,
     "stream_types.MetricUI": stream_types.MetricUI,
 
+    "types.PlatformScope": types.PlatformScope,
+    "stream_types.PlatformScope": stream_types.PlatformScope,
+
     "types.PredicateClassification": types.PredicateClassification,
     "stream_types.PredicateClassification": stream_types.PredicateClassification,
 
