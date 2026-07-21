@@ -1368,6 +1368,15 @@ async def _resolve_instance(
     return decision.subject_uri, provenance
 
 
+# Honest-degradation guard for subject resolution (recall-override). Pure logic
+# in a dep-free sibling so it unit-tests without the engine-o import chain;
+# flatten-aware import, same shape as registry_views above.
+try:
+    from recall_guard import recall_override_guard as _recall_override_guard  # type: ignore[no-redef]
+except ImportError:
+    from agent_fleet.ontology_service.recall_guard import recall_override_guard as _recall_override_guard
+
+
 # ---------------------------------------------------------------------------
 # POST /resolve
 # ---------------------------------------------------------------------------
@@ -1560,12 +1569,18 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         # over-eagerly flagged (not instance-shaped → the class contest is
         # the right answer) or an infra non-answer (timeout/error/
         # no_providers — we didn't get a trustworthy "no", so we must not
-        # tell the user "no provider knows it"). Keep the LLM's class guess.
+        # tell the user "no provider knows it"). Keep the LLM's class guess,
+        # but the phone-book did NOT confirm it — apply the recall-override
+        # honesty guard so an override of strong recall reads as weak.
+        _conf, _reason, _prov = _recall_override_guard(
+            str(result.resolved_uri), result.confidence_score,
+            candidates, result.reasoning, instance_provenance,
+        )
         return SemanticResolutionResponse(
             resolved_uri=str(result.resolved_uri),
-            confidence_score=result.confidence_score,
-            reasoning=result.reasoning,
-            provenance=instance_provenance,
+            confidence_score=_conf,
+            reasoning=_reason,
+            provenance=_prov,
             candidates=candidates,
         )
 
@@ -1576,10 +1591,19 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # AND the losers (the PROV-contamination diagnosis lived exactly
     # here: the winner was prov#Bundle at 0.66, and the losers-with-
     # scores are what made "contaminated pool" a glance).
+    #
+    # No phone-book ran (no identifier), so this is the LLM standing alone —
+    # apply the recall-override honesty guard: if the LLM overrode a strong
+    # vector-recall winner, discount + flag so it reads as the weak path.
+    _conf, _reason, _prov = _recall_override_guard(
+        str(result.resolved_uri), result.confidence_score,
+        candidates, result.reasoning, None,
+    )
     return SemanticResolutionResponse(
         resolved_uri=str(result.resolved_uri),
-        confidence_score=result.confidence_score,
-        reasoning=result.reasoning,
+        confidence_score=_conf,
+        reasoning=_reason,
+        provenance=_prov,
         candidates=candidates,
     )
 
