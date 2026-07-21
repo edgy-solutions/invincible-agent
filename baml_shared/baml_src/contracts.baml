@@ -381,6 +381,54 @@ function ExtractIntent(user_query: string) -> ExtractedIntent {
   "#
 }
 
+// -----------------------------------------------------------------------------
+// Platform scope extraction (ADR-0030): does the question restrict lineage to a
+// specific DATA PLATFORM, and which? `platforms` is a PROJECTION PARAMETER — it
+// changes what comes back, never the output type. `platform_mentioned` is
+// load-bearing: it is what keeps "no platform asked for" (→ no filter, full
+// lineage) distinct from "a platform was named but it isn't in the catalog"
+// (→ say so, never silently return everything). Schema-enforced output is the
+// point — a hand-rolled parse that dropped this boolean would collapse the two.
+// -----------------------------------------------------------------------------
+class PlatformScope {
+  platforms string[] @description("Catalog platform slugs the user wants to restrict to, normalized to the KNOWN list (e.g. 'snowflake', 'postgres'). Empty when no platform was asked for. A platform the user named that is NOT in the known list does NOT go here — it goes in `unrecognized`.")
+  platform_mentioned bool @description("True iff the user named or clearly implied a specific platform to filter by ('snowflake tables', 'which warehouse feeds X'). False for platform-agnostic lineage questions ('what feeds X', 'upstream of X').")
+  unrecognized string[] @description("Any platform token the user named that is NOT in the known-platforms list. Lets the caller say 'that isn't a catalog platform' instead of silently returning everything. Empty when the mentioned platform(s) are all recognized, or when none was mentioned.")
+  reasoning string @description("One sentence — for observability.")
+}
+
+function ExtractPlatformScope(user_query: string, known_platforms: string) -> PlatformScope {
+  client MainAgent
+  prompt #"
+    Decide whether the user's question restricts results to a specific DATA
+    PLATFORM (the system a dataset lives on — a warehouse, a transform tool, a
+    relational database), and if so which.
+
+    The platforms that ACTUALLY EXIST in this catalog:
+    {{ known_platforms }}
+
+    Rules:
+    - platform_mentioned = true if the user named or clearly implied a specific
+      platform to filter by ("snowflake tables", "postgres sources", "which
+      warehouse feeds X"). false if they asked about lineage with NO platform
+      constraint ("what feeds X", "upstream of X", "trace the lineage of X").
+    - platforms = matching slugs FROM THE KNOWN LIST ONLY, normalized to the
+      known slug. A platform the user named that is NOT in the known list must
+      NOT appear here.
+    - unrecognized = any platform the user named that is NOT in the known list.
+    - When platform_mentioned is false, both platforms and unrecognized are empty.
+
+    Do NOT infer a platform from the asset's name or from dotted identifiers in
+    it — only from an explicit platform constraint in the question itself. The
+    shape of a name is not evidence of a platform.
+
+    User Query:
+    {{ user_query }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
 // =============================================================================
 // Engine W (Weaviate Semantic Expert) Data Contracts
 // =============================================================================
