@@ -1,0 +1,6 @@
+# Generated BAML client: pin to LF so regenerating on Windows (or WSL vs the
+# Linux/macOS box it was first generated on) doesn't rewrite every file as a
+# line-ending diff. `baml-cli generate` emits platform-native EOL; without this,
+# a Windows regen to add one function churns ~4700 lines (see ADR-0030-era
+# commit 1819e70). Store and check out as LF.
+baml_shared/baml_client/** text eol=lf
