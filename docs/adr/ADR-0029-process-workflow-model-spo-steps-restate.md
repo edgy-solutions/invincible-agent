@@ -275,7 +275,10 @@ orphan writing blobs to a superseded catalog.
   proves the model against the one workflow known to work *before* anything new is
   added. Design the **step call-shape** (Decision 5) here. If the SPO definition
   cannot express the promotion workflow, that is learned early and cheaply.
-- **Slice 2:** the re-aimed SPO interview (Decision 3), producing SPO definitions.
+- **Slice 2:** the re-aimed SPO interview (Decision 3), producing SPO definitions. Its
+  first target definition is the **PCN/PDN obsolescence workflow** (the Case-2 exemplar
+  below), which also surfaces the Part/Notice/BOM ontology-class prerequisite and the
+  HumanTask grouping extension.
 - **Slice 3:** type-2 observation (Decision 4) — domain-stage view, gated per the
   3-audience tiers.
 - **Slice 4:** canvas answer→step seeding ([[ADR-0028]] Use-3) — native, since a step
@@ -284,6 +287,132 @@ orphan writing blobs to a superseded catalog.
   Topaz rego.
 - **Later / triggered:** the ODCS/ODPS/CALM seams (Decision 2) — greenfield, per
   ADR-0024's per-standard-integration triggers.
+
+## Worked example — the PCN/PDN obsolescence workflow (the Case-2 exemplar)
+
+Slice 1 proved the model on the **linear** promotion workflow: one `human_await` → one
+`direct_call`, a straight line with a single decision. That sealed the *mechanics*
+(register-before-suspend, promise resolve, capability gate, terminal-403 on deny) but
+exercises none of the shape the model was designed for. The **PCN/PDN part-obsolescence
+workflow** is adopted as the **full Case-2 worked example** (Situation-B designed-await,
+per [[feedback_hitl_suspend_vs_fail_ruling]]) — the richer exemplar carried from Slice 1's
+proof into Slice 2's authoring. (Domain: PCN = *Product Change Notification*, PDN = *Product
+Discontinuation Notice* — the two "the part you designed in is about to change or go away"
+alerts in electronics/component lifecycle management.)
+
+The shape: a supplier notice **fans out to N affected part-items**, each independently
+triaged; **most die at relevance scoring** with no human involved; some **auto-disposition**
+into an FYI lane; the residue **routes to an approver with a system-proposed disposition**;
+approved items **dispatch effects** (last-time-buy task, qualification task, alternate-
+sourcing task). Multi-step, fan-out, conditional, effect-bearing — and in the **actual work
+domain vocabulary** (parts, BOMs, AVL, lifecycle), not a system-internal one. It earns its
+keep as Case 2 precisely because it stresses the model where the promotion workflow didn't.
+
+It is to be **authored as a definition in Slice 2** (the SPO interview's target), *not* built
+ahead of the model — writing it and hitting the walls is how the extensions Slices 3–5 need
+get prioritized against a real workflow rather than a hypothetical.
+
+**Expressible on the model today**, mapped to the three step kinds: extraction / matching /
+scoring = `spo_operation` steps (pre-resolved subject+verb, verified at the stage-2 gate);
+triage approval = `human_await` (audience→`can_act`, `ctx.promise`, suspend-not-fail — the
+sealed Case-2 mechanic); dispositions = `direct_call` with capabilities
+(`mesh:createLastTimeBuyTask`, `mesh:openQualificationTask` — each `can_invoke`-gated, ungated
+inexpressible, 401/403→terminal). The spine is expressible now. **Prerequisite:** it needs
+**Part / Notice / BOM ontology classes with registered verbs, which do not exist today** — a
+concrete Slice-2 dependency.
+
+### Governing ruling — approval grain is a UI decision; the backend must serve it
+
+Reasoning from execution mechanics (per-item is cleanest for idempotency + resolved subjects)
+lands on a model that produces *thirty inbox items per notice* — disqualifying regardless of
+how clean the backend is. **A workflow model that generates unusable review is a broken
+model.** The reconciliation separates two grains the current substrate conflates:
+
+- **Execution grain ≠ approval grain.** Per-item execution stays right — per-item idempotency
+  on `fingerprint × part`, resolved subjects, independent retry, per-item disposition history.
+  What must change is that **one human action resolves N promises.** Today the HumanTask
+  substrate is 1 task → 1 promise → 1 resumption. The extension is a **grouping key** on the
+  task (notice fingerprint / review-batch id) plus a **bulk-resolve** operation: the inbox
+  renders one review over N tasks, the approver acts once, the substrate resolves N promises —
+  possibly with different per-item outcomes (approve 28, defer 2). This is a genuine addition
+  to the sealed substrate, and it is **smaller than growing the workflow model with fan-out +
+  branching**: keep the sealed per-item mechanics, add aggregation at the task layer where the
+  UI needs it.
+- **Per-item execution + a thin dispatcher makes fan-out, branching, and dynamic subjects
+  DISAPPEAR from the model.** One invocation per `(notice × part)`; the fan-out becomes a
+  **dispatcher step that emits N invocations**, outside the workflow. Each item then carries
+  its own resolved subject (no dynamic-subject step kind), clean per-item idempotency, and a
+  normal single-approval `human_await`. The workflow model needs **no map/foreach step, no
+  conditional step, no bound-from-prior-step subject** to express the canonical Case-2 workflow.
+
+### The mitigation stack (grouping is the last layer, not the first)
+
+`filter → auto-dispose → group → propose-with-exceptions`, each layer measured by how much it
+removes from the next:
+
+- **Relevance scoring** kills most items silently-but-**auditably** (part on no active BOM /
+  never bought → auto-archive with a log entry, never bothers a human) — the single biggest
+  lever against drowning the user.
+- **Auto-disposition** handles confident low-risk items into an **FYI lane** — present, and
+  separate from the approval lane.
+- **Group + propose** is a **default-with-exceptions grid**: each row shows the part, where
+  it's used, change type + dates, and the **system-proposed disposition**; the approver's
+  dominant action is "accept all," with per-row override on the few that need it. Reviewing
+  thirty pre-decided rows is a *scan for exceptions*, not thirty questions — the cognitive-load
+  win is entirely in whether the system proposes. If thirty items reach grouped review, the
+  earlier layers under-performed.
+- **Instrument the funnel from day one:** notices in / surviving relevance / auto-disposed /
+  reaching a human. If the last number does not fall over time, the tuning loop (the captured
+  *why* on every dismiss/override) is not feeding back.
+
+### Two constraints inherited from existing laws — each needs its own seal
+
+1. **Auto-archived items stay countable and inspectable.** "We dropped 400 notices as
+   irrelevant" is fine; *silently* dropping them is the empty-chart-hides-the-refusal pattern
+   ([[feedback_optimistic_defaults_are_dishonest]], honest-not-hidden) at business scale.
+   Aggressive filtering is trustworthy only with an auditable archive + reasons and the FYI lane.
+2. **The grouped review must be per-approver-filtered — grouping must not leak across
+   visibility boundaries.** A batch keyed on the notice may span items an approver has different
+   entitlements to; rendered wholesale it becomes an **existence-oracle wearing a convenience
+   feature** (part/BOM/program associations the approver is not cleared for). The batch is the
+   **intersection of the notice's items and what *this* approver can see and act on** — so two
+   approvers on the same notice legitimately see **different-sized groups**, and that is correct,
+   not a bug. Needs a **discriminating seal** exactly like the other existence-oracle gates: two
+   approvers, same notice, different visible item sets. Same governance as the 3-audience
+   observation ruling (Decision 4) and the HumanTask queue's `can_view`.
+
+**Provenance discipline reused, not reinvented:** every extracted field carries a **source
+citation (page + snippet)** so review is *verification*, not re-reading a 12-page PDF (capture-
+fact-at-source / TRACE, the same discipline as the decision-map rendering captured routing data
+rather than a synthesized chain of thought). And **"capture why on dismiss or override" is
+structural, not asked-nicely** — the disposition record *requires* it (the `granted_by`/`reason`
+required-field discipline from the grant files), because it is the feedback signal that tunes
+relevance + extraction.
+
+### Not expressible today — the walls, mapped to where they close
+
+Named so a builder meets them deliberately, not by surprise:
+
+- **Fan-out** (one notice → N item decisions) — *dissolved* by per-item invocation + dispatcher.
+  This is NOT the Slice-5 multi-approval join (that is N approvals gating **one** step; this is
+  N **independent** items each with its own approval and state). No new step kind.
+- **Branching** (relevance→await vs auto-dispose; low-confidence extraction→force review) —
+  *dissolved* by moving the decision out of the step graph into the dispatcher/scoring layer.
+  Stated, not discovered: a step set that depends on runtime scores can't be fully pre-checked,
+  which **collides with the pre-flight ruling's static-scope-only limit** (Decision 5) — fine,
+  because dispatch is authoritative, but it must be said aloud.
+- **Dynamic subjects** (the item's subject is the matched part from a prior step) — *dissolved*
+  by per-item invocation with an already-resolved subject; the alternative (a bound-from-prior-
+  step subject form with per-instance verification at run) is the heavier path and is NOT taken.
+- **Item-grain idempotency** (`fingerprint × part` state machine + append-only disposition log)
+  — a **real, open design call**: a VirtualObject keyed on the composite vs. Postgres read by
+  the workflow. This is what answers "already dispositioned — don't re-ask the human." Restate
+  gives durable execution keyed on invocation; the item-grain composite key is the addition.
+
+**Net commitment:** the canonical Case-2 workflow costs **one narrow substrate extension —
+the HumanTask layer learns group keys + bulk resolution (plus the item-grain idempotency
+key)** — and **zero** new workflow-model step kinds. Everything Slice 1 sealed stays intact;
+the new work lands in exactly one place.
 
 ## Consequences
 
@@ -300,6 +429,12 @@ orphan writing blobs to a superseded catalog.
   why it is the explicit load-bearing task of Slice 1, not an assumption.
 - **Honest scope:** standards composition beyond the process seam stays directional;
   this ADR states the mapping, it does not build ODCS/ODPS/CALM.
+- **The canonical Case-2 workflow (the PCN/PDN worked example) is carried on ONE narrow
+  substrate extension — HumanTask group-keys + bulk-resolve — and zero new workflow-model
+  step kinds.** Approval grain is a UI decision the backend serves (execution grain ≠
+  approval grain); per-item execution + a thin dispatcher dissolves fan-out, branching, and
+  dynamic subjects. The grouped review is per-approver-filtered (an existence-oracle gate at
+  batch scale, needing its own discriminating seal), and auto-archived items stay countable.
 
 ## Non-goals
 
