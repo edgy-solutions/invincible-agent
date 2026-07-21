@@ -1026,27 +1026,20 @@ async def get_tables() -> dict:
 # ---------------------------------------------------------------------------
 # Instance resolution — Recipe v2 Piece 2.
 # ---------------------------------------------------------------------------
-def _name_score(identifier: str, candidate_name: str) -> float:
-    """Provider relevance for a candidate name against the lookup token.
-
-    1.0  exact match (case-insensitive).
-    0.9  identifier is a suffix of the candidate name (resolved against a
-         shorter alias) OR vice versa — a strong hit either way.
-    else difflib.SequenceMatcher ratio — fuzzy / typo tolerant.
-
-    The contract requires honest scores; do NOT inflate to win. The
-    routing decision table treats anything below
-    RESOLVE_INSTANCE_MIN_SCORE as absent.
-    """
-    a = (identifier or "").strip().lower()
-    b = (candidate_name or "").strip().lower()
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
-    if a.endswith(b) or b.endswith(a):
-        return 0.9
-    return difflib.SequenceMatcher(None, a, b).ratio()
+# resolveInstance name-matching lives in a dep-free sibling so it unit-tests
+# without the httpx/fastapi/datahub import chain (same split as lineage_filter);
+# flatten-aware import. _name_score keeps its underscore name so call sites and
+# the /resolve_instance scoring below are unchanged.
+try:
+    from instance_match import (  # type: ignore[no-redef]
+        name_score as _name_score,
+        strip_descriptor_tokens as _strip_descriptor_tokens,
+    )
+except ImportError:
+    from agent_fleet.datahub_wrapper.instance_match import (
+        name_score as _name_score,
+        strip_descriptor_tokens as _strip_descriptor_tokens,
+    )
 
 
 def _column_match(identifier: str, entity: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -1123,6 +1116,17 @@ async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceRe
         prefix = request.identifier.rsplit(".", 1)[0]
         if prefix and prefix not in search_queries:
             search_queries.append(prefix)
+    # Descriptor-strip fallback: users append entity-type / BI-platform nouns
+    # ("customer 360 superset dashboard"); DataHub's search on the full
+    # descriptor string can return ZERO hits while the core name resolves
+    # exactly. Add a reduced query with those tokens removed. The full query is
+    # tried first and EVERY candidate is scored against the ORIGINAL identifier
+    # (via _name_score, whose multi-word-containment rule lets the core name
+    # still clear the floor), so this only ADDS a candidate source — it cannot
+    # make a worse match win.
+    reduced = _strip_descriptor_tokens(request.identifier)
+    if reduced and reduced.lower() != request.identifier.strip().lower() and reduced not in search_queries:
+        search_queries.append(reduced)
 
     all_results: List[Dict[str, Any]] = []
     try:
