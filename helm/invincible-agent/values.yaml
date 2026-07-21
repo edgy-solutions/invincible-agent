@@ -876,6 +876,57 @@ primeSubstrate:
     sentinelTimeout: 420
 
 # ==========================================================================
+# demoSeed — GATED reproducible DEMO CONTENT (bootstrap-state-debt #4).
+#
+# Promotes the hand-run scripts/seed_weaviate_manuals.py (the Engine-W
+# DocumentChunk knowledge corpus) to a helm-gated Job, so a fresh install or a
+# wipe+reprime restores it with NO hand scripts — the demoSeed.enabled-style
+# gated seed tests/test_bootstrap_reproducible.py already assumes exists.
+#
+# Default OFF: this is SANDBOX demo content. A sandbox sets enabled=true so its
+# Engine-W suite has a corpus; a work cluster leaves it false and ingests real
+# manuals. Runs as a post-install/post-upgrade hook at weight 30 — AFTER prime
+# (10) and reregister (20) — so the prime --wipe (which clears EVERY Weaviate
+# collection) can't delete the corpus this seed creates.
+#
+# NOTE: seed_datahub_catalog (the other unfolded demo seed) is deliberately NOT
+# folded here yet — it needs acryl-datahub in the image and a DATAHUB_GMS_URL
+# stripped of /api/graphql. DataHub isn't wiped by prime, so its demo catalog
+# survives a reprime; only a fresh DataHub needs it. See demo-seed-job.yaml.
+# ==========================================================================
+demoSeed:
+  enabled: false
+  hook:
+    weight: "30"
+    deletePolicy: "before-hook-creation"
+  # Same dagster-control-plane image prime uses (has scripts/ + neo4j +
+  # weaviate-client). Pin tag to a SHA for reproducibility.
+  image:
+    registry: ""
+    repository: "edgy-solutions/invincible-agent/dagster-control-plane"
+    tag: "latest"
+    pullPolicy: "Always"
+  # The seed reads Weaviate host/port SEPARATELY (the engines use a combined
+  # host:port ConfigMap form). Empty host -> the chart's in-cluster
+  # <release>-weaviate / <release>-weaviate-grpc services. Set for BYO-Weaviate.
+  weaviate:
+    httpHost: ""
+    httpPort: "8080"
+    grpcHost: ""
+    grpcPort: "50051"
+  # Extra env for the seed, applied LAST (wins over the above). At work, point
+  # the text2vec-ollama vectorizer at your ollama via OLLAMA_API_ENDPOINT, and
+  # override OLLAMA_EMBED_MODEL / WEAVIATE_DOC_COLLECTION if they differ.
+  env: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ==========================================================================
 # Frontend Services
 # ==========================================================================
 

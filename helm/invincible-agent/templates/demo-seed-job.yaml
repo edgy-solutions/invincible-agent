@@ -1,0 +1,100 @@
+{{- if .Values.demoSeed.enabled }}
+# ============================================================================
+# demo-seed Job — GATED reproducible demo CONTENT (bootstrap-state-debt #4).
+#
+# Promotes the hand-run `scripts/seed_weaviate_manuals.py` (the Engine-W
+# DocumentChunk knowledge corpus) to a reproducible, helm-gated Job so a fresh
+# `helm install` — or a routine wipe+reprime — restores it with NO hand scripts.
+# This is exactly the `demoSeed.enabled-style` gated seed the compliance test
+# tests/test_bootstrap_reproducible.py already assumes exists.
+#
+# WHY GATED (default OFF): this is SANDBOX DEMO content, not something a work
+# cluster wants — work ingests its own manuals from real sources. Leaving
+# demoSeed.enabled=false at work keeps its Weaviate free of demo chunks; a
+# sandbox sets it true so its Engine-W suite has a corpus to retrieve.
+#
+# WHY IT RUNS LAST (hook-weight 30 > prime 10 > reregister 20): the prime
+# --wipe at weight 10 clears EVERY Weaviate collection (incl. DocumentChunk).
+# If this seed ran before the wipe, its corpus would be deleted. Running after
+# both prime and reregister guarantees the substrate is up and the wipe is done.
+#
+# SCOPE: this Job folds seed_weaviate_manuals only. seed_datahub_catalog (the
+# other unfolded demo seed) is NOT here yet — it needs `acryl-datahub` in the
+# image (absent from the dagster-control-plane image's deps) and a
+# DATAHUB_GMS_URL stripped of its `/api/graphql` suffix (the REST emitter wants
+# the GMS base). DataHub also isn't wiped by prime, so its demo catalog
+# persists across a reprime; only a truly-fresh DataHub needs it. Tracked as a
+# follow-up decision (add the dep to a seed image vs. rewrite the seed to raw
+# REST) rather than shipped half-configured.
+# ============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-demo-seed
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "demo-seed" "root" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": {{ .Values.demoSeed.hook.weight | quote }}
+    "helm.sh/hook-delete-policy": {{ .Values.demoSeed.hook.deletePolicy | quote }}
+spec:
+  # One retry: the seed is idempotent (it DROPs+recreates DocumentChunk), so a
+  # transient Weaviate-not-ready is safe to re-attempt without accumulating state.
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "demo-seed" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: demo-seed
+          # Same dagster-control-plane image prime uses: it has the full repo
+          # (scripts/ included) + neo4j + weaviate-client in /app's uv venv.
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.demoSeed.image.registry "repository" .Values.demoSeed.image.repository "tag" .Values.demoSeed.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.demoSeed.image.pullPolicy }}
+          workingDir: /app
+          command:
+            - python
+            - scripts/seed_weaviate_manuals.py
+          # Cluster-wide config (WEAVIATE_DOC_COLLECTION, OLLAMA_*, etc.) from
+          # the shared ConfigMap/secrets — same backends the engines use.
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            # The ConfigMap publishes WEAVIATE_HTTP_HOST / WEAVIATE_GRPC_HOST as
+            # COMBINED host:port (e.g. "iagent-weaviate:8080") — the shape the
+            # weaviate-client v4 connect helpers used by the ENGINES expect. But
+            # seed_weaviate_manuals reads host and port SEPARATELY. Override with
+            # the split form here (explicit env wins over envFrom). Defaults
+            # target the chart's in-cluster Weaviate services; BYO-Weaviate
+            # clusters override via demoSeed.env below.
+            - name: WEAVIATE_HTTP_HOST
+              value: {{ .Values.demoSeed.weaviate.httpHost | default (printf "%s-weaviate" .Release.Name) | quote }}
+            - name: WEAVIATE_HTTP_PORT
+              value: {{ .Values.demoSeed.weaviate.httpPort | quote }}
+            - name: WEAVIATE_GRPC_HOST
+              value: {{ .Values.demoSeed.weaviate.grpcHost | default (printf "%s-weaviate-grpc" .Release.Name) | quote }}
+            - name: WEAVIATE_GRPC_PORT
+              value: {{ .Values.demoSeed.weaviate.grpcPort | quote }}
+            # seed_weaviate_manuals configures a text2vec-ollama vectorizer; its
+            # apiEndpoint is the ollama BASE (no /v1). The seed's own default
+            # already targets the sandbox ollama, so nothing is bridged from the
+            # ConfigMap's OLLAMA_BASE_URL (which carries a /v1 the vectorizer
+            # can't use). Work overrides OLLAMA_API_ENDPOINT via demoSeed.env.
+            {{- range $k, $v := .Values.demoSeed.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.demoSeed.resources | nindent 12 }}
+{{- end }}
