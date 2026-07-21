@@ -368,6 +368,7 @@ try:
         OUTCOME_LIST,
         OUTCOME_NONE,
         build_trace_lineage_answer,
+        humanize_urn_label,
         resolve_urn_outcome,
     )
 except ImportError:
@@ -375,6 +376,7 @@ except ImportError:
         OUTCOME_LIST,
         OUTCOME_NONE,
         build_trace_lineage_answer,
+        humanize_urn_label,
         resolve_urn_outcome,
     )
 
@@ -1091,7 +1093,7 @@ to decide the next call. Use only what the tools return — never invent data.
             import requests as _requests
 
             wrapper_url = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
-            asset_label = (semantic_ctx.get("instance_id") or "").strip() or task.task_description
+            raw_instance = (semantic_ctx.get("instance_id") or "").strip()
             user_query = request.get("user_query") or task.task_description
 
             # 1. Platform scope (BAML). known_platforms is a hint set so the
@@ -1109,24 +1111,36 @@ to decide the next call. Use only what the tools return — never invent data.
                 logger.warning("traceLineage: ExtractPlatformScope failed (%s); no platform filter", exc)
                 platform_scope = {"platforms": [], "platform_mentioned": False, "unrecognized": []}
 
-            # 2. Resolve the subject NAME → a single URN, then the three-outcome
-            #    floor decides found / ambiguous / not_found. Entitlement is
-            #    threaded so resolution respects the caller's domain scope (an
-            #    unentitled caller sees no candidates).
-            #    NB the resolution logic is DataHub-entity-model reasoning that
-            #    belongs on Engine D (its ``resolve_instance`), quarantined in a
-            #    deliberately-named function until that endpoint registers — see
-            #    _TEMPORARY_urn_resolution_belongs_on_engine_d and ADR-0030 owed
-            #    items. This call site stays identical when it relocates.
-            resolve = await _TEMPORARY_urn_resolution_belongs_on_engine_d(
-                asset_label=asset_label,
-                resolved_class_uri=semantic_ctx.get("resolved_uri", ""),
-                wrapper_url=wrapper_url,
-                caller_persona=caller_persona,
-                task_domain=task_domain,
-                caller_entitled_domains=caller_entitled_domains,
-                caller_email=caller_email,
-            )
+            # 2. Resolve the subject to a single URN.
+            #    The router's phone-book step usually ALREADY resolved the
+            #    instance to a URN and passes it as resolved_instance_id. In that
+            #    case use it DIRECTLY: re-resolving a URN by NAME search is both
+            #    wasteful and wrong — the URN string doesn't name-match the
+            #    display label, so the search mis-scored a clean single hit as
+            #    "ambiguous" and rendered the raw URN as the asset name (the
+            #    Customer 360 bug). We derive a readable label for prose.
+            #    Only when the instance arrives as a NAME (direct API callers,
+            #    class-level queries) do we fall back to the name-search
+            #    resolution — DataHub entity-model work that belongs on Engine D,
+            #    quarantined in _TEMPORARY_urn_resolution_belongs_on_engine_d
+            #    until its endpoint registers (ADR-0030 owed items). Either path
+            #    is safe: the /lineage_by_platform walk below enforces
+            #    entitlement, so skipping the resolution search never bypasses
+            #    the gate.
+            if raw_instance.startswith("urn:"):
+                resolve = {"outcome": "found", "urn": raw_instance, "candidate_count": 1}
+                asset_label = humanize_urn_label(raw_instance)
+            else:
+                asset_label = raw_instance or task.task_description
+                resolve = await _TEMPORARY_urn_resolution_belongs_on_engine_d(
+                    asset_label=asset_label,
+                    resolved_class_uri=semantic_ctx.get("resolved_uri", ""),
+                    wrapper_url=wrapper_url,
+                    caller_persona=caller_persona,
+                    task_domain=task_domain,
+                    caller_entitled_domains=caller_entitled_domains,
+                    caller_email=caller_email,
+                )
 
             # 3. Walk lineage ONLY when the subject resolved cleanly AND (if a
             #    platform was named) it was recognized. Otherwise the assembler

@@ -19,6 +19,7 @@ from agent_fleet.restate_analyst.lineage_answer import (
     OUTCOME_UNRECOGNIZED_PLATFORM,
     OUTPUT_URI_LINEAGE_TOPOLOGY,
     build_trace_lineage_answer,
+    humanize_urn_label,
     resolve_urn_outcome,
 )
 
@@ -192,3 +193,30 @@ def test_resolve_nothing_clears_the_floor_is_ambiguous():
     cands = [_cand("Weather Map", 1), _cand("Fleet Status", 2)]
     r = resolve_urn_outcome("customer revenue attribution", cands)
     assert r["outcome"] == "ambiguous" and r["urn"] is None
+
+
+def test_resolve_lone_candidate_is_found_even_on_poor_name_score():
+    # THE Customer 360 bug: the asked "name" was actually a URN, so it scored
+    # below min_score against the candidate's display name. With exactly one
+    # candidate there is nothing to be ambiguous BETWEEN — take it.
+    cands = [_cand("Customer 360", 7)]
+    r = resolve_urn_outcome("urn:li:dashboard:(superset,customer_360)", cands)
+    assert r["outcome"] == "found"
+    assert r["urn"] == "urn:li:dashboard:(bi,7)"
+    assert r["candidate_count"] == 1
+
+
+# --- humanize_urn_label: readable prose from a resolved URN ------------------
+
+def test_humanize_dashboard_urn():
+    assert humanize_urn_label("urn:li:dashboard:(superset,customer_360)") == "Customer 360"
+
+
+def test_humanize_drops_env_marker_and_takes_specific_segment():
+    urn = "urn:li:dataset:(urn:li:dataPlatform:snowflake,bronze.sales.orders_fact,PROD)"
+    assert humanize_urn_label(urn) == "Orders Fact"
+
+
+def test_humanize_handles_plain_token_and_empty():
+    assert humanize_urn_label("not-a-urn") == "Not A Urn"
+    assert humanize_urn_label("") == ""

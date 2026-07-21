@@ -79,6 +79,15 @@ def resolve_urn_outcome(
     if not cands:
         return {"outcome": "not_found", "urn": None, "candidate_count": 0}
 
+    if len(cands) == 1:
+        # A single search hit is not ambiguous — there is nothing to pick
+        # BETWEEN. Trust the search's lone result (the resolved URN travels in
+        # structured_data for audit if it turns out wrong). This honours the
+        # contract above ("a lone candidate" resolves) rather than rejecting a
+        # clean single match when its name happens to score below min_score —
+        # which is exactly what mis-fired when the asked "name" was itself a URN.
+        return {"outcome": "found", "urn": str(cands[0].get(urn_key)), "candidate_count": 1}
+
     scored = sorted(
         ((_name_score(instance_name, str(c.get(name_key) or "")), c) for c in cands),
         key=lambda x: x[0],
@@ -124,6 +133,33 @@ def _display_name(urn: str) -> str:
     name = m.group("name").strip()
     # last dotted segment is the most specific / readable
     return name.split(".")[-1] if "." in name else name
+
+
+_ENV_MARKERS = {"PROD", "DEV", "STG", "STAGING", "TEST", "QA", "UAT"}
+
+
+def humanize_urn_label(urn: str) -> str:
+    """A readable label from an entity URN — best-effort, cosmetic.
+
+    The router's phone-book step resolves a subject to a URN and passes THAT
+    (not the display name) as the instance id. For prose we want the human
+    name the URN stands for — the same thing the UI shows as the card title.
+    e.g. ``urn:li:dashboard:(superset,customer_360)`` -> ``Customer 360``.
+    Falls back to the raw URN when it can't parse one. PURE.
+    """
+    s = (urn or "").strip()
+    if not s:
+        return ""
+    if "(" in s and ")" in s:
+        inner = s[s.rfind("(") + 1:s.rfind(")")]
+        parts = [p.strip() for p in inner.split(",") if p.strip()]
+        parts = [p for p in parts if p.upper() not in _ENV_MARKERS]
+        token = parts[-1] if parts else s
+    else:
+        token = s.rsplit(":", 1)[-1]
+    token = token.split(".")[-1]                       # most specific segment
+    token = token.replace("_", " ").replace("-", " ").strip()
+    return token.title() if token else s
 
 
 def _nodes_and_sources(matches: List[Dict[str, Any]]) -> tuple[List[dict], List[dict], List[str]]:
