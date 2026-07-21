@@ -23,6 +23,26 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, Union
 import json
 
+# Pure selection helpers (platform filter, dedupe, structured result,
+# honest truncation). NO service imports there, so it stays unit-testable
+# with no cluster. Container flattens agent_fleet/datahub_wrapper/ into
+# /app, so the flat import wins in-image; the dev checkout uses the package
+# path — same duality as the mesh_registration imports elsewhere.
+try:
+    from lineage_filter import (  # type: ignore[no-redef]
+        LINEAGE_MAX_HOP_DEPTH,
+        LINEAGE_SCROLL_MAX_ENTITIES,
+        LINEAGE_SCROLL_PAGE_SIZE,
+        build_lineage_result,
+    )
+except ImportError:
+    from agent_fleet.datahub_wrapper.lineage_filter import (
+        LINEAGE_MAX_HOP_DEPTH,
+        LINEAGE_SCROLL_MAX_ENTITIES,
+        LINEAGE_SCROLL_PAGE_SIZE,
+        build_lineage_result,
+    )
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("DataHubWrapper")
@@ -361,6 +381,15 @@ class MetadataQueryRequest(BaseModel):
     # privileged posture of an empty entitled_domains.
     caller_email: str = ""
     entity_type: Optional[str] = None
+    # EXPLICIT platform scope, threaded from the router as structured data —
+    # NOT inferred by scanning user_query for platform words. Slug
+    # ('warehouse') or full 'urn:li:dataPlatform:<slug>'; empty = all
+    # platforms (no filter). Replaces a substring heuristic that was
+    # fragile both ways: a dashboard named after a platform triggered a
+    # spurious filter, a paraphrase triggered none, and the caller passed
+    # the narrowed entity name rather than the question so it could not fire
+    # even in principle.
+    platforms: List[str] = []
 
 
 # The domain this DataHub catalog serves. Engine D registers
@@ -424,6 +453,39 @@ async def _topaz_can_view(caller_email: str, domain: str) -> bool:
             e,
         )
         return False
+
+
+async def _domain_view_gate(
+    caller_email: str, entitled_domains: Optional[List[str]]
+) -> tuple[bool, str]:
+    """THE single catalog-metadata `can_view` gate for Engine D.
+
+    Every metadata-plane reader — /query_metadata, /lineage_edges, and the
+    platform-scoped /lineage_by_platform below — calls THIS, so "the new
+    endpoint inherits the gate by construction" is the same function call,
+    not similar code copied to a new site (which is exactly how the DA-read
+    gate went broken-closed for months: helper present, call site threading
+    the wrong identity). Returns ``(allowed, gate_basis)``; the caller
+    renders an honest-empty / access_denied response on deny.
+
+    Two branches, per the ADR-0025 dark launch:
+      * ENABLE_AGENTIC_AUTH → Topaz ``can_view`` ask (fail-closed on any
+        error/timeout/unreachable authorizer).
+      * else → in-code ``ENGINE_D_SERVED_DOMAIN in entitled_domains``.
+
+    SEAL STATE (2026-07-20): the IN-CODE branch is sealed on sandbox with a
+    three-caller probe — entitled-to-served-domain allowed; empty denied;
+    and, load-bearingly, entitled-to-the-WRONG-domain (MAINTENANCE) denied,
+    which proves the check is on the SPECIFIC served domain rather than the
+    mere presence of an entitlement list. The TOPAZ branch is a COLD PATH:
+    unexercised in any armed environment, so it must be sealed with the
+    same three-caller shape at the terminal flip before it is trusted.
+    """
+    entitled = [d.upper() for d in (entitled_domains or [])]
+    if ENABLE_AGENTIC_AUTH:
+        allowed = await _topaz_can_view(caller_email, _ENGINE_D_SERVED_DOMAIN)
+        return allowed, "topaz_can_view"
+    return (_ENGINE_D_SERVED_DOMAIN.upper() in entitled), "in_code_entitled_domains"
 
 
 # Recipe v2 instance-resolution contract.
@@ -755,6 +817,206 @@ async def lineage_edges(req: LineageEdgesRequest) -> dict:
     return {"edges": edges}
 
 
+# ---------------------------------------------------------------------------
+# Platform-scoped upstream lineage — the server-side, filtered walk.
+# ---------------------------------------------------------------------------
+_SCROLL_LINEAGE_QUERY = """
+query ScrollLineage($input: ScrollAcrossLineageInput!) {
+  scrollAcrossLineage(input: $input) {
+    nextScrollId
+    searchResults { degree entity { urn } }
+  }
+}
+"""
+
+
+def _platform_or_filters(platforms: Optional[List[str]]) -> Optional[list]:
+    """DataHub orFilters selecting the given platforms, or None for all.
+
+    Accepts bare slugs or full platform URNs; emits the URN form DataHub
+    matches on. None/empty means NO filter — an absent constraint must
+    never become an everything-excluded one.
+    """
+    wanted = [str(p).strip() for p in (platforms or []) if str(p).strip()]
+    if not wanted:
+        return None
+    values = [
+        p if p.startswith("urn:li:dataPlatform:") else f"urn:li:dataPlatform:{p}"
+        for p in wanted
+    ]
+    return [{"and": [{"field": "platform", "values": values}]}]
+
+
+async def _scroll_lineage_upstream(
+    client: httpx.AsyncClient,
+    start_urn: str,
+    platforms: Optional[List[str]],
+) -> tuple[List[Dict[str, Any]], bool]:
+    """UPSTREAM lineage of ``start_urn``, platform-filtered SERVER-SIDE.
+
+    DataHub does the traversal AND the platform filter (orFilters on the
+    dataPlatform field), so we never pull the full closure to filter it
+    client-side, and — critically — we never mistake NAME-SEARCH hits for
+    lineage. A prior approach searched by asset name and treated the hits
+    as lineage; name search returns same-named assets that aren't upstream
+    of anything, so its evidence set had no defensible relationship to the
+    question. This is a lineage traversal, full stop.
+
+    Scroll-paginated via ``nextScrollId`` so a large closure is fetched
+    COMPLETELY, not clipped at one page (the single-page cap on the
+    /lineage_edges walk is a genuine silent-loss bug; this path does not
+    repeat it). Two honest bounds:
+      * ``LINEAGE_SCROLL_MAX_ENTITIES`` — total entities pulled.
+      * ``LINEAGE_MAX_HOP_DEPTH`` — degree ceiling. Measured 8 and 11 on a
+        real dashboard; set to 20 for headroom. Applied to the returned
+        ``degree`` (the server already traversed and labelled it — this is
+        a filter on results, not a client walk).
+
+    Returns ``(rows, truncated)``. ``truncated`` is True when EITHER bound
+    clips, so ``build_lineage_result`` can mark the answer a lower bound.
+    """
+    headers = {"Content-Type": "application/json"}
+    if DATAHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {DATAHUB_TOKEN}"
+    or_filters = _platform_or_filters(platforms)
+
+    rows: List[Dict[str, Any]] = []
+    truncated = False
+    scroll_id: Optional[str] = None
+    # Page ceiling: a server that returns a perpetual nextScrollId must not
+    # loop us forever. Derived from the entity ceiling so it can only bind
+    # after that one would have.
+    max_pages = (LINEAGE_SCROLL_MAX_ENTITIES // max(1, LINEAGE_SCROLL_PAGE_SIZE)) + 2
+
+    for _ in range(max_pages):
+        inp: Dict[str, Any] = {
+            "urn": start_urn,
+            "direction": "UPSTREAM",
+            "count": LINEAGE_SCROLL_PAGE_SIZE,
+        }
+        if or_filters:
+            inp["orFilters"] = or_filters
+        if scroll_id:
+            inp["scrollId"] = scroll_id
+
+        r = await client.post(
+            DATAHUB_GMS_URL,
+            json={"query": _SCROLL_LINEAGE_QUERY, "variables": {"input": inp}},
+            headers=headers,
+        )
+        r.raise_for_status()
+        body = r.json()
+        if body.get("errors"):
+            # LOUD, per the same discipline query_metadata uses: a 200 with
+            # errors[] is a real failure, not an empty result.
+            raise RuntimeError(
+                f"scrollAcrossLineage GraphQL error: "
+                f"{json.dumps(body['errors'])[:300]}"
+            )
+        blk = (body.get("data") or {}).get("scrollAcrossLineage") or {}
+        for res in blk.get("searchResults") or []:
+            deg = res.get("degree")
+            urn = ((res.get("entity") or {}).get("urn")) or ""
+            if isinstance(deg, int) and deg > LINEAGE_MAX_HOP_DEPTH:
+                truncated = True  # beyond the hop ceiling; excluded + marked
+                continue
+            if urn:
+                rows.append({"urn": urn, "degree": deg})
+            if len(rows) >= LINEAGE_SCROLL_MAX_ENTITIES:
+                truncated = True
+                break
+        if truncated and len(rows) >= LINEAGE_SCROLL_MAX_ENTITIES:
+            break
+        scroll_id = blk.get("nextScrollId")
+        if not scroll_id:
+            break
+    else:
+        # Loop hit max_pages without a terminal null scrollId — the closure
+        # is larger than we will pull. Honest lower bound.
+        truncated = True
+
+    return rows, truncated
+
+
+class LineageByPlatformRequest(BaseModel):
+    subject_urn: str
+    platforms: List[str] = []          # empty = all platforms (no filter)
+    entitled_domains: List[str] = []
+    caller_email: str = ""
+
+
+@app.post("/lineage_by_platform")
+async def lineage_by_platform(req: LineageByPlatformRequest) -> dict:
+    """Platform-scoped UPSTREAM lineage of a single asset — server-side,
+    exact, in code.
+
+    Replaces the accumulate-by-name-search-then-let-the-LLM-pick pattern
+    that produced a confident wrong answer: the model read a long
+    repetitive list, missed the matching rows, and reported "none" while
+    the matches sat in its own evidence. Selection is done HERE
+    (lineage_filter.build_lineage_result); the model only narrates the
+    small result.
+
+    GATE — metadata plane, inherited VERBATIM. Calls the same
+    ``_domain_view_gate`` helper as /query_metadata, fail-closed,
+    honest-empty on deny. Its safety rests on a CHECKED fact: past the
+    domain gate /query_metadata is per-asset-UNFILTERED (only a platform
+    orFilter, no per-asset predicate in the query or the result parsing),
+    so every entity this UPSTREAM walk can surface is already reachable by
+    name through /query_metadata — the walk's exposure is a SUBSET. It does
+    NOT rely on /lineage_edges' "edges only between subjects already seen"
+    property, which does NOT survive an 8-11-hop walk.
+
+    IF the metadata-plane ruling ever flips to per-asset ``can_read``, THIS
+    endpoint is the FIRST that must adopt per-asset filtering — its
+    aperture (deep upstream traversal) is the widest in the system. That
+    dependency is recorded in the substrate runbook at the point it will
+    break, not just here.
+    """
+    allowed, gate_basis = await _domain_view_gate(req.caller_email, req.entitled_domains)
+    requested = sorted({str(p).strip().lower() for p in (req.platforms or []) if str(p).strip()})
+    if not allowed:
+        logging.warning(
+            "LINEAGE_BY_PLATFORM DENIED (%s): served_domain=%s caller_email=%r",
+            gate_basis, _ENGINE_D_SERVED_DOMAIN, req.caller_email,
+        )
+        # Honest-empty, same discriminating shape as the other metadata-plane
+        # denials: access_denied True distinguishes "gate blocked" from
+        # "walk ran and found nothing".
+        return {
+            "match_count": 0, "matches": [], "considered_count": 0,
+            "platforms_requested": requested, "platform_histogram": {},
+            "truncated": False, "access_denied": True, "gate_basis": gate_basis,
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            rows, truncated = await _scroll_lineage_upstream(
+                client, req.subject_urn, req.platforms
+            )
+    except Exception as exc:  # noqa: BLE001
+        logging.warning(
+            "LINEAGE_BY_PLATFORM: scroll failed for subject=%r: %r",
+            req.subject_urn, exc,
+        )
+        # Honest error, NOT a fabricated empty — the caller must be able to
+        # tell "lineage unavailable" from "no matching lineage".
+        return {
+            "match_count": 0, "matches": [], "considered_count": 0,
+            "platforms_requested": requested, "platform_histogram": {},
+            "truncated": False, "error": "lineage_unavailable",
+        }
+
+    result = build_lineage_result(rows, platforms=req.platforms, truncated=truncated)
+    result["access_denied"] = False
+    logging.info(
+        "LINEAGE_BY_PLATFORM: subject=%r platforms=%s considered=%d matched=%d truncated=%s",
+        req.subject_urn, result["platforms_requested"],
+        result["considered_count"], result["match_count"], result["truncated"],
+    )
+    return result
+
+
 @app.get("/tables")
 async def get_tables() -> dict:
     """Legacy endpoint — now deprecated in favor of /query_metadata."""
@@ -1054,12 +1316,9 @@ async def query_metadata(request: MetadataQueryRequest):
     # least-privileged), distinct from "no assets matched". This closes the
     # confirmed bypass where any caller got full PII-tagged metadata.
     entitled = [d.upper() for d in (request.entitled_domains or [])]
-    if ENABLE_AGENTIC_AUTH:
-        allowed = await _topaz_can_view(request.caller_email, _ENGINE_D_SERVED_DOMAIN)
-        gate_basis = "topaz_can_view"
-    else:
-        allowed = _ENGINE_D_SERVED_DOMAIN.upper() in entitled
-        gate_basis = "in_code_entitled_domains"
+    allowed, gate_basis = await _domain_view_gate(
+        request.caller_email, request.entitled_domains
+    )
 
     if not allowed:
         logging.warning(
@@ -1091,15 +1350,19 @@ async def query_metadata(request: MetadataQueryRequest):
             ),
         )
 
-    query_upper = request.user_query.upper()
+    # Platform scope is an EXPLICIT parameter now (see MetadataQueryRequest.
+    # platforms). The old `for term in PLATFORM_MAP if term in
+    # user_query.upper()` heuristic is deleted, not layered over: two
+    # mechanisms deciding the same thing, one of them silently wrong, is
+    # the shape this codebase keeps getting bitten by.
+    wanted_platforms = [p for p in (request.platforms or []) if str(p).strip()]
     or_filters = []
-    
-    # Intelligently apply platform filters if mentioned in the query
-    for term, urn in PLATFORM_MAP.items():
-        if term in query_upper:
-            or_filters.append({
-                "and": [{"field": "platform", "values": [urn]}]
-            })
+    if wanted_platforms:
+        or_filters.append({"and": [{"field": "platform", "values": [
+            p if str(p).startswith("urn:li:dataPlatform:")
+            else f"urn:li:dataPlatform:{p}"
+            for p in wanted_platforms
+        ]}]})
 
     # Construct the dynamic DataHub SearchInput
     search_variables = {

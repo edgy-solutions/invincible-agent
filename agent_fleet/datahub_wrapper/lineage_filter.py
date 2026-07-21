@@ -39,6 +39,24 @@ from typing import Any, Dict, Iterable, List, Optional
 #: trips against per-response size.
 LINEAGE_SCROLL_PAGE_SIZE = int(os.getenv("LINEAGE_SCROLL_PAGE_SIZE", "200"))
 
+#: Maximum upstream HOP DEPTH the lineage traversal is allowed to reach.
+#:
+#: SET FROM MEASUREMENT, NOT INTUITION. On a real dashboard the target
+#: platform's datasets were observed at hops 8 and 11 (a deep upstream
+#: closure across transform/warehouse layers). A bound guessed at ~5 —
+#: the intuitive "a few hops" — would have traversed past none of them
+#: and returned an empty set, i.e. reproduced the ORIGINAL wrong answer
+#: ("no <platform> tables") deterministically, now blessed by the fix.
+#: That is the specific trap this constant exists to prevent.
+#:
+#: Set with headroom above the deepest observed match (11) so a lineage
+#: slightly deeper than the one measured still resolves. Like the entity
+#: ceiling, when this bound actually clips the traversal the result is
+#: marked truncated (a LOWER BOUND), never presented as complete. Raise
+#: it — with a new measurement in this comment — if real lineages are
+#: found deeper than this.
+LINEAGE_MAX_HOP_DEPTH = int(os.getenv("LINEAGE_MAX_HOP_DEPTH", "20"))
+
 #: HARD CEILING on how many lineage entities a single request will pull.
 #:
 #: WHAT THIS PROTECTS AGAINST: lineage is a graph, and a pathologically
