@@ -27,8 +27,75 @@ ADR-0030 contract, enforced here:
 """
 from __future__ import annotations
 
+import difflib
 import re
 from typing import Any, Dict, List, Optional
+
+
+def _name_score(query: str, candidate: str) -> float:
+    """0..1 similarity between the asked name and a candidate asset name.
+
+    Mirrors Engine D's resolveInstance scoring in spirit: exact match wins,
+    a suffix/containment relationship is strong, otherwise a fuzzy ratio.
+    Pure — no catalog access.
+    """
+    a = (query or "").strip().lower()
+    b = (candidate or "").strip().lower()
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    # The asked name often carries descriptors the catalog name omits
+    # ("quarterly sales overview dashboard" vs "Sales Overview"), so
+    # containment either way is a strong signal.
+    if b in a or a in b:
+        return 0.9
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def resolve_urn_outcome(
+    instance_name: str,
+    candidates: List[Dict[str, Any]],
+    *,
+    min_score: float = 0.55,
+    margin: float = 0.15,
+    name_key: str = "name",
+    urn_key: str = "urn",
+) -> Dict[str, Any]:
+    """The three-outcome URN floor: never silently walk a guessed asset.
+
+    Given catalog search candidates (each at least ``{name, urn}``), decide:
+      * "found"     — one candidate clearly best (score >= min_score AND
+                      beating the runner-up by >= margin, or a lone
+                      candidate). Returns its urn.
+      * "ambiguous" — several near-equal (top two within `margin`) or nothing
+                      clears `min_score`. Do NOT pick — the handler says so.
+      * "not_found" — no candidates at all.
+
+    Returns {"outcome", "urn", "candidate_count"}. Pure and unit-testable;
+    the live DataHub search that produces `candidates` is the I/O boundary.
+    """
+    cands = [c for c in (candidates or []) if str(c.get(urn_key) or "").strip()]
+    if not cands:
+        return {"outcome": "not_found", "urn": None, "candidate_count": 0}
+
+    scored = sorted(
+        ((_name_score(instance_name, str(c.get(name_key) or "")), c) for c in cands),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+    top_score, top = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0.0
+
+    if top_score < min_score:
+        # Nothing clearly matches the asked name — don't walk the best-of-a-bad-lot.
+        return {"outcome": "ambiguous", "urn": None, "candidate_count": len(cands)}
+    if len(scored) > 1 and (top_score - second_score) < margin:
+        # Two (or more) near-equal matches — picking one silently is the
+        # confidently-wrong-answer failure with a new mechanism.
+        near = sum(1 for s, _ in scored if (top_score - s) < margin)
+        return {"outcome": "ambiguous", "urn": None, "candidate_count": near}
+    return {"outcome": "found", "urn": str(top.get(urn_key)), "candidate_count": len(cands)}
 
 OUTPUT_URI_LINEAGE_TOPOLOGY = "http://invincible-agent/mesh#LineageTopology"
 

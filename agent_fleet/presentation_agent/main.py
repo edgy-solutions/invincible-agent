@@ -219,6 +219,49 @@ def _render_document_deterministic(
     }
 
 
+def _degrade_edgeless_topology_to_document(
+    raw_data: Any, persona: str
+) -> Optional[Dict[str, Any]]:
+    """ADR-0030 rule 2: a deterministic ``LineageTopology`` is EDGELESS BY
+    DESIGN and must render as a document, not a graph.
+
+    The deterministic traceLineage branch (Engine A, ADR-0030 / D4) computes
+    the selected upstream set in code and writes the summary FROM it, then
+    emits a ``LineageTopology`` whose ``structured_data`` carries an explicit
+    ``outcome`` discriminant and (because a platform filter crosses
+    intermediate hops) usually no edges. Forcing that through
+    ``RenderAsTopology`` is the ORIGINAL bug: the renderer is asked to draw a
+    graph from data with no edges, so the model INVENTS edges and the
+    oversized prompt times out (a list is not a graph).
+
+    Key on the DISCRIMINANT, never on "edges happens to be empty" — a genuine
+    but sparse graph would also be edgeless. When ``outcome`` is present the
+    answer already decided its own honest shape (list / none / couldnt_locate
+    / ambiguous / unrecognized_platform / lineage_error), all of which read
+    correctly as the already-written summary. When it is absent, this is a
+    real topology graph and belongs to ``RenderAsTopology`` — return None.
+    """
+    resp = _extract_agent_response(raw_data)
+    if not isinstance(resp, dict):
+        return None
+    sd = resp.get("structured_data")
+    if isinstance(sd, str):
+        try:
+            sd = json.loads(sd)
+        except (ValueError, TypeError):
+            sd = None
+    summary = resp.get("summary") or resp.get("summary_text") or ""
+    doc = _edgeless_lineage_document(sd, summary, persona)
+    if doc is not None:
+        logger.info(
+            "render_ui: edgeless LineageTopology outcome=%s matched=%s -> "
+            "KNOWLEDGE_DOCUMENT (ADR-0030 rule 2; renderer bypassed, no "
+            "invented edges, no graph-of-a-list timeout).",
+            (sd or {}).get("outcome"), (sd or {}).get("match_count"),
+        )
+    return doc
+
+
 # ADR-0017 follow-up: archetype-hardened renderers. Each maps a BAML
 # archetype enum string to the matching RenderAs* function that
 # RETURNS the specific archetype class (not the union). The LLM has
@@ -240,6 +283,18 @@ except ImportError:
         chart_data_is_empty as _chart_data_is_empty,
         honest_text_from_response as _honest_text_from_response,
         normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
+    )
+
+# ADR-0030 rule 2: the edgeless-LineageTopology → document decision, kept in a
+# dep-free sibling so it unit-tests without the FastAPI/BAML chain (same split
+# as chart_normalizer above). Flatten-aware import.
+try:
+    from topology_degrade import (  # type: ignore[no-redef]
+        edgeless_lineage_document as _edgeless_lineage_document,
+    )
+except ImportError:
+    from agent_fleet.presentation_agent.topology_degrade import (
+        edgeless_lineage_document as _edgeless_lineage_document,
     )
 
 
@@ -285,6 +340,16 @@ async def _render_archetype_hardened(
     # the user sees anything, and the fallback is both faster and
     # guaranteed to produce output. A repeated warning here is the signal
     # that the renderer's timeout budget is too tight for this archetype.
+    # ADR-0030 rule 2: intercept a deterministic (edgeless) LineageTopology
+    # BEFORE the graph renderer runs. Keyed on the outcome discriminant, this
+    # never reaches RenderAsTopology — so the model can't invent edges from an
+    # edgeless payload and the oversized-prompt timeout can't fire. A genuine
+    # graph (no discriminant, or real edges) falls through to the renderer.
+    if archetype == "PROCESS_TOPOLOGY":
+        degraded = _degrade_edgeless_topology_to_document(raw_data, persona)
+        if degraded is not None:
+            return degraded, True
+
     try:
         if archetype == "PROCESS_TOPOLOGY":
             ui = await b.RenderAsTopology(str_raw_data, persona)

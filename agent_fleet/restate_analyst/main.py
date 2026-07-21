@@ -360,6 +360,57 @@ except ImportError:
         recommended_entity_type as _recommended_entity_type,
     )
 
+# The deterministic traceLineage assembler (ADR-0030 / D4). PURE module —
+# no network, no smolagents — so the summary is written FROM the selected
+# structure and cannot contradict it. Same flatten-aware import shape.
+try:
+    from lineage_answer import (  # type: ignore[no-redef]
+        OUTCOME_LIST,
+        OUTCOME_NONE,
+        build_trace_lineage_answer,
+        resolve_urn_outcome,
+    )
+except ImportError:
+    from agent_fleet.restate_analyst.lineage_answer import (
+        OUTCOME_LIST,
+        OUTCOME_NONE,
+        build_trace_lineage_answer,
+        resolve_urn_outcome,
+    )
+
+
+# The hint set the ExtractPlatformScope extractor uses to tell a recognized
+# data platform from a typo'd/unknown one. These are GENERIC VENDOR SLUGS
+# (DataHub dataPlatform names) — not catalog assets — so they are safe to
+# name in code. Ops can extend the set for a deployment without a code change
+# via KNOWN_PLATFORMS (comma-separated); the authoritative recognition still
+# happens at Engine D (an unrecognized slug yields no filter match). The list
+# only steers the extractor's recognized-vs-unrecognized branch.
+_KNOWN_PLATFORMS_DEFAULT = [
+    "snowflake", "postgres", "mysql", "mssql", "oracle", "redshift",
+    "bigquery", "databricks", "dbt", "s3", "hive", "kafka", "superset",
+    "looker", "tableau", "presto", "trino", "clickhouse", "mongodb",
+]
+
+
+def _known_platforms_str() -> str:
+    """Comma-separated known-platform hint for the extractor (env-overridable)."""
+    override = (os.getenv("KNOWN_PLATFORMS") or "").strip()
+    if override:
+        slugs = [s.strip().lower() for s in override.split(",") if s.strip()]
+    else:
+        slugs = list(_KNOWN_PLATFORMS_DEFAULT)
+    return ", ".join(slugs)
+
+
+def _is_trace_lineage(verb_iri: str) -> bool:
+    """True when the router matched the traceLineage verb, tolerant of the IRI
+    form (``mesh:traceLineage`` or a fully-qualified ``…#traceLineage``)."""
+    if not verb_iri:
+        return False
+    local = verb_iri.rsplit("#", 1)[-1].rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    return local.strip().lower() == "tracelineage"
+
 
 def _resolve_ontology(task_description: str, user_email: str = "") -> dict:
     """Call Engine O to resolve the task description into semantic context.
@@ -960,7 +1011,138 @@ to decide the next call. Use only what the tools return — never invent data.
                 print(f"ERROR in run_smolagent: {error_trace}")
                 raise e
 
-        raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
+        async def run_trace_lineage():
+            """Deterministic traceLineage (ADR-0030 / D4).
+
+            The original bug was a summary that contradicted its own evidence:
+            the smolagent read a long upstream list, missed the matching rows,
+            and reported "none." This branch removes the model from selection
+            entirely — it resolves the subject to a single URN (three-outcome
+            floor: never silently walk a guessed asset), asks Engine D to walk
+            and platform-FILTER lineage server-side, and assembles the answer
+            FROM that structure. Narrative cannot disagree with evidence
+            because there is one source of truth. Produces the same
+            (raw_agent_response, execution_trace, conf) tuple the smolagent
+            path does, so all shared response assembly below runs unchanged.
+            """
+            import requests as _requests
+
+            wrapper_url = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
+            asset_label = (semantic_ctx.get("instance_id") or "").strip() or task.task_description
+            user_query = request.get("user_query") or task.task_description
+
+            # 1. Platform scope (BAML). known_platforms is a hint set so the
+            #    extractor distinguishes a recognized platform from a typo.
+            #    A failure here degrades to "no filter" (full lineage), never
+            #    to a wrong filter.
+            try:
+                scope = await b.ExtractPlatformScope(user_query, _known_platforms_str())
+                platform_scope = {
+                    "platforms": [str(p).strip().lower() for p in (scope.platforms or []) if str(p).strip()],
+                    "platform_mentioned": bool(scope.platform_mentioned),
+                    "unrecognized": [str(u) for u in (scope.unrecognized or []) if str(u).strip()],
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("traceLineage: ExtractPlatformScope failed (%s); no platform filter", exc)
+                platform_scope = {"platforms": [], "platform_mentioned": False, "unrecognized": []}
+
+            # 2. Resolve the subject NAME → a single URN via Engine D search,
+            #    then the three-outcome floor decides found / ambiguous /
+            #    not_found. Entitlement is threaded so resolution respects the
+            #    caller's domain scope (an unentitled caller sees no candidates).
+            entity_type = _recommended_entity_type(semantic_ctx.get("resolved_uri", "")) or None
+            candidates: List[Dict[str, Any]] = []
+            try:
+                payload = {
+                    "user_query": asset_label,
+                    "persona": caller_persona,
+                    "domain": task_domain,
+                    "entitled_domains": caller_entitled_domains,
+                    "caller_email": caller_email,
+                }
+                if entity_type:
+                    payload["entity_type"] = entity_type
+                r = await asyncio.to_thread(
+                    lambda: _requests.post(f"{wrapper_url}/query_metadata", json=payload, timeout=15.0)
+                )
+                r.raise_for_status()
+                for a in (r.json().get("matched_assets") or []):
+                    if isinstance(a, dict) and a.get("urn"):
+                        candidates.append({"name": a.get("label") or a.get("urn"), "urn": a["urn"]})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("traceLineage: subject resolution search failed (%s)", exc)
+            resolve = resolve_urn_outcome(asset_label, candidates)
+
+            # 3. Walk lineage ONLY when the subject resolved cleanly AND (if a
+            #    platform was named) it was recognized. Otherwise the assembler
+            #    emits the correct say-so outcome without a pointless walk.
+            unrecognized_platform = platform_scope["platform_mentioned"] and not platform_scope["platforms"]
+            lineage_result = None
+            if resolve["outcome"] == "found" and not unrecognized_platform:
+                try:
+                    lr = await asyncio.to_thread(lambda: _requests.post(
+                        f"{wrapper_url}/lineage_by_platform",
+                        json={
+                            "subject_urn": resolve["urn"],
+                            "platforms": platform_scope["platforms"],
+                            "entitled_domains": caller_entitled_domains,
+                            "caller_email": caller_email,
+                        },
+                        timeout=45.0,
+                    ))
+                    lr.raise_for_status()
+                    lineage_result = lr.json()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("traceLineage: /lineage_by_platform failed (%s)", exc)
+                    lineage_result = {"error": "lineage_unavailable"}
+
+            answer = build_trace_lineage_answer(
+                asset_label=asset_label,
+                resolve=resolve,
+                platform_scope=platform_scope,
+                lineage_result=lineage_result,
+            )
+            sd = answer["structured_data"]
+            trace = (
+                "--- Deterministic traceLineage (ADR-0030) ---\n"
+                f"subject={asset_label!r}\n"
+                f"resolve={resolve['outcome']} candidates={resolve.get('candidate_count')}\n"
+                f"platforms={platform_scope['platforms']} "
+                f"mentioned={platform_scope['platform_mentioned']} "
+                f"unrecognized={platform_scope['unrecognized']}\n"
+                f"outcome={answer['outcome']} "
+                f"considered={sd.get('considered_count')} matched={sd.get('match_count')} "
+                f"truncated={sd.get('truncated')}\n"
+            )
+            # A clean list / genuine-none is a high-confidence deterministic
+            # result; the say-so outcomes are honest low-confidence answers.
+            confidence = {OUTCOME_LIST: 0.95, OUTCOME_NONE: 0.9}.get(answer["outcome"], 0.5)
+            raw = {
+                "summary_text": answer["summary"],
+                "structured_data": sd,
+                "output_uri": answer["output_uri"],
+                "__sources": answer["sources"],
+            }
+            return raw, trace, confidence
+
+        if _is_trace_lineage(routed_verb_iri):
+            raw_agent_response, execution_trace, conf = await ctx.run(
+                "deterministic-trace-lineage", run_trace_lineage
+            )
+            # Project the deterministically-selected upstreams into the same
+            # sources_collected channel the smolagent path fills, reusing its
+            # dedupe + cortex-ui Source shape. `__sources` is a transport-only
+            # key; drop it before the shared assembly reads the dict.
+            for s in (raw_agent_response.pop("__sources", []) or []):
+                _collect_datahub_source(
+                    s.get("uri", ""),
+                    search_query="traceLineage",
+                    relevance=s.get("relevance"),
+                    label_override=s.get("label"),
+                    entity_type_override=s.get("type"),
+                )
+        else:
+            raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
 
         summary_text = str(raw_agent_response)
         structured_data_str = None

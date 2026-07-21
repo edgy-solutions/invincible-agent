@@ -19,6 +19,7 @@ from agent_fleet.restate_analyst.lineage_answer import (
     OUTCOME_UNRECOGNIZED_PLATFORM,
     OUTPUT_URI_LINEAGE_TOPOLOGY,
     build_trace_lineage_answer,
+    resolve_urn_outcome,
 )
 
 FOUND = {"outcome": "found", "urn": "urn:li:dashboard:(authored_bi,1)", "candidate_count": 1}
@@ -150,3 +151,44 @@ def test_truncation_is_surfaced_as_a_lower_bound():
         lineage_result=_result([{"urn": _ds("warehouse_a", "z.t"), "platforms": ["warehouse_a"]}], truncated=True))
     assert res["structured_data"]["truncated"] is True
     assert "lower bound" in res["summary"]
+
+
+# --- the URN-resolution floor: three outcomes, never a silent pick ----------
+
+def _cand(name, n):
+    return {"name": name, "urn": f"urn:li:dashboard:(bi,{n})"}
+
+
+def test_resolve_no_candidates_is_not_found():
+    r = resolve_urn_outcome("anything", [])
+    assert r["outcome"] == "not_found" and r["urn"] is None
+
+
+def test_resolve_single_candidate_is_found():
+    # The asked name carries descriptors the catalog name omits — containment
+    # still resolves to the lone candidate.
+    r = resolve_urn_outcome("Quarterly Sales Overview Dashboard", [_cand("Sales Overview", 19)])
+    assert r["outcome"] == "found"
+    assert r["urn"] == "urn:li:dashboard:(bi,19)"
+
+
+def test_resolve_clear_best_is_found():
+    # one strong containment match, others unrelated
+    cands = [_cand("Sales Overview", 1), _cand("Quarterly Sales Dashboard", 2), _cand("Weather", 3)]
+    r = resolve_urn_outcome("Quarterly Sales Dashboard", cands)
+    assert r["outcome"] == "found" and r["urn"].endswith(",2)")
+
+
+def test_resolve_near_equal_is_ambiguous_not_a_silent_pick():
+    # two identically-named assets — must NOT pick one
+    cands = [_cand("Orders", 1), _cand("Orders", 2)]
+    r = resolve_urn_outcome("Orders", cands)
+    assert r["outcome"] == "ambiguous" and r["urn"] is None
+    assert r["candidate_count"] >= 2
+
+
+def test_resolve_nothing_clears_the_floor_is_ambiguous():
+    # the asked name matches none of the candidates well
+    cands = [_cand("Weather Map", 1), _cand("Fleet Status", 2)]
+    r = resolve_urn_outcome("customer revenue attribution", cands)
+    assert r["outcome"] == "ambiguous" and r["urn"] is None
