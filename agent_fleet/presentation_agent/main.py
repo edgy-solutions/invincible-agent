@@ -38,13 +38,21 @@ try:
 except ImportError:
     from agent_fleet.utils.mesh_registration import register_presentation_to_mesh
 
-# Configure root logging so this module's INFO records actually reach stdout.
-# Without this, `logging.getLogger("presentation_agent")` has no handler and
-# every logger.info here is dropped — including the ADR-0030 edgeless-topology
-# degrade line — so the only Engine F logs visible are uvicorn's own access
-# lines. Mirrors datahub_wrapper / mesh_registrar (both basicConfig at import).
-logging.basicConfig(level=logging.INFO)
+# Give THIS module's logger its own stdout handler so its INFO records survive
+# uvicorn's logging reconfiguration at startup. A bare logging.basicConfig here
+# emits nothing under uvicorn: uvicorn replaces the root handler basicConfig
+# installs, so every logger.info was dropped — including the ADR-0030
+# edgeless-topology degrade line, leaving only uvicorn's own access logs. A
+# handler attached to the NAMED "presentation_agent" logger (with propagate off
+# so it doesn't also hit uvicorn's root) is untouched by that reconfig and
+# always emits.
 logger = logging.getLogger("presentation_agent")
+if not logger.handlers:
+    _log_handler = logging.StreamHandler()
+    _log_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    logger.addHandler(_log_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
 
 # ---------------------------------------------------------------------------
 # Presentation capability table (ADR-0017 §5)
