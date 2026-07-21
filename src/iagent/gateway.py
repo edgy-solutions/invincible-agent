@@ -721,76 +721,15 @@ def _metadata_dict(mat: dict) -> dict[str, Any]:
     return out
 
 
-def _engine_name_from_provider(provider: str | None) -> str:
-    """Best-effort human-readable engine name from a verb edge's provider
-    string. Provider values are conventionally `engine_<letter>_<role>`
-    (e.g. `engine_w_weaviate_expert_work_instruction`). The letter
-    after the underscore identifies which mesh engine handled the
-    dispatch. Falls back to the raw provider string when the convention
-    doesn't apply (e.g. a future engine with a different naming scheme).
-    """
-    if not provider:
-        return "Unknown engine"
-    p = provider.lower()
-    if p.startswith("engine_a"):
-        return "Engine A"
-    if p.startswith("engine_b"):
-        return "Engine B"
-    if p.startswith("engine_c"):
-        return "Engine C"
-    if p.startswith("engine_d_") or p == "engine_d":
-        return "Engine D"
-    if p.startswith("engine_da"):
-        return "Engine DA"
-    if p.startswith("engine_e"):
-        return "Engine E"
-    if p.startswith("engine_f"):
-        return "Engine F"
-    if p.startswith("engine_o"):
-        return "Engine O"
-    if p.startswith("engine_w"):
-        return "Engine W"
-    return provider
-
-
-def _engine_name_from_endpoint(endpoint: str | None) -> str:
-    """Derive a human-readable engine name from a verb edge's endpoint
-    URL. Used as a fallback when the predicate dict has no ``provider``
-    field (the Weaviate Predicate-collection record doesn't store one;
-    only ``endpoint_url`` is reliable). Endpoint shape is usually
-    ``http://iagent-engine-<letter>:<port>/<route>`` (k8s in-cluster DNS).
-
-    Exception: Engine DA's deployment is named ``iagent-data-analyst``
-    not ``iagent-engine-da``, so the regex alone misses it. The named-
-    deployment lookup table below catches that case (and any future
-    engine whose chart component name doesn't follow the
-    iagent-engine-<letter> pattern). Caught 2026-06-24 when the HUD
-    showed "Unknown engine" on an analyzeDataset route despite the
-    endpoint being correctly attributed.
-    """
-    if not endpoint:
-        return ""
-    e = endpoint.lower()
-    import re
-    # Named-deployment overrides for engines whose k8s service name
-    # doesn't follow iagent-engine-<letter>. Tested at module
-    # boundary by tests/routing/test_specialist_endpoints_probe.py
-    # — adding a new override here should also add an entry to the
-    # endpoint probe so the engine name stays attributable.
-    named_deployments = {
-        "iagent-data-analyst": "Engine DA",
-    }
-    for service_name, engine_name in named_deployments.items():
-        if service_name in e:
-            return engine_name
-    # Regex path: iagent-engine-<letter[letter]>
-    m = re.search(r"iagent-engine-([a-z]{1,2})\b", e)
-    if not m:
-        return ""
-    letter = m.group(1)
-    if letter == "da":
-        return "Engine DA"
-    return f"Engine {letter.upper()}"
+# Engine-name resolution for the routing HUD "Handled by" label lives in a
+# dep-free sibling (engine_names.py) so it unit-tests without importing gateway
+# (whose import connects to Postgres). Release-agnostic: anchored on the chart
+# component name, not a release-prefixed / bare-vs-FQDN service name. Kept under
+# the original underscore aliases so the call sites below are unchanged.
+from .engine_names import (  # noqa: E402
+    engine_name_from_endpoint as _engine_name_from_endpoint,
+    engine_name_from_provider as _engine_name_from_provider,
+)
 
 
 def _label_from_uri(uri: str | None) -> str:
