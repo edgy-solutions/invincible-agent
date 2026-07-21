@@ -721,7 +721,7 @@ async def analyze(ctx: Context, request: dict) -> dict:
             appear in `upstream:` or `downstream:`.
 
             Args:
-                query: CRITICAL - You MUST extract 1-3 concise keywords (e.g. 'RSO Superset'). DO NOT pass full sentences.
+                query: CRITICAL - You MUST extract 1-3 concise keywords (e.g. 'sales dashboard'). DO NOT pass full sentences.
                 entity_type: The specific entity to search. You MUST choose a value from the 'Valid DataHub Entity Types' list provided in your system prompt. Do NOT use '*'.
             """
             import requests
