@@ -1520,6 +1520,15 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # Engines that don't read this field ignore it (forward-
         # compatible introduction).
         "resolved_subject_uri": telemetry.get("subject_uri", ""),
+        # 2026-07-21 — also thread the resolved instance's DISPLAY LABEL
+        # alongside its id. `subject_instance_id` is the URN (e.g. a superset
+        # dashboard whose URN key is a numeric id); an engine that humanizes the
+        # URN for prose then titles the card with that number. The label is the
+        # human display name the phone-book already matched. Forward it so
+        # Engine A's traceLineage can title the answer with the real name
+        # instead of the URN key. Empty when no instance resolved; engines that
+        # don't read it ignore it (forward-compatible).
+        "resolved_instance_label": telemetry.get("subject_instance_label", ""),
     }
 
     context.log.info(

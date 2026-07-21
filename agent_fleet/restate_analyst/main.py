@@ -1094,6 +1094,12 @@ to decide the next call. Use only what the tools return — never invent data.
 
             wrapper_url = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
             raw_instance = (semantic_ctx.get("instance_id") or "").strip()
+            # The supervisor's phone-book match carries the instance's DISPLAY
+            # LABEL separately from its URN id (whose key can be a numeric
+            # superset id). Prefer the label for prose so the card isn't titled
+            # after the URN key; fall back to humanizing the URN only when no
+            # label was threaded.
+            resolved_instance_label = (request.get("resolved_instance_label") or "").strip()
             user_query = request.get("user_query") or task.task_description
 
             # 1. Platform scope (BAML). known_platforms is a hint set so the
@@ -1129,7 +1135,7 @@ to decide the next call. Use only what the tools return — never invent data.
             #    the gate.
             if raw_instance.startswith("urn:"):
                 resolve = {"outcome": "found", "urn": raw_instance, "candidate_count": 1}
-                asset_label = humanize_urn_label(raw_instance)
+                asset_label = resolved_instance_label or humanize_urn_label(raw_instance)
             elif raw_instance:
                 asset_label = raw_instance
                 resolve = await _TEMPORARY_urn_resolution_belongs_on_engine_d(
