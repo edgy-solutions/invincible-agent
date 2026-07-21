@@ -18,8 +18,12 @@ from __future__ import annotations
 import difflib
 
 # Entity-type + BI-platform nouns (and articles) users append when naming an
-# asset in prose. NOT data-platform names (snowflake/postgres/dbt) — those are
-# more likely to be genuine parts of an asset name.
+# asset in prose. This is a CLOSED grammatical class — the words English
+# speakers append to a BI asset name — not data knowledge, which is why a frozen
+# set (not an LLM) is the honest home for it (ADR-0031). Admission rule:
+# entity-type nouns + BI-tool names + articles; NEVER data-platform names
+# (snowflake/postgres/dbt) — those are more likely genuine parts of an asset
+# name. MAINTENANCE: when a new BI tool enters the stack (e.g. grafana), add it.
 _DESCRIPTOR_TOKENS = frozenset({
     "the", "a", "an",
     "dashboard", "dashboards", "table", "tables", "dataset", "datasets",

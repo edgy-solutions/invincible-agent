@@ -1215,6 +1215,25 @@ async def resolve_instance(request: ResolveInstanceRequest) -> ResolveInstanceRe
         )
 
     candidates.sort(key=lambda c: c.score, reverse=True)
+
+    # Alias telemetry (log-only, zero behavior change). When the descriptor-strip
+    # fallback was applied AND a NON-exact candidate resolved, the user's
+    # phrasing is an ALIAS for the asset (they said it a way that isn't its
+    # catalog name). Record the pair so a future decision is driven by REAL
+    # phrasings from logs rather than imagined ones: (a) whether an LLM
+    # candidate-generator rung is ever worth building — see ADR-0031 — and
+    # (b) raw material for a v2 alias-persistence loop (confirmation-gated).
+    # Grep marker: RESOLVE_INSTANCE_ALIAS.
+    if reduced and reduced.strip().lower() != request.identifier.strip().lower() and candidates:
+        top = candidates[0]
+        if top.score < 1.0:
+            logger.info(
+                "RESOLVE_INSTANCE_ALIAS identifier=%r resolved_to=%r urn=%s "
+                "score=%.2f reduced_query=%r — descriptor-strip bridged a "
+                "non-exact name; alias-mining / LLM-rung-need signal (ADR-0031).",
+                request.identifier, top.label, top.instance_id, top.score, reduced,
+            )
+
     return ResolveInstanceResponse(candidates=candidates)
 
 
