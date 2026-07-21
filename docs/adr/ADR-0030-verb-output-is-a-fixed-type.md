@@ -125,6 +125,48 @@ mechanism, an extension of `rendersAs`, or a presentation-SPO layer — is
   `AgentResponse`) runs unchanged, so the complete-response shape (TRACE,
   provenance, sources, left-bar fields) is satisfied *by construction*.
 
+## Owed items — enumerated so "partially applied" stays visible
+
+A decision that establishes a pattern but does not list its consumers cannot
+know it is only *partly* applied; the gap becomes discoverable only by a
+question that happens to have a knowable answer — which is exactly how the
+edgeless-topology bug hid in plain sight (the topology path "worked" for a long
+time in the sense that it returned *something*; the fabricated edges and the
+whole-list-through-the-LLM reshaping were structurally wrong the entire time).
+This section is the checkable record: the consumers of this pattern, and the
+follow-ups still owed.
+
+### Consumer adoption (fixed-`O` + deterministic-shape)
+
+| Consumer | Adopted? |
+|---|---|
+| Engine A `traceLineage` — deterministic branch, fixed `LineageTopology` | ✅ 62bb71e |
+| Engine F — edgeless `LineageTopology` → document on the `outcome` discriminant | ✅ 62bb71e |
+| Engine F — non-empty topology → graph (`RenderAsTopology`) | ✅ unchanged (the straggler that had been left un-adopted) |
+| A *second* verb needing a deterministic branch | ❌ — trigger to **generalize**, not add another `if` |
+
+### Owed: URN resolution belongs on Engine D, not Engine A
+
+D4's subject-name → URN resolution currently runs **inside Engine A** (the
+deliberately wrong-on-sight `_TEMPORARY_urn_resolution_belongs_on_engine_d`): a
+DataHub search, an `entity_type` derived from the ontology class, top hit under
+the ambiguity floor. That is DataHub entity-model knowledge on the wrong engine.
+
+- **Correct home:** Engine D already has `resolve_instance` — this operation *is*
+  that. Engine A should call an Engine D endpoint, not reach into the entity
+  model. (The *walk* is already layered correctly: Engine A calls Engine D's
+  `/lineage_by_platform` over HTTP; only this resolution sub-step leaked.)
+- **Why it's here:** `resolve_instance`'s registration is rejected at load
+  because `mesh#InstanceIdentifier` / `mesh#InstanceResolution` don't resolve in
+  Neo4j — the partial mesh-ontology load gap (a bootstrap-state-debt thread). D4
+  routes around the broken endpoint.
+- **Marker, not a TODO:** the logic is isolated in one function whose *name*
+  reads as wrong every time the file is opened, because a TODO comment is
+  precisely how a straggler stays invisible.
+- **Trigger to move:** Engine D's `resolve_instance` registers cleanly (the
+  `mesh#Instance*` classes load). Then delete the Engine-A function and call the
+  endpoint — the call site is written to stay identical across the move.
+
 ## Consequences
 
 - Static composition survives (the reason it now matters): one verb, one `O`,

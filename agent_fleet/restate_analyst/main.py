@@ -412,6 +412,69 @@ def _is_trace_lineage(verb_iri: str) -> bool:
     return local.strip().lower() == "tracelineage"
 
 
+async def _TEMPORARY_urn_resolution_belongs_on_engine_d(
+    *,
+    asset_label: str,
+    resolved_class_uri: str,
+    wrapper_url: str,
+    caller_persona: str,
+    task_domain: str,
+    caller_entitled_domains: List[str],
+    caller_email: str,
+) -> Dict[str, Any]:
+    """MISPLACED — DataHub entity-model knowledge that belongs on Engine D.
+
+    This resolves a subject NAME → a single URN: a DataHub search, an
+    entity_type derived from the ontology class (Dashboard → DASHBOARD), and
+    the top hit under the three-outcome ambiguity floor. That is DataHub
+    entity-model reasoning, and it is running on the WRONG engine — Engine A
+    should be a thin consumer, Engine D owns the DataHub client.
+
+    CORRECT HOME: Engine D already has ``resolve_instance`` — this operation
+    IS that operation. Engine A should call an Engine D endpoint
+    (e.g. ``/resolve_subject_urn``), not reach into the entity model itself.
+    The correct layering is ALREADY in place for the walk (Engine A calls
+    Engine D's ``/lineage_by_platform`` over HTTP); only THIS sub-step leaked.
+
+    WHY IT'S HERE ANYWAY: Engine D's ``resolve_instance`` registration is
+    REJECTED at load time because ``mesh#InstanceIdentifier`` /
+    ``mesh#InstanceResolution`` do not resolve in Neo4j — the partial
+    mesh-ontology load gap, a [[bootstrap-state-debt]] thread. D4 routes
+    around the broken endpoint by doing the resolution here. The function
+    name is deliberately wrong-on-sight so the misplacement cannot calcify
+    into "it works, leave it" — the fix-one-instance-of-a-class failure mode.
+
+    TRIGGER TO MOVE (do NOT leave this past it): when Engine D's
+    ``resolve_instance`` registers cleanly (the ``mesh#Instance*`` classes
+    load), DELETE this function and call that endpoint. Tracked as an
+    enumerated owed item in ADR-0030 ("Owed items").
+    """
+    import requests as _requests
+
+    entity_type = _recommended_entity_type(resolved_class_uri) or None
+    candidates: List[Dict[str, Any]] = []
+    try:
+        payload = {
+            "user_query": asset_label,
+            "persona": caller_persona,
+            "domain": task_domain,
+            "entitled_domains": caller_entitled_domains,
+            "caller_email": caller_email,
+        }
+        if entity_type:
+            payload["entity_type"] = entity_type
+        r = await asyncio.to_thread(
+            lambda: _requests.post(f"{wrapper_url}/query_metadata", json=payload, timeout=15.0)
+        )
+        r.raise_for_status()
+        for a in (r.json().get("matched_assets") or []):
+            if isinstance(a, dict) and a.get("urn"):
+                candidates.append({"name": a.get("label") or a.get("urn"), "urn": a["urn"]})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("traceLineage: subject resolution search failed (%s)", exc)
+    return resolve_urn_outcome(asset_label, candidates)
+
+
 def _resolve_ontology(task_description: str, user_email: str = "") -> dict:
     """Call Engine O to resolve the task description into semantic context.
 
@@ -1046,32 +1109,24 @@ to decide the next call. Use only what the tools return — never invent data.
                 logger.warning("traceLineage: ExtractPlatformScope failed (%s); no platform filter", exc)
                 platform_scope = {"platforms": [], "platform_mentioned": False, "unrecognized": []}
 
-            # 2. Resolve the subject NAME → a single URN via Engine D search,
-            #    then the three-outcome floor decides found / ambiguous /
-            #    not_found. Entitlement is threaded so resolution respects the
-            #    caller's domain scope (an unentitled caller sees no candidates).
-            entity_type = _recommended_entity_type(semantic_ctx.get("resolved_uri", "")) or None
-            candidates: List[Dict[str, Any]] = []
-            try:
-                payload = {
-                    "user_query": asset_label,
-                    "persona": caller_persona,
-                    "domain": task_domain,
-                    "entitled_domains": caller_entitled_domains,
-                    "caller_email": caller_email,
-                }
-                if entity_type:
-                    payload["entity_type"] = entity_type
-                r = await asyncio.to_thread(
-                    lambda: _requests.post(f"{wrapper_url}/query_metadata", json=payload, timeout=15.0)
-                )
-                r.raise_for_status()
-                for a in (r.json().get("matched_assets") or []):
-                    if isinstance(a, dict) and a.get("urn"):
-                        candidates.append({"name": a.get("label") or a.get("urn"), "urn": a["urn"]})
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("traceLineage: subject resolution search failed (%s)", exc)
-            resolve = resolve_urn_outcome(asset_label, candidates)
+            # 2. Resolve the subject NAME → a single URN, then the three-outcome
+            #    floor decides found / ambiguous / not_found. Entitlement is
+            #    threaded so resolution respects the caller's domain scope (an
+            #    unentitled caller sees no candidates).
+            #    NB the resolution logic is DataHub-entity-model reasoning that
+            #    belongs on Engine D (its ``resolve_instance`), quarantined in a
+            #    deliberately-named function until that endpoint registers — see
+            #    _TEMPORARY_urn_resolution_belongs_on_engine_d and ADR-0030 owed
+            #    items. This call site stays identical when it relocates.
+            resolve = await _TEMPORARY_urn_resolution_belongs_on_engine_d(
+                asset_label=asset_label,
+                resolved_class_uri=semantic_ctx.get("resolved_uri", ""),
+                wrapper_url=wrapper_url,
+                caller_persona=caller_persona,
+                task_domain=task_domain,
+                caller_entitled_domains=caller_entitled_domains,
+                caller_email=caller_email,
+            )
 
             # 3. Walk lineage ONLY when the subject resolved cleanly AND (if a
             #    platform was named) it was recognized. Otherwise the assembler
