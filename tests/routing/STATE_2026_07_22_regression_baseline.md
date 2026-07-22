@@ -80,3 +80,29 @@ menu). The verb question itself is proven live; aligning the menu vocabulary wit
 the verb-bearing routing subjects is a Slice-2 data-model decision (which source
 of truth the subject menu draws from), separate from the overwrite bug. It is not
 a regression — the menu was empty before, so this was never exercisable.
+
+## After the DataHub catalog seed + engine-d read-auth (2026-07-22)
+
+The DataHub demo-catalog gap was closed on sandbox: a write PAT was minted (operator),
+stored durably in a gitignored `values-sandbox.secret.yaml` overlay feeding
+`iagent-secrets.DATAHUB_TOKEN`, the demoSeed catalog job (chart 0.3.25) seeded 8 datasets /
+3 dashboards / 3 charts with it (no 401), and engine-d was restarted to pick up the
+now-populated token (envFrom injects at pod-start; engine-d had rolled before the PAT landed).
+**Matrix: 20 passed / 3 failed.**
+
+The 5 DataHub cases flipped UNKNOWN → resolved (`gold.sales.revenue_summary` ×2,
+`What feeds …amount?`, `Customer 360 dashboard`, `customers_gold`). Remaining 3:
+
+- `foo.bar.zzz_nope` — correct abstain, a pass mislabeled (unchanged; leave it).
+- `procedure 1234` — the open resolveInstance identifier-form thread (unchanged; engine-e/ADR-0031).
+- `What's the weather like today?` — **NEW this run; it passed in the two prior runs.** An
+  out-of-domain query whose abstention is LLM-mediated (gpt-oss). Per the intermittent-failure
+  discipline a single-shot result on a stochastic case is luck; almost certainly an LLM blip
+  (nothing in the catalog/ontology/engine-d work touches off-domain routing), but flagged rather
+  than dismissed — a confirming re-run is the honest close.
+
+Reproducibility note: the seed + engine-d-auth were done via a direct job + restart because
+(a) the deployed release was chart 0.3.23 while the catalog fold is in 0.3.25, and (b) a flaky
+k8s API kept throwing transient EOFs that failed the helm hooks. A clean `helm upgrade` to 0.3.25
+with `-f values-sandbox.secret.yaml --set demoSeed.enabled=true` on a stable API does it all from
+install (engines get the token + the catalog seeds in one pass) — no direct-run/restart needed.
