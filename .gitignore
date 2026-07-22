@@ -208,3 +208,7 @@ __marimo__/
 # Held locally pending remediation (detailed findings) — publish as record-of-fixes once
 # the ungated endpoints are patched. Full findings: project_endpoint_gating_audit memory.
 docs/architecture/endpoint-gating-audit.md
+
+# Local secret overlays — NEVER commit (public repo). Holds PATs/tokens for --set-free deploys.
+*.secret.yaml
+values-*.local.yaml
