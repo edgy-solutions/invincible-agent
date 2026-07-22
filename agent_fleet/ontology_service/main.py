@@ -345,15 +345,24 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     1. Try Apache Jena Fuseki (Fast/Enterprise)
     2. Fallback to local rdflib (Safe/Development)
     """
-    # Determine the correct Named Graph based on the routed domain
-    named_graph = "<http://internal/mro>"
-    # Both Maintenance and Manufacturing use the core MRO/IOF ontology graph
-    if domain in ["MAINTENANCE", "MANUFACTURING"]:
-        named_graph = "<http://internal/mro>"
-    elif domain == "SUSTAINMENT":
-        named_graph = "<http://internal/sustainment>"
-    elif domain == "DATA_ENGINEERING":
-        named_graph = "<http://internal/idp>"
+    # Scope to the named graph the reproducible ingest actually writes:
+    # doc-tools ontology_assets.py PUTs each domain's ontology to
+    # http://internal/{DOMAIN} (uppercase, from the prime manifest's domain tag).
+    # The old lowercase-semantic map (mro / sustainment / idp) matched NO graph the
+    # ingest produced — a silent producer/consumer mismatch (the "core MRO/IOF graph"
+    # it named no longer exists; the ingest folds core into MAINTENANCE). Only
+    # /classes exercises this scoped path, so nothing broke until the SPO subject
+    # menu read it (found 2026-07-22). Derive the graph from the REQUEST domain — the
+    # consumer follows the producer's layout (source-authority), never a hardcoded
+    # guess that goes stale silently. [[feedback_path_vs_semantic_domain]].
+    #
+    # CAVEAT (must land together): this is correct ONLY once the ingest's PUT-overwrite
+    # bug is fixed. Today each domain's multiple TTLs all PUT to one graph and collapse
+    # to the LAST file (MAINTENANCE = mil_extension alone, IOF core/MRO destroyed), so
+    # {domain} points at a real-but-THIN graph until the producer switches to
+    # append/merge. Shipping the name fix alone yields a thin menu, not a full one.
+    _dom = "".join(c for c in (domain or "") if c.isalnum() or c == "_") or "MAINTENANCE"
+    named_graph = f"<http://internal/{_dom}>"
 
     # 🛑 Strictly enforce data segregation by wrapping the query in the graph context.
     # This assumes the input query uses standard triple patterns that we want to scope.
