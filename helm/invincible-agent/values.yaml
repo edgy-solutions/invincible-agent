@@ -907,6 +907,12 @@ demoSeed:
   # the /api/graphql form the ConfigMap publishes (the emitter 404s on that).
   # In-cluster default; override for BYO / external DataHub.
   datahubGmsUrl: "http://datahub-datahub-gms:8080"
+  # NOTE: seedCatalog WRITES to DataHub (REST /aspects), which requires a write
+  # token when the GMS enforces auth (it does at work + the shared sandbox
+  # DataHub). The token rides in as DATAHUB_TOKEN via the secrets envFrom — set
+  # `secrets.datahubToken` to a DataHub PAT. If it's empty AND the GMS enforces
+  # auth, the catalog emit 401s (manuals still run). Work already sets the PAT;
+  # a demo cluster that wants the catalog reproducibly seeded must set it too.
   hook:
     weight: "30"
     deletePolicy: "before-hook-creation"
