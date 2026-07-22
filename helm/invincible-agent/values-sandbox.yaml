@@ -373,6 +373,15 @@ primeSubstrate:
   enabled: true
   wipe: false
 
+# ontologySeed ON for sandbox: the mro_extension routing nouns
+# (TechnicalManual/Diagram/ProcedureStep) aren't in the prime ingest set, so a
+# fresh sandbox needs this gated seed to reach working routing with zero hand
+# scripts. Default-off in values.yaml (work uses its own overlayEnums vocab).
+# Runs at prime+5 (after prime, before reregister); idempotent, so it's
+# self-healing on every install/upgrade — same posture as primeSubstrate above.
+ontologySeed:
+  enabled: true
+
 keycloak:
   enabled: true
   auth:

@@ -1,0 +1,96 @@
+{{- if .Values.ontologySeed.enabled }}
+# ============================================================================
+# ontology-seed Job — GATED reproducible ROUTING substrate (bootstrap-state-debt).
+#
+# Promotes the hand-run `scripts/seed_mro_extension_runtime.py` to a reproducible,
+# helm-gated Job. That seed puts the 3 concrete mro_extension routing nouns
+# (TechnicalManual, Diagram, ProcedureStep — authored in
+# setup/ontologies/mro_extension.ttl) into BOTH stores the resolver reads:
+# Weaviate `OntologyClass` (vector recall) at domain=MAINTENANCE, and Neo4j
+# `:OntologyClass` (canonical full-IRI). On a fresh cluster these classes arrive
+# via NO prime path — mro_extension.ttl is not in the prime ingest set — so
+# without this seed the manual/diagram/step subjects are unroutable. Folding it
+# is what lets a fresh cluster reach WORKING ROUTING with zero hand-run scripts.
+#
+# WHY GATED (default OFF): mro_extension is the SANDBOX domain vocabulary. A work
+# cluster brings its own domain nouns (overlayEnums) and does NOT want these
+# seeded — so demoSeed-style, it's off by default and the sandbox overlay
+# (values-sandbox.yaml) flips it on.
+#
+# WHY IT RUNS AT prime+5 (after prime=10, BEFORE reregister=prime+10): prime's
+# --wipe at weight 10 clears the Weaviate collections and re-ingests the base
+# ontology; this seed must land AFTER that wipe (or its classes would be
+# deleted) but BEFORE reregister forms the runtime provider/verb state that keys
+# off the class substrate. So: prime(10) -> ontologySeed(15) -> reregister(20)
+# -> demoSeed(30).
+#
+# The seed reads Weaviate host/port SEPARATELY (the engines use a combined
+# host:port ConfigMap form), so the split-form Weaviate hosts are overridden
+# below exactly as the demo-seed Job does. Neo4j creds ride in from the shared
+# config/secrets envFrom (NEO4J_URI/USERNAME/PASSWORD), same as prime uses.
+# ============================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-ontology-seed
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" "ontology-seed" "root" .) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # prime + 5: strictly after prime's wipe/ingest, strictly before reregister
+    # (prime + 10). The ordering is a correctness invariant, not a tunable, so
+    # it's derived from primeSubstrate.hook.weight rather than set independently.
+    "helm.sh/hook-weight": {{ add (int .Values.primeSubstrate.hook.weight) 5 | quote }}
+    "helm.sh/hook-delete-policy": {{ .Values.ontologySeed.hook.deletePolicy | quote }}
+spec:
+  # One retry: the seed is idempotent (MERGE on Neo4j, exists->update on
+  # Weaviate, both keyed on the canonical URI), so a transient
+  # store-not-ready is safe to re-attempt without accumulating state.
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "ontology-seed" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ontology-seed
+          # Same dagster-control-plane image prime uses: it carries the full repo
+          # (scripts/ included) + neo4j + weaviate-client in /app's uv venv.
+          image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.ontologySeed.image.registry "repository" .Values.ontologySeed.image.repository "tag" .Values.ontologySeed.image.tag "root" .) }}
+          imagePullPolicy: {{ .Values.ontologySeed.image.pullPolicy }}
+          workingDir: /app
+          command: ["python", "scripts/seed_mro_extension_runtime.py"]
+          # Cluster-wide config (WEAVIATE_*, NEO4J_*, etc.) from the shared
+          # ConfigMap/secrets — the same backends the engines and prime use.
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          env:
+            # The ConfigMap publishes WEAVIATE_HTTP_HOST / WEAVIATE_GRPC_HOST as
+            # COMBINED host:port (the shape the engines' weaviate-client helpers
+            # expect). This seed reads host and port SEPARATELY (host-only), so
+            # override with the split form here (explicit env wins over envFrom).
+            # Defaults target the chart's in-cluster Weaviate services; a
+            # BYO-Weaviate cluster overrides via ontologySeed.weaviate below.
+            - name: WEAVIATE_HTTP_HOST
+              value: {{ .Values.ontologySeed.weaviate.httpHost | default (printf "%s-weaviate" .Release.Name) | quote }}
+            - name: WEAVIATE_GRPC_HOST
+              value: {{ .Values.ontologySeed.weaviate.grpcHost | default (printf "%s-weaviate-grpc" .Release.Name) | quote }}
+            # NEO4J_USERNAME is published on the ConfigMap; the seed reads that
+            # exact key. NEO4J_PASSWORD rides in from the secrets envFrom above.
+            {{- range $k, $v := .Values.ontologySeed.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.ontologySeed.resources | nindent 12 }}
+{{- end }}

@@ -11,8 +11,11 @@ CANONICAL PIPELINE GAP (filed as Step-1 follow-up):
     pass; the canonical pipeline needs either domain-mapping (mro -> MAINTENANCE)
     or the resolver needs multi-domain query support. Either fix is a separate PR.
 
-This runs INSIDE the doc-tools pod via stdin so it has Weaviate/Neo4j credentials
-already.
+Promoted to the gated `ontologySeed` helm Job (templates/ontology-seed-job.yaml,
+runs at prime+5) so a fresh cluster reaches working routing with zero hand-run
+scripts. Reads Weaviate/Neo4j credentials from the shared config/secrets the Job
+mounts (WEAVIATE_HTTP_HOST/WEAVIATE_GRPC_HOST host-only, NEO4J_URI/USERNAME/
+PASSWORD). Still runnable by hand against any pod that carries those env vars.
 
 CANONICAL-FORM DISCIPLINE (2026-06-15). Subject URIs MUST be canonical
 full-IRI (`https://spec.industrialontologies.org/.../`) — the form

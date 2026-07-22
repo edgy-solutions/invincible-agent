@@ -944,6 +944,43 @@ demoSeed:
       memory: 512Mi
 
 # ==========================================================================
+# ontologySeed — GATED reproducible ROUTING substrate (bootstrap-state-debt).
+# Promotes scripts/seed_mro_extension_runtime.py (the 3 mro_extension routing
+# nouns from setup/ontologies/mro_extension.ttl -> Weaviate OntologyClass at
+# domain=MAINTENANCE + Neo4j :OntologyClass) to a gated Job. Runs at prime+5:
+# after prime's --wipe/ingest, before reregister. Default OFF — this is the
+# SANDBOX domain vocabulary; work brings its own nouns via overlayEnums. The
+# sandbox overlay (values-sandbox.yaml) flips it on so a fresh install reaches
+# working routing with zero hand-run scripts. See templates/ontology-seed-job.yaml.
+# ==========================================================================
+ontologySeed:
+  enabled: false
+  hook:
+    deletePolicy: "before-hook-creation"
+  # Same dagster-control-plane image prime uses (has scripts/ + neo4j +
+  # weaviate-client). Pin tag to a SHA for reproducibility.
+  image:
+    registry: ""
+    repository: "edgy-solutions/invincible-agent/dagster-control-plane"
+    tag: "latest"
+    pullPolicy: "Always"
+  # The seed reads Weaviate host SEPARATELY from port (host-only); the engines
+  # use a combined host:port ConfigMap form. Empty host -> the chart's in-cluster
+  # <release>-weaviate / <release>-weaviate-grpc services. Set for BYO-Weaviate.
+  weaviate:
+    httpHost: ""
+    grpcHost: ""
+  # Extra env for the seed, applied LAST (wins over the above).
+  env: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ==========================================================================
 # Frontend Services
 # ==========================================================================
 
