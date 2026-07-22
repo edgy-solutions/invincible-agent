@@ -338,6 +338,26 @@ fuseki:
   persistence:
     size: 2Gi
 
+# Substrate priming — bootstrap-state-debt fix (docs/principles/bootstrap-state-debt.md).
+# ENABLED for sandbox so a fresh install / upgrade reproduces the ontology in Fuseki with
+# ZERO hand-run scripts. The prime post-install/post-upgrade hook uploads the canonical TTLs
+# to MinIO and triggers doc-tools' `ingest_ontology_to_jena` (Graph-Store-Protocol PUT into
+# Fuseki) + reregisters engines (triggerIngest + reregisterEngines both default true).
+#
+# Root cause it heals (found 2026-07-21): on 2026-07-13 the Fuseki pod was recreated and its
+# dataset came back EMPTY — Neo4j (955 OntologyClass) + Weaviate kept their own PVCs, so the
+# verb question (/find_compatible_verbs, Neo4j) kept working while /classes (SPARQL over the
+# empty store) went blank. Nothing reproducible re-ingested because this was disabled and
+# never overridden in sandbox values — textbook bootstrap-state-debt.
+#
+# wipe:false keeps it IDEMPOTENT (GSP PUT overwrites per graph; re-registration is
+# idempotent), so leaving it ON is self-healing on every install/upgrade rather than a
+# one-shot "flip on then flip back" manual toggle. For a scorched-earth routing re-prime set
+# wipe:true temporarily (preserves answer-durability data); see values.yaml for the guards.
+primeSubstrate:
+  enabled: true
+  wipe: false
+
 keycloak:
   enabled: true
   auth:
