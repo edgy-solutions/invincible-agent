@@ -987,7 +987,7 @@ def main() -> None:
     if args.wipe:
         # Allowlist of namespaces this script is allowed to wipe. The
         # default covers the common dev names; clusters with their own
-        # naming convention (e.g. "d4-sandbox", "prod-east-1") publish
+        # naming convention (e.g. "app-cluster", "prod-east-1") publish
         # an override via the PRIME_NAMESPACE_ALLOWLIST env var, which
         # the helm chart's primeSubstrate.namespaceAllowlist value
         # populates. Comma-separated, whitespace tolerated.

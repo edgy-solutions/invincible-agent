@@ -302,7 +302,7 @@ spec:
             # the script will allow `--wipe --namespace=` against. Only
             # consulted when primeSubstrate.wipe=true. Required for clusters
             # whose namespace name isn't in the default {sandbox,work,local}
-            # set (e.g. d4-sandbox).
+            # set (e.g. app-cluster).
             - name: PRIME_NAMESPACE_ALLOWLIST
               value: {{ .Values.primeSubstrate.namespaceAllowlist | quote }}
             {{- end }}

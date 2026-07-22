@@ -737,14 +737,14 @@ primeSubstrate:
   nuclear: false
   # Allowlist of cluster identifiers the script will accept for `--wipe`.
   # The script defaults to "sandbox,work,local" when this is unset. When
-  # your release runs in a namespace OUTSIDE that list (e.g. "d4-sandbox",
+  # your release runs in a namespace OUTSIDE that list (e.g. "app-cluster",
   # "prod-east-1") the wipe will refuse with "namespace not in allowlist."
   # Set this to a comma-separated list that INCLUDES your cluster
   # identifier — typically the same as your k8s namespace, since the
   # chart passes `--namespace={{ .Release.Namespace }}`.
   #
   # Empty (default) -> script falls back to "sandbox,work,local".
-  # Example: "sandbox,work,local,d4-sandbox" — keeps the safe defaults
+  # Example: "sandbox,work,local,app-cluster" — keeps the safe defaults
   # and adds the new cluster.
   #
   # Doesn't change anything when wipe=false; only consulted on the
