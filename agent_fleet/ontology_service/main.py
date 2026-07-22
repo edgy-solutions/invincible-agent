@@ -2233,19 +2233,40 @@ async def route_and_plan(request: RouteAndPlanRequest) -> dict:
 # ---------------------------------------------------------------------------
 @app.post("/classes")
 async def classes(request: ResolveRequest) -> dict:
-    """Return all active ontology classes for the requested domain.
+    """Return active ontology classes for the requested domain, FILTERED to what the
+    caller may SEE (Topaz ``can_view`` — the sealed ontology-visibility gate).
 
-    Useful for discovery and for populating UI dropdowns or LLM context.
+    This is the SPO interview's authorized SUBJECT source (ADR-0029 Slice 2, design §7):
+    the menu an author sees is bounded by their compartment grants, so the interview can
+    only author over vocabulary the author can view (Ruling A — self-gating via threaded
+    identity). It reuses ``_can_view_class`` EXACTLY like ``/resolve`` (same single decider,
+    same rego), so the two seams cannot disagree. No-op when ``ENABLE_AGENTIC_AUTH`` is off
+    (dark-launch), so plain discovery / UI-dropdown use is unchanged until the flag flips.
+
+    Identity reaches this seam via ``ResolveRequest.user_email`` (threaded by the interview's
+    ``authorized_subjects``); empty caller → ungranted → deny-by-default on compartmented
+    classes when the gate is on. [[feedback_identity_reaches_enforcement_point]].
     """
     rows = await execute_sparql(_SPARQL_MAINTENANCE_CLASSES, domain=request.domain)
     results = []
+    dropped = 0
     for row in rows:
+        uri = row.get("cls")
+        # Per-IRI can_view — same gate /resolve applies to the candidate pool.
+        if not _can_view_class(request.user_email, uri):
+            dropped += 1
+            continue
         results.append({
-            "uri": row.get("cls"),
+            "uri": uri,
             "label": row.get("label"),
             "definition": row.get("definition"),
             "example": row.get("example"),
         })
+    if dropped:
+        logging.info(
+            "/classes: %d class(es) hidden from %r by can_view (compartment gate)",
+            dropped, request.user_email or "anonymous",
+        )
     return {"classes": results, "count": len(results), "domain": request.domain}
 
 
