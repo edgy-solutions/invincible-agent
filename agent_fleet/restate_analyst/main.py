@@ -1807,6 +1807,167 @@ async def get_status(ctx: ObjectContext, request: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Restate Service — ProcessInterviewerV2 (the SPO interview; ADR-0029 Slice 2)
+# ---------------------------------------------------------------------------
+# Supersedes ProcessInterviewer: re-aims the interview at the git-asserted
+# WorkflowDefinition model (not a BPMN graph), adds the VERB question, and moves
+# every enforcement decision SERVER-SIDE. This VirtualObject is a THIN durable
+# shell over the pure, unit-tested core (spo_interview.py): it holds the
+# InterviewState + chat history + focused subject across turns, computes the
+# authorized sets from Engine O, calls the BAML shell for the next pick, and runs
+# the pick through the enforcement funnel. The LLM only PROPOSES; the funnel
+# DECIDES. Old ProcessInterviewer left in place (staged retirement).
+process_interviewer_v2_service = VirtualObject("ProcessInterviewerV2")
+
+_ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
+# Audience-sourcing is a follow-up: the real set is the task_audience grants
+# (policy/task_grants.yaml). Until wired, the caller supplies the audiences the
+# author may route to; this default keeps the promotion workflow authorable.
+_DEFAULT_AUDIENCES = [{"audience": "promotion:DATA_ENGINEERING"}]
+
+_ISTATE_FIELDS = ("id", "name", "classification", "participants", "domain_stages",
+                  "steps", "observable_state")
+
+
+def _norm_set(items, key: str) -> list[dict]:
+    """Accept a list of strings OR {key: value} dicts -> list of {key: value} dicts."""
+    out = []
+    for it in items or []:
+        if isinstance(it, dict):
+            out.append(it)
+        elif it:
+            out.append({key: str(it)})
+    return out
+
+
+def _render_subjects(subjects: list[dict]) -> str:
+    return "\n".join(f"- {s.get('uri')}  ({s.get('label', '')})" for s in subjects) \
+        or "- (no subjects visible to you yet)"
+
+
+def _render_verbs(verbs: list[dict]) -> str:
+    return "\n".join(f"- {v.get('verb_iri')}  (output: {v.get('output_uri', '')})" for v in verbs) \
+        or "- (focus a subject first — verbs are computed for the chosen subject)"
+
+
+def _render_audiences(auds: list[dict]) -> str:
+    return "\n".join(f"- {a.get('audience')}" for a in auds) or "- (no audiences available)"
+
+
+@process_interviewer_v2_service.handler()
+async def spo_turn(ctx: ObjectContext, request: dict) -> dict:
+    """One turn of the SPO interview.
+
+    request: {user_query, caller_email, workflow_domain?, available_audiences?,
+              available_capabilities?}. Durable VO state (keyed on ctx.key()):
+    the accumulating InterviewState, the chat history, and the focused subject
+    (whose compatible verbs are offered next turn)."""
+    # Lazy dual-path import, matching this file's container/dev import dance.
+    try:
+        import spo_interview as si  # type: ignore[no-redef]
+    except ImportError:
+        from agent_fleet.restate_analyst import spo_interview as si
+
+    user_msg = request.get("user_query", "")
+    caller_email = request.get("caller_email") or request.get("user_email") or ""
+    req_domain = request.get("workflow_domain")
+    audiences = _norm_set(request.get("available_audiences") or _DEFAULT_AUDIENCES, "audience")
+    capabilities = request.get("available_capabilities")
+    capabilities = _norm_set(capabilities, "capability") if capabilities is not None else None
+
+    raw_state = await ctx.get("state") or {}
+    chat_history = await ctx.get("history") or ""
+    focused_subject = await ctx.get("focused_subject") or ""
+
+    state = si.InterviewState(**{k: v for k, v in raw_state.items() if k in _ISTATE_FIELDS})
+    scope_domain = state.classification or req_domain or "MAINTENANCE"
+
+    # 1. Compute the authorized sets (network — Engine O). Subjects are can_view-scoped
+    #    to the AUTHOR (caller_email threaded); verbs are for the focused subject only.
+    async def compute_sets():
+        subjects = si.authorized_subjects(caller_email, engine_o_url=_ENGINE_O_URL, domain=scope_domain)
+        verbs = (si.authorized_verbs(focused_subject, workflow_domain=state.classification,
+                                     engine_o_url=_ENGINE_O_URL) if focused_subject else [])
+        return {"subjects": subjects, "verbs": verbs}
+
+    sets = await ctx.run("authorized_sets", compute_sets)
+    subjects, verbs = sets["subjects"], sets["verbs"]
+
+    # 2. Ask the BAML shell for the next pick (it PROPOSES; the funnel DECIDES).
+    async def call_baml():
+        turn = await b.InterviewSPOWorkflow(
+            chat_history=chat_history,
+            user_message=user_msg,
+            partial_definition_json=json.dumps(state._assemble()),
+            available_subjects=_render_subjects(subjects),
+            available_verbs=_render_verbs(verbs),
+            available_audiences=_render_audiences(audiences),
+        )
+        return turn.model_dump()
+
+    turn_dict = await ctx.run("baml_turn", call_baml)
+    agent_reply = turn_dict.get("agent_reply", "")
+    pick = turn_dict.get("pick") or {"action": "NoPick"}
+    action = str(pick.get("action") or "NoPick")
+
+    # 3. Apply the pick through the SERVER-SIDE enforcement funnel.
+    refusal = None
+    applied = None
+    if action == "FocusSubject":
+        subj = str(pick.get("subject_uri") or "")
+        try:
+            si.validate_pick(subj, subjects, key="uri")  # can't focus an unseen subject
+            focused_subject = subj
+        except si.PickRefused as e:
+            refusal = str(e)
+    elif action == "AddSpoStep":
+        # Recompute verbs for the EXACT proposed subject, so the verb is checked against
+        # that subject's eligibility, never a stale/other set (defense-in-depth).
+        subj = str(pick.get("subject_uri") or "")
+        try:
+            si.validate_pick(subj, subjects, key="uri")
+
+            async def verbs_for_pick():
+                return si.authorized_verbs(subj, workflow_domain=state.classification,
+                                           engine_o_url=_ENGINE_O_URL)
+
+            fresh_verbs = await ctx.run("verbs_for_pick", verbs_for_pick)
+            applied = si.apply_pick(state, pick, authorized_subjects=subjects,
+                                    authorized_verbs=fresh_verbs, authorized_audiences=audiences,
+                                    authorized_capabilities=capabilities)
+        except (si.PickRefused, ValueError) as e:
+            refusal = str(e)
+    else:
+        try:
+            applied = si.apply_pick(state, pick, authorized_subjects=subjects,
+                                    authorized_verbs=verbs, authorized_audiences=audiences,
+                                    authorized_capabilities=capabilities)
+        except (si.PickRefused, ValueError) as e:
+            refusal = str(e)
+
+    # 4. Termination = the definition VALIDATES (server-side, not an LLM flag).
+    definition, gaps = si.try_finalize(state)
+    definition_yaml = si.emit_definition_yaml(definition) if definition else None
+
+    # 5. Persist durable state for the next turn.
+    reply_suffix = f" (refused: {refusal})" if refusal else ""
+    ctx.set("state", state._assemble())
+    ctx.set("history", f"{chat_history}\nUser: {user_msg}\nAgent: {agent_reply}{reply_suffix}")
+    ctx.set("focused_subject", focused_subject)
+
+    return {
+        "agent_reply": agent_reply,
+        "refusal": refusal,                       # set iff a pick was rejected out-of-set
+        "applied_step": applied,                  # the step appended this turn, or null
+        "focused_subject": focused_subject,
+        "gaps": gaps,                             # what's still missing to validate
+        "is_complete": definition is not None,    # true when the definition VALIDATES
+        "definition_yaml": definition_yaml,       # the file a HUMAN commits (Decision C)
+        "partial_definition": state._assemble(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
 from contextlib import asynccontextmanager
@@ -2147,7 +2308,7 @@ except ImportError:
     )
 
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, run_tracker]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker]))
 
 
 # ---------------------------------------------------------------------------
