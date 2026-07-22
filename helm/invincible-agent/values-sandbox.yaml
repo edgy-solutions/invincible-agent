@@ -150,7 +150,12 @@ agentFleet:
     # values.yaml's agentFleet.env since they duplicate the
     # template-rendered values.
     KEYCLOAK_REALM_URL: "http://iagent-keycloak:8080/realms/invincible-agent"
-    JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/query"
+    # /ds/sparql, NOT /ds/query: this Fuseki dataset returns HTTP 405 on POST to
+    # /ds/query (engine-o's execute_sparql POSTs form-encoded queries), so the old
+    # value made every Fuseki query 405 -> silent fallback/empty. /ds/sparql is the
+    # working query endpoint. (Was hot-patched via `kubectl set env` on 2026-07-22
+    # to unblock; folded here so a fresh install reproduces it — bootstrap-state-debt.)
+    JENA_SPARQL_ENDPOINT: "http://iagent-fuseki:3030/ds/sparql"
     # NEO4J_URI override RETIRED (chart 0.3.16): the configmap derives it
     # from neo4j.*/externalNeo4j.* with hasKey guards, and the stale
     # values.yaml default (`bolt://neo4j`, the duplicate-key race that
