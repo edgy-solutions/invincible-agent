@@ -37,7 +37,7 @@ def get_checks(checks: typing.Dict[CheckName, Check]) -> typing.List[Check]:
 def all_succeeded(checks: typing.Dict[CheckName, Check]) -> bool:
     return all(check.status == "succeeded" for check in get_checks(checks))
 # #########################################################################
-# Generated enums (12)
+# Generated enums (13)
 # #########################################################################
 
 class AgentStatus(str, Enum):
@@ -89,6 +89,14 @@ class PersonaTarget(str, Enum):
 class Predicate(str, Enum):
     pass
 
+class SPOPickAction(str, Enum):
+    SetMetadata = "SetMetadata"
+    FocusSubject = "FocusSubject"
+    AddSpoStep = "AddSpoStep"
+    AddHumanAwait = "AddHumanAwait"
+    AddDirectCall = "AddDirectCall"
+    NoPick = "NoPick"
+
 class SemanticArchetype(str, Enum):
     PROCESS_TOPOLOGY = "PROCESS_TOPOLOGY"
     HAZARD_DECLARATION = "HAZARD_DECLARATION"
@@ -103,7 +111,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (31)
+# Generated classes (33)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -255,6 +263,24 @@ class PredicateClassification(BaseModel):
     resolved_verb_iri: typing.Union[Predicate, str] = Field(description='The verb IRI that best matches the user\'s intent given the resolved subject. Must be one of the IRIs provided in the dynamic enum.')
     confidence_score: float = Field(description='0.0 (no fit) to 1.0 (clear fit). The supervisor\'s PREDICATE_FALLBACK_SCORE_THRESHOLD env var thresholds against this.')
     reasoning: str = Field(description='One sentence on why this verb was picked given the query and subject. If subject_uri == \'UNKNOWN\', explain the pick against query alone.')
+
+class SPOInterviewTurn(BaseModel):
+    agent_reply: str = Field(description='Conversational text to the user (2-5 sentences). If you refused a pick or something was out-of-set, explain and offer the closest legal options.')
+    pick: "SPOPick" = Field(description='The structured pick for this turn. Use action=NoPick (with the question in agent_reply) when you are still clarifying.')
+
+class SPOPick(BaseModel):
+    action: SPOPickAction
+    workflow_id: typing.Optional[str] = Field(default=None, description='snake_case id, e.g. \'promote_answer_artifact\'. Only for SetMetadata.')
+    workflow_name: typing.Optional[str] = Field(default=None, description='Human-readable name. Only for SetMetadata.')
+    classification: typing.Optional[str] = Field(default=None, description='The workflow\'s declared domain / compartment, e.g. \'DATA_ENGINEERING\'. Gates who may observe and scopes the verb question. Only for SetMetadata.')
+    subject_uri: typing.Optional[str] = Field(default=None, description='An EXACT value copied verbatim from available_subjects. NEVER invent or paraphrase one.')
+    verb_iri: typing.Optional[str] = Field(default=None, description='An EXACT value copied verbatim from available_verbs (which are the verbs compatible with the focused subject). NEVER invent one.')
+    audience: typing.Optional[str] = Field(default=None, description='An EXACT value copied verbatim from available_audiences.')
+    step_title: typing.Optional[str] = Field(default=None, description='Short title shown to the approver. Optional.')
+    step_summary: typing.Optional[str] = Field(default=None, description='One-line summary shown to the approver. Optional.')
+    endpoint: typing.Optional[str] = Field(default=None, description='The action endpoint (may contain {placeholders} bound at trigger time).')
+    capability: typing.Optional[str] = Field(default=None, description='Topaz-decidable capability for the action, e.g. \'mesh:publishArtifact\'.')
+    step_id: typing.Optional[str] = Field(default=None, description='Optional stable id for the step, e.g. \'approve_promotion\'.')
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

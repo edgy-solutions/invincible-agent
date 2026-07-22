@@ -77,6 +77,12 @@ class LlmResponseParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatKnowledgeResponse", llm_response=llm_response, mode="request")
         return typing.cast(types.KnowledgeResponse, __result__)
 
+    def InterviewSPOWorkflow(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> types.SPOInterviewTurn:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="InterviewSPOWorkflow", llm_response=llm_response, mode="request")
+        return typing.cast(types.SPOInterviewTurn, __result__)
+
     def IterateBPMNGraph(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> types.BPMNInterviewState:
@@ -181,6 +187,12 @@ class LlmStreamParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="FormatKnowledgeResponse", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.KnowledgeResponse, __result__)
 
+    def InterviewSPOWorkflow(
+        self, llm_response: str, baml_options: BamlCallOptions = {},
+    ) -> stream_types.SPOInterviewTurn:
+        __result__ = self.__options.merge_options(baml_options).parse_response(function_name="InterviewSPOWorkflow", llm_response=llm_response, mode="stream")
+        return typing.cast(stream_types.SPOInterviewTurn, __result__)
+
     def IterateBPMNGraph(
         self, llm_response: str, baml_options: BamlCallOptions = {},
     ) -> stream_types.BPMNInterviewState:
@@ -223,4 +235,4 @@ class LlmStreamParser:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="SynthesizeReports", llm_response=llm_response, mode="stream")
         return typing.cast(stream_types.FinalSynthesis, __result__)
 
-    
+    

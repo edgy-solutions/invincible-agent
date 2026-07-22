@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (31)
+# Generated classes (33)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -175,6 +175,24 @@ class PredicateClassification(BaseModel):
     resolved_verb_iri: typing.Optional[typing.Union[types.Predicate, str]] = Field(default=None, description='The verb IRI that best matches the user\'s intent given the resolved subject. Must be one of the IRIs provided in the dynamic enum.')
     confidence_score: typing.Optional[float] = Field(default=None, description='0.0 (no fit) to 1.0 (clear fit). The supervisor\'s PREDICATE_FALLBACK_SCORE_THRESHOLD env var thresholds against this.')
     reasoning: typing.Optional[str] = Field(default=None, description='One sentence on why this verb was picked given the query and subject. If subject_uri == \'UNKNOWN\', explain the pick against query alone.')
+
+class SPOInterviewTurn(BaseModel):
+    agent_reply: typing.Optional[str] = Field(default=None, description='Conversational text to the user (2-5 sentences). If you refused a pick or something was out-of-set, explain and offer the closest legal options.')
+    pick: typing.Optional["SPOPick"] = Field(default=None, description='The structured pick for this turn. Use action=NoPick (with the question in agent_reply) when you are still clarifying.')
+
+class SPOPick(BaseModel):
+    action: typing.Optional[types.SPOPickAction] = None
+    workflow_id: typing.Optional[str] = Field(default=None, description='snake_case id, e.g. \'promote_answer_artifact\'. Only for SetMetadata.')
+    workflow_name: typing.Optional[str] = Field(default=None, description='Human-readable name. Only for SetMetadata.')
+    classification: typing.Optional[str] = Field(default=None, description='The workflow\'s declared domain / compartment, e.g. \'DATA_ENGINEERING\'. Gates who may observe and scopes the verb question. Only for SetMetadata.')
+    subject_uri: typing.Optional[str] = Field(default=None, description='An EXACT value copied verbatim from available_subjects. NEVER invent or paraphrase one.')
+    verb_iri: typing.Optional[str] = Field(default=None, description='An EXACT value copied verbatim from available_verbs (which are the verbs compatible with the focused subject). NEVER invent one.')
+    audience: typing.Optional[str] = Field(default=None, description='An EXACT value copied verbatim from available_audiences.')
+    step_title: typing.Optional[str] = Field(default=None, description='Short title shown to the approver. Optional.')
+    step_summary: typing.Optional[str] = Field(default=None, description='One-line summary shown to the approver. Optional.')
+    endpoint: typing.Optional[str] = Field(default=None, description='The action endpoint (may contain {placeholders} bound at trigger time).')
+    capability: typing.Optional[str] = Field(default=None, description='Topaz-decidable capability for the action, e.g. \'mesh:publishArtifact\'.')
+    step_id: typing.Optional[str] = Field(default=None, description='Optional stable id for the step, e.g. \'approve_promotion\'.')
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

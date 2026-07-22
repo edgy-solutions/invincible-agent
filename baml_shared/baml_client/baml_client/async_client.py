@@ -217,6 +217,21 @@ class BamlAsyncClient:
                 "raw_text": raw_text,"domain": domain,
             })
             return typing.cast(types.KnowledgeResponse, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def InterviewSPOWorkflow(self, chat_history: str,user_message: str,partial_definition_json: str,available_subjects: str,available_verbs: str,available_audiences: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.SPOInterviewTurn:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.InterviewSPOWorkflow(chat_history=chat_history,user_message=user_message,partial_definition_json=partial_definition_json,available_subjects=available_subjects,available_verbs=available_verbs,available_audiences=available_audiences,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="InterviewSPOWorkflow", args={
+                "chat_history": chat_history,"user_message": user_message,"partial_definition_json": partial_definition_json,"available_subjects": available_subjects,"available_verbs": available_verbs,"available_audiences": available_audiences,
+            })
+            return typing.cast(types.SPOInterviewTurn, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
         baml_options: BamlCallOptions = {},
     ) -> types.BPMNInterviewState:
@@ -439,6 +454,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.KnowledgeResponse, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def InterviewSPOWorkflow(self, chat_history: str,user_message: str,partial_definition_json: str,available_subjects: str,available_verbs: str,available_audiences: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[stream_types.SPOInterviewTurn, types.SPOInterviewTurn]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="InterviewSPOWorkflow", args={
+            "chat_history": chat_history,"user_message": user_message,"partial_definition_json": partial_definition_json,"available_subjects": available_subjects,"available_verbs": available_verbs,"available_audiences": available_audiences,
+        })
+        return baml_py.BamlStream[stream_types.SPOInterviewTurn, types.SPOInterviewTurn](
+          __result__,
+          lambda x: typing.cast(stream_types.SPOInterviewTurn, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.SPOInterviewTurn, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[stream_types.BPMNInterviewState, types.BPMNInterviewState]:
@@ -594,6 +621,13 @@ class BamlHttpRequestClient:
             "raw_text": raw_text,"domain": domain,
         }, mode="request")
         return __result__
+    async def InterviewSPOWorkflow(self, chat_history: str,user_message: str,partial_definition_json: str,available_subjects: str,available_verbs: str,available_audiences: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="InterviewSPOWorkflow", args={
+            "chat_history": chat_history,"user_message": user_message,"partial_definition_json": partial_definition_json,"available_subjects": available_subjects,"available_verbs": available_verbs,"available_audiences": available_audiences,
+        }, mode="request")
+        return __result__
     async def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -714,6 +748,13 @@ class BamlHttpStreamRequestClient:
             "raw_text": raw_text,"domain": domain,
         }, mode="stream")
         return __result__
+    async def InterviewSPOWorkflow(self, chat_history: str,user_message: str,partial_definition_json: str,available_subjects: str,available_verbs: str,available_audiences: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="InterviewSPOWorkflow", args={
+            "chat_history": chat_history,"user_message": user_message,"partial_definition_json": partial_definition_json,"available_subjects": available_subjects,"available_verbs": available_verbs,"available_audiences": available_audiences,
+        }, mode="stream")
+        return __result__
     async def IterateBPMNGraph(self, chat_history: str,user_message: str,current_graph_json: str,available_ontology_classes: str,available_data_sources: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -765,4 +806,4 @@ class BamlHttpStreamRequestClient:
         return __result__
     
 
-b = BamlAsyncClient(DoNotUseDirectlyCallManager({}))
+b = BamlAsyncClient(DoNotUseDirectlyCallManager({}))

@@ -20,13 +20,13 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","PlatformScope","PredicateClassification","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","PlatformScope","PredicateClassification","SPOInterviewTurn","SPOPick","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
         ), enums=set(
-          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SPOPickAction","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 12
+    # Generated enums 13
     # #########################################################################
 
     @property
@@ -70,6 +70,10 @@ class TypeBuilder(type_builder.TypeBuilder):
         return PredicateBuilder(self)
 
     @property
+    def SPOPickAction(self) -> "SPOPickActionViewer":
+        return SPOPickActionViewer(self)
+
+    @property
     def SemanticArchetype(self) -> "SemanticArchetypeViewer":
         return SemanticArchetypeViewer(self)
 
@@ -79,7 +83,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 31
+    # Generated classes 33
     # #########################################################################
 
     @property
@@ -183,6 +187,14 @@ class TypeBuilder(type_builder.TypeBuilder):
         return PredicateClassificationViewer(self)
 
     @property
+    def SPOInterviewTurn(self) -> "SPOInterviewTurnViewer":
+        return SPOInterviewTurnViewer(self)
+
+    @property
+    def SPOPick(self) -> "SPOPickViewer":
+        return SPOPickViewer(self)
+
+    @property
     def SemanticResolution(self) -> "SemanticResolutionViewer":
         return SemanticResolutionViewer(self)
 
@@ -209,7 +221,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 12
+# Generated enums 13
 # #########################################################################
 
 class AgentStatusAst:
@@ -674,6 +686,64 @@ class PredicateValues:
     
 
 
+class SPOPickActionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("SPOPickAction")
+        self._values: typing.Set[str] = set([  "SetMetadata",  "FocusSubject",  "AddSpoStep",  "AddHumanAwait",  "AddDirectCall",  "NoPick",  ])
+        self._vals = SPOPickActionValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "SPOPickActionValues":
+        return self._vals
+
+
+class SPOPickActionViewer(SPOPickActionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class SPOPickActionValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def SetMetadata(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("SetMetadata"))
+    
+    @property
+    def FocusSubject(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("FocusSubject"))
+    
+    @property
+    def AddSpoStep(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("AddSpoStep"))
+    
+    @property
+    def AddHumanAwait(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("AddHumanAwait"))
+    
+    @property
+    def AddDirectCall(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("AddDirectCall"))
+    
+    @property
+    def NoPick(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("NoPick"))
+    
+    
+
+
 class SemanticArchetypeAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -780,7 +850,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 31
+# Generated classes 33
 # #########################################################################
 
 class AgentResponseAst:
@@ -2038,6 +2108,132 @@ class PredicateClassificationProperties:
     
 
 
+class SPOInterviewTurnAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SPOInterviewTurn")
+        self._properties: typing.Set[str] = set([  "agent_reply",  "pick",  ])
+        self._props = SPOInterviewTurnProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SPOInterviewTurnProperties":
+        return self._props
+
+
+class SPOInterviewTurnViewer(SPOInterviewTurnAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SPOInterviewTurnProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def agent_reply(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("agent_reply"))
+    
+    @property
+    def pick(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("pick"))
+    
+    
+
+
+class SPOPickAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SPOPick")
+        self._properties: typing.Set[str] = set([  "action",  "workflow_id",  "workflow_name",  "classification",  "subject_uri",  "verb_iri",  "audience",  "step_title",  "step_summary",  "endpoint",  "capability",  "step_id",  ])
+        self._props = SPOPickProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SPOPickProperties":
+        return self._props
+
+
+class SPOPickViewer(SPOPickAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SPOPickProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def action(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("action"))
+    
+    @property
+    def workflow_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("workflow_id"))
+    
+    @property
+    def workflow_name(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("workflow_name"))
+    
+    @property
+    def classification(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("classification"))
+    
+    @property
+    def subject_uri(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("subject_uri"))
+    
+    @property
+    def verb_iri(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("verb_iri"))
+    
+    @property
+    def audience(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("audience"))
+    
+    @property
+    def step_title(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("step_title"))
+    
+    @property
+    def step_summary(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("step_summary"))
+    
+    @property
+    def endpoint(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("endpoint"))
+    
+    @property
+    def capability(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("capability"))
+    
+    @property
+    def step_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("step_id"))
+    
+    
+
+
 class SemanticResolutionAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -2339,3 +2535,4 @@ class UIRelationProperties:
     
     
 
+

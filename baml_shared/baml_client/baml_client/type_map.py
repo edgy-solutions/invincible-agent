@@ -91,6 +91,12 @@ type_map = {
     "types.PredicateClassification": types.PredicateClassification,
     "stream_types.PredicateClassification": stream_types.PredicateClassification,
 
+    "types.SPOInterviewTurn": types.SPOInterviewTurn,
+    "stream_types.SPOInterviewTurn": stream_types.SPOInterviewTurn,
+
+    "types.SPOPick": types.SPOPick,
+    "stream_types.SPOPick": stream_types.SPOPick,
+
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
 
@@ -129,6 +135,8 @@ type_map = {
     "types.PersonaTarget": types.PersonaTarget,
 
     "types.Predicate": types.Predicate,
+
+    "types.SPOPickAction": types.SPOPickAction,
 
     "types.SemanticArchetype": types.SemanticArchetype,
 
