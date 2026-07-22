@@ -18,14 +18,13 @@
 # If this seed ran before the wipe, its corpus would be deleted. Running after
 # both prime and reregister guarantees the substrate is up and the wipe is done.
 #
-# SCOPE: this Job folds seed_weaviate_manuals only. seed_datahub_catalog (the
-# other unfolded demo seed) is NOT here yet — it needs `acryl-datahub` in the
-# image (absent from the dagster-control-plane image's deps) and a
-# DATAHUB_GMS_URL stripped of its `/api/graphql` suffix (the REST emitter wants
-# the GMS base). DataHub also isn't wiped by prime, so its demo catalog
-# persists across a reprime; only a truly-fresh DataHub needs it. Tracked as a
-# follow-up decision (add the dep to a seed image vs. rewrite the seed to raw
-# REST) rather than shipped half-configured.
+# SCOPE: folds BOTH demo seeds — seed_weaviate_manuals (DocumentChunk corpus)
+# and seed_datahub_catalog (the demo datasets/dashboards the Engine-D suite
+# resolves against). The catalog seed needs `acryl-datahub` (baked into the
+# control-plane image's venv — the cluster has no PyPI egress, so it can't be
+# installed at runtime; kept out of root deps to avoid bloating other images)
+# and the GMS BASE url, not the `/api/graphql` form the ConfigMap publishes
+# (the REST emitter 404s on that). Each seed is independently toggleable.
 # ============================================================================
 apiVersion: batch/v1
 kind: Job
@@ -60,9 +59,24 @@ spec:
           image: {{ include "invincible-agent.image" (dict "name" "dagster-control-plane" "registry" .Values.demoSeed.image.registry "repository" .Values.demoSeed.image.repository "tag" .Values.demoSeed.image.tag "root" .) }}
           imagePullPolicy: {{ .Values.demoSeed.image.pullPolicy }}
           workingDir: /app
-          command:
-            - python
-            - scripts/seed_weaviate_manuals.py
+          # Run the enabled demo-content seeds. Each is independent (manuals ->
+          # Weaviate, catalog -> DataHub), so a failure in one doesn't block the
+          # other, but the Job fails if either does. acryl-datahub is baked into
+          # this image's venv (control-plane build), so the catalog seed needs no
+          # runtime install (the cluster has no PyPI egress). Toggles from env.
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -u; rc=0
+              if [ "${SEED_MANUALS:-true}" = "true" ]; then
+                echo "[demoSeed] weaviate manuals (DocumentChunk)…"
+                python scripts/seed_weaviate_manuals.py || rc=1
+              fi
+              if [ "${SEED_CATALOG:-true}" = "true" ]; then
+                echo "[demoSeed] datahub demo catalog -> ${DATAHUB_GMS_URL}…"
+                python scripts/seed_datahub_catalog.py || rc=1
+              fi
+              echo "[demoSeed] done (rc=$rc)"; exit $rc
           # Cluster-wide config (WEAVIATE_DOC_COLLECTION, OLLAMA_*, etc.) from
           # the shared ConfigMap/secrets — same backends the engines use.
           envFrom:
@@ -86,6 +100,21 @@ spec:
               value: {{ .Values.demoSeed.weaviate.grpcHost | default (printf "%s-weaviate-grpc" .Release.Name) | quote }}
             - name: WEAVIATE_GRPC_PORT
               value: {{ .Values.demoSeed.weaviate.grpcPort | quote }}
+            # DataHub demo catalog (seed_datahub_catalog). The ConfigMap
+            # publishes DATAHUB_GMS_URL in the GraphQL form (…/api/graphql),
+            # which the acryl REST emitter chokes on — it wants the GMS BASE.
+            # Override with the base here (the banked DATAHUB_GMS_URL-
+            # over-specified debt, worked around at this consumer). DATAHUB_TOKEN
+            # (if any) rides in from the secrets envFrom above.
+            - name: DATAHUB_GMS_URL
+              value: {{ .Values.demoSeed.datahubGmsUrl | quote }}
+            # Which demo seeds to run. A cluster with a REAL DataHub can set
+            # seedCatalog=false (keep manuals) — but demoSeed is default-OFF at
+            # work anyway. Both default on when demoSeed is enabled.
+            - name: SEED_MANUALS
+              value: {{ .Values.demoSeed.seedManuals | quote }}
+            - name: SEED_CATALOG
+              value: {{ .Values.demoSeed.seedCatalog | quote }}
             # seed_weaviate_manuals configures a text2vec-ollama vectorizer; its
             # apiEndpoint is the ollama BASE (no /v1). The seed's own default
             # already targets the sandbox ollama, so nothing is bridged from the
