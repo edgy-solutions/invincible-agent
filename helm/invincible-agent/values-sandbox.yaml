@@ -79,6 +79,16 @@ agentFleet:
     OLLAMA_BASE_URL: "http://192.168.1.126:11434/v1"  # verified reachable from sandbox pods
     BAML_LOG_LEVEL: "info"
 
+    # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
+    # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).
+    # Absent in sandbox before 2026-07-22 → the Job's optional refs fell through and
+    # botocore defaulted to localhost:9000 → prime FAILED "Could not connect to
+    # http://localhost:9000/ontologies". iagent-minio is the in-cluster svc; these
+    # are sandbox test creds (same values cortexBff.env already carries in plaintext).
+    MINIO_ENDPOINT_URL: "http://iagent-minio:9000"
+    MINIO_ACCESS_KEY: "minio-sandbox"
+    MINIO_SECRET_KEY: "minio-sandbox-secret"
+
     # External DataHub web UI (Phase 3 follow-up 2026-06-24).
     # When set, datahub_wrapper's /query_metadata response includes
     # an open_url per MatchedAsset so the cortex-ui SourcesTrail can
