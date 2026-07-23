@@ -67,19 +67,37 @@ N MAINTENANCE TTLs collapsed to the last (mil_extension); IOF_Core/MRO were
 silently destroyed. Fixed at source (POST-merge + clear-once), reproducible, no
 hand-seeded data.
 
-### New finding surfaced by the now-working menu (Slice-2, not a regression)
+### Menu-vs-verb finding (Slice-2) — CORRECTED 2026-07-22
 
-With the menu populated, a live probe showed the **subject menu and the
-verb-bearing subjects are disjoint**: the menu is the Fuseki IOF ontology
-vocabulary (`/classes`), while the verb edges sit on ~60 curated routing classes
-in **Neo4j** (`MaintenanceReferenceOntology/WorkInstruction` → `queryKnowledgeGraph`,
-`TechnicalManual` → `retrieveKnowledge`). Those verb-bearing IRIs are **not in the
-Fuseki menu graph at all** — so `/find_compatible_verbs` works for them, but the
-interview can't *offer* them (the enforcement correctly restricts picks to the
-menu). The verb question itself is proven live; aligning the menu vocabulary with
-the verb-bearing routing subjects is a Slice-2 data-model decision (which source
-of truth the subject menu draws from), separate from the overwrite bug. It is not
-a regression — the menu was empty before, so this was never exercisable.
+⚠️ **RETRACTION (verified vs asserted):** an earlier draft of this section asserted
+the menu and the verb-bearing subjects were **"disjoint"** and the `spo_operation`
+path was **blocked**. That was WRONG — it came from a *mid-ingest snapshot* (a 105-
+class menu captured while the re-ingest was still in flight, plus a per-subject verb
+loop that under-counted). Same failure class as the lowercase graph-map: a transient
+count presented as a stable fact. The numbers below are re-measured on the STABLE
+state (release rev 59, chart `0.3.26`, all ontology-ingest hooks green — NOT mid-ingest).
+
+**VERIFIED (live, 2026-07-22, rev 59):**
+- The `spo_operation` path **works** — the live interview authored
+  `spo_operation(subject=MaintenanceReferenceOntology/TechnicalManual,
+  verb=mesh:retrieveKnowledge, output=mesh#KnowledgeRetrievalResponse)` through real
+  Restate+BAML, and the definition validated (`complete: True`). Slice-2 is sealed
+  live across ALL step kinds (metadata + human_await + direct_call + spo_operation).
+- Exact overlap, MAINTENANCE domain: **menu (`/classes`, Fuseki IOF vocab) = 122**;
+  **verb-bearing (Neo4j capability graph, all domains) = 14**; **overlap
+  (spo_operation-authorable) = 7** (WorkInstruction, TechnicalManual, ProcedureStep,
+  4 mil DataModules). **115 of 122 menu subjects (94%) carry no verb** (abstract IOF
+  vocabulary: agent, algorithm, assembly, DitaNode…). The 7 verb-bearing subjects NOT
+  in the MAINTENANCE menu (`mesh#*`, `idp#Dataset`, `mfg#*`) are OTHER domains,
+  correctly excluded by domain scoping — not a gap.
+
+**So the real issue is menu signal-to-noise, not a blocker:** the interview offers
+122 subjects but only 7 lead to an `spo_operation` (94% dead-ends). The Slice-2
+design question is whether the operation-subject menu should be SOURCED from the
+capability graph (verb-bearing subjects, per role) rather than the full ontology
+vocabulary — a `select-from-authorized-set` question (authorized subject set =
+domain ∩ can_view ∩ has-a-compatible-verb), taken to the architect. Not a regression
+(the menu was empty before) and not the overwrite bug.
 
 ## After the DataHub catalog seed + engine-d read-auth (2026-07-22)
 
