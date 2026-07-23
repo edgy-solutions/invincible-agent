@@ -7,8 +7,20 @@ work is committed and deploy-gated (see `pcn-pdn-bulk-resolve.md §8` for the wh
 Preconditions already landed (do NOT re-litigate at the console):
 - Graph-split + read-union — DONE (`0183b41` engine-o union, `927a41e`/`dd218e8` split, `fff5378` AGENTS).
 - Idempotency ruling — SETTLED (VirtualObject-on-composite; `pcn-pdn-bulk-resolve.md §1`).
-- CORE re-tag audit — the prime run FIRES its wake, and the deferral is already recorded (`§8.1`). That
-  decision is **spent** — don't re-open it at prime time.
+- CORE re-tag audit — a **FULL prime** (DROP-first, re-ingests IOF_Core) fires its wake; a
+  **partition-additive** ingest does NOT. What actually landed pcn was additive, so the wake is
+  **still ARMED** (not fired, not spent) — see the two-modes note below.
+
+**⚠️ TWO INGEST MODES — "run the prime" is ambiguous; always name the mode.**
+- **Partition-additive (safe default):** launch ONE TTL's `ontology_files` partition
+  (`addDynamicPartition` + `launchPipelineExecution` on `ingest_ontology_job`, `domain` explicit, NO
+  `clear_ontology_graphs`). POST-merges one file into one domain graph; other domains + instance
+  graphs untouched; no regression gate; does NOT fire the CORE-audit wake. This is what landed pcn
+  and re-tested mesh_system.
+- **Full prime (`prime_databases.py --trigger-ingest`):** `clear_ontology_graphs()` DROPs the
+  manifest domain graphs (DROP-first), then re-ingests the whole manifest. Destructive,
+  decision-bearing, needs the frozen-matrix regression gate, and DOES fire the CORE-audit wake
+  (re-tags IOF_Core across domains). Every doc that says "run the prime" means THIS mode.
 
 ## B(2) probe — in order, with the 2×2 live
 
@@ -99,11 +111,18 @@ re-prime I ran the single pcn partition, which touches only the SUSTAINMENT grap
   DATA_ENGINEERING/MAINTENANCE/MANUFACTURING/MESH all unchanged. The collision fix + additive path
   proven end-to-end on live data.
 
+**B(2) CLOSED — the grid is complete (2026-07-23, arch-caught that the pcn half wasn't the point).**
+The probe's actual subject was the InstanceIdentifier/InstanceResolution pair, not pcn. Ran the
+`mesh_system` partition **additively** (same safe path; it was already in MinIO) to test the pair
+against a FRESH sync write. Result: both steps SUCCESS; Neo4j pair present with FULL defs (648/675,
+unchanged) and mesh class count unchanged at 22. So: pcn syncs ∧ pair present-after-fresh-re-ingest →
+the **staleness** cell → the long-comment-drop hypothesis is **moot**, B(2) is **CLOSED**, and the
+sync-health blocker on the `_TEMPORARY`/resolveInstance convergence is removed (that thread's own
+clean-registration test is next; B(2) no longer gates it).
+
 **Remaining (unchanged wake states):** pcn INSTANCES (26 triples) aren't consumable until the pcn
 resolveInstance provider exists; zero disposition verbs until endpoints land; the bulk-resolve
-dispatcher/driver is the M1 chunk. A full-prime B(2) confirmation (fresh re-ingest of the mesh pair)
-was NOT needed — the read-only probe + this additive pcn ingest both show the sync carries long
-comments cleanly.
+dispatcher/driver is the M1 chunk.
 
 ## Everything else is in its wake state with a named trigger
 

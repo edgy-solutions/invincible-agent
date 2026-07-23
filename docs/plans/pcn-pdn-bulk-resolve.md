@@ -178,18 +178,19 @@ invisible orphans — documented as dead space in `clear_ontology_graphs`; a one
 
 Three more seams the dogfood must clear — recorded in the open, not dissolved:
 
-1. **The CORE re-tag audit wake condition FIRES on the prime run (correcting an earlier claim).**
-   `prime` is NOT incremental: `clear_ontology_graphs()` (setup/prime_databases.py:494-535) DROPs
-   EVERY `http://internal/*` graph, then `trigger_ingest_jobs` re-ingests the WHOLE manifest (:602).
-   So running prime to land `pcn_extension.ttl` IS "the next planned re-ingest" — the audit's own
-   wake condition. (An earlier note said "additive; doesn't wake the audit"; that was wrong — asserted
-   without checking the DROP-first semantics.) **Decision: the full audit is explicitly DEFERRED** —
-   it is decision-bearing ontology governance (how a class shared across domains, e.g. IOF_Core under
-   both MAINTENANCE and SUSTAINMENT, should be domain-tagged/deduped), and pcn dogfooding should not
-   block on that conversation. **New wake condition:** the audit runs at the next of (a) a dedicated
-   ontology-governance session, (b) the MANUFACTURING query path going live [original OR-clause,
-   still standing], or (c) the first observed cross-domain routing ambiguity (a query resolving to an
-   IOF_Core class in the wrong domain). Recorded, not silent.
+1. **The CORE re-tag audit wake — armed, NOT fired (superseding both the original claim AND its
+   first correction).** History, so the record is honest: (i) an early note said "additive; doesn't
+   wake the audit" — asserted without checking; (ii) that was corrected to "a FULL prime IS the next
+   planned re-ingest and fires the wake" — true for a full prime; (iii) BUT pcn was ultimately landed
+   by a **partition-additive ingest** (2026-07-23, `7f713cb` / run card), NOT a full prime. A partition
+   ingest does not run `clear_ontology_graphs` and does not re-ingest IOF_Core, so it does **not**
+   re-tag CORE and the wake **did not fire**. Net: the CORE re-tag audit is still **ARMED** against its
+   original condition — the next of (a) a **full prime** (DROP-first, re-ingests IOF_Core), (b) the
+   MANUFACTURING query path going live, or (c) the first observed cross-domain routing ambiguity (a
+   query resolving to an IOF_Core class in the wrong domain). The audit is decision-bearing ontology
+   governance (how IOF_Core shared under both MAINTENANCE and SUSTAINMENT should be domain-tagged),
+   still owed when its wake fires — it just hasn't fired. (Lesson: the stale-assert pattern can operate
+   on a process record — a wake logged as "fired/deferred" against an event that never happened.)
 
 2. **B(2) probe gates the dogfood — the sync is under open suspicion.** The interview's authorized
    sets read Neo4j `:OntologyClass` nodes, but "pcn classes ingested" (Fuseki) and "pcn classes
@@ -219,5 +220,10 @@ Three more seams the dogfood must clear — recorded in the open, not dissolved:
    drop at the Jena→Neo4j boundary — same shape as the descriptor query was for containment. Do NOT
    shorten them to make the ingest "safer"; the length is the test.
 
-**Sequence from here:** B(2) probe → prime run (with the CORE-audit deferral made explicitly, per §8.1)
-→ dual-substrate dogfood (Fuseki ∧ Neo4j ∧ /classes) → dispatcher (idempotency settled, §1).
+**Sequence — DONE through the dogfood (2026-07-23, `7f713cb`; NOT via full prime — partition-additive):**
+B(2) probe [CLOSED — pair survives fresh re-ingest, run card] → pcn `pcn_extension` partition ingest
+(additive, domain=SUSTAINMENT explicit, no clear) → dual-substrate dogfood GREEN (Fuseki ∧ Neo4j ∧
+/classes, all 4 pcn subjects; SUSTAINMENT_INSTANCES + other domains untouched). **Remaining:** the pcn
+resolveInstance provider (so the 26 real instance triples become consumable), disposition verbs
+per-endpoint, then the dispatcher (idempotency settled, §1). NB: this used the partition-additive
+mode; a full prime (DROP-first) was never run, so the CORE-audit wake (§8.1) remains armed.
