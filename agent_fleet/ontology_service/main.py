@@ -1442,6 +1442,11 @@ try:
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.pcn_instance_provider import resolve_pcn_candidates as _resolve_pcn_candidates, PCN_INSTANCES_QUERY as _PCN_INSTANCES_QUERY
 
+try:
+    from pcn_state_sparql import build_disposition_state_update as _build_state_update, build_parts_by_state_query as _build_parts_query  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.pcn_state_sparql import build_disposition_state_update as _build_state_update, build_parts_by_state_query as _build_parts_query
+
 
 # ---------------------------------------------------------------------------
 # POST /resolve
@@ -2509,15 +2514,6 @@ async def resolve_pcn_instance(request: ResolvePcnRequest) -> dict:
 # the write is idempotent (delete-then-insert) so the two-write convergence can
 # re-stamp safely, and the read rides the deployed read-union.
 # ---------------------------------------------------------------------------
-_PCN_NS = "http://internal/sustainment/pcn#"
-_SUSTAINMENT_INSTANCES_GRAPH = "http://internal/SUSTAINMENT_INSTANCES"
-
-
-def _sparql_lit(v: str) -> str:
-    """Escape a string for a SPARQL literal (quotes/backslashes/newlines)."""
-    return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
-
-
 async def _execute_sparql_update(update: str) -> None:
     if not _JENA_UPDATE_ENDPOINT:
         raise HTTPException(status_code=503, detail="Jena update endpoint not configured")
@@ -2544,20 +2540,7 @@ async def write_pcn_disposition_state(request: WriteDispositionStateRequest) -> 
     s = request.subject_iri
     if not s.startswith("http://internal/"):
         raise HTTPException(status_code=400, detail="subject_iri must be an internal component/notice IRI")
-    g, ns = _SUSTAINMENT_INSTANCES_GRAPH, _PCN_NS
-    ins = [
-        f'<{s}> <{ns}dispositionState> "{_sparql_lit(request.disposition_state)}" .',
-        f'<{s}> <{ns}dispositionRef> "{_sparql_lit(request.disposition_ref)}" .',
-    ]
-    if request.proposed_by_ruleset:
-        ins.append(f'<{s}> <{ns}proposedByRuleset> "{_sparql_lit(request.proposed_by_ruleset)}" .')
-    ins_block = " ".join(ins)
-    update = (
-        f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionState> ?a }} }} ;\n'
-        f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionRef> ?b }} }} ;\n'
-        f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}proposedByRuleset> ?c }} }} ;\n'
-        f'INSERT DATA {{ GRAPH <{g}> {{ {ins_block} }} }}'
-    )
+    update = _build_state_update(s, request.disposition_state, request.disposition_ref, request.proposed_by_ruleset)
     await _execute_sparql_update(update)
     return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
 
@@ -2572,11 +2555,7 @@ async def pcn_parts_by_state(request: PartsByStateRequest) -> dict:
     """Step-5 query: all parts in a disposition state, via the read-union (which spans
     SUSTAINMENT_INSTANCES) — the disposition dashboard's source. No dashboard store; the UI queries
     the same graph the policy lives in."""
-    ns = _PCN_NS
-    query = (
-        f'SELECT ?part ?ref ?ruleset WHERE {{ ?part <{ns}dispositionState> "{_sparql_lit(request.disposition_state)}" . '
-        f'OPTIONAL {{ ?part <{ns}dispositionRef> ?ref }} OPTIONAL {{ ?part <{ns}proposedByRuleset> ?ruleset }} }} ORDER BY ?part'
-    )
+    query = _build_parts_query(request.disposition_state)
     rows = await execute_sparql(query, domain=request.domain)
     return {"disposition_state": request.disposition_state, "parts": rows, "count": len(rows)}
 
