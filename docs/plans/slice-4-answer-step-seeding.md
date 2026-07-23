@@ -162,3 +162,19 @@ path and re-seals after: (1) the `recall_override` thread-through (§3.1); (2) t
 `resolveInstance` convergence — the retire-`_TEMPORARY` thread (`[[project_resolve_instance_provider_gap]]`,
 ADR-0031). S3 and S5 drivers do NOT consume resolution and can go first. That ordering also gives
 the `recall_override` telemetry more soak time before seeding starts trusting its absence.
+
+**Seal PRECONDITIONS (checklist gate — a promise is only as strong as the gate that checks it).**
+"These land before the seal" must be a named precondition on the seal, not implicit ordering that
+deadline pressure can quietly skip. The S4 seal MAY NOT be declared until all three are checkably
+true:
+
+1. **provenance-as-block landed** — `routing.about.provenance` carries the resolution provenance
+   block (assert a known key, e.g. `about.provenance` is a dict, on a live route).
+2. **`resolved_via` emitted and visible** — assert `routing.about.provenance.resolved_via` is one of
+   the ladder rungs on a live route (not absent).
+3. **`_TEMPORARY` deleted** — `grep -rn "_TEMPORARY" src/ agent_fleet/` returns nothing in the
+   resolution path. The cheapest gate there is; a literal string search stands in for the whole
+   convergence being real, not intended.
+
+Until (1)+(2) hold, the seed gate's precise (flag) half is dormant and only the capped-confidence
+proxy fires — sealing then would bless a routing shape about to change under it.
