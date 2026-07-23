@@ -48,12 +48,42 @@ items ──filter(relevance)──▶ ──auto-dispose(FYI lane)──▶ ─
 - **auto-dispose**: relevant + low-stakes + system-confident → an FYI lane, no human.
 - **residue**: what a human must actually decide.
 
-**PROPOSER CORE LANDED** (`agent_fleet/restate_analyst/pcn_disposition_proposer.py` + 11/11): the
-deterministic funnel-input producer — `score_relevance` (scope membership, no optimistic default),
-`propose_disposition` (PDN/discontinuation → qualify-if-replacement / LTB-else; PCN FFF change →
-qualify; admin-only → archive), and `build_part_items` (assembles `PartItem`s; subject left None for
-the resolveInstance step; needs_review carried). Honest degradation at the proposer: an unclassifiable
-change → `None` disposition → the part can't ride accept-all (proven end-to-end into the core seal).
+**PROPOSER — MECHANISM CODE, POLICY DATA (the arc's thesis, applied to the first policy core).** A
+condition→disposition dict frozen in the proposer would be the lowercase-graph-map one altitude up:
+someone's correct business knowledge frozen in a consumer, going stale the day the process owner
+changes the process. So the split the arc uses all week — **mechanism stays code, policy becomes
+data**:
+- **Policy (data):** `setup/ontologies/pcn_disposition_rules.ttl` — the condition→disposition DECISION
+  TABLE as flat `pcn:DispositionRule` individuals (`whenNoticeType` / `whenHasReplacement` /
+  `whenAnyChangeClass` / `whenAllChangeClass` → `proposesDisposition`) + the category→change-class
+  classification. Ingested via the manifest partition path → versioned, reproducible, owner-ratifiable,
+  and **covered by the drift-check like every standards artifact**. v1 is the AGENT'S reading;
+  every rule's `prov:wasDerivedFrom` is **deliberately empty** until a domain owner maps it to a
+  governing clause (e.g. S3000L obsolescence management) — "drive from standards" made literal, and
+  the emptiness is honest, not a TODO.
+- **Mechanism (sealed code):** `agent_fleet/restate_analyst/pcn_disposition_proposer.py` + 15/15 —
+  `evaluate_rules` (all-match-must-agree over an INJECTED ruleset), `score_relevance` (scope
+  membership, no optimistic default), `build_part_items`. Two honest-degradation outcomes, both →
+  no proposal → can't ride accept-all: **UNCLASSIFIABLE** (no rule matched) and **CONFLICT** (matching
+  rules disagree → *abstain rather than pick* — a new outcome that only exists once rules are data,
+  with its own red test).
+- **Ingest gate:** `validate_ruleset` — a malformed ruleset fails at INGEST, not at an approver's
+  screen (unregistered disposition; identical-conditions-different-disposition contradiction). The
+  rdflib-validated discipline applied to rules.
+- **Guardrail — decision table, never a rule language.** Fixed closed condition schema, flat rules,
+  all-match-must-agree. A rule DSL (nesting/expressions/computed priorities) would be code-as-policy's
+  revenge — policy so expressive it's code again, minus the tests. Schema evolution is an owner
+  decision, not a DSL feature.
+- **The override loop is the growth loop.** Every UNCLASSIFIABLE/CONFLICT part a human disposes (with
+  its `override_reason` in `audit_record`) is a candidate rule — recurring → owner ratifies into the
+  TTL → the gap closes at source. Policy grows from evidence with provenance: the self-hardening
+  phonebook shape applied to business process.
+- **Trajectory:** the interview authors *workflows*; this rules artifact is *vocabulary those
+  workflows consume*. Both data, both owner-ratified — no conflict with the interview-authored endstate.
+- **Third-set trigger (armed):** this is the 2nd per-domain descriptor/policy artifact (after the BI
+  matcher's set). When a 3rd domain mints its own, that's the trigger to consolidate the *admission
+  decisions* (not the sets) into one reviewed place — same third-instance rule that fired on the
+  discard pattern.
 
 **Seal 1 — honest funnel (auto-archived items stay COUNTABLE).** Nothing vanishes: the counts at
 every stage sum to the input (`filtered + auto_disposed + residue == input`). Auto-disposed items

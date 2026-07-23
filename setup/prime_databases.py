@@ -214,6 +214,16 @@ CANONICAL_TTL_MANIFEST = [
         "s3_key": "sustainment/pcn_extension.ttl",
         "path": "ontologies/pcn_extension.ttl",
     },
+    # PCN/PDN disposition rules — POLICY AS DATA (the condition->disposition decision table the
+    # proposer consumes). Ingested here so it is versioned, reproducible, owner-ratifiable, and
+    # covered by the drift-check like every other standards artifact. SEED = the agent's reading of
+    # domain convention; every rule's prov:wasDerivedFrom is empty pending domain-owner ratification.
+    {
+        "domain": "SUSTAINMENT",
+        "name": "pcn_disposition_rules",
+        "s3_key": "sustainment/pcn_disposition_rules.ttl",
+        "path": "ontologies/pcn_disposition_rules.ttl",
+    },
 
     # ----- LAYER 3: DATA_ENGINEERING (idp catalog / lineage) -----
     # The semantic domain is DATA_ENGINEERING, not IDP.

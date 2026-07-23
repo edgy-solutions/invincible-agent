@@ -1,0 +1,55 @@
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix pcn:  <http://internal/sustainment/pcn#> .
+
+<http://internal/sustainment/pcn/rules> a owl:Ontology ;
+    rdfs:label "PCN/PDN disposition rules — SEED policy (pending domain-owner ratification)" ;
+    rdfs:comment "The condition->disposition decision table the disposition proposer consumes. POLICY AS DATA, not code: the mechanism (evaluate a part against these rules; degrade honestly when none match; ABSTAIN when they conflict) lives in agent_fleet/restate_analyst/pcn_disposition_proposer.py; the ROWS live here, versioned + reproducible via the manifest partition path like every standards artifact, so the drift-check invariant covers policy too. Change the process -> edit this file -> partition re-ingest -> proposer follows source, no code deploy. v1 is the AGENT'S reading of domain convention: every rule's prov:wasDerivedFrom is DELIBERATELY EMPTY until a domain owner maps it to a governing standard clause (e.g. S3000L obsolescence management) and ratifies. That emptiness is honest, not a TODO. Keep this a FLAT decision table — never a rule language (nesting/expressions/priorities is code-as-policy's revenge)." ;
+    pcn:ratificationStatus "unratified: agent's reading of domain convention, pending domain-owner sign-off" .
+
+# --- Change-category classification (vocabulary: which change types affect form/fit/function). ---
+# Data, not code — a rule references a class, not a hardcoded category list.
+pcn:Material       pcn:changeClass "form_fit_function" .
+pcn:Process        pcn:changeClass "form_fit_function" .
+pcn:Testing        pcn:changeClass "form_fit_function" .
+pcn:Location       pcn:changeClass "administrative" .
+pcn:Packaging      pcn:changeClass "administrative" .
+pcn:Discontinuation pcn:changeClass "discontinuance" .
+
+# --- The decision table (SEED). Flat rule individuals; a fixed, closed condition schema:
+#     whenNoticeType (PCN|PDN), whenHasReplacement (bool), whenAnyChangeClass, whenAllChangeClass.
+#     Evaluated all-match-must-agree: agree -> propose; disagree -> abstain; none -> unclassifiable.
+#     prov:wasDerivedFrom intentionally ABSENT on every rule until ratified against a standard clause.
+
+pcn:RuleDiscontinuedWithReplacement a pcn:DispositionRule ;
+    rdfs:label "Discontinued part with a named replacement -> qualify the replacement" ;
+    pcn:whenNoticeType "PDN" ; pcn:whenHasReplacement true ;
+    pcn:proposesDisposition "dispatchQualification" .
+
+pcn:RuleDiscontinuedNoReplacement a pcn:DispositionRule ;
+    rdfs:label "Discontinued part, no replacement -> last-time buy to bridge" ;
+    pcn:whenNoticeType "PDN" ; pcn:whenHasReplacement false ;
+    pcn:proposesDisposition "dispatchLTB" .
+
+pcn:RuleDiscontinuanceCategoryWithReplacement a pcn:DispositionRule ;
+    rdfs:label "A change notice carrying a discontinuance, replacement named -> qualify" ;
+    pcn:whenAnyChangeClass "discontinuance" ; pcn:whenHasReplacement true ;
+    pcn:proposesDisposition "dispatchQualification" .
+
+pcn:RuleDiscontinuanceCategoryNoReplacement a pcn:DispositionRule ;
+    rdfs:label "A change notice carrying a discontinuance, no replacement -> last-time buy" ;
+    pcn:whenAnyChangeClass "discontinuance" ; pcn:whenHasReplacement false ;
+    pcn:proposesDisposition "dispatchLTB" .
+
+pcn:RuleFormFitFunctionChange a pcn:DispositionRule ;
+    rdfs:label "A process change affecting form/fit/function -> qualify" ;
+    pcn:whenNoticeType "PCN" ; pcn:whenAnyChangeClass "form_fit_function" ;
+    pcn:proposesDisposition "dispatchQualification" .
+
+pcn:RuleAdministrativeOnlyChange a pcn:DispositionRule ;
+    rdfs:label "A change that is purely administrative -> archive (acknowledge, no action)" ;
+    pcn:whenNoticeType "PCN" ; pcn:whenAllChangeClass "administrative" ;
+    pcn:proposesDisposition "archive" .
