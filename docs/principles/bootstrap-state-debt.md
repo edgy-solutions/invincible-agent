@@ -35,6 +35,36 @@ catalog routing fell to the generalist. The resolution was source-authority: fol
 into `sync_jena_ontologies_to_neo4j` (doc-tools, commit `3dbc83a0`), so `helm install` + the ingest
 asset reproduces them. That is what *every* such gap must become.
 
+## The sibling invariant — a running cluster can't silently drift from source
+
+The definition of done is the **forward** direction: a fresh cluster reaches working state from
+`helm install` alone. It has a sibling the forward direction does **not** imply — the **ongoing**
+direction: *a running cluster, once built, must not silently drift from its source.* The reproducible
+path being **correct** does not make a **running** cluster **current** — a cluster stood up at time T
+does not follow a source change at T+n unless something re-runs the ingest.
+
+This week's B(2) close is the proof. `mesh_system.ttl` gained the `InstanceIdentifier` /
+`InstanceResolution` classes at some point; the cluster's Jena→Neo4j sync predated that; **no
+mechanism noticed the gap for weeks**, until a human ran a probe and it turned out to be staleness,
+not a sync bug. The long survival of the lowercase graph-map was arguably a second instance. Both
+drifts were found by a human probing; neither by the system noticing — that is the gap.
+
+The cure has the shape of the machinery that healed it (a per-TTL partition run), in ascending
+ambition:
+
+1. **Runbook rule (do now):** a TTL edit runs its partition in the same PR. Cheap, human-enforced.
+2. **Checksum drift-check (ITEM-C LIST — the actionable next rung):** store each partition's source
+   TTL hash at ingest; a probe-style check compares live source hash vs last-ingested hash per
+   partition. This turns *"is the cluster stale?"* from an **investigation** into a **query** — the
+   same move that turned "does the sync drop long comments?" from a mystery into a Cypher line.
+   Deterministic, no LLM, no teardown. It is the sibling of "fresh empty cluster reaches working
+   routing with zero hand-run scripts": *a running cluster can't silently drift from source.*
+3. **Dagster source-sensor (do NOT build now):** auto-trigger a partition when its TTL changes. Full
+   automation; deferred — the checksum query is the high-leverage rung, not this.
+
+Drift is this law read in the time dimension: *only state a fresh install recreates is durable*
+(forward) **+** *only a cluster that follows source is current* (ongoing).
+
 ## Why "direct mutation is never a fix"
 
 A durable-store write from a hand-run script is invisible to the thing that rebuilds the store. It
