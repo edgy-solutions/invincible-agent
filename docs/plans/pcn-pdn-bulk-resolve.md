@@ -84,6 +84,26 @@ override cannot be resolved (you can't dispatch an effect with no disposition �
 Pure — no Restate, no Topaz. `can_act` (Topaz), relevance scores + `needs_review` (doc-tools), and
 the system-proposed disposition are all INPUTS. The enforceable innovations are the four seals.
 
+## 6a. resolveInstance for pcn — the descriptor admission decision (provider-work, flag not default)
+
+A pcn `resolveInstance` provider (engine-o-backed, over the SUSTAINMENT graph — NOT engine-d's
+DataHub matcher) needs its OWN descriptor-token set, built with the admission rule from
+`agent_fleet/datahub_wrapper/instance_match.py` applied to pcn vocabulary — **do not copy the
+BI-flavored `_DESCRIPTOR_TOKENS`** (dashboard/superset/table are wrong-domain here).
+
+The happy case is trivial: instances carry deterministic IRIs keyed by MPN and notice-id
+(`<http://internal/components/{mpn}>`, `<http://internal/sustainment/doc/{notice_id}>`), so an
+exact-match resolves without any stripping.
+
+The **decision-bearing** part is which prose nouns are descriptors, and the trap:
+- **Descriptors (strippable):** `notice`, `notices`, `part`, `parts`, `component`, `components`,
+  `mpn`, articles (`the`, `a`, `for`, `of`) — "the discontinuation **notice** for 23_0120" → "23_0120".
+- **NOT descriptors (identifier-fragments — never strip):** `pcn`, `pdn` (and `ptn`). They look
+  like entity-type nouns, but they are almost always part of the genuine identifier — "PCN 23_0120",
+  "PDN 23_0120". Stripping them turns a resolvable id into an ambiguous bare number. This is exactly
+  the admission-rule judgment the frozen-set comment anticipated ("entity-type nouns, never names"),
+  applied to its first non-BI domain. **Flag it in the provider PR; do not let a default list ship.**
+
 ## 7. Driver + seals (spec — deploy-gated)
 
 `_run_definition` registers the grouped HumanTask; the dispatcher (per-item, idempotent, OUTSIDE

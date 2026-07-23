@@ -24,6 +24,16 @@ import difflib
 # entity-type nouns + BI-tool names + articles; NEVER data-platform names
 # (snowflake/postgres/dbt) — those are more likely genuine parts of an asset
 # name. MAINTENANCE: when a new BI tool enters the stack (e.g. grafana), add it.
+#
+# GENERAL PRINCIPLE (this set is BI-DOMAIN-SPECIFIC — do NOT reuse it, or add
+# other domains' words to it). A descriptor is a word a user APPENDS to name a
+# thing ("dashboard"); an identifier-FRAGMENT is a word that is part of the
+# genuine name and must never be stripped. Data-platform names are one class of
+# identifier-fragment; a type PREFIX that lives INSIDE the id is another — e.g.
+# the pcn/pdn domain: "notice"/"part" are descriptors, but "PCN"/"PDN" look like
+# entity-type nouns yet are usually part of the real identifier ("PCN 23_0120").
+# Each resolveInstance provider owns its OWN descriptor set with this same
+# admission test applied to its OWN vocabulary — see docs/plans/pcn-pdn-bulk-resolve.md.
 _DESCRIPTOR_TOKENS = frozenset({
     "the", "a", "an",
     "dashboard", "dashboards", "table", "tables", "dataset", "datasets",
