@@ -2337,6 +2337,87 @@ async def list_domains() -> dict:
 # precision step that picks among the compatible set when there are
 # multiple choices.
 
+# ---------------------------------------------------------------------------
+# POST /operable_subjects — the CAPABILITY-GRAPH subject menu (ADR-0029 Slice 2,
+# Decision D — docs/plans/slice-2-spo-interview.md §8). The INVERSE of
+# /find_compatible_verbs: "which subjects have ANY verb?" instead of "which verbs
+# for this subject?". This is the source for the SPO interview's OPERATION-subject
+# question — the subjects the mesh can ACT on (OntologyClass nodes carrying >=1
+# registered verb edge), domain-scoped + can_view-filtered. Distinct from /classes
+# (the full ontology VOCABULARY, used for nameable roles like a human_await
+# subject_ref / participant): /classes is what EXISTS, this is what's ACTIONABLE.
+# Sourcing the operation menu HERE (not filtering /classes) means it GROWS
+# automatically as verbs are registered on new classes — consumer-derives-from-
+# producer, the same rule the graph-name fix taught.
+# ---------------------------------------------------------------------------
+class OperableSubjectsRequest(BaseModel):
+    domain: str | None = None
+    # Author's entitlement key (email) — same per-IRI can_view gate /classes and
+    # /resolve apply. Empty → ungranted → deny-by-default on compartmented subjects
+    # once ENABLE_AGENTIC_AUTH flips.
+    user_email: str = ""
+
+
+class OperableSubject(BaseModel):
+    uri: str
+    label: str | None = None
+
+
+class OperableSubjectsResponse(BaseModel):
+    subjects: list[OperableSubject] = Field(default_factory=list)
+    count: int = 0
+    domain: str | None = None
+
+
+_OPERABLE_SUBJECTS_CYPHER = """
+MATCH (s:OntologyClass)-[r]->()
+WHERE r.iri IS NOT NULL
+  AND ($domain IS NULL OR s.domain = $domain)
+RETURN DISTINCT s.uri AS uri, s.label AS label
+ORDER BY label
+"""
+
+
+@app.post("/operable_subjects", response_model=OperableSubjectsResponse)
+async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubjectsResponse:
+    """The subjects an SPO workflow step can be built on — OntologyClass nodes that
+    carry at least one registered verb edge — domain-scoped and can_view-filtered
+    (Decision D). The interview offers THESE for the operation-subject question, so
+    every offered subject leads to >=1 compatible verb (no 94%-dead-end menu)."""
+    if not _NEO4J_DRIVER:
+        raise HTTPException(status_code=503, detail="Neo4j driver not initialized.")
+
+    def _run() -> list[dict]:
+        with _NEO4J_DRIVER.session() as session:
+            return [
+                dict(r)
+                for r in session.run(_OPERABLE_SUBJECTS_CYPHER, domain=request.domain)
+            ]
+
+    try:
+        rows = await asyncio.to_thread(_run)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"operable_subjects query failed: {exc}") from exc
+
+    out: list[OperableSubject] = []
+    dropped = 0
+    for row in rows:
+        uri = row.get("uri")
+        if not uri:
+            continue
+        # Same sealed ontology-visibility gate /resolve + /classes apply.
+        if not _can_view_class(request.user_email, uri):
+            dropped += 1
+            continue
+        out.append(OperableSubject(uri=uri, label=row.get("label")))
+    if dropped:
+        logging.info(
+            "/operable_subjects: %d verb-bearing subject(s) hidden from %r by can_view",
+            dropped, request.user_email or "anonymous",
+        )
+    return OperableSubjectsResponse(subjects=out, count=len(out), domain=request.domain)
+
+
 class FindCompatibleVerbsRequest(BaseModel):
     subject_uri: str
     # How many subClassOf hops to walk. 0 = direct edges only;

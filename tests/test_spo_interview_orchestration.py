@@ -209,3 +209,25 @@ def test_seal_matches_committed_promotion_mechanics():
     c_call = next(s for s in committed.steps if s.kind == "direct_call")
     a_call = next(s for s in authored.steps if s.kind == "direct_call")
     assert a_call.capability == c_call.capability
+
+
+# ---------------------------------------------------------------------------
+# 5. Decision D — the operation-subject menu is the capability graph
+# ---------------------------------------------------------------------------
+
+def test_operation_subject_parser_and_enforcement():
+    """/operable_subjects response parses to the {uri,label} funnel shape, and the
+    same select-from-authorized-set enforcement applies (Decision D — the operation
+    menu is verb-bearing subjects, sourced from the capability graph)."""
+    payload = {"subjects": [
+        {"uri": "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
+         "label": "Technical Manual"},
+        {"uri": "", "label": "junk-dropped"},
+    ], "count": 1, "domain": "MAINTENANCE"}
+    subs = si._parse_operation_subjects(payload)
+    assert subs == [{"uri": "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
+                     "label": "Technical Manual"}]
+    tm = subs[0]["uri"]
+    assert si.validate_pick(tm, subs, key="uri") == tm
+    with pytest.raises(si.PickRefused):
+        si.validate_pick("http://not/offered", subs, key="uri")

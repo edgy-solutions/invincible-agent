@@ -119,6 +119,47 @@ def authorized_subjects(
     return _parse_classes(r.json())
 
 
+def _parse_operation_subjects(payload: dict) -> list[dict]:
+    """PURE: Engine O ``/operable_subjects`` response -> the authorized OPERATION-subject
+    set. Same ``{uri, label}`` shape the funnel expects, so ``validate_pick`` is unchanged."""
+    out = []
+    for s in (payload or {}).get("subjects") or []:
+        uri = str(s.get("uri") or "").strip()
+        if uri:
+            out.append({"uri": uri, "label": str(s.get("label") or "")})
+    return out
+
+
+def authorized_operation_subjects(
+    caller_email: str,
+    *,
+    engine_o_url: str = ENGINE_O_URL_DEFAULT,
+    domain: str = "MAINTENANCE",
+) -> list[dict]:
+    """The OPERATION-subject menu (ADR-0029 Slice 2, Decision D — design §8): the subjects
+    the mesh can ACT on (the capability graph — OntologyClass nodes carrying >=1 verb edge),
+    domain-scoped + can_view-filtered. This is the authorized set for the ``spo_operation``
+    subject question — EVERY subject here leads to >=1 compatible verb, so the menu never
+    dead-ends.
+
+    Distinct from ``authorized_subjects`` (the full ontology VOCABULARY via ``/classes``,
+    which is ~94% verbless and is for NAMEABLE roles — human_await ``subject_ref`` /
+    participants / classification). Decision D role rule: *actionable* subjects source HERE;
+    *nameable* subjects source from ``authorized_subjects``.
+
+    Sourced from Engine O ``/operable_subjects`` (the inverse of ``/find_compatible_verbs``),
+    NOT filtered from ``/classes`` — so the menu GROWS automatically as verbs are registered
+    on new classes (consumer-derives-from-producer). ``caller_email`` threads identity for the
+    same can_view compartment gate (Ruling A)."""
+    r = httpx.post(
+        f"{engine_o_url}/operable_subjects",
+        json={"domain": domain, "user_email": caller_email},
+        timeout=_HTTP_TIMEOUT,
+    )
+    r.raise_for_status()
+    return _parse_operation_subjects(r.json())
+
+
 def authorized_verbs(
     subject_uri: str,
     *,

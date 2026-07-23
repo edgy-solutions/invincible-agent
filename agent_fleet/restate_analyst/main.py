@@ -1882,10 +1882,15 @@ async def spo_turn(ctx: ObjectContext, request: dict) -> dict:
     state = si.InterviewState(**{k: v for k, v in raw_state.items() if k in _ISTATE_FIELDS})
     scope_domain = state.classification or req_domain or "MAINTENANCE"
 
-    # 1. Compute the authorized sets (network — Engine O). Subjects are can_view-scoped
-    #    to the AUTHOR (caller_email threaded); verbs are for the focused subject only.
+    # 1. Compute the authorized sets (network — Engine O). The OPERATION-subject menu
+    #    is sourced from the CAPABILITY GRAPH (Decision D — design §8): only subjects the
+    #    mesh can act on (>=1 verb), domain- + can_view-scoped to the AUTHOR — so every
+    #    offered subject leads to a verb (no 94%-dead-end ontology-vocabulary menu). Verbs
+    #    are for the focused subject only. (Nameable-role menus — human_await subject_ref /
+    #    participants — would source from si.authorized_subjects/`/classes`; that role-split
+    #    is a follow-up once the BAML shell distinguishes the questions.)
     async def compute_sets():
-        subjects = si.authorized_subjects(caller_email, engine_o_url=_ENGINE_O_URL, domain=scope_domain)
+        subjects = si.authorized_operation_subjects(caller_email, engine_o_url=_ENGINE_O_URL, domain=scope_domain)
         verbs = (si.authorized_verbs(focused_subject, workflow_domain=state.classification,
                                      engine_o_url=_ENGINE_O_URL) if focused_subject else [])
         return {"subjects": subjects, "verbs": verbs}
