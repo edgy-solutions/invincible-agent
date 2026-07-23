@@ -1,5 +1,28 @@
 # PCN/PDN bulk-resolve — the one substrate extension (grouped review: 1 approval resolves N items)
 
+## Decisions (ledger) — the v1 dispatch effect + graph-state location (2026-07-23)
+
+**What a resolved disposition DOES at v1 — the workflow model consuming its own output (the Case-2
+thesis, not a placeholder).** Three writes, all in owned substrates, no external procurement anything:
+(1) persist the durable `ItemResolution` (already the bulk-resolve core's output, carrying
+`ruleset_ref` + override provenance); (2) write disposition STATE onto the item's graph node
+(`pcn:dispositionState` / `pcn:dispositionRef`); (3) open a per-item **real Restate HumanTask** keyed
+by (notice × part) with type = the disposition — NOT a UI mock (same lifecycle substrate the
+bulk-resolve core lives in; per-item VirtualObject-on-composite is the settled ruling). The loop the
+demo closes is **disposition → dispatch → visibility**; a dispatched item opening a task for a
+*different persona's queue* is the multiplayer moment.
+
+**DECIDED — graph-state write goes to `SUSTAINMENT_INSTANCES`** (not a separate store): it is runtime
+data (survives prime, same graph as the instances it describes, provenance-adjacent), and it makes
+step-5 querying fall out for free — "all parts in LTB" is a one-hop SPARQL through the already-deployed
+read-union, the sourced-menu philosophy applied to operational state (nobody builds a dashboard store).
+
+**SCOPE GUARD — the demo ends at "the task exists, is real, is durable," NOT at the task completing.**
+Task completion (the qualification engineer finishing qualification) is real workflow-execution, the
+next milestone's opening scene. Demoing completion would be hand-waving; ending on a durable task is
+stronger.
+
+
 The PCN/PDN part-obsolescence workflow (ADR-0029 Case-2 exemplar, `2b5615f`) needs **zero new
 workflow-model step kinds** — the five slices are the whole model. Its net cost is **one narrow
 substrate extension**: a HumanTask that a single approval resolves across N items (a grouped
