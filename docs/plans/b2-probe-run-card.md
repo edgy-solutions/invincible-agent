@@ -124,6 +124,20 @@ clean-registration test is next; B(2) no longer gates it).
 resolveInstance provider exists; zero disposition verbs until endpoints land; the bulk-resolve
 dispatcher/driver is the M1 chunk.
 
+## Run log — 2026-07-23, M1 wiring #1: disposition rules LIVE, policy-as-data proven end-to-end
+
+Cluster authorized ("cluster is yours"). Landed the disposition-rules TTL via the same additive
+partition path as the vocab (§8.0c order: rules ingest FIRST), Jena-only (rules are individuals, not
+`owl:Class`, so no Neo4j sync): `mc pipe pcn_disposition_rules.ttl` → MinIO → Dagster launch
+`ingest_ontology_to_jena` only, `domain=SUSTAINMENT`, no clear. SUCCESS. **Verified live:** 6
+`pcn:DispositionRule` + 6 `pcn:changeClass` in `<http://internal/SUSTAINMENT>`. **Loader acceptance
+gate MET LIVE** (not just fixture): a SPARQL CONSTRUCT of the rule triples → `load_disposition_rules`
+→ 6 rules / 6 classifications, `ruleset_ref = rules@edc21f242929`, `validate_ruleset` CLEAN, and the
+real IPCN25300X shape (Material/Process/Location/Testing) → **`dispatchQualification`** — the actual
+notice's disposition computed from POLICY-IN-THE-GRAPH, no code table. The policy-as-data thesis works
+against real data. Remaining loader work = the driver's live SPARQL fetch inside the engine (the
+CONSTRUCT I ran by hand becomes the driver's query); pure graph→structure logic is sealed + live-proven.
+
 ## Everything else is in its wake state with a named trigger
 
 Zero undocumented dormancy (the point of the week): dispatcher → on the settled ruling; disposition
