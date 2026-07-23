@@ -34,6 +34,7 @@ class PartItem:
     subject: Optional[str] = None          # resolved ontology subject IRI (execution grain)
     proposed_disposition: Optional[str] = None  # system-proposed action, or None
     needs_review: bool = False             # doc-tools weak-extraction flag (provenance strength)
+    proposed_by_ruleset: Optional[str] = None   # policy-artifact identity that proposed the disposition
 
 
 @dataclass
@@ -97,6 +98,7 @@ class ItemResolution:
     idempotency_key: str
     needs_review: bool
     override_reason: Optional[str] = None
+    proposed_by_ruleset: Optional[str] = None   # policy-artifact identity (audit survives policy change)
 
 
 def run_funnel(
@@ -184,5 +186,6 @@ def resolve_batch(
             idempotency_key=f"{notice_fingerprint}:{it.mpn}",
             needs_review=it.needs_review,               # carried forward, visible — never laundered
             override_reason=(ov.reason if ov is not None else None),
+            proposed_by_ruleset=it.proposed_by_ruleset,  # which policy proposed it — audit survives ruleset change
         ))
     return out

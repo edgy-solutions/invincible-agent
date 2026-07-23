@@ -84,6 +84,24 @@ data**:
   matcher's set). When a 3rd domain mints its own, that's the trigger to consolidate the *admission
   decisions* (not the sets) into one reviewed place — same third-instance rule that fired on the
   discard pattern.
+- **§5a — Coverage semantics DECIDED: strict all-match-must-agree, subsumption rejected at ingest
+  (NOT specificity-precedence).** The runtime does not do specificity-precedence, because a
+  more-specific rule silently shadowing a broader one is the hidden behavior the arc avoids. But
+  strict-agree has a growth-loop failure mode: as owners ratify refinements, a new SPECIFIC rule that
+  overlaps an old BROAD one *conflicts* with it (widening the abstain surface every ratification)
+  instead of refining it. Closed at authoring time — `validate_ruleset` REJECTS SUBSUMPTION (one
+  rule's conditions a subset of another's, different disposition), forcing the owner to reconcile
+  broad-vs-specific in the TTL (narrow the broad rule, or make them agree). Agreement by construction;
+  refinements shrink the abstain surface. Non-subsumption overlaps (different dimensions, e.g.
+  discontinuance × f/f/f) are allowed and abstain at runtime by design. Red test: a broad rule + a
+  specific override with a different disposition → rejected.
+- **Ruleset-identity as provenance (the loader is the next discard boundary — block rule applied
+  preemptively).** `DispositionProposal.ruleset_ref` → `PartItem.proposed_by_ruleset` →
+  `ItemResolution.proposed_by_ruleset`: the policy-artifact version/hash rides forward into the durable
+  resolution, so an `audit_record` answers "*which* ruleset proposed this." Once policy changes without
+  deploys, "what did the code say" no longer answers "what did the policy say THEN" — a proposal made
+  under v3 and reviewed after v4 must survive. The TTL→runtime loader (deploy-gated) populates
+  `ruleset_ref` with the artifact identity; the field + thread are in place now.
 
 **Seal 1 — honest funnel (auto-archived items stay COUNTABLE).** Nothing vanishes: the counts at
 every stage sum to the input (`filtered + auto_disposed + residue == input`). Auto-disposed items
@@ -234,6 +252,15 @@ invisible orphans — documented as dead space in `clear_ontology_graphs`; a one
 `DROP DEFAULT` closes it if a store audit shows the default graph non-empty.
 
 **Corrected sequence: graph-split + read-union (done) → B(2) → prime → dual-substrate dogfood → dispatcher.**
+
+**8.0c — WIRING ORDER: the disposition-rules partition ingest MUST precede the provider registration.**
+The menu-growth acceptance test (§6a) fires the interview at pcn subjects — an interview-authored
+`spo_operation` step that reaches the proposer BEFORE the rules TTL has landed hits an EMPTY ruleset →
+every part abstains (unclassifiable) → forced-explicit-everywhere. That is *honest*, but it will read
+as "the pipeline is broken" during the very test meant to prove the menu design. Sequence:
+**rules partition ingest → provider registration → menu-growth assertion → funnel smoke over
+`IPCN25300X`** (which should then propose `dispatchQualification` for its f/f/f parts, not abstain).
+Same additive partition path already proven safe for the pcn vocabulary.
 
 Three more seams the dogfood must clear — recorded in the open, not dissolved:
 

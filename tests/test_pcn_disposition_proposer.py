@@ -116,15 +116,61 @@ def test_unregistered_disposition_is_rejected():
     assert any("dispatchMagic" in e for e in errs)
 
 
-def test_direct_contradiction_is_rejected():
-    """Two rules, identical conditions, different disposition -> an always-conflict that would abstain
+def test_identical_conditions_different_disposition_is_rejected():
+    """The degenerate subsumption case: identical conditions, different disposition -> would abstain
     every matching part. Caught at ingest."""
     bad = [
         {"id": "A", "whenNoticeType": "PDN", "whenHasReplacement": True, "proposesDisposition": "dispatchQualification"},
         {"id": "B", "whenNoticeType": "PDN", "whenHasReplacement": True, "proposesDisposition": "dispatchLTB"},
     ]
-    errs = validate_ruleset(bad, known_dispositions=_DISPOSITIONS)
-    assert any("contradiction" in e for e in errs)
+    assert validate_ruleset(bad, known_dispositions=_DISPOSITIONS)  # non-empty -> rejected
+
+
+def test_subsumption_is_rejected_the_growth_loop_guard():
+    """The growth-loop rot guard (coverage-semantics decision §5a): a BROAD rule and a more-SPECIFIC
+    refinement with a different disposition. Under strict all-match-must-agree the broad rule conflicts
+    with the specific one on every part it targets — so the gate rejects it and forces the owner to
+    reconcile in the TTL. A ratified refinement must SHRINK the abstain surface, not grow it."""
+    broad_then_specific = [
+        {"id": "BroadFFF", "whenNoticeType": "PCN", "whenAnyChangeClass": "form_fit_function",
+         "proposesDisposition": "dispatchQualification"},
+        {"id": "SpecificNoRepl", "whenNoticeType": "PCN", "whenAnyChangeClass": "form_fit_function",
+         "whenHasReplacement": False, "proposesDisposition": "dispatchLTB"},  # refines the broad rule
+    ]
+    errs = validate_ruleset(broad_then_specific, known_dispositions=_DISPOSITIONS)
+    assert any("subsume" in e for e in errs)
+
+
+def test_non_subsumption_overlap_is_allowed():
+    """Different dimensions (discontinuance × form/fit/function) are NOT subsumption — neither's
+    conditions subset the other's — so they're allowed; they abstain at runtime by design when they
+    disagree (honest ambiguity, not an authoring error). The seed ruleset relies on this."""
+    assert validate_ruleset(_RULESET, known_dispositions=_DISPOSITIONS) == []
+
+
+# ---------------------------------------------------------------------------
+# Ruleset-identity provenance — the audit survives a policy change
+# ---------------------------------------------------------------------------
+
+def test_ruleset_ref_stamped_on_every_proposal():
+    for cats in (None, ["Material"], ["Discontinuation", "Material"]):  # matched / matched / conflict
+        r = evaluate_rules(doc_type="PCN", has_replacement=False, categories=cats,
+                           ruleset=_RULESET, category_classes=_CATEGORY_CLASSES,
+                           ruleset_ref="pcn_disposition_rules@v1:abc123")
+        assert r.ruleset_ref == "pcn_disposition_rules@v1:abc123"
+
+
+def test_ruleset_ref_flows_part_item_to_resolution():
+    """The proposal's ruleset identity rides PartItem -> ItemResolution, so an audit_record can answer
+    'which ruleset proposed this' even after a newer ruleset has landed."""
+    items = build_part_items(
+        [{"affected_mpn": "NSR01L30NXT5G", "replacement_mpn": "SNSR01F30NXT5G"}],
+        doc_type="PDN", categories=None, in_scope_mpns={"NSR01L30NXT5G"},
+        ruleset=_RULESET, category_classes=_CATEGORY_CLASSES, ruleset_ref="rules@v1:abc123")
+    assert items[0].proposed_by_ruleset == "rules@v1:abc123"
+    res = resolve_batch(ReviewBatch(approver="alice", items=items),
+                        BulkDecision(), notice_fingerprint="IPCN25300X")
+    assert res[0].proposed_by_ruleset == "rules@v1:abc123"
 
 
 # ---------------------------------------------------------------------------
