@@ -87,6 +87,20 @@ maps the runner's runtime state → `WorkflowRuntimeState`; asks Topaz the four 
 view**; cortex-ui is the **domain** view (this projection). The other-observers grant needs a
 git-asserted namespace (like the other grants) — filed as a follow-up.
 
+**Hardening when this driver lands — split the projection into two objects, not one with a
+convention.** "`redactions` is audit-only" (§6) is a *label* until something enforces it, and the
+failure mode is a driver (or a future debug endpoint, or a log projection) handing the audit
+structure to the wrong audience because nothing in the type system distinguishes audit-grade from
+observer-grade output. The core-produced observer surfaces are already clean (pinned by
+`test_suspended_join_on_unseen_approvers_leaks_nothing_observer_facing`), but that is the *core's*
+output; intent doesn't survive a careless driver. So have the core return them as **separate
+objects** — `observer_view` (what may be surfaced) and `audit_record` (the redaction trail, which
+NAMES roles and is countable) — rather than one `ObservationProjection` with a naming convention
+attached. Then a driver has to *choose* the audit record to leak it, instead of leaking it by
+forgetting the convention. This is a pure-core split (red-first, deploy-independent) and it is right
+**under either answer** Decision D gives on the anonymous-count question (§6) — the count, if
+disclosable, is part of `observer_view`; the who/role trail is always `audit_record`.
+
 ## 5. Composed-path seal (spec)
 
 Two observers on ONE compartmented workflow instance see **different** projections — a

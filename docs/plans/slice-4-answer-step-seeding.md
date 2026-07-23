@@ -81,16 +81,36 @@ more field of the provenance.
   low-confidence answer failing this too is correct: a shaky answer shouldn't seed a durable
   workflow regardless of the mechanism.
 
-## 3.1 Producer-side thread-through (lands with the S4 driver, not the core)
+## 3.1 Producer-side prep (lands with the S4 driver) — invert the discard boundary, don't patch it a third time
 
-To light up the precise flag, thread `recall_override` through the discard seam:
-`_resolve_subject` must carry `provenance.get("recall_override")` (the same one-line addition its
-sibling fields already got), the supervisor telemetry must include it, and the gateway's `about`
-projection (`gateway.py`) must surface it alongside `confidence`. This is exactly the
-consumer-derives-from-producer thread the ontology graph-name fix was — small, but it belongs
-with the **driver** wiring, not the pure core. **Sequence:** land it (and the `resolveInstance`
-convergence, below) *before* the S4 driver seals, or the driver seals against a routing shape that
-is about to change and re-seals after.
+**Do NOT thread `recall_override` through as one more named field.** That is the third one-line
+patch to the same bug, and the bug's shape is *allowlist-by-hand at a boundary that keeps growing*:
+`_resolve_subject` (`src/iagent/defs/dynamic_supervisor.py`) pulls named fields from the resolution
+provenance and silently drops the rest — its own comments already name two prior instances, and
+`recall_override` is the third. Every future provenance field (`resolved_via` below, whatever the
+ADR-0031 ladder grows next) re-runs the identical failure: producer emits, boundary drops, consumer
+gates on a phantom.
+
+**Invert it.** When the driver work opens that file anyway, pass provenance through **as a block** —
+`routing.about.provenance = resolution_provenance` (or a spread with an explicit *deny*list for the
+genuinely-internal fields) — so the boundary defaults **transparent** and the next field arrives
+free. Same producer/consumer lesson as the graph names (`[[project_phase5_prophecy_resolved]]`):
+stop making the consumer enumerate what the producer knows. The gateway `about` projection then
+surfaces the block alongside `confidence`; Slice 4's flag branch reads `about.provenance.recall_override`
+and goes live.
+
+**While in there, emit `resolved_via` at the resolver — it's the flag that SURVIVES.** The dual
+gate's live half (`confidence <= 0.50`) is semantically overloaded: a capped weak-path answer and a
+genuinely-uncertain strong-path answer read identically at 0.50. `resolved_via` (`exact | containment
+| reduced-query | llm-alone | urn-direct` — the ladder-rung-as-confidence-semantics from ADR-0031)
+subsumes `recall_override` (which is just `resolved_via == llm-alone` plus an override bit). Emitting
+it is one field at the resolver, and once provenance passes as a block it costs nothing downstream —
+so Slice 4's gate can eventually refuse on the **honest** signal (weak *rung*) instead of inferring
+weakness from a capped number. **Sequence:** one visit to `_resolve_subject` retires three debts —
+provenance-as-block + `resolved_via` emission + the `resolveInstance` `_TEMPORARY` convergence
+(`[[project_resolve_instance_provider_gap]]`) — all *before* the S4 driver seals, so the dormant half
+of the dual gate goes live before anything seals against it. S3/S5 drivers don't consume resolution
+and go first.
 
 ## 3. Seeding inherits enforcement — it is a SOURCE, not a bypass
 
