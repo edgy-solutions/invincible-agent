@@ -138,6 +138,28 @@ notice's disposition computed from POLICY-IN-THE-GRAPH, no code table. The polic
 against real data. Remaining loader work = the driver's live SPARQL fetch inside the engine (the
 CONSTRUCT I ran by hand becomes the driver's query); pure graph→structure logic is sealed + live-proven.
 
+## Run log — 2026-07-23, M1 wiring #2: resolveInstance provider LIVE (instances consumable)
+
+§8.0c order step 2 done. Provider code (route `POST /resolve_pcn_instance` + pure matcher, 7/7;
+reproducible self-registration in engine-o's lifespan via `register_engine_to_mesh`, mirroring Engine
+D — survives re-prime, `5a7f6bc`/`657dff4`). CI built the engine-o image; rolled engine-o. **Verified
+LIVE end-to-end:** on boot engine-o logged the registration and Neo4j holds
+`(InstanceIdentifier)-[resolveInstance {provider:engine_o_sustainment, endpoint:/resolve_pcn_instance,
+domains:[SUSTAINMENT], timeout:5}]->(InstanceResolution)` — discoverable by the /resolve fan-out.
+Endpoint results: `NSR01L30NXT5G` → `components/NSR01L30NXT5G` (pcn:Component) @1.0 + fuzzy neighbors
+sorted; `PCN IPCN25300X` → `doc/IPCN25300X` (ProcessChangeNotification) @0.9 (PCN kept as fragment);
+`ZZ_BOGUS_9999` and lone `the notice` → 0 candidates (honest abstain). The 26 real instance triples
+are now consumable. SURFACED (not hidden): engine-o is router AND this provider — mild smell, accepted
+(owns the Jena instances), exit documented (move to a sustainment engine if one appears).
+
+**Next (§8.0c step 3): menu-growth** — a DISTINCT capability write. `_OPERABLE_SUBJECTS_CYPHER` is
+`MATCH (s:OntologyClass)-[r]->() WHERE r.iri IS NOT NULL`, so a class is operable iff it has a VERB
+edge — the resolveInstance provider (on InstanceIdentifier) does NOT grow the pcn-subject menu. That
+needs the disposition-VERB registration pointing at a REAL disposition endpoint (verbs wake
+per-endpoint; a stub would be the dead-end menu). So step 3 = the disposition endpoint (the first real
+effect endpoint — where a hidden decision is most likely) + its verb registration carrying the
+menu-growth assertion, then funnel smoke over IPCN25300X.
+
 ## Everything else is in its wake state with a named trigger
 
 Zero undocumented dormancy (the point of the week): dispatcher → on the settled ruling; disposition
