@@ -48,6 +48,13 @@ items ──filter(relevance)──▶ ──auto-dispose(FYI lane)──▶ ─
 - **auto-dispose**: relevant + low-stakes + system-confident → an FYI lane, no human.
 - **residue**: what a human must actually decide.
 
+**PROPOSER CORE LANDED** (`agent_fleet/restate_analyst/pcn_disposition_proposer.py` + 11/11): the
+deterministic funnel-input producer — `score_relevance` (scope membership, no optimistic default),
+`propose_disposition` (PDN/discontinuation → qualify-if-replacement / LTB-else; PCN FFF change →
+qualify; admin-only → archive), and `build_part_items` (assembles `PartItem`s; subject left None for
+the resolveInstance step; needs_review carried). Honest degradation at the proposer: an unclassifiable
+change → `None` disposition → the part can't ride accept-all (proven end-to-end into the core seal).
+
 **Seal 1 — honest funnel (auto-archived items stay COUNTABLE).** Nothing vanishes: the counts at
 every stage sum to the input (`filtered + auto_disposed + residue == input`). Auto-disposed items
 are inspectable, not hidden — silent shrinkage at business scale is the funnel telling a comforting
