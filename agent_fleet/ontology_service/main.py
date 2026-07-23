@@ -234,6 +234,9 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
 _JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
 _JENA_USERNAME = os.getenv("JENA_USERNAME", "admin")
 _JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
+# The SPARQL UPDATE endpoint (writes) — engine-o's ONE write path, used only by the pcn
+# disposition-state stamp. Derived from the read endpoint (…/ds/sparql -> …/ds/update).
+_JENA_UPDATE_ENDPOINT = os.getenv("JENA_UPDATE_ENDPOINT", "") or (_JENA_ENDPOINT.replace("/sparql", "/update") if _JENA_ENDPOINT else "")
 _LOCAL_GRAPH = None
 
 # Weaviate Configuration
@@ -2498,6 +2501,81 @@ async def resolve_pcn_instance(request: ResolvePcnRequest) -> dict:
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
     candidates = _resolve_pcn_candidates(request.identifier, rows=rows)
     return {"candidates": candidates}
+
+
+# ---------------------------------------------------------------------------
+# Disposition state — the dispatch effect's graph write + the step-5 read query.
+# State lives in SUSTAINMENT_INSTANCES (DECIDED: runtime state with the instances);
+# the write is idempotent (delete-then-insert) so the two-write convergence can
+# re-stamp safely, and the read rides the deployed read-union.
+# ---------------------------------------------------------------------------
+_PCN_NS = "http://internal/sustainment/pcn#"
+_SUSTAINMENT_INSTANCES_GRAPH = "http://internal/SUSTAINMENT_INSTANCES"
+
+
+def _sparql_lit(v: str) -> str:
+    """Escape a string for a SPARQL literal (quotes/backslashes/newlines)."""
+    return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
+
+
+async def _execute_sparql_update(update: str) -> None:
+    if not _JENA_UPDATE_ENDPOINT:
+        raise HTTPException(status_code=503, detail="Jena update endpoint not configured")
+    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+        resp = await client.post(_JENA_UPDATE_ENDPOINT, data={"update": update})
+        resp.raise_for_status()
+
+
+class WriteDispositionStateRequest(BaseModel):
+    subject_iri: str
+    disposition_state: str
+    disposition_ref: str
+    proposed_by_ruleset: Optional[str] = None
+
+
+@app.post("/write_pcn_disposition_state")
+async def write_pcn_disposition_state(request: WriteDispositionStateRequest) -> dict:
+    """Stamp disposition state onto a component node in SUSTAINMENT_INSTANCES — the dispatch effect's
+    graph write. IDEMPOTENT: deletes any prior state for the subject then inserts, so the two-write
+    convergence can re-stamp on resume without duplicating. subject_iri must be a controlled component
+    IRI; values are escaped."""
+    s = request.subject_iri
+    if not s.startswith("http://internal/"):
+        raise HTTPException(status_code=400, detail="subject_iri must be an internal component/notice IRI")
+    g, ns = _SUSTAINMENT_INSTANCES_GRAPH, _PCN_NS
+    ins = [
+        f'<{s}> <{ns}dispositionState> "{_sparql_lit(request.disposition_state)}" .',
+        f'<{s}> <{ns}dispositionRef> "{_sparql_lit(request.disposition_ref)}" .',
+    ]
+    if request.proposed_by_ruleset:
+        ins.append(f'<{s}> <{ns}proposedByRuleset> "{_sparql_lit(request.proposed_by_ruleset)}" .')
+    update = (
+        f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionState> ?a }} }} ;\n'
+        f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionRef> ?b }} }} ;\n'
+        f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}proposedByRuleset> ?c }} }} ;\n'
+        f'INSERT DATA {{ GRAPH <{g}> {{ ' + " ".join(ins) + ' }} }}'
+    )
+    await _execute_sparql_update(update)
+    return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
+
+
+class PartsByStateRequest(BaseModel):
+    disposition_state: str
+    domain: str = "SUSTAINMENT"
+
+
+@app.post("/pcn_parts_by_state")
+async def pcn_parts_by_state(request: PartsByStateRequest) -> dict:
+    """Step-5 query: all parts in a disposition state, via the read-union (which spans
+    SUSTAINMENT_INSTANCES) — the disposition dashboard's source. No dashboard store; the UI queries
+    the same graph the policy lives in."""
+    ns = _PCN_NS
+    query = (
+        f'SELECT ?part ?ref ?ruleset WHERE {{ ?part <{ns}dispositionState> "{_sparql_lit(request.disposition_state)}" . '
+        f'OPTIONAL {{ ?part <{ns}dispositionRef> ?ref }} OPTIONAL {{ ?part <{ns}proposedByRuleset> ?ruleset }} }} ORDER BY ?part'
+    )
+    rows = await execute_sparql(query, domain=request.domain)
+    return {"disposition_state": request.disposition_state, "parts": rows, "count": len(rows)}
 
 
 class FindCompatibleVerbsRequest(BaseModel):
