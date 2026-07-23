@@ -19,9 +19,22 @@ take the authz/relevance decisions as INPUT.
 action resolves N promises (the approver clicks once), but each item executes independently —
 idempotent on `notice_fingerprint × mpn`, over its own resolved subject, retryable in isolation. So
 the core produces **N per-item resolutions from one decision**, each carrying its own idempotency
-key. (The idempotency *substrate* — VirtualObject-on-composite-key vs a Postgres dedup table — is
-the one open architect call; it gates the dispatcher, not this core. Lean: VirtualObject-on-composite,
-one consistency domain.)
+key.
+
+**DECISION (settled 2026-07-23) — idempotency substrate = VirtualObject-on-composite-key
+`{notice_fingerprint}:{mpn}`.** Three-legged: (1) one consistency domain — the workflow model already
+runs on Restate, so idempotency lives in the same substrate as execution; (2) keyed addressing IS the
+per-item lock — Restate serializes per key and journals the effect (idempotency-as-execution, no
+check-then-act TOCTOU); (3) the resolution lifecycle already lives in Restate's durable substrate, so
+a Postgres dedup table would split ONE item's state across two stores with no compensating benefit —
+the only thing Postgres is better at (querying) is a read-model you build regardless, fed by per-item
+dispatch events. The one condition that would flip it: if the disposition effects were same-database
+writes (transactional idempotency for free) Postgres would win; they aren't (external effect
+dispatches). Reversible only by a scale argument nobody has raised (e.g. 9k-style key cardinality).
+Guardrails: a retention/archival policy for resolved item-objects (unbounded keyed state otherwise —
+and archival must keep items countable per Seal 1), and emit a per-item dispatch event into the
+reporting read-model. Gates only the dispatcher, not this core; the core already emits the key on
+every `ItemResolution`.
 
 ## 2. The funnel — stack of reducers, each measured by removal (instrument it)
 
@@ -48,14 +61,22 @@ the disposition** — the exact analogue of Slice-4's weak-provenance seam one l
 disposition taken over a part whose MPN we're not sure we read is **weak provenance seeding durable
 action** — Slice-4 laundering wearing a part number.
 
-Two structural rules (both sealed):
+Three structural rules (all sealed):
 - **A needs_review item may NOT take an automated lane** — never filtered, never auto-disposed. You
   cannot trust an automated relevance/disposition decision on an MPN you're unsure you read
   correctly, so it is forced into human residue. (`run_funnel` routes it to residue regardless.)
-- **A resolution CARRIES the needs_review flag forward, visibly** — the human approves an INFORMED
-  disposition, and the durable `ItemResolution` (and the effect it dispatches) records that the
-  underlying extraction was uncertain. A disposition approval never silently launders an unverified
-  extraction.
+- **A needs_review item is a MANDATORY EXCEPTION — it may NOT ride accept-all.** Reaching human
+  residue is not enough: the review UI's accept-all is a single gesture over N items, and sweeping an
+  unverified row in by default rebuilds the automated lane out of one click — a human "reviews" it by
+  not noticing it in a batch of forty. Visibility (the badge) is not friction. So `resolve_batch`
+  REFUSES a needs_review item that has no explicit override — it must be individually dispositioned
+  (an override, whose reason records the verification), and until it is, the WHOLE batch is blocked,
+  exactly like a no-disposition row. Sealed both layers: the core guard + the cortex-ui accept-all
+  exclusion (an unverified row shows "override required", is excluded from the accepted count, and
+  blocks submit).
+- **A resolution CARRIES the needs_review flag forward, visibly** — even once individually verified,
+  the durable `ItemResolution` (and the effect it dispatches) records that the underlying extraction
+  was uncertain. A disposition approval never silently launders an unverified extraction.
 
 ## 4. Grouped review is per-approver-filtered (existence-oracle at batch scale) — Seal 2
 
@@ -110,4 +131,38 @@ The **decision-bearing** part is which prose nouns are descriptors, and the trap
 the workflow graph) emits N invocations on resolve. Composed-path seals, red-first: the funnel
 conservation (Seal 1), the per-approver discrimination (Seal 2), the needs_review lane-block +
 carry-forward (§3), and capture-why (§5). Depends on: the pcn class vocabulary + registered verbs
-(the disposition effects as mesh verbs with endpoints), and the idempotency-substrate ruling.
+(the disposition effects as mesh verbs with endpoints), and the idempotency-substrate ruling (§1, settled).
+
+## 8. Deploy sequencing + gates (before the pcn dogfood can go green)
+
+Three seams the dogfood must clear — recorded in the open, not dissolved:
+
+1. **The CORE re-tag audit wake condition FIRES on the prime run (correcting an earlier claim).**
+   `prime` is NOT incremental: `clear_ontology_graphs()` (setup/prime_databases.py:494-535) DROPs
+   EVERY `http://internal/*` graph, then `trigger_ingest_jobs` re-ingests the WHOLE manifest (:602).
+   So running prime to land `pcn_extension.ttl` IS "the next planned re-ingest" — the audit's own
+   wake condition. (An earlier note said "additive; doesn't wake the audit"; that was wrong — asserted
+   without checking the DROP-first semantics.) **Decision: the full audit is explicitly DEFERRED** —
+   it is decision-bearing ontology governance (how a class shared across domains, e.g. IOF_Core under
+   both MAINTENANCE and SUSTAINMENT, should be domain-tagged/deduped), and pcn dogfooding should not
+   block on that conversation. **New wake condition:** the audit runs at the next of (a) a dedicated
+   ontology-governance session, (b) the MANUFACTURING query path going live [original OR-clause,
+   still standing], or (c) the first observed cross-domain routing ambiguity (a query resolving to an
+   IOF_Core class in the wrong domain). Recorded, not silent.
+
+2. **B(2) probe gates the dogfood — the sync is under open suspicion.** The interview's authorized
+   sets read Neo4j `:OntologyClass` nodes, but "pcn classes ingested" (Fuseki) and "pcn classes
+   offered by the interview" (Neo4j) are producer-truth and consumer-truth across the still-suspect
+   Jena→Neo4j sync (the InstanceIdentifier/InstanceResolution drop — suspected per-node write bug on
+   long comments). So the dogfood red→green must name BOTH substrates: pcn classes present in Fuseki's
+   `SUSTAINMENT` graph **and** present as `:OntologyClass` in Neo4j **and** surfaced by `/classes`.
+   Run B(2) before or as part of the prime run.
+
+3. **The pcn classes ARE the cheapest live probe of the suspect sync bug — keep their comments long.**
+   `pcn:Component` / `pcn:SustainmentNotice` etc. carry long `rdfs:comment`s. That is deliberate and
+   load-bearing here: if the suspected per-node-write-on-long-comment bug is real, these classes will
+   drop at the Jena→Neo4j boundary — same shape as the descriptor query was for containment. Do NOT
+   shorten them to make the ingest "safer"; the length is the test.
+
+**Sequence from here:** B(2) probe → prime run (with the CORE-audit deferral made explicitly, per §8.1)
+→ dual-substrate dogfood (Fuseki ∧ Neo4j ∧ /classes) → dispatcher (idempotency settled, §1).

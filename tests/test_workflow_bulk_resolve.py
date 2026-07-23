@@ -123,12 +123,32 @@ def test_one_decision_yields_per_item_idempotent_resolutions():
     assert all(r.disposition == "dispatchLTB" for r in res)  # accept-all system-proposed
 
 
-def test_needs_review_flag_carried_into_resolution():
-    """A disposition over a needs_review part records that the extraction was uncertain — the
-    durable resolution never silently launders it (the Slice-4 seam, one layer down)."""
+def test_needs_review_cannot_ride_accept_all():
+    """The laundering seal: an unverified part is a MANDATORY EXCEPTION. accept-all (an empty/default
+    decision) may NOT sweep it in — a human would 'review' it by not noticing it in a batch. It blocks
+    the whole batch until individually dispositioned, exactly like a no-disposition row."""
     batch = ReviewBatch(approver="alice", items=[_part("A", needs_review=True)])
-    res = resolve_batch(batch, BulkDecision(), notice_fingerprint="PCN1")
+    with pytest.raises(ValueError):
+        resolve_batch(batch, BulkDecision(), notice_fingerprint="PCN1")
+
+
+def test_needs_review_resolves_when_individually_dispositioned_and_carries_flag():
+    """Handled with an explicit override (the reason records the verification), it resolves AND the
+    durable resolution still carries needs_review forward — the extraction's uncertainty is never
+    dropped, even once a human has verified it."""
+    batch = ReviewBatch(approver="alice", items=[_part("A", disp="dispatchLTB", needs_review=True)])
+    decision = BulkDecision(overrides={"A": Override("dispatchLTB", "MPN verified against datasheet")})
+    res = resolve_batch(batch, decision, notice_fingerprint="PCN1")
     assert res[0].needs_review is True
+    assert res[0].override_reason == "MPN verified against datasheet"
+
+
+def test_verified_parts_still_ride_accept_all():
+    """The seal is specific to unverified parts — a normal part with a proposed disposition still
+    resolves on the default path (accept-all is not broken for the common case)."""
+    batch = ReviewBatch(approver="alice", items=[_part("A"), _part("B", needs_review=False)])
+    res = resolve_batch(batch, BulkDecision(), notice_fingerprint="PCN1")
+    assert len(res) == 2 and all(r.needs_review is False for r in res)
 
 
 # ---------------------------------------------------------------------------

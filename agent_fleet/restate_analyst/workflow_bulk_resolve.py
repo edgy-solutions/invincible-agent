@@ -152,6 +152,17 @@ def resolve_batch(
     out: list[ItemResolution] = []
     for it in batch.items:
         ov: Optional[Override] = decision.overrides.get(it.mpn)
+        # A needs_review part is a MANDATORY EXCEPTION — it may NOT ride the default/bulk (accept-all)
+        # path. Visibility is not friction: a human "reviews" an unverified MPN by not noticing it in
+        # a batch of forty, which rebuilds the automated lane out of one click. An unverified part must
+        # be handled with an EXPLICIT individual override (whose reason records the verification). This
+        # blocks the whole batch until it is handled — the same discipline as the no-disposition guard.
+        if it.needs_review and ov is None:
+            raise ValueError(
+                f"part {it.mpn!r} has an unverified MPN extraction (needs_review) and was not "
+                f"individually dispositioned — an unverified part cannot ride accept-all; handle it "
+                f"with an explicit override (which records the verifying reason)"
+            )
         disposition = ov.disposition if ov is not None else it.proposed_disposition
         if not disposition:
             raise ValueError(
