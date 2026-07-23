@@ -92,8 +92,16 @@ excluding what the other exclusively owns — proven on the same input, both sid
 
 The review UI is a default-with-exceptions grid: accept the system-proposed disposition for every
 row unless overridden. An override MUST carry a reason — enforced by the **type** (`Override` has no
-default reason), so capture-why cannot be skipped. An item with no proposed disposition and no
-override cannot be resolved (you can't dispatch an effect with no disposition — refuse honestly).
+default reason, and `__post_init__` rejects a blank/whitespace one), so capture-why cannot be
+skipped. An item with no proposed disposition and no override cannot be resolved (you can't dispatch
+an effect with no disposition — refuse honestly).
+
+**The reason is provenance, so route it like provenance — two thin edges.** (1) The core holds only
+a **non-empty floor**; it does NOT judge reason quality (whether "ok" suffices is a review-quality
+governance question — parked with Decision D, same family as the anonymous-count disclosability, NOT
+a validation rule invented in the lifecycle core). (2) The reason names what a human *doubted* about
+an MPN, so it is **audit-grade** — when a resolution is later projected for observation/reporting it
+belongs in `audit_record`, never `observer_view` (the two-object split from slice-3 §6).
 
 ## 6. The pure core — `workflow_bulk_resolve.py`
 
@@ -135,7 +143,19 @@ carry-forward (§3), and capture-why (§5). Depends on: the pcn class vocabulary
 
 ## 8. Deploy sequencing + gates (before the pcn dogfood can go green)
 
-Three seams the dogfood must clear — recorded in the open, not dissolved:
+**8.0 — THE GRAPH COLLISION (found 2026-07-23; the CORE-audit check surfaced it). FIXED.** Two fixes
+collided: the doc-tools GRAPH-clause fix pointed runtime extraction at `<http://internal/SUSTAINMENT>`
+so the mesh could see it; the PUT→POST/DROP-first fix made prime WIPE and re-land every internal
+graph the manifest lists. The manifest lists vocabulary only. So the prime run that lands
+`pcn_extension` — the step meant to enable the dogfood — would have DESTROYED the real extracted parts
+first. Root rule (now in doc-tools AGENTS.md): **producers with different reproducibility must not
+share a graph; DROP-first is only safe for data the manifest can reproduce.** Fix, both ends: (a)
+doc-tools writes instances to `<http://internal/{DOMAIN}_INSTANCES>` (the pcn resolveInstance provider
+queries THAT graph); (b) `clear_ontology_graphs()` drops MANIFEST-listed graphs only, never globs
+`internal/*` — the invariant is enforced by the clearer, not by convention. This gates the prime run.
+**Corrected sequence: graph-split (done) → B(2) → prime → dual-substrate dogfood → dispatcher.**
+
+Three more seams the dogfood must clear — recorded in the open, not dissolved:
 
 1. **The CORE re-tag audit wake condition FIRES on the prime run (correcting an earlier claim).**
    `prime` is NOT incremental: `clear_ontology_graphs()` (setup/prime_databases.py:494-535) DROPs
@@ -157,6 +177,20 @@ Three seams the dogfood must clear — recorded in the open, not dissolved:
    long comments). So the dogfood red→green must name BOTH substrates: pcn classes present in Fuseki's
    `SUSTAINMENT` graph **and** present as `:OntologyClass` in Neo4j **and** surfaced by `/classes`.
    Run B(2) before or as part of the prime run.
+
+   **Pin the interpretation NOW, before evidence (or a green result closes B(2) by inference).** The
+   probe tests the HYPOTHESIS (per-node write fails on long comments), not the SYMPTOM (the
+   InstanceIdentifier/InstanceResolution pair absent from Neo4j). The 2×2 — {pcn classes sync: Y/N} ×
+   {the missing pair reappears after re-ingest: Y/N}:
+   - **pcn syncs, pair reappears** → staleness was the whole story; the long-comment bug hypothesis is
+     moot (nothing was ever broken but freshness). Close B(2).
+   - **pcn syncs, pair still missing** → the long-comment hypothesis is FALSIFIED and the drop is
+     UNEXPLAINED — this is MORE open, not less. Do NOT record as "sync works"; the pair's absence is a
+     separate live bug needing its own probe.
+   - **pcn does NOT sync (drops)** → hypothesis CONFIRMED (long `rdfs:comment`s break the per-node
+     write). Fix the sync; the pcn classes were the probe that caught it.
+   - **pcn does not sync, pair reappears** → mixed/weird (two independent effects) — investigate both,
+     do not average them into a verdict.
 
 3. **The pcn classes ARE the cheapest live probe of the suspect sync bug — keep their comments long.**
    `pcn:Component` / `pcn:SustainmentNotice` etc. carry long `rdfs:comment`s. That is deliberate and

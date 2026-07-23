@@ -67,9 +67,17 @@ class ReviewBatch:
 @dataclass
 class Override:
     """An exception to the system-proposed disposition. ``reason`` has NO default — capture-why is
-    structural (§5): you cannot construct an override without recording why."""
+    structural (§5): you cannot construct an override without recording why. The core holds only a
+    NON-EMPTY FLOOR (below); it does NOT judge reason QUALITY (whether "ok" suffices is a
+    review-quality governance question — parked with Decision D, not invented in the lifecycle core).
+    The reason is provenance about what a human doubted: it is AUDIT-grade (audit_record), not
+    observer-facing, when a resolution is later projected for observation/reporting."""
     disposition: str
     reason: str
+
+    def __post_init__(self) -> None:
+        if not (self.reason or "").strip():
+            raise ValueError("override reason must be non-empty (capture-why) — a blank reason does not record a decision")
 
 
 @dataclass

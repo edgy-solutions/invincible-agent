@@ -492,8 +492,8 @@ def upload_canonical_ttls() -> None:
 
 
 def clear_ontology_graphs() -> None:
-    """Append-idempotency guard: DROP every ``http://internal/*`` ontology graph
-    BEFORE the per-file ingests POST-append into them.
+    """Append-idempotency guard: DROP the MANIFEST-listed domain graphs BEFORE the
+    per-file ingests POST-append into them.
 
     doc-tools ``ontology_assets.py`` now POSTs (merges) each TTL into its domain
     graph instead of PUT (replace) — because MANY files map to ONE domain and PUT
@@ -501,38 +501,39 @@ def clear_ontology_graphs() -> None:
     mil_extension, IOF core destroyed). POST accumulates them; but append-only would
     DOUBLE blank-node structures (owl:Restriction etc.) on every re-prime. Clearing
     the graphs once here makes a re-prime a clean rebuild — the reproducible,
-    idempotent home for the reset (bootstrap-state-debt: no hand-run DROP). Also
-    sweeps any stale exact-name graph left by the old PUT ingest.
+    idempotent home for the reset (bootstrap-state-debt: no hand-run DROP).
+
+    CRITICAL INVARIANT (2026-07-23): drop ONLY graphs the manifest can REPRODUCE — the
+    per-domain vocabulary graphs ``http://internal/{DOMAIN}`` for each distinct domain
+    in ``CANONICAL_TTL_MANIFEST``. Do NOT glob ``http://internal/*``. Runtime producers
+    (e.g. doc-tools' PCN/PDN extraction) write NON-reproducible INSTANCE data into their
+    own graphs (``http://internal/{DOMAIN}_INSTANCES``), and DROP-first is only safe for
+    data the manifest can re-land — an earlier glob would have wiped real extracted parts
+    on the very prime run meant to enable the pcn dogfood. Producers with different
+    reproducibility must not share a graph, and the clearer enforces the split (not just
+    convention). Consequence: a stale exact-name graph from the pre-domain-fix era is no
+    longer auto-swept here — clear any such legacy graph manually, once.
     """
-    print("--- Clearing internal ontology graphs (append-idempotency) ---")
+    print("--- Clearing manifest ontology graphs (append-idempotency; instance graphs untouched) ---")
     raw_host = os.environ.get("JENA_URL") or os.environ.get("JENA_SPARQL_ENDPOINT", "http://localhost:3030")
     host = get_base_url(raw_host)
     ds_name = os.environ.get("JENA_DS", "ds")
     user = os.environ.get("JENA_USERNAME", "admin")
     pw = os.environ.get("FUSEKI_PASSWORD") or os.environ.get("JENA_PASSWORD", "Admin123!")
     auth = (user, pw)
-    query_url = f"{host}/{ds_name}/sparql"   # /query 405s on this Fuseki; /sparql is the query endpoint
     update_url = f"{host}/{ds_name}/update"
-    enum_q = ('SELECT DISTINCT ?g WHERE { GRAPH ?g { ?s ?p ?o } '
-              'FILTER(STRSTARTS(STR(?g), "http://internal/")) }')
+    # The reproducible set: one vocabulary graph per distinct manifest domain. Instance
+    # graphs (…_INSTANCES) are deliberately absent from this set, so they are never dropped.
+    manifest_graphs = sorted({f"http://internal/{e['domain']}" for e in CANONICAL_TTL_MANIFEST})
     try:
-        resp = requests.post(
-            query_url, data={"query": enum_q},
-            headers={"Accept": "application/sparql-results+json"},
-            auth=auth, proxies=proxy_int, verify=False,
-        )
-        resp.raise_for_status()
-        graphs = [b["g"]["value"] for b in resp.json()["results"]["bindings"]]
-        if not graphs:
-            print("  [OK] no internal graphs to clear (fresh store).")
-            return
-        for g in graphs:
+        for g in manifest_graphs:
+            # DROP SILENT: a manifest graph may not exist yet on a fresh store.
             up = requests.post(
-                update_url, data={"update": f"DROP GRAPH <{g}>"},
+                update_url, data={"update": f"DROP SILENT GRAPH <{g}>"},
                 auth=auth, proxies=proxy_int, verify=False,
             )
             up.raise_for_status()
-            print(f"  [clear] DROP GRAPH <{g}>")
+            print(f"  [clear] DROP SILENT GRAPH <{g}>")
     except Exception as e:
         # Fail loud — a half-cleared store would silently under-populate the menu.
         print(f"  [ERROR] clear_ontology_graphs failed: {e}")

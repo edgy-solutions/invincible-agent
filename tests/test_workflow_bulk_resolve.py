@@ -162,6 +162,14 @@ def test_override_requires_reason_at_the_type_level():
         Override(disposition="dispatchAltSourcing")  # type: ignore[call-arg]
 
 
+def test_override_reason_non_empty_floor_enforced_in_core():
+    """The floor is server-side, not just the UI: a blank/whitespace reason is rejected at
+    construction. (The core holds ONLY the non-empty floor — reason QUALITY is Decision-D governance,
+    not a validation rule in the lifecycle core.)"""
+    with pytest.raises(ValueError):
+        Override(disposition="dispatchAltSourcing", reason="   ")
+
+
 def test_override_disposition_and_reason_carried_forward():
     batch = ReviewBatch(approver="alice", items=[_part("A", disp="dispatchLTB")])
     decision = BulkDecision(overrides={"A": Override("dispatchAltSourcing", "second source qualified")})
