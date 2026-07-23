@@ -102,6 +102,17 @@ data**:
   deploys, "what did the code say" no longer answers "what did the policy say THEN" — a proposal made
   under v3 and reviewed after v4 must survive. The TTL→runtime loader (deploy-gated) populates
   `ruleset_ref` with the artifact identity; the field + thread are in place now.
+- **LOADER LANDED** (`agent_fleet/restate_analyst/pcn_rules_loader.py` + 6/6): `load_disposition_rules(graph)`
+  → `(ruleset, category_classes, ruleset_ref)`. Built with the BLOCK RULE from the start (the boundary
+  the review flagged as discard-instance-six): a rule's conditions pass through as a block — every
+  `pcn:` predicate carried by local name, so a condition the schema grows tomorrow is CARRIED, not
+  silently dropped. The loudness lives one layer over: `validate_ruleset` now REJECTS a carried-but-
+  unknown condition (`when*` ∉ the mechanism's keys) as schema drift, at ingest — transparent
+  producer, enforcing consumer, loud failure. `ruleset_ref` = `<label>@<12-hex content hash>` (stable
+  for identical content, changes when any rule triple changes). **Remaining (deploy-gated) = the driver
+  visit:** SPARQL the SUSTAINMENT graph for the rule triples → `load_disposition_rules` → inject
+  `(ruleset, category_classes, ruleset_ref)` into `build_part_items`. Pure graph→structure logic is
+  sealed; only the live SPARQL fetch is wiring.
 
 **Seal 1 — honest funnel (auto-archived items stay COUNTABLE).** Nothing vanishes: the counts at
 every stage sum to the input (`filtered + auto_disposed + residue == input`). Auto-disposed items

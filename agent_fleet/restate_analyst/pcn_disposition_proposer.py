@@ -120,6 +120,16 @@ def validate_ruleset(ruleset: list[dict], *, known_dispositions: set) -> list[st
     for i, name, _c, d in parsed:
         if d not in known_dispositions:
             errors.append(f"rule {name}: unregistered disposition {d!r}")
+        # Schema-drift guard: the loader carries conditions as a BLOCK (transparent), so a condition
+        # the schema grew without the evaluator learning it arrives here — reject it LOUDLY rather
+        # than let the evaluator silently ignore it. Schema evolution is a deliberate data+mechanism
+        # change, never a data-only drift.
+        for key in ruleset[i]:
+            if key.startswith("when") and key not in _COND_KEYS:
+                errors.append(
+                    f"rule {name}: unknown condition {key!r} — the evaluator does not handle it "
+                    f"(schema drift: add it to the mechanism, or remove it from the TTL)"
+                )
     for a in range(len(parsed)):
         for b in range(a + 1, len(parsed)):
             _, na, ca, da = parsed[a]
