@@ -66,7 +66,11 @@ def test_unresolved_subject_skips_graph_write_but_still_tasks():
     honestly (can't stamp state on a node you couldn't resolve) but still open the task."""
     plan = plan_dispatch(_res("dispatchLTB", subject=None), notice_fingerprint="IPCN25300X")
     assert plan.graph_write is None
-    assert plan.human_task is not None and plan.human_task.subject_ref is None
+    t = plan.human_task
+    assert t is not None and t.subject_ref is None
+    # re-link path: the task carries enough to stamp state retroactively when the subject resolves.
+    assert t.subject_unresolved is True and t.mpn == "NSR01L30NXT5G" and t.notice_fingerprint == "IPCN25300X"
+    assert "pending re-link" in t.summary
 
 
 def test_needs_review_surfaced_in_the_task():

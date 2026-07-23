@@ -53,17 +53,25 @@ class GraphStateWrite:
 @dataclass
 class HumanTaskSpec:
     """A per-item dispatch task. ``task_key`` is the idempotency key (notice_fingerprint × mpn);
-    ``audience`` is the persona queue. The driver mints the actual Restate HumanTask from this."""
+    ``audience`` is the persona queue. The driver mints the actual Restate HumanTask from this.
+
+    RE-LINK path (rider): when ``subject_ref`` is None the subject was unresolved, so no graph-state
+    write happened — but the task carries ``mpn`` + ``notice_fingerprint`` (the resolution-attempt
+    provenance) so a later pass can re-resolve and stamp the state RETROACTIVELY when the subject
+    becomes resolvable (phone-book growth / alias ratification). Without these, unresolved tasks are
+    permanent orphans in the persona queues — the default-graph-residue pattern in task form."""
     task_key: str
     kind: str
     audience: str
     disposition: str
     subject_ref: Optional[str]
     mpn: str
+    notice_fingerprint: str
     title: str
     summary: str
     needs_review: bool
     proposed_by_ruleset: Optional[str]
+    subject_unresolved: bool = False   # explicit re-link marker (subject_ref is None)
 
 
 @dataclass
@@ -101,14 +109,17 @@ def plan_dispatch(resolution: ItemResolution, *, notice_fingerprint: str, notice
             disposition=disp,
             subject_ref=subject,
             mpn=resolution.mpn,
+            notice_fingerprint=notice_fingerprint,
             title=f"{disp}: {resolution.mpn}",
             summary=(
                 f"Part {resolution.mpn} from notice {notice_id or notice_fingerprint} was dispositioned "
                 f"'{disp}'"
                 + (" [MPN extraction UNVERIFIED]" if resolution.needs_review else "")
+                + ("" if subject else " [subject UNRESOLVED — state pending re-link]")
             ),
             needs_review=resolution.needs_review,
             proposed_by_ruleset=resolution.proposed_by_ruleset,
+            subject_unresolved=subject is None,
         )
 
     return DispatchPlan(resolution=resolution, graph_write=graph_write, human_task=human_task)

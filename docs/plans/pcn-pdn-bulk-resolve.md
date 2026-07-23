@@ -22,6 +22,28 @@ Task completion (the qualification engineer finishing qualification) is real wor
 next milestone's opening scene. Demoing completion would be hand-waving; ending on a durable task is
 stronger.
 
+**DECIDED — two-write convergence order: TASK-MINT FIRST, graph-state SECOND.** Executing a
+`DispatchPlan` is two writes to two substrates (mint the Restate HumanTask; SPARQL-write the graph
+state). If one succeeds and the other fails: state-without-task is *silent-and-stuck* (the dashboard
+shows work nobody is doing — the silent-degradation shape the arc kills on sight); task-without-state
+is *visible-and-recoverable* (someone sees the task; state re-stamps idempotently). So mint the task
+first. Restate makes this nearly free — sequence the two writes as journaled `ctx.run` steps INSIDE
+the per-item VirtualObject (keyed notice × part), so a crash between them RESUMES rather than halves.
+**Driver's red-first seal:** a failure-injection test — kill the driver between the two writes,
+restart, assert convergence (both writes land). That test is what makes "durable" a property, not an
+adjective.
+
+**RIDER — the unresolved-subject task needs a RE-LINK path.** A task opened without a graph write
+(subject unresolved) must carry enough — raw identifier (mpn), notice reference, resolution-attempt
+provenance — that when the subject *becomes* resolvable (phone-book growth, alias ratification), a
+later pass stamps the state retroactively. Otherwise unresolved tasks are permanent orphans in the
+persona queues — the default-graph-residue pattern in task form.
+
+**RIDER — the menu-growth assertion fires DURING the driver integration, observed not assumed.** When
+the disposition verb lands on `pcn:Component`, run the recorded acceptance IN THE SAME SESSION — the
+interview offers pcn subjects for `spo_operation` with no menu code touched (§6a). First live test of
+the sourced-menu design; observe it, don't call it green because nothing errored.
+
 
 The PCN/PDN part-obsolescence workflow (ADR-0029 Case-2 exemplar, `2b5615f`) needs **zero new
 workflow-model step kinds** — the five slices are the whole model. Its net cost is **one narrow
