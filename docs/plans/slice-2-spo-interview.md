@@ -260,3 +260,58 @@ ruling A's self-gating holds — `authorized_subjects` already threads `caller_e
 keys off a resolved `subject_uri`). Prove all of it with a composed-path seal: a granted author
 sees a compartment's classes in the menu, an ungranted author does not, and a real
 subject→verb→validating-definition round-trip matches the Slice-1 promotion YAML.
+
+## 8. Decision D — the operation-subject menu source (RULED 2026-07-22)
+
+Surfaced once Slice-2 was deployed and the ontology menu actually populated (see the
+regression STATE, `tests/routing/STATE_2026_07_22_regression_baseline.md`): the subject
+menu (`/classes`, the Fuseki IOF ontology vocabulary) and the verb-bearing subjects (the
+Neo4j capability graph) are **not the same set**. Measured live on the stable state
+(rev 59 / chart 0.3.26): menu = 122, verb-bearing = 14, overlap = 7. So **94% of menu
+subjects carry no compatible verb** — an author browsing the menu hits mostly dead-ends.
+(NB: this is a signal-to-noise issue, not a blocker — `spo_operation` is proven live on the
+7, e.g. `TechnicalManual → mesh:retrieveKnowledge`. An earlier note calling the sets
+"disjoint / blocked" was a mid-ingest snapshot and is retracted in the STATE file.)
+
+**Ruling: SOURCE the operation-subject menu from the capability graph — do not filter
+`/classes`.** These sound identical (both yield the 7) but differ in *where truth lives*:
+
+- A *filter* keeps the ontology as the source and treats "has a verb" as a decoration
+  subtracted from it. When verbs are later registered on new classes, someone has to
+  remember the filter exists for the menu to grow.
+- *Sourcing* says the operation-subject question's authorized set **is** "subjects the mesh
+  can act on" — which lives in the Neo4j capability graph, intersected with `domain` and
+  (post-ADR-0025-flip) `can_view`. When verbs are registered on a new class, the menu grows
+  automatically. This is the same **consumer-derives-from-producer** rule the graph-name fix
+  taught. It also means growing verb coverage is not a competing option — it is *how this
+  menu gets richer*: the mechanism (source from capability graph) and the content (register
+  more verbs) are the same decision from two ends.
+
+Authorized operation-subject set = **`domain ∩ can_view ∩ has-a-compatible-verb`**.
+
+**The role rule (this is the actual design, not a caveat): each interview question draws
+from the authorized set *for its role*.**
+
+| Question / role | Source | Contract |
+|---|---|---|
+| `spo_operation` subject | capability graph (verb-bearing subjects) | *actionable* — must have a compatible verb |
+| `human_await` `subject_ref`, `participants`, `classification` | full ontology vocabulary (`/classes`) | *nameable* — any ontology class is fine |
+
+This dissolves the "two-tier menu" idea: the tiers are not a UI treatment, they are different
+questions with different sources. (Residual, out of scope for this ruling: whether the
+operation-subject step should *show* the non-actionable classes greyed-out for discoverability.
+Lean is no — 7 items is a menu; 122 with 115 disabled is a wall — but cheap to revisit.)
+
+**Rejected — C (leave the full ontology menu, surface "no verbs" only when the pick fails):**
+rejected on principle, not preference. A menu where 94% of choices dead-end *after* the author
+has invested in the path is the human-facing form of silent degradation — the system knows at
+question-time which subjects can't complete and withholds that until failure. The standing rule
+is to surface constraints at the earliest point the system knows them; it applies to interviews
+as much as to routing confidence.
+
+**Rider for the ADR-0025 auth-flip checklist:** `can_view` is the unexercised term in the
+intersection — it has never fired in any environment. Building the operation menu on
+`domain ∩ can_view ∩ has-verb` means the auth flip will *change menu contents*. Expected, but
+after the flip, confirm the operation menu still shows what an entitled user should see —
+otherwise the flip's first symptom is "my subjects disappeared" and someone debugs the menu
+instead of the entitlement.
