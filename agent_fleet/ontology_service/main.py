@@ -2530,7 +2530,9 @@ class WriteDispositionStateRequest(BaseModel):
     subject_iri: str
     disposition_state: str
     disposition_ref: str
-    proposed_by_ruleset: Optional[str] = None
+    # str = "" not Optional[str]: this module uses `from __future__ import annotations`, and Pydantic
+    # v2 can't resolve `Optional` as a forward-ref (same reason list[str] is used over List[str], §657).
+    proposed_by_ruleset: str = ""
 
 
 @app.post("/write_pcn_disposition_state")
