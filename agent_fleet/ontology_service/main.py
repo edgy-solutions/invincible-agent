@@ -362,7 +362,18 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # {domain} points at a real-but-THIN graph until the producer switches to
     # append/merge. Shipping the name fix alone yields a thin menu, not a full one.
     _dom = "".join(c for c in (domain or "") if c.isalnum() or c == "_") or "MAINTENANCE"
-    named_graph = f"<http://internal/{_dom}>"
+    # READ-SIDE UNION mirroring the write-side split (2026-07-23). A domain's triples live in TWO
+    # graphs: its manifest-reproducible VOCABULARY graph <http://internal/{DOMAIN}> and its
+    # non-reproducible runtime INSTANCE graph <http://internal/{DOMAIN}_INSTANCES> (doc-tools writes
+    # instances there so prime's DROP-first never wipes them — producers with different
+    # reproducibility must not share a graph). Scope reads to the UNION of both so ANY consumer on
+    # this path sees vocab + instances without knowing the split — the convention lives in the
+    # consumer's single derivation, not each provider's memory ([[feedback_path_vs_semantic_domain]]).
+    # A domain with no instance graph (e.g. MAINTENANCE_INSTANCES absent) simply contributes nothing.
+    # NOTE: this is why the split did NOT re-hide instances the way the default graph did — the
+    # domain-scoped read now spans both graphs by construction.
+    _graph_scope = (f"VALUES ?__mesh_g {{ <http://internal/{_dom}> "
+                    f"<http://internal/{_dom}_INSTANCES> }} GRAPH ?__mesh_g")
 
     # 🛑 Strictly enforce data segregation by wrapping the query in the graph context.
     # This assumes the input query uses standard triple patterns that we want to scope.
@@ -370,16 +381,16 @@ async def execute_sparql(query: str, domain: str = "MAINTENANCE") -> list[dict]:
     # standard patterns, this wrapping is effective.
     scoped_query = query
     if "GRAPH" not in query.upper() and "SELECT" in query.upper():
-        # Simple injection: replace WHERE { with WHERE { GRAPH <named_graph> {
+        # Simple injection: replace WHERE { with WHERE { VALUES ?g {vocab inst} GRAPH ?g {
         if "WHERE {" in query:
-            scoped_query = query.replace("WHERE {", f"WHERE {{ GRAPH {named_graph} {{", 1)
+            scoped_query = query.replace("WHERE {", f"WHERE {{ {_graph_scope} {{", 1)
             last_brace_idx = scoped_query.rfind("}")
             if last_brace_idx != -1:
                 scoped_query = scoped_query[:last_brace_idx] + "} }" + scoped_query[last_brace_idx+1:]
         elif "WHERE {" in query.upper():
             # Handle case-insensitive WHERE
             import re
-            scoped_query = re.sub(r"WHERE\s*\{", f"WHERE {{ GRAPH {named_graph} {{", query, flags=re.IGNORECASE, count=1)
+            scoped_query = re.sub(r"WHERE\s*\{", f"WHERE {{ {_graph_scope} {{", query, flags=re.IGNORECASE, count=1)
             last_brace_idx = scoped_query.rfind("}")
             if last_brace_idx != -1:
                 scoped_query = scoped_query[:last_brace_idx] + "} }" + scoped_query[last_brace_idx+1:]

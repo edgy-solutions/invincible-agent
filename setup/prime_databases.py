@@ -513,6 +513,12 @@ def clear_ontology_graphs() -> None:
     reproducibility must not share a graph, and the clearer enforces the split (not just
     convention). Consequence: a stale exact-name graph from the pre-domain-fix era is no
     longer auto-swept here — clear any such legacy graph manually, once.
+
+    DEAD SPACE: pre-GRAPH-fix PCN/PDN instances (written before doc-tools scoped its INSERT
+    DATA) still sit in Jena's DEFAULT graph — permanent, invisible orphans. Harmless, but they
+    inflate a triple count someday. This clearer does NOT touch the default graph (dropping it
+    wholesale is too broad to automate safely); run a one-time ``DROP DEFAULT`` by hand if a
+    store audit shows it non-empty.
     """
     print("--- Clearing manifest ontology graphs (append-idempotency; instance graphs untouched) ---")
     raw_host = os.environ.get("JENA_URL") or os.environ.get("JENA_SPARQL_ENDPOINT", "http://localhost:3030")

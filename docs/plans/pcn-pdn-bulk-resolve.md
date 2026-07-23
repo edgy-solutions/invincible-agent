@@ -153,7 +153,28 @@ share a graph; DROP-first is only safe for data the manifest can reproduce.** Fi
 doc-tools writes instances to `<http://internal/{DOMAIN}_INSTANCES>` (the pcn resolveInstance provider
 queries THAT graph); (b) `clear_ontology_graphs()` drops MANIFEST-listed graphs only, never globs
 `internal/*` — the invariant is enforced by the clearer, not by convention. This gates the prime run.
-**Corrected sequence: graph-split (done) → B(2) → prime → dual-substrate dogfood → dispatcher.**
+
+**8.0a — the split's OWN seam: don't re-hide instances (verified by inspection, then closed).** The
+GRAPH-clause fix existed because instances in the default graph were invisible to engine-o, which
+scopes to `http://internal/{domain}`. The split moved instances to `{DOMAIN}_INSTANCES` — *also* not
+`{domain}` — so it could have re-created the invisibility one graph over. Enumerated the readers:
+engine-o's `execute_sparql` is the ONLY reader of `http://internal/{domain}`, and every domain-scoped
+caller queries `?cls a owl:Class` (vocabulary); instance resolution runs through Neo4j/Weaviate, not
+this path; the supervisor reads via engine-o HTTP, not the graph. So the instance-reading-via-domain
+set is **empty today** — but rather than rely on that, `execute_sparql` now scopes to the **UNION**
+`{ <…/{DOMAIN}> <…/{DOMAIN}_INSTANCES> }` via `VALUES ?g … GRAPH ?g`, so any future consumer on the
+path sees vocab + instances by construction. The read-side rule lives in the one derivation point,
+mirroring the write-side split (doc-tools AGENTS.md carries both). rdflib-validated.
+
+**8.0b — two migration residues (small).** (1) Any instances written to `http://internal/SUSTAINMENT`
+between the GRAPH-clause fix and the split are manifest-listed and get DROP'd by the next prime —
+acceptable ONLY because re-extraction is the plan (the dogfood re-extracts after the split deploys);
+this specific batch does not survive prime, stated so the "dogfood data survives prime" guarantee
+isn't over-claimed for it. (2) Pre-GRAPH-fix instances still in Jena's DEFAULT graph are permanent
+invisible orphans — documented as dead space in `clear_ontology_graphs`; a one-time manual
+`DROP DEFAULT` closes it if a store audit shows the default graph non-empty.
+
+**Corrected sequence: graph-split + read-union (done) → B(2) → prime → dual-substrate dogfood → dispatcher.**
 
 Three more seams the dogfood must clear — recorded in the open, not dissolved:
 
