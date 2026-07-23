@@ -1396,6 +1396,11 @@ try:
 except ImportError:
     from agent_fleet.ontology_service.recall_guard import recall_override_guard as _recall_override_guard
 
+try:
+    from pcn_instance_provider import resolve_pcn_candidates as _resolve_pcn_candidates, PCN_INSTANCES_QUERY as _PCN_INSTANCES_QUERY  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.pcn_instance_provider import resolve_pcn_candidates as _resolve_pcn_candidates, PCN_INSTANCES_QUERY as _PCN_INSTANCES_QUERY
+
 
 # ---------------------------------------------------------------------------
 # POST /resolve
@@ -2427,6 +2432,34 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
             dropped, request.user_email or "anonymous",
         )
     return OperableSubjectsResponse(subjects=out, count=len(out), domain=request.domain)
+
+
+# ---------------------------------------------------------------------------
+# POST /resolve_pcn_instance — the pcn mesh:resolveInstance provider endpoint.
+# engine-o self-hosts it (it owns the SUSTAINMENT_INSTANCES graph) and registers
+# itself in the capability graph as a provider for SUSTAINMENT; the /resolve
+# fan-out then discovers + calls it like any other provider. Registry-discovered,
+# not hardcoded (ADR-0031). NB: engine-o is here both router AND a provider — a
+# mild smell accepted because engine-o owns the Jena instances; if a dedicated
+# sustainment engine appears, move this route to it and re-point the registration.
+# ---------------------------------------------------------------------------
+class ResolvePcnRequest(BaseModel):
+    identifier: str
+    query: str = ""
+
+
+@app.post("/resolve_pcn_instance")
+async def resolve_pcn_instance(request: ResolvePcnRequest) -> dict:
+    """Resolve an identifier to pcn instance candidates (matcher: agent_fleet/ontology_service/
+    pcn_instance_provider.py). Contract matches _call_resolver's expectation: returns
+    ``{candidates: [{instance_id, class_uri, label, score}]}``; an empty list is a first-class
+    ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
+    try:
+        rows = await execute_sparql(_PCN_INSTANCES_QUERY, domain="SUSTAINMENT")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
+    candidates = _resolve_pcn_candidates(request.identifier, rows=rows)
+    return {"candidates": candidates}
 
 
 class FindCompatibleVerbsRequest(BaseModel):
