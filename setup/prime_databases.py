@@ -203,6 +203,17 @@ CANONICAL_TTL_MANIFEST = [
         "s3_key": "sustainment/S3000L.ttl",
         "url": "https://www.semanticstep.org/sites/default/files/2018-01/s3kl_0.ttl",
     },
+    # PCN/PDN subject vocabulary. The class IRIs (pcn:ProductDiscontinuationNotice /
+    # pcn:ProcessChangeNotification / pcn:Component) are EXACTLY the instance types
+    # doc-tools' SustainmentPlugin writes, so declaring them here lights up /classes +
+    # the SPO-interview operable-subjects menu over the parts doc-tools already extracts.
+    # Classes + RDF data-properties ONLY — actionable disposition VERBS wake per-endpoint.
+    {
+        "domain": "SUSTAINMENT",
+        "name": "pcn_extension",
+        "s3_key": "sustainment/pcn_extension.ttl",
+        "path": "ontologies/pcn_extension.ttl",
+    },
 
     # ----- LAYER 3: DATA_ENGINEERING (idp catalog / lineage) -----
     # The semantic domain is DATA_ENGINEERING, not IDP.

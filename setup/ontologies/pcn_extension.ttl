@@ -1,0 +1,63 @@
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix pcn:   <http://internal/sustainment/pcn#> .
+
+<http://internal/sustainment/pcn> a owl:Ontology ;
+    rdfs:label "PCN/PDN sustainment vocabulary (SUSTAINMENT domain)" ;
+    rdfs:comment "The class vocabulary for part-obsolescence sustainment. The IRIs here are EXACTLY the ones doc-tools' SustainmentPlugin asserts as instance types (see doc-tools/doc_tools/plugins/sustainment.py to_graph_queries): a notice instance is `a pcn:ProductDiscontinuationNotice` / `a pcn:ProcessChangeNotification`, and component/notice IRIs live under http://internal/components/ and http://internal/sustainment/doc/. This file DECLARES those classes so /classes surfaces them and the SPO interview can author over them; the producer already writes the instances. Only CLASSES + RDF data-properties are declared here — the actionable mesh VERBS (relevanceScore, proposeDisposition, dispatchLTB/Qualification/AltSourcing) are NOT registered here; they wake per-endpoint as each serving endpoint becomes real (registering a verb against a stub endpoint would recreate a dead-end menu). Per the ingest convention the user-facing definition goes in rdfs:comment ONLY (that is what lands in Weaviate.OntologyClass.definition; a skos:definition would be silently clobbered)." .
+
+# ---------------------------------------------------------------------------
+# Subject classes — the nouns a PCN/PDN workflow operates on
+# ---------------------------------------------------------------------------
+
+pcn:SustainmentNotice a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Sustainment Notice" ;
+    rdfs:comment "A manufacturer notice affecting the lifecycle of an electronic component or part — the umbrella for product-change and product-discontinuation notices. Queries about obsolescence notices, EOL announcements, last-time-buy dates, or affected-part lists in general target this class; the concrete PCN and PDN subclasses carry the specifics." .
+
+pcn:ProductDiscontinuationNotice a owl:Class ;
+    rdfs:subClassOf pcn:SustainmentNotice ;
+    rdfs:label "Product Discontinuation Notice (PDN)" ;
+    rdfs:comment "A PDN — a manufacturer notice that a part is being discontinued / end-of-lifed / made obsolete (also PTN, product-termination notice). Carries the last-time-buy date and the affected part numbers, often with recommended replacements. Queries about a specific discontinuance, an EOL, or an obsolescence event target this class." .
+
+pcn:ProcessChangeNotification a owl:Class ;
+    rdfs:subClassOf pcn:SustainmentNotice ;
+    rdfs:label "Product/Process Change Notification (PCN)" ;
+    rdfs:comment "A PCN — a manufacturer notice of a change to a part or its production (material, process, location, packaging, or testing change) that may affect form, fit, or function. Carries the affected part numbers and, where relevant, replacements and last-time-buy dates. Queries about a part change (not a discontinuance) target this class." .
+
+pcn:Component a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Component" ;
+    rdfs:comment "An electronic component / part identified by a manufacturer part number (MPN), e.g. 'LTC6226HDC#TRMPBF'. This is the affected part a sustainment notice is about, and the subject a disposition (last-time-buy, qualification, alternate-sourcing) acts on. Queries about a specific part number, its obsolescence status, or its replacement target this class." .
+
+# ---------------------------------------------------------------------------
+# RDF data-properties the producer writes (NOT mesh capability verbs).
+# Declared for a well-formed data model + labels; the executable disposition
+# verbs are registered separately, per-endpoint, in the capability graph.
+# ---------------------------------------------------------------------------
+
+pcn:subjectToNotice a owl:ObjectProperty ;
+    rdfs:label "subject to notice" ;
+    rdfs:domain pcn:Component ;
+    rdfs:range pcn:SustainmentNotice ;
+    rdfs:comment "Relates an affected component to the sustainment notice that governs it." .
+
+pcn:hasReplacement a owl:ObjectProperty ;
+    rdfs:label "has replacement" ;
+    rdfs:domain pcn:Component ;
+    rdfs:range pcn:Component ;
+    rdfs:comment "The recommended replacement / substitute component for a discontinued or changed part." .
+
+pcn:hasLastTimeBuyDate a owl:DatatypeProperty ;
+    rdfs:label "has last-time-buy date" ;
+    rdfs:domain pcn:Component ;
+    rdfs:range xsd:date ;
+    rdfs:comment "The last date on which the affected component may be purchased before it is no longer available (LTB / last-order date)." .
+
+pcn:hasChangeCategory a owl:ObjectProperty ;
+    rdfs:label "has change category" ;
+    rdfs:domain pcn:SustainmentNotice ;
+    rdfs:comment "The category of change a notice describes (material, process, location, discontinuation, packaging, testing)." .
