@@ -133,6 +133,18 @@ The **decision-bearing** part is which prose nouns are descriptors, and the trap
   the admission-rule judgment the frozen-set comment anticipated ("entity-type nouns, never names"),
   applied to its first non-BI domain. **Flag it in the provider PR; do not let a default list ship.**
 
+**CORE LANDED** (`agent_fleet/ontology_service/pcn_instance_match.py` + 11/11 tests): the pure matcher
+— `_PCN_DESCRIPTOR_TOKENS` (notice/part/component + articles, EXCLUDING pcn/pdn/ptn),
+`strip_descriptor_tokens`, `name_score` (mirrors the BI matcher), and the DETERMINISTIC exact-match
+IRIs `component_iri` / `notice_iri` (byte-matched to doc-tools' `safe_*` transforms and verified
+against the REAL live nodes `components/NSR01L30NXT5G`, `doc/IPCN25300X`). MPNs preserved verbatim;
+the pcn/pdn trap test-pinned. **Remaining (deploy-gated) = the provider wiring:** (1) a handler that
+tries the exact IRI first, then a descriptor-stripped graph query against `SUSTAINMENT_INSTANCES` (now
+readable via engine-o's read-union), feeding candidates to the existing `instance_resolution.py`
+decision table (exact / fuzzy-unanimous / fuzzy-mixed-abstain / empty); (2) register it as a
+`mesh:resolveInstance` provider in the capability graph so the ladder discovers it. Then the 26 real
+instance triples become consumable — "NSR01L30NXT5G" or "PCN IPCN25300X" resolves to its node.
+
 ## 7. Driver + seals (spec — deploy-gated)
 
 `_run_definition` registers the grouped HumanTask; the dispatcher (per-item, idempotent, OUTSIDE
