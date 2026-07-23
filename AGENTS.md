@@ -1,5 +1,17 @@
 # AGENTS.md — AI Agent Workflow & Safety Guide
 
+## The fence — agent read/write boundaries (three clauses, no ambiguity)
+
+1. **Agents read freely where they have reach.** Read-only inspection of any substrate an agent can
+   reach (sandbox Fuseki/Neo4j/MinIO, repos, logs) needs no gate — verify by observation, don't ask.
+2. **Writes serialize through the human, everywhere.** Any mutation — helm/kubectl apply, prime,
+   image roll, a destructive substrate op — is the human's to authorize or run. The user serializes
+   the agents; a write is never assumed from a read.
+3. **Work-cluster anything is the human's until agents get read credentials there.** The agents'
+   access is sandbox-side; the work cluster (e.g. its Dagster runs) is out of reach, so any probe or
+   task against it is the human's regardless of the read-only-vs-mutating rule — the fence is literal,
+   not a permission judgment. Revisit when agents get read creds on the work cluster.
+
 ## Governing Architecture
 
 A strictly decoupled, **Polyglot Microservice** architecture:
