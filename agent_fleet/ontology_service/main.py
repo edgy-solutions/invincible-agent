@@ -2551,11 +2551,12 @@ async def write_pcn_disposition_state(request: WriteDispositionStateRequest) -> 
     ]
     if request.proposed_by_ruleset:
         ins.append(f'<{s}> <{ns}proposedByRuleset> "{_sparql_lit(request.proposed_by_ruleset)}" .')
+    ins_block = " ".join(ins)
     update = (
         f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionState> ?a }} }} ;\n'
         f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}dispositionRef> ?b }} }} ;\n'
         f'DELETE WHERE {{ GRAPH <{g}> {{ <{s}> <{ns}proposedByRuleset> ?c }} }} ;\n'
-        f'INSERT DATA {{ GRAPH <{g}> {{ ' + " ".join(ins) + ' }} }}'
+        f'INSERT DATA {{ GRAPH <{g}> {{ {ins_block} }} }}'
     )
     await _execute_sparql_update(update)
     return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
