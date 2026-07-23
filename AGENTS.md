@@ -12,6 +12,16 @@
    task against it is the human's regardless of the read-only-vs-mutating rule — the fence is literal,
    not a permission judgment. Revisit when agents get read creds on the work cluster.
 
+**Post-grant status (2026-07-23):** the human granted **standing write authorization on the SANDBOX
+cluster** (kube context `edge`) for the current PCN/PDN M1 wiring — "the cluster is yours." So sandbox
+deploys/ingests/rolls no longer serialize per-action under clause 2; agents may write there directly,
+with the destructive-op discipline still applying (predict-via-check before a destructive substrate op;
+additive/partition paths preferred; verify the effect; a full DROP-first prime remains decision-bearing
+and should still be surfaced, not run silently). Clause 2's per-action serialization now governs writes
+**outside** this grant; **clause 3 is unchanged** — the work cluster is still the human's. Re-scope the
+grant when the work changes, and keep this line current so the fence tracks reality, not the state it
+was written in.
+
 ## Governing Architecture
 
 A strictly decoupled, **Polyglot Microservice** architecture:
