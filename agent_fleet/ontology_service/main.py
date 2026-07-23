@@ -491,6 +491,44 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[ontology-service] FAILED to connect to Neo4j: {e}")
 
+    # Register engine-o as the SUSTAINMENT mesh:resolveInstance provider (Recipe v2 pattern, mirrors
+    # Engine D). engine-o owns the SUSTAINMENT_INSTANCES graph, so it self-hosts /resolve_pcn_instance
+    # and self-registers here — REPRODUCIBLE: runs every boot, survives re-prime, NOT a hand-run Cypher
+    # (bootstrap-state-debt). The /resolve fan-out then discovers it like any other provider.
+    try:
+        try:
+            from utils.mesh_registration import register_engine_to_mesh  # type: ignore[no-redef]
+        except ImportError:
+            from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+        _pcn_endpoint = os.getenv(
+            "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
+        ).rstrip("/") + "/resolve_pcn_instance"
+        register_engine_to_mesh(
+            name="engine_o_sustainment_resolve_instance",
+            description=(
+                "Resolves a PCN/PDN identifier — a manufacturer part number (e.g. NSR01L30NXT5G) or a "
+                "notice id (e.g. PCN IPCN25300X) — to its pcn: instance node in the SUSTAINMENT graph, "
+                "by deterministic-IRI exact match then descriptor-strip fuzzy match. Returns candidates "
+                "with class URI, label, IRI identity, and score sorted descending. An empty list is a "
+                "first-class answer — abstains below its floor rather than returning least-bad matches. "
+                "pcn/pdn are identifier fragments, never stripped; MPNs are matched verbatim."
+            ),
+            verb="mesh:resolveInstance",
+            input_uri="http://invincible-agent/mesh#InstanceIdentifier",
+            output_uri="http://invincible-agent/mesh#InstanceResolution",
+            verb_synonyms=["resolve part", "look up MPN", "which component", "identify notice", "resolve PCN"],
+            endpoint_url=_pcn_endpoint,
+            owner_persona="OPS_OPERATOR",
+            domains=["SUSTAINMENT"],
+            cost_class="fast",
+            requires_human_approval=False,
+            provider="engine_o_sustainment",
+            timeout_s=5.0,
+        )
+        print(f"[ontology-service] registered SUSTAINMENT mesh:resolveInstance provider -> {_pcn_endpoint}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[ontology-service] pcn mesh:resolveInstance registration failed: {e}")
+
     await _check_jena_populated()
     yield
     if _WEAVIATE_CLIENT:
