@@ -73,6 +73,38 @@ doc-tools is free): run prime, then re-verify these two STILL carry full definit
 **and** that pcn classes sync with theirs. `_TEMPORARY` retirement: encouraging (its resolve_instance
 substrate classes are present + complete), but its own clean-registration test is separate.
 
+## Run log — 2026-07-23, DNS fixed, pcn vocab dogfood GREEN (additive, not full-prime)
+
+DNS root-caused + fixed (Pi-hole rate limit raised), engine-o re-rolled clean → **read-union deployed**
+(`grep -c _graph_scope` = 3 in the running pod). Then landed the pcn vocabulary **additively** — the
+ingest is a `DynamicPartitionsDefinition` (one partition per TTL), so instead of a destructive full
+re-prime I ran the single pcn partition, which touches only the SUSTAINMENT graph:
+
+- `mc pipe` `pcn_extension.ttl` → `ontologies/sustainment/pcn_extension.ttl` (kubectl cp needs tar,
+  absent in the minio container; pipe on stdin works).
+- Dagster GraphQL: `addDynamicPartition` + `launchPipelineExecution` on `ingest_ontology_job` assets
+  `[ingest_ontology_to_jena, sync_jena_ontologies_to_neo4j]` with `extra_metadata.domain=SUSTAINMENT`
+  passed EXPLICITLY (no path-derived-domain risk) and NO `clear_ontology_graphs` (additive). Both
+  asset steps SUCCESS.
+
+**Dogfood red→green — all four, verified:**
+- ✅ Fuseki: 4 pcn classes in `<http://internal/SUSTAINMENT>`; graph 10104 → **10142** (+38, grew not dropped).
+- ✅ Neo4j: 4 pcn `:OntologyClass` (domain=SUSTAINMENT) with FULL definitions (Component 352, notices
+  326-337 chars) — **pcn's long comments synced intact**, so the long-comment-drop hypothesis is
+  falsified on pcn data too (the pcn half of §8.2's 2×2).
+- ✅ `/classes?domain=SUSTAINMENT` (engine-o read path + union): 89 classes incl. all 4 pcn subjects
+  (Component / PDN / PCN / Sustainment Notice) — the SPO interview's authorized-subject source, so it
+  now offers them, with honestly-zero verbs (no disposition endpoints yet).
+- ✅ No collateral: `SUSTAINMENT_INSTANCES` = **26** (untouched — the real IPCN25300X parts survived);
+  DATA_ENGINEERING/MAINTENANCE/MANUFACTURING/MESH all unchanged. The collision fix + additive path
+  proven end-to-end on live data.
+
+**Remaining (unchanged wake states):** pcn INSTANCES (26 triples) aren't consumable until the pcn
+resolveInstance provider exists; zero disposition verbs until endpoints land; the bulk-resolve
+dispatcher/driver is the M1 chunk. A full-prime B(2) confirmation (fresh re-ingest of the mesh pair)
+was NOT needed — the read-only probe + this additive pcn ingest both show the sync carries long
+comments cleanly.
+
 ## Everything else is in its wake state with a named trigger
 
 Zero undocumented dormancy (the point of the week): dispatcher → on the settled ruling; disposition
