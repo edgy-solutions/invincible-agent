@@ -182,6 +182,16 @@ decision table (exact / fuzzy-unanimous / fuzzy-mixed-abstain / empty); (2) regi
 `mesh:resolveInstance` provider in the capability graph so the ladder discovers it. Then the 26 real
 instance triples become consumable — "NSR01L30NXT5G" or "PCN IPCN25300X" resolves to its node.
 
+**Provider registration is the SOURCED-MENU design's first live test — make menu-growth the red→green.**
+The provider write is the first new capability-graph edge since source-from-capability-graph landed.
+When it registers, `Component` / `SustainmentNotice` go from honestly-zero-verbs to verb-bearing, and
+the SPO-interview operation-subject menu should **grow on its own** — that was the whole point of
+sourcing the menu from the capability graph rather than filtering the ontology. So the registration's
+acceptance is NOT just "the provider answers a resolveInstance query"; it is **"the interview now
+offers the pcn subjects for `spo_operation` steps without anyone touching menu code."** If the menu
+doesn't grow, the menu was built as a filter after all — and it's far better to learn that on the
+first registration than the tenth.
+
 ## 7. Driver + seals (spec — deploy-gated)
 
 `_run_definition` registers the grouped HumanTask; the dispatcher (per-item, idempotent, OUTSIDE
