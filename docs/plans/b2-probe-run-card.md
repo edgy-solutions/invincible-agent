@@ -47,6 +47,32 @@ Only the first cell green-lights the full sequence. The others **re-route, not f
 6. **Re-extract** a PCN/PDN doc after prime — that pre-split batch was declared non-surviving
    (`§8.0b`), so the real parts come from a post-split extraction.
 
+## Run log — 2026-07-23, read-only half (prime NOT run; doc-tools untouched)
+
+Ran the read-only diagnostic against current sandbox state (context `edge`). Held at the prime line —
+prime triggers the doc-tools ingest and another agent was testing doc-tools.
+
+- **Hop 1 (MinIO, source):** transitively confirmed — the pair is in the repo TTL AND downstream in
+  Fuseki, so the source chain is intact (a class can't be in Fuseki without being in the source).
+- **Hop 2 (Fuseki, producer):** ✅ both `mesh:InstanceIdentifier` + `mesh:InstanceResolution` are
+  `owl:Class` in `http://internal/MESH`, with all 22 mesh siblings.
+- **Hop 3 (Neo4j, consumer):** ✅ both present as `:OntologyClass` — **and** carrying their FULL long
+  definitions (`InstanceIdentifier` 648 chars, `InstanceResolution` 675) vs the short control
+  `AgentResponse` (47). No node dropped, no comment truncated.
+
+**Verdict (read carefully against §8.2):** the long-comment-per-node-write hypothesis is **FALSIFIED on
+current data** — the two LONGEST-comment mesh classes synced completely, node and definition. The B(2)
+motivating symptom (pair absent from Neo4j) is **not present**. This is NOT the trap cell ("pcn syncs +
+pair still missing") — the opposite is observed, so there is no silent "sync works" collapse to guard
+against here. **Caveat (honest):** this reads CURRENT state, not a FRESH re-ingest — "present + complete
+now" points hard at *staleness-was-the-story / already-resolved*, but the definitive "a fresh write lands
+them clean" and the pcn-specific long-comment sync both need the prime run, which stayed held.
+
+**Routing:** green branch — convergence is very likely unblocked. Remaining, prime-gated (do when
+doc-tools is free): run prime, then re-verify these two STILL carry full definitions post-fresh-ingest,
+**and** that pcn classes sync with theirs. `_TEMPORARY` retirement: encouraging (its resolve_instance
+substrate classes are present + complete), but its own clean-registration test is separate.
+
 ## Everything else is in its wake state with a named trigger
 
 Zero undocumented dormancy (the point of the week): dispatcher → on the settled ruling; disposition
