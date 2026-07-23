@@ -160,6 +160,27 @@ per-endpoint; a stub would be the dead-end menu). So step 3 = the disposition en
 effect endpoint — where a hidden decision is most likely) + its verb registration carrying the
 menu-growth assertion, then funnel smoke over IPCN25300X.
 
+## Run log — 2026-07-23, M1 wiring #3: dispatch graph-write + step-5 query LIVE (engine-o side)
+
+The engine-o side of the dispatch loop. `POST /write_pcn_disposition_state` (idempotent
+delete-then-insert into SUSTAINMENT_INSTANCES via a derived Jena `/update`) + `POST /pcn_parts_by_state`
+(step-5 query via the read-union). Three build/roll cycles — two bugs, both caught by VERIFY-LIVE not
+assumed green: (a) `Optional[str]` under `from __future__ import annotations` → Pydantic 500 (module
+forbids typing imports, §657); (b) `INSERT DATA` close was a PLAIN string `' }} }}'` → four literal
+braces → Fuseki 400 (the hand-written SPARQL succeeded; only the Python construction was wrong). Fixed,
+rebuilt, **verified LIVE:** wrote dispatchQualification→NSR01L30NXT5G, dispatchLTB→NSR01F30NXT5G,
+archive→SNSR15304NXT5G (all `ok:true`); step-5 `pcn_parts_by_state` returned each part in its state via
+the read-union — "all parts in LTB" is one hop through the same graph the policy lives in, no dashboard
+store (the architectural win). Test state then DELETED (state-without-task is the inconsistency the
+convergence decision kills; the real driver produces state+task together). The dispatch effect's two
+writes now both have live executors: task-mint (cortex-bff `_register_human_task`) + graph-state
+(`/write_pcn_disposition_state`).
+
+**Next: the Restate DRIVER** — grouped HumanTask (review) → resolve_batch → per-item VirtualObject
+(keyed notice×part) executing `plan_dispatch` as two journaled `ctx.run` steps, TASK-FIRST, with the
+failure-injection convergence seal. Then the menu-growth verb registration (observed) + the cortex-ui
+dashboard calling `/pcn_parts_by_state`.
+
 ## Everything else is in its wake state with a named trigger
 
 Zero undocumented dormancy (the point of the week): dispatcher → on the settled ruling; disposition
