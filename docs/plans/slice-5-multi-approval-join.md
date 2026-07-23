@@ -48,6 +48,29 @@ UNSATISFIABLE (→ terminate) as its central job, and the driver maps UNSATISFIA
 ([[feedback_lifecycle_state_observable]]) is the receipt: an unsatisfiable join must land in a
 terminal state, not a suspended/backing-off one.
 
+## 2.1 The time dimension — the oracle is only as good as its MOMENT (cross-seam with the entitlement flip)
+
+`evaluate_join` is **stateless**: it judges the approval facts *as they are now*. But entitlements
+change **underneath parked joins** — a grant lands late; an approver loses `can_view` when
+`ENABLE_AGENTIC_AUTH` flips (item F / `[[project_terminal_flip_runway]]`). So the SAME join
+re-evaluates to a DIFFERENT verdict as its inputs move, in **both** directions:
+
+- **PENDING → UNSATISFIABLE** (a required approver loses entitlement post-flip): if the driver
+  cached the creation-time PENDING, the join parks **forever** on a now-impossible condition —
+  precisely the resource surface this slice exists to kill, re-introduced through the back door of
+  a stale verdict. The flip's first symptom would be a mysteriously stuck approval — the same
+  class of rider as "my subjects disappeared."
+- **UNSATISFIABLE → COMPLETE** (a grant lands late): a verdict computed one moment too early would
+  have **terminated a workflow a late grant would have completed**. The terminate must be taken at
+  the right moment (on wake, after approvals settle), not eagerly at creation.
+
+**Driver rule (deploy-gated):** re-run `evaluate_join` on **every join wake/heartbeat**, never
+cache the creation-time verdict. **ADR-0025 flip-checklist rider:** add *post-flip join
+re-evaluation* alongside the existing menu-contents check — when the flip changes `can_view`, every
+suspended join keyed on an approver whose clearance changed must be re-evaluated so a newly
+unsatisfiable join terminates (fail-release) rather than sitting parked. This is proven in the core
+tests (the two `test_reevaluation_flips_*` cases) as the semantics the driver must honor.
+
 ## 3. The pure core (this slice) — `workflow_join.py`
 
 Pure, unit-testable, no Topaz — the analogue of the other Slice cores. `evaluate_join(approvals,

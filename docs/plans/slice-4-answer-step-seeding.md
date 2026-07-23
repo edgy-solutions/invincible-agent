@@ -49,6 +49,49 @@ An answer only seeds a step if it was a **grounded, non-fallback SPO op**:
 Seeding a step from a fallback answer would bake a non-routable tuple into a durable workflow —
 the workflow equivalent of the optimistic-default trap. Refuse it at the seam.
 
+## 2.1 What is also NOT seedable — WEAK PROVENANCE (the cross-seam with the recall-override guard)
+
+Fallback/UNKNOWN is not the only degraded path. An answer can be **grounded and plausible yet
+weak**: engine-o's recall-override guard (`agent_fleet/ontology_service/recall_guard.py`) fires
+when the classifier overrode a *strong* vector-recall winner with **no phone-book confirmation**
+— a confidently-wrong classification that reads like a normal one (the motivating case: "tables
+used in the `<named>` dashboard" resolving subject=`Table` over `Dashboard`). The guard flags it
+(`provenance.recall_override=True`) and caps the reported confidence at **0.50**.
+
+**Provenance includes HOW the answer resolved, and weak provenance shouldn't seed.** A wrong
+answer is transient — the user sees it and moves on. A wrong answer *seeded into a repeatable
+workflow* is the error made **durable and re-executable**: the one place a silently-degraded
+answer can do compounding damage. So the seed refuses the weak path too. The rule falls straight
+out of the slice's own principle ("an answer is provenance, not authority") — it just reads one
+more field of the provenance.
+
+**Two discriminators, deliberately both — and one is not yet wired (verified, not assumed):**
+
+- `routing.about.recall_override` — the PRECISE flag. **But it is currently DISCARDED before it
+  reaches routing.** engine-o emits `provenance.recall_override`, yet the supervisor's
+  `_resolve_subject` (`src/iagent/defs/dynamic_supervisor.py`) pulls only `confidence_score`,
+  `abstention_reason`, `instance_label` from that provenance and drops the rest — a textbook
+  `[[resolution-discard-pattern]]` instance, sitting *beside two sibling fields whose own comments
+  name the pattern*. So gating on this flag ALONE would be a **dormant gate**
+  (`[[feedback_presence_in_repo_is_not_presence_in_running_system]]`). The core's flag branch is
+  therefore explicitly DORMANT-UNTIL-WIRED.
+- `routing.about.confidence <= 0.50` — the LIVE proxy today. The 0.50 cap **does** propagate
+  (`confidence_score` → `subject_confidence` → `routing.about.confidence`), so the weak path is
+  observable now via the capped confidence even while the flag is dropped. A genuinely
+  low-confidence answer failing this too is correct: a shaky answer shouldn't seed a durable
+  workflow regardless of the mechanism.
+
+## 3.1 Producer-side thread-through (lands with the S4 driver, not the core)
+
+To light up the precise flag, thread `recall_override` through the discard seam:
+`_resolve_subject` must carry `provenance.get("recall_override")` (the same one-line addition its
+sibling fields already got), the supervisor telemetry must include it, and the gateway's `about`
+projection (`gateway.py`) must surface it alongside `confidence`. This is exactly the
+consumer-derives-from-producer thread the ontology graph-name fix was — small, but it belongs
+with the **driver** wiring, not the pure core. **Sequence:** land it (and the `resolveInstance`
+convergence, below) *before* the S4 driver seals, or the driver seals against a routing shape that
+is about to change and re-seals after.
+
 ## 3. Seeding inherits enforcement — it is a SOURCE, not a bypass
 
 The most important property. A seeded step is authored on behalf of a **seeder** (the user
@@ -89,5 +132,13 @@ which computes the seeder's authorized sets (Slice-2's `authorized_operation_sub
 `authorized_verbs` for the subject), calls `seed_and_validate_step`, and appends the step to a
 draft `WorkflowDefinition` the human then commits (Decision C — the human asserts). Composed-path
 seal: a grounded answer whose (subject, verb) the seeder is entitled to → a valid `spo_operation`
-step that round-trips through `load_workflow_definition`; a fallback answer → refused; an answer
-whose subject the seeder can no longer view → `PickRefused`.
+step that round-trips through `load_workflow_definition`; a fallback answer → refused; a
+weak-provenance (recall-override / capped-confidence) answer → refused; an answer whose subject
+the seeder can no longer view → `PickRefused`.
+
+**Sequencing (driver-time, not core-time).** The S4 driver consumes *routing subject quality*, so
+two upstream items must land before it seals, or it seals against a pre-convergence resolution
+path and re-seals after: (1) the `recall_override` thread-through (§3.1); (2) the
+`resolveInstance` convergence — the retire-`_TEMPORARY` thread (`[[project_resolve_instance_provider_gap]]`,
+ADR-0031). S3 and S5 drivers do NOT consume resolution and can go first. That ordering also gives
+the `recall_override` telemetry more soak time before seeding starts trusting its absence.

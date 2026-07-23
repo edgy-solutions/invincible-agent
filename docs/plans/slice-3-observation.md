@@ -94,3 +94,26 @@ participant sees their own human-await + the domain stages; a non-participant, n
 observer sees a deny; a cleared-but-not-granted observer sees the agent steps over subjects they
 can view but NOT the other party's human action. The discriminating seal (like the ontology
 `can_view` and HITL-queue seals): prove the redaction is real, both sides, on the same instance.
+
+## 6. Open question for the Decision-D session — the suspended-JOIN rendering (cross-seam with Slice 5)
+
+Redacting other-humans' steps **entirely** closes the existence oracle (correct, and sealed). But
+it collides with Slice 5: a **multi-approval join** suspended on approvers the observer cannot see
+renders to that observer as a workflow **stuck on nothing** — and the human's next move is to file
+a bug or re-submit (a new, human-powered DoS shape). The observation surface needs a way to say
+*"waiting on 2 of 3 approvals"* **without naming or counting *who***. Two things this raises, both
+for the Decision-D session (adjacent to the Decision-D role-split BAML work, so decide them
+together):
+
+1. **Does a bare anonymous count itself leak existence?** "Waiting on N of M" tells a
+   non-participant that N humans are involved and M approvals pending — a weaker oracle than
+   identities, but non-zero. Whether that is disclosable is a real 3-audience question, not a
+   driver-time improvisation. It may itself be tiered (participants see the count; pure-classification
+   observers see only "in approval").
+2. **`redactions` is audit-only — enforce it at the driver.** The pure core's `redactions` list
+   *names the roles* (`approver_a`, `approver_b`) and is *countable* (one line per hidden leg AND
+   per hidden participant). That is fine for an audit trail but is itself an existence oracle if
+   handed to a non-participant observer. The driver contract: **never return `redactions` to a
+   non-participant** — the anonymous count (once designed) is what they get instead. Pinned by
+   `test_suspended_join_on_unseen_approvers_leaks_nothing_observer_facing` (observer-facing
+   surfaces carry neither identity nor count; the audit trail deliberately does).

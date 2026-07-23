@@ -176,6 +176,73 @@ def test_defaults_fail_closed():
     assert _step_ids(proj) == set()  # agent step hidden (can_view default deny), human step deny-by-default
 
 
+# ---------------------------------------------------------------------------
+# CROSS-SEAM with Slice 5 — a multi-approval JOIN suspended on other-humans.
+# Redacting other-human steps ENTIRELY closes the existence oracle (correct), but a join
+# suspended on approvers you cannot see then renders as "stuck on nothing". The anonymous
+# "waiting on N of M" surface is DEFERRED to the Decision-D session (whether even a bare count
+# leaks existence is a real 3-audience question). These pin the invariant that surface must keep.
+# ---------------------------------------------------------------------------
+
+JOIN_DEF = WorkflowDefinition.model_validate({
+    "id": "multi_approval",
+    "name": "Two-approver gate",
+    "classification": "DATA_ENGINEERING",
+    "participants": [{"role": "initiator"}, {"role": "approver_a"}, {"role": "approver_b"}],
+    "domain_stages": ["awaiting_approvals", "done"],
+    "steps": [
+        {"kind": "human_await", "id": "approve_a", "audience": "promotion:DATA_ENGINEERING"},
+        {"kind": "human_await", "id": "approve_b", "audience": "promotion:DATA_ENGINEERING"},
+    ],
+    "observable_state": {"visible": ["domain_stages", "approve_a.status", "approve_b.status"], "internal": []},
+})
+
+
+def _join_runtime():
+    return WorkflowRuntimeState(
+        workflow_id="wf-join",
+        current_stage="awaiting_approvals",
+        steps=[
+            StepRuntime(id="approve_a", kind="human_await", status="suspended", assignee_role="approver_a"),
+            StepRuntime(id="approve_b", kind="human_await", status="suspended", assignee_role="approver_b"),
+        ],
+        participant_bindings={"approver_a": "bob@ex", "approver_b": "carol@ex"},
+    )
+
+
+def test_suspended_join_on_unseen_approvers_leaks_nothing_observer_facing():
+    """dave is cleared to observe but is not a participant and has no other-observers grant. Both
+    legs of the join redact entirely; the OBSERVER-FACING surfaces (steps, participants) must leak
+    neither approver identity NOR a pending-approval count — the invariant the deferred anonymous
+    'waiting on N of M' surface must preserve, so a stuck-looking workflow never becomes an oracle."""
+    proj = project_observation(JOIN_DEF, _join_runtime(), "dave@ex",
+                               observer_role=None, can_observe_workflow=True,
+                               can_view_subject=_ALLOW_ALL)
+    assert _step_ids(proj) == set()                                  # both legs gone
+    facing = repr(proj.steps) + repr(proj.participants)
+    assert "bob@ex" not in facing and "carol@ex" not in facing       # no identity, observer-facing
+    assert not any(ch.isdigit() for ch in facing)                    # no count/tally, observer-facing
+    # FINDING for the Decision-D session: proj.redactions DOES name the roles (approver_a/b) and is
+    # countable — a restricted line per hidden leg AND per hidden participant -> redactions is
+    # AUDIT-ONLY; a driver must NOT hand it to a non-participant observer, or the roles + count leak
+    # through the audit trail. The anonymous "N of M" is what a non-participant should get instead,
+    # and its design must rule whether a bare count is itself disclosable. See slice-3 doc §5.
+    step_legs = [r for r in proj.redactions if r.startswith("approve_") and "restricted" in r]
+    assert len(step_legs) == 2                                       # audit trail sees both legs...
+    assert any("approver_a" in r for r in proj.redactions)           # ...and NAMES the roles (why audit-only)
+
+
+def test_join_participant_sees_own_leg_not_co_approvers():
+    """approver_a (bob) sees his OWN leg as self; the co-approver leg (carol's) stays
+    deny-by-default — being a participant in a join does not clear you to see co-approvers."""
+    proj = project_observation(JOIN_DEF, _join_runtime(), "bob@ex",
+                               observer_role="approver_a", can_observe_workflow=True,
+                               can_view_subject=_ALLOW_ALL)
+    ids = _step_ids(proj)
+    assert "approve_a" in ids and "approve_b" not in ids
+    assert all("carol@ex" not in r for r in proj.redactions)
+
+
 def test_unknown_step_kind_fails_closed():
     rt = _runtime()
     rt.steps.append(StepRuntime(id="mystery", kind="weird_kind", status="done"))

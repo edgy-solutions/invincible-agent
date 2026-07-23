@@ -101,3 +101,38 @@ def test_dos_boundary_flip_suspend_to_terminate():
 def test_counts_reported_for_observability():
     js = evaluate_join(_apps(g=1, d=1, p=1), threshold=2)
     assert (js.granted, js.denied, js.pending, js.threshold) == (1, 1, 1, 2)
+
+
+# ---------------------------------------------------------------------------
+# THE TIME DIMENSION — the oracle is only as good as its MOMENT (item-F / the flip)
+#
+# evaluate_join is stateless: it judges the approval facts AS THEY ARE NOW. Entitlements change
+# UNDERNEATH parked joins (a grant lands late; an approver loses can_view post-flip), so the
+# SAME join re-evaluates to a DIFFERENT verdict as its inputs move. The driver MUST therefore
+# re-run the check on every join wake/heartbeat — NOT cache the creation-time verdict — or a
+# join that became unsatisfiable sits PENDING forever (the parked-resource surface this slice
+# exists to kill), and a join judged unsatisfiable a moment too early terminates a workflow a
+# late-landing grant would have completed. Both directions are proven below.
+# ---------------------------------------------------------------------------
+
+def test_reevaluation_flips_pending_to_unsatisfiable_when_approver_lost():
+    """A join PENDING on an outstanding approver -> that approver loses entitlement (their pending
+    approval is revoked/denied) -> re-evaluation flips PENDING->UNSATISFIABLE (suspend->terminate).
+    If the driver cached the creation-time PENDING it would park forever on the impossible."""
+    at_creation = evaluate_join(_apps(g=1, p=1), threshold=2)       # 1 granted, 1 pending
+    assert at_creation.state == JOIN_PENDING and at_creation.action == "suspend"
+
+    after_revocation = evaluate_join(_apps(g=1, d=1), threshold=2)  # that pending approver now denied
+    assert after_revocation.state == UNSATISFIABLE and after_revocation.action == "terminate"
+
+
+def test_reevaluation_flips_unsatisfiable_to_complete_when_grant_lands_late():
+    """The reverse: judged UNSATISFIABLE because a grant had not landed yet -> the grant lands ->
+    re-evaluation flips UNSATISFIABLE->COMPLETE. Proof the verdict is moment-bound: terminating on
+    the FIRST (premature) evaluation would have been wrong. The driver must evaluate at the right
+    moment (on wake, after approvals settle), not eagerly at creation."""
+    too_early = evaluate_join(_apps(g=1, d=1), threshold=2)         # grant for the 3rd not yet issued
+    assert too_early.state == UNSATISFIABLE
+
+    grant_landed = evaluate_join(_apps(g=2, d=1), threshold=2)      # the awaited grant arrives
+    assert grant_landed.state == COMPLETE
