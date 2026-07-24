@@ -56,6 +56,51 @@ Same shape as the ADR-0025 flip-checklist `can_view` seal (entitled / empty / wr
 > notices there's nothing other-domain to test against — "can't test it, skip it" is exactly how the
 > attribute stays cosmetic — and so the fixture does not outlive its test.
 
+## The example (replicate at work) — Topaz artifacts, mirroring the sealed ontology can_view gate
+
+Sandbox `ENABLE_AGENTIC_AUTH` is OFF (all gates dark; the terminal flip is staged + irreversible). So
+can_act gets its OWN dark-launch toggle `ENABLE_DISPOSITION_AUTHZ` — NOT the terminal flip. Entitled
+subject for the test = `alice`; swap the real approver identity at work.
+
+**1. Manifest type** (add to the Topaz `manifest.yaml` — type is GENERIC, domain is the instance key):
+```yaml
+  disposition_item:
+    relations: { actor: user }
+    permissions: { can_act: actor }
+```
+
+**2. Policy** `invincible_agent.disposition.can_act` (mirrors `ontology.can_view` — `ds.check`, subject
+in `resource_context.user_id`, fail-closed):
+```rego
+package invincible_agent.disposition.can_act
+import future.keywords.if
+default allowed := false
+allowed if {
+    ds.check({
+        "object_type": "disposition_item",
+        "object_id": input.resource.domain,     # domain = the instance key (attribute); type stays generic
+        "relation": "can_act",
+        "subject_type": "user",
+        "subject_id": input.resource.user_id,
+    })
+}
+```
+
+**3. Grant** (directory relation — the entitlement): `user:alice --actor--> disposition_item:SUSTAINMENT`
+(written via the directory writer / a `policy/disposition_grants.yaml` + sync, mirroring
+`policy/asset_grants.yaml`). At work: grant the real approver `actor` on their domain's `disposition_item`.
+
+**4. Wire-up** (BUILT, `pcn_review_starter.can_act_via_topaz`): POSTs `/api/v2/authz/is` with
+`policy_context.path = invincible_agent.disposition.can_act`, subject in `resource_context.user_id`,
+domain in `resource_context.domain`. Toggle `ENABLE_DISPOSITION_AUTHZ=true` on engine-a (off → no-op True).
+
+**5. Discrimination seal — the three legs:**
+- `alice` (actor of `disposition_item:SUSTAINMENT`) → ALLOW → sees the batch.
+- `bob` (no relation) → DENY → unentitled → `NO_ENTITLED_ACTION` (not a silent empty).
+- `alice` on `disposition_item:AVIATION` (no relation) → DENY → the domain attribute DISCRIMINATES.
+  The AVIATION item is the synthetic other-domain fixture: written, rejected, then DELETED (fixture,
+  not residue).
+
 ## Live-session order (unchanged; this is its first act)
 
 bind `disposition_item` + wire `can_act_via_topaz` against `core/authz.py` → run the three-caller

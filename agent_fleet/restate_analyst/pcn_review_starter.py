@@ -106,16 +106,48 @@ def load_policy_rules() -> dict:  # pragma: no cover - deploy-gated (live engine
     return fetch_policy_rules(_RULESET_GRAPH, _RULESET_LABEL, known_dispositions=_KNOWN_DISPOSITIONS)
 
 
-def can_act_via_topaz(approver: str, item) -> bool:  # pragma: no cover - deploy-gated (Topaz wiring pending)
-    """Topaz predicate for grouped_review — DEPLOY-GATED, born generic. The resource type is the
-    workflow-model noun ``disposition_item`` (domain as a Topaz ATTRIBUTE, never a ``pcn_disposition``
-    type — a domain-named type would write the domain into the entitlement contract, the hardest layer
-    to walk back). Pending its Topaz wiring against ``core/authz.py``. grouped_review fails CLOSED on a
-    missing can_act, so an unwired default is safe-but-empty."""
-    raise NotImplementedError(
-        "can_act_via_topaz: wire the GENERIC Topaz resource type 'disposition_item' (domain as "
-        "attribute) + action against core/authz.py — see the generic-at-birth rule in AGENTS.md"
-    )
+TOPAZ_AUTHORIZER_URL = os.getenv("TOPAZ_AUTHORIZER_URL", "http://topaz-svc:8383")
+# Independent toggle for the disposition can_act gate. NOT the terminal ENABLE_AGENTIC_AUTH (whose flip
+# turns on EVERY dark-launched content gate cluster-wide, irreversibly). can_act gates WHO reviews (a
+# grain-of-review property), so it gets its OWN dark-launch toggle — dark until grants are seeded, then
+# flipped for its own gate alone. Off -> no-op True (like the other gates when their flag is off).
+ENABLE_DISPOSITION_AUTHZ = os.getenv("ENABLE_DISPOSITION_AUTHZ", "false").lower() in ("true", "1", "yes")
+_ITEM_DOMAIN = os.getenv("PCN_DISPOSITION_DOMAIN", "SUSTAINMENT")
+
+
+def can_act_via_topaz(approver: str, item) -> bool:  # pragma: no cover - live Topaz (exercised by the discrimination seal)
+    """Topaz predicate for grouped_review — born generic. Single-decider (Topaz), fail-CLOSED, mirroring
+    the sealed ontology ``can_view`` gate: POST ``/api/v2/authz/is`` with the subject in
+    ``resource_context.user_id`` and the DOMAIN as the object key, evaluating the generic
+    ``invincible_agent.disposition.can_act`` policy (``ds.check`` of ``can_act`` on a ``disposition_item``
+    keyed by domain). The resource TYPE is generic (``disposition_item``); the domain is an instance
+    attribute (object_id), never baked into the type — a ``pcn_disposition`` type would write the domain
+    into the entitlement contract, the hardest layer to walk back.
+
+    No-op True when ``ENABLE_DISPOSITION_AUTHZ`` is off (its OWN dark-launch toggle, not the terminal
+    ENABLE_AGENTIC_AUTH flip). Any error -> deny (a gate must not fail open); grouped_review then
+    withholds the item and start_review surfaces NO_ENTITLED_ACTION rather than parking."""
+    if not ENABLE_DISPOSITION_AUTHZ:
+        return True
+    if not approver:
+        return False
+    try:
+        import requests
+        resp = requests.post(
+            f"{TOPAZ_AUTHORIZER_URL}/api/v2/authz/is",
+            headers={"Content-Type": "application/json"},
+            json={
+                "identity_context": {"identity": approver, "type": "IDENTITY_TYPE_MANUAL"},
+                "policy_context": {"path": "invincible_agent.disposition.can_act", "decisions": ["allowed"]},
+                "resource_context": {"user_id": approver, "domain": _ITEM_DOMAIN},
+            },
+            timeout=5.0,
+        )
+        resp.raise_for_status()
+        decisions = resp.json().get("decisions") or []
+        return bool(next((d.get("is") for d in decisions if d.get("decision") == "allowed"), False))
+    except Exception:  # noqa: BLE001 — fail-closed (deny) on any error, like the ontology gate
+        return False
 
 
 # ---------------------------------------------------------------------------
