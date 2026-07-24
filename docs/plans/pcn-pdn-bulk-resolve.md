@@ -266,13 +266,56 @@ offers the pcn subjects for `spo_operation` steps without anyone touching menu c
 doesn't grow, the menu was built as a filter after all — and it's far better to learn that on the
 first registration than the tenth.
 
-## 7. Driver + seals (spec — deploy-gated)
+## 7. Driver + seals (spec — deploy-gated) — the full build sheet
 
 `_run_definition` registers the grouped HumanTask; the dispatcher (per-item, idempotent, OUTSIDE
 the workflow graph) emits N invocations on resolve. Composed-path seals, red-first: the funnel
 conservation (Seal 1), the per-approver discrimination (Seal 2), the needs_review lane-block +
 carry-forward (§3), and capture-why (§5). Depends on: the pcn class vocabulary + registered verbs
 (the disposition effects as mesh verbs with endpoints), and the idempotency-substrate ruling (§1, settled).
+
+**Start this FRESH, with the Restate patterns loaded** (`restate_analyst/main.py`: `_run_definition`
+per-step loop, `_register_human_task` → cortex-bff `/internal/human_tasks/register`, `ctx.run` for
+effects, `ctx.promise().value()` to suspend on a human, the VirtualObject shape). Do NOT start it at a
+session tail — a mid-integration compaction on a durable-execution seal is the worst outcome.
+
+**The five proven layers it composes** (all live or sealed): (1) rules→proposal
+(`pcn_rules_loader.load_disposition_rules` → `pcn_disposition_proposer.build_part_items`, ruleset_ref
+stamped) — LIVE; (2) resolveInstance engine-o `POST /resolve_pcn_instance` fills `PartItem.subject` —
+LIVE; (3) grouped review `workflow_bulk_resolve` (`run_funnel`→`grouped_review`→`resolve_batch`) +
+cortex-ui `GROUPED_REVIEW` — sealed/built; (4) dispatch plan `pcn_dispatch.plan_dispatch` — sealed;
+(5) the two write executors, both LIVE — task-mint `_register_human_task`, graph-state engine-o
+`POST /write_pcn_disposition_state` (idempotent), read-back `POST /pcn_parts_by_state` (read-union).
+
+**Composition chain.** Ingest notice → load rules (the hand-run CONSTRUCT in the run-card becomes the
+driver's SPARQL fetch) → `build_part_items` → resolve each subject → `run_funnel` → `grouped_review` →
+ONE grouped HumanTask (suspend on `ctx.promise().value()`) → on resolve, `BulkDecision` →
+`resolve_batch` → N `ItemResolution`s → per-item fan-out to a **VirtualObject keyed by
+`idempotency_key` (notice × part)**.
+
+**The per-item VirtualObject — the two-write convergence seal.** Inside the keyed object, two journaled
+`ctx.run` steps, **TASK-FIRST** (decided, §Decisions): `ctx.run("mint_task", …)` then
+`ctx.run("write_state", …)`. Graph write is delete-then-insert idempotent; the task-mint side needs
+the SAME dedupe-on-(notice×part) property — the VirtualObject keying *should* give it for free, but
+that's an assert-without-checking phrase. **Seal (red-first) = TWO-DIRECTION failure injection:** kill
+between the writes, restart, assert convergence — in both directions, asserting the end state is
+EXACTLY ONE task and EXACTLY ONE state stamp. That two-direction exactly-one assertion is what makes
+"durable" a property. Unresolved-subject (rider): `plan_dispatch` skips the graph write but still mints
+the task carrying `mpn`+`notice_fingerprint`+`subject_unresolved` for retroactive re-link — never an orphan.
+
+**Menu-growth (DISTINCT write, observed in-session).** `_OPERABLE_SUBJECTS_CYPHER` needs a VERB edge
+(`r.iri`) on `pcn:Component` — the resolveInstance provider does NOT grow the menu. Register a
+disposition VERB on `pcn:Component` (register_engine_to_mesh style) pointing at a REAL disposition
+endpoint (a stub = the dead-end menu). When it lands, OBSERVE the acceptance in-session: `POST
+/operable_subjects` for SUSTAINMENT shows the pcn subjects, no menu code touched — the sourced-menu
+design's first live test.
+
+**Preconditions (landed `9865bcf`):** two guards the driver inherits — `tests/test_pcn_state_sparql.py`
+(rdflib parse-validates SPARQL builders; put new templates in a pure module + a test) and
+`tests/test_no_typing_generics_in_pydantic_models.py` (AST guard: unimported typing-generic in a
+Pydantic field under future-annotations → flagged). Then the cortex-ui dashboard → `/pcn_parts_by_state`,
+and the five-beat demo (§Decisions) over the real `IPCN25300X`. Scope guard: end at "durable task
+exists," NOT task completion.
 
 ## 8. Deploy sequencing + gates (before the pcn dogfood can go green)
 
