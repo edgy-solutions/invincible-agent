@@ -74,10 +74,14 @@ Concretely, it already decides open questions rather than deferring them:
 - A rules-fetch endpoint is `POST /policy_rules` taking `{graph, ruleset_label}`, NOT
   `POST /pcn_disposition_rules`. "Fetch flat rule individuals from a named graph" knows nothing about
   PCN; the pcn-ness is the caller's arguments.
-- The authz resource type is a workflow-model noun — `disposition_item` (domain as a Topaz
-  *attribute* it can policy on), NOT `pcn_disposition`. Topaz types are contracts with the auth layer;
-  a domain-named type writes the domain into the entitlement model, the hardest layer to walk back and
-  exactly where the flip-checklist seals live. Invent the generic version once; never migrate later.
+- The authz check reuses the EXISTING workflow-model type `task_audience` (key
+  `pcn_disposition:<compartment>`), NOT a domain-named `pcn_disposition` type — Topaz types are contracts
+  with the auth layer; a domain-named type writes the domain into the entitlement model, the hardest
+  layer to walk back. (Historical note: this was first designed as a bespoke-but-generic `disposition_item`
+  type; reading work's policy rails showed `task_audience` already covers it, so the reconciliation went
+  one better than "invent the generic version once" — it **reused** the existing generic type and deleted
+  the invention as a diff. The deeper rule: before inventing generic surface, check whether the existing
+  generic surface already answers it — the entitlement plane especially must not grow a second decider.)
 
 Existing domain-named surface is NOT retroactively force-renamed (don't generalize from one example) —
 it is sorted for the extraction milestone (`docs/plans/pcn-extraction-sort.md`): rename-and-promote /

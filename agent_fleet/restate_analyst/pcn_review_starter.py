@@ -18,11 +18,12 @@ name, so neither seam mints pcn-named surface:
     modes honestly: ``not_found`` -> RULES_NOT_FOUND, ``invalid`` -> RULESET_INVALID (report-don't-
     reject: no dispatch under a corrupt ruleset), ``empty`` -> abstains -> NO_RESIDUE, ``ok`` -> build.
     NOT a pcn-named route — the domain is the ``graph`` argument.
-  * ``can_act``         -> DEPLOY-GATED, born generic. Topaz resource type is the workflow-model noun
-    ``disposition_item`` with the domain as a Topaz ATTRIBUTE (never a ``pcn_disposition`` type — a
-    domain-named type would write the domain into the entitlement contract). ``core/authz.py`` is
-    decorator-shaped; the ``disposition_item`` type + action pending its Topaz wiring — the ONE seam
-    that is genuinely unsealable offline (needs the live authz binding).
+  * ``can_act``         -> WIRED onto WORK'S EXISTING ``task_audience`` HITL mechanism (single-decider):
+    a grouped review is a HITL task; "who may act on a class of HITL tasks in a compartment" IS
+    ``task_audience`` (key ``pcn_disposition:<domain>``, permission ``can_act``, grantable direct or via
+    group). Direct Topaz DIRECTORY check, deny-by-default; grants arrive by the git-rails seed CronJob
+    (`task_grants.yaml`), never hand-surgery. Reading work's rails RETIRED the bespoke ``disposition_item``
+    type + rego (they were reinventing this). Still deploy-gated (needs the seed + the grants).
 
 The notice's affected parts + needs_review flags are the doc-tools EXTRACTION, passed in the request
 (the upstream producer); the starter does not re-extract. Scope (BOM/AVL ``in_scope_mpns``) is an input.
@@ -106,46 +107,45 @@ def load_policy_rules() -> dict:  # pragma: no cover - deploy-gated (live engine
     return fetch_policy_rules(_RULESET_GRAPH, _RULESET_LABEL, known_dispositions=_KNOWN_DISPOSITIONS)
 
 
-TOPAZ_AUTHORIZER_URL = os.getenv("TOPAZ_AUTHORIZER_URL", "http://topaz-svc:8383")
+TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
 # Independent toggle for the disposition can_act gate. NOT the terminal ENABLE_AGENTIC_AUTH (whose flip
 # turns on EVERY dark-launched content gate cluster-wide, irreversibly). can_act gates WHO reviews (a
 # grain-of-review property), so it gets its OWN dark-launch toggle — dark until grants are seeded, then
 # flipped for its own gate alone. Off -> no-op True (like the other gates when their flag is off).
 ENABLE_DISPOSITION_AUTHZ = os.getenv("ENABLE_DISPOSITION_AUTHZ", "false").lower() in ("true", "1", "yes")
 _ITEM_DOMAIN = os.getenv("PCN_DISPOSITION_DOMAIN", "SUSTAINMENT")
+_TASK_KIND = "pcn_disposition"   # the task_kind half of the task_audience key (task_kind:compartment)
 
 
 def can_act_via_topaz(approver: str, item) -> bool:  # pragma: no cover - live Topaz (exercised by the discrimination seal)
-    """Topaz predicate for grouped_review — born generic. Single-decider (Topaz), fail-CLOSED, mirroring
-    the sealed ontology ``can_view`` gate: POST ``/api/v2/authz/is`` with the subject in
-    ``resource_context.user_id`` and the DOMAIN as the object key, evaluating the generic
-    ``invincible_agent.disposition.can_act`` policy (``ds.check`` of ``can_act`` on a ``disposition_item``
-    keyed by domain). The resource TYPE is generic (``disposition_item``); the domain is an instance
-    attribute (object_id), never baked into the type — a ``pcn_disposition`` type would write the domain
-    into the entitlement contract, the hardest layer to walk back.
+    """Topaz predicate for grouped_review — reconciled onto WORK'S EXISTING mechanism (single-authz-
+    decider): the HITL ``task_audience`` (`task_grants.yaml` → `task_grant_sync.py`). A grouped review is
+    a HITL task, and "who may act on a class of HITL tasks in a compartment" is EXACTLY ``task_audience``
+    — key ``<task_kind>:<compartment>`` where the compartment IS the domain (``pcn_disposition:SUSTAINMENT``),
+    permission ``can_act`` (relation ``actor``, granted directly OR via ``group#member``). No bespoke
+    ``disposition_item`` type, no rego, no manifest edit — that was reinventing this. The check is a
+    direct Topaz DIRECTORY check (`POST /api/v3/directory/check`): deny-by-default (an ungranted audience
+    is "object not found" -> deny). Grants arrive by the git-rails seed CronJob, never hand-surgery.
 
     No-op True when ``ENABLE_DISPOSITION_AUTHZ`` is off (its OWN dark-launch toggle, not the terminal
-    ENABLE_AGENTIC_AUTH flip). Any error -> deny (a gate must not fail open); grouped_review then
-    withholds the item and start_review surfaces NO_ENTITLED_ACTION rather than parking."""
+    ENABLE_AGENTIC_AUTH flip). Any error / not-found -> deny (a gate must not fail open); grouped_review
+    then withholds the item and start_review surfaces NO_ENTITLED_ACTION rather than parking."""
     if not ENABLE_DISPOSITION_AUTHZ:
         return True
     if not approver:
         return False
+    audience = f"{_TASK_KIND}:{_ITEM_DOMAIN}"   # task_kind:compartment — compartment is the domain
     try:
         import requests
         resp = requests.post(
-            f"{TOPAZ_AUTHORIZER_URL}/api/v2/authz/is",
+            f"{TOPAZ_DIRECTORY_URL}/api/v3/directory/check",
             headers={"Content-Type": "application/json"},
-            json={
-                "identity_context": {"identity": approver, "type": "IDENTITY_TYPE_MANUAL"},
-                "policy_context": {"path": "invincible_agent.disposition.can_act", "decisions": ["allowed"]},
-                "resource_context": {"user_id": approver, "domain": _ITEM_DOMAIN},
-            },
+            json={"object_type": "task_audience", "object_id": audience, "relation": "can_act",
+                  "subject_type": "user", "subject_id": approver},
             timeout=5.0,
         )
         resp.raise_for_status()
-        decisions = resp.json().get("decisions") or []
-        return bool(next((d.get("is") for d in decisions if d.get("decision") == "allowed"), False))
+        return bool(resp.json().get("check", False))   # absent/not-found/error -> deny (fail-closed)
     except Exception:  # noqa: BLE001 — fail-closed (deny) on any error, like the ontology gate
         return False
 

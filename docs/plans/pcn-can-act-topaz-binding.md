@@ -1,14 +1,28 @@
-# can_act / disposition_item — the Topaz binding, decided on paper (live session reads this)
+# can_act — the Topaz binding, RECONCILED onto `task_audience` (live session reads this)
+
+> **RECONCILED 2026-07-24 — `disposition_item` RETIRED.** Reading work's git-rails policy repo
+> (`C:\tmp\iagent-policy`) before building revealed that a grouped review IS a HITL task, and "who may
+> act on a class of HITL tasks in a compartment" is EXACTLY the existing Topaz **`task_audience`** type
+> (`task_grants.yaml` → `task_grant_sync.py`; manifest: `task_audience { relations: actor: user |
+> group#member; permissions: can_act: actor }`). The bespoke `disposition_item` type + rego this doc
+> originally proposed were REINVENTING it — a second mechanism answering "who may act" on the
+> entitlement plane, the last place that should ever happen (single-authz-decider). It died as a diff,
+> never deployed. Everything below is the `task_audience` form; the old `disposition_item` shape is gone,
+> not half-retired.
 
 The `can_act` seam is the ONE piece of the PCN loop that cannot be sealed offline (it needs the live
 authz layer). But "can't be sealed offline" ≠ "undesigned": an authz question answered at the console
 under demo momentum becomes the entitlement model by accident. So the SHAPE is decided here; the live
-session BINDS and OBSERVES, it does not decide.
+session BINDS and OBSERVES against work's mechanism, it does not invent.
 
-**The type (born generic per AGENTS.md):** Topaz resource type `disposition_item`, a workflow-model
-noun. The domain is a Topaz **attribute** (`domain: SUSTAINMENT`), never baked into the type name — a
-`pcn_disposition` type would write the domain into the entitlement contract, the hardest layer to walk
-back and where the flip-checklist seals live. Action: the approver's disposition act (e.g. `act`).
+**The binding:** audience key `pcn_disposition:<compartment>` where the **compartment IS the domain**
+(`pcn_disposition:SUSTAINMENT`) — `<task_kind>:<compartment>`, work's existing shape. A caller may act
+iff they are an `actor` of that audience (granted directly OR via `group#member`), permission `can_act`.
+`can_act_via_topaz` is a direct Topaz DIRECTORY check (`POST /api/v3/directory/check`), deny-by-default
+(an ungranted audience is "object not found" → deny). Grants arrive by the git-rails seed CronJob
+(`task_grants.yaml`), never hand-surgery. The domain is the compartment half of the key — pcn-ness lives
+purely in the key VALUE, and the type covers every future grouped review of any kind (more generic than
+the invented type, per the birth rule's deeper form).
 
 ## Three decisions (settled now)
 
@@ -37,68 +51,59 @@ distinction → the deny-all case silently returns `NO_RESIDUE`, red).
 > precisely where someone adds an approver-initiated path, and this is the line that stops the leak
 > being wired in then. Marked at the point of use in `start_review`.
 
-**3. The three-caller discrimination seal (pcn edition) — the LIVE acceptance, watched not inferred.**
-Same shape as the ADR-0025 flip-checklist `can_view` seal (entitled / empty / wrong-domain), applied to
-`can_act`. When the binding lands, OBSERVE in-session (status = the menu-growth assertion: watched, not
-"nothing errored"):
-- an **entitled** SUSTAINMENT approver SEES their batch (non-empty);
-- an **unentitled** approver does NOT (their batch is empty → `NO_ENTITLED_ACTION`, per decision 2);
-- the **domain attribute actually discriminates** — a hypothetical other-domain approver cannot act on
-  a SUSTAINMENT `disposition_item`, proving the born-generic type's *attribute* does the work the
-  domain-named type used to. That third leg is the whole point of `disposition_item` + attribute; if it
-  doesn't discriminate, the attribute is cosmetic and the type is domain-named in disguise.
+**3. The FOUR-leg discrimination seal — the LIVE acceptance, watched not inferred.** Same shape as the
+ADR-0025 flip-checklist `can_view` seal, applied to `can_act` on `task_audience`. Under the reconciled
+mechanism it also RE-PROVES work's rails as consumed by a new caller (upgrades the exhibit). OBSERVE
+in-session (watched, not "nothing errored"), grants arriving BY THE SEED, not hand-written:
+- **leg-0 — deny-BEFORE-grant:** `alice` with NO grant → deny → `NO_ENTITLED_ACTION`. The fail-closed
+  property observed live before the grant exists (the leg the 3-caller seal doesn't cover; costs one call).
+- **leg-1 — entitled:** `alice` actor of `pcn_disposition:SUSTAINMENT` (via `task_grants.yaml` seed) →
+  SEES the batch (non-empty).
+- **leg-2 — absent:** `bob` (no grant) → does NOT → `NO_ENTITLED_ACTION` (per decision 2).
+- **leg-3 — wrong-compartment:** `alice` granted `pcn_disposition:AVIATION` ONLY must NOT see the
+  SUSTAINMENT batch — the **compartment key does the discrimination**. If it doesn't, the key is cosmetic
+  and the audience is domain-blind. AVIATION is the synthetic fixture: seeded, tested, then REVOKED **by
+  removing it from `task_grants.yaml`** (the rails' own removal-sync IS the cleanup — observe the
+  revocation take, the one mechanism nothing has exercised yet).
 
-> **THIRD-LEG FIXTURE (acceptance — the seal MUST run all three legs).** Everything live on sandbox is
-> SUSTAINMENT, so the other-domain `disposition_item` the attribute must reject **does not exist** — the
-> third leg requires WRITING a synthetic other-domain item into the authz/graph surface, running the
-> reject, and **DELETING it after** (same clean-after discipline as the state-write test — a fixture,
-> not residue). Name it in the run card so the seal does not quietly shrink to two legs when someone
-> notices there's nothing other-domain to test against — "can't test it, skip it" is exactly how the
-> attribute stays cosmetic — and so the fixture does not outlive its test.
+> **THIRD-LEG FIXTURE (acceptance — the seal MUST run all four legs).** Everything live on sandbox is
+> SUSTAINMENT, so the wrong-compartment audience `pcn_disposition:AVIATION` the key must reject **does
+> not exist** — leg-3 requires SEEDING a synthetic AVIATION grant (a `task_grants.yaml` audience entry),
+> running the reject, and **REVOKING it after by removing the entry** (the rails' removal-sync IS the
+> clean-after — a fixture, not residue). Name it in the run card so the seal does not quietly shrink when
+> someone notices there's nothing other-compartment to test against — "can't test it, skip it" is exactly
+> how the key stays cosmetic.
 
-## The example (replicate at work) — Topaz artifacts, mirroring the sealed ontology can_view gate
+## The example (replicate at work) — a `task_grants.yaml` entry (NO new type, NO rego, NO manifest edit)
 
-Sandbox `ENABLE_AGENTIC_AUTH` is OFF (all gates dark; the terminal flip is staged + irreversible). So
-can_act gets its OWN dark-launch toggle `ENABLE_DISPOSITION_AUTHZ` — NOT the terminal flip. Entitled
-subject for the test = `alice`; swap the real approver identity at work.
+The whole point of reading work's rails: the artifact is a grant in the EXISTING mechanism, not new
+surface. Sandbox `ENABLE_AGENTIC_AUTH` is OFF (content gates dark); can_act has its OWN toggle
+`ENABLE_DISPOSITION_AUTHZ` (NOT the terminal flip). Entitled subject for the sandbox test = `alice` in
+sandbox's id format; swap the real approver at work in work's format.
 
-**1. Manifest type** (add to the Topaz `manifest.yaml` — type is GENERIC, domain is the instance key):
+**The grant** — one entry in `policy/task_grants.yaml`, PR-reviewed, merged to `main`, applied by the
+seed CronJob (merge = grant, removal = revoke). Audience key `<task_kind>:<compartment>` where the
+compartment IS the domain:
 ```yaml
-  disposition_item:
-    relations: { actor: user }
-    permissions: { can_act: actor }
+audiences:
+  pcn_disposition:SUSTAINMENT:
+    grant_to: ["<subject in YOUR deployment's id format>"]   # sandbox: alice@example.com · work: <employee-id>
+    granted_by: "<accountable human's id>"
+    reason: "PCN/PDN disposition review approvals — SUSTAINMENT"
 ```
-
-**2. Policy** `invincible_agent.disposition.can_act` (mirrors `ontology.can_view` — `ds.check`, subject
-in `resource_context.user_id`, fail-closed):
-```rego
-package invincible_agent.disposition.can_act
-import future.keywords.if
-default allowed := false
-allowed if {
-    ds.check({
-        "object_type": "disposition_item",
-        "object_id": input.resource.domain,     # domain = the instance key (attribute); type stays generic
-        "relation": "can_act",
-        "subject_type": "user",
-        "subject_id": input.resource.user_id,
-    })
-}
-```
-
-**3. Grant** (directory relation — the entitlement), stated SYMBOLICALLY because this doc is the
-copy-paste vector across environments and identity FORMAT differs per deployment (see Identity
-invariant below): `user:<subject in your deployment's id format> --actor--> disposition_item:SUSTAINMENT`
-(written via the directory writer / a `disposition_grants.yaml` + sync, mirroring `policy/asset_grants.yaml`).
-Seed grants in the ENVIRONMENT's format — sandbox=email (`alice`/`bob`), **work=employee-id** (e.g.
-`E123456`). Do NOT paste `alice@…` literals into work's seed. At work: grant the real approver `actor`
-on their domain's `disposition_item`.
+- `grant_to` may be employee-ids/emails (direct) OR a group name (via `group#member`) — work grants a
+  whole approver group. Identity FORMAT is deployment content (below); do NOT paste literals across envs.
+- The check is a direct Topaz DIRECTORY check on `task_audience` (`can_act` permission) — no rego, no
+  manifest edit (`task_audience` already ships in the chart manifest, `loadManifest: true`).
+- The `can_act` seam (`can_act_via_topaz`) builds the audience key `pcn_disposition:<domain>` and checks
+  membership; `ENABLE_DISPOSITION_AUTHZ=true` on the analyst engine arms it (off → no-op True).
 
 **Identity invariant (born-generic on the identity plane — pin, don't infer).** Subject identity enters
 from ONE claim and is carried OPAQUELY: nothing in the policy repo, manifest, or any consumer parses,
 validates, or assumes the format — no email regexes, no `@`-splitting, no "looks like an ID" checks.
-The rego's `subject_id: input.resource.user_id` is already format-agnostic (good); keep it so. Identity
-is a string that matches or doesn't; the FORMAT is deployment CONTENT, not mechanism. The seam — WHICH
+`can_act_via_topaz` passes the `approver` string straight through as the check `subject_id` — already
+format-agnostic (good); keep it so. Identity is a string that matches or doesn't; the FORMAT is
+deployment CONTENT, not mechanism. The seam — WHICH
 claim populates `user_id` — is config-per-environment (sandbox maps its IdP's email; work maps the
 employee-id claim, per the already-filed `central_gateway` `preferred_username` fix in
 [[project_work_deploy_runbook]] — same seam, same invariant, one gateway layer down). A grant seeded in
@@ -106,16 +111,11 @@ employee-id claim, per the already-filed `central_gateway` `preferred_username` 
 everything," the ADR-0025 first-symptom class; and it hides because STRUCTURE diffs clean (shape
 identical, only values differ). So it is a named knob, not a buried assumption.
 
-**4. Wire-up** (BUILT, `pcn_review_starter.can_act_via_topaz`): POSTs `/api/v2/authz/is` with
-`policy_context.path = invincible_agent.disposition.can_act`, subject in `resource_context.user_id`,
-domain in `resource_context.domain`. Toggle `ENABLE_DISPOSITION_AUTHZ=true` on engine-a (off → no-op True).
-
-**5. Discrimination seal — the three legs:**
-- `alice` (actor of `disposition_item:SUSTAINMENT`) → ALLOW → sees the batch.
-- `bob` (no relation) → DENY → unentitled → `NO_ENTITLED_ACTION` (not a silent empty).
-- `alice` on `disposition_item:AVIATION` (no relation) → DENY → the domain attribute DISCRIMINATES.
-  The AVIATION item is the synthetic other-domain fixture: written, rejected, then DELETED (fixture,
-  not residue).
+**Wire-up** (BUILT, `pcn_review_starter.can_act_via_topaz`): direct Topaz DIRECTORY check `POST
+/api/v3/directory/check {object_type: task_audience, object_id: "pcn_disposition:<domain>", relation:
+can_act, subject_type: user, subject_id: <approver>}`; absent/not-found/error → deny (fail-closed).
+Toggle `ENABLE_DISPOSITION_AUTHZ=true` on the analyst engine (off → no-op True). The four discrimination
+legs are decision 3 above.
 
 ## DEFERRED: the discrimination seal runs on the git-deployment RAILS, not hand-surgery (decided 2026-07-24)
 
@@ -128,17 +128,14 @@ the discrimination seal runs later against config that arrived by the deployment
 it a stronger exhibit — it proves the rails too). The flip checklist re-runs it at work regardless.
 
 **The two open unknowns are FACTS ABOUT THE CURRENT (hand-built) SANDBOX TOPAZ — filed unresolved as
-"what we're replacing" notes for whoever does the git-rails sync:**
-- **Policy load = explicit volume-items, not whole-dir.** OPA `local_bundles.paths: ["/policies"]`
-  loads the dir, BUT the topaz *deployment* mounts the configmap with an explicit `items:` list — a new
-  rego needs a DEPLOYMENT volume-items change, not just a configmap key. The git-rails path replaces
-  this with the overlay's documented mount.
-- **Manifest load path unconfirmed (configmap-file vs PVC-persisted).** `manifest.yaml` is mounted in
-  `/policies`, but a `topaz-seed-cronjob` (default-DISABLED) syncs data, and the schema may be
-  DB-persisted in the PVC — so a configmap edit might not "take" without a re-seed. Directory manifest
-  API didn't answer on probed ports (9393/8383). The git+cronjob path is the ANSWER to "how does a
-  manifest change take effect" — it's already proven at work; nobody reverse-engineers the hand-built
-  mount.
+"what we're replacing" notes — BOTH now MOOT under the reconciliation (2026-07-24):**
+- ~~Policy load = explicit volume-items~~ — **MOOT: no rego.** `task_audience` needs no custom rego (a
+  direct directory check does it), so there is no `/policies` volume-items change at all. The unknown
+  only existed for the abandoned `disposition_item` rego.
+- ~~Manifest load path (configmap vs PVC)~~ — **RESOLVED: chart-shipped, `loadManifest: true`.** The
+  seed loads the chart's ReBAC manifest idempotently every tick; `task_audience` already ships in it
+  (verified live, chart 0.3.26). No manifest edit, no PVC question. The git+cronjob path WAS the answer.
+  (Kept struck-through, not deleted, as the record of what reading the rails made unnecessary.)
 
 ## FOLLOW-UP TASK: stand sandbox Topaz up on work's rails (config work, not code)
 
