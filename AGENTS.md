@@ -27,6 +27,35 @@ JOURNAL-CONFIRMED (mint journaled, state-write not yet → kill landed between t
 grant when the work changes, and keep this line current so the fence tracks reality, not the state it
 was written in.
 
+## The generic-at-birth rule (adopted 2026-07-23)
+
+**No new engine route, endpoint, Topaz resource type, or registered capability may carry a domain
+name. New surface is GENERIC at birth; the domain arrives as a parameter or as data.** The domain-ness
+lives in the arguments the caller passes, never baked into the name of the mechanism.
+
+Why now: the PCN/PDN M1 exemplar moved fast and let *mechanism* pick up domain names
+(`PcnDispatchItem`, `/write_pcn_disposition_state`, a would-be `pcn_disposition` Topaz type) while the
+*content* stayed correctly in data. Content was always in the right place; mechanism got domain names
+because the exemplar sprinted. Left alone the exemplar becomes the precedent — "real processes get
+coded and named, the interview is for demos" — which inverts the ADR-0029 thesis that processes are
+data. This rule stops the bleeding without a big-bang refactor: it binds only NEW surface, and it is
+*less* work than the domain-named version (no second endpoint/type when the next policy domain lands —
+which is the whole test).
+
+Concretely, it already decides open questions rather than deferring them:
+- A rules-fetch endpoint is `POST /policy_rules` taking `{graph, ruleset_label}`, NOT
+  `POST /pcn_disposition_rules`. "Fetch flat rule individuals from a named graph" knows nothing about
+  PCN; the pcn-ness is the caller's arguments.
+- The authz resource type is a workflow-model noun — `disposition_item` (domain as a Topaz
+  *attribute* it can policy on), NOT `pcn_disposition`. Topaz types are contracts with the auth layer;
+  a domain-named type writes the domain into the entitlement model, the hardest layer to walk back and
+  exactly where the flip-checklist seals live. Invent the generic version once; never migrate later.
+
+Existing domain-named surface is NOT retroactively force-renamed (don't generalize from one example) —
+it is sorted for the extraction milestone (`docs/plans/pcn-extraction-sort.md`): rename-and-promote /
+plugin-residue / dissolve-to-data, acceptance = the deletion test (every `pcn_*.py` gone from the
+engines, the process still runs via generic mechanism + plugin + data).
+
 ## Governing Architecture
 
 A strictly decoupled, **Polyglot Microservice** architecture:
