@@ -174,6 +174,34 @@ ENGINES = [
         "cost_class": "medium",
         "requires_human_approval": False,
     },
+    {
+        # PCN/PDN disposition — the first SUSTAINMENT verb to wake. Mirrors
+        # restate_analyst/main.py's lifespan registration (engine_a_propose_
+        # disposition). setup/ontologies/pcn_extension.ttl declared the pcn
+        # subject classes but deliberately registered NO disposition verbs
+        # until each serving endpoint became real; PcnReviewStarter.start_review
+        # is now live + proven end-to-end (the five-beats loop), so this wakes
+        # the verb. input_uri is the PARENT pcn:SustainmentNotice so the
+        # subClassOf walk offers it for PCN + PDN too — one edge, whole family.
+        # The SPO interview sources its menu from this edge (zero menu code).
+        "name": "engine_a_propose_disposition",
+        "verb_iri": "mesh:proposeDisposition",
+        "input_uri": "http://internal/sustainment/pcn#SustainmentNotice",
+        "output_uri": _MESH + "DispositionReview",
+        "endpoint_url": "http://iagent-restate:8080/PcnReviewStarter/start_review",
+        "owner_persona": "SUSTAINMENT_ENGINEER",
+        "domains": ["SUSTAINMENT"],
+        "synonyms": ["propose disposition", "disposition review",
+                     "review the affected parts", "act on the notice",
+                     "process the change notice", "disposition the parts"],
+        "description": "Starts a grouped disposition review for a sustainment "
+                       "notice (PCN/PDN): composes affected parts into a batch "
+                       "under the disposition ruleset, proposes a disposition "
+                       "per part, and opens one human review that fans out "
+                       "per-part dispatch tasks on approval.",
+        "cost_class": "slow",
+        "requires_human_approval": True,
+    },
 ]
 
 

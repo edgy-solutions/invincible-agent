@@ -2281,6 +2281,66 @@ async def lifespan(fastapi_app: FastAPI):
         cost_class="slow",  # smolagents loops are not cheap
     )
 
+    # ---------------------------------------------------------------------
+    # PCN/PDN disposition — the FIRST sustainment verb to wake.
+    #
+    # setup/ontologies/pcn_extension.ttl deliberately declared the pcn
+    # subject CLASSES but registered NO disposition verbs, with the standing
+    # rule: "they wake per-endpoint as each serving endpoint becomes real
+    # (registering a verb against a stub endpoint would recreate a dead-end
+    # menu)." That precondition is now met — PcnReviewStarter.start_review
+    # is live and PROVEN end-to-end (the five-beats loop: notice -> batch ->
+    # grouped review -> approve -> fan-out -> dispatch + state). So we wake
+    # exactly one verb, bound to that real endpoint.
+    #
+    # input_uri is the PARENT pcn:SustainmentNotice, so find_compatible_verbs
+    # offers it for both concrete subclasses (PCN, PDN) via the subClassOf
+    # walk — one edge, whole-family coverage. This adds ZERO menu/UI code:
+    # the SPO interview sources its menu from these verb edges, so registering
+    # here is the entire change — the proof of the sourced-menu design.
+    #
+    # endpoint_url points at the real Restate ingress for start_review (NOT a
+    # stub, NOT the /analyze LLM handler which can't drive a deterministic
+    # workflow). The router->start_review payload adapter is the dispatch
+    # concern of a later window; end-to-end invocation is already proven
+    # directly. First user of ADR-0008 verb_anti_synonyms: repel pure-lookup
+    # intents ("what does the notice say") so a read never routes to an action.
+    register_engine_to_mesh(
+        name="engine_a_propose_disposition",
+        description=(
+            "Starts a grouped disposition review for a sustainment notice "
+            "(PCN/PDN): composes the notice's affected parts into a server-"
+            "authored batch under the current disposition ruleset, proposes a "
+            "disposition per part (dispatch-to-qualification / last-time-buy / "
+            "alternate-sourcing / archive), and opens ONE human review that, "
+            "on approval, fans out per-part dispatch tasks. Use this to ACT on "
+            "a notice; it does not merely describe one."
+        ),
+        verb="mesh:proposeDisposition",
+        input_uri="http://internal/sustainment/pcn#SustainmentNotice",
+        output_uri="http://invincible-agent/mesh#DispositionReview",
+        verb_synonyms=[
+            "propose disposition", "propose dispositions", "disposition review",
+            "review the affected parts", "review dispositions",
+            "what should we do about this notice", "act on the notice",
+            "act on the PCN", "handle the PDN", "process the change notice",
+            "disposition the parts", "start disposition review",
+        ],
+        verb_anti_synonyms=[
+            "what does the notice say", "show the notice details",
+            "list the affected parts", "who owns this part",
+            "when was the notice issued", "summarize the notice",
+        ],
+        endpoint_url=os.getenv(
+            "PCN_REVIEW_STARTER_URL",
+            "http://iagent-restate:8080/PcnReviewStarter/start_review",
+        ),
+        owner_persona="SUSTAINMENT_ENGINEER",
+        domains=["SUSTAINMENT"],
+        cost_class="slow",
+        requires_human_approval=True,  # the grouped review is HITL by design
+    )
+
     yield
 
     # Teardown Sequence
