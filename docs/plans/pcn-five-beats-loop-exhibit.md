@@ -43,16 +43,42 @@ separation is the product thesis made observable.
   approver who resolved the batch) — the field whose absence 422'd the register live (found in the
   batch-diff, threaded in `2f1c5ca`). Without it, beat 4 parks; with it, the provenance names the human.
 
-## Durable end-state (intentional — pre-seeds the showing)
-Left in place, because these are the LEGITIMATE outcome of a proven disposition, not residue:
-- 3 parts in `dispatchQualification` (the dashboard window will render exactly these).
-- 3 pending qualification tasks in bob's queue (real HITL records; the qualification window acts on these).
-- alice→SUSTAINMENT + bob→qualification, both DECLARED in the sandbox repo (`f441af7`).
-The next window (BFF wiring / dashboard / verb) starts from a cluster that has already run the loop once.
+## Residue ruling — BUILD SUBSTRATE, cleaned before the rehearsal (explicit; revises the open-of-window ruling)
+When this window opened the question "demo artifact or test run?" was settled **test run, clean after** —
+the demo mints fresh during the rehearsal with BFF + dashboard live, no seam. This run's output is a
+genuine disposition's genuine output AND it usefully feeds the next two build windows, which tempts a
+reframe to "leave it standing." Recorded here as a REVISION, not a closing-paragraph slide:
+- **KEEP now** as substrate for the BFF-wiring + dashboard windows: 3 parts in `dispatchQualification`
+  (dashboard feeder renders exactly these), 3 pending qualification tasks in bob's queue (HITL records the
+  qualification view acts on), alice→SUSTAINMENT + bob→qualification DECLARED in the sandbox repo (`f441af7`).
+- **CLEAN before the five-beats rehearsal** — a NAMED pre-rehearsal step, so the demo mints fresh (honors
+  the original ruling). The failure it prevents is concrete: re-running `IPCN25300X` against live residue
+  either (a) idempotency collapses it into the day-old tasks → demo shows stale `requested_by` timestamps,
+  or (b) yields SIX parts in `dispatchQualification` + duplicate tasks in bob's queue — both are seams in
+  the exact artifact the demo displays. Clean = clear the 3 state stamps + cancel the 3 tasks (and reset
+  the workflow key) before beat 1 of the rehearsal.
+- **WAKE:** the five-beats rehearsal session begins with this cleanup, or re-rules read-only-replay. Not
+  the unexamined middle.
 
 ## Follow-up observed (not M1 — filed, not fixed)
 The dispatch queue key is a PLAIN persona name (`qualification`), not `task_kind:compartment` like the
 review audience (`pcn_disposition:SUSTAINMENT`). So dispatch/qualification WORK isn't compartment-isolated
-the way REVIEW is — a second compartment's qualification tasks would share one `qualification` queue.
-Revisit whether dispatch queues should be `qualify:<compartment>` when >1 compartment ships. Declared in
-the sandbox repo note so it's visible, deny-by-default holds regardless (no grant ⇒ no queue).
+the way REVIEW is. **Wake trigger (sharpened):** not "when a second COMPARTMENT ships" but **the first day
+two kinds of work share the `qualification` queue** — i.e. when any SECOND audience/consumer reads that
+queue, whether or not the second thing is a compartment. The isolation gap bites on shared consumption,
+earlier than multi-compartment. Revisit `qualify:<compartment>` (or a consumer-scoped key) then. Declared
+in the sandbox repo note; deny-by-default holds regardless (no grant ⇒ no queue).
+
+## Bug-arc closure — `requested_by`: found → fixed → classified → LOAD-BEARING
+The strongest form of the arc thesis (the live session catching not just a bug but a missing FEATURE
+wearing a bug's clothes):
+
+| bug (live-only) | found | fixed | classified | now |
+|---|---|---|---|---|
+| `ruleset_ref` whole-graph hash → co-tenancy drift | batch-diff | content-only hash (`51b146b`) | co-tenancy-stable provenance | the one hash shown end-to-end (beats 1→5) |
+| `rdflib` missing from image | load 500 | pyproject+lock (`d3b3c2e`) | test-env==image-env rule | suite runs `--frozen`, no overlay |
+| **`requested_by` absent** | **register 422 → park** | **thread approver (`2f1c5ca`)** | **register contract, not detail** | **LOAD-BEARING: names the human on every dispatch task (beat 4 provenance)** |
+
+`requested_by` is the exemplar: a 422 that looked like a wiring miss was a provenance requirement the
+design hadn't stated. The live session didn't patch a bug — it surfaced a feature the offline seals
+couldn't have named, because only the real register contract demanded it.
