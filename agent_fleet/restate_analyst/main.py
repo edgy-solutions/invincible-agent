@@ -2312,8 +2312,18 @@ except ImportError:
         run_tracker,
     )
 
+# PcnDispatchItem — the per-item PCN/PDN dispatch driver (two-write convergence, keyed by notice x
+# part). Same flatten-the-dir import dance as run_tracker so the container path (/app/pcn_driver.py)
+# and the dev package path both resolve.
+try:
+    from pcn_driver import pcn_dispatch_item  # noqa: E402  — container path
+except ImportError:
+    from agent_fleet.restate_analyst.pcn_driver import (  # noqa: E402
+        pcn_dispatch_item,
+    )
+
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, pcn_dispatch_item]))
 
 
 # ---------------------------------------------------------------------------
