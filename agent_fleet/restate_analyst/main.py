@@ -2331,8 +2331,16 @@ except ImportError:
         pcn_grouped_review,
     )
 
+# PcnReviewStarter — the explicit entry that composes a notice into a running grouped review.
+try:
+    from pcn_review_starter import pcn_review_starter  # noqa: E402  — container path
+except ImportError:
+    from agent_fleet.restate_analyst.pcn_review_starter import (  # noqa: E402
+        pcn_review_starter,
+    )
+
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, pcn_dispatch_item, pcn_grouped_review]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, pcn_dispatch_item, pcn_grouped_review, pcn_review_starter]))
 
 
 # ---------------------------------------------------------------------------

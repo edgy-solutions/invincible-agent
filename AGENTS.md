@@ -17,7 +17,12 @@ cluster** (kube context `edge`) for the current PCN/PDN M1 wiring — "the clust
 deploys/ingests/rolls no longer serialize per-action under clause 2; agents may write there directly,
 with the destructive-op discipline still applying (predict-via-check before a destructive substrate op;
 additive/partition paths preferred; verify the effect; a full DROP-first prime remains decision-bearing
-and should still be surfaced, not run silently). Clause 2's per-action serialization now governs writes
+and should still be surfaced, not run silently). **Kill-seal ruling (2026-07-23):** the PCN driver's
+two-direction failure-injection seal KILLS a Restate process mid-write on `edge` — disruptive-by-intent
+but resumable-by-design (data loss would mean the seal already failed), so it is within the standing
+grant, NOT a per-action gate; the agent DRIVES it, ANNOUNCING each kill before it runs (surface-not-
+silent) with a timestamp to correlate against the Restate journal + assertions. The kill window must be
+JOURNAL-CONFIRMED (mint journaled, state-write not yet → kill landed between the writes), not assumed. Clause 2's per-action serialization now governs writes
 **outside** this grant; **clause 3 is unchanged** — the work cluster is still the human's. Re-scope the
 grant when the work changes, and keep this line current so the fence tracks reality, not the state it
 was written in.
