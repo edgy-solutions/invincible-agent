@@ -133,6 +133,20 @@ are emails), selected by `USER_ENTITLEMENT_CLAIM` (`auth.py`, default
 point.** Sending the sub matches no subject → deny-all (this was the
 `central_gateway` bug).
 
+**DEPLOYMENT DIVERGENCE (identity is CONTENT, not mechanism) + FLIP RIDER.** `USER_ENTITLEMENT_CLAIM`
+selects WHICH claim is the subject, per environment: **sandbox = `email`** (`alice@example.com`, the
+default; observed live 2026-07-24), **work = the employee-id claim** (work's IdP puts employee-id in
+the authz claim; `policy/users.yaml`/`task_grants.yaml` ids are employee-ids there — README rule #1).
+The mechanism is identical; only the subject FORMAT differs. Consequence: any seal asserting "this exact
+grant works" transfers SHAPE, not literal subjects — a grant seeded in email denies-everyone against an
+employee-id caller (fail-closed, presenting as "the flip broke everything"). **Flip-checklist rider —
+at the `ENABLE_AGENTIC_AUTH` flip, RE-RUN the discrimination seal (pcn `can_act` + `can_view`) with
+WORK-FORMAT subjects**, so the email↔employee-id seam is a checked box, not a rediscovered surprise.
+Sibling of the `central_gateway` `preferred_username` fix (same seam, one gateway layer down); keep them
+adjacent in the checklist. Divergence record: sandbox policy repo README
+(`C:\tmp\iagent-policy-sandbox`, observed claim + date); pcn seal:
+[[pcn-discrimination-seal-exhibit]] · [[feedback_identity_carried_opaque]].
+
 ### Subject is passed EXPLICITLY in `resourceContext`
 This Topaz has **no `identity→user` resolution objects seeded**, so
 `input.user.id` is always EMPTY. Enforcement points pass the subject key

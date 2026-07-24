@@ -37,10 +37,13 @@ alice granted `pcn_disposition:SUSTAINMENT` (persists — the demo entitlement);
 via removal-sync. `bob` exists as a non-reviewer. The sandbox policy repo (`e0f6ee9`) reflects the clean
 state; the AVIATION entry lives only in this exhibit's history, not the repo (fixture, not residue).
 
-## Remaining to make it a standing loop (not blocking — the seal is proven)
-The syncs were run manually in-pod (the mechanism). To make it CONTINUOUS: host the sandbox repo on git,
-create the `iagent-policy-repo` secret (a PAT), and `helm upgrade` sandbox with `deploy/values-sandbox.yaml`
-(`topazSeed.enabled: true`) — then the CronJob reconciles on every tick. That's infra wiring (needs the
-git host + PAT + the sandbox helm release/base-values), distinct from the mechanism proof, which is done.
-NB `topaz_sync.py` (personas/cells) needs a `personas.yaml` source in the dir or a flag — irrelevant to
-`can_act`/`task_audience`, but resolve it before enabling the full seed.
+## Continuous-seed WAKE (armed — not blocking; the mechanism is proven run-in-pod)
+Run-in-pod seeding proved the mechanism. Continuous seeding (hosted repo + `iagent-policy-repo` PAT
+secret + `helm upgrade` sandbox with `deploy/values-sandbox.yaml` `topazSeed.enabled: true` → the
+CronJob reconciles every tick) matters ONLY when authz config starts changing *without* an agent session
+driving it — which is exactly when the demo period ends and other hands touch sandbox.
+- **WAKE: the first authz change NOT made through an agent session → stand up the continuous seed.**
+  Until then, run-in-pod (the mechanism, proven here) is sufficient and cheaper.
+- **Precondition (rides the wake):** `topaz_sync.py` (personas/cells) needs a `personas.yaml` source in
+  the policy-dir or a flag — irrelevant to `can_act`/`task_audience` (this seal), but it must be resolved
+  before the FULL seed runs green. Filed, not dangling.
