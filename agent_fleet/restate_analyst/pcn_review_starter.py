@@ -12,15 +12,17 @@ were RESOLVED GENERIC per the generic-at-birth rule (AGENTS.md): new surface nev
 name, so neither seam mints pcn-named surface:
 
   * ``resolve_subject`` -> ``resolve_subject_via_engine_o`` (LIVE; exists).
-  * ``load_rules``      -> DEPLOY-GATED, born generic. Rules come from the GRAPH (source-authority —
-    policy is the ingested TTL in SUSTAINMENT, changeable without a deploy), fetched via engine-o
-    ``POST /policy_rules`` taking ``{graph, ruleset_label}`` and returning ``{ruleset,
-    category_classes, ruleset_ref}``. NOT a pcn-named route — "fetch flat rule individuals from a named
-    graph" knows nothing about PCN; the domain is the caller's argument. (Endpoint pending build.)
+  * ``load_policy_rules`` -> BUILT, born generic. The generic ``[[policy_rules_client]]`` fetches
+    engine-o ``POST /policy_rules {graph, ruleset_label}`` (which serves the rule subgraph as Turtle —
+    engine-o interprets nothing) and loads + validates it. ``start_review`` surfaces the four failure
+    modes honestly: ``not_found`` -> RULES_NOT_FOUND, ``invalid`` -> RULESET_INVALID (report-don't-
+    reject: no dispatch under a corrupt ruleset), ``empty`` -> abstains -> NO_RESIDUE, ``ok`` -> build.
+    NOT a pcn-named route — the domain is the ``graph`` argument.
   * ``can_act``         -> DEPLOY-GATED, born generic. Topaz resource type is the workflow-model noun
     ``disposition_item`` with the domain as a Topaz ATTRIBUTE (never a ``pcn_disposition`` type — a
     domain-named type would write the domain into the entitlement contract). ``core/authz.py`` is
-    decorator-shaped; the ``disposition_item`` type + action pending its Topaz wiring.
+    decorator-shaped; the ``disposition_item`` type + action pending its Topaz wiring — the ONE seam
+    that is genuinely unsealable offline (needs the live authz binding).
 
 The notice's affected parts + needs_review flags are the doc-tools EXTRACTION, passed in the request
 (the upstream producer); the starter does not re-extract. Scope (BOM/AVL ``in_scope_mpns``) is an input.
@@ -37,10 +39,12 @@ try:  # lazy-import dance (container flattens the dir)
     from pcn_review_builder import build_review_batch, resolve_subject_via_engine_o  # type: ignore[no-redef]
     from pcn_workflow import batch_items_to_state  # type: ignore[no-redef]
     from pcn_workflow import run as pcn_grouped_review_run  # type: ignore[no-redef]
+    from policy_rules_client import fetch_policy_rules  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.pcn_review_builder import build_review_batch, resolve_subject_via_engine_o
     from agent_fleet.restate_analyst.pcn_workflow import batch_items_to_state
     from agent_fleet.restate_analyst.pcn_workflow import run as pcn_grouped_review_run
+    from agent_fleet.restate_analyst.policy_rules_client import fetch_policy_rules
 
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
@@ -52,15 +56,17 @@ _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 def build_review_from_request(
     request: dict,
     *,
-    load_rules: Callable[[], tuple],
+    ruleset: list,
+    category_classes: dict,
+    ruleset_ref: str,
     resolve_subject: Callable[[str], Optional[str]],
     can_act: Callable[[str, object], bool],
 ) -> dict:
-    """Compose ONE notice's request into the serialized batch the workflow consumes. Pure given the
-    seams — the same real-shaped IPCN25300X fixture the seam-diff seal uses drives it. Returns the
-    batch_items (JSON-native), the funnel counts (conservation observable), the ruleset_ref, and the
-    resolved/unresolved residue-subject counts (the re-link tally)."""
-    ruleset, category_classes, ruleset_ref = load_rules()
+    """Compose ONE notice's request into the serialized batch the workflow consumes, given an
+    ALREADY-LOADED ruleset (loading + validation happened upstream in the policy-rules client, so a
+    corrupt/absent ruleset never reaches here). Pure given the two seams — the same real-shaped
+    IPCN25300X fixture the seam-diff seal uses drives it. Returns batch_items (JSON-native), funnel
+    counts (conservation observable), ruleset_ref, and the resolved/unresolved residue-subject tally."""
     build = build_review_batch(
         impacted_parts=request["impacted_parts"],
         doc_type=request["doc_type"],
@@ -83,26 +89,19 @@ def build_review_from_request(
 
 
 # ---------------------------------------------------------------------------
-# Live seams (DEPLOY-GATED — see module docstring; two decisions surfaced)
+# Live seams
 # ---------------------------------------------------------------------------
 _RULESET_GRAPH = os.getenv("PCN_SUSTAINMENT_GRAPH", "SUSTAINMENT")
 _RULESET_LABEL = os.getenv("PCN_RULESET_LABEL", "pcn_disposition_rules")
+# The caller's registered actions (its domain vocab) — enables the registration check at load time.
+_KNOWN_DISPOSITIONS = ["dispatchQualification", "dispatchLTB", "dispatchAltSourcing", "archive"]
 
 
-def load_rules_via_engine_o() -> tuple:  # pragma: no cover - deploy-gated (generic endpoint pending build)
-    """Fetch (ruleset, category_classes, ruleset_ref) from the GRAPH via engine-o's GENERIC
-    ``POST /policy_rules`` (born generic per the birth rule): ``{graph, ruleset_label}`` -> rule
-    individuals from the named graph. Source-authority — rules follow the ingested graph, never a file
-    on disk, so a policy change without a deploy is honoured. The PCN-ness is entirely in the
-    arguments; the route knows nothing about PCN."""
-    import requests
-    resp = requests.post(
-        f"{ENGINE_O_URL}/policy_rules",
-        json={"graph": _RULESET_GRAPH, "ruleset_label": _RULESET_LABEL}, timeout=_HTTP_TIMEOUT,
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    return body["ruleset"], body["category_classes"], body["ruleset_ref"]
+def load_policy_rules() -> dict:  # pragma: no cover - deploy-gated (live engine-o fetch)
+    """Fetch + load + validate the ruleset via the GENERIC policy-rules client (engine-o serves Turtle
+    from the named graph; the client interprets it — source-authority, the domain is the ``graph``
+    argument). Returns the client's dict incl. ``status`` (not_found/empty/invalid/ok) + validity."""
+    return fetch_policy_rules(_RULESET_GRAPH, _RULESET_LABEL, known_dispositions=_KNOWN_DISPOSITIONS)
 
 
 def can_act_via_topaz(approver: str, item) -> bool:  # pragma: no cover - deploy-gated (Topaz wiring pending)
@@ -135,11 +134,26 @@ async def start_review(ctx: Context, request: dict) -> dict:
     notice_id = request["notice_id"]
     approver = request["approver"]
 
+    # 1) Load + validate the ruleset (client interprets engine-o's served Turtle). A corrupt or absent
+    #    ruleset is surfaced HONESTLY here — it never flows into the batch looking valid.
+    rules = await ctx.run("load_policy_rules", load_policy_rules)
+    if rules["status"] == "not_found":
+        return {"status": "RULES_NOT_FOUND", "notice_id": notice_id, "graph": _RULESET_GRAPH}
+    if rules["status"] == "invalid":
+        # report-don't-reject reaches its terminus: the caller's policy is "do not dispatch under an
+        # invalid ruleset." Honest halt with reasons, no batch, no workflow.
+        return {"status": "RULESET_INVALID", "notice_id": notice_id,
+                "ruleset_ref": rules["ruleset_ref"], "validation_errors": rules["validation_errors"]}
+
+    # 2) Compose the batch (ok or empty ruleset — an empty ruleset abstains everything, which surfaces
+    #    honestly as NO_RESIDUE below rather than a silent nothing).
     build = await ctx.run(
         "build_review_batch",
         lambda: build_review_from_request(
             request,
-            load_rules=load_rules_via_engine_o,
+            ruleset=rules["ruleset"],
+            category_classes=rules["category_classes"],
+            ruleset_ref=rules["ruleset_ref"],
             resolve_subject=resolve_subject_via_engine_o,
             can_act=can_act_via_topaz,
         ),

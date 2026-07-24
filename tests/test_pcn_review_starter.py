@@ -66,21 +66,30 @@ def _request(impacted=None, in_scope=None):
     }
 
 
-def _fake_seams(can_act=lambda a, it: True):
-    return {
-        "load_rules": _load_real_rules,
-        "resolve_subject": lambda mpn: _KNOWN_IRIS.get(mpn),
-        "can_act": can_act,
-    }
+def _ok_rules():
+    """The client's 'ok' envelope over the real ruleset — what load_policy_rules returns live."""
+    ruleset, category_classes, ruleset_ref = _load_real_rules()
+    return {"status": "ok", "ruleset": ruleset, "category_classes": category_classes,
+            "ruleset_ref": ruleset_ref, "valid": True, "validation_errors": [], "registration_checked": True}
+
+
+def _wire(monkeypatch, rules=None, resolve=None, can_act=lambda a, it: True):
+    monkeypatch.setattr(starter, "load_policy_rules", lambda: rules if rules is not None else _ok_rules())
+    monkeypatch.setattr(starter, "resolve_subject_via_engine_o", resolve or (lambda mpn: _KNOWN_IRIS.get(mpn)))
+    monkeypatch.setattr(starter, "can_act_via_topaz", can_act)
 
 
 # ===========================================================================
 # The entry composition == the seam-diff seal's validated batch
 # ===========================================================================
 def test_entry_composition_matches_seam_diff_prediction():
-    out = starter.build_review_from_request(_request(), **_fake_seams())
+    ruleset, category_classes, ruleset_ref = _load_real_rules()
+    out = starter.build_review_from_request(
+        _request(), ruleset=ruleset, category_classes=category_classes, ruleset_ref=ruleset_ref,
+        resolve_subject=lambda mpn: _KNOWN_IRIS.get(mpn), can_act=lambda a, it: True,
+    )
     assert out["counts"] == {"input": 4, "residue": 3, "filtered": 1, "auto_disposed": 0, "review_forced": 1}
-    assert out["ruleset_ref"].startswith("rules@")
+    assert out["ruleset_ref"] == "rules@edc21f242929"
     assert out["resolved"] == 2 and out["unresolved"] == 1
     mpns = {it["mpn"] for it in out["batch_items"]}
     assert mpns == {"NSR01L30NXT5G", "MPN-NEEDSREVIEW", "MPN-UNRES"}
@@ -108,10 +117,7 @@ class _FakeContext:
 
 @pytest.mark.asyncio
 async def test_start_review_starts_workflow_with_composed_batch(monkeypatch):
-    monkeypatch.setattr(starter, "load_rules_via_engine_o", _load_real_rules)
-    monkeypatch.setattr(starter, "resolve_subject_via_engine_o", lambda mpn: _KNOWN_IRIS.get(mpn))
-    monkeypatch.setattr(starter, "can_act_via_topaz", lambda a, it: True)
-
+    _wire(monkeypatch)
     ctx = _FakeContext()
     out = await _START(ctx, _request())
     assert out["status"] == "STARTED"
@@ -128,10 +134,7 @@ async def test_start_review_starts_workflow_with_composed_batch(monkeypatch):
 async def test_start_review_no_residue_starts_no_workflow(monkeypatch):
     """Every part out-of-scope -> all filtered -> nothing reaches residue -> NO_RESIDUE, no workflow,
     no empty task. The honest-empty path, not a silent success."""
-    monkeypatch.setattr(starter, "load_rules_via_engine_o", _load_real_rules)
-    monkeypatch.setattr(starter, "resolve_subject_via_engine_o", lambda mpn: None)
-    monkeypatch.setattr(starter, "can_act_via_topaz", lambda a, it: True)
-
+    _wire(monkeypatch, resolve=lambda mpn: None)
     all_out_of_scope = [
         {"affected_mpn": "OTHER-1", "replacement_mpn": "", "needs_review": False},
         {"affected_mpn": "OTHER-2", "replacement_mpn": "", "needs_review": False},
@@ -141,3 +144,31 @@ async def test_start_review_no_residue_starts_no_workflow(monkeypatch):
     assert out["status"] == "NO_RESIDUE"
     assert out["counts"]["residue"] == 0
     assert ctx.sends == [], "started a workflow with an empty batch"
+
+
+@pytest.mark.asyncio
+async def test_start_review_invalid_ruleset_halts_honestly(monkeypatch):
+    """An invalid ruleset (client status 'invalid') -> RULESET_INVALID with reasons, NO batch, NO
+    workflow. report-don't-reject reaches its terminus at the caller's policy: don't dispatch under a
+    corrupt ruleset."""
+    _wire(monkeypatch, rules={"status": "invalid", "ruleset": [{"id": "x"}], "category_classes": {},
+                              "ruleset_ref": "rules@bad", "valid": False,
+                              "validation_errors": ["rule x: subsumes y with a different disposition"],
+                              "registration_checked": True})
+    ctx = _FakeContext()
+    out = await _START(ctx, _request())
+    assert out["status"] == "RULESET_INVALID"
+    assert out["validation_errors"]
+    assert ctx.sends == [], "dispatched under an invalid ruleset"
+
+
+@pytest.mark.asyncio
+async def test_start_review_rules_not_found_halts_honestly(monkeypatch):
+    """No rules in the graph (client status 'not_found') -> RULES_NOT_FOUND, no batch, no workflow."""
+    _wire(monkeypatch, rules={"status": "not_found", "ruleset": [], "category_classes": {},
+                              "ruleset_ref": "", "valid": True, "validation_errors": [],
+                              "registration_checked": False})
+    ctx = _FakeContext()
+    out = await _START(ctx, _request())
+    assert out["status"] == "RULES_NOT_FOUND"
+    assert ctx.sends == []

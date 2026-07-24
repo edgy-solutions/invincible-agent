@@ -27,6 +27,21 @@ JOURNAL-CONFIRMED (mint journaled, state-write not yet → kill landed between t
 grant when the work changes, and keep this line current so the fence tracks reality, not the state it
 was written in.
 
+## Runbook: engine-o's SELECT path drops RDF term types — typed reads go CONSTRUCT→parse (2026-07-23)
+
+`execute_sparql` returns `list[dict]` of `{var: string}` — it stringifies every RDF term (main.py
+~L415, `v["value"]`), dropping the Literal/IRI/datatype distinction. So **any** consumer reading a
+TYPED value through the SELECT path gets a string: a boolean `"false"` becomes truthy (`bool("false")
+is True`), a number becomes text, a date loses its type. This was found by design while building
+`/policy_rules` (a boolean rule condition would have silently mis-fired), not by debugging a wrong
+answer in production — file it so the next consumer doesn't rediscover it the expensive way. **Rule:
+for typed reads, run a CONSTRUCT and parse the Turtle into rdflib (types preserved); reserve the
+SELECT path for string/label reads.** `/policy_rules` is the reference: engine-o CONSTRUCTs + serves
+Turtle, the consumer parses. **Convention (until a second consumer forces it structural):** raw
+`/policy_rules` Turtle is NOT a rules API — consumers go through the loader/validator
+(`restate_analyst/policy_rules_client.py`); nothing consumes the raw triples, which is why the endpoint
+honestly serving a possibly-invalid graph is safe. Same shape as "audit_record is audit-only."
+
 ## The generic-at-birth rule (adopted 2026-07-23)
 
 **No new engine route, endpoint, Topaz resource type, or registered capability may carry a domain

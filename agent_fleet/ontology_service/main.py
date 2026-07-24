@@ -1447,6 +1447,11 @@ try:
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.pcn_state_sparql import build_disposition_state_update as _build_state_update, build_parts_by_state_query as _build_parts_query
 
+try:
+    from policy_rules_sparql import build_rules_construct, build_graph_probe_ask  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.ontology_service.policy_rules_sparql import build_rules_construct, build_graph_probe_ask
+
 
 # ---------------------------------------------------------------------------
 # POST /resolve
@@ -2558,6 +2563,59 @@ async def pcn_parts_by_state(request: PartsByStateRequest) -> dict:
     query = _build_parts_query(request.disposition_state)
     rows = await execute_sparql(query, domain=request.domain)
     return {"disposition_state": request.disposition_state, "parts": rows, "count": len(rows)}
+
+
+# ---------------------------------------------------------------------------
+# POST /policy_rules — GENERIC policy-rules reader (born generic per the birth rule).
+# engine-o is a thin typed-triples WINDOW onto a named graph: it CONSTRUCTs the rule
+# subgraph and returns Turtle (types intact — CONSTRUCT, not SELECT, because the SELECT
+# path stringifies RDF terms and `bool("false")` is truthy). It makes NO rules-judgment:
+# whether the graph holds valid rules, an empty ruleset, or garbage is the CONSUMER's call
+# (restate_analyst's loader/validator, which is the only thing that interprets rulesets).
+# Raw /policy_rules Turtle is NOT a rules API — consumers go through the loader/validator.
+# ---------------------------------------------------------------------------
+async def _run_construct_turtle(query: str) -> str:
+    if not _JENA_ENDPOINT:
+        raise HTTPException(status_code=503, detail="Jena query endpoint not configured")
+    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+        resp = await client.post(_JENA_ENDPOINT, data={"query": query}, headers={"Accept": "text/turtle"})
+        resp.raise_for_status()
+        return resp.text
+
+
+async def _run_ask(query: str) -> bool:
+    if not _JENA_ENDPOINT:
+        raise HTTPException(status_code=503, detail="Jena query endpoint not configured")
+    async with httpx.AsyncClient(timeout=5.0, auth=(_JENA_USERNAME, _JENA_PASSWORD), verify=False) as client:
+        resp = await client.post(_JENA_ENDPOINT, data={"query": query},
+                                 headers={"Accept": "application/sparql-results+json"})
+        resp.raise_for_status()
+        return bool(resp.json().get("boolean", False))
+
+
+# Rule vocabulary config (v1: the one ingested ruleset). This is DATA/config, not surface — the route
+# name is domain-free; when a second policy vocabulary lands it becomes a request parameter (the vocab
+# is already a parameter of the pure builders). Sorted for M2 in docs/plans/pcn-extraction-sort.md.
+_RULE_TYPE_IRI = os.getenv("POLICY_RULE_TYPE_IRI", "http://internal/sustainment/pcn#DispositionRule")
+_CHANGE_CLASS_PRED = os.getenv("POLICY_CHANGE_CLASS_PRED", "http://internal/sustainment/pcn#changeClass")
+
+
+class PolicyRulesRequest(BaseModel):
+    graph: str                       # the named graph / domain to read (e.g. "SUSTAINMENT")
+    ruleset_label: str = ""          # advisory (v1: one ruleset per graph); echoed for traceability
+
+
+@app.post("/policy_rules")
+async def policy_rules(request: PolicyRulesRequest) -> dict:
+    """Return the rule subgraph of a named graph as Turtle, plus whether the graph holds any triples.
+    engine-o interprets NOTHING: the consumer (restate_analyst's loader+validator) parses the Turtle,
+    loads the ruleset, and decides not_found / empty / invalid / ok. Turtle preserves RDF term types so
+    boolean rule conditions survive (a SELECT would not)."""
+    construct = build_rules_construct(request.graph, rule_type_iri=_RULE_TYPE_IRI, change_class_pred=_CHANGE_CLASS_PRED)
+    turtle = await _run_construct_turtle(construct)
+    graph_nonempty = await _run_ask(build_graph_probe_ask(request.graph))
+    return {"turtle": turtle, "graph_nonempty": graph_nonempty,
+            "graph": request.graph, "ruleset_label": request.ruleset_label}
 
 
 class FindCompatibleVerbsRequest(BaseModel):

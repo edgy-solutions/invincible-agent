@@ -53,6 +53,20 @@ is generic from now on; this sorts the surface that already exists.
 
 ---
 
+## Armed wakes (named, so they're triggers not re-litigations)
+
+- **Shared policy-lib wake (second-consumer trigger).** The rules loader + validator live in
+  `restate_analyst` (with the proposer, their only consumer). engine-o's `/policy_rules` deliberately
+  does NOT host them — it serves Turtle, the consumer interprets (option 1). If a **second service**
+  ever needs to load/validate rulesets, THAT is the trigger to promote the loader+validator into a
+  shared lib both build contexts vendor — the second-consumer rule, same shape as the second-domain
+  trigger. Armed by this decision, not pre-empted by it. Don't build the shared-lib vendoring
+  mechanism until the second consumer exists.
+- **Raw-Turtle convention → structure wake.** Today "raw `/policy_rules` Turtle is not a rules API;
+  consumers go through the loader/validator" is a CONVENTION (AGENTS.md). Safe because nothing consumes
+  the raw triples. If a second consumer of `/policy_rules` appears, the shared-lib wake fires and the
+  convention becomes structure (the loader/validator is the only sanctioned path).
+
 ## Horizons
 
 - **M2 (extraction):** execute the sort above. Deletion test is the acceptance seal.
