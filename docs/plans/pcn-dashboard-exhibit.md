@@ -30,10 +30,23 @@ The design rule: give the renderer a NON-pcn payload and it must draw a correct 
 3. **Types are generic.** `InstancesByPropertyPayload` names `columns/rows/state_vocabulary/target/
    row_identity` — no pcn field. `tsc --noEmit` clean.
 
-## Live feeder seal (composed path, live inputs)
-The pre-seeded state from the loop + BFF windows means `/pcn_parts_by_state{dispatchQualification}` returns
-real rows across two notices (IPCN25300X + PCNBFFSEAL01). The feeder wraps them into the archetype payload:
-[SEAL RESULT APPENDED BELOW]
+## Live feeder seal (composed path, live inputs — EMPTY-INPUT LAW satisfied)
+Rolled cortex-bff (`053e958`) and hit the feeder with the pre-seeded live state. `GET
+/pcn/parts_by_state?state=dispatchQualification` (alice bearer) returned a well-formed
+INSTANCES_BY_PROPERTY payload over NON-EMPTY live rows:
+```
+archetype INSTANCES_BY_PROPERTY, title "Parts by disposition state",
+target {SUSTAINMENT, pcn:Component, pcn:dispositionState, dispatchQualification},
+columns[4], row_identity{instance, iri, local-name}, state_vocabulary[4 dispositions],
+rows[3]: NSR01L30NXT5G / NSR02F30NXT5G / NSR05F20NXT5G,
+         ref PCNBFFSEAL01:<mpn>, ruleset rules@2915ddb229e4
+```
+This is exactly the shape the generic renderer consumes — the backend→renderer contract holds over live
+data. **What the data taught me:** the rows carry `ref PCNBFFSEAL01:*`, not 6 rows across two notices —
+disposition state is PER-COMPONENT (engine-o's `/write_pcn_disposition_state` is delete-then-insert on the
+component IRI), so the loop-run (IPCN25300X) and the BFF seal (PCNBFFSEAL01) dispositioned the SAME 3 MPNs
+and the latest ref wins. Correct: a part has ONE current disposition state, and the dashboard shows the
+current one. (So the pre-seed is 3 parts, latest-notice ref — not additive across notices.)
 
 ## Payload contract
 `docs/plans/pcn-dashboard-payload-schema.md` — each field is the hand-assembled projection of a `rendersAs`
