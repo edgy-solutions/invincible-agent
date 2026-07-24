@@ -166,6 +166,11 @@ async def start_review(ctx: Context, request: dict) -> dict:
             # flip's first-symptom class) / wrong-approver case: a review nobody can action is the
             # join-that-can-never-complete in review clothes (Slice-5 suspend-vs-fail, one level up).
             # Fail here (no workflow started) rather than register a review that parks forever, unseen.
+            # AUDIENCE: this is an INITIATOR-PLANE outcome (operator/system starting the review). It is
+            # honest here, but to a PARTICIPANT (an approver about their OWN view) it is an existence
+            # oracle — "items exist you can't act on" is exactly what Slice-3 redaction withholds. Any
+            # participant-facing entry path MUST collapse this to nothing-to-review. See
+            # docs/plans/pcn-can-act-topaz-binding.md (Audience Rule).
             return {"status": "NO_ENTITLED_ACTION", "notice_id": notice_id,
                     "approver": approver, "counts": build["counts"]}
         # Genuinely nothing to review — every part filtered / auto-disposed (residue is empty).

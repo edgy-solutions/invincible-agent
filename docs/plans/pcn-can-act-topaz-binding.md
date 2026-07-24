@@ -27,6 +27,16 @@ the join-that-can-never-complete in review clothes (Slice-5 suspend-vs-fail, one
 build/registration, never register a review that suspends forever unseen. Proven-to-bite (defeat the
 distinction → the deny-all case silently returns `NO_RESIDUE`, red).
 
+> **AUDIENCE RULE (record before the BFF grows an approver path).** `NO_ENTITLED_ACTION` is an
+> **initiator-plane** outcome — honest loud-fail for the operator/system that STARTS the review.
+> On the **participant plane** (an approver asking about their OWN view) it is an EXISTENCE ORACLE:
+> "items exist you're not entitled to act on" is exactly the fact Slice-3 redaction withholds (Seal 2
+> puts it in `audit_withheld`, unsurfaced). So: **any participant-facing surface collapses
+> `NO_ENTITLED_ACTION` to the same shape as nothing-to-review.** Today the only caller is the operator
+> plane (`start_review` is initiator-invoked), so this costs nothing now — but the dashboard work is
+> precisely where someone adds an approver-initiated path, and this is the line that stops the leak
+> being wired in then. Marked at the point of use in `start_review`.
+
 **3. The three-caller discrimination seal (pcn edition) — the LIVE acceptance, watched not inferred.**
 Same shape as the ADR-0025 flip-checklist `can_view` seal (entitled / empty / wrong-domain), applied to
 `can_act`. When the binding lands, OBSERVE in-session (status = the menu-growth assertion: watched, not
@@ -37,6 +47,14 @@ Same shape as the ADR-0025 flip-checklist `can_view` seal (entitled / empty / wr
   a SUSTAINMENT `disposition_item`, proving the born-generic type's *attribute* does the work the
   domain-named type used to. That third leg is the whole point of `disposition_item` + attribute; if it
   doesn't discriminate, the attribute is cosmetic and the type is domain-named in disguise.
+
+> **THIRD-LEG FIXTURE (acceptance — the seal MUST run all three legs).** Everything live on sandbox is
+> SUSTAINMENT, so the other-domain `disposition_item` the attribute must reject **does not exist** — the
+> third leg requires WRITING a synthetic other-domain item into the authz/graph surface, running the
+> reject, and **DELETING it after** (same clean-after discipline as the state-write test — a fixture,
+> not residue). Name it in the run card so the seal does not quietly shrink to two legs when someone
+> notices there's nothing other-domain to test against — "can't test it, skip it" is exactly how the
+> attribute stays cosmetic — and so the fixture does not outlive its test.
 
 ## Live-session order (unchanged; this is its first act)
 
