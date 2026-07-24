@@ -9,7 +9,7 @@ Turtle, interpreting nothing. Two seals at the layer that owns the property:
    boolean rule condition (`whenHasReplacement true`) survives as a boolean Literal, not the string
    "true" (which `bool()` would read as truthy either way — the landmine the SELECT path would arm).
    Proven by loading the CONSTRUCT result through the real loader and diffing against the known-good
-   answer (rules@edc21f242929) — the seam-diff pattern, at the endpoint's layer.
+   answer (rules@2915ddb229e4) — the seam-diff pattern, at the endpoint's layer.
 
 Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with rdflib \
         pytest ../../tests/test_policy_rules_sparql.py -v
@@ -79,7 +79,7 @@ def test_construct_preserves_everything_the_loader_needs():
     from_construct = load_disposition_rules(result_graph)
     from_direct = load_disposition_rules(direct)
     assert from_construct == from_direct, "CONSTRUCT result did not round-trip to the source loader answer"
-    assert from_construct[2] == "rules@edc21f242929", f"ruleset_ref drifted: {from_construct[2]}"
+    assert from_construct[2] == "rules@2915ddb229e4", f"ruleset_ref drifted: {from_construct[2]}"
 
 
 def test_construct_preserves_boolean_term_type():

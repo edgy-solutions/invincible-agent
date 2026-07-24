@@ -29,16 +29,22 @@ def _local(uri: str) -> str:
     return str(uri).rsplit("#", 1)[-1].rsplit("/", 1)[-1]
 
 
-def load_disposition_rules(graph) -> tuple[list[dict], dict, str]:
+def load_disposition_rules(graph, *, ruleset_label: str = "") -> tuple[list[dict], dict, str]:
     """(ruleset, category_classes, ruleset_ref) from a graph of disposition-rule triples.
 
     * ruleset — one dict per ``pcn:DispositionRule``, carrying EVERY ``pcn:`` predicate as
       ``{local_name: value}`` (block pass), plus ``id`` (the rule's local name). Booleans/strings
       are Python-native.
     * category_classes — ``{category_local: change_class_string}`` from ``pcn:changeClass`` triples.
-    * ruleset_ref — ``<ontology_local_or_'pcn_disposition_rules'>@<12-hex content hash>``: stable for
-      identical content, changes the moment any rule/classification triple changes.
+    * ruleset_ref — ``<label>@<12-hex content hash>``. The hash is over the RULESET CONTENT ONLY
+      (rules + classification), NOT the whole graph — so the identity is STABLE when the ruleset shares
+      a graph with the rest of the vocabulary (the live case: the SUSTAINMENT graph co-tenants the rules
+      with the pcn/s3kl/IOF-Core ontologies; the single-ruleset fixture graph masked this). Co-tenant
+      ontology/vocab triples do NOT perturb the ref. ``label`` is caller-DECLARED (``ruleset_label``) —
+      deterministic and independent of which ontologies happen to co-tenant; it falls back to a graph
+      ``owl:Ontology`` only for a single-ruleset graph (the fixture), sorted so even that is stable.
     """
+    import json
     import rdflib
 
     rules: list[dict] = []
@@ -57,10 +63,20 @@ def load_disposition_rules(graph) -> tuple[list[dict], dict, str]:
     for c, o in graph.subject_objects(rdflib.URIRef(_CHANGE_CLASS)):
         category_classes[_local(c)] = str(o)
 
-    # ruleset_ref: human-readable label + content hash over the canonical triple set.
-    onto = next(graph.subjects(rdflib.RDF.type, rdflib.URIRef("http://www.w3.org/2002/07/owl#Ontology")), None)
-    label = _local(onto) if onto is not None else "pcn_disposition_rules"
-    canon = "\n".join(sorted(f"{s} {p} {o}" for s, p, o in graph))
+    # Label: caller-declared identity, else a deterministic (sorted) graph-ontology fallback for a
+    # single-ruleset graph (the fixture); never the whole-graph-dependent guess that co-tenancy breaks.
+    if ruleset_label:
+        label = ruleset_label
+    else:
+        ontos = sorted(str(o) for o in graph.subjects(rdflib.RDF.type, rdflib.URIRef("http://www.w3.org/2002/07/owl#Ontology")))
+        label = _local(ontos[0]) if ontos else "pcn_disposition_rules"
+
+    # Content hash: rules + classification ONLY (not the graph), so co-tenant vocabulary can't move it.
+    canon = json.dumps(
+        {"rules": [sorted((k, str(v)) for k, v in rule.items()) for rule in rules],
+         "categories": sorted(category_classes.items())},
+        sort_keys=True, ensure_ascii=True,
+    )
     digest = hashlib.sha256(canon.encode("utf-8")).hexdigest()[:12]
     ruleset_ref = f"{label}@{digest}"
 

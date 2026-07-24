@@ -89,7 +89,7 @@ def test_entry_composition_matches_seam_diff_prediction():
         resolve_subject=lambda mpn: _KNOWN_IRIS.get(mpn), can_act=lambda a, it: True,
     )
     assert out["counts"] == {"input": 4, "residue": 3, "filtered": 1, "auto_disposed": 0, "review_forced": 1}
-    assert out["ruleset_ref"] == "rules@edc21f242929"
+    assert out["ruleset_ref"] == "rules@2915ddb229e4"
     assert out["resolved"] == 2 and out["unresolved"] == 1
     mpns = {it["mpn"] for it in out["batch_items"]}
     assert mpns == {"NSR01L30NXT5G", "MPN-NEEDSREVIEW", "MPN-UNRES"}

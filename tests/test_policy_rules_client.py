@@ -1,7 +1,7 @@
 """Policy-rules CLIENT sealed — the adapter that interprets the served Turtle, four failure modes.
 
 The seam-diff at the adapter layer (where option 1 put the interpretation): the served Turtle, loaded
-here, must yield the known-good answer (rules@edc21f242929) — and the four failure modes (not_found /
+here, must yield the known-good answer (rules@2915ddb229e4) — and the four failure modes (not_found /
 empty / invalid / ok) are decided HERE, each with its own test, since they're exactly what the SECOND
 policy domain hits first (new domains arrive with empty graphs).
 
@@ -36,7 +36,7 @@ def test_ok_matches_known_good_answer():
     assert out["status"] == "ok"
     assert out["valid"] is True and out["validation_errors"] == []
     assert out["registration_checked"] is True
-    assert out["ruleset_ref"] == "rules@edc21f242929"
+    assert out["ruleset_ref"] == "rules@2915ddb229e4"
     assert len(out["ruleset"]) == 6
     assert out["category_classes"]["Material"] == "form_fit_function"
 
@@ -47,7 +47,7 @@ def test_ok_without_known_dispositions_skips_registration_honestly():
     out = parse_policy_rules(_real_turtle(), graph_nonempty=True)
     assert out["status"] == "ok" and out["valid"] is True
     assert out["registration_checked"] is False
-    assert out["ruleset_ref"] == "rules@edc21f242929"
+    assert out["ruleset_ref"] == "rules@2915ddb229e4"
 
 
 # ---------------------------------------------------------------------------

@@ -92,7 +92,9 @@ def build_review_from_request(
 # Live seams
 # ---------------------------------------------------------------------------
 _RULESET_GRAPH = os.getenv("PCN_SUSTAINMENT_GRAPH", "SUSTAINMENT")
-_RULESET_LABEL = os.getenv("PCN_RULESET_LABEL", "pcn_disposition_rules")
+# Caller-DECLARED ruleset label (rides into ruleset_ref = <label>@<content-hash>). Matches the pcn/rules
+# ontology's local name; declared not sniffed, so co-tenant vocabulary in the graph can't perturb it.
+_RULESET_LABEL = os.getenv("PCN_RULESET_LABEL", "rules")
 # The caller's registered actions (its domain vocab) — enables the registration check at load time.
 _KNOWN_DISPOSITIONS = ["dispatchQualification", "dispatchLTB", "dispatchAltSourcing", "archive"]
 

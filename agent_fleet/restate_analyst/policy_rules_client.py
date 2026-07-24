@@ -34,7 +34,7 @@ ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 
 
-def parse_policy_rules(turtle: str, *, graph_nonempty: bool, known_dispositions=None) -> dict:
+def parse_policy_rules(turtle: str, *, graph_nonempty: bool, known_dispositions=None, ruleset_label: str = "") -> dict:
     """Load + validate the served Turtle, deciding the four failure modes. PURE (no HTTP) — seals as a
     unit against the real TTL. Returns a JSON-native dict so it rides a Restate journal directly.
 
@@ -46,7 +46,7 @@ def parse_policy_rules(turtle: str, *, graph_nonempty: bool, known_dispositions=
     g = rdflib.Graph()
     if turtle and turtle.strip():
         g.parse(data=turtle, format="turtle")
-    ruleset, category_classes, ruleset_ref = load_disposition_rules(g)
+    ruleset, category_classes, ruleset_ref = load_disposition_rules(g, ruleset_label=ruleset_label)
 
     if not ruleset:
         status = "empty" if graph_nonempty else "not_found"
@@ -80,5 +80,5 @@ def fetch_policy_rules(graph: str, ruleset_label: str = "", *, known_disposition
     body = resp.json()
     return parse_policy_rules(
         body.get("turtle", ""), graph_nonempty=bool(body.get("graph_nonempty", False)),
-        known_dispositions=known_dispositions,
+        known_dispositions=known_dispositions, ruleset_label=body.get("ruleset_label") or ruleset_label,
     )

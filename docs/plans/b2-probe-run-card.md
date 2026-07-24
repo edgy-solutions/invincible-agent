@@ -132,7 +132,7 @@ partition path as the vocab (§8.0c order: rules ingest FIRST), Jena-only (rules
 `ingest_ontology_to_jena` only, `domain=SUSTAINMENT`, no clear. SUCCESS. **Verified live:** 6
 `pcn:DispositionRule` + 6 `pcn:changeClass` in `<http://internal/SUSTAINMENT>`. **Loader acceptance
 gate MET LIVE** (not just fixture): a SPARQL CONSTRUCT of the rule triples → `load_disposition_rules`
-→ 6 rules / 6 classifications, `ruleset_ref = rules@edc21f242929`, `validate_ruleset` CLEAN, and the
+→ 6 rules / 6 classifications, `ruleset_ref = rules@2915ddb229e4`, `validate_ruleset` CLEAN, and the
 real IPCN25300X shape (Material/Process/Location/Testing) → **`dispatchQualification`** — the actual
 notice's disposition computed from POLICY-IN-THE-GRAPH, no code table. The policy-as-data thesis works
 against real data. Remaining loader work = the driver's live SPARQL fetch inside the engine (the
