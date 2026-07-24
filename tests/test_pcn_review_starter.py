@@ -147,6 +147,19 @@ async def test_start_review_no_residue_starts_no_workflow(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_no_entitled_action_when_residue_but_approver_denied_all(monkeypatch):
+    """Residue EXISTS but Topaz denies this approver every item -> NO_ENTITLED_ACTION, LOUD, no
+    workflow. Distinct from NO_RESIDUE (genuinely nothing to review) — the deny-for-everyone misconfig
+    must not hide behind 'nothing to review'. The join-that-can-never-complete, surfaced not parked."""
+    _wire(monkeypatch, can_act=lambda a, it: False)  # deny everyone
+    ctx = _FakeContext()
+    out = await _START(ctx, _request())
+    assert out["status"] == "NO_ENTITLED_ACTION"
+    assert out["counts"]["residue"] == 3, "residue exists (3) — this is not an empty review"
+    assert ctx.sends == [], "started a review no approver can action"
+
+
+@pytest.mark.asyncio
 async def test_start_review_invalid_ruleset_halts_honestly(monkeypatch):
     """An invalid ruleset (client status 'invalid') -> RULESET_INVALID with reasons, NO batch, NO
     workflow. report-don't-reject reaches its terminus at the caller's policy: don't dispatch under a

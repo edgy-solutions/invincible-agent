@@ -160,7 +160,15 @@ async def start_review(ctx: Context, request: dict) -> dict:
     )
     batch_items = build["batch_items"]
     if not batch_items:
-        # HONEST: every part filtered / auto-disposed / withheld — nothing for this approver to review.
+        if build["counts"]["residue"] > 0:
+            # Residue EXISTS but this approver is entitled to act on NONE of it. Surface LOUDLY — never
+            # mask it as "nothing to review". This is the deny-for-everyone misconfig (the agentic-auth
+            # flip's first-symptom class) / wrong-approver case: a review nobody can action is the
+            # join-that-can-never-complete in review clothes (Slice-5 suspend-vs-fail, one level up).
+            # Fail here (no workflow started) rather than register a review that parks forever, unseen.
+            return {"status": "NO_ENTITLED_ACTION", "notice_id": notice_id,
+                    "approver": approver, "counts": build["counts"]}
+        # Genuinely nothing to review — every part filtered / auto-disposed (residue is empty).
         return {"status": "NO_RESIDUE", "notice_id": notice_id, "counts": build["counts"]}
 
     workflow_id = f"pcn-review-{notice_id}-{approver}"
