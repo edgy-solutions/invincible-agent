@@ -14,6 +14,7 @@ Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with pyt
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -34,6 +35,7 @@ from agent_fleet.restate_analyst.workflow_bulk_resolve import (  # noqa: E402
 
 _SUBMIT = pcn_workflow.submit_decision.__wrapped__
 _RUN = pcn_workflow.run.__wrapped__
+_GET_BATCH = pcn_workflow.get_batch.__wrapped__
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +225,39 @@ async def test_submit_accept_resolves_promise_once():
     out = await _SUBMIT(ctx, {"decision": {"overrides": {}}})
     assert out["accepted"] is True and out["status"] == "accepted"
     assert len(ctx.resolved) == 1, "an accepted decision must resolve the promise exactly once (wake -> fan out)"
+
+
+@pytest.mark.asyncio
+async def test_get_batch_serves_only_the_authored_batch():
+    """Rider 1 (two-object at birth): the batch-read serves EXACTLY the per-approver-authored items +
+    the notice labels, and NOTHING else from workflow state. A decoy field in state must not leak — a
+    batch-read that echoed other state would be the existence oracle Slice 3 closed. Safe by
+    construction (the state IS the filtered batch), asserted anyway."""
+    authored = [
+        {"mpn": "A", "subject": "http://internal/components/A",
+         "proposed_disposition": "dispatchQualification", "needs_review": False},
+        {"mpn": "B", "subject": None,
+         "proposed_disposition": "dispatchQualification", "needs_review": True},
+    ]
+    state = {
+        "batch_items": authored, "approver": "alice@example.com",
+        "notice_fingerprint": "IPCN25300X", "notice_id": "IPCN25300X", "doc_type": "PCN",
+        "audit_withheld": [{"mpn": "SECRET-OTHER-APPROVER"}],  # decoy — MUST NOT leak
+    }
+    out = await _GET_BATCH(FakeSharedContext(state))
+    assert out["items"] == authored, "batch-read must serve exactly the authored per-approver items"
+    assert out["notice_type"] == "PCN" and out["notice_id"] == "IPCN25300X"
+    assert out["approver"] == "alice@example.com"
+    assert set(out.keys()) == {"batch_id", "approver", "notice_id", "notice_type",
+                               "notice_fingerprint", "items"}, "batch-read leaked an extra field"
+    assert "SECRET-OTHER-APPROVER" not in json.dumps(out), "decoy state leaked into the batch-read"
+
+
+@pytest.mark.asyncio
+async def test_get_batch_404_when_no_active_review():
+    import restate
+    with pytest.raises(restate.TerminalError):
+        await _GET_BATCH(FakeSharedContext({}))  # no batch_items -> no active review
 
 
 # ===========================================================================

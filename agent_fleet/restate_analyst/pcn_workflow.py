@@ -125,13 +125,18 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     audience = request.get("audience") or approver
     notice_fingerprint = request["notice_fingerprint"]
     notice_id = request.get("notice_id", "")
+    doc_type = request.get("doc_type", "PCN")
     user_jwt = request.get("user_jwt", "")
     batch_items = request["batch_items"]
 
     # Persist the server-authored batch — submit_decision validates against THIS, not client input.
+    # notice_id/doc_type are stored too so the reviewer's batch-read (get_batch) can label the notice
+    # without the client re-supplying it.
     ctx.set("batch_items", batch_items)
     ctx.set("approver", approver)
     ctx.set("notice_fingerprint", notice_fingerprint)
+    ctx.set("notice_id", notice_id)
+    ctx.set("doc_type", doc_type)
 
     # ONE grouped HumanTask for the whole batch (1 approval resolves N). Register durably BEFORE
     # suspending, mirroring the sealed HITL mechanics.
@@ -197,3 +202,31 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
 
     await ctx.promise("decision", type_hint=dict).resolve(request.get("decision", {}))
     return {"status": "accepted", "accepted": True, "resolved_count": len(submission.resolutions)}
+
+
+@pcn_grouped_review.handler()
+async def get_batch(ctx: WorkflowSharedContext) -> dict:
+    """Serve the reviewer THIS approver's authored batch — so the UI can show the parts + proposed
+    dispositions + needs_review flags before deciding (blind accept-all can't handle a needs_review row).
+
+    TWO-OBJECT AT BIRTH (rider): ``batch_items`` in workflow state is ALREADY the per-approver-filtered
+    batch — the funnel + can_act filtering happened upstream in grouped_review, and only THIS approver's
+    residue was ever authored into the workflow arg. So we return exactly that state and nothing else: no
+    audit_withheld, no other-approver residue exists here to leak, so a batch-read can never become the
+    existence oracle Slice 3 closed. The seal asserts the returned items are exactly the authored batch —
+    'safe by construction' is a claim until observed."""
+    batch_items = await ctx.get("batch_items")
+    if batch_items is None:
+        raise restate.TerminalError("no active grouped review for this workflow", status_code=404)
+    approver = await ctx.get("approver")
+    notice_fingerprint = await ctx.get("notice_fingerprint")
+    notice_id = await ctx.get("notice_id")
+    doc_type = await ctx.get("doc_type")
+    return {
+        "batch_id": f"grouped:{notice_fingerprint}:{approver}",
+        "approver": approver,
+        "notice_id": notice_id or notice_fingerprint,
+        "notice_type": doc_type or "PCN",
+        "notice_fingerprint": notice_fingerprint,
+        "items": batch_items,   # exactly the authored per-approver batch — nothing else from state
+    }

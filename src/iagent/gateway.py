@@ -366,6 +366,51 @@ async def start_pcn_review(
     return out
 
 
+@app.get("/pcn/reviews/{workflow_id}/batch")
+async def get_pcn_review_batch(
+    workflow_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch the reviewer's grouped-review batch (parts + proposed dispositions + needs_review flags) so
+    the UI can show it before deciding — a blind accept-all can't handle a needs_review row, which is a
+    mandatory per-item exception. EXISTENCE-ORACLE-SAFE: the caller must hold THIS grouped task in their
+    OWN pending queue (same authz_id filter as /act); a caller who isn't the approver gets 404, never a
+    peek at another approver's batch. engine-a's get_batch serves only the per-approver-authored state."""
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    try:
+        rows = await run_in_threadpool(
+            lambda: human_tasks.list_tasks_for(current_user.authz_id, status="pending")
+        )
+    except human_tasks.HumanTaskConfigError:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
+    match = next((t for t in rows
+                  if t.get("workflow_id") == workflow_id and t.get("kind") == "pcn_grouped_review"), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail={"error": "review_not_found"})
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            rr = await client.post(
+                f"{_RESTATE_INGRESS_URL}/PcnGroupedReview/{workflow_id}/get_batch", json={},
+            )
+            rr.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"error": "review_batch_unreachable", "message": str(exc)})
+    b = rr.json()
+    # Map engine-a state items -> the UI ReviewItem shape (mpn/subject/proposed_disposition/needs_review).
+    items = [{"mpn": it.get("mpn"), "subject": it.get("subject"),
+              "proposed_disposition": it.get("proposed_disposition"),
+              "needs_review": bool(it.get("needs_review", False))} for it in b.get("items", [])]
+    return {
+        "batch_id": match["task_id"],        # the grouped HumanTask id — what /act is addressed on
+        "notice_id": b.get("notice_id"),
+        "notice_type": b.get("notice_type", "PCN"),
+        "notice_fingerprint": b.get("notice_fingerprint"),
+        "approver": current_user.authz_id,
+        "items": items,
+    }
+
+
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
 # The ONE pcn-aware presentation surface (grep-able; the M2 deletion test covers it). It hand-assembles
 # an INSTANCES_BY_PROPERTY archetype payload (docs/plans/pcn-dashboard-payload-schema.md) from engine-o's
