@@ -33,7 +33,8 @@ is generic from now on; this sorts the surface that already exists.
 | `restate_analyst/pcn_disposition_proposer.py` | policy/decision-table evaluator | `evaluate_rules` is generic all-match-must-agree; ruleset is injected data. |
 | `ontology_service/pcn_state_sparql.py` | state SPARQL w/ **predicate config** | The `pcn:` predicates become config the caller supplies. |
 | endpoint `POST /write_pcn_disposition_state` | `POST /write_item_state` (+ predicate config) | Generic "stamp state onto a node in a named graph." |
-| endpoint `POST /pcn_parts_by_state` | `POST /items_by_state` | Generic read-union "items in a state." |
+| endpoint `POST /pcn_parts_by_state` | `POST /instances` `{domain, class, filter_property, filter_value}` | SHAPE violation, not just naming: "parts, by state" is a specialization of the generic capability the arch already claims — "query instances of class C in domain D filtered by property P" over the read-union + typed CONSTRUCT. Subsumes `/pcn_parts_by_state` the way `/policy_rules` subsumed the pcn rules fetch. `parameterize-and-promote`, not just rename. |
+| cortex-ui `PcnDispositionDashboard` component (to be built) | generic **instances-by-property TABLE archetype** | UI SHAPE violation: not a feature component but a generic "instances-by-property" table whose columns/filters/target-query come from CONFIG (`rendersAs` triples, E-list). Build it archetype-SHAPED even while its payload is hand-assembled (generic renderer, specific feeder) so M2 touches the FEEDER only. See [[feedback_graph_derives_whole_stack]]. |
 | (new, born generic) rules fetch | `POST /policy_rules` `{graph, ruleset_label}` | Built generic per the birth rule — never a pcn-named version. |
 | (new, born generic) authz type | Topaz `disposition_item`, domain as attribute | Never `pcn_disposition`; the entitlement model stays domain-free. |
 
@@ -69,10 +70,33 @@ is generic from now on; this sorts the surface that already exists.
 
 ## Horizons
 
-- **M2 (extraction):** execute the sort above. Deletion test is the acceptance seal.
-- **M3 (definition migration):** re-express the PCN process as a **workflow definition** consumed by
-  `_run_definition` (ADR-0029), retiring the hand-coded `PcnGroupedReview` class — with the honest
-  caveat surfaced now: the definition model likely needs ONE new step kind (a fan-out / grouped human
-  step) to express bulk-resolve, and that addition is generic mechanism arriving with its first real
-  consumer — exactly when ADR-0029 said step kinds should be added. PCN becomes a process the system
-  *runs*, not a feature it *contains*.
+- **M2 (extraction):** execute the sort above — now including the PRESENTATION layer (the endpoint
+  parameterize-and-promote to `/instances` + the dashboard as a generic archetype). The sort previously
+  stopped at engine/BFF; it does not anymore. Deletion test is the acceptance seal, extended: every
+  `pcn_*.py` gone from the engines AND no pcn-named presentation surface (endpoint or UI component).
+- **M3 (definition migration) — INCLUDES PRESENTATION.** Re-express the PCN process as a **workflow
+  definition** consumed by `_run_definition` (ADR-0029), retiring the hand-coded `PcnGroupedReview`
+  class — likely needs ONE new step kind (a fan-out / grouped human step) for bulk-resolve, generic
+  mechanism arriving with its first real consumer (exactly when ADR-0029 said step kinds should be
+  added). AND: the definition carries its **presentation** — `rendersAs` per step/verb (the E-list
+  triple shape). A workflow-as-data whose UI is still code-per-feature is only TWO-THIRDS of the
+  original intent ([[feedback_graph_derives_whole_stack]]): the whole stack — process, capability,
+  presentation — must derive from the graph. PCN becomes a process the system *runs* and *renders*, not
+  a feature it *contains*.
+
+## Vision layers (the paydown map)
+
+The full vision is three layers, each a different maturity — the exemplar sprinted through all three in
+specific form; this sort is the paydown:
+- **PROCESS** — M3 workflow-as-data (the original BPMN intent). Not started.
+- **CAPABILITY** — verbs + generic endpoints parameterized by ontology. Mostly built (`/policy_rules`,
+  `/resolve`); needs the parameterize-and-promote pass (`/instances`).
+- **PRESENTATION** — cortex-ui archetypes driven by `rendersAs` triples. HALF-built: cortex-ui already
+  renders by archetype (GROUPED_REVIEW / WORKFLOW_OBSERVATION / honest UI-COMPONENT-NOT-FOUND) — a
+  config-driven UI in embryo — but archetypes are chosen by CODE PATHS, not DECLARED by the graph. The
+  missing step is `rendersAs` (E-list): a verb's output type declares its archetype; a class declares
+  its table columns.
+**Ruling (governs new UI/BFF):** demo on the specific shape; generalize on the trigger — but TIGHTEN the
+trigger. Do NOT build `/instances` or the declarative dashboard under demo pressure — a rushed
+archetype-declaration SCHEMA becomes the contract every future feature writes to and is far harder to
+walk back than a rushed endpoint name. File + shape now (this doc); build on the trigger.
