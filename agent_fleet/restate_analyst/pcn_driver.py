@@ -30,10 +30,17 @@ Scope guard (§7): the driver ends at "the durable task EXISTS," NOT at the task
 from __future__ import annotations
 
 import os
+from datetime import timedelta
 
 import requests
 import restate
 from restate import ObjectContext, VirtualObject
+
+# Kill-seal test scaffolding (env-gated, default 0 = no-op): durable pauses that make a live process
+# kill land PROVABLY in a chosen window (after mint / after state), so the seal's kill is journal-
+# confirmed, not assumed. Never fires in normal operation.
+_SEAL_PAUSE_AFTER_MINT = float(os.getenv("PCN_SEAL_PAUSE_AFTER_MINT_S", "0"))
+_SEAL_PAUSE_AFTER_STATE = float(os.getenv("PCN_SEAL_PAUSE_AFTER_STATE_S", "0"))
 
 try:  # same lazy-import dance as the other restate_analyst cores (container flattens the dir)
     from pcn_dispatch import plan_dispatch  # type: ignore[no-redef]
@@ -192,11 +199,23 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
         outcome["task_minted"] = True
         outcome["task"] = minted
 
+    # KILL-SEAL WINDOW A (env-gated, default 0 -> no-op): a DURABLE pause between the two writes, so a
+    # process kill during it lands PROVABLY after mint and before state — the Restate journal then shows
+    # mint_task completed + this sleep pending at kill. Test scaffolding for the live two-direction
+    # failure-injection seal; never fires in normal operation. See docs/plans/pcn-kill-seal-run-card.md.
+    if _SEAL_PAUSE_AFTER_MINT:
+        await ctx.sleep(timedelta(seconds=_SEAL_PAUSE_AFTER_MINT))
+
     # 2) STATE SECOND — idempotent (delete-then-insert); skipped honestly for an unresolved subject.
     if gw:
         written = await ctx.run("write_state", lambda g=gw: _write_disposition_state(g))
         outcome["state_written"] = True
         outcome["state"] = written
+
+    # KILL-SEAL WINDOW B (env-gated): a durable pause between the state write and the exactly-one marker,
+    # so a kill here proves resume re-runs NEITHER write (both journaled) and still sets the marker once.
+    if _SEAL_PAUSE_AFTER_STATE:
+        await ctx.sleep(timedelta(seconds=_SEAL_PAUSE_AFTER_STATE))
 
     ctx.set("dispatched", outcome)  # exactly-one marker — persists on this object's key
     return outcome
