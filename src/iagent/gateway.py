@@ -366,6 +366,56 @@ async def start_pcn_review(
     return out
 
 
+# ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
+# The ONE pcn-aware presentation surface (grep-able; the M2 deletion test covers it). It hand-assembles
+# an INSTANCES_BY_PROPERTY archetype payload (docs/plans/pcn-dashboard-payload-schema.md) from engine-o's
+# /pcn_parts_by_state. Everything pcn lives in these VALUES; the cortex-ui renderer is generic and knows
+# none of it. Each field is the hand-assembled projection of a `rendersAs` triple M3 will declare, so the
+# M2 swap to a generic /instances endpoint touches ONLY this feeder — the renderer does not move.
+_PCN_STATE_VOCABULARY = ["dispatchQualification", "dispatchLTB", "dispatchAltSourcing", "archive"]
+_PCN_DASHBOARD_COLUMNS = [
+    {"key": "instance", "label": "Part",       "from": "row_identity"},
+    {"key": "state",    "label": "State",      "from": "pcn:dispositionState"},
+    {"key": "ref",      "label": "Resolution", "from": "pcn:dispositionRef"},
+    {"key": "ruleset",  "label": "Policy",     "from": "pcn:proposedByRuleset"},
+]
+
+
+@app.get("/pcn/parts_by_state")
+async def pcn_parts_by_state_dashboard(
+    state: str = "dispatchQualification",
+    current_user: User = Depends(get_current_user),
+):
+    """FEEDER: assemble the INSTANCES_BY_PROPERTY payload for the parts-by-disposition-state dashboard.
+    Pulls rows from engine-o /pcn_parts_by_state and wraps them in the archetype the generic renderer
+    consumes. The pcn-specific columns/vocabulary/target are hand-set HERE (the temporary feeder); the
+    renderer receives only the archetype shape."""
+    if state not in _PCN_STATE_VOCABULARY:
+        raise HTTPException(status_code=400, detail={"error": "unknown_state", "state_vocabulary": _PCN_STATE_VOCABULARY})
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            rr = await client.post(
+                f"{_DAGSONTOLOGY_SVC_URL}/pcn_parts_by_state", json={"disposition_state": state},
+            )
+            rr.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"error": "parts_by_state_unreachable", "message": str(exc)})
+    parts = rr.json().get("parts", [])
+    # Map engine-o's {part, ref, ruleset} rows to the archetype's column keys (state is the query filter).
+    rows = [{"instance": p.get("part"), "state": state, "ref": p.get("ref"), "ruleset": p.get("ruleset")}
+            for p in parts]
+    return {
+        "archetype": "INSTANCES_BY_PROPERTY",
+        "title": "Parts by disposition state",
+        "target": {"domain": "SUSTAINMENT", "class": "pcn:Component",
+                   "filter_property": "pcn:dispositionState", "filter_value": state},
+        "columns": _PCN_DASHBOARD_COLUMNS,
+        "row_identity": {"key": "instance", "iri": True, "display_from_local_name": True},
+        "state_vocabulary": _PCN_STATE_VOCABULARY,
+        "rows": rows,
+    }
+
+
 # ── ADR-0028 canvas persistence ──────────────────────────────────────────────
 class CanvasesBody(_BaseModel):
     """The user's full custom-canvas set (CustomCanvas[]), stored verbatim as
