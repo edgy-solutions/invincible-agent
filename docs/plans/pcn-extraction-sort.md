@@ -67,6 +67,38 @@ is generic from now on; this sorts the surface that already exists.
   consumers go through the loader/validator" is a CONVENTION (AGENTS.md). Safe because nothing consumes
   the raw triples. If a second consumer of `/policy_rules` appears, the shared-lib wake fires and the
   convention becomes structure (the loader/validator is the only sanctioned path).
+- **Presentation-generalization wake (SECOND-VIEW trigger — likely fires SOONEST).** Pile 1 now covers
+  the presentation layer, but its trigger differs from the engine files' (second-domain). The natural
+  trigger: **the second view that wants a table of instances filtered by a property** — the observation
+  view, the review-batch listing, any M2 dashboard variant, within weeks. When that second consumer
+  appears and a dev reaches to COPY the dashboard component, that is the parameterize-and-promote moment
+  for BOTH the endpoint (`/instances`) and the archetype — same second-consumer rule as the shared
+  policy lib, applied to presentation. Arm it now so the second view isn't built by copy-paste during a
+  demo week (the queue growing instead of draining).
+- **Replacement-IRI named wake (known-bad input to a LIVE rule path).** The live graph has 2 parts with
+  MANGLED multi-MPN `hasReplacement` (`SNSR01F30NXT5G,_NSR20F40NXT5G`) — the doc-tools replacement-IRI
+  bug did NOT land. Harmless for the demo (IPCN25300X is a PCN; form/fit/function proposes via
+  `RuleFormFitFunctionChange`, which does not consult replacement) — BUT `RuleDiscontinuedWithReplacement`
+  / `RuleDiscontinuanceCategoryWithReplacement` (PDN) DO test replacement, so the FIRST PDN through the
+  chain meets mangled data at exactly the field its rule reads. Wakes on **first PDN OR the doc-tools
+  fix, whichever first**. Not a demo blocker; a named wake, not a "flagged."
+- **PRODUCER follow-up filed to doc-tools (their side of the fence).** Per-part `needs_review` is
+  persisted to NEITHER graph — only the `review.json` + Neo4j DOC-LEVEL flag. The safety chain rides a
+  field the mesh substrates drop. Ask: **persist per-part `needs_review` into the instance graph** so
+  the projection stops being lossy on the one field five sealed laundering layers depend on. Until it
+  lands, "extraction is authoritative for review-state" is the recorded rule and the
+  `REVIEW_STATE_UNSOURCED` tripwire (`start_review`, `0cc406e`) is its enforcement.
+
+## Archetype payload schema = the hand-assembled version of the future `rendersAs` declaration
+
+Write this BEFORE the dashboard session (the schema is the contract nobody was assigned — and it'd get
+designed under demo pressure otherwise). The instances-by-property archetype's payload shape — **columns,
+filter spec, row identity, state vocabulary** — must NOT be invented; it is the PROJECTION of what
+`rendersAs` will someday declare (class → columns, property → filter, verb-output-type → row shape).
+Writing it down as "this is the hand-assembled version of the future triple declaration" means the M3
+`rendersAs` layer lands on a schema BORN pointing at it, and the M2 feeder-swap is mechanical. Skip it
+and the renderer's payload contract becomes an accident `rendersAs` later has to contort to match — the
+rushed-schema trap through the side door the generic-renderer/hand-fed-feeder split left open.
 
 ## Horizons
 

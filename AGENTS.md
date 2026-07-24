@@ -42,6 +42,19 @@ Turtle, the consumer parses. **Convention (until a second consumer forces it str
 (`restate_analyst/policy_rules_client.py`); nothing consumes the raw triples, which is why the endpoint
 honestly serving a possibly-invalid graph is safe. Same shape as "audit_record is audit-only."
 
+## Runbook: test-env must == image-env — runtime imports are frozen deps, never `--with` overlays (2026-07-24)
+
+Found live: `restate-analyst` 500'd with `No module named 'rdflib'` — the code imports rdflib at
+runtime, but it was missing from the image; the offline suite ran `uv run --frozen --with rdflib`, so
+the overlay supplied rdflib in TEST but not in the CONTAINER. That's **test-env/runtime-env drift** — the
+same shape as fixture/live drift, one layer down: the tests passed in an environment the deployment
+doesn't have. **Rule: a module's RUNTIME imports must be in the image's FROZEN deps (pyproject+lock),
+never provided by a `--with` overlay.** `--with` is only for TEST-ONLY tools (pytest, pytest-asyncio).
+Enforcement: run the suite against `--frozen` alone for anything that imports a runtime dep (the pcn
+suite now passes `--frozen` with no rdflib overlay); if a `--with <runtime-lib>` is load-bearing for a
+test, that library belongs in the image, not the overlay. Same class as the CONSTRUCT finding above —
+"the test lied about the environment."
+
 ## The generic-at-birth rule (adopted 2026-07-23)
 
 **No new engine route, endpoint, Topaz resource type, or registered capability may carry a domain
