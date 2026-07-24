@@ -91,6 +91,21 @@ def plan_to_payload(plan, *, user_jwt: str = "", requested_by: str = "") -> dict
 # ---------------------------------------------------------------------------
 # The two write executors — sync (run inside ctx.run), suspend-vs-fail discipline
 # ---------------------------------------------------------------------------
+def _fail_terminal_on_4xx(resp, what: str) -> None:
+    """Suspend-vs-fail classifier for a write, generalized past 401/403: ANY 4xx (except 429) is a
+    POISONED payload — the request is malformed/unprocessable/denied and will NOT heal on retry, so it
+    is TERMINAL (release the item's keyed object), never a retry-and-park DoS. 429 (rate limit) and
+    5xx/network are transient and stay RETRYABLE (handled by the caller's raise_for_status). Written
+    after a live 422 (missing requested_by) proved a non-401/403 4xx would otherwise park —
+    [[feedback_hitl_suspend_vs_fail_ruling]] / the fan-out isolation seal's poisoned-item discipline."""
+    if 400 <= resp.status_code < 500 and resp.status_code != 429:
+        raise restate.TerminalError(
+            f"{what} rejected ({resp.status_code}) — malformed/unprocessable, won't heal on retry; "
+            f"failing TERMINALLY (release), not retry-park",
+            status_code=resp.status_code,
+        )
+
+
 def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
     """TASK-FIRST executor: register the per-item HumanTask on the disposition's persona queue — the
     "another persona's queue" moment. Same cortex-bff endpoint + SUSPEND-VS-FAIL discipline as
@@ -138,7 +153,8 @@ def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
             f"(audience {audience!r}) -> {CORTEX_BFF_URL}; failing (state released)",
             status_code=403,
         )
-    resp.raise_for_status()  # 5xx / network stay RETRYABLE (cortex-bff momentarily down SHOULD retry)
+    _fail_terminal_on_4xx(resp, f"cortex-bff register of pcn dispatch task {task['task_key']!r}")
+    resp.raise_for_status()  # 5xx / 429 / network stay RETRYABLE (transient, SHOULD retry)
     return resp.json()
 
 
@@ -156,12 +172,8 @@ def _write_disposition_state(gw: dict) -> dict:
     resp = requests.post(
         f"{ENGINE_O_URL}/write_pcn_disposition_state", json=body, timeout=_HTTP_TIMEOUT,
     )
-    if resp.status_code == 400:
-        raise restate.TerminalError(
-            f"engine-o rejected disposition-state write for {gw['subject_iri']!r} (400); failing",
-            status_code=400,
-        )
-    resp.raise_for_status()  # 5xx / network stay RETRYABLE (transient, should retry)
+    _fail_terminal_on_4xx(resp, f"engine-o disposition-state write for {gw['subject_iri']!r}")
+    resp.raise_for_status()  # 5xx / 429 / network stay RETRYABLE (transient, should retry)
     return resp.json()
 
 

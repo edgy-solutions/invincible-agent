@@ -310,6 +310,15 @@ endpoint (a stub = the dead-end menu). When it lands, OBSERVE the acceptance in-
 /operable_subjects` for SUSTAINMENT shows the pcn subjects, no menu code touched — the sourced-menu
 design's first live test.
 
+**TEST AFFORDANCE in the production dispatch path (do NOT "clean up").** `PcnDispatchItem.dispatch`
+carries two env-gated durable `ctx.sleep` windows — `PCN_SEAL_PAUSE_AFTER_MINT_S` (between mint and
+state) and `PCN_SEAL_PAUSE_AFTER_STATE_S` (between state and the exactly-one marker). Default 0 = no-op;
+they exist so the LIVE kill-seal's process-kill lands provably in-window (journaled by the Restate
+server → the window is a fact in `sys_journal`, not a timing claim). A future reader finding an
+unexplained sleep between the two most important writes in the system should NOT remove it — it is
+deliberate, harmless-by-default, and load-bearing for the runtime seal (`87ddcde`; run card
+`pcn-kill-seal-run-card.md`).
+
 **Preconditions (landed `9865bcf`):** two guards the driver inherits — `tests/test_pcn_state_sparql.py`
 (rdflib parse-validates SPARQL builders; put new templates in a pure module + a test) and
 `tests/test_no_typing_generics_in_pydantic_models.py` (AST guard: unimported typing-generic in a

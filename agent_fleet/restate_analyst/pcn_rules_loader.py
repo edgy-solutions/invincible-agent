@@ -43,6 +43,11 @@ def load_disposition_rules(graph, *, ruleset_label: str = "") -> tuple[list[dict
       ontology/vocab triples do NOT perturb the ref. ``label`` is caller-DECLARED (``ruleset_label``) —
       deterministic and independent of which ontologies happen to co-tenant; it falls back to a graph
       ``owl:Ontology`` only for a single-ruleset graph (the fixture), sorted so even that is stable.
+
+    PROVENANCE PRECISION (the content-only change cuts both ways): the ref is now STABLE under co-tenant
+    graph growth (the live fix) — and by the same token it no longer detects ANYTHING outside the rule
+    subgraph. So a ``ruleset_ref`` provenance claim means "THESE RULES," not "this graph state"; don't
+    lean on it to detect changes elsewhere in the graph — it deliberately stopped providing that.
     """
     import json
     import rdflib

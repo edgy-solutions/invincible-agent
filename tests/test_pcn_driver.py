@@ -249,6 +249,28 @@ async def test_auth_denial_on_mint_is_terminal_not_park(http):
     assert http["state"] == 0, "state was written despite the task-mint denial (chain should have stopped)"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 404, 422])
+async def test_malformed_mint_4xx_is_terminal_not_park(http, status):
+    """The classifier past 401/403: any 4xx (a 422 missing-field, a 400 bad request, a 404) is a
+    POISONED payload that won't heal on retry -> TerminalError (release), never retry-park. Found live:
+    a 422 (missing requested_by) would otherwise have parked the item's object forever."""
+    http["status"]["mint"] = status
+    with pytest.raises(restate.TerminalError):
+        await _invoke(_payload("dispatchQualification"), {})
+    assert http["state"] == 0
+
+
+@pytest.mark.asyncio
+async def test_rate_limited_mint_429_stays_retryable(http):
+    """429 is the exception — a rate limit IS transient, so it must NOT be terminal (stays retryable so
+    Restate backs off and retries)."""
+    http["status"]["mint"] = 429
+    with pytest.raises(Exception) as ei:
+        await _invoke(_payload("dispatchQualification"), {})
+    assert not isinstance(ei.value, restate.TerminalError), "429 (rate limit) must stay retryable, not terminal"
+
+
 # ===========================================================================
 # Fan-out — one grouped approval -> N keyed sends (execution grain, §1)
 # ===========================================================================
