@@ -160,6 +160,40 @@ async def test_no_entitled_action_when_residue_but_approver_denied_all(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_review_state_unsourced_bites_the_graph_laundering(monkeypatch):
+    """THE TRIPWIRE: a request with doc-level needs_review TRUE but no part carrying the per-part flag
+    was built from the lossy graph projection (both graphs drop per-part needs_review) -> REVIEW_STATE_
+    UNSOURCED, no workflow. If a future wiring/BFF builds the request from the graph 'because it's right
+    there', THIS goes red instead of an unverified MPN riding accept-all through five sealed layers."""
+    _wire(monkeypatch)
+    # Graph-derived shape: parts carry mpn/replacement but NO per-part needs_review (both graphs drop it).
+    graph_shaped = [
+        {"affected_mpn": "NSR01L30NXT5G", "replacement_mpn": "", "needs_review": False},
+        {"affected_mpn": "MPN-NEEDSREVIEW", "replacement_mpn": "", "needs_review": False},
+    ]
+    req = _request(impacted=graph_shaped, in_scope=["NSR01L30NXT5G", "MPN-NEEDSREVIEW"])
+    req["doc_needs_review"] = True  # ...but the extraction's doc-level flag says something needs review
+    ctx = _FakeContext()
+    out = await _START(ctx, req)
+    assert out["status"] == "REVIEW_STATE_UNSOURCED"
+    assert ctx.sends == [], "started a review that laundered an unsourced needs_review flag"
+
+
+@pytest.mark.asyncio
+async def test_review_state_sourced_proceeds(monkeypatch):
+    """doc-level TRUE and a part actually carries needs_review=True -> sourced from the extraction ->
+    proceeds (the flagged part is forced to residue downstream by §3). And doc-level FALSE/absent (the
+    IPCN25300X case) proceeds normally."""
+    _wire(monkeypatch)
+    req = _request()
+    req["doc_needs_review"] = True
+    req["impacted_parts"][1]["needs_review"] = True  # MPN-NEEDSREVIEW carries the flag (sourced)
+    ctx = _FakeContext()
+    out = await _START(ctx, req)
+    assert out["status"] == "STARTED", "a properly-sourced review-state request must proceed"
+
+
+@pytest.mark.asyncio
 async def test_start_review_invalid_ruleset_halts_honestly(monkeypatch):
     """An invalid ruleset (client status 'invalid') -> RULESET_INVALID with reasons, NO batch, NO
     workflow. report-don't-reject reaches its terminus at the caller's policy: don't dispatch under a

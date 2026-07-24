@@ -151,6 +151,25 @@ def can_act_via_topaz(approver: str, item) -> bool:  # pragma: no cover - live T
 
 
 # ---------------------------------------------------------------------------
+# Review-state sourcing tripwire — laundering-by-substrate-gap guard (STANDING INVARIANT)
+# ---------------------------------------------------------------------------
+def review_state_is_unsourced(doc_needs_review, impacted_parts) -> bool:
+    """The laundering-by-substrate-gap signature. Per-part ``needs_review`` exists ONLY in the extraction
+    (`review.json`) — BOTH graphs drop it (doc-tools writes only the DOC-LEVEL flag to Neo4j; Jena drops
+    it entirely). So the request MUST be built from the extraction, never the mesh graph. The tripwire:
+    if the DOC-LEVEL flag says "something here needs review" (``doc_needs_review`` True) but NO part
+    carries ``needs_review`` True, the per-part flags were NOT sourced — the request was built from a
+    lossy graph projection, and every downstream §3 laundering seal (UNVERIFIED badge → accept-all
+    exclusion → override-with-reason) would fire CLEAN on an unverified MPN. That defeats five sealed
+    layers without touching any of them. Standing rule: EXTRACTION is authoritative for review-state;
+    [[feedback_synthetic_data_no_mock_leak]] one layer up. ``doc_needs_review`` is None/absent -> can't
+    check (no-op); the request builder MUST pass it (from the extraction / Neo4j doc-level) to arm this."""
+    if not doc_needs_review:
+        return False
+    return not any(bool(p.get("needs_review")) for p in (impacted_parts or []))
+
+
+# ---------------------------------------------------------------------------
 # The durable entry handler
 # ---------------------------------------------------------------------------
 pcn_review_starter = Service("PcnReviewStarter")
@@ -161,12 +180,21 @@ async def start_review(ctx: Context, request: dict) -> dict:
     """Explicitly-invoked: compose a notice into a batch and START the grouped-review workflow.
 
     request: ``notice_id``, ``doc_type``, ``categories``, ``impacted_parts`` (doc-tools extraction),
-    ``in_scope_mpns``, ``approver``, ``audience``, ``user_jwt``. The build runs in one journaled
+    ``in_scope_mpns``, ``approver``, ``audience``, ``user_jwt``, and ``doc_needs_review`` (the
+    extraction's DOC-LEVEL flag — arms the review-state tripwire). The build runs in one journaled
     ``ctx.run`` step (reads only — resolveInstance/Topaz/rules-fetch — so a crash re-runs it
     idempotently); the only durable effect is starting the workflow (idempotent on its id). If nothing
     reaches residue, return ``NO_RESIDUE`` honestly — no workflow, no empty task."""
     notice_id = request["notice_id"]
     approver = request["approver"]
+
+    # 0) Review-state sourcing tripwire (BEFORE anything else): a request whose doc-level flag says
+    #    "needs review" but whose parts carry no per-part flag was built from a lossy graph projection —
+    #    refuse rather than launder an unverified MPN through five sealed layers.
+    if review_state_is_unsourced(request.get("doc_needs_review"), request.get("impacted_parts")):
+        return {"status": "REVIEW_STATE_UNSOURCED", "notice_id": notice_id,
+                "detail": "doc-level needs_review is set but no part carries it — per-part review-state "
+                          "was not sourced from the extraction (built from the lossy graph projection?)"}
 
     # 1) Load + validate the ruleset (client interprets engine-o's served Turtle). A corrupt or absent
     #    ruleset is surfaced HONESTLY here — it never flows into the batch looking valid.
