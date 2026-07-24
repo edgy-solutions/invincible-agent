@@ -86,9 +86,25 @@ allowed if {
 }
 ```
 
-**3. Grant** (directory relation — the entitlement): `user:alice --actor--> disposition_item:SUSTAINMENT`
-(written via the directory writer / a `policy/disposition_grants.yaml` + sync, mirroring
-`policy/asset_grants.yaml`). At work: grant the real approver `actor` on their domain's `disposition_item`.
+**3. Grant** (directory relation — the entitlement), stated SYMBOLICALLY because this doc is the
+copy-paste vector across environments and identity FORMAT differs per deployment (see Identity
+invariant below): `user:<subject in your deployment's id format> --actor--> disposition_item:SUSTAINMENT`
+(written via the directory writer / a `disposition_grants.yaml` + sync, mirroring `policy/asset_grants.yaml`).
+Seed grants in the ENVIRONMENT's format — sandbox=email (`alice`/`bob`), **work=employee-id** (e.g.
+`E123456`). Do NOT paste `alice@…` literals into work's seed. At work: grant the real approver `actor`
+on their domain's `disposition_item`.
+
+**Identity invariant (born-generic on the identity plane — pin, don't infer).** Subject identity enters
+from ONE claim and is carried OPAQUELY: nothing in the policy repo, manifest, or any consumer parses,
+validates, or assumes the format — no email regexes, no `@`-splitting, no "looks like an ID" checks.
+The rego's `subject_id: input.resource.user_id` is already format-agnostic (good); keep it so. Identity
+is a string that matches or doesn't; the FORMAT is deployment CONTENT, not mechanism. The seam — WHICH
+claim populates `user_id` — is config-per-environment (sandbox maps its IdP's email; work maps the
+employee-id claim, per the already-filed `central_gateway` `preferred_username` fix in
+[[project_work_deploy_runbook]] — same seam, same invariant, one gateway layer down). A grant seeded in
+`email` denies-everyone against an `employee-id` caller — fail-closed presenting as "the flip broke
+everything," the ADR-0025 first-symptom class; and it hides because STRUCTURE diffs clean (shape
+identical, only values differ). So it is a named knob, not a buried assumption.
 
 **4. Wire-up** (BUILT, `pcn_review_starter.can_act_via_topaz`): POSTs `/api/v2/authz/is` with
 `policy_context.path = invincible_agent.disposition.can_act`, subject in `resource_context.user_id`,
@@ -100,6 +116,56 @@ domain in `resource_context.domain`. Toggle `ENABLE_DISPOSITION_AUTHZ=true` on e
 - `alice` on `disposition_item:AVIATION` (no relation) → DENY → the domain attribute DISCRIMINATES.
   The AVIATION item is the synthetic other-domain fixture: written, rejected, then DELETED (fixture,
   not residue).
+
+## DEFERRED: the discrimination seal runs on the git-deployment RAILS, not hand-surgery (decided 2026-07-24)
+
+Hand-editing sandbox Topaz (kubectl edits to the manifest/policy) would MANUFACTURE the sandbox/work
+disparity it's meant to avoid: every future seal would prove something about an 11pm hand-build, not
+the deployment path work uses. Work's Topaz is git-overlay + cronjob-sync; sandbox must be stood up the
+SAME way — one producer path, both clusters derive, no second hand-maintained truth (the graph-convention
+lesson on the entitlement plane). So `can_act` ships tonight WIRED + verified-DARK + example-committed;
+the discrimination seal runs later against config that arrived by the deployment MECHANISM (which makes
+it a stronger exhibit — it proves the rails too). The flip checklist re-runs it at work regardless.
+
+**The two open unknowns are FACTS ABOUT THE CURRENT (hand-built) SANDBOX TOPAZ — filed unresolved as
+"what we're replacing" notes for whoever does the git-rails sync:**
+- **Policy load = explicit volume-items, not whole-dir.** OPA `local_bundles.paths: ["/policies"]`
+  loads the dir, BUT the topaz *deployment* mounts the configmap with an explicit `items:` list — a new
+  rego needs a DEPLOYMENT volume-items change, not just a configmap key. The git-rails path replaces
+  this with the overlay's documented mount.
+- **Manifest load path unconfirmed (configmap-file vs PVC-persisted).** `manifest.yaml` is mounted in
+  `/policies`, but a `topaz-seed-cronjob` (default-DISABLED) syncs data, and the schema may be
+  DB-persisted in the PVC — so a configmap edit might not "take" without a re-seed. Directory manifest
+  API didn't answer on probed ports (9393/8383). The git+cronjob path is the ANSWER to "how does a
+  manifest change take effect" — it's already proven at work; nobody reverse-engineers the hand-built
+  mount.
+
+## FOLLOW-UP TASK: stand sandbox Topaz up on work's rails (config work, not code)
+
+Source-authority for STRUCTURE (not content): `C:\tmp\iagent-policy` — the local dir that bootstrapped
+the work git policy repo. It carries work's SHAPE (overlay layout, manifest organization, rego bundle
+arrangement, cronjob contract, naming) — which is exactly the parity target — WITHOUT work's current
+content (real grants/policies, restricted). That restriction is the correct boundary landing for free:
+sandbox gets work's MECHANISM with sandbox's CONTENT (alice/bob/AVIATION, the pcn additions). Build:
+1. **Verify the dir's structural currency FIRST** ("created long ago" = stale-record flag). Produce a
+   one-page STRUCTURAL SUMMARY (file tree, load path, cronjob contract, manifest schema version) → the
+   human eyeball-diffs it against the real repo (the restriction respected; "assumed same shape" →
+   "verified same shape"). Parity vs the appearance of parity.
+2. **Deliverable = a repo + a deployment path, not applied config.** Build a sandbox policy repo seeded
+   from the dir's structure; land `disposition_item` + the rego + test grants (alice/bob/AVIATION, in
+   sandbox's EMAIL format) as COMMITS; wire sandbox Topaz to consume it the SAME way work does (overlay
+   + cronjob) — resolving the two unknowns above by standing up the REAL load path, not reverse-
+   engineering the hand-built one. Then the discrimination seal runs against config that ARRIVED by the
+   mechanism.
+3. **Divergence policy, one README paragraph at birth:** structure SYNCS (periodic human eyeball /
+   structural checklist), content DIVERGES freely, and anything sandbox-proven that work needs (the pcn
+   additions) travels as a DOCUMENTED change applied to the real repo (exactly this doc's "replicable
+   example" workflow). Include the identity knob: "subject claim: sandbox=email, work=employee-id —
+   grants seeded in the environment's format." Self-documenting, not tribal.
+
+Ledger: the dir the agent created "long ago" as a bootstrap aid becomes the seed of the mechanism that
+keeps two clusters honest — [[project_bootstrap_state_debt]] converting into reproducible-asset lineage,
+item C's program running backwards through time.
 
 ## Live-session order (unchanged; this is its first act)
 
