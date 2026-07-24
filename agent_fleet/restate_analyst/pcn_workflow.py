@@ -137,6 +137,11 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     # suspending, mirroring the sealed HITL mechanics.
     grouped_task = {
         "task_key": f"grouped:{notice_fingerprint}:{approver}",
+        # This workflow's OWN key — the address submit_decision is invoked on
+        # (PcnGroupedReview/{workflow_id}/submit_decision). Carried into the register body so cortex-bff's
+        # /human_tasks/{id}/act can resume THIS workflow when the reviewer approves. Without it the
+        # projection row's workflow_id is NULL and the approval can't reach the suspended promise.
+        "workflow_id": ctx.key(),
         "audience": audience,
         "kind": "pcn_grouped_review",
         "disposition": "grouped_review",

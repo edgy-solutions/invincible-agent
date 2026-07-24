@@ -204,6 +204,10 @@ class HumanTaskRegisterRequest(_BaseModel):
 class HumanTaskActRequest(_BaseModel):
     decision: str  # "approved" | "rejected"
     comment: str = ""
+    # PCN grouped review only: optional per-part disposition overrides the reviewer
+    # changed from the proposal, {mpn: {disposition, reason}}. Absent/empty = accept-all
+    # (every part takes its proposed disposition). Ignored for non-grouped-review kinds.
+    overrides: Optional[dict] = None
 
 
 class AccessRequestRequest(_BaseModel):
@@ -295,6 +299,71 @@ async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
         tasks = []
     # `email` is DISPLAY only; the queue was filtered on authz_id above.
     return {"email": current_user.email, "tasks": tasks}
+
+
+# ── PCN/PDN disposition review — start ────────────────────────────────────────
+class PcnReviewStartRequest(_BaseModel):
+    """Start a grouped disposition review for a notice. The extraction-sourced fields
+    (`impacted_parts`, `doc_needs_review`, etc.) are PASSED THROUGH from the caller — the
+    BFF MUST NOT reconstruct `impacted_parts` from a graph projection: per-part
+    `needs_review` lives only in the doc-tools extraction, both graphs drop it, and
+    start_review's `review_state_is_unsourced` tripwire fails a request built from the
+    lossy graph. So the BFF forwards the extraction payload verbatim and adds only the
+    authenticated identity (`approver`) — never trusting a client-supplied approver."""
+    notice_id: str
+    impacted_parts: list  # extraction-sourced [{affected_mpn, replacement_mpn, needs_review}]
+    doc_type: str = "PCN"
+    categories: Optional[list] = None
+    in_scope_mpns: Optional[list] = None
+    doc_needs_review: bool = False
+    domain: str = "SUSTAINMENT"          # selects the review audience pcn_disposition:<domain>
+    audience: Optional[str] = None        # override; defaults to pcn_disposition:<domain>
+
+
+# start_review outcomes that mean "the request/ruleset was bad", surfaced as 422 (not 200).
+_PCN_REVIEW_BAD_REQUEST = {"REVIEW_STATE_UNSOURCED", "RULESET_INVALID", "RULES_NOT_FOUND"}
+
+
+@app.post("/pcn/reviews")
+async def start_pcn_review(
+    req: PcnReviewStartRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Compose a notice into a grouped disposition review (proxies engine-a's durable
+    PcnReviewStarter.start_review). The APPROVER is stamped from the authenticated
+    identity (`authz_id` — the Topaz key engine-a's can_act checks), never from the body,
+    so a caller cannot start a review as someone else. The raw bearer is forwarded as
+    `user_jwt` because the downstream grouped-task register + dispatch mint act as this
+    user. Honest outcomes pass through: STARTED / NO_RESIDUE / NO_ENTITLED_ACTION are
+    200; a bad/unsourced request or corrupt ruleset is 422 (never a silent success)."""
+    raw_token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+    body = {
+        "notice_id": req.notice_id,
+        "doc_type": req.doc_type,
+        "categories": req.categories,
+        "impacted_parts": req.impacted_parts,     # extraction pass-through (tripwire source)
+        "in_scope_mpns": req.in_scope_mpns,
+        "doc_needs_review": req.doc_needs_review,
+        "approver": current_user.authz_id,        # identity from the token — NOT client-supplied
+        "audience": req.audience or f"pcn_disposition:{req.domain}",
+        "user_jwt": raw_token,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            rr = await client.post(
+                f"{_RESTATE_INGRESS_URL}/PcnReviewStarter/start_review", json=body,
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={"error": "review_start_unreachable", "message": str(exc)})
+    if rr.status_code != 200:
+        raise HTTPException(status_code=502, detail={"error": "review_start_failed", "code": rr.status_code})
+    out = rr.json()
+    logger.info("pcn review start: notice=%s approver=%s status=%s",
+                req.notice_id, current_user.authz_id, out.get("status"))
+    if out.get("status") in _PCN_REVIEW_BAD_REQUEST:
+        raise HTTPException(status_code=422, detail=out)
+    return out
 
 
 # ── ADR-0028 canvas persistence ──────────────────────────────────────────────
@@ -408,6 +477,57 @@ async def act_on_human_task(
     allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, current_user.authz_id))
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
+
+    # FULFILLMENT (pcn_grouped_review): the decision must be VALIDATED by the workflow
+    # (PcnGroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision
+    # can REFUSE (an unverified row riding accept-all, a blank-reason override) — a policy
+    # outcome, not a transient failure — and a refused submission must leave the task PENDING,
+    # never falsely marked approved while the workflow stays suspended. So unlike workflow_ack
+    # (mark-then-best-effort-resume), we validate FIRST and mark resolved ONLY on acceptance.
+    if match.get("kind") == "pcn_grouped_review":
+        wf = match.get("workflow_id")
+        if not wf:
+            # No workflow key on the row -> nothing to resume (engine-a must stamp workflow_id
+            # on the grouped-task register). Fail loudly rather than mark-resolved-and-dangle.
+            raise HTTPException(status_code=409, detail={"error": "grouped_review_unresumable",
+                "message": "grouped-review task has no workflow_id; cannot resume the review"})
+        if req.decision == "rejected":
+            # A grouped-review rejection must CANCEL the durable workflow, else it dangles
+            # suspended (the suspend-vs-fail DoS). Cancellation-on-reject is a filed follow-up;
+            # refuse loudly here rather than mark-resolved-and-dangle. To change dispositions,
+            # the reviewer sends per-part `overrides` and approves.
+            raise HTTPException(status_code=501, detail={"error": "grouped_reject_not_wired",
+                "message": "grouped-review rejection needs workflow cancellation (follow-up); "
+                           "use per-part overrides to change dispositions, then approve"})
+        # approved -> submit the (accept-all + optional per-part overrides) decision.
+        decision = {"overrides": req.overrides or {}}
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                rr = await client.post(
+                    f"{_RESTATE_INGRESS_URL}/PcnGroupedReview/{wf}/submit_decision",
+                    json={"decision": decision},
+                )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail={"error": "review_submit_unreachable", "message": str(exc)})
+        if rr.status_code != 200:
+            raise HTTPException(status_code=502, detail={"error": "review_submit_failed", "code": rr.status_code})
+        sub = rr.json()
+        if not sub.get("accepted"):
+            # POLICY refusal — the review stays PENDING (projection NOT marked). Surface the reason.
+            return {"task_id": task_id, "decision": req.decision, "accepted": False,
+                    "status": "still_pending", "reason": sub.get("reason", "")}
+        # Accepted -> the workflow resumed + fanned out; NOW resolve the projection.
+        n = await run_in_threadpool(
+            lambda: human_tasks.mark_task_resolved(
+                task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment
+            )
+        )
+        logger.info("pcn grouped review approved: task_id=%s wf=%s by=%s resolved_count=%s",
+                    task_id, wf, current_user.authz_id, sub.get("resolved_count"))
+        return {"task_id": task_id, "decision": req.decision, "accepted": True,
+                "rows_resolved": n, "review_dispatched": True,
+                "resolved_count": sub.get("resolved_count")}
+
     n = await run_in_threadpool(
         lambda: human_tasks.mark_task_resolved(
             task_id, caller_id=current_user.authz_id, decision=req.decision, comment=req.comment

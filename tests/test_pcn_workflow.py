@@ -125,11 +125,15 @@ class FakeWorkflowContext:
     """WorkflowContext stand-in: journals ctx.run, hands the pre-resolved decision back from the
     promise, and records object_send (the fan-out on the workflow ctx — rider 2 journaled-in-context)."""
 
-    def __init__(self, decision):
+    def __init__(self, decision, key="pcn-review-IPCN25300X-qa"):
         self._decision = decision
+        self._key = key
         self.state: dict = {}
         self.runs: list = []
         self.sends: list = []
+
+    def key(self):
+        return self._key
 
     def set(self, k, v):
         self.state[k] = v
@@ -226,7 +230,9 @@ async def test_submit_accept_resolves_promise_once():
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_run_registers_task_then_fans_out_on_accept(monkeypatch):
-    monkeypatch.setattr(pcn_driver.requests, "post", lambda url, **k: _Resp(200, {"task_id": "t"}))
+    posts = []
+    monkeypatch.setattr(pcn_driver.requests, "post",
+                        lambda url, **k: (posts.append((url, k.get("json"))), _Resp(200, {"task_id": "t"}))[1])
     batch_items = [
         {"mpn": f"MPN-{i}", "subject": f"http://internal/components/MPN-{i}",
          "proposed_disposition": "dispatchQualification", "needs_review": False}
@@ -242,6 +248,12 @@ async def test_run_registers_task_then_fans_out_on_accept(monkeypatch):
     assert out["status"] == "DISPATCHED" and out["count"] == 2
     assert [s["key"] for s in ctx.sends] == ["IPCN25300X:MPN-0", "IPCN25300X:MPN-1"]
     assert [s["idempotency_key"] for s in ctx.sends] == ["IPCN25300X:MPN-0", "IPCN25300X:MPN-1"]
+    # The grouped-task register (the FIRST post) MUST carry this workflow's own key as workflow_id —
+    # else cortex-bff's /act has nothing to address submit_decision on and the review dangles.
+    grouped_register = posts[0][1]
+    assert grouped_register["kind"] == "pcn_grouped_review"
+    assert grouped_register["workflow_id"] == ctx.key() == "pcn-review-IPCN25300X-qa", \
+        "grouped-review register dropped workflow_id — /act could not resume the review"
 
 
 # ===========================================================================

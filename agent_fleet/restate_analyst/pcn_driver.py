@@ -125,6 +125,12 @@ def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
         "kind": task.get("kind", "pcn_disposition"),
         "task_id": task["task_key"],
         "task_key": task["task_key"],          # notice x part — lets cortex-bff dedup a redelivery too
+        # The durable workflow this task belongs to. For a grouped-review task this is the
+        # PcnGroupedReview KEY, so cortex-bff's /human_tasks/{id}/act can address
+        # PcnGroupedReview/{workflow_id}/submit_decision when the reviewer approves — without it the
+        # projection row has workflow_id NULL and the approval has nothing to resume (the review would
+        # suspend forever). Dispatch tasks are terminal and carry None (harmless; the field is optional).
+        "workflow_id": task.get("workflow_id"),
         "audience": audience,
         "title": task.get("title") or f"{task.get('disposition')}: {task.get('mpn')}",
         "summary": task.get("summary") or "",
