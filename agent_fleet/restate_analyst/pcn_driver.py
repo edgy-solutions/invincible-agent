@@ -55,7 +55,7 @@ _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 # ---------------------------------------------------------------------------
 # Serialization — DispatchPlan (pure dataclass) -> a JSON-native invocation body
 # ---------------------------------------------------------------------------
-def plan_to_payload(plan, *, user_jwt: str = "") -> dict:
+def plan_to_payload(plan, *, user_jwt: str = "", requested_by: str = "") -> dict:
     """Flatten a ``DispatchPlan`` to the payload the VirtualObject consumes. Kept flat + JSON-native so
     it rides a Restate invocation body; ``None`` graph_write / human_task pass through as ``None``
     (an unresolved subject has no graph write; ``archive`` has no task)."""
@@ -83,6 +83,7 @@ def plan_to_payload(plan, *, user_jwt: str = "") -> dict:
             "needs_review": ht.needs_review,
             "proposed_by_ruleset": ht.proposed_by_ruleset,
             "subject_unresolved": ht.subject_unresolved,
+            "requested_by": requested_by,   # the approver who resolved the batch (cortex-bff requires it)
         },
     }
 
@@ -114,6 +115,10 @@ def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
         "summary": task.get("summary") or "",
         "subject_ref": task.get("subject_ref"),
         "disposition": task.get("disposition"),
+        # cortex-bff register REQUIRES requested_by (422 without it) — the principal who caused the task
+        # (the approver who resolved the grouped review). Found live: the register contract, not
+        # inferable from the driver alone.
+        "requested_by": task.get("requested_by") or "",
         "needs_review": task.get("needs_review", False),
         "proposed_by_ruleset": task.get("proposed_by_ruleset"),
         # RE-LINK provenance (rider): unresolved subject -> no graph write, but the task carries enough
@@ -224,7 +229,7 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Fan-out — one grouped approval -> N per-item dispatches (execution grain, §1)
 # ---------------------------------------------------------------------------
-def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "", user_jwt: str = "") -> list[str]:
+def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "", user_jwt: str = "", requested_by: str = "") -> list[str]:
     """Fan ONE grouped approval out to N per-item dispatches. Each ``ItemResolution`` is planned then
     SENT (fire-and-forget) to its own ``PcnDispatchItem`` keyed by ``idempotency_key`` — per-item,
     idempotent, OUTSIDE the workflow graph (§7). The Restate invocation ``idempotency_key`` is that
@@ -233,7 +238,7 @@ def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: st
     keys: list[str] = []
     for res in resolutions:
         plan = plan_dispatch(res, notice_fingerprint=notice_fingerprint, notice_id=notice_id)
-        payload = plan_to_payload(plan, user_jwt=user_jwt)
+        payload = plan_to_payload(plan, user_jwt=user_jwt, requested_by=requested_by)
         ctx.object_send(dispatch, key=res.idempotency_key, arg=payload, idempotency_key=res.idempotency_key)
         keys.append(res.idempotency_key)
     return keys

@@ -165,6 +165,7 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     keys = fan_out_dispatch(
         ctx, submission.resolutions,
         notice_fingerprint=notice_fingerprint, notice_id=notice_id, user_jwt=user_jwt,
+        requested_by=approver,   # the approver who resolved the batch is the task's requester
     )
     return {"status": "DISPATCHED", "count": len(keys), "dispatched_keys": keys}
 

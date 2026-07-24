@@ -232,6 +232,7 @@ async def test_unresolved_subject_mints_task_only_with_relink_provenance(http):
     assert body["mpn"] == "MPN-UNRES"
     assert body["notice_fingerprint"] == "IPCN25300X"
     assert body["subject_unresolved"] is True
+    assert "requested_by" in body, "cortex-bff register REQUIRES requested_by (422 without it)"
 
 
 # ===========================================================================
