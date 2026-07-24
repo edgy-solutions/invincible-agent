@@ -2322,8 +2322,17 @@ except ImportError:
         pcn_dispatch_item,
     )
 
+# PcnGroupedReview — the grouped-review orchestrator (register 1 HumanTask, suspend, fan out N on an
+# ACCEPTED decision). Same flatten-the-dir import dance.
+try:
+    from pcn_workflow import pcn_grouped_review  # noqa: E402  — container path
+except ImportError:
+    from agent_fleet.restate_analyst.pcn_workflow import (  # noqa: E402
+        pcn_grouped_review,
+    )
+
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, pcn_dispatch_item]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, pcn_dispatch_item, pcn_grouped_review]))
 
 
 # ---------------------------------------------------------------------------
