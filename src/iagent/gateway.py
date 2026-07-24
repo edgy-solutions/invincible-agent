@@ -390,8 +390,10 @@ async def get_pcn_review_batch(
         raise HTTPException(status_code=404, detail={"error": "review_not_found"})
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
+            # get_batch takes NO input — send an EMPTY body. A JSON `{}` body is rejected 400 by Restate
+            # (input supplied to a no-input handler); an empty POST is the correct invocation.
             rr = await client.post(
-                f"{_RESTATE_INGRESS_URL}/PcnGroupedReview/{workflow_id}/get_batch", json={},
+                f"{_RESTATE_INGRESS_URL}/PcnGroupedReview/{workflow_id}/get_batch",
             )
             rr.raise_for_status()
     except Exception as exc:
