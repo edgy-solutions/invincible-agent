@@ -25,6 +25,8 @@ dependencies = [
     "packaging",
     "mcp",
     "acryl-datahub",
+    "rdflib",  # pcn_rules_loader + policy_rules_client parse the served rules Turtle (found live: the
+               # offline tests overlay --with rdflib, masking that the container image lacked it).
 ]
 
 [build-system]
