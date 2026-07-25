@@ -435,14 +435,95 @@ _PROV_FIXTURE = {
 }
 
 
+# notice_id -> the doc-tools output prefix in MinIO. INTERIM index (the outputs
+# key off the upload path, not the notice id; they coincide only when the PDF was
+# uploaded under a path carrying the id). Follow-up: store the S3 pointer on the
+# SustainmentNotice Neo4j node so this map isn't hand-maintained.
+_ARTIFACT_BUCKET = "processing-artifacts"
+_NOTICE_ARTIFACT_PREFIX = {
+    "IPCN25300X": "sustainment/inbound/onsemi_ipcn/generated/onsemi_Generic_IPCN25300X_pdf",
+    "ADI_PDN_23_0120": "sustainment/inbound/adi_23_0120/generated/ADI_PDN_23_0120_pdf",
+}
+
+
+def _read_notice_provenance_from_store(prefix: str) -> list:
+    """Read a notice's REAL provenance from MinIO: review.json (the extracted
+    values + bboxes + match metadata) joined to its table CROPS. No full-page
+    render exists (doc-tools defers the page rasterizer), so the crop IS the
+    source-table region — highlight-on-crop, which is also the row-level check the
+    element-granular bbox can't give. Crop join: text.json Table elements ->
+    page -> image basename -> manifest embedded_images -> s3:// crop URL."""
+    import os.path as _op
+    import json as _json
+    import boto3
+    from botocore.config import Config
+    s3 = boto3.client(
+        "s3", endpoint_url=_MINIO_ENDPOINT_URL, aws_access_key_id=_MINIO_ACCESS_KEY,
+        aws_secret_access_key=_MINIO_SECRET_KEY, region_name=_MINIO_REGION,
+        config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+    )
+
+    def _get_json(key: str):
+        return _json.loads(s3.get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read())
+
+    review = _get_json(f"{prefix}/review.json")
+    manifest = _get_json(f"{prefix}/manifest.json")
+    text = _get_json(f"{prefix}/text.json")
+    embedded = manifest.get("embedded_images") or {}
+
+    # page -> [crop s3 urls] for Table elements (the crop filename encodes page).
+    page_crops: dict = {}
+    for e in (text if isinstance(text, list) else []):
+        md = e.get("metadata") or {}
+        if e.get("type") == "Table" and md.get("image_path"):
+            url = embedded.get(_op.basename(md["image_path"]))
+            pg = md.get("page_number")
+            if url and pg is not None:
+                page_crops.setdefault(pg, []).append(url)
+
+    items = []
+    for it in review.get("review_items", []):
+        fp = it.get("field_path", "")
+        if not fp.endswith("affected_mpn"):
+            continue  # the card keys parts by affected MPN
+        pg = it.get("page_number")
+        crops = page_crops.get(pg, [])
+        items.append({
+            "field_path": fp,
+            "mpn": it.get("value"),
+            "value": it.get("value"),
+            "source_snippet": it.get("source_snippet") or "",
+            "page_number": pg,
+            "bboxes": it.get("bboxes") or [],
+            "page_dims": it.get("page_dims"),
+            "region": it.get("region") or "table",
+            "match_method": it.get("match_method") or "not_found",
+            "match_confidence": it.get("match_confidence") or 0.0,
+            "needs_review": bool(it.get("needs_review")),
+            "review_reason": it.get("review_reason"),
+            "crop_url": crops[0] if crops else None,  # s3:// — served via FederatedImage
+            "page_image_url": None,  # no full-page render yet (doc-tools Phase 5.8)
+        })
+    return items
+
+
 @app.get("/notices/{notice_id}/provenance")
 async def notice_provenance(
     notice_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Serve a notice's extraction provenance for the evidence card. FIXTURE for
-    now (synthetic demo notices have no source PDF); returns real doc-tools
-    review.json items when a notice has one."""
+    """Serve a notice's extraction provenance for the evidence card. Reads the
+    REAL doc-tools review.json + table crops from MinIO for a mapped notice;
+    falls back to the shaped fixture for synthetic notices with no source PDF."""
+    from starlette.concurrency import run_in_threadpool
+    prefix = _NOTICE_ARTIFACT_PREFIX.get(notice_id)
+    if prefix:
+        try:
+            items = await run_in_threadpool(lambda: _read_notice_provenance_from_store(prefix))
+            return {"notice_id": notice_id, "page_image_url": None, "items": items, "source": "doc-tools"}
+        except Exception as exc:  # noqa: BLE001 — fall back to fixture on any store error
+            logger.warning("notice provenance read failed for %s: %s", notice_id, exc)
+
     items = []
     for mpn, p in _PROV_FIXTURE.items():
         items.append({
