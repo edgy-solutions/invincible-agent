@@ -61,6 +61,17 @@ test, that library belongs in the image, not the overlay. Same class as the CONS
 name. New surface is GENERIC at birth; the domain arrives as a parameter or as data.** The domain-ness
 lives in the arguments the caller passes, never baked into the name of the mechanism.
 
+**ALL REPOS, including the UI (extended 2026-07-24).** The rule was written for engine surface and
+didn't enumerate `cortex-ui`, so the presentation layer became the place the discipline arrived last —
+and the UI recapitulated the engines' pollution arc (domain-named `switch` branches, label maps) six
+weeks faster. So it binds every repo now: **no new UI component, switch branch, label/icon/color/route
+map may carry a domain name or value; domain display arrives as a payload field or a served declaration
+(the `rendersAs` / M3 horizon).** A new task kind adds a ROW to the single `taskKindRegistry` (interim
+scaffolding awaiting served hints), never a `kind === "pcn_…"` branch; everything else keys on the
+ARCHETYPE (structural). Undeclared kind → honest default (UI-COMPONENT-NOT-FOUND for labels). See
+`cortex-ui/AGENTS.md`. The deletion test now reads every repo: no domain-named surface in engines OR UI,
+feature still runs.
+
 Why now: the PCN/PDN M1 exemplar moved fast and let *mechanism* pick up domain names
 (`PcnDispatchItem`, `/write_pcn_disposition_state`, a would-be `pcn_disposition` Topaz type) while the
 *content* stayed correctly in data. Content was always in the right place; mechanism got domain names

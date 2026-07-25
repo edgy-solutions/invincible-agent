@@ -137,3 +137,32 @@ specific form; this sort is the paydown:
 trigger. Do NOT build `/instances` or the declarative dashboard under demo pressure — a rushed
 archetype-declaration SCHEMA becomes the contract every future feature writes to and is far harder to
 walk back than a rushed endpoint name. File + shape now (this doc); build on the trigger.
+
+## cortex-ui inventory (added 2026-07-24 — the deletion test reads every repo)
+
+The task-timeline unification recapitulated the engine pollution arc in the UI: domain-named branches
+(`kind === "pcn_grouped_review"`) scattered across label maps, the batch-loader, the drawer, the HUD.
+The birth rule now binds the UI (AGENTS.md, both repos). Same three piles for `cortex-ui/src`:
+
+- **rename-and-promote → served display hints (`rendersAs`, M3):**
+  - `lib/taskKindRegistry.ts` — the ONE address for per-kind badge/title/archetype. Collapsed from five
+    scattered maps into one table (2026-07-24, `stop-the-bleeding`). Interim; the endstate is the task
+    payload carrying its hints (badge/archetype) or the UI resolving them from a served declaration. Swap
+    is then a ONE-FILE change. Return `"TASK"` becomes the honest default for an undeclared kind.
+  - `registry/frontendCapabilities.ts` GROUPED_REVIEW / INSTANCES_BY_PROPERTY entries — the ADR-0017
+    self-registration; already the `rendersAs` precursor. Promote when the graph declares archetypes.
+- **plugin-residue (domain UI behind the archetype boundary):**
+  - `components/GroupedReview/*` (the disposition-review renderer — parts/MPN/disposition table) +
+    `lib/dispositions.ts` (the `dispatchLTB/Qualification/AltSourcing/archive` vocab + presenter). This is
+    the GROUPED_REVIEW archetype's domain implementation. Long-term it's a GENERIC "grouped decision table"
+    archetype fed by domain data; near-term it's the one domain component, correctly behind the archetype
+    switch (SemanticInterpreter routes to it structurally, not by domain name).
+  - `lib/mockGroundingEmitter.ts` pcn scenarios — dev-only fixtures (like the sandbox seed); acceptable,
+    excluded from the deletion test (mock mode is off in prod).
+- **dissolve-to-data:** the `taskKindRegistry` table itself + `dispositions` vocab — both become served
+  vocabulary once `rendersAs` lands.
+
+**Deletion test (all repos):** grep `pcn|pdn|disposition|mpn|notice` across engines AND cortex-ui `src`;
+every non-fixture hit lives behind an archetype boundary or in the single registry table; the feature
+still runs. Do NOT open the declaration-layer (served `rendersAs`) window under demo pressure — same
+rushed-schema trap as `/instances`; file + single-address now, served-data on the trigger.
