@@ -3075,7 +3075,16 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
         _keepalive_wrap(
             generate_dagster_stream(
                 request,
-                user_id=current_user.id,
+                # OWNERSHIP-ISOLATION KEY consolidation (2026-07-25): produced_for
+                # (and the produced_for_user_id column the Electric answer shape
+                # filters on) must key on authz_id, NOT the JWT sub. In this
+                # deployment two distinct users can share a `sub` (observed:
+                # alice+bob both `a400f096…`) while their authz_id (email) differs —
+                # so a sub-scoped answer shape served one user another's answers,
+                # while the task shape (recipient_id = authz_id) isolated correctly.
+                # Key answers on the SAME identity the task path + Topaz already use.
+                # In sandbox authz_id == email; work re-keys via USER_ENTITLEMENT_CLAIM.
+                user_id=current_user.authz_id,
                 # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
                 # caller's AUTHORIZATION IDENTITY (authz_id — the
                 # USER_ENTITLEMENT_CLAIM key policy/users.yaml + the seeded Topaz
@@ -4076,8 +4085,11 @@ async def electric_shape_proxy(
     #        truth and there is no sub<->email bridge to mis-route. authz_id == email
     #        in sandbox; at work-deploy it becomes the employee-ID claim, and this
     #        filter re-keys with the knob (no code change here).
-    #      - answer_artifact_projection (default): produced_for_user_id = <sub>
-    #        (interim per-user ownership isolation, NOT Topaz authz — unchanged).
+    #      - answer_artifact_projection (default): produced_for_user_id = <authz_id>
+    #        (per-user ownership isolation). Keyed on authz_id, NOT the JWT sub:
+    #        two distinct users can share a `sub` here while authz_id (email)
+    #        differs, so a sub-scoped shape leaked one user's answers to another.
+    #        The WRITE side (orchestrate produced_for) stamps authz_id to match.
     # NOTE the `else` catches EVERY non-task table -> every table gets a
     # server-side WHERE; there is no branch that serves a table UNFILTERED.
     if table == "human_task_projection":
@@ -4092,7 +4104,10 @@ async def electric_shape_proxy(
         # is a plain column (Electric's WHERE subset handles column = literal + AND).
         server_where = f"recipient_id = '{escaped_id}' AND status = 'pending'"
     else:
-        escaped = _escape_sql_string_literal(verified_user_id)
+        # authz_id (email in sandbox), the SAME per-user key the task shape and
+        # Topaz use — NOT verified_user_id (the sub), which is not unique per user
+        # in this deployment and caused the answer cross-user leak.
+        escaped = _escape_sql_string_literal(current_user.authz_id)
         server_where = f"produced_for_user_id = '{escaped}'"
     upstream_params["where"] = server_where
 
