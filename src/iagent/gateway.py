@@ -471,6 +471,18 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
     text = _get_json(f"{prefix}/text.json")
     embedded = manifest.get("embedded_images") or {}
 
+    # Full-page renders — the CONTEXT half of the evidence (which table, where on
+    # the page, what surrounds it) that the crop can't give. PAGE-COHERENCE SEAL:
+    # key by the page each entry DECLARES, so a page image is served for page N
+    # only if the manifest says it IS page N — a right-crop/wrong-page render
+    # can't recreate the mismatch class one level up. Absent (notices ingested
+    # before the rasterizer, or non-PDF) → no page image, honest degrade.
+    page_url_by_num = {}
+    for pe in (manifest.get("pages") or []):
+        pn, url = pe.get("page"), pe.get("s3_url")
+        if isinstance(pn, int) and url:
+            page_url_by_num[pn] = url
+
     # Table elements with their bbox + text + crop — for a PRECISE, COHERENT join.
     # (An MPN can sit on a page with several tables; "first table on the page" is
     #  wrong. The value anchored to ONE element with a specific bbox.)
@@ -546,7 +558,10 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
             "review_reason": review_reason,
             "coherent": crop_url is not None,  # the served crop's text contains the value
             "crop_url": crop_url,  # s3:// — served via FederatedImage
-            "page_image_url": None,  # no full-page render yet (doc-tools Phase 5.8)
+            # The page render is served for EVERY item that has one — including
+            # not_found (no crop): "here's the document, we couldn't anchor it,
+            # you look" is the honest-degradation money shot the override fires on.
+            "page_image_url": page_url_by_num.get(pg),  # s3:// full-page, page-coherent by construction
         })
     return items
 
