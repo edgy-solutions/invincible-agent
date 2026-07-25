@@ -413,6 +413,57 @@ async def get_pcn_review_batch(
     }
 
 
+# ── PCN notice PROVENANCE feeder (evidence card) ──────────────────────────────
+# Read-side join at DISPLAY time (NOT batch payload): where a review value came
+# from in the source document. Extraction stays the authority; the graph's lossy
+# projection isn't widened. TEMPORARY FIXTURE — real doc-tools `review.json`
+# (field_path/source_snippet/bboxes/page_dims/match_method/region/needs_review +
+# page image + S3 crop) replaces `_PROV_FIXTURE` when a notice has a source PDF.
+# The demo notices are synthetic (no PDF), so this serves shaped placeholder
+# provenance so the evidence-card INTERACTION + not_found path are demonstrable;
+# the box rendering itself is sealed by the overlay-drift unit test in cortex-ui.
+_PAGE_DIMS = {"width": 1700, "height": 2200}  # 200 DPI US-letter
+_PROV_FIXTURE = {
+    "NSR01L30NXT5G": {"bboxes": [[170, 440, 1530, 640]], "region": "table",
+                      "match_method": "unique", "match_confidence": 1.0, "needs_review": False},
+    "NSR02F30NXT5G": {"bboxes": [[170, 640, 1530, 840]], "region": "table",
+                      "match_method": "unique", "match_confidence": 1.0, "needs_review": False},
+    # The unverified part — the extractor could not anchor it (this is why the
+    # override ceremony fires): no box, needs_review, verify against the crop.
+    "NSR05F20NXT5G": {"bboxes": [], "region": "table",
+                      "match_method": "not_found", "match_confidence": 0.0, "needs_review": True},
+}
+
+
+@app.get("/notices/{notice_id}/provenance")
+async def notice_provenance(
+    notice_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Serve a notice's extraction provenance for the evidence card. FIXTURE for
+    now (synthetic demo notices have no source PDF); returns real doc-tools
+    review.json items when a notice has one."""
+    items = []
+    for mpn, p in _PROV_FIXTURE.items():
+        items.append({
+            "field_path": f"parts[].affected_mpn ({mpn})",
+            "mpn": mpn,
+            "value": mpn,
+            "source_snippet": "" if p["match_method"] == "not_found" else mpn,
+            "page_number": 1,
+            "bboxes": p["bboxes"],
+            "page_dims": _PAGE_DIMS,
+            "region": p["region"],
+            "match_method": p["match_method"],
+            "match_confidence": p["match_confidence"],
+            "needs_review": p["needs_review"],
+            "review_reason": "MPN not located in document" if p["needs_review"] else None,
+            "crop_url": None,
+            "page_image_url": None,
+        })
+    return {"notice_id": notice_id, "page_image_url": None, "items": items, "fixture": True}
+
+
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
 # The ONE pcn-aware presentation surface (grep-able; the M2 deletion test covers it). It hand-assembles
 # an INSTANCES_BY_PROPERTY archetype payload (docs/plans/pcn-dashboard-payload-schema.md) from engine-o's
