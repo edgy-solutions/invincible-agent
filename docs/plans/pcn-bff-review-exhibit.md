@@ -46,5 +46,15 @@ didn't collide with the prior `IPCN25300X` run — the residue ruling in practic
 ## Follow-ups filed (not M1)
 - Grouped-review **rejection** → workflow cancellation (currently 501); wire cancel-on-reject so a rejected
   review releases rather than dangles.
+- **STRIKE disposition — "this part isn't in the notice at all" (surfaced 2026-07-25 by the auto-path
+  re-ingest).** The first un-hacked producer ingest had the vision model over-generate `NSR02F30NXT5G`
+  (an F30 variant present in NEITHER run's tables — the notice has the L-variant). The evidence coherence
+  seal correctly refused it a crop (honest not_found), and the review flow correctly forces it to be an
+  explicit exception (no automated lane). BUT the reviewer's only outcomes are the ruleset dispositions
+  (LTB / qualify / archive) — there is no "this is not a real part, strike it from the batch" outcome, so
+  an LLM-hallucinated part has to be dispositioned as if it were real. This is a POLICY addition (a
+  rules-TTL / outcome-vocabulary question), NOT UI — the disposition set needs a `strike`/`notInNotice`
+  terminal outcome that removes the row without dispatching an action. Fold into the grouped-reject→cancel
+  work OR wake on the first reviewer who hits it; the honest UNVERIFIED label covers it for the demo.
 - `user_jwt` staleness: the token threaded at start is reused for dispatch mint at approve time; a review
   that sits past token expiry would 401 the mint. Pre-existing design; noted for the approval-latency case.
