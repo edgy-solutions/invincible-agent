@@ -471,15 +471,42 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
     text = _get_json(f"{prefix}/text.json")
     embedded = manifest.get("embedded_images") or {}
 
-    # page -> [crop s3 urls] for Table elements (the crop filename encodes page).
-    page_crops: dict = {}
+    # Table elements with their bbox + text + crop — for a PRECISE, COHERENT join.
+    # (An MPN can sit on a page with several tables; "first table on the page" is
+    #  wrong. The value anchored to ONE element with a specific bbox.)
+    def _bbox(md: dict):
+        pts = ((md.get("coordinates") or {}).get("points")) or None
+        if not pts:
+            return None
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        return [min(xs), min(ys), max(xs), max(ys)]
+
+    def _iou(a, b) -> float:
+        if not a or not b:
+            return 0.0
+        ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+        ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+        inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+        if inter <= 0:
+            return 0.0
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        area_b = (b[2] - b[0]) * (b[3] - b[1])
+        denom = area_a + area_b - inter
+        return inter / denom if denom > 0 else 0.0
+
+    tables = []
     for e in (text if isinstance(text, list) else []):
         md = e.get("metadata") or {}
         if e.get("type") == "Table" and md.get("image_path"):
             url = embedded.get(_op.basename(md["image_path"]))
-            pg = md.get("page_number")
-            if url and pg is not None:
-                page_crops.setdefault(pg, []).append(url)
+            if url:
+                tables.append({
+                    "page": md.get("page_number"),
+                    "bbox": _bbox(md),
+                    "text": (e.get("text") or "") + " " + (md.get("text_as_html") or ""),
+                    "crop": url,
+                })
 
     items = []
     for it in review.get("review_items", []):
@@ -487,11 +514,27 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
         if not fp.endswith("affected_mpn"):
             continue  # the card keys parts by affected MPN
         pg = it.get("page_number")
-        crops = page_crops.get(pg, [])
+        val = it.get("value") or ""
+        ib = (it.get("bboxes") or [None])[0]
+        review_reason = it.get("review_reason")
+
+        # COHERENCE SEAL: only serve a crop whose element TEXT CONTAINS the matched
+        # value — the evidence must attest provenance it actually has. Among the
+        # page's tables that contain the value, pick the best bbox overlap (the
+        # element the value anchored to). If none contain it, serve NO crop rather
+        # than a mismatched table (the exact failure that made the instrument lie).
+        cands = [t for t in tables if t["page"] == pg and val and val in t["text"]]
+        best = max(cands, key=lambda t: _iou(ib, t["bbox"])) if cands else None
+        crop_url = best["crop"] if best else None
+        if not best and val:
+            review_reason = review_reason or (
+                f"value not located in any source table on page {pg} (coherence check failed)"
+            )
+
         items.append({
             "field_path": fp,
-            "mpn": it.get("value"),
-            "value": it.get("value"),
+            "mpn": val,
+            "value": val,
             "source_snippet": it.get("source_snippet") or "",
             "page_number": pg,
             "bboxes": it.get("bboxes") or [],
@@ -500,8 +543,9 @@ def _read_notice_provenance_from_store(prefix: str) -> list:
             "match_method": it.get("match_method") or "not_found",
             "match_confidence": it.get("match_confidence") or 0.0,
             "needs_review": bool(it.get("needs_review")),
-            "review_reason": it.get("review_reason"),
-            "crop_url": crops[0] if crops else None,  # s3:// — served via FederatedImage
+            "review_reason": review_reason,
+            "coherent": crop_url is not None,  # the served crop's text contains the value
+            "crop_url": crop_url,  # s3:// — served via FederatedImage
             "page_image_url": None,  # no full-page render yet (doc-tools Phase 5.8)
         })
     return items
