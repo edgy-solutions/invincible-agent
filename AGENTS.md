@@ -27,6 +27,14 @@ JOURNAL-CONFIRMED (mint journaled, state-write not yet → kill landed between t
 grant when the work changes, and keep this line current so the fence tracks reality, not the state it
 was written in.
 
+**Deploy-target resolution is EXACT-MATCH, not pattern-match (2026-07-25).** The standing grant covers
+the NAMED M1 services; it does not license rolling whatever a substring happens to hit. Resolve a
+`kubectl rollout restart` target by exact deployment name (`iagent-cortex-ui`, `iagent-cortex-bff`, …),
+never by a grep/`grep -iE` over `kubectl get deploy` output — a "frontend"/"ui" pattern once matched and
+rolled `datahub-datahub-frontend` by accident (harmless rolling restart, but the wrong service). The
+grant makes the fleet writable at 2am; the fence is that name resolution is deliberate, not incidental.
+Filed from that miss so the anecdote becomes a rule, not a repeat.
+
 ## Runbook: engine-o's SELECT path drops RDF term types — typed reads go CONSTRUCT→parse (2026-07-23)
 
 `execute_sparql` returns `list[dict]` of `{var: string}` — it stringifies every RDF term (main.py
