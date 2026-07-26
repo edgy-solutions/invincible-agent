@@ -4029,7 +4029,13 @@ _ELECTRIC_FORWARD_HEADERS = {
     "electric-schema",
     "electric-cursor",
     "content-type",
-    "cache-control",
+    # NB: Electric's own `cache-control` is DELIBERATELY NOT forwarded. Electric
+    # marks shape responses publicly cacheable (built for CDN caching), but behind
+    # this per-user proxy the client URL is IDENTICAL across users (the
+    # discriminating WHERE is injected server-side from the JWT), so a public/
+    # shared cache would serve one user's shape response to another in the same
+    # browser — the cross-user "flash" of a prior user's answers/tasks. We force
+    # `no-store` on the response below instead.
 }
 
 
@@ -4095,11 +4101,6 @@ async def electric_shape_proxy(
         escaped = _escape_sql_string_literal(verified_user_id)
         server_where = f"produced_for_user_id = '{escaped}'"
     upstream_params["where"] = server_where
-    # TEMP FORENSIC (2026-07-25): resolve whether distinct users carry distinct
-    # subs/authz_ids and what WHERE each shape gets — the flash-vs-shared-sub
-    # question. Remove once the identity question is closed.
-    logger.warning("electric_shape_forensic table=%s sub=%s authz_id=%s where=%r",
-                   table, current_user.id, current_user.authz_id, server_where)
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
 
@@ -4120,6 +4121,14 @@ async def electric_shape_proxy(
         k: v for k, v in upstream_resp.headers.items()
         if k.lower() in _ELECTRIC_FORWARD_HEADERS
     }
+    # These shape responses are PER-USER (identical URL, WHERE injected from the
+    # caller's JWT) — they must NEVER be cached and served to another user in the
+    # same browser (or by any shared/CDN cache). no-store prevents the cross-user
+    # flash; vary:authorization documents that the content depends on the caller.
+    # (App-level incremental sync uses electric-handle/offset, not HTTP caching,
+    # so disabling the HTTP cache does not affect correctness of the stream.)
+    forwarded["cache-control"] = "no-store"
+    forwarded["vary"] = "Authorization"
 
     return StreamingResponse(
         iter([upstream_resp.content]),
