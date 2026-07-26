@@ -4098,8 +4098,8 @@ async def electric_shape_proxy(
     # TEMP FORENSIC (2026-07-25): resolve whether distinct users carry distinct
     # subs/authz_ids and what WHERE each shape gets — the flash-vs-shared-sub
     # question. Remove once the identity question is closed.
-    logger.info("electric_shape_forensic table=%s sub=%s authz_id=%s where=%r",
-                table, current_user.id, current_user.authz_id, server_where)
+    logger.warning("electric_shape_forensic table=%s sub=%s authz_id=%s where=%r",
+                   table, current_user.id, current_user.authz_id, server_where)
 
     upstream_url = f"{_ELECTRIC_UPSTREAM_URL}/v1/shape"
 
