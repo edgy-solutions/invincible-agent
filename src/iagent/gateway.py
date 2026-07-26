@@ -904,6 +904,25 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _no_store_per_user_responses(request: Request, call_next):
+    """Force `Cache-Control: no-store` on EVERY response (class fix).
+
+    Every cortex-bff response is per-caller / dynamic, served at a URL that does
+    NOT itself carry the caller identity (the JWT does, via Authorization). A
+    shared or browser cache keyed by URL would serve one user's response to
+    another in the same browser — the cross-user leak found on the Electric
+    shape proxy (identical URL, per-user WHERE injected server-side) and equally
+    latent on /me/human_tasks, /canvases, /federated_image, etc. (all per-user,
+    none previously sending cache-control). no-store makes the whole class
+    impossible; it also stops a cache from serving an authorized user's
+    /federated_image to an unauthorized one. Correctness over cache-hit here.
+    """
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # ── Models ────────────────────────────────────────────────
 class InterviewRequest(BaseModel):
     message: str
