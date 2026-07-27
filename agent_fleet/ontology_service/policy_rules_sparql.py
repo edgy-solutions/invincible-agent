@@ -8,7 +8,7 @@ the loading/validation lives with the loader (restate_analyst), so there is no s
 ingest-gate validator.
 
 Any new SPARQL template belongs in a pure module with a parse-validating test (the brace-bug lesson,
-[[project_pcn_driver_arc]] preconditions). CONSTRUCT/ASK forms parse-validate the same way SELECT does.
+[[project_dispatch_driver_arc]] preconditions). CONSTRUCT/ASK forms parse-validate the same way SELECT does.
 """
 from __future__ import annotations
 

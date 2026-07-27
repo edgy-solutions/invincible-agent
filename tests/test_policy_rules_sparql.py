@@ -25,7 +25,7 @@ for p in (str(_REPO / "agent_fleet" / "ontology_service"), str(_REPO / "agent_fl
         sys.path.insert(0, p)
 
 from agent_fleet.ontology_service.policy_rules_sparql import build_graph_probe_ask, build_rules_construct  # noqa: E402
-from agent_fleet.restate_analyst.pcn_rules_loader import load_disposition_rules  # noqa: E402
+from agent_fleet.restate_analyst.policy_rules_loader import load_disposition_rules  # noqa: E402
 
 _TTL = _REPO / "setup" / "ontologies" / "pcn_disposition_rules.ttl"
 _RULE_TYPE = "http://internal/sustainment/pcn#DispositionRule"

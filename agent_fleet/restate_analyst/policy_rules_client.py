@@ -24,11 +24,11 @@ import os
 import requests
 
 try:  # lazy-import dance
-    from pcn_rules_loader import load_disposition_rules  # type: ignore[no-redef]
-    from pcn_disposition_proposer import validate_ruleset  # type: ignore[no-redef]
+    from policy_rules_loader import load_disposition_rules  # type: ignore[no-redef]
+    from policy_evaluator import validate_ruleset  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
-    from agent_fleet.restate_analyst.pcn_rules_loader import load_disposition_rules
-    from agent_fleet.restate_analyst.pcn_disposition_proposer import validate_ruleset
+    from agent_fleet.restate_analyst.policy_rules_loader import load_disposition_rules
+    from agent_fleet.restate_analyst.policy_evaluator import validate_ruleset
 
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))

@@ -12,7 +12,7 @@ re-link provenance), the dedup no-op on a second invocation, suspend-vs-fail on 
 execution-grain fan-out (one grouped approval -> N keyed sends).
 
 Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with pytest-asyncio \
-        pytest ../../tests/test_pcn_driver.py -v
+        pytest ../../tests/test_dispatch_driver.py -v
 """
 from __future__ import annotations
 
@@ -28,11 +28,11 @@ for p in (str(_RA), str(_REPO)):
         sys.path.insert(0, p)
 
 import restate  # noqa: E402
-from agent_fleet.restate_analyst import pcn_driver  # noqa: E402
-from agent_fleet.restate_analyst.pcn_dispatch import plan_dispatch  # noqa: E402
+from agent_fleet.restate_analyst import dispatch_driver  # noqa: E402
+from agent_fleet.restate_analyst.dispatch_plan import plan_dispatch  # noqa: E402
 from agent_fleet.restate_analyst.workflow_bulk_resolve import ItemResolution  # noqa: E402
 
-_DISPATCH = pcn_driver.dispatch.__wrapped__  # unwrap the @handler coroutine to call it directly
+_DISPATCH = dispatch_driver.dispatch.__wrapped__  # unwrap the @handler coroutine to call it directly
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ def _payload(disposition, *, mpn="NSR01L30NXT5G",
         override_reason=None, proposed_by_ruleset=ruleset,
     )
     plan = plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X")
-    return pcn_driver.plan_to_payload(plan, user_jwt=user_jwt)
+    return dispatch_driver.plan_to_payload(plan, user_jwt=user_jwt)
 
 
 # ---------------------------------------------------------------------------
@@ -136,13 +136,13 @@ def http(monkeypatch):
             rec["mint"] += 1
             rec["mint_bodies"].append(json)
             return _Resp(rec["status"]["mint"], {"task_id": json["task_id"], "queued": True})
-        if url.endswith("/write_pcn_disposition_state"):
+        if url.endswith("/write_item_state"):
             rec["state"] += 1
             rec["state_bodies"].append(json)
             return _Resp(rec["status"]["state"], {"ok": True, "subject_iri": json["subject_iri"]})
         raise AssertionError(f"unexpected POST {url}")
 
-    monkeypatch.setattr(pcn_driver.requests, "post", _post)
+    monkeypatch.setattr(dispatch_driver.requests, "post", _post)
     return rec
 
 
@@ -169,17 +169,17 @@ async def test_task_is_minted_before_state(http):
     """Ordering is load-bearing (§Decisions): task-without-state is visible-and-recoverable; the
     reverse is silent-and-stuck. Under a clean run the register POST precedes the state POST."""
     seq: list[str] = []
-    orig = pcn_driver.requests.post
+    orig = dispatch_driver.requests.post
 
     def _tracking(url, **kw):
         seq.append("mint" if url.endswith("/register") else "state")
         return orig(url, **kw)
 
-    pcn_driver.requests.post = _tracking
+    dispatch_driver.requests.post = _tracking
     try:
         await _invoke(_payload("dispatchLTB"), {})
     finally:
-        pcn_driver.requests.post = orig
+        dispatch_driver.requests.post = orig
     assert seq == ["mint", "state"], f"expected task-first ordering, got {seq}"
 
 
@@ -220,7 +220,7 @@ async def test_unresolved_subject_mints_task_only_with_relink_provenance(http):
         idempotency_key="IPCN25300X:MPN-UNRES", needs_review=False,
         override_reason=None, proposed_by_ruleset="rules@abc123def456",
     )
-    payload = pcn_driver.plan_to_payload(
+    payload = dispatch_driver.plan_to_payload(
         plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X"),
     )
     outcome = await _invoke(payload, {})
@@ -293,7 +293,7 @@ def test_fan_out_sends_one_keyed_invocation_per_item():
         for i in range(3)
     ]
     ctx = _SendRecorder()
-    keys = pcn_driver.fan_out_dispatch(ctx, resolutions, notice_fingerprint="IPCN25300X",
+    keys = dispatch_driver.fan_out_dispatch(ctx, resolutions, notice_fingerprint="IPCN25300X",
                                        notice_id="IPCN25300X", user_jwt="jwt-abc")
     assert keys == ["IPCN25300X:MPN-0", "IPCN25300X:MPN-1", "IPCN25300X:MPN-2"]
     assert [s["key"] for s in ctx.sends] == keys

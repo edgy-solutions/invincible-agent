@@ -12,7 +12,7 @@ The three live seams (rules-fetch, resolveInstance, Topaz can_act) are injected 
 boundary, not a mock in the data path: real-shaped parts flow through the real proposer/funnel/review.
 
 Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with pytest-asyncio --with rdflib \
-        pytest ../../tests/test_pcn_review_starter.py -v
+        pytest ../../tests/test_review_starter.py -v
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ for p in (str(_RA), str(_REPO)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from agent_fleet.restate_analyst import pcn_review_starter as starter  # noqa: E402
-from agent_fleet.restate_analyst.pcn_rules_loader import load_disposition_rules  # noqa: E402
+from agent_fleet.restate_analyst import review_starter as starter  # noqa: E402
+from agent_fleet.restate_analyst.policy_rules_loader import load_disposition_rules  # noqa: E402
 
 _TTL = _REPO / "setup" / "ontologies" / "pcn_disposition_rules.ttl"
 _START = starter.start_review.__wrapped__
@@ -41,7 +41,7 @@ def _load_real_rules():
     return load_disposition_rules(g)
 
 
-# Same real-shaped IPCN25300X fixture as the seam-diff seal (test_pcn_review_builder).
+# Same real-shaped IPCN25300X fixture as the seam-diff seal (test_review_composer).
 _KNOWN_IRIS = {
     "NSR01L30NXT5G": "http://internal/components/NSR01L30NXT5G",
     "MPN-NEEDSREVIEW": "http://internal/components/MPN-NEEDSREVIEW",

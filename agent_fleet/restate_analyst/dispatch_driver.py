@@ -1,6 +1,6 @@
 """PCN/PDN dispatch DRIVER — the durable per-item executor of a resolved disposition.
 
-[[pcn_dispatch]] produces a PURE ``DispatchPlan`` (the persona-queue task + the graph-state write as
+[[dispatch_plan]] produces a PURE ``DispatchPlan`` (the persona-queue task + the graph-state write as
 DATA); this module EXECUTES it durably. The dispatcher is a Restate ``VirtualObject`` keyed by the
 ``idempotency_key`` (notice_fingerprint x mpn) — the settled idempotency substrate
 (docs/plans/pcn-pdn-bulk-resolve.md §1): keyed addressing IS the per-item lock (no check-then-act
@@ -10,7 +10,7 @@ RESUMES rather than halves.
 Two-write convergence (§Decisions, §7) — TASK-FIRST, then graph-state:
 
   1. ``ctx.run("mint_task")``  -> cortex-bff ``/internal/human_tasks/register``  (the persona-queue task)
-  2. ``ctx.run("write_state")`` -> engine-o ``/write_pcn_disposition_state``       (idempotent delete+insert)
+  2. ``ctx.run("write_state")`` -> engine-o ``/write_item_state``       (idempotent delete+insert)
 
 Order is load-bearing. If one write lands and the other does not: state-without-task is
 *silent-and-stuck* (a dashboard row nobody works — the silent-degradation shape the arc kills on
@@ -22,7 +22,7 @@ Exactly-one is TWO mechanisms composed:
       step (the task is not double-minted; the idempotent state write is not the concern);
   (b) a durable ``dispatched`` marker on the object makes a second WHOLE invocation to the same key a
       no-op — the dedup-on-(notice x part) the keying "should give for free," asserted not assumed.
-The seal is ``tests/test_pcn_driver.py``'s TWO-DIRECTION failure injection (kill after each write,
+The seal is ``tests/test_dispatch_driver.py``'s TWO-DIRECTION failure injection (kill after each write,
 replay, assert EXACTLY ONE task and EXACTLY ONE state stamp).
 
 Scope guard (§7): the driver ends at "the durable task EXISTS," NOT at the task completing.
@@ -43,9 +43,9 @@ _SEAL_PAUSE_AFTER_MINT = float(os.getenv("PCN_SEAL_PAUSE_AFTER_MINT_S", "0"))
 _SEAL_PAUSE_AFTER_STATE = float(os.getenv("PCN_SEAL_PAUSE_AFTER_STATE_S", "0"))
 
 try:  # same lazy-import dance as the other restate_analyst cores (container flattens the dir)
-    from pcn_dispatch import plan_dispatch  # type: ignore[no-redef]
+    from dispatch_plan import plan_dispatch  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
-    from agent_fleet.restate_analyst.pcn_dispatch import plan_dispatch
+    from agent_fleet.restate_analyst.dispatch_plan import plan_dispatch
 
 CORTEX_BFF_URL = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090")
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
@@ -126,8 +126,8 @@ def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
         "task_id": task["task_key"],
         "task_key": task["task_key"],          # notice x part — lets cortex-bff dedup a redelivery too
         # The durable workflow this task belongs to. For a grouped-review task this is the
-        # PcnGroupedReview KEY, so cortex-bff's /human_tasks/{id}/act can address
-        # PcnGroupedReview/{workflow_id}/submit_decision when the reviewer approves — without it the
+        # GroupedReview KEY, so cortex-bff's /human_tasks/{id}/act can address
+        # GroupedReview/{workflow_id}/submit_decision when the reviewer approves — without it the
         # projection row has workflow_id NULL and the approval has nothing to resume (the review would
         # suspend forever). Dispatch tasks are terminal and carry None (harmless; the field is optional).
         "workflow_id": task.get("workflow_id"),
@@ -166,7 +166,7 @@ def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
 
 def _write_disposition_state(gw: dict) -> dict:
     """STATE-SECOND executor: stamp disposition state onto the item's node via engine-o's IDEMPOTENT
-    (delete-then-insert) ``/write_pcn_disposition_state``, so a re-stamp on resume never duplicates.
+    (delete-then-insert) ``/write_item_state``, so a re-stamp on resume never duplicates.
     Called only when the subject resolved (an unresolved subject has no ``graph_write`` — the task
     carries the re-link provenance instead). A 400 (malformed IRI) is TERMINAL, not retry-and-park."""
     body = {
@@ -176,7 +176,7 @@ def _write_disposition_state(gw: dict) -> dict:
         "proposed_by_ruleset": gw.get("proposed_by_ruleset", ""),
     }
     resp = requests.post(
-        f"{ENGINE_O_URL}/write_pcn_disposition_state", json=body, timeout=_HTTP_TIMEOUT,
+        f"{ENGINE_O_URL}/write_item_state", json=body, timeout=_HTTP_TIMEOUT,
     )
     _fail_terminal_on_4xx(resp, f"engine-o disposition-state write for {gw['subject_iri']!r}")
     resp.raise_for_status()  # 5xx / 429 / network stay RETRYABLE (transient, should retry)
@@ -186,10 +186,10 @@ def _write_disposition_state(gw: dict) -> dict:
 # ---------------------------------------------------------------------------
 # The dispatcher — one VirtualObject per item, keyed by idempotency_key
 # ---------------------------------------------------------------------------
-pcn_dispatch_item = VirtualObject("PcnDispatchItem")
+dispatch_item = VirtualObject("DispatchItem")
 
 
-@pcn_dispatch_item.handler()
+@dispatch_item.handler()
 async def dispatch(ctx: ObjectContext, request: dict) -> dict:
     """Execute ONE item's dispatch durably (keyed by ``idempotency_key`` = notice x part).
 
@@ -249,7 +249,7 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
 # ---------------------------------------------------------------------------
 def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "", user_jwt: str = "", requested_by: str = "") -> list[str]:
     """Fan ONE grouped approval out to N per-item dispatches. Each ``ItemResolution`` is planned then
-    SENT (fire-and-forget) to its own ``PcnDispatchItem`` keyed by ``idempotency_key`` — per-item,
+    SENT (fire-and-forget) to its own ``DispatchItem`` keyed by ``idempotency_key`` — per-item,
     idempotent, OUTSIDE the workflow graph (§7). The Restate invocation ``idempotency_key`` is that
     same key, so even a re-fan-out from a workflow replay collapses onto the same invocation. Returns
     the keys dispatched (audit)."""

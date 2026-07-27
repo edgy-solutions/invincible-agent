@@ -495,7 +495,7 @@ async def lifespan(app: FastAPI):
         print(f"[ontology-service] FAILED to connect to Neo4j: {e}")
 
     # Register engine-o as the SUSTAINMENT mesh:resolveInstance provider (Recipe v2 pattern, mirrors
-    # Engine D). engine-o owns the SUSTAINMENT_INSTANCES graph, so it self-hosts /resolve_pcn_instance
+    # Engine D). engine-o owns the SUSTAINMENT_INSTANCES graph, so it self-hosts /resolve_instance
     # and self-registers here — REPRODUCIBLE: runs every boot, survives re-prime, NOT a hand-run Cypher
     # (bootstrap-state-debt). The /resolve fan-out then discovers it like any other provider.
     try:
@@ -505,7 +505,7 @@ async def lifespan(app: FastAPI):
             from agent_fleet.utils.mesh_registration import register_engine_to_mesh
         _pcn_endpoint = os.getenv(
             "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
-        ).rstrip("/") + "/resolve_pcn_instance"
+        ).rstrip("/") + "/resolve_instance"
         register_engine_to_mesh(
             name="engine_o_sustainment_resolve_instance",
             description=(
@@ -1438,14 +1438,14 @@ except ImportError:
     from agent_fleet.ontology_service.recall_guard import recall_override_guard as _recall_override_guard
 
 try:
-    from pcn_instance_provider import resolve_pcn_candidates as _resolve_pcn_candidates, PCN_INSTANCES_QUERY as _PCN_INSTANCES_QUERY  # type: ignore[no-redef]
+    from sustainment_instance_provider import resolve_sustainment_candidates as _resolve_sustainment_candidates, SUSTAINMENT_INSTANCES_QUERY as _SUSTAINMENT_INSTANCES_QUERY  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
-    from agent_fleet.ontology_service.pcn_instance_provider import resolve_pcn_candidates as _resolve_pcn_candidates, PCN_INSTANCES_QUERY as _PCN_INSTANCES_QUERY
+    from agent_fleet.ontology_service.sustainment_instance_provider import resolve_sustainment_candidates as _resolve_sustainment_candidates, SUSTAINMENT_INSTANCES_QUERY as _SUSTAINMENT_INSTANCES_QUERY
 
 try:
-    from pcn_state_sparql import build_disposition_state_update as _build_state_update, build_parts_by_state_query as _build_parts_query  # type: ignore[no-redef]
+    from state_sparql import build_item_state_update as _build_state_update, build_instances_by_property_query as _build_parts_query  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
-    from agent_fleet.ontology_service.pcn_state_sparql import build_disposition_state_update as _build_state_update, build_parts_by_state_query as _build_parts_query
+    from agent_fleet.ontology_service.state_sparql import build_item_state_update as _build_state_update, build_instances_by_property_query as _build_parts_query
 
 try:
     from policy_rules_sparql import build_rules_construct, build_graph_probe_ask  # type: ignore[no-redef]
@@ -2486,7 +2486,7 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 
 
 # ---------------------------------------------------------------------------
-# POST /resolve_pcn_instance — the pcn mesh:resolveInstance provider endpoint.
+# POST /resolve_instance — the pcn mesh:resolveInstance provider endpoint.
 # engine-o self-hosts it (it owns the SUSTAINMENT_INSTANCES graph) and registers
 # itself in the capability graph as a provider for SUSTAINMENT; the /resolve
 # fan-out then discovers + calls it like any other provider. Registry-discovered,
@@ -2494,22 +2494,22 @@ async def operable_subjects(request: OperableSubjectsRequest) -> OperableSubject
 # mild smell accepted because engine-o owns the Jena instances; if a dedicated
 # sustainment engine appears, move this route to it and re-point the registration.
 # ---------------------------------------------------------------------------
-class ResolvePcnRequest(BaseModel):
+class ResolveInstanceRequest(BaseModel):
     identifier: str
     query: str = ""
 
 
-@app.post("/resolve_pcn_instance")
-async def resolve_pcn_instance(request: ResolvePcnRequest) -> dict:
+@app.post("/resolve_instance")
+async def resolve_instance(request: ResolveInstanceRequest) -> dict:
     """Resolve an identifier to pcn instance candidates (matcher: agent_fleet/ontology_service/
-    pcn_instance_provider.py). Contract matches _call_resolver's expectation: returns
+    sustainment_instance_provider.py). Contract matches _call_resolver's expectation: returns
     ``{candidates: [{instance_id, class_uri, label, score}]}``; an empty list is a first-class
     ABSTAIN. The async Jena fetch lives here; the matching is the pure, unit-tested core."""
     try:
-        rows = await execute_sparql(_PCN_INSTANCES_QUERY, domain="SUSTAINMENT")
+        rows = await execute_sparql(_SUSTAINMENT_INSTANCES_QUERY, domain="SUSTAINMENT")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"pcn instance query failed: {exc}") from exc
-    candidates = _resolve_pcn_candidates(request.identifier, rows=rows)
+    candidates = _resolve_sustainment_candidates(request.identifier, rows=rows)
     return {"candidates": candidates}
 
 
@@ -2527,7 +2527,7 @@ async def _execute_sparql_update(update: str) -> None:
         resp.raise_for_status()
 
 
-class WriteDispositionStateRequest(BaseModel):
+class WriteItemStateRequest(BaseModel):
     subject_iri: str
     disposition_state: str
     disposition_ref: str
@@ -2536,8 +2536,8 @@ class WriteDispositionStateRequest(BaseModel):
     proposed_by_ruleset: str = ""
 
 
-@app.post("/write_pcn_disposition_state")
-async def write_pcn_disposition_state(request: WriteDispositionStateRequest) -> dict:
+@app.post("/write_item_state")
+async def write_item_state(request: WriteItemStateRequest) -> dict:
     """Stamp disposition state onto a component node in SUSTAINMENT_INSTANCES — the dispatch effect's
     graph write. IDEMPOTENT: deletes any prior state for the subject then inserts, so the two-write
     convergence can re-stamp on resume without duplicating. subject_iri must be a controlled component
@@ -2550,13 +2550,13 @@ async def write_pcn_disposition_state(request: WriteDispositionStateRequest) -> 
     return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
 
 
-class PartsByStateRequest(BaseModel):
+class InstancesByPropertyRequest(BaseModel):
     disposition_state: str
     domain: str = "SUSTAINMENT"
 
 
-@app.post("/pcn_parts_by_state")
-async def pcn_parts_by_state(request: PartsByStateRequest) -> dict:
+@app.post("/instances_by_property")
+async def instances_by_property(request: InstancesByPropertyRequest) -> dict:
     """Step-5 query: all parts in a disposition state, via the read-union (which spans
     SUSTAINMENT_INSTANCES) — the disposition dashboard's source. No dashboard store; the UI queries
     the same graph the policy lives in."""
