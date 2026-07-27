@@ -336,7 +336,15 @@ async def start_review(
     so a caller cannot start a review as someone else. The raw bearer is forwarded as
     `user_jwt` because the downstream grouped-task register + dispatch mint act as this
     user. Honest outcomes pass through: STARTED / NO_RESIDUE / NO_ENTITLED_ACTION are
-    200; a bad/unsourced request or corrupt ruleset is 422 (never a silent success)."""
+    200; a bad/unsourced request or corrupt ruleset is 422 (never a silent success).
+
+    TRIGGER STATUS: this endpoint is the OPS / RE-DRIVE path, NOT the primary trigger.
+    The CANONICAL trigger is the extraction->review Dagster sensor
+    (`iagent.defs.extraction_review_sensor`), which fires this same start_review flow
+    automatically when a doc-tools extraction lands its review.json — one review per
+    notice (idempotent on the fingerprint), impacted_parts sourced from review.json.
+    Call this route by hand only to re-drive a specific notice (e.g. after fixing a
+    ruleset / grant) — same status as re-running a Dagster partition."""
     raw_token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
     body = {
         "notice_id": req.notice_id,
