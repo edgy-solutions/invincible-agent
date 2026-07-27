@@ -154,6 +154,20 @@ lands there. The directional rows are **stated so a future builder knows where e
 lands**, but are unbuilt; converting them from directional to decided is a separate
 trigger (per ADR-0024's per-standard-integration discipline).
 
+**Posture for the directional rows (see `docs/plans/standards-posture.md`, Rule 3).**
+ODCS/ODPS/CALM are INTERCHANGE / architecture-description standards with NO runtime to
+import — so the BPMN "decline the interpreter" move does NOT apply. Declining them would
+mean inventing proprietary YAML for what an LF standard specifies (a generic-at-birth
+violation one level up); their shape (ratifiable git artifacts describing promises,
+generic-consumed) IS the mesh thesis. So they are adopted as EXPORT/IMPORT SCHEMAS at the
+boundary they serve, on trigger, with the graph as sole authority (its dialects, never a
+rival source). `directional and greenfield` is thus three ARMED WAKES with named consumers:
+**ODCS** at the ADR-0032 DQ/coverage verb (the verb reads declared contracts, not an
+invented expectation format); **ODPS** at the first workflow-promotion (the promoted
+artifact's manifest IS an ODPS document); **CALM** at the first external-architecture ask
+or work-deploy compliance review (a CALM export FROM the capability graph). Failure mode is
+PREMATURE adoption — mapping before the boundary is live — not the sidestep.
+
 ### 3. The interrogator: supersede the machinery, keep the pattern, add the verb
 
 - **Supersede** the BPMN-fused interview machinery (`IterateBPMNGraph`,

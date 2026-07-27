@@ -92,6 +92,18 @@ surface).
 - **M3.3 (on the presentation trigger):** `rendersAs` triples; retire `taskKindRegistry` + the hand-fed
   dashboard feeder. NOT before the second instances-by-property view.
 
+## Standards posture (the gap this doc originally missed)
+This design covered BPMN→the SPO model but said nothing about ADR-0029's OTHER standards
+(`ODCS/ODPS/CALM → directional and greenfield`). Those are **interchange/architecture-description**
+standards with NO runtime to import — the BPMN "decline the interpreter" logic does NOT apply to them; the
+failure mode is *premature* adoption, and the right shape is adopt-as-export/import-schema at the boundary,
+on trigger, with the graph as sole authority. The full three-rule posture (domain=data · process=semantics-
+mined · interchange=dialect-on-trigger), the instances, the two standing liabilities (compliance
+conversation; first un-dissolvable branch), and the three armed wakes (ODCS↔the ADR-0032 DQ/coverage verb ·
+ODPS↔first workflow-promotion · CALM↔first external-architecture ask / work compliance review) are in
+**`standards-posture.md`** — the standalone note the ADRs cite. M3's `rendersAs` presentation layer is Rule-2
+(graph-derived, not an imported presentation standard).
+
 ## Acceptance when M3.2 lands
 The hand-coded `grouped_review_workflow.py` is deleted; the grouped review runs from
 `policy/workflows/grouped_review.yaml` via `_run_definition`; the sealed HITL mechanics (register-before-
