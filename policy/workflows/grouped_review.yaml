@@ -1,0 +1,64 @@
+# SPO-native re-expression of the grouped disposition-review workflow (ADR-0029 M3).
+# Git-asserted + reviewed like promote_answer_artifact.yaml, so classification + grants
+# compose. Executed on the Restate BPMNWorkflowRunner; steps run as the workflow INITIATOR.
+#
+# STATUS: definition ARTIFACT only (M3.1). NOT yet wired to _run_definition — the executor
+# (stage-2 verifier + runner cutover) is a separate SEALED increment, and the extraction/
+# scoring spo_operation steps are BLOCKED on the Part/Notice/BOM ontology classes + registered
+# verbs that don't exist yet (ADR-0029 Slice-2 prereq). This artifact + its validation test are
+# the buildable slice: the grouped-review expressed AS DATA, ready for the executor to consume.
+#
+# {placeholders} are bound at trigger time (the notice being reviewed + its compartment).
+id: grouped_review
+name: "Grouped disposition review (1 approval resolves N affected parts)"
+
+# The compartment gates who may OBSERVE (3-audience tiers). The grouped review is generic over
+# domain — the compartment is the notice's, bound at trigger via the audience below. Static
+# WorkflowDefinition.classification can't express a per-invocation compartment; until the model
+# grows per-trigger binding (M3 open item), author one definition per compartment OR leave null
+# and let the audience carry it. Left null here = observation gate deferred to the audience.
+classification: null
+
+participants:
+  - role: initiator                         # identity all steps execute as (the review starter)
+  - role: reviewer                          # resolved from the audience (per-approver-filtered batch)
+
+domain_stages: [scored, awaiting_review, dispatched]
+
+steps:
+  # NOTE (blocked, documented): the extraction / matching / relevance-scoring stages are
+  # `spo_operation` steps in the full model. They need Part/Notice/BOM ontology classes with
+  # registered verbs (which do not exist yet) so the stage-2 eligibility verifier has real
+  # (subject, verb) URIs to check. Omitted from this spine until that prereq lands (Slice-2).
+  # Per ADR-0029 the FAN-OUT to N parts is dissolved by per-item invocation + the dispatcher
+  # (outside the definition) — this spine is the single per-notice review + dispatch, ZERO new
+  # step kinds.
+
+  # 1:1 with today's sealed grouped HumanTask — register durable task -> suspend on the batch
+  # promise -> Topaz can_act on the audience -> bulk-resolve N promises. UNCHANGED mechanics.
+  - kind: human_await
+    id: decision                                    # M3.2: matches the shared handler's promise. The
+                                                    # DURABLE name is declared, not derived from this id
+                                                    # — `promise_name: decision` lands with build 1's
+                                                    # model change (see design doc §1, AMENDED). Safe to
+                                                    # rename here because this definition has never run:
+                                                    # no durable state holds the old id.
+    audience: "disposition_review:{compartment}"   # generic audience (M2 renamed from pcn_disposition);
+                                                    # {compartment} bound at trigger from the notice
+    subject_ref: "{notice_ref}"                     # the supplier notice under review
+    title: "Review {n} affected part(s) — notice {notice_id}"
+    summary: "Affected parts need a disposition review (accept-all with per-part exceptions)"
+
+  # Dispatch the approved dispositions. direct_call = TRANSITIONAL escape hatch, capability-GATED
+  # (Topaz can_invoke). FOLLOW-UP: register mesh:dispatchDispositions as a real verb -> becomes a
+  # `kind: spo_operation` through the stage-2 verifier, closing the escape hatch. The dispatcher
+  # emits one keyed invocation per (notice x part) to the DispatchItem VirtualObject (per-item
+  # idempotency), so fan-out never enters this definition.
+  - kind: direct_call
+    id: dispatch_dispositions
+    endpoint: "{dispatch_endpoint}"
+    capability: "mesh:dispatchDispositions"
+
+observable_state:
+  visible: [domain_stages, grouped_review.status]   # per 3-audience tiers (Slice 3)
+  internal: [dispatch_dispositions.result]

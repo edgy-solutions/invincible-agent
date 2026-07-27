@@ -42,9 +42,28 @@ def test_promotion_definition_loads() -> None:
     assert pub.capability == "mesh:publishArtifact"
 
 
+def test_grouped_review_definition_loads() -> None:
+    """M3.1 artifact: the grouped disposition-review expressed as a WorkflowDefinition
+    (human_await grouped task -> gated direct_call dispatch). Executor + the spo_operation
+    extraction steps are deferred (ADR-0029 prereqs); this asserts the DATA parses + validates
+    against the sealed Slice-1 model, and that the audience was de-pcn'd (M2) to a generic,
+    compartment-bound disposition-review key."""
+    path = _REPO / "policy" / "workflows" / "grouped_review.yaml"
+    d = wd.load_workflow_definition(path)
+    assert d.id == "grouped_review"
+    kinds = [s.kind for s in d.steps]
+    assert kinds == ["human_await", "direct_call"], kinds
+    aw = d.steps[0]
+    assert aw.audience.startswith("disposition_review:"), aw.audience   # generic, not pcn_disposition
+    assert aw.subject_ref == "{notice_ref}"
+    disp = d.steps[1]                                                    # dispatch is GATED (Q3)
+    assert disp.capability == "mesh:dispatchDispositions"
+
+
 def test_load_all_keys_by_id() -> None:
     workflows = wd.load_all_workflows(_REPO / "policy" / "workflows")
     assert "promote_answer_artifact" in workflows
+    assert "grouped_review" in workflows
 
 
 def test_direct_call_without_capability_is_rejected() -> None:
