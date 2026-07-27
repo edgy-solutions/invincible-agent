@@ -302,7 +302,7 @@ async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
 
 
 # ── PCN/PDN disposition review — start ────────────────────────────────────────
-class PcnReviewStartRequest(_BaseModel):
+class ReviewStartRequest(_BaseModel):
     """Start a grouped disposition review for a notice. The extraction-sourced fields
     (`impacted_parts`, `doc_needs_review`, etc.) are PASSED THROUGH from the caller — the
     BFF MUST NOT reconstruct `impacted_parts` from a graph projection: per-part
@@ -324,14 +324,14 @@ class PcnReviewStartRequest(_BaseModel):
 _PCN_REVIEW_BAD_REQUEST = {"REVIEW_STATE_UNSOURCED", "RULESET_INVALID", "RULES_NOT_FOUND"}
 
 
-@app.post("/pcn/reviews")
-async def start_pcn_review(
-    req: PcnReviewStartRequest,
+@app.post("/reviews")
+async def start_review(
+    req: ReviewStartRequest,
     request: Request,
     current_user: User = Depends(get_current_user),
 ):
     """Compose a notice into a grouped disposition review (proxies engine-a's durable
-    PcnReviewStarter.start_review). The APPROVER is stamped from the authenticated
+    ReviewStarter.start_review). The APPROVER is stamped from the authenticated
     identity (`authz_id` — the Topaz key engine-a's can_act checks), never from the body,
     so a caller cannot start a review as someone else. The raw bearer is forwarded as
     `user_jwt` because the downstream grouped-task register + dispatch mint act as this
@@ -352,7 +352,7 @@ async def start_pcn_review(
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             rr = await client.post(
-                f"{_RESTATE_INGRESS_URL}/PcnReviewStarter/start_review", json=body,
+                f"{_RESTATE_INGRESS_URL}/ReviewStarter/start_review", json=body,
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"error": "review_start_unreachable", "message": str(exc)})
@@ -366,8 +366,8 @@ async def start_pcn_review(
     return out
 
 
-@app.get("/pcn/reviews/{workflow_id}/batch")
-async def get_pcn_review_batch(
+@app.get("/reviews/{workflow_id}/batch")
+async def get_review_batch(
     workflow_id: str,
     current_user: User = Depends(get_current_user),
 ):
@@ -385,7 +385,7 @@ async def get_pcn_review_batch(
     except human_tasks.HumanTaskConfigError:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
     match = next((t for t in rows
-                  if t.get("workflow_id") == workflow_id and t.get("kind") == "pcn_grouped_review"), None)
+                  if t.get("workflow_id") == workflow_id and t.get("kind") == "grouped_review"), None)
     if match is None:
         raise HTTPException(status_code=404, detail={"error": "review_not_found"})
     try:
@@ -393,7 +393,7 @@ async def get_pcn_review_batch(
             # get_batch takes NO input — send an EMPTY body. A JSON `{}` body is rejected 400 by Restate
             # (input supplied to a no-input handler); an empty POST is the correct invocation.
             rr = await client.post(
-                f"{_RESTATE_INGRESS_URL}/PcnGroupedReview/{workflow_id}/get_batch",
+                f"{_RESTATE_INGRESS_URL}/GroupedReview/{workflow_id}/get_batch",
             )
             rr.raise_for_status()
     except Exception as exc:
@@ -607,7 +607,7 @@ async def notice_provenance(
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
 # The ONE pcn-aware presentation surface (grep-able; the M2 deletion test covers it). It hand-assembles
 # an INSTANCES_BY_PROPERTY archetype payload (docs/plans/pcn-dashboard-payload-schema.md) from engine-o's
-# /pcn_parts_by_state. Everything pcn lives in these VALUES; the cortex-ui renderer is generic and knows
+# /instances_by_property. Everything pcn lives in these VALUES; the cortex-ui renderer is generic and knows
 # none of it. Each field is the hand-assembled projection of a `rendersAs` triple M3 will declare, so the
 # M2 swap to a generic /instances endpoint touches ONLY this feeder — the renderer does not move.
 _PCN_STATE_VOCABULARY = ["dispatchQualification", "dispatchLTB", "dispatchAltSourcing", "archive"]
@@ -619,13 +619,13 @@ _PCN_DASHBOARD_COLUMNS = [
 ]
 
 
-@app.get("/pcn/parts_by_state")
-async def pcn_parts_by_state_dashboard(
+@app.get("/instances_by_property")
+async def instances_by_property_dashboard(
     state: str = "dispatchQualification",
     current_user: User = Depends(get_current_user),
 ):
     """FEEDER: assemble the INSTANCES_BY_PROPERTY payload for the parts-by-disposition-state dashboard.
-    Pulls rows from engine-o /pcn_parts_by_state and wraps them in the archetype the generic renderer
+    Pulls rows from engine-o /instances_by_property and wraps them in the archetype the generic renderer
     consumes. The pcn-specific columns/vocabulary/target are hand-set HERE (the temporary feeder); the
     renderer receives only the archetype shape."""
     if state not in _PCN_STATE_VOCABULARY:
@@ -633,7 +633,7 @@ async def pcn_parts_by_state_dashboard(
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             rr = await client.post(
-                f"{_DAGSONTOLOGY_SVC_URL}/pcn_parts_by_state", json={"disposition_state": state},
+                f"{_DAGSONTOLOGY_SVC_URL}/instances_by_property", json={"disposition_state": state},
             )
             rr.raise_for_status()
     except Exception as exc:
@@ -766,13 +766,13 @@ async def act_on_human_task(
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
 
-    # FULFILLMENT (pcn_grouped_review): the decision must be VALIDATED by the workflow
-    # (PcnGroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision
+    # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
+    # (GroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision
     # can REFUSE (an unverified row riding accept-all, a blank-reason override) — a policy
     # outcome, not a transient failure — and a refused submission must leave the task PENDING,
     # never falsely marked approved while the workflow stays suspended. So unlike workflow_ack
     # (mark-then-best-effort-resume), we validate FIRST and mark resolved ONLY on acceptance.
-    if match.get("kind") == "pcn_grouped_review":
+    if match.get("kind") == "grouped_review":
         wf = match.get("workflow_id")
         if not wf:
             # No workflow key on the row -> nothing to resume (engine-a must stamp workflow_id
@@ -792,7 +792,7 @@ async def act_on_human_task(
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(
-                    f"{_RESTATE_INGRESS_URL}/PcnGroupedReview/{wf}/submit_decision",
+                    f"{_RESTATE_INGRESS_URL}/GroupedReview/{wf}/submit_decision",
                     json={"decision": decision},
                 )
         except Exception as exc:

@@ -1,0 +1,620 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!--Arbortext, Inc., 1988-2012, v.4002-->
+<!DOCTYPE DocumentTypeConfiguration PUBLIC "-//Arbortext//DTD Document Type Configuration 2.0//EN" "dcfdtd.dtd">
+<DocumentTypeConfiguration>
+<Options allowApplicationToolbar="yes" allowComposeStylesheetList="yes" allowFosiMod="yes" allowTouchup="yes" protected="no"></Options>
+<NewDialog>
+<New description="40051E_5_0 aalwp" sampleFile="aalwp.xml"/>
+<New description="40051E_5_0 ammo.marking" sampleFile="ammo.markingwp.xml"/>
+<New description="40051E_5_0 ammowp" sampleFile="ammowp.xml"/>
+<New description="40051E_5_0 auxeqpwp" sampleFile="auxeqpwp.xml"/>
+<New description="40051E_5_0 bdartoolswp" sampleFile="bdartoolswp.xml"/>
+<New description="40051E_5_0 bulk_itemswp" sampleFile="bulk_itemswp.xml"/>
+<New description="40051E_5_0 coeibiiwp" sampleFile="coeibiiwp.xml"/>
+<New description="40051E_5_0 compchklistwp" sampleFile="compchklistwp.xml"/>
+<New description="40051E_5_0 csi.fscap.wp" sampleFile="csi.fscap.wp.xml"/>
+<New description="40051E_5_0 descwp" sampleFile="descwp.xml"/>
+<New description="40051E_5_0 ctrlindwp" sampleFile="ctrlindwp.xml"/>
+<New description="40051E_5_0 diagnositicwp" sampleFile="diagnosticwp.xml"/>
+<New description="40051E_5_0 emergencywp" sampleFile="emergencywp.xml"/>
+<New description="40051E_5_0 eqploadwp" sampleFile="eqploadwp.xml"/>
+<New description="40051E_5_0 explistwp" sampleFile="explistwp.xml"/>
+<New description="40051E_5_0 facilwp" sampleFile="facilwp.xml"/>
+<New description="40051E_5_0 genmaintwp" sampleFile="genmaintwp.xml"/>
+<New description="40051E_5_0 genwp" sampleFile="genwp.xml"/>
+<New description="40051E_5_0 ginfowp" sampleFile="ginfowp.xml"/>
+<New description="40051E_5_0 introwp" sampleFile="introwp.xml"/>
+<New description="40051E_5_0 inventorywp" sampleFile="inventorywp.xml"/>
+<New description="40051E_5_0 kitswp" sampleFile="kitswp.xml"/>
+<New description="40051E_5_0 lubewp" sampleFile="lubewp.xml"/>
+<New description="40051E_5_0 macintrowp" sampleFile="macintrowp.xml"/>
+<New description="40051E_5_0 macwp" sampleFile="macwp.xml"/>
+<New description="40051E_5_0 maintwp" sampleFile="maintwp.xml"/>
+<New description="40051E_5_0 manu_items_introwp" sampleFile="manu_items_introwp.xml"/>
+<New description="40051E_5_0 manuwp" sampleFile="manuwp.xml"/>
+<New description="40051E_5_0 mimtemplate" sampleFile="mimtemplate.xml"/>
+<New description="40051E_5_0 mobilewp" sampleFile="mobilewp.xml"/>
+<New description="40051E_5_0 mrplwp" sampleFile="mrplwp.xml"/>
+<New description="40051E_5_0 natowp" sampleFile="natowp.xml"/>
+<New description="40051E_5_0 nsnindxwp" sampleFile="nsnindxwp.xml"/>
+<New description="40051E_5_0 oipwp" sampleFile="oipwp.xml"/>
+<New description="40051E_5_0 opcheck-tswp" sampleFile="opcheck-tswp.xml"/>
+<New description="40051E_5_0 opcheckwp" sampleFile="opcheckwp.xml"/>
+<New description="40051E_5_0 opunup" sampleFile="opunup.xml"/>
+<New description="40051E_5_0 opusualwp" sampleFile="opusualwp.xml"/>
+<New description="40051E_5_0 paper.frnt" sampleFile="paper.frnt.xml"/>
+<New description="40051E_5_0 perseqpwp" sampleFile="perseqpwp.xml"/>
+<New description="40051E_5_0 plwp" sampleFile="plwp.xml"/>
+<New description="40051E_5_0 pmcsintrowp" sampleFile="pmcsintrowp.xml"/>
+<New description="40051E_5_0 pmcswp" sampleFile="pmcswp.xml"/>
+<New description="40051E_5_0 pmiwp" sampleFile="pmiwp.xml"/>
+<New description="40051E_5_0 pmi-checklistwp" sampleFile="pmi-checklistwp.xml"/>
+<New description="40051E_5_0 pmscintrowp" sampleFile="pmscintrowp.xml"/>
+<New description="40051E_5_0 pms-inspecwp" sampleFile="pms-inspecwp.xml"/>
+<New description="40051E_5_0 pnindxwp" sampleFile="pnindxwp.xml"/>
+<New description="40051E_5_0 pshopanalwp" sampleFile="pshopanalwp.xml"/>
+<New description="40051E_5_0 qawp" sampleFile="qawp.xml"/>
+<New description="40051E_5_0 refdesindxwp" sampleFile="refdesindxwp.xml"/>
+<New description="40051E_5_0 refwp" sampleFile="refwp.xml"/>
+<New description="40051E_5_0 stl_partswp" sampleFile="stl_partswp.xml"/>
+<New description="40051E_5_0 stlwp" sampleFile="stlwp.xml"/>
+<New description="40051E_5_0 storagewp" sampleFile="storagewp.xml"/>
+<New description="40051E_5_0 stowagewp" sampleFile="stowagewp.xml"/>
+<New description="40051E_5_0 substitute-matwp" sampleFile="substitute-matwp.xml"/>
+<New description="40051E_5_0 supitemwp" sampleFile="supitemwp.xml"/>
+<New description="40051E_5_0 surwp" sampleFile="surwp.xml"/>
+<New description="40051E_5_0 thrywp" sampleFile="thrywp.xml"/>
+<New description="40051E_5_0 titlepg" sampleFile="titlepg.xml"/>
+<New description="40051E_5_0 toolidwp" sampleFile="toolidwp.xml"/>
+<New description="40051E_5_0 torquewp" sampleFile="torquewp.xml"/>
+<New description="40051E_5_0 towquewp" sampleFile="towquewp.xml"/>
+<New description="40051E_5_0 tswp" sampleFile="tswp.xml"/>
+<New description="40051E_5_0 tsindxwp" sampleFile="tsindxwp.xml"/>
+<New description="40051E_5_0 volume" sampleFile="volume.xml"/>
+<New description="40051E_5_0 vol-rear" sampleFile="vol-rear.xml"/>
+<New description="40051E_5_0 wiringwp" sampleFile="wiringwp.xml"/>
+<New description="40051E_5_0 wtloadwp" sampleFile="wtloadwp.xml"/></NewDialog>
+<ElementOptions>
+<ElementOption category="division" element="aalwp"/>
+<ElementOption category="division" element="acceptance"/>
+<ElementOption category="division" element="accpt-rpbl-nonrpbl-entry"/>
+<ElementOption category="division" element="acptrejinsp"/>
+<ElementOption category="division" element="action"/>
+<ElementOption category="division" element="address"/>
+<ElementOption category="division" element="adjust"/>
+<ElementOption category="division" element="aindx"/>
+<ElementOption category="division" element="align"/>
+<ElementOption category="division" element="alignproc"/>
+<ElementOption category="division" element="ammo.defect"/>
+<ElementOption category="division" element="ammo.handling"/>
+<ElementOption category="division" element="ammo.markings"/>
+<ElementOption category="division" element="ammo.markingwp"/>
+<ElementOption category="division" element="ammo.packing"/>
+<ElementOption category="division" element="ammo.unpacking"/>
+<ElementOption category="division" element="ammotype"/>
+<ElementOption category="division" element="ammowp"/>
+<ElementOption category="division" element="answer"/>
+<ElementOption category="division" element="appconfig"/>
+<ElementOption category="division" element="applic"/>
+<ElementOption category="division" element="areainspec"/>
+<ElementOption category="division" element="arm"/>
+<ElementOption category="division" element="assem"/>
+<ElementOption category="division" element="auxeqpwp"/>
+<ElementOption category="division" element="avail"/>
+<ElementOption category="division" element="avmac"/>
+<ElementOption category="division" element="avmaintclass"/>
+<ElementOption category="division" element="avmaintclass-2lvl"/>
+<ElementOption category="division" element="avqualify"/>
+<ElementOption category="division" element="avqualify-2lvl"/>
+<ElementOption category="division" element="b.statement"/>
+<ElementOption category="division" element="bii"/>
+<ElementOption category="division" element="bii-category"/>
+<ElementOption category="division" element="bii-entry"/>
+<ElementOption category="division" element="biitab"/>
+<ElementOption category="division" element="boi"/>
+<ElementOption category="division" element="BulkItemList"/>
+<ElementOption category="division" element="c.statement"/>
+<ElementOption category="division" element="calibration"/>
+<ElementOption category="division" element="calign"/>
+<ElementOption category="division" element="calref"/>
+<ElementOption category="division" element="caution"/>
+<ElementOption category="division" element="caution.group"/>
+<ElementOption category="division" element="certreq"/>
+<ElementOption category="division" element="change"/>
+<ElementOption category="division" element="checked"/>
+<ElementOption category="division" element="checkstep"/>
+<ElementOption category="division" element="chglist"/>
+<ElementOption category="division" element="chgsheet"/>
+<ElementOption category="division" element="chgwp"/>
+<ElementOption category="division" element="chkeqp"/>
+<ElementOption category="division" element="chklist"/>
+<ElementOption category="division" element="ckremarks"/>
+<ElementOption category="division" element="clean"/>
+<ElementOption category="division" element="coei"/>
+<ElementOption category="division" element="coeibiiwp"/>
+<ElementOption category="division" element="coei-category"/>
+<ElementOption category="division" element="coei-entry"/>
+<ElementOption category="division" element="coeitab"/>
+<ElementOption category="division" element="compassem"/>
+<ElementOption category="division" element="compchklist"/>
+<ElementOption category="division" element="compchklistwp"/>
+<ElementOption category="division" element="comp-item"/>
+<ElementOption category="division" element="comp-locator"/>
+<ElementOption category="division" element="compname"/>
+<ElementOption category="division" element="compnt-assem"/>
+<ElementOption category="division" element="compnt-assem-entry"/>
+<ElementOption category="division" element="condition"/>
+<ElementOption category="division" element="config"/>
+<ElementOption category="division" element="copyrt"/>
+<ElementOption category="division" element="cost"/>
+<ElementOption category="division" element="cover"/>
+<ElementOption category="division" element="coverpage"/>
+<ElementOption category="division" element="cpcdata"/>
+<ElementOption category="division" element="crit.insp.tab"/>
+<ElementOption category="division" element="criteria"/>
+<ElementOption category="division" element="csi"/>
+<ElementOption category="division" element="csi.fscap.wp"/>
+<ElementOption category="division" element="ctrlind"/>
+<ElementOption category="division" element="ctrlinddesc"/>
+<ElementOption category="division" element="ctrlindproc"/>
+<ElementOption category="division" element="ctrlindrow"/>
+<ElementOption category="division" element="ctrlindtab"/>
+<ElementOption category="division" element="ctrlindwp"/>
+<ElementOption category="division" element="d.statement"/>
+<ElementOption category="division" element="damage"/>
+<ElementOption category="division" element="dataitem"/>
+<ElementOption category="division" element="dcpno"/>
+<ElementOption category="division" element="decalinfo"/>
+<ElementOption category="division" element="decon"/>
+<ElementOption category="division" element="def"/>
+<ElementOption category="division" element="defect.tab"/>
+<ElementOption category="division" element="defect-row"/>
+<ElementOption category="division" element="definitions"/>
+<ElementOption category="division" element="deflist"/>
+<ElementOption category="division" element="desc"/>
+<ElementOption category="division" element="descproc"/>
+<ElementOption category="division" element="desc-uoc"/>
+<ElementOption category="division" element="descwp"/>
+<ElementOption category="division" element="destr"/>
+<ElementOption category="division" element="destructmat"/>
+<ElementOption category="division" element="deviation"/>
+<ElementOption category="division" element="disassem"/>
+<ElementOption category="division" element="disclos"/>
+<ElementOption category="division" element="disconnect"/>
+<ElementOption category="division" element="dist"/>
+<ElementOption category="division" element="dwgreq"/>
+<ElementOption category="division" element="dwgreq-setup-item"/>
+<ElementOption category="division" element="e.statement"/>
+<ElementOption category="division" element="ecm"/>
+<ElementOption category="division" element="ecp"/>
+<ElementOption category="division" element="eicnomen"/>
+<ElementOption category="division" element="eir"/>
+<ElementOption category="division" element="emergency"/>
+<ElementOption category="division" element="emphasis"/>
+<ElementOption category="division" element="endblock"/>
+<ElementOption category="division" element="entry"/>
+<ElementOption category="division" element="eqpconds"/>
+<ElementOption category="division" element="eqpconds-setup-item"/>
+<ElementOption category="division" element="eqpconfig"/>
+<ElementOption category="division" element="eqpdata"/>
+<ElementOption category="division" element="eqpdesc"/>
+<ElementOption category="division" element="eqpdiff"/>
+<ElementOption category="division" element="eqpinfo"/>
+<ElementOption category="division" element="eqpitem"/>
+<ElementOption category="division" element="eqploadwp"/>
+<ElementOption category="division" element="eqpnotavail"/>
+<ElementOption category="division" element="expdur-category"/>
+<ElementOption category="division" element="expdur-entry"/>
+<ElementOption category="division" element="explist"/>
+<ElementOption category="division" element="explistwp"/>
+<ElementOption category="division" element="export"/>
+<ElementOption category="division" element="extconn"/>
+<ElementOption category="division" element="extpwr"/>
+<ElementOption category="division" element="f.statement"/>
+<ElementOption category="division" element="facilwp"/>
+<ElementOption category="division" element="faultcode"/>
+<ElementOption category="division" element="faultitem"/>
+<ElementOption category="division" element="faultproc"/>
+<ElementOption category="division" element="faultreports"/>
+<ElementOption category="division" element="figure"/>
+<ElementOption category="division" element="finalinspec"/>
+<ElementOption category="division" element="first"/>
+<ElementOption category="division" element="flghtsafe-part"/>
+<ElementOption category="division" element="flyable"/>
+<ElementOption category="division" element="fncgrp"/>
+<ElementOption category="division" element="fnctitle"/>
+<ElementOption category="division" element="follow-on"/>
+<ElementOption category="division" element="fording"/>
+<ElementOption category="division" element="formchart"/>
+<ElementOption category="division" element="framed.frnt"/>
+<ElementOption category="division" element="framed.manual"/>
+<ElementOption category="division" element="frntcover"/>
+<ElementOption category="division" element="fscap"/>
+<ElementOption category="division" element="fscap.tab"/>
+<ElementOption category="division" element="fscap-entry"/>
+<ElementOption category="division" element="fscapreq"/>
+<ElementOption category="division" element="ftnote"/>
+<ElementOption category="division" element="funcdepend"/>
+<ElementOption category="division" element="function"/>
+<ElementOption category="division" element="gen.maintwp"/>
+<ElementOption category="division" element="geninfo"/>
+<ElementOption category="division" element="geninspec"/>
+<ElementOption category="division" element="genwp"/>
+<ElementOption category="division" element="gim"/>
+<ElementOption category="division" element="ginfowp"/>
+<ElementOption category="division" element="glossary"/>
+<ElementOption category="division" element="graphic"/>
+<ElementOption category="division" element="groundtsk"/>
+<ElementOption category="division" element="handreceipt"/>
+<ElementOption category="division" element="harness-indx"/>
+<ElementOption category="division" element="hazard"/>
+<ElementOption category="division" element="hazdesc"/>
+<ElementOption category="division" element="haz-icons"/>
+<ElementOption category="division" element="hazid"/>
+<ElementOption category="division" element="hazmat"/>
+<ElementOption category="division" element="hcp"/>
+<ElementOption category="division" element="hoist"/>
+<ElementOption category="division" element="hookup"/>
+<ElementOption category="division" element="howtouse"/>
+<ElementOption category="division" element="ident-fault"/>
+<ElementOption category="division" element="identno"/>
+<ElementOption category="division" element="indexentry"/>
+<ElementOption category="division" element="indication"/>
+<ElementOption category="division" element="initial"/>
+<ElementOption category="division" element="inprocess"/>
+<ElementOption category="division" element="inspec-area"/>
+<ElementOption category="division" element="inspec-form"/>
+<ElementOption category="division" element="inspec-head"/>
+<ElementOption category="division" element="inspec-item"/>
+<ElementOption category="division" element="inspecphase"/>
+<ElementOption category="division" element="inspinstitm"/>
+<ElementOption category="division" element="install"/>
+<ElementOption category="division" element="instructplt"/>
+<ElementOption category="division" element="interconnect"/>
+<ElementOption category="division" element="intermediate"/>
+<ElementOption category="division" element="internet"/>
+<ElementOption category="division" element="interval"/>
+<ElementOption category="division" element="interval.notes"/>
+<ElementOption category="division" element="intro"/>
+<ElementOption category="division" element="intropara"/>
+<ElementOption category="division" element="introwp"/>
+<ElementOption category="division" element="inventoriable"/>
+<ElementOption category="division" element="inventorywp"/>
+<ElementOption category="division" element="item"/>
+<ElementOption category="division" element="item-condition"/>
+<ElementOption category="division" element="itemref"/>
+<ElementOption category="division" element="jack"/>
+<ElementOption category="division" element="kit"/>
+<ElementOption category="division" element="kititem"/>
+<ElementOption category="division" element="KitList"/>
+<ElementOption category="division" element="legend"/>
+<ElementOption category="division" element="loa"/>
+<ElementOption category="division" element="loaddesc"/>
+<ElementOption category="division" element="loadlist"/>
+<ElementOption category="division" element="location"/>
+<ElementOption category="division" element="locdesc"/>
+<ElementOption category="division" element="loepwp"/>
+<ElementOption category="division" element="logicproc"/>
+<ElementOption category="division" element="lruthry"/>
+<ElementOption category="division" element="lube"/>
+<ElementOption category="division" element="lubewp"/>
+<ElementOption category="division" element="mac"/>
+<ElementOption category="division" element="macintrowp"/>
+<ElementOption category="division" element="macwp"/>
+<ElementOption category="division" element="maintclass"/>
+<ElementOption category="division" element="maintclass-2lvl"/>
+<ElementOption category="division" element="maintsk"/>
+<ElementOption category="division" element="maintwp"/>
+<ElementOption category="division" element="malfunc"/>
+<ElementOption category="division" element="manhours"/>
+<ElementOption category="division" element="manuindx"/>
+<ElementOption category="division" element="manuwp"/>
+<ElementOption category="division" element="map.circle"/>
+<ElementOption category="division" element="map.polygon"/>
+<ElementOption category="division" element="map.rectangle"/>
+<ElementOption category="division" element="mapref"/>
+<ElementOption category="division" element="messageindx"/>
+<ElementOption category="division" element="messageitem"/>
+<ElementOption category="division" element="mfrr"/>
+<ElementOption category="division" element="mim"/>
+<ElementOption category="division" element="mobil-entry"/>
+<ElementOption category="division" element="mobilreq"/>
+<ElementOption category="division" element="mobiltab"/>
+<ElementOption category="division" element="mobilwp"/>
+<ElementOption category="division" element="mobreq"/>
+<ElementOption category="division" element="moor"/>
+<ElementOption category="division" element="mos"/>
+<ElementOption category="division" element="mrpl"/>
+<ElementOption category="division" element="mrpl-category"/>
+<ElementOption category="division" element="mrpl-entry"/>
+<ElementOption category="division" element="mrplpart"/>
+<ElementOption category="division" element="mrplwp"/>
+<ElementOption category="division" element="mtrlpart"/>
+<ElementOption category="division" element="mtrlpart-setup-item"/>
+<ElementOption category="division" element="muxproc"/>
+<ElementOption category="division" element="name"/>
+<ElementOption category="division" element="natowp"/>
+<ElementOption category="division" element="ndti"/>
+<ElementOption category="division" element="nomen"/>
+<ElementOption category="division" element="nomenreflist"/>
+<ElementOption category="division" element="nonrepairable"/>
+<ElementOption category="division" element="note"/>
+<ElementOption category="division" element="note.group"/>
+<ElementOption category="division" element="notices"/>
+<ElementOption category="division" element="nsn"/>
+<ElementOption category="division" element="nsnindx"/>
+<ElementOption category="division" element="nsnindxrow"/>
+<ElementOption category="division" element="nsnindxwp"/>
+<ElementOption category="division" element="odsdata"/>
+<ElementOption category="division" element="oipitem"/>
+<ElementOption category="division" element="oiptab"/>
+<ElementOption category="division" element="oipwp"/>
+<ElementOption category="division" element="on_board_spares"/>
+<ElementOption category="division" element="opcheck"/>
+<ElementOption category="division" element="opcheckproc"/>
+<ElementOption category="division" element="opcheck-tsproc"/>
+<ElementOption category="division" element="opcheck-tswp"/>
+<ElementOption category="division" element="opcheckwp"/>
+<ElementOption category="division" element="oper"/>
+<ElementOption category="division" element="operaux"/>
+<ElementOption category="division" element="opertsk"/>
+<ElementOption category="division" element="opim"/>
+<ElementOption category="division" element="opunutsk"/>
+<ElementOption category="division" element="opunuwp"/>
+<ElementOption category="division" element="opusualwp"/>
+<ElementOption category="division" element="origin"/>
+<ElementOption category="division" element="orsch"/>
+<ElementOption category="division" element="orsch.tab"/>
+<ElementOption category="division" element="overhaul.interval"/>
+<ElementOption category="division" element="paint"/>
+<ElementOption category="division" element="paper.frnt"/>
+<ElementOption category="division" element="paper.manual"/>
+<ElementOption category="division" element="para"/>
+<ElementOption category="division" element="park"/>
+<ElementOption category="division" element="partdesc"/>
+<ElementOption category="division" element="pecul.insp.tab"/>
+<ElementOption category="division" element="pecul.insp-entry"/>
+<ElementOption category="division" element="perseqpwp"/>
+<ElementOption category="division" element="persnreq"/>
+<ElementOption category="division" element="persnreq-setup-item"/>
+<ElementOption category="division" element="phaseno"/>
+<ElementOption category="division" element="pi.category"/>
+<ElementOption category="division" element="pi.item"/>
+<ElementOption category="division" element="pidb"/>
+<ElementOption category="division" element="pim"/>
+<ElementOption category="division" element="pis"/>
+<ElementOption category="division" element="pl"/>
+<ElementOption category="division" element="plcomp"/>
+<ElementOption category="division" element="pleqp"/>
+<ElementOption category="division" element="plitem"/>
+<ElementOption category="division" element="pltbl"/>
+<ElementOption category="division" element="pltitle"/>
+<ElementOption category="division" element="plwp"/>
+<ElementOption category="division" element="pm.frnt"/>
+<ElementOption category="division" element="pmcs-entry"/>
+<ElementOption category="division" element="pmcsintrowp"/>
+<ElementOption category="division" element="pmcspara"/>
+<ElementOption category="division" element="pmcsproc"/>
+<ElementOption category="division" element="pmcsstep1"/>
+<ElementOption category="division" element="pmcsstep2"/>
+<ElementOption category="division" element="pmcsstep3"/>
+<ElementOption category="division" element="pmcsstep4"/>
+<ElementOption category="division" element="pmcstable"/>
+<ElementOption category="division" element="pmcswp"/>
+<ElementOption category="division" element="pm-ginfowp"/>
+<ElementOption category="division" element="pmi"/>
+<ElementOption category="division" element="pmi.pecul.tab"/>
+<ElementOption category="division" element="pmi.pecul-entry"/>
+<ElementOption category="division" element="pmi.pecul-row"/>
+<ElementOption category="division" element="pmi-cklistwp"/>
+<ElementOption category="division" element="pmiwp"/>
+<ElementOption category="division" element="pms"/>
+<ElementOption category="division" element="pms-form"/>
+<ElementOption category="division" element="pms-ginfowp"/>
+<ElementOption category="division" element="pms-inspecwp"/>
+<ElementOption category="division" element="pms-item"/>
+<ElementOption category="division" element="pms-proc"/>
+<ElementOption category="division" element="pnindx"/>
+<ElementOption category="division" element="pnindxrow"/>
+<ElementOption category="division" element="pnindxwp"/>
+<ElementOption category="division" element="ppm"/>
+<ElementOption category="division" element="prdinv"/>
+<ElementOption category="division" element="precal"/>
+<ElementOption category="division" element="prechkadj"/>
+<ElementOption category="division" element="prelim"/>
+<ElementOption category="division" element="prepforuse"/>
+<ElementOption category="division" element="prepmove"/>
+<ElementOption category="division" element="preserv"/>
+<ElementOption category="division" element="proc"/>
+<ElementOption category="division" element="processeqp"/>
+<ElementOption category="division" element="production"/>
+<ElementOption category="division" element="proponent"/>
+<ElementOption category="division" element="prtitle"/>
+<ElementOption category="division" element="pshopanal"/>
+<ElementOption category="division" element="pshopanalwp"/>
+<ElementOption category="division" element="pshopchk.tab"/>
+<ElementOption category="division" element="pshopchk-entry"/>
+<ElementOption category="division" element="pss"/>
+<ElementOption category="division" element="pssref"/>
+<ElementOption category="division" element="publist"/>
+<ElementOption category="division" element="pwron-inspec"/>
+<ElementOption category="division" element="qainfo"/>
+<ElementOption category="division" element="qawp"/>
+<ElementOption category="division" element="qual.mat.info"/>
+<ElementOption category="division" element="qualify"/>
+<ElementOption category="division" element="qualify-2lvl"/>
+<ElementOption category="division" element="randlist"/>
+<ElementOption category="division" element="rear"/>
+<ElementOption category="division" element="reason"/>
+<ElementOption category="division" element="recfrom"/>
+<ElementOption category="division" element="reclam"/>
+<ElementOption category="division" element="ref"/>
+<ElementOption category="division" element="refdes"/>
+<ElementOption category="division" element="refdesindx"/>
+<ElementOption category="division" element="refdesindxrow"/>
+<ElementOption category="division" element="refdesindxwp"/>
+<ElementOption category="division" element="ref-setup-item"/>
+<ElementOption category="division" element="refwp"/>
+<ElementOption category="division" element="releaseagent"/>
+<ElementOption category="division" element="remarks"/>
+<ElementOption category="division" element="remarktab"/>
+<ElementOption category="division" element="remove"/>
+<ElementOption category="division" element="removepg"/>
+<ElementOption category="division" element="repairable"/>
+<ElementOption category="division" element="repair-rplc"/>
+<ElementOption category="division" element="reporting"/>
+<ElementOption category="division" element="reprod"/>
+<ElementOption category="division" element="requiremnt"/>
+<ElementOption category="division" element="responsibility"/>
+<ElementOption category="division" element="retirement.interval"/>
+<ElementOption category="division" element="rev.chg"/>
+<ElementOption category="division" element="rev.date"/>
+<ElementOption category="division" element="ris"/>
+<ElementOption category="division" element="row"/>
+<ElementOption category="division" element="rpstlwp"/>
+<ElementOption category="division" element="safety"/>
+<ElementOption category="division" element="schematic"/>
+<ElementOption category="division" element="scope"/>
+<ElementOption category="division" element="secref"/>
+<ElementOption category="division" element="security"/>
+<ElementOption category="division" element="seqlist"/>
+<ElementOption category="division" element="seqno"/>
+<ElementOption category="division" element="serialno"/>
+<ElementOption category="division" element="service"/>
+<ElementOption category="division" element="servnomen"/>
+<ElementOption category="division" element="setconn"/>
+<ElementOption category="division" element="sftydesc"/>
+<ElementOption category="division" element="sfty-icons"/>
+<ElementOption category="division" element="sftyinfo"/>
+<ElementOption category="division" element="shelter"/>
+<ElementOption category="division" element="shltr"/>
+<ElementOption category="division" element="short"/>
+<ElementOption category="division" element="signal-item"/>
+<ElementOption category="division" element="sim"/>
+<ElementOption category="division" element="site"/>
+<ElementOption category="division" element="siting"/>
+<ElementOption category="division" element="sling"/>
+<ElementOption category="division" element="specenv"/>
+<ElementOption category="division" element="specenv-setup-item"/>
+<ElementOption category="division" element="specialproc"/>
+<ElementOption category="division" element="specialreq"/>
+<ElementOption category="division" element="specpara"/>
+<ElementOption category="division" element="sruthry"/>
+<ElementOption category="division" element="ssysthry"/>
+<ElementOption category="division" element="status"/>
+<ElementOption category="division" element="step1"/>
+<ElementOption category="division" element="step1-entry"/>
+<ElementOption category="division" element="step2"/>
+<ElementOption category="division" element="step3"/>
+<ElementOption category="division" element="step4"/>
+<ElementOption category="division" element="step5"/>
+<ElementOption category="division" element="step6"/>
+<ElementOption category="division" element="stitle"/>
+<ElementOption category="division" element="stl"/>
+<ElementOption category="division" element="stltbl"/>
+<ElementOption category="division" element="stlwp"/>
+<ElementOption category="division" element="storagewp"/>
+<ElementOption category="division" element="stowagewp"/>
+<ElementOption category="division" element="stowinfo"/>
+<ElementOption category="division" element="sub-entry1"/>
+<ElementOption category="division" element="sub-entry2"/>
+<ElementOption category="division" element="sub-entry3"/>
+<ElementOption category="division" element="sub-entry4"/>
+<ElementOption category="division" element="subfig"/>
+<ElementOption category="division" element="subfncgrp"/>
+<ElementOption category="division" element="subject"/>
+<ElementOption category="division" element="subtitle"/>
+<ElementOption category="division" element="supdata"/>
+<ElementOption category="division" element="super"/>
+<ElementOption category="division" element="supitemwp"/>
+<ElementOption category="division" element="surmat"/>
+<ElementOption category="division" element="surtsk"/>
+<ElementOption category="division" element="surwp"/>
+<ElementOption category="division" element="symptom"/>
+<ElementOption category="division" element="sysdesc"/>
+<ElementOption category="division" element="sysnomen"/>
+<ElementOption category="division" element="systhry"/>
+<ElementOption category="division" element="sys-ts"/>
+<ElementOption category="division" element="table"/>
+<ElementOption category="division" element="tbody"/>
+<ElementOption category="division" element="techdescwp"/>
+<ElementOption category="division" element="tereqtab"/>
+<ElementOption category="division" element="term.def"/>
+<ElementOption category="division" element="test"/>
+<ElementOption category="division" element="testblock"/>
+<ElementOption category="division" element="testeqp"/>
+<ElementOption category="division" element="testeqp-setup-item"/>
+<ElementOption category="division" element="testflow"/>
+<ElementOption category="division" element="test-inspect"/>
+<ElementOption category="division" element="test-pass"/>
+<ElementOption category="division" element="testproc"/>
+<ElementOption category="division" element="text"/>
+<ElementOption category="division" element="tgroup"/>
+<ElementOption category="division" element="thead"/>
+<ElementOption category="division" element="thryproc"/>
+<ElementOption category="division" element="thrywp"/>
+<ElementOption category="division" element="tim"/>
+<ElementOption category="division" element="title"/>
+<ElementOption category="division" element="titleblk"/>
+<ElementOption category="division" element="titlepg"/>
+<ElementOption category="division" element="tminfono"/>
+<ElementOption category="division" element="tmtitle"/>
+<ElementOption category="division" element="tool-category"/>
+<ElementOption category="division" element="tool-entry"/>
+<ElementOption category="division" element="toolidlist"/>
+<ElementOption category="division" element="toolidwp"/>
+<ElementOption category="division" element="tools"/>
+<ElementOption category="division" element="tools-setup-item"/>
+<ElementOption category="division" element="topic"/>
+<ElementOption category="division" element="torqueval"/>
+<ElementOption category="division" element="torquewp"/>
+<ElementOption category="division" element="tow"/>
+<ElementOption category="division" element="trim.para"/>
+<ElementOption category="division" element="trim.specpara"/>
+<ElementOption category="division" element="ts-category"/>
+<ElementOption category="division" element="tsindx"/>
+<ElementOption category="division" element="tsindx-entry"/>
+<ElementOption category="division" element="tsindxwp"/>
+<ElementOption category="division" element="tsintrowp"/>
+<ElementOption category="division" element="tsproc"/>
+<ElementOption category="division" element="tswp"/>
+<ElementOption category="division" element="unit"/>
+<ElementOption category="division" element="unpack"/>
+<ElementOption category="division" element="unusualenv"/>
+<ElementOption category="division" element="uoc"/>
+<ElementOption category="division" element="vol-rear"/>
+<ElementOption category="division" element="volume"/>
+<ElementOption category="division" element="warninfo"/>
+<ElementOption category="division" element="warning"/>
+<ElementOption category="division" element="warning.group"/>
+<ElementOption category="division" element="warnsum"/>
+<ElementOption category="division" element="weighteqp"/>
+<ElementOption category="division" element="weightinst"/>
+<ElementOption category="division" element="wireid"/>
+<ElementOption category="division" element="wiringdiag"/>
+<ElementOption category="division" element="wiringwp"/>
+<ElementOption category="division" element="wpidinfo"/>
+<ElementOption category="division" element="wpinfo"/>
+<ElementOption category="division" element="wrntyref"/>
+<ElementOption category="division" element="wtloadwp"/><?Pub Caret -2?>
+<ElementOption category="division" element="x.statement"/>
+<ElementOption category="title" element="title"/>
+<ElementOption category="title" element="figure"/>
+<ElementOption element="table"/>
+<ElementOption allowSpellChecking="no" element="insertpg"/>
+<ElementOption allowSpellChecking="no" element="removepg"/></ElementOptions>
+<Display>
+<ElementDisplay element="graphic"/></Display>
+<Specials>
+<Graphic element="graphic" entity="boardno" horizScale="hscale" reproDepth="reprodep" reproWidth="reprowid" scaleToFit="scalefit" vertScale="vscale"/>
+<Graphic element="authent" entity="boardno" reproDepth="reprodep" reproWidth="reprowid"/>
+<Graphic element="back" entity="boardno" reproDepth="reprodep" reproWidth="reprowid"/>
+<Graphic element="inlinegraphic" entity="boardno" horizScale="hscale" reproDepth="reprodep" reproWidth="reprowid" scaleToFit="scalefit"/>
+<Graphic element="symbol" entity="boardno" horizScale="hscale" reproDepth="reprodep" reproWidth="reprowid" vertScale="vscale"/>
+<Graphic element="icon-set" entity="boardno" reproDepth="reprodep" reproWidth="reprowid"/>
+<Graphic element="da2028" entity="boardno" reproDepth="reprodep" reproWidth="reprowid"/></Specials>
+<ContextTransformations></ContextTransformations>
+<Lists></Lists>
+<FrameSets></FrameSets>
+<Composition></Composition>
+</DocumentTypeConfiguration>

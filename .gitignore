@@ -212,3 +212,6 @@ docs/architecture/endpoint-gating-audit.md
 # Local secret overlays — NEVER commit (public repo). Holds PATs/tokens for --set-free deploys.
 *.secret.yaml
 values-*.local.yaml
+
+# scratch to-do list (not source)
+list.md

@@ -2,10 +2,10 @@
 
 The durable glue over the pure/sealed layers: register ONE grouped HumanTask for a whole
 per-approver batch, suspend on ``ctx.promise().value()``, and — on an ACCEPTED decision — run
-``resolve_batch`` and fan out to the per-item dispatch driver ([[pcn_driver]]). One approval resolves
+``resolve_batch`` and fan out to the per-item dispatch driver ([[dispatch_driver]]). One approval resolves
 N items (the fan-OUT dual of the Slice-5 join).
 
-Two joints this call-site must answer, each sealed (tests/test_pcn_workflow.py):
+Two joints this call-site must answer, each sealed (tests/test_grouped_review_workflow.py):
 
 1. **Refusal routing — the POLICY-failure sibling of suspend-vs-fail.** The grouped review resolves
    with a ``BulkDecision``, but the bulk-resolve core can REFUSE it (an unverified row with no
@@ -35,12 +35,12 @@ from restate import Workflow, WorkflowContext, WorkflowSharedContext
 
 try:  # lazy-import dance (container flattens the dir)
     from workflow_bulk_resolve import BulkDecision, Override, PartItem, ReviewBatch, resolve_batch  # type: ignore[no-redef]
-    from pcn_driver import _mint_dispatch_task, fan_out_dispatch  # type: ignore[no-redef]
+    from dispatch_driver import _mint_dispatch_task, fan_out_dispatch  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.workflow_bulk_resolve import (
         BulkDecision, Override, PartItem, ReviewBatch, resolve_batch,
     )
-    from agent_fleet.restate_analyst.pcn_driver import _mint_dispatch_task, fan_out_dispatch
+    from agent_fleet.restate_analyst.dispatch_driver import _mint_dispatch_task, fan_out_dispatch
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +110,10 @@ def evaluate_submission(batch: ReviewBatch, raw_decision: dict, *, notice_finger
 # ---------------------------------------------------------------------------
 # The durable workflow
 # ---------------------------------------------------------------------------
-pcn_grouped_review = Workflow("PcnGroupedReview")
+grouped_review = Workflow("GroupedReview")
 
 
-@pcn_grouped_review.main()
+@grouped_review.main()
 async def run(ctx: WorkflowContext, request: dict) -> dict:
     """Register the grouped HumanTask, suspend, and — on an accepted decision — fan out N dispatches.
 
@@ -143,12 +143,12 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     grouped_task = {
         "task_key": f"grouped:{notice_fingerprint}:{approver}",
         # This workflow's OWN key — the address submit_decision is invoked on
-        # (PcnGroupedReview/{workflow_id}/submit_decision). Carried into the register body so cortex-bff's
+        # (GroupedReview/{workflow_id}/submit_decision). Carried into the register body so cortex-bff's
         # /human_tasks/{id}/act can resume THIS workflow when the reviewer approves. Without it the
         # projection row's workflow_id is NULL and the approval can't reach the suspended promise.
         "workflow_id": ctx.key(),
         "audience": audience,
-        "kind": "pcn_grouped_review",
+        "kind": "grouped_review",
         "disposition": "grouped_review",
         "title": f"Review {len(batch_items)} affected part(s) — notice {notice_id or notice_fingerprint}",
         "summary": f"{len(batch_items)} affected part(s) need a disposition review",
@@ -180,7 +180,7 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     return {"status": "DISPATCHED", "count": len(keys), "dispatched_keys": keys}
 
 
-@pcn_grouped_review.handler()
+@grouped_review.handler()
 async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
     """Validate a grouped decision against the server batch BEFORE waking the workflow (rider 1).
 
@@ -204,7 +204,7 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
     return {"status": "accepted", "accepted": True, "resolved_count": len(submission.resolutions)}
 
 
-@pcn_grouped_review.handler()
+@grouped_review.handler()
 async def get_batch(ctx: WorkflowSharedContext) -> dict:
     """Serve the reviewer THIS approver's authored batch — so the UI can show the parts + proposed
     dispositions + needs_review flags before deciding (blind accept-all can't handle a needs_review row).

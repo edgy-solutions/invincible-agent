@@ -16,7 +16,7 @@ def sparql_lit(v: str) -> str:
     return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
 
 
-def build_disposition_state_update(
+def build_item_state_update(
     subject_iri: str, disposition_state: str, disposition_ref: str, proposed_by_ruleset: str = ""
 ) -> str:
     """Idempotent state stamp: delete any prior disposition triples for the subject, then insert.
@@ -37,7 +37,7 @@ def build_disposition_state_update(
     )
 
 
-def build_parts_by_state_query(disposition_state: str) -> str:
+def build_instances_by_property_query(disposition_state: str) -> str:
     """Step-5: all parts in a disposition state. Runs through engine-o's execute_sparql read-union
     (which spans SUSTAINMENT_INSTANCES), so it needs no GRAPH clause of its own."""
     ns = _PCN_NS

@@ -5,7 +5,7 @@ descriptors (strippable prose), pcn/pdn/ptn are identifier fragments (never stri
 deterministic IRIs land on the REAL live instances (verified against the ingested IPCN25300X notice
 and its ON-Semi parts).
 
-Run:  cd agent_fleet/ontology_service && uv run --frozen --with pytest pytest ../../tests/test_pcn_instance_match.py -v
+Run:  cd agent_fleet/ontology_service && uv run --frozen --with pytest pytest ../../tests/test_sustainment_instance_match.py -v
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ for p in (str(_EO), str(_REPO)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from agent_fleet.ontology_service.pcn_instance_match import (  # noqa: E402
+from agent_fleet.ontology_service.sustainment_instance_match import (  # noqa: E402
     _PCN_DESCRIPTOR_TOKENS, strip_descriptor_tokens, name_score,
     component_iri, notice_iri,
 )

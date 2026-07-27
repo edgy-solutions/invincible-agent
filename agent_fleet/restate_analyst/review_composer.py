@@ -1,6 +1,6 @@
 """PCN/PDN upstream composer — chain the sealed cores into the workflow's server-authored batch.
 
-The seam the review flagged: [[pcn_workflow]] consumes a SERVER-AUTHORED batch, and THIS is what
+The seam the review flagged: [[grouped_review_workflow]] consumes a SERVER-AUTHORED batch, and THIS is what
 authors it — the five-layer chain that was sealed-but-never-chained. Given the loaded ruleset (from the
 disposition-rules graph) and two injected seams — ``resolve_subject`` (the resolveInstance provider)
 and ``can_act`` (Topaz) — compose:
@@ -12,7 +12,7 @@ subject is irrelevant, and an UNRESOLVED residue subject is KEPT (the re-link pa
 
 The first live batch over IPCN25300X must be diffed against what the pure-core tests predicted — part
 count, the UNVERIFIED (needs_review) rows, and the proposals matching the live ruleset at its current
-``ruleset_ref`` (tests/test_pcn_review_builder.py). That diff is the one class of bug the per-core
+``ruleset_ref`` (tests/test_review_composer.py). That diff is the one class of bug the per-core
 green suites structurally can't see: drift between the fixture-shaped assumptions the seals were built
 on and what the live graph actually feeds them. Red→green on the batch shape, the D4 "three named
 tables" discipline applied to the batch.
@@ -27,12 +27,12 @@ import requests
 
 try:  # lazy-import dance (container flattens the dir)
     from workflow_bulk_resolve import FunnelResult, ReviewBatch, grouped_review, run_funnel  # type: ignore[no-redef]
-    from pcn_disposition_proposer import build_part_items  # type: ignore[no-redef]
+    from policy_evaluator import build_part_items  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.workflow_bulk_resolve import (
         FunnelResult, ReviewBatch, grouped_review, run_funnel,
     )
-    from agent_fleet.restate_analyst.pcn_disposition_proposer import build_part_items
+    from agent_fleet.restate_analyst.policy_evaluator import build_part_items
 
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
@@ -91,7 +91,7 @@ def resolve_subject_via_engine_o(mpn: str, *, engine_o_url: str = ENGINE_O_URL) 
     take the top candidate's ``instance_id``, or None (abstain — empty candidates). The provider already
     ran the exact/fuzzy/abstain decision table; this picks the winner. An unresolved subject is NOT an
     error — it routes to the re-link path in the driver."""
-    resp = requests.post(f"{engine_o_url}/resolve_pcn_instance", json={"identifier": mpn}, timeout=_HTTP_TIMEOUT)
+    resp = requests.post(f"{engine_o_url}/resolve_instance", json={"identifier": mpn}, timeout=_HTTP_TIMEOUT)
     resp.raise_for_status()
     candidates = resp.json().get("candidates", [])
     return candidates[0]["instance_id"] if candidates else None

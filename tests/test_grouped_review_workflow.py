@@ -10,7 +10,7 @@ RIDER 2 — fan-out partial-failure isolation: the fan-out runs on the workflow'
 keyed object without wedging the other N-1.
 
 Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with pytest-asyncio \
-        pytest ../../tests/test_pcn_workflow.py -v
+        pytest ../../tests/test_grouped_review_workflow.py -v
 """
 from __future__ import annotations
 
@@ -27,15 +27,15 @@ for p in (str(_RA), str(_REPO)):
         sys.path.insert(0, p)
 
 import restate  # noqa: E402
-from agent_fleet.restate_analyst import pcn_driver, pcn_workflow  # noqa: E402
-from agent_fleet.restate_analyst.pcn_dispatch import plan_dispatch  # noqa: E402
+from agent_fleet.restate_analyst import dispatch_driver, grouped_review_workflow  # noqa: E402
+from agent_fleet.restate_analyst.dispatch_plan import plan_dispatch  # noqa: E402
 from agent_fleet.restate_analyst.workflow_bulk_resolve import (  # noqa: E402
     ItemResolution, PartItem, ReviewBatch,
 )
 
-_SUBMIT = pcn_workflow.submit_decision.__wrapped__
-_RUN = pcn_workflow.run.__wrapped__
-_GET_BATCH = pcn_workflow.get_batch.__wrapped__
+_SUBMIT = grouped_review_workflow.submit_decision.__wrapped__
+_RUN = grouped_review_workflow.run.__wrapped__
+_GET_BATCH = grouped_review_workflow.get_batch.__wrapped__
 
 
 # ---------------------------------------------------------------------------
@@ -55,8 +55,8 @@ class _Resp:
 
 
 class _MinObjectCtx:
-    """One-shot journaling object ctx — enough to run pcn_driver.dispatch to completion or a
-    TerminalError. No crash injection (that lives in test_pcn_driver); here we watch isolation."""
+    """One-shot journaling object ctx — enough to run dispatch_driver.dispatch to completion or a
+    TerminalError. No crash injection (that lives in test_dispatch_driver); here we watch isolation."""
 
     def __init__(self, key, state):
         self._key = key
@@ -84,7 +84,7 @@ def _dispatch_payload(disposition="dispatchQualification", *, mpn="NSR01L30NXT5G
         idempotency_key=f"IPCN25300X:{mpn}", needs_review=False,
         override_reason=None, proposed_by_ruleset="rules@abc123def456",
     )
-    return pcn_driver.plan_to_payload(plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X"))
+    return dispatch_driver.plan_to_payload(plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X"))
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ def _batch(*items):
 def test_evaluate_accepts_a_clean_batch():
     batch = _batch(PartItem(mpn="A", subject="http://internal/components/A",
                             proposed_disposition="dispatchQualification"))
-    sub = pcn_workflow.evaluate_submission(batch, {"overrides": {}}, notice_fingerprint="IPCN25300X")
+    sub = grouped_review_workflow.evaluate_submission(batch, {"overrides": {}}, notice_fingerprint="IPCN25300X")
     assert sub.accepted and len(sub.resolutions) == 1
 
 
@@ -172,14 +172,14 @@ def test_evaluate_refuses_unverified_row_riding_accept_all():
     """An unverified (needs_review) row with NO explicit override cannot ride accept-all — refused."""
     batch = _batch(PartItem(mpn="A", subject="http://internal/components/A",
                             proposed_disposition="dispatchQualification", needs_review=True))
-    sub = pcn_workflow.evaluate_submission(batch, {"overrides": {}}, notice_fingerprint="IPCN25300X")
+    sub = grouped_review_workflow.evaluate_submission(batch, {"overrides": {}}, notice_fingerprint="IPCN25300X")
     assert not sub.accepted and not sub.resolutions
     assert "unverified" in sub.reason.lower() or "needs_review" in sub.reason.lower()
 
 
 def test_evaluate_refuses_row_with_no_disposition():
     batch = _batch(PartItem(mpn="A", subject="http://internal/components/A", proposed_disposition=None))
-    sub = pcn_workflow.evaluate_submission(batch, {"overrides": {}}, notice_fingerprint="IPCN25300X")
+    sub = grouped_review_workflow.evaluate_submission(batch, {"overrides": {}}, notice_fingerprint="IPCN25300X")
     assert not sub.accepted and not sub.resolutions
     assert "no" in sub.reason.lower() and "disposition" in sub.reason.lower()
 
@@ -188,7 +188,7 @@ def test_evaluate_refuses_blank_override_reason():
     """capture-why is structural: a blank override reason is a refusal, not a silent accept."""
     batch = _batch(PartItem(mpn="A", subject="http://internal/components/A",
                             proposed_disposition="dispatchQualification"))
-    sub = pcn_workflow.evaluate_submission(
+    sub = grouped_review_workflow.evaluate_submission(
         batch, {"overrides": {"A": {"disposition": "archive", "reason": "  "}}},
         notice_fingerprint="IPCN25300X",
     )
@@ -266,7 +266,7 @@ async def test_get_batch_404_when_no_active_review():
 @pytest.mark.asyncio
 async def test_run_registers_task_then_fans_out_on_accept(monkeypatch):
     posts = []
-    monkeypatch.setattr(pcn_driver.requests, "post",
+    monkeypatch.setattr(dispatch_driver.requests, "post",
                         lambda url, **k: (posts.append((url, k.get("json"))), _Resp(200, {"task_id": "t"}))[1])
     batch_items = [
         {"mpn": f"MPN-{i}", "subject": f"http://internal/components/MPN-{i}",
@@ -286,7 +286,7 @@ async def test_run_registers_task_then_fans_out_on_accept(monkeypatch):
     # The grouped-task register (the FIRST post) MUST carry this workflow's own key as workflow_id —
     # else cortex-bff's /act has nothing to address submit_decision on and the review dangles.
     grouped_register = posts[0][1]
-    assert grouped_register["kind"] == "pcn_grouped_review"
+    assert grouped_register["kind"] == "grouped_review"
     assert grouped_register["workflow_id"] == ctx.key() == "pcn-review-IPCN25300X-qa", \
         "grouped-review register dropped workflow_id — /act could not resume the review"
 
@@ -301,13 +301,13 @@ async def test_poisoned_item_terminal_fails_only_itself(monkeypatch):
     def _post(url, json=None, headers=None, timeout=None):
         if url.endswith("/internal/human_tasks/register"):
             return _Resp(200, {"task_id": json["task_id"]})
-        if url.endswith("/write_pcn_disposition_state"):
+        if url.endswith("/write_item_state"):
             status = 400 if json["subject_iri"].endswith("POISON") else 200
             return _Resp(status, {"ok": status == 200})
         raise AssertionError(f"unexpected POST {url}")
 
-    monkeypatch.setattr(pcn_driver.requests, "post", _post)
-    _DISPATCH = pcn_driver.dispatch.__wrapped__
+    monkeypatch.setattr(dispatch_driver.requests, "post", _post)
+    _DISPATCH = dispatch_driver.dispatch.__wrapped__
 
     healthy_state: dict = {}
     healthy = await _DISPATCH(_MinObjectCtx("IPCN25300X:GOOD", healthy_state),

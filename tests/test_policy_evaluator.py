@@ -5,7 +5,7 @@ Covers: rule evaluation (all-match-must-agree), honest degradation (unclassifiab
 abstain-on-conflict outcome (only possible once rules are data), the ingest validation gate, and the
 funnel integration.
 
-Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest pytest ../../tests/test_pcn_disposition_proposer.py -v
+Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest pytest ../../tests/test_policy_evaluator.py -v
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ for p in (str(_RA), str(_REPO)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from agent_fleet.restate_analyst.pcn_disposition_proposer import (  # noqa: E402
+from agent_fleet.restate_analyst.policy_evaluator import (  # noqa: E402
     evaluate_rules, validate_ruleset, score_relevance, build_part_items,
     MATCHED, UNCLASSIFIABLE, CONFLICT,
 )

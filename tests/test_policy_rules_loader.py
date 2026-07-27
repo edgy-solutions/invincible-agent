@@ -5,7 +5,7 @@ stamps a stable-yet-content-sensitive ruleset_ref, and that a schema-drift condi
 the loader but rejected LOUDLY by validate_ruleset — transparent producer, enforcing consumer.
 
 Needs rdflib:
-  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with rdflib pytest ../../tests/test_pcn_rules_loader.py -v
+  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with rdflib pytest ../../tests/test_policy_rules_loader.py -v
 """
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ for p in (str(_RA), str(_REPO)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from agent_fleet.restate_analyst.pcn_rules_loader import load_disposition_rules  # noqa: E402
-from agent_fleet.restate_analyst.pcn_disposition_proposer import (  # noqa: E402
+from agent_fleet.restate_analyst.policy_rules_loader import load_disposition_rules  # noqa: E402
+from agent_fleet.restate_analyst.policy_evaluator import (  # noqa: E402
     evaluate_rules, validate_ruleset, MATCHED,
 )
 

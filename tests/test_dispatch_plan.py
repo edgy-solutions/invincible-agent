@@ -4,7 +4,7 @@ Proves the three-write plan: graph-state onto the item's node (SUSTAINMENT_INSTA
 HumanTask routed to the disposition's persona queue (the multiplayer moment), archive → no task, and
 an unresolved subject skips the graph write honestly. Idempotency keyed by notice × part.
 
-Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest pytest ../../tests/test_pcn_dispatch.py -v
+Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest pytest ../../tests/test_dispatch_plan.py -v
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ for p in (str(_RA), str(_REPO)):
         sys.path.insert(0, p)
 
 from agent_fleet.restate_analyst.workflow_bulk_resolve import ItemResolution  # noqa: E402
-from agent_fleet.restate_analyst.pcn_dispatch import plan_dispatch  # noqa: E402
+from agent_fleet.restate_analyst.dispatch_plan import plan_dispatch  # noqa: E402
 
 
 def _res(disposition, *, mpn="NSR01L30NXT5G", subject="http://internal/components/NSR01L30NXT5G",

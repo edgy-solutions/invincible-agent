@@ -12,7 +12,7 @@ mock in the data path ([[feedback_synthetic_data_no_mock_leak]]): real-shaped pa
 real proposer/funnel/review; only subject-resolution and can-act are stubbed at their seam.
 
 Run:  cd agent_fleet/restate_analyst && uv run --frozen --with pytest --with rdflib \
-        pytest ../../tests/test_pcn_review_builder.py -v
+        pytest ../../tests/test_review_composer.py -v
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ for p in (str(_RA), str(_REPO)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from agent_fleet.restate_analyst.pcn_review_builder import build_review_batch  # noqa: E402
-from agent_fleet.restate_analyst.pcn_rules_loader import load_disposition_rules  # noqa: E402
+from agent_fleet.restate_analyst.review_composer import build_review_batch  # noqa: E402
+from agent_fleet.restate_analyst.policy_rules_loader import load_disposition_rules  # noqa: E402
 
 _TTL = _REPO / "setup" / "ontologies" / "pcn_disposition_rules.ttl"
 

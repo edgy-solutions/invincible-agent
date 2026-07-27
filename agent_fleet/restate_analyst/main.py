@@ -2288,7 +2288,7 @@ async def lifespan(fastapi_app: FastAPI):
     # subject CLASSES but registered NO disposition verbs, with the standing
     # rule: "they wake per-endpoint as each serving endpoint becomes real
     # (registering a verb against a stub endpoint would recreate a dead-end
-    # menu)." That precondition is now met — PcnReviewStarter.start_review
+    # menu)." That precondition is now met — ReviewStarter.start_review
     # is live and PROVEN end-to-end (the five-beats loop: notice -> batch ->
     # grouped review -> approve -> fan-out -> dispatch + state). So we wake
     # exactly one verb, bound to that real endpoint.
@@ -2333,7 +2333,7 @@ async def lifespan(fastapi_app: FastAPI):
         ],
         endpoint_url=os.getenv(
             "PCN_REVIEW_STARTER_URL",
-            "http://iagent-restate:8080/PcnReviewStarter/start_review",
+            "http://iagent-restate:8080/ReviewStarter/start_review",
         ),
         owner_persona="SUSTAINMENT_ENGINEER",
         domains=["SUSTAINMENT"],
@@ -2372,35 +2372,35 @@ except ImportError:
         run_tracker,
     )
 
-# PcnDispatchItem — the per-item PCN/PDN dispatch driver (two-write convergence, keyed by notice x
-# part). Same flatten-the-dir import dance as run_tracker so the container path (/app/pcn_driver.py)
+# DispatchItem — the per-item PCN/PDN dispatch driver (two-write convergence, keyed by notice x
+# part). Same flatten-the-dir import dance as run_tracker so the container path (/app/dispatch_driver.py)
 # and the dev package path both resolve.
 try:
-    from pcn_driver import pcn_dispatch_item  # noqa: E402  — container path
+    from dispatch_driver import dispatch_item  # noqa: E402  — container path
 except ImportError:
-    from agent_fleet.restate_analyst.pcn_driver import (  # noqa: E402
-        pcn_dispatch_item,
+    from agent_fleet.restate_analyst.dispatch_driver import (  # noqa: E402
+        dispatch_item,
     )
 
-# PcnGroupedReview — the grouped-review orchestrator (register 1 HumanTask, suspend, fan out N on an
+# GroupedReview — the grouped-review orchestrator (register 1 HumanTask, suspend, fan out N on an
 # ACCEPTED decision). Same flatten-the-dir import dance.
 try:
-    from pcn_workflow import pcn_grouped_review  # noqa: E402  — container path
+    from grouped_review_workflow import grouped_review  # noqa: E402  — container path
 except ImportError:
-    from agent_fleet.restate_analyst.pcn_workflow import (  # noqa: E402
-        pcn_grouped_review,
+    from agent_fleet.restate_analyst.grouped_review_workflow import (  # noqa: E402
+        grouped_review,
     )
 
-# PcnReviewStarter — the explicit entry that composes a notice into a running grouped review.
+# ReviewStarter — the explicit entry that composes a notice into a running grouped review.
 try:
-    from pcn_review_starter import pcn_review_starter  # noqa: E402  — container path
+    from review_starter import review_starter  # noqa: E402  — container path
 except ImportError:
-    from agent_fleet.restate_analyst.pcn_review_starter import (  # noqa: E402
-        pcn_review_starter,
+    from agent_fleet.restate_analyst.review_starter import (  # noqa: E402
+        review_starter,
     )
 
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, pcn_dispatch_item, pcn_grouped_review, pcn_review_starter]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, dispatch_item, grouped_review, review_starter]))
 
 
 # ---------------------------------------------------------------------------
