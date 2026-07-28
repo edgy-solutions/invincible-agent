@@ -128,7 +128,8 @@ This is the ops / re-drive path — identical downstream (Beats 3–5 unchanged)
 If the notice hits a refusal, the **Dagster run for that notice FAILS visibly** (that's the
 sensor surfacing what `POST /reviews` would have returned) — and nothing silently vanishes:
 - `RULES_NOT_FOUND` / `RULESET_INVALID` → the disposition ruleset isn't loaded/valid for this domain.
-- `NO_ENTITLED_ACTION` → residue exists but no reviewer holds `pcn_disposition:SUSTAINMENT` (grant it, §B).
+- `NOT_ENTITLED_TO_INITIATE` (403) → the auto-starter `svc:review-starter` lacks `can_invoke(mesh:startReview)` — grant the capability (`capability_grants.yaml`, §B). The sensor surfaces this as a failed Dagster run.
+- `no_entitled_recipients` (422) → residue exists but no reviewer holds `pcn_disposition:SUSTAINMENT`, so the review would be a task nobody can act on — `register_task` refuses it and the workflow fails-and-releases (never parks). Grant the review audience (§B), re-drive.
 - `REVIEW_STATE_UNSOURCED` → the notice is doc-level-needs-review but no part carries the flag
   (the tripwire — the extraction is under-sourced; do NOT paper over it).
 - `NO_RESIDUE` → genuinely nothing to review (an honest non-start; the run SUCCEEDS with a skip log).

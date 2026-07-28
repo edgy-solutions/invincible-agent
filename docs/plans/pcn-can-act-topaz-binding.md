@@ -10,6 +10,23 @@
 > never deployed. Everything below is the `task_audience` form; the old `disposition_item` shape is gone,
 > not half-retired.
 
+> **SPLIT 2026-07-27 (`feat-review-starter-identity`) — INITIATE separated from REVIEW; `NO_ENTITLED_ACTION`
+> retired.** The first non-human initiator (`svc:review-starter`, the extraction→review sensor) exposed a
+> conflation baked into the design below: `start_review` gated its residue filter on the INITIATOR's
+> `can_act` against this `pcn_disposition:<compartment>` audience — a coarse initiator check wearing a
+> per-item costume (it checked a FIXED audience, ignoring the item), invisible while `approver == reviewer`
+> (M1). Now split: this doc's `task_audience` binding is the **REVIEWER** gate ONLY, enforced downstream at
+> the HITL task layer (`register_task` materializes one row per audience actor; `/act` re-checks). The
+> **INITIATOR** is gated separately by a CAPABILITY — `can_invoke(mesh:startReview)` (`capability_grants.yaml`,
+> ADR-0029 sixth namespace) — because starting a review INVOKES a verb, it does not ACT on a task; an
+> audience-membership grant for the initiator would be a false statement in the fifth namespace (membership
+> IS recipiency). **`NO_ENTITLED_ACTION` is GONE, split in two:** the initiator-plane deny is
+> **`NOT_ENTITLED_TO_INITIATE`** (BFF → 403; the sensor surfaces it as a failed run); the reviewer-plane
+> zero-entitled-actors case — which the audience gate below used to catch ONLY because approver==reviewer —
+> is now **`NoEntitledRecipients`**: `register_task` refuses a zero-recipient task (BFF → terminal 422 →
+> workflow fail-and-release, never park, the join-that-can-never-complete closed on the reviewer plane).
+> Everything below reads as the M1 record + the audience-rule reasoning (still valid for the reviewer gate).
+
 The `can_act` seam is the ONE piece of the PCN loop that cannot be sealed offline (it needs the live
 authz layer). But "can't be sealed offline" ≠ "undesigned": an authz question answered at the console
 under demo momentum becomes the entitlement model by accident. So the SHAPE is decided here; the live
