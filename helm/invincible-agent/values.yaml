@@ -1237,6 +1237,11 @@ keycloak:
     adminUser: "admin"
     adminPassword: "changeme-keycloak"
   realm: "invincible-agent"
+  # Client secret for the iagent-review-starter service account (the extraction->review sensor's
+  # client-credentials identity). This ONE value feeds BOTH the client `secret` in the realm import
+  # (keycloak-configmap.yaml) AND REVIEW_STARTER_CLIENT_SECRET in the Secret — they must match. Override
+  # per deployment (a real secret at work); the sandbox default is a dev value, not sensitive.
+  reviewStarterClientSecret: "sandbox-review-starter-secret"
   service:
     type: ClusterIP
     port: 8080

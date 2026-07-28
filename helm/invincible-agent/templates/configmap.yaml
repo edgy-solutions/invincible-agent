@@ -128,6 +128,13 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "REVIEW_WATCH_PREFIX") }}
   REVIEW_WATCH_PREFIX: "sustainment/"
   {{- end }}
+  {{- /* Auto-starter identity: the sensor mints a token per run via client-credentials against
+  KEYCLOAK_REALM_URL (above) + /protocol/openid-connect/token, as this client; the secret is in
+  the Secret (REVIEW_STARTER_CLIENT_SECRET). authz_id resolves to svc:review-starter via the client's
+  hardcoded-claim mapper. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "REVIEW_STARTER_CLIENT_ID") }}
+  REVIEW_STARTER_CLIENT_ID: "iagent-review-starter"
+  {{- end }}
 
   # Shared Agent Fleet Configs
   {{- if .Values.agentFleet.env }}
