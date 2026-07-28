@@ -142,8 +142,37 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
             {{- end }}
+            {{- if and $deploy.grist $deploy.grist.enabled }}
+            # Grist ingest surface — dag_tools.user_deployment.definitions
+            # loads the mounted component config when this is set. OFF
+            # unless grist.enabled is flipped on for this deployment.
+            - name: DAG_TOOLS_GRIST_CONFIG
+              value: /etc/dag-tools/grist/grist.yaml
+            {{- range $s := $deploy.grist.secretEnv }}
+            - name: {{ $s.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s.secretName }}
+                  key: {{ $s.secretKey }}
+                  {{- if $s.optional }}
+                  optional: true
+                  {{- end }}
+            {{- end }}
+            {{- end }}
           resources:
             {{- toYaml (default (dict "requests" (dict "cpu" "100m" "memory" "256Mi") "limits" (dict "cpu" "500m" "memory" "1Gi")) $deploy.codeLocation.resources) | nindent 12 }}
+          {{- if and $deploy.grist $deploy.grist.enabled }}
+          volumeMounts:
+            - name: grist-config
+              mountPath: /etc/dag-tools/grist
+              readOnly: true
+          {{- end }}
+      {{- if and $deploy.grist $deploy.grist.enabled }}
+      volumes:
+        - name: grist-config
+          configMap:
+            name: {{ $fullName }}-grist
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service

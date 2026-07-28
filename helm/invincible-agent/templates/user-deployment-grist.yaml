@@ -1,0 +1,32 @@
+{{- /*
+Grist ingest config for user-deployments.
+
+For each userDeployment with `grist.enabled: true`, renders a ConfigMap
+holding the GristIngestComponent config. The code-location pod mounts it
+at /etc/dag-tools/grist/grist.yaml and sets DAG_TOOLS_GRIST_CONFIG (wired
+in user-deployments.yaml), so dag_tools.user_deployment.definitions loads
+the Grist surface.
+
+OFF by default — no default Grist/Postgres connection can be guessed.
+`{{ env.VAR }}` refs in `grist.config` are literal strings here (values
+files aren't Helm-templated); dag-tools resolves them against the pod
+environment at load time, so wire tokens/passwords via `grist.secretEnv`.
+*/}}
+{{- range $name, $deploy := .Values.userDeployments }}
+{{- if and $deploy.enabled $deploy.grist $deploy.grist.enabled }}
+{{- $fullName := printf "%s-%s" $.Release.Name $name }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-grist
+  labels:
+    {{- include "invincible-agent.labels" $ | nindent 4 }}
+    {{- include "invincible-agent.selectorLabels" (dict "component" $name "root" $) | nindent 4 }}
+data:
+  grist.yaml: |
+    enabled: true
+    attributes:
+{{ $deploy.grist.config | toYaml | indent 6 }}
+{{- end }}
+{{- end }}
