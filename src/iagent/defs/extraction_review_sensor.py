@@ -88,10 +88,18 @@ def build_start_review_payload(
     impacted_parts = [
         by_idx[i] for i in sorted(by_idx) if by_idx[i]["affected_mpn"]
     ]
+    # in_scope_mpns is REQUIRED: start_review's funnel filters out any affected part NOT in this
+    # list (out-of-scope) BEFORE building residue. Omitting it filtered EVERY part -> NO_RESIDUE ->
+    # the auto-fire silently reviewed nothing (caught live 2026-07-28: the sensor fired + posted, but
+    # the review came back NO_RESIDUE because this field was missing; the offline shape-test and a
+    # manual witness that hand-supplied in_scope_mpns both masked it). For an auto-review of a whole
+    # notice, EVERY affected part is in scope — so scope = the affected MPNs themselves.
+    in_scope_mpns = [p["affected_mpn"] for p in impacted_parts]
     return {
         "notice_id": review_json.get("doc_id"),
         "doc_type": doc_type,
         "impacted_parts": impacted_parts,
+        "in_scope_mpns": in_scope_mpns,
         "doc_needs_review": bool(review_json.get("needs_review")),
         "domain": domain,
     }

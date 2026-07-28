@@ -66,6 +66,10 @@ def test_payload_sources_parts_and_per_part_flag_from_review_json() -> None:
         {"affected_mpn": "MPN-A", "replacement_mpn": "MPN-A-R", "needs_review": True},
         {"affected_mpn": "MPN-B", "replacement_mpn": "MPN-B-R", "needs_review": False},
     ], payload["impacted_parts"]
+    # in_scope_mpns MUST list every affected MPN — start_review's funnel filters out-of-scope parts
+    # BEFORE residue, so omitting this returns NO_RESIDUE (the auto-fire reviews nothing). Regression
+    # guard for the live bug of 2026-07-28; without this line the shape-test passed on an empty scope.
+    assert payload["in_scope_mpns"] == ["MPN-A", "MPN-B"], payload["in_scope_mpns"]
 
 
 def test_tripwire_shape_is_preserved_not_papered_over() -> None:
