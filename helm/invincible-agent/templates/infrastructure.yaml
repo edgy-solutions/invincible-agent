@@ -311,7 +311,14 @@ spec:
               value: "{{ .Values.fuseki.auth.adminPassword }}"
           volumeMounts:
             - name: data
-              mountPath: /fuseki
+              # PERSIST the TDB2 dataset — NOT /fuseki (the PVC was mounted there but the image's
+              # FUSEKI_BASE is /fuseki-base, so /fuseki held nothing and every restart came up EMPTY;
+              # a power-loss reboot silently lost the ontology + disposition ruleset -> RULES_NOT_FOUND).
+              # The baked assembler is tdb:DatasetTDB at /fuseki-base/databases/tdb, so we persist ONLY
+              # /fuseki-base/databases: the graph data survives restarts, while the image-baked
+              # configuration/ and the entrypoint-regenerated shiro.ini stay ephemeral (an empty PVC at
+              # /fuseki-base would shadow the baked assembler and crash the sed under `set -e`).
+              mountPath: /fuseki-base/databases
   volumeClaimTemplates:
     - metadata:
         name: data
