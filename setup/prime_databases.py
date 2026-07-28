@@ -515,19 +515,29 @@ def _compact_jena(host: str, ds_name: str, auth) -> None:
     fatal — the prime's job is to populate; a missed compaction only defers
     reclaim to the next run. (First-fill of an ALREADY-full PVC still needs a
     manual volume reclaim/expand; this keeps it from re-filling thereafter.)"""
+    # TIMEOUTS ARE LOAD-BEARING: compact is fired against a store that may be
+    # under disk pressure — the very condition this exists to relieve. Without a
+    # timeout the POST/poll could hang FOREVER on a wedged Fuseki, turning a
+    # "best-effort, non-fatal" maintenance step into the prime's new hang. Kick
+    # off (POST returns the task id quickly, it runs async) and poll bounded.
     try:
         r = requests.post(
             f"{host}/$/compact/{ds_name}", params={"deleteOld": "true"},
-            auth=auth, proxies=proxy_int, verify=False,
+            auth=auth, proxies=proxy_int, verify=False, timeout=30,
         )
         r.raise_for_status()
         task_id = (r.json() or {}).get("taskId")
         print(f"  [compact] TDB2 compaction started (task {task_id}); waiting for reclaim…")
         for _ in range(90):  # ~3 min ceiling
             time.sleep(2)
-            t = requests.get(
-                f"{host}/$/tasks/{task_id}", auth=auth, proxies=proxy_int, verify=False,
-            )
+            try:
+                t = requests.get(
+                    f"{host}/$/tasks/{task_id}", auth=auth, proxies=proxy_int,
+                    verify=False, timeout=15,
+                )
+            except requests.RequestException as pe:
+                print(f"  [warn] compaction poll failed ({pe}); reclaim continues in background.")
+                return
             if t.status_code != 200:
                 break
             if (t.json() or {}).get("finished"):
