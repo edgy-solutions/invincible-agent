@@ -33,23 +33,42 @@ then verify (§C). Do NOT assume "prime ran" means "the graph is queryable".
 
 ## B. Grants — deny-by-default, git-rails only (never hand-surgery Topaz)
 
-All three principals below get their entitlement through `policy/task_grants.yaml` +
-`task_grant_sync` (validate → reconcile → readback → prune). Deny-by-default means an ungranted
-principal sees an **empty authorized queue**, not an error — verify the ALLOW path positively (§C).
+Three DISTINCT things are in play here, and they are commonly conflated. Only **one** of them
+is toggled by `ENABLE_DISPOSITION_AUTHZ` — read this table before you decide what to skip:
 
-| principal (symbolic) | needs | audience / capability |
+| what | how | gated by `ENABLE_DISPOSITION_AUTHZ`? |
 |---|---|---|
-| **reviewer** | to see + approve the grouped review | task audience `pcn_disposition:SUSTAINMENT` |
-| **dispatch-actor** | to see + act the dispatched qualification tasks | task audience `qualification` |
-| **auto-starter** (the sensor's `REVIEW_STARTER_TOKEN` identity) | to START reviews AND mint dispatch tasks | a valid identity + the dispatch mint capability |
+| **1. auto-starter identity + token** (the sensor authenticates to `/reviews`) | Keycloak client-credentials client `iagent-review-starter` (or the static-token shim), **not** a grant | **no** — `/reviews` is `Depends(get_current_user)`; a valid token is ALWAYS required |
+| **2. auto-starter `can_invoke(mesh:startReview)` capability** | `policy/capability_grants.yaml` → `svc:review-starter` | **YES — this is the only thing the env gates** |
+| **3. reviewer / dispatch-actor audience grants** (WHO the tasks route to) | `policy/task_grants.yaml` audiences `pcn_disposition:SUSTAINMENT` + `qualification` | **no** — deny-by-default *routing*, not a togglable check |
 
-**The auto-starter identity is the one new grant this pipeline needs.** The sensor authenticates
-to cortex-bff `/reviews` as this service identity; the BFF stamps it as `approver` (the review
-*initiator* — the human *reviewer* is still resolved from the `pcn_disposition:SUSTAINMENT`
-audience, not this token). Because the review's `user_jwt` is reused for the dispatch mint at
-approval time, this identity must also carry the dispatch-mint capability. Grant it in the same
-git-rails pass. (Follow-up already noted: `user_jwt` staleness for auto-started reviews — a
-service token that doesn't expire mid-review is the clean fix.)
+All grants go through `task_grant_sync` / `capability_sync` (validate → reconcile → readback →
+prune); never hand-surgery Topaz.
+
+**If you leave `ENABLE_DISPOSITION_AUTHZ` unset (the fastest path — the sandbox-proven config):**
+- ✅ **Drop** item 2 (the `can_invoke(mesh:startReview)` capability grant). With the gate off,
+  `can_invoke_start_review` is a no-op, so the auto-starter needs no capability. This is exactly
+  the hands-off witness config we ran in sandbox.
+- ❌ **Keep** item 1 — the token. Gate-off does NOT remove authentication; the sensor still mints
+  and presents a service token, or the review POST is rejected `401`.
+- ❌ **Keep** item 3 — the reviewer audience grant. This is the trap: it is **not** an authz check
+  you toggled off, it is the *routing* that decides whose queue the review lands in. Drop it and
+  the review still POSTs, but `register_task` finds **zero entitled recipients** →
+  `NoEntitledRecipients` → **422** → the review fails and **never reaches a human** (the loud
+  zero-recipients fail-and-release, by design — better than a silent forever-suspend). Grant
+  `pcn_disposition:SUSTAINMENT` to your reviewer, and `qualification` to your dispatch-actor if the
+  demo shows the approve→dispatch hop.
+
+So the minimum for the env-off demo is **token + reviewer audience grant** (+ `qualification` for
+the fan-out). The env buys you skipping the *capability* grant, not the token and not the routing.
+
+The BFF stamps the auto-starter as `approver` (the review *initiator*) — the human *reviewer* is
+still resolved from the `pcn_disposition:SUSTAINMENT` audience, never from this token. When you DO
+turn the gate on (to prove enforcement), an ungranted initiator gets `NOT_ENTITLED_TO_INITIATE`
+(403) up front; grant item 2 to clear it. (Follow-up already noted: the review's `user_jwt` is
+reused for the dispatch mint at approval time, so a long-lived-enough service credential — the
+per-run client-credentials mint, not a hand-pasted static JWT — is what keeps it from going stale
+mid-review.)
 
 ---
 
