@@ -73,10 +73,12 @@ def _ok_rules():
             "ruleset_ref": ruleset_ref, "valid": True, "validation_errors": [], "registration_checked": True}
 
 
-def _wire(monkeypatch, rules=None, resolve=None, can_act=lambda a, it: True):
+def _wire(monkeypatch, rules=None, resolve=None, can_invoke=lambda who: True):
     monkeypatch.setattr(starter, "load_policy_rules", lambda: rules if rules is not None else _ok_rules())
     monkeypatch.setattr(starter, "resolve_subject_via_engine_o", resolve or (lambda mpn: _KNOWN_IRIS.get(mpn)))
-    monkeypatch.setattr(starter, "can_act_via_topaz", can_act)
+    # The initiator gate (capability can_invoke mesh:startReview). WHO may review is a separate,
+    # downstream gate (task_audience) — not exercised here.
+    monkeypatch.setattr(starter, "can_invoke_start_review", can_invoke)
 
 
 # ===========================================================================
@@ -147,16 +149,18 @@ async def test_start_review_no_residue_starts_no_workflow(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_entitled_action_when_residue_but_approver_denied_all(monkeypatch):
-    """Residue EXISTS but Topaz denies this approver every item -> NO_ENTITLED_ACTION, LOUD, no
-    workflow. Distinct from NO_RESIDUE (genuinely nothing to review) — the deny-for-everyone misconfig
-    must not hide behind 'nothing to review'. The join-that-can-never-complete, surfaced not parked."""
-    _wire(monkeypatch, can_act=lambda a, it: False)  # deny everyone
+async def test_not_entitled_to_initiate_when_initiator_denied(monkeypatch):
+    """The INITIATOR gate discriminates (the migrated discrimination seal): an initiator without
+    can_invoke(mesh:startReview) is refused UP FRONT — NOT_ENTITLED_TO_INITIATE, loud, no workflow, no
+    composition. This is the honest coarse gate that replaced the degenerate per-item can_act filter
+    (which checked a fixed audience against the initiator, conflating 'may initiate' with 'is a
+    reviewer'). WHO may REVIEW is a separate gate, downstream at the task layer."""
+    _wire(monkeypatch, can_invoke=lambda who: False)  # initiator not entitled to invoke mesh:startReview
     ctx = _FakeContext()
     out = await _START(ctx, _request())
-    assert out["status"] == "NO_ENTITLED_ACTION"
-    assert out["counts"]["residue"] == 3, "residue exists (3) — this is not an empty review"
-    assert ctx.sends == [], "started a review no approver can action"
+    assert out["status"] == "NOT_ENTITLED_TO_INITIATE"
+    assert out["initiator"] == "qa"
+    assert ctx.sends == [], "started a review the initiator was not entitled to start"
 
 
 @pytest.mark.asyncio

@@ -243,6 +243,10 @@ async def register_human_task(
         )
     except human_tasks.HumanTaskConfigError as exc:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
+        # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
@@ -280,6 +284,10 @@ async def create_access_request(
         )
     except human_tasks.HumanTaskConfigError as exc:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
+        # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     logger.info("access_request created: task_id=%s subject=%s asset=%s approvers=%d",
                 task_id, current_user.authz_id, req.asset, len(result.get("recipients", [])))
     return {"request_id": task_id, "status": "pending",
@@ -335,8 +343,9 @@ async def start_review(
     identity (`authz_id` — the Topaz key engine-a's can_act checks), never from the body,
     so a caller cannot start a review as someone else. The raw bearer is forwarded as
     `user_jwt` because the downstream grouped-task register + dispatch mint act as this
-    user. Honest outcomes pass through: STARTED / NO_RESIDUE / NO_ENTITLED_ACTION are
-    200; a bad/unsourced request or corrupt ruleset is 422 (never a silent success).
+    user. Honest outcomes pass through: STARTED / NO_RESIDUE are 200; an initiator not
+    entitled to invoke mesh:startReview is NOT_ENTITLED_TO_INITIATE -> 403 (authz deny); a
+    bad/unsourced request or corrupt ruleset is 422 (never a silent success).
 
     TRIGGER STATUS: this endpoint is the OPS / RE-DRIVE path, NOT the primary trigger.
     The CANONICAL trigger is the extraction->review Dagster sensor
@@ -371,6 +380,11 @@ async def start_review(
                 req.notice_id, current_user.authz_id, out.get("status"))
     if out.get("status") in _PCN_REVIEW_BAD_REQUEST:
         raise HTTPException(status_code=422, detail=out)
+    if out.get("status") == "NOT_ENTITLED_TO_INITIATE":
+        # The INITIATOR lacks can_invoke(mesh:startReview) — an authz DENY (403), distinct from a bad
+        # request (422). The auto-starter service surfaces this as a failed Dagster run; a human caller
+        # gets a clean 403. (Who may REVIEW is a separate gate, downstream at the task layer.)
+        raise HTTPException(status_code=403, detail=out)
     return out
 
 

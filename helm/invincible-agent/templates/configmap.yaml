@@ -110,6 +110,32 @@ data:
   SWARMS_MODEL: {{ .Values.engineC.env.SWARMS_MODEL | quote }}
   KEYCLOAK_REALM_URL: "http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080/realms/{{ .Values.keycloak.realm }}"
 
+  # ── Extraction→review sensor (iagent.defs.extraction_review_sensor) ──
+  # The canonical trigger runs in the iagent Dagster code-location: it
+  # watches the artifacts bucket for a review.json landing (the "extraction
+  # done" event) and POSTs the composed review to cortex-bff /reviews.
+  # CORTEX_BFF_URL is release-aware (a non-iagent release must NOT inherit
+  # the sandbox host — same self-advertisement trap as ENGINE_*_PUBLIC_URL).
+  # ARTIFACT_BUCKET / REVIEW_WATCH_PREFIX default to the sandbox layout; the
+  # sensor's own os.environ defaults match, so these are belt-and-suspenders.
+  # hasKey-guarded so an agentFleet.env override wins with no duplicate key.
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "CORTEX_BFF_URL") }}
+  CORTEX_BFF_URL: "http://{{ .Release.Name }}-cortex-bff{{ include "invincible-agent.svcDomain" . }}:{{ .Values.cortexBff.port }}"
+  {{- end }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "ARTIFACT_BUCKET") }}
+  ARTIFACT_BUCKET: "processing-artifacts"
+  {{- end }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "REVIEW_WATCH_PREFIX") }}
+  REVIEW_WATCH_PREFIX: "sustainment/"
+  {{- end }}
+  {{- /* Auto-starter identity: the sensor mints a token per run via client-credentials against
+  KEYCLOAK_REALM_URL (above) + /protocol/openid-connect/token, as this client; the secret is in
+  the Secret (REVIEW_STARTER_CLIENT_SECRET). authz_id resolves to svc:review-starter via the client's
+  hardcoded-claim mapper. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "REVIEW_STARTER_CLIENT_ID") }}
+  REVIEW_STARTER_CLIENT_ID: "iagent-review-starter"
+  {{- end }}
+
   # Shared Agent Fleet Configs
   {{- if .Values.agentFleet.env }}
   {{- range $k, $v := .Values.agentFleet.env }}

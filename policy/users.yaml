@@ -86,3 +86,18 @@ users:
     default:
       persona: MECHANIC
       domains: [AVIATION]
+
+  # ── Service identities (non-human subjects) ─────────────────────────
+  # A service identity is a SUBJECT in the entitlement model exactly like
+  # a human — seeded here so its grants carry the same git-blame audit
+  # trail — but it is a DIFFERENT species: it authenticates via Keycloak
+  # client-credentials (no browser, no Ping federation), its `id` is the
+  # authz_id claim in `svc:<name>` form (never an email/employee-id), and
+  # it assumes NO persona/domain (it never opens the cortex-ui picker), so
+  # it carries no `groups` and no `default`. Its entitlements are CAPABILITY
+  # invocations (capability_grants.yaml), not persona/domain cells. This is
+  # instance-one of the pattern (the dispatcher / analyst loop will follow
+  # the same shape). See docs/plans/identity-mint-contract.md.
+  - id: svc:review-starter
+    display_name: review-starter (service — extraction→review sensor)
+    groups: []

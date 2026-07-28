@@ -75,6 +75,17 @@ class HumanTaskConfigError(RuntimeError):
     (PG DSN / Topaz URL). Fail LOUD — never silently no-op a security surface."""
 
 
+class NoEntitledRecipients(RuntimeError):
+    """Raised when a task is registered to an audience with ZERO Topaz-authorized actors.
+    A task no one can act on can never complete — it would suspend the caller's workflow
+    FOREVER, UNSEEN (the join-that-can-never-complete). Fail LOUD (a TERMINAL 4xx at the BFF,
+    so the workflow releases rather than parks or retries). This is the misconfiguration class
+    the initiator-plane NO_ENTITLED_ACTION used to catch when approver==reviewer; once initiate
+    and review split (svc:review-starter initiates, humans review), it must be caught HERE, on
+    the reviewer plane, uniformly for every task kind. Cure: grant the audience (task_grants.yaml)
+    then re-drive."""
+
+
 def _pg_connect():
     if not _PG_DSN:
         raise HumanTaskConfigError("PROJECTOR_POSTGRES_DSN is unset")
@@ -164,6 +175,16 @@ def register_task(
     an actor authorized for the TASK is not cleared for.
     """
     actors = _resolve_audience_actors(audience)
+    if not actors:
+        # Zero entitled recipients: refuse LOUD, never materialize a task no one can act on (it would
+        # park the caller's workflow forever, unseen). Raised BEFORE any DB touch so it is cheap and
+        # test-verifiable without a database. The BFF maps this to a TERMINAL 4xx so the workflow
+        # fails-and-releases; deny-by-default already routes an unreadable/empty audience here.
+        raise NoEntitledRecipients(
+            f"task {task_id!r} (kind={kind}) has ZERO entitled recipients for audience {audience!r} — "
+            f"refusing to register a task no one can act on (grant the audience in task_grants.yaml, "
+            f"then re-drive)"
+        )
     now = int(time.time() * 1000)
     payload_json = json.dumps(payload or {})
     rows = []

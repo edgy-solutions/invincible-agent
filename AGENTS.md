@@ -35,6 +35,16 @@ rolled `datahub-datahub-frontend` by accident (harmless rolling restart, but the
 grant makes the fleet writable at 2am; the fence is that name resolution is deliberate, not incidental.
 Filed from that miss so the anecdote becomes a rule, not a repeat.
 
+**Git branches are OWNED BY NAME — the serialization rule applied to version control (2026-07-27).**
+Multiple agents share one working copy; a `git checkout`/branch-switch by one silently moves HEAD under
+another mid-edit (seen live: a second agent branched `feat/user-deployment-grist-chart` off an active
+branch and left HEAD there; caught only because the human flagged it). So each agent works ONLY on the
+branch it created/owns for its task, and **verifies `git branch --show-current` immediately before every
+`git add`/`commit`** — a wrong-branch result aborts the commit (never `git checkout` onto someone else's
+branch to "fix" it). This is clause 2's write-serialization applied to git: a branch is a write surface,
+and an unowned HEAD move is a collision, not a convenience. Per-commit verification is the floor; if
+agents run concurrently often, isolate with a `git worktree` per agent. Filed from that collision.
+
 ## Runbook: engine-o's SELECT path drops RDF term types — typed reads go CONSTRUCT→parse (2026-07-23)
 
 `execute_sparql` returns `list[dict]` of `{var: string}` — it stringifies every RDF term (main.py

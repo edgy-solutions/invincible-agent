@@ -154,6 +154,11 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         "summary": f"{len(batch_items)} affected part(s) need a disposition review",
         "mpn": "",
         "notice_fingerprint": notice_fingerprint,
+        # The INITIATOR, honest on the reviewer's own card. For a pipeline-started review this is
+        # svc:review-starter (the sensor's service identity); the UI renders "(automated)" off the svc:
+        # PREFIX, not a name check, so every future service identity reads correctly for free. Previously
+        # omitted -> the grouped-review card shipped requested_by="" and showed no provenance at all.
+        "requested_by": approver,
     }
     await ctx.run("register_grouped_task", lambda: _mint_dispatch_task(grouped_task, user_jwt))
 

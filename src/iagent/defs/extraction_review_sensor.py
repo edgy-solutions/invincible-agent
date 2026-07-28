@@ -19,10 +19,10 @@ Design (the three seams, per the ruling):
     `review.json`'s `review_items`, the ONLY place per-part `needs_review` exists — NEVER
     reconstructed from the graph. So `REVIEW_STATE_UNSOURCED` stays honest by the sensor's
     OWN source choice, by construction.
-  * HONEST FAILURE = if `start_review` REFUSES (422 tripwire/rules, or 200 with
-    NO_ENTITLED_ACTION), the op RAISES -> the Dagster run FAILS, visible to the operator.
-    The sensor is now that operator; nothing swallowed. (NO_RESIDUE = an honest non-start,
-    logged + skipped, not a failure.)
+  * HONEST FAILURE = if `start_review` REFUSES (422 tripwire/rules, or 403
+    NOT_ENTITLED_TO_INITIATE — the auto-starter lacks can_invoke(mesh:startReview)), the op
+    RAISES -> the Dagster run FAILS, visible to the operator. The sensor is now that operator;
+    nothing swallowed. (NO_RESIDUE = an honest non-start, logged + skipped, not a failure.)
 
 The manual `POST /reviews` survives as the ops / re-drive path (same status as re-running
 a partition) — NOT the primary trigger.
@@ -102,10 +102,10 @@ def classify_start_review(status_code: int, body: dict) -> Tuple[str, str]:
 
     Returns (outcome, detail): "started" (success), "no_residue_skip" (honest non-start —
     nothing to review, not an error), or "refused" (surface as a FAILED run).
-      - 200 STARTED            -> started
-      - 200 NO_RESIDUE         -> no_residue_skip
-      - 200 NO_ENTITLED_ACTION -> refused (a CONFIG gap: no entitled reviewer for this
-                                   compartment — the loud-fail outcome designed for the operator)
+      - 200 STARTED               -> started
+      - 200 NO_RESIDUE            -> no_residue_skip
+      - 403 NOT_ENTITLED_TO_INITIATE -> refused (a CONFIG gap: the auto-starter lacks
+                                   can_invoke(mesh:startReview) — the loud-fail outcome for the operator)
       - 422 (REVIEW_STATE_UNSOURCED / RULESET_INVALID / RULES_NOT_FOUND) -> refused
       - anything else (502 unreachable / non-200) -> refused
     """
@@ -115,12 +115,14 @@ def classify_start_review(status_code: int, body: dict) -> Tuple[str, str]:
             return "started", f"workflow_id={body.get('workflow_id')} count={body.get('count')}"
         if status == "NO_RESIDUE":
             return "no_residue_skip", f"nothing to review: {body.get('counts')}"
-        if status == "NO_ENTITLED_ACTION":
-            return "refused", (
-                f"NO_ENTITLED_ACTION — residue exists but no entitled reviewer for the "
-                f"compartment (grant the review audience): {body.get('counts')}"
-            )
+        # The initiator deny no longer arrives as a 200 — it is a 403 NOT_ENTITLED_TO_INITIATE
+        # (handled below). Any other 200 status is unexpected.
         return "refused", f"unexpected 200 status={status!r} body={body}"
+    if status_code == 403:
+        return "refused", (
+            f"NOT_ENTITLED_TO_INITIATE — the auto-starter (svc:review-starter) lacks "
+            f"can_invoke(mesh:startReview); grant it in capability_grants.yaml: {body}"
+        )
     if status_code == 422:
         return "refused", f"start_review refused (tripwire/rules): {body}"
     return "refused", f"start_review failed: HTTP {status_code} {body}"
@@ -152,6 +154,41 @@ def _list_new_review_jsons(s3, bucket: str, prefix: str, since_key: Optional[str
             if k.endswith("/review.json"):
                 keys.append(k)
     return sorted(keys)
+
+
+def mint_service_token(*, timeout: float = 15.0) -> str:
+    """Mint a FRESH access token for the auto-starter service identity (svc:review-starter) via Keycloak
+    client-credentials — per RUN, so there is no static JWT to expire (closes the user_jwt-staleness
+    follow-up). The token's authz_id resolves to svc:review-starter via the client's hardcoded-claim mapper;
+    the pipeline acts under its OWN entitled identity, never a borrowed human token.
+
+    Mint is part of the OBSERVABLE seam: a failure (Keycloak down, secret rotated, client disabled) RAISES
+    dagster.Failure and NAMES the cause -> the Dagster run FAILS, visible. "Keycloak was down so no reviews
+    started and nothing said so" is precisely the invisible-dead-notice this pipeline was built to refuse."""
+    import httpx
+
+    realm_url = os.environ["KEYCLOAK_REALM_URL"].rstrip("/")
+    client_id = os.environ["REVIEW_STARTER_CLIENT_ID"]
+    client_secret = os.environ["REVIEW_STARTER_CLIENT_SECRET"]
+    token_url = f"{realm_url}/protocol/openid-connect/token"
+    try:
+        resp = httpx.post(
+            token_url,
+            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=timeout,
+        )
+    except Exception as exc:  # noqa: BLE001 — transport failure is a loud, named failure, never silent
+        raise Failure(description=f"mint_service_token: Keycloak token endpoint unreachable at {token_url}: {exc}")
+    if resp.status_code != 200:
+        raise Failure(
+            description=f"mint_service_token: client-credentials mint failed HTTP {resp.status_code} for "
+            f"client {client_id!r} at {token_url}: {resp.text[:300]}"
+        )
+    tok = (resp.json() or {}).get("access_token")
+    if not tok:
+        raise Failure(description=f"mint_service_token: token response carried no access_token: {resp.text[:300]}")
+    return tok
 
 
 def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = 30.0):
@@ -187,11 +224,12 @@ def start_review_op(context, config: StartReviewConfig) -> None:
     """Read the extraction's review.json, build the tripwire-safe payload, and start the
     review via cortex-bff. A refusal RAISES (failed run); NO_RESIDUE logs + skips.
 
-    Identity: the review INITIATOR is the auto-starter service account (approver stamped
-    by the BFF from REVIEW_STARTER_TOKEN); the reviewer is resolved from the audience grant,
-    not from this token. DEPLOY REQ: REVIEW_STARTER_TOKEN must be a valid identity entitled
-    to start reviews AND (per the user_jwt-at-dispatch thread) to mint dispatch tasks —
-    grant it the dispatch capability. See docs/plans/work-demo-runbook + the user_jwt-staleness follow-up."""
+    Identity: the review INITIATOR is the auto-starter service account (svc:review-starter). The op mints
+    a fresh token per run via client-credentials (mint_service_token); the BFF stamps the approver from
+    that token's authz_id (=svc:review-starter). The reviewer is resolved separately from the review
+    audience grant, not from this token. DEPLOY REQ: svc:review-starter must hold can_invoke(mesh:startReview)
+    (capability_grants.yaml) — an ungranted initiator is refused NOT_ENTITLED_TO_INITIATE (403 -> failed run).
+    See docs/plans/identity-mint-contract.md + capability_grants.yaml."""
     bucket = _ARTIFACT_BUCKET
     src = config.review_json_url
     key = src[len(f"s3://{bucket}/"):] if src.startswith(f"s3://{bucket}/") else src
@@ -204,7 +242,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
         context.log.info(f"no impacted parts in {key}; nothing to review — skipping")
         return
     bff_url = os.environ["CORTEX_BFF_URL"]
-    token = os.environ["REVIEW_STARTER_TOKEN"]
+    token = mint_service_token()   # per-run client-credentials; RAISES loudly on mint failure (failed run)
     outcome, body = submit_review(payload, bff_url=bff_url, token=token)
     context.log.info(f"start_review {outcome}: notice={payload['notice_id']} -> {body}")
 
