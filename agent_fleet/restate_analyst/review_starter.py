@@ -157,13 +157,20 @@ def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live 
 
 
 def _no_reviewer_filter(approver: str, item) -> bool:
-    """The per-item reviewer filter injected into grouped_review. TODAY a pass-through: the single review
-    audience (``pcn_disposition:<compartment>``) has no per-item differential, so every residue item flows
-    into the batch for the audience to triage, and who may REVIEW is enforced at the HITL task layer
-    (register_task materializes one row per audience actor; /act re-checks). When per-item reviewer scoping
-    IS wanted (e.g. per-compartment items in one batch), the real predicate is injected HERE, keyed on the
-    REVIEWER audience — NEVER the initiator (that was the conflation). ``grouped_review`` stays the honest
-    per-item filter, ready for that predicate; this is just the identity function until one exists."""
+    """The per-item reviewer filter injected into grouped_review. TODAY the identity function: the single
+    review audience (``pcn_disposition:<compartment>``) has no COMPOSITION-time per-item differential, so
+    every residue item flows into the batch for the audience to triage; who may REVIEW is enforced at the
+    HITL task layer (register_task materializes one row per audience actor, refusing a zero-recipient task;
+    /act re-checks). NB the Slice-3 grouped-review filter already handles the per-approver VIEW (redacting a
+    reviewer's OWN batch); THIS hook is a distinct COMPOSITION-time differential with no consumer yet.
+
+    NAMED WAKER — replace this pass-through with a real predicate when EITHER: (a) a single batch spans
+    multiple compartments (items carrying different reviewer audiences composed together), or (b) reviewer-
+    specific redaction WITHIN one audience becomes real. When it wakes, the predicate is keyed on the
+    REVIEWER audience — NEVER the initiator (that conflation was the bug this split repaired; the initiator
+    is gated once, coarsely, by can_invoke above). ``grouped_review`` stays the genuine per-item filter,
+    ready for it. The trigger is spelled out on purpose: a named waker survives a tidy-minded pass; a vague
+    'TODO: filtering' gets deleted into a bug."""
     return True
 
 

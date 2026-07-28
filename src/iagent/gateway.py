@@ -243,6 +243,10 @@ async def register_human_task(
         )
     except human_tasks.HumanTaskConfigError as exc:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
+        # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     logger.info("human_task registered: task_id=%s audience=%s recipients=%d",
                 req.task_id, req.audience, len(result.get("recipients", [])))
     return result
@@ -280,6 +284,10 @@ async def create_access_request(
         )
     except human_tasks.HumanTaskConfigError as exc:
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        # TERMINAL 4xx (not 5xx): a task with zero entitled actors is a permanent misconfiguration, not
+        # a transient outage — the caller's workflow must fail-and-release (never park or retry-forever).
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
     logger.info("access_request created: task_id=%s subject=%s asset=%s approvers=%d",
                 task_id, current_user.authz_id, req.asset, len(result.get("recipients", [])))
     return {"request_id": task_id, "status": "pending",
