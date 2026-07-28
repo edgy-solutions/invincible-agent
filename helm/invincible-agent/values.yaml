@@ -1241,7 +1241,14 @@ fuseki:
   persistence:
     enabled: true
     storageClass: ""
-    size: 5Gi
+    # 5Gi filled on the work cluster: TDB2 grows monotonically across re-primes
+    # (DROP is logical; only compaction returns disk) until msync fails with "No
+    # space left on device" and TDB2 wedges. prime_databases now compacts each
+    # run to bound growth; this headroom absorbs the between-compaction working
+    # set + a reasoner-materialized SUSTAINMENT/MAINTENANCE graph. Expanding an
+    # EXISTING deploy needs a PVC resize (allowVolumeExpansion) or STS recreate —
+    # the volumeClaimTemplate size is immutable, so `helm upgrade` alone won't.
+    size: 20Gi
 
 externalFuseki:
   url: ""     # e.g. "http://my-fuseki.infra.svc:3030"

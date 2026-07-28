@@ -501,6 +501,43 @@ def upload_canonical_ttls() -> None:
     print("[SUCCESS] All canonical TTLs uploaded.")
 
 
+def _compact_jena(host: str, ds_name: str, auth) -> None:
+    """Compact the TDB2 dataset so DROP/DELETE actually RETURN disk.
+
+    TDB2 reclaims space ONLY via compaction; DROP just marks data dead. Without
+    this, a re-prime grows the store every run (clear-then-re-append) until the
+    PVC fills and TDB2 wedges on msync ("No space left on device") — at which
+    point even a DROP can't commit and the prime hangs at clear_ontology_graphs.
+    deleteOld=true removes the pre-compaction copy (else Fuseki keeps BOTH
+    generations, transiently DOUBLING on-disk size — the opposite of what a
+    pressured PVC needs). Poll the async task so reclaim finishes before the
+    re-ingest re-appends. Best-effort: a compaction failure is logged, not
+    fatal — the prime's job is to populate; a missed compaction only defers
+    reclaim to the next run. (First-fill of an ALREADY-full PVC still needs a
+    manual volume reclaim/expand; this keeps it from re-filling thereafter.)"""
+    try:
+        r = requests.post(
+            f"{host}/$/compact/{ds_name}", params={"deleteOld": "true"},
+            auth=auth, proxies=proxy_int, verify=False,
+        )
+        r.raise_for_status()
+        task_id = (r.json() or {}).get("taskId")
+        print(f"  [compact] TDB2 compaction started (task {task_id}); waiting for reclaim…")
+        for _ in range(90):  # ~3 min ceiling
+            time.sleep(2)
+            t = requests.get(
+                f"{host}/$/tasks/{task_id}", auth=auth, proxies=proxy_int, verify=False,
+            )
+            if t.status_code != 200:
+                break
+            if (t.json() or {}).get("finished"):
+                print("  [compact] finished — dead space reclaimed.")
+                return
+        print("  [compact] still running past budget — reclaim will finish in the background.")
+    except Exception as e:
+        print(f"  [warn] TDB2 compaction skipped ({e}); disk reclaim deferred to next prime.")
+
+
 def clear_ontology_graphs() -> None:
     """Append-idempotency guard: DROP the MANIFEST-listed domain graphs BEFORE the
     per-file ingests POST-append into them.
@@ -550,6 +587,10 @@ def clear_ontology_graphs() -> None:
             )
             up.raise_for_status()
             print(f"  [clear] DROP SILENT GRAPH <{g}>")
+        # RECLAIM: DROP is a logical delete — return the freed space to disk so
+        # the store doesn't grow monotonically across re-primes and fill the PVC.
+        # Runs after the drop, before trigger_ingest_jobs re-appends.
+        _compact_jena(host, ds_name, auth)
     except Exception as e:
         # Fail loud — a half-cleared store would silently under-populate the menu.
         print(f"  [ERROR] clear_ontology_graphs failed: {e}")
@@ -913,17 +954,23 @@ def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
             else:
                 raise
 
-        # delete_objects caps at 1000 keys per batch; paginate.
+        # Delete PER-OBJECT, not via batch DeleteObjects. Batch DeleteObjects
+        # REQUIRES a Content-MD5 (or the new x-amz-checksum trailer) that
+        # boto3 1.36+ and MinIO negotiate inconsistently across versions:
+        # _minio_compat_config()'s request_checksum_calculation="when_required"
+        # fixes it on SOME botocore builds, but the work image still 400'd with
+        # `MissingContentMD5 — Missing required header ... Content-Md5`, which
+        # silently SKIPPED the wipe (stale non-canonical objects survived).
+        # Single-object delete_object carries no such requirement, so it is
+        # version-proof. The ontologies bucket is tiny (~a dozen keys); the
+        # extra round-trips are negligible against never-wiping.
         deleted = 0
         for page in ([] if not bucket_exists else s3.get_paginator("list_objects_v2").paginate(Bucket=bucket)):
-            contents = page.get("Contents") or []
-            if not contents:
-                continue
-            batch = [{"Key": obj["Key"]} for obj in contents]
-            s3.delete_objects(Bucket=bucket, Delete={"Objects": batch, "Quiet": True})
-            deleted += len(batch)
+            for obj in (page.get("Contents") or []):
+                s3.delete_object(Bucket=bucket, Key=obj["Key"])
+                deleted += 1
         if bucket_exists:
-            print(f"[OK] MinIO bucket {bucket} cleared ({deleted} objects).")
+            print(f"[OK] MinIO bucket {bucket} cleared ({deleted} objects, per-object).")
     except Exception as e:
         print(f"[ERROR] MinIO wipe: {e}")
 
