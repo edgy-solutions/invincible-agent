@@ -99,5 +99,5 @@ users:
   # instance-one of the pattern (the dispatcher / analyst loop will follow
   # the same shape). See docs/plans/identity-mint-contract.md.
   - id: svc:review-starter
-    display_name: review-starter (service — extraction→review sensor)
+    display_name: review-starter (service - extraction-to-review sensor)
     groups: []
