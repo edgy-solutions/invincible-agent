@@ -19,10 +19,10 @@ Design (the three seams, per the ruling):
     `review.json`'s `review_items`, the ONLY place per-part `needs_review` exists — NEVER
     reconstructed from the graph. So `REVIEW_STATE_UNSOURCED` stays honest by the sensor's
     OWN source choice, by construction.
-  * HONEST FAILURE = if `start_review` REFUSES (422 tripwire/rules, or 200 with
-    NO_ENTITLED_ACTION), the op RAISES -> the Dagster run FAILS, visible to the operator.
-    The sensor is now that operator; nothing swallowed. (NO_RESIDUE = an honest non-start,
-    logged + skipped, not a failure.)
+  * HONEST FAILURE = if `start_review` REFUSES (422 tripwire/rules, or 403
+    NOT_ENTITLED_TO_INITIATE — the auto-starter lacks can_invoke(mesh:startReview)), the op
+    RAISES -> the Dagster run FAILS, visible to the operator. The sensor is now that operator;
+    nothing swallowed. (NO_RESIDUE = an honest non-start, logged + skipped, not a failure.)
 
 The manual `POST /reviews` survives as the ops / re-drive path (same status as re-running
 a partition) — NOT the primary trigger.
@@ -102,10 +102,10 @@ def classify_start_review(status_code: int, body: dict) -> Tuple[str, str]:
 
     Returns (outcome, detail): "started" (success), "no_residue_skip" (honest non-start —
     nothing to review, not an error), or "refused" (surface as a FAILED run).
-      - 200 STARTED            -> started
-      - 200 NO_RESIDUE         -> no_residue_skip
-      - 200 NO_ENTITLED_ACTION -> refused (a CONFIG gap: no entitled reviewer for this
-                                   compartment — the loud-fail outcome designed for the operator)
+      - 200 STARTED               -> started
+      - 200 NO_RESIDUE            -> no_residue_skip
+      - 403 NOT_ENTITLED_TO_INITIATE -> refused (a CONFIG gap: the auto-starter lacks
+                                   can_invoke(mesh:startReview) — the loud-fail outcome for the operator)
       - 422 (REVIEW_STATE_UNSOURCED / RULESET_INVALID / RULES_NOT_FOUND) -> refused
       - anything else (502 unreachable / non-200) -> refused
     """
@@ -115,12 +115,14 @@ def classify_start_review(status_code: int, body: dict) -> Tuple[str, str]:
             return "started", f"workflow_id={body.get('workflow_id')} count={body.get('count')}"
         if status == "NO_RESIDUE":
             return "no_residue_skip", f"nothing to review: {body.get('counts')}"
-        if status == "NO_ENTITLED_ACTION":
-            return "refused", (
-                f"NO_ENTITLED_ACTION — residue exists but no entitled reviewer for the "
-                f"compartment (grant the review audience): {body.get('counts')}"
-            )
+        # The initiator deny no longer arrives as a 200 — it is a 403 NOT_ENTITLED_TO_INITIATE
+        # (handled below). Any other 200 status is unexpected.
         return "refused", f"unexpected 200 status={status!r} body={body}"
+    if status_code == 403:
+        return "refused", (
+            f"NOT_ENTITLED_TO_INITIATE — the auto-starter (svc:review-starter) lacks "
+            f"can_invoke(mesh:startReview); grant it in capability_grants.yaml: {body}"
+        )
     if status_code == 422:
         return "refused", f"start_review refused (tripwire/rules): {body}"
     return "refused", f"start_review failed: HTTP {status_code} {body}"

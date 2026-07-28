@@ -49,3 +49,24 @@ capabilities:
       same single decider as the four content gates and the task audiences.
     grant_to:
       - alice@example.com
+
+  # The extraction→review sensor's service identity — the FIRST non-human invoker in the
+  # entitlement model. Starting a disposition review is INVOKING mesh:startReview (an effect:
+  # it composes residue + starts a durable workflow), so it is gated HERE, deny-by-default,
+  # like every direct_call — NOT in the task-audience namespace. Audience membership IS
+  # recipiency (task_grant materializes a queue row per actor); a `review_initiation` audience
+  # would be a key whose defining property is that nothing must ever materialize for it — a
+  # false statement in the fifth namespace (the disposition_item cosmetic-attribute death).
+  # DISTINCT from who may REVIEW (task_grants.yaml pcn_disposition:<compartment>): the service
+  # INITIATES; humans REVIEW. Instance-one of the service-identity pattern (dispatcher / analyst
+  # loop follow the same shape). svc:review-starter is seeded in users.yaml (service species).
+  mesh:startReview:
+    granted_by: cnogradi
+    reason: >-
+      svc:review-starter (the extraction→review Dagster sensor's client-credentials identity) may
+      invoke mesh:startReview — auto-start a grouped disposition review when a doc-tools extraction
+      lands its review.json. The pipeline acts under its OWN entitled, auditable identity, never a
+      borrowed human token (the alice-token quick-proof was rejected precisely to avoid corrupting
+      requested_by provenance on the inaugural automated run). Who may REVIEW is granted separately.
+    grant_to:
+      - svc:review-starter

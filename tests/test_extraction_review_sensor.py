@@ -88,8 +88,8 @@ def test_no_parts_yields_empty_impacted_parts() -> None:
 def test_classify_covers_every_outcome() -> None:
     assert ers.classify_start_review(200, {"status": "STARTED", "workflow_id": "wf1", "count": 2})[0] == "started"
     assert ers.classify_start_review(200, {"status": "NO_RESIDUE", "counts": {}})[0] == "no_residue_skip"
-    # NO_ENTITLED_ACTION comes back 200 but is a config gap -> surface as a failure.
-    assert ers.classify_start_review(200, {"status": "NO_ENTITLED_ACTION", "counts": {}})[0] == "refused"
+    # NOT_ENTITLED_TO_INITIATE comes back 403 (the auto-starter lacks can_invoke) -> surface as a failure.
+    assert ers.classify_start_review(403, {"status": "NOT_ENTITLED_TO_INITIATE"})[0] == "refused"
     # 422 = the tripwire / rules refusals.
     assert ers.classify_start_review(422, {"status": "REVIEW_STATE_UNSOURCED"})[0] == "refused"
     assert ers.classify_start_review(422, {"status": "RULES_NOT_FOUND"})[0] == "refused"

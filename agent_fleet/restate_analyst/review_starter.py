@@ -108,46 +108,63 @@ def load_policy_rules() -> dict:  # pragma: no cover - deploy-gated (live engine
 
 
 TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
-# Independent toggle for the disposition can_act gate. NOT the terminal ENABLE_AGENTIC_AUTH (whose flip
-# turns on EVERY dark-launched content gate cluster-wide, irreversibly). can_act gates WHO reviews (a
-# grain-of-review property), so it gets its OWN dark-launch toggle — dark until grants are seeded, then
-# flipped for its own gate alone. Off -> no-op True (like the other gates when their flag is off).
+# Independent dark-launch toggle for the review-START authz gate. NOT the terminal ENABLE_AGENTIC_AUTH
+# (whose flip turns on EVERY dark-launched content gate cluster-wide, irreversibly). It gates WHO may
+# INITIATE a review — capability can_invoke(mesh:startReview) — so it gets its OWN toggle: dark until the
+# capability grant is seeded (capability_grants.yaml), then flipped for this gate alone. Off -> no-op True
+# (like the other gates when their flag is off). (Name kept as ENABLE_DISPOSITION_AUTHZ to avoid deploy-env
+# churn mid-flight — it has always been the review-start authz switch.) WHO may REVIEW is a SEPARATE gate
+# that lives at the HITL task layer (task_audience pcn_disposition:<compartment>, enforced at task
+# registration + /act) — not here. Conflating "may initiate" with "is a reviewer" was the latent bug the
+# first non-human initiator (svc:review-starter) exposed; this split is its repair.
 ENABLE_DISPOSITION_AUTHZ = os.getenv("ENABLE_DISPOSITION_AUTHZ", "false").lower() in ("true", "1", "yes")
-_ITEM_DOMAIN = os.getenv("PCN_DISPOSITION_DOMAIN", "SUSTAINMENT")
-_TASK_KIND = "pcn_disposition"   # the task_kind half of the task_audience key (task_kind:compartment)
+
+# The capability a review INITIATOR must be able to invoke. Starting a review is invoking mesh:startReview
+# (an EFFECT), gated on the SAME single decider as every direct_call (ADR-0029 capability `can_invoke`,
+# the SIXTH namespace — capability_grants.yaml). svc:review-starter is its first non-human invoker.
+MESH_START_REVIEW = "mesh:startReview"
 
 
-def can_act_via_topaz(approver: str, item) -> bool:  # pragma: no cover - live Topaz (exercised by the discrimination seal)
-    """Topaz predicate for grouped_review — reconciled onto WORK'S EXISTING mechanism (single-authz-
-    decider): the HITL ``task_audience`` (`task_grants.yaml` → `task_grant_sync.py`). A grouped review is
-    a HITL task, and "who may act on a class of HITL tasks in a compartment" is EXACTLY ``task_audience``
-    — key ``<task_kind>:<compartment>`` where the compartment IS the domain (``pcn_disposition:SUSTAINMENT``),
-    permission ``can_act`` (relation ``actor``, granted directly OR via ``group#member``). No bespoke
-    ``disposition_item`` type, no rego, no manifest edit — that was reinventing this. The check is a
-    direct Topaz DIRECTORY check (`POST /api/v3/directory/check`): deny-by-default (an ungranted audience
-    is "object not found" -> deny). Grants arrive by the git-rails seed CronJob, never hand-surgery.
+def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live Topaz (discrimination seal)
+    """Topaz predicate for the review INITIATOR: capability ``can_invoke(initiator, mesh:startReview)``.
+
+    Starting a review INVOKES a capability; it does not ACT on a HITL task — so the initiator is gated in
+    the CAPABILITY namespace (capability_grants.yaml → capability_grant_sync.py), deny-by-default. This is
+    deliberately DISTINCT from who may REVIEW (the human ``task_audience`` ``pcn_disposition:<compartment>``,
+    enforced downstream at task registration + /act): a service identity may initiate without ever being a
+    reviewer, and a reviewer needn't be able to initiate. Direct Topaz DIRECTORY check; an ungranted
+    capability is "object not found" -> deny.
 
     No-op True when ``ENABLE_DISPOSITION_AUTHZ`` is off (its OWN dark-launch toggle, not the terminal
-    ENABLE_AGENTIC_AUTH flip). Any error / not-found -> deny (a gate must not fail open); grouped_review
-    then withholds the item and start_review surfaces NO_ENTITLED_ACTION rather than parking."""
+    ENABLE_AGENTIC_AUTH flip). Any error / not-found -> deny (a gate must not fail open)."""
     if not ENABLE_DISPOSITION_AUTHZ:
         return True
-    if not approver:
+    if not initiator:
         return False
-    audience = f"{_TASK_KIND}:{_ITEM_DOMAIN}"   # task_kind:compartment — compartment is the domain
     try:
         import requests
         resp = requests.post(
             f"{TOPAZ_DIRECTORY_URL}/api/v3/directory/check",
             headers={"Content-Type": "application/json"},
-            json={"object_type": "task_audience", "object_id": audience, "relation": "can_act",
-                  "subject_type": "user", "subject_id": approver},
+            json={"object_type": "capability", "object_id": MESH_START_REVIEW, "relation": "can_invoke",
+                  "subject_type": "user", "subject_id": initiator},
             timeout=5.0,
         )
         resp.raise_for_status()
         return bool(resp.json().get("check", False))   # absent/not-found/error -> deny (fail-closed)
     except Exception:  # noqa: BLE001 — fail-closed (deny) on any error, like the ontology gate
         return False
+
+
+def _no_reviewer_filter(approver: str, item) -> bool:
+    """The per-item reviewer filter injected into grouped_review. TODAY a pass-through: the single review
+    audience (``pcn_disposition:<compartment>``) has no per-item differential, so every residue item flows
+    into the batch for the audience to triage, and who may REVIEW is enforced at the HITL task layer
+    (register_task materializes one row per audience actor; /act re-checks). When per-item reviewer scoping
+    IS wanted (e.g. per-compartment items in one batch), the real predicate is injected HERE, keyed on the
+    REVIEWER audience — NEVER the initiator (that was the conflation). ``grouped_review`` stays the honest
+    per-item filter, ready for that predicate; this is just the identity function until one exists."""
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +213,16 @@ async def start_review(ctx: Context, request: dict) -> dict:
                 "detail": "doc-level needs_review is set but no part carries it — per-part review-state "
                           "was not sourced from the extraction (built from the lossy graph projection?)"}
 
+    # 0.5) INITIATOR GATE (ADR-0029 capability, deny-by-default). Starting a review is INVOKING
+    #      mesh:startReview — an EFFECT — so the initiator is gated on the single decider BEFORE any
+    #      composition. This is the honest COARSE gate that replaces the old per-item can_act filter: that
+    #      filter checked a FIXED audience (ignoring the item) against the INITIATOR, so it was a coarse
+    #      initiator check wearing a per-item costume, and it conflated "may initiate" with "is a reviewer"
+    #      — invisible until the first non-human initiator (svc:review-starter). WHO may REVIEW is a
+    #      separate gate at the task layer. See docs/plans/pcn-can-act-topaz-binding.md (Audience Rule).
+    if not can_invoke_start_review(approver):
+        return {"status": "NOT_ENTITLED_TO_INITIATE", "notice_id": notice_id, "initiator": approver}
+
     # 1) Load + validate the ruleset (client interprets engine-o's served Turtle). A corrupt or absent
     #    ruleset is surfaced HONESTLY here — it never flows into the batch looking valid.
     rules = await ctx.run("load_policy_rules", load_policy_rules)
@@ -217,25 +244,16 @@ async def start_review(ctx: Context, request: dict) -> dict:
             category_classes=rules["category_classes"],
             ruleset_ref=rules["ruleset_ref"],
             resolve_subject=resolve_subject_via_engine_o,
-            can_act=can_act_via_topaz,
+            can_act=_no_reviewer_filter,
         ),
     )
     batch_items = build["batch_items"]
     if not batch_items:
-        if build["counts"]["residue"] > 0:
-            # Residue EXISTS but this approver is entitled to act on NONE of it. Surface LOUDLY — never
-            # mask it as "nothing to review". This is the deny-for-everyone misconfig (the agentic-auth
-            # flip's first-symptom class) / wrong-approver case: a review nobody can action is the
-            # join-that-can-never-complete in review clothes (Slice-5 suspend-vs-fail, one level up).
-            # Fail here (no workflow started) rather than register a review that parks forever, unseen.
-            # AUDIENCE: this is an INITIATOR-PLANE outcome (operator/system starting the review). It is
-            # honest here, but to a PARTICIPANT (an approver about their OWN view) it is an existence
-            # oracle — "items exist you can't act on" is exactly what Slice-3 redaction withholds. Any
-            # participant-facing entry path MUST collapse this to nothing-to-review. See
-            # docs/plans/pcn-can-act-topaz-binding.md (Audience Rule).
-            return {"status": "NO_ENTITLED_ACTION", "notice_id": notice_id,
-                    "approver": approver, "counts": build["counts"]}
-        # Genuinely nothing to review — every part filtered / auto-disposed (residue is empty).
+        # Nothing reached residue — every part filtered / auto-disposed. Honest empty (no workflow, no
+        # empty task), not a silent success. The old "residue exists but approver entitled to NONE" branch
+        # is GONE: entitlement to INITIATE is the coarse capability gate above (NOT_ENTITLED_TO_INITIATE),
+        # and a permitted initiator composes the FULL residue for the audience to triage — who may REVIEW
+        # is gated at the task layer (register_task per-actor + /act), not by pre-filtering the batch.
         return {"status": "NO_RESIDUE", "notice_id": notice_id, "counts": build["counts"]}
 
     workflow_id = f"pcn-review-{notice_id}-{approver}"

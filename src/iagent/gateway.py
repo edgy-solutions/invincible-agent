@@ -335,8 +335,9 @@ async def start_review(
     identity (`authz_id` — the Topaz key engine-a's can_act checks), never from the body,
     so a caller cannot start a review as someone else. The raw bearer is forwarded as
     `user_jwt` because the downstream grouped-task register + dispatch mint act as this
-    user. Honest outcomes pass through: STARTED / NO_RESIDUE / NO_ENTITLED_ACTION are
-    200; a bad/unsourced request or corrupt ruleset is 422 (never a silent success).
+    user. Honest outcomes pass through: STARTED / NO_RESIDUE are 200; an initiator not
+    entitled to invoke mesh:startReview is NOT_ENTITLED_TO_INITIATE -> 403 (authz deny); a
+    bad/unsourced request or corrupt ruleset is 422 (never a silent success).
 
     TRIGGER STATUS: this endpoint is the OPS / RE-DRIVE path, NOT the primary trigger.
     The CANONICAL trigger is the extraction->review Dagster sensor
@@ -371,6 +372,11 @@ async def start_review(
                 req.notice_id, current_user.authz_id, out.get("status"))
     if out.get("status") in _PCN_REVIEW_BAD_REQUEST:
         raise HTTPException(status_code=422, detail=out)
+    if out.get("status") == "NOT_ENTITLED_TO_INITIATE":
+        # The INITIATOR lacks can_invoke(mesh:startReview) — an authz DENY (403), distinct from a bad
+        # request (422). The auto-starter service surfaces this as a failed Dagster run; a human caller
+        # gets a clean 403. (Who may REVIEW is a separate gate, downstream at the task layer.)
+        raise HTTPException(status_code=403, detail=out)
     return out
 
 
