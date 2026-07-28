@@ -69,3 +69,37 @@ audiences:
       alice->reader->customers_gold rehearsal into a self-service HITL flow.
     grant_to:
       - alice@example.com
+
+  # PCN/PDN sustainment — the disposition-REVIEW audience for the SUSTAINMENT
+  # compartment. The extraction→review sensor (svc:review-starter, capability
+  # can_invoke mesh:startReview) STARTS the grouped review; the actors here are the
+  # humans who see + approve it. This is the trap the work-runbook §B calls out: it
+  # is NOT gated by ENABLE_DISPOSITION_AUTHZ (that gates only the initiator capability)
+  # — it is deny-by-default ROUTING. Without it register_task materializes zero rows
+  # → NoEntitledRecipients → 422 → the review never reaches a human. Drift-closure:
+  # this relation was live in sandbox Topaz from M1 but was never committed; the next
+  # task_grant_sync prune would have deleted it. Now git-asserted so the manifest
+  # reproduces the working demo AND travels to work (rebind to the employee-id there).
+  pcn_disposition:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      The disposition-review audience for the SUSTAINMENT compartment. The
+      extraction→review sensor auto-starts the grouped review; these actors are the
+      humans who see + approve it in their queue. Sandbox reviewer = alice; bind to
+      the reviewer's real employee-id at work. Who may INITIATE is granted separately
+      (svc:review-starter, capability_grants.yaml) — the service initiates, humans review.
+    grant_to:
+      - alice@example.com
+
+  # PCN/PDN sustainment — the dispatch-actor audience. On approval the grouped review
+  # fans out one qualification task per part (alice's approve → bob's queue in the M1
+  # witness); these actors act them. Same not-gated-by-the-env, deny-by-default routing
+  # as the reviewer audience above; same drift-closure (live-only from M1 until now).
+  qualification:
+    granted_by: cnogradi
+    reason: >-
+      The dispatch-actor audience. On approval the review fans out a qualification task
+      per affected part; these actors act it. Sandbox = bob; bind to the qualifier's
+      real employee-id at work.
+    grant_to:
+      - bob@example.com
