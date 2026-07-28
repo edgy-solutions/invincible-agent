@@ -17,6 +17,7 @@ Run:  uv run --frozen python tests/test_extraction_review_sensor.py
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -137,6 +138,47 @@ def test_submit_review_raises_on_refusal_returns_on_started(monkeypatch=None) ->
         fake_post._resp = (200, {"status": "STARTED", "workflow_id": "wf1", "count": 2})
         outcome, body = ers.submit_review({"notice_id": "IPCN25300X"}, bff_url="http://bff", token="t")
         assert outcome == "started" and body["workflow_id"] == "wf1"
+    finally:
+        httpx.post = orig
+
+
+def test_mint_service_token_raises_loud_on_failure_returns_on_success():
+    """The credential joins the observable seam (the ruling's rider): a mint failure — token endpoint
+    unreachable, or a non-200 — RAISES dagster.Failure NAMING the cause, so the Dagster run fails loudly.
+    Positive control: a 200 with an access_token returns it, so the red assertions discriminate. "Keycloak
+    was down so no reviews started and nothing said so" is exactly the invisible-death this refuses."""
+    import httpx
+    from dagster import Failure
+
+    os.environ["KEYCLOAK_REALM_URL"] = "http://keycloak/realms/invincible-agent"
+    os.environ["REVIEW_STARTER_CLIENT_ID"] = "iagent-review-starter"
+    os.environ["REVIEW_STARTER_CLIENT_SECRET"] = "s"
+    orig = httpx.post
+    try:
+        # transport down -> loud, NAMED Failure (mentions the unreachable endpoint)
+        def _down(*a, **k):
+            raise httpx.ConnectError("connection refused")
+        httpx.post = _down
+        raised = False
+        try:
+            ers.mint_service_token()
+        except Failure as f:
+            raised = True
+            assert "unreachable" in str(f.description).lower()
+        assert raised, "token endpoint down must raise dagster.Failure (failed run), not return silently"
+
+        # non-200 (e.g. bad secret) -> loud Failure
+        httpx.post = lambda *a, **k: _FakeResp(401, {"error": "invalid_client"})
+        raised = False
+        try:
+            ers.mint_service_token()
+        except Failure:
+            raised = True
+        assert raised, "a non-200 client-credentials mint must raise dagster.Failure"
+
+        # 200 with an access_token -> returns it (positive control: the red tests discriminate)
+        httpx.post = lambda *a, **k: _FakeResp(200, {"access_token": "tok-abc", "expires_in": 300})
+        assert ers.mint_service_token() == "tok-abc"
     finally:
         httpx.post = orig
 
