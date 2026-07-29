@@ -908,15 +908,29 @@ def wipe_databases(*, namespace: str, nuclear: bool = False) -> None:
     user = os.environ.get("JENA_USERNAME", "admin")
     pw = os.environ.get("FUSEKI_PASSWORD") or os.environ.get("JENA_PASSWORD", "Admin123!")
     try:
+        # timeout is load-bearing: a TDB2 left WEDGED by a prior disk-full
+        # (msync failure corrupts the mmap/journal) blocks CLEAR ALL forever on
+        # a stuck write lock — expanding the PVC gives space but not a healthy
+        # store. Bound it so the wedge surfaces as a LOUD error the operator can
+        # act on (recreate the TDB2), not an invisible hang. A hung CLEAR ALL
+        # means the store needs recreating, not retrying.
         res = requests.post(
             f"{host}/{ds_name}/update",
             data={"update": "CLEAR ALL"},
-            auth=(user, pw), verify=False,
+            auth=(user, pw), verify=False, timeout=120,
         )
         if res.status_code in (200, 204):
             print(f"[OK] Jena /{ds_name} cleared.")
         else:
             print(f"[ERROR] Jena wipe: {res.status_code} {res.text}")
+    except requests.Timeout:
+        print(
+            "[ERROR] Jena wipe: CLEAR ALL timed out after 120s — TDB2 is likely "
+            "WEDGED from a prior disk-full (msync). Expanding the PVC does NOT "
+            "heal it; RECREATE the store: scale the fuseki StatefulSet to 0, "
+            "delete its PVC (or `rm -rf /fuseki-base/databases/*` in the pod), "
+            "scale back up for a fresh TDB2, then re-run prime."
+        )
     except Exception as e:
         print(f"[ERROR] Jena wipe: {e}")
 
