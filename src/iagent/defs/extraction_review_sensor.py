@@ -95,9 +95,26 @@ def build_start_review_payload(
     # manual witness that hand-supplied in_scope_mpns both masked it). For an auto-review of a whole
     # notice, EVERY affected part is in scope — so scope = the affected MPNs themselves.
     in_scope_mpns = [p["affected_mpn"] for p in impacted_parts]
+    # categories DRIVE the disposition proposer: every PCN rule requires a change
+    # category, so without them the proposer returns UNCLASSIFIABLE for every part and
+    # the UI shows 'needs a disposition' on ALL of them (caught live 2026-07-29 at work;
+    # same class as the in_scope_mpns bug — a field the funnel needs, dropped from the
+    # payload). Source order: the top-level `categories` (newer doc-tools) ELSE the
+    # existing `header.categories` review_item (so the fix works on already-extracted
+    # review.json with NO re-extraction). Value may be a list or a comma/;-separated
+    # string; normalize to enum-name strings that match the ruleset's pcn:changeClass
+    # keys ('Material','Process',…). doc_type likewise prefers the extraction's own.
+    cats = review_json.get("categories")
+    if not cats:
+        cats = next((it.get("value") for it in (review_json.get("review_items") or [])
+                     if it.get("field_path") == "header.categories"), None)
+    if isinstance(cats, str):
+        cats = re.split(r"[,;]", cats)
+    categories = [str(c).strip() for c in (cats or []) if str(c).strip()]
     return {
         "notice_id": review_json.get("doc_id"),
-        "doc_type": doc_type,
+        "doc_type": review_json.get("doc_type") or doc_type,
+        "categories": categories,
         "impacted_parts": impacted_parts,
         "in_scope_mpns": in_scope_mpns,
         "doc_needs_review": bool(review_json.get("needs_review")),

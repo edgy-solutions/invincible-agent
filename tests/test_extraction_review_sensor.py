@@ -44,6 +44,7 @@ def _review_json(*, doc_needs_review: bool, part0_needs: bool, part1_needs: bool
         "pages": [],
         "review_items": [
             {"field_path": "header.notice_number", "value": "IPCN25300X", "needs_review": False},
+            {"field_path": "header.categories", "value": ["Material", "Process"], "needs_review": False},
             {"field_path": "parts[0].affected_mpn", "value": "MPN-A", "needs_review": part0_needs},
             {"field_path": "parts[0].replacement_mpn", "value": "MPN-A-R", "needs_review": False},
             {"field_path": "parts[1].affected_mpn", "value": "MPN-B", "needs_review": part1_needs},
@@ -70,6 +71,31 @@ def test_payload_sources_parts_and_per_part_flag_from_review_json() -> None:
     # BEFORE residue, so omitting this returns NO_RESIDUE (the auto-fire reviews nothing). Regression
     # guard for the live bug of 2026-07-28; without this line the shape-test passed on an empty scope.
     assert payload["in_scope_mpns"] == ["MPN-A", "MPN-B"], payload["in_scope_mpns"]
+    # categories MUST be sourced from the extraction — every PCN disposition rule requires a
+    # change category, so an empty list makes the proposer return UNCLASSIFIABLE for EVERY part
+    # and the UI shows 'needs a disposition' on all of them. Regression guard for the live bug of
+    # 2026-07-29 (the payload dropped categories entirely). Sourced from the header.categories item.
+    assert payload["categories"] == ["Material", "Process"], payload["categories"]
+
+
+def test_categories_from_string_and_top_level_forms() -> None:
+    """header.categories may be a LIST (rich extraction) or a comma/;-separated STRING (some
+    viewers/exports); and a newer doc-tools writes a top-level `categories`. All three normalize
+    to the same enum-name list the ruleset's pcn:changeClass keys expect."""
+    # string form in the header item
+    rj = _review_json(doc_needs_review=False, part0_needs=False, part1_needs=False)
+    for it in rj["review_items"]:
+        if it["field_path"] == "header.categories":
+            it["value"] = "Material, Process ; Location"
+    assert ers.build_start_review_payload(rj)["categories"] == ["Material", "Process", "Location"]
+    # top-level field WINS (newer doc-tools) over the header item
+    rj2 = _review_json(doc_needs_review=False, part0_needs=False, part1_needs=False)
+    rj2["categories"] = ["Discontinuation"]
+    assert ers.build_start_review_payload(rj2)["categories"] == ["Discontinuation"]
+    # doc_type prefers the extraction's own over the "PCN" default
+    rj3 = _review_json(doc_needs_review=False, part0_needs=False, part1_needs=False)
+    rj3["doc_type"] = "PDN"
+    assert ers.build_start_review_payload(rj3)["doc_type"] == "PDN"
 
 
 def test_tripwire_shape_is_preserved_not_papered_over() -> None:
