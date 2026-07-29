@@ -96,10 +96,22 @@ directly against work's Keycloak. Federation and local service clients coexist b
 
 **Deltas from Section 1, each with its check:**
 1. **Realm name** — `keycloak.realm` differs. *Check:* the token's `iss` names the work realm.
-2. **`USER_ENTITLEMENT_CLAIM`** — work sets it to the employee-id claim, NOT `email`. So BOTH the human
-   broker mappers AND the service client's hardcoded mapper must emit THAT claim name.
-   *Check:* `USER_ENTITLEMENT_CLAIM` (cortex-bff env) == the `claim.name` on the service mapper == the
+2. **`USER_ENTITLEMENT_CLAIM`** — work sets it to a NON-email claim, NOT `email`. The claim the human
+   broker mappers AND the service client carry must be THAT claim name.
+   *Check:* `USER_ENTITLEMENT_CLAIM` (cortex-bff env) == the identity claim on the service token == the
    claim the Ping broker mapper projects for humans. All three equal, or isolation drifts.
+   **PER-ENVIRONMENT MAPPER COUNT (the simplification — state it so it's legible, not rediscovered):**
+   whether the service account needs an identity mapper AT ALL depends on the claim:
+   - If `USER_ENTITLEMENT_CLAIM` names a claim the service account populates NATIVELY — the OIDC-standard
+     username claim, which equals the service-account's own username — then **ZERO identity mappers** are
+     needed. The username IS the claim, carried in every client-credentials token for free; set the
+     service-account username to `svc:<name>` and the entitlement identity is already present. The
+     identity half was never broken in that case.
+   - If it names a NON-native claim (e.g. an employee-id claim) — then **ONE hardcoded mapper** emits
+     `<claim> = svc:<name>`.
+   So the service-account identity-mapper count is env-dependent: **zero** when the entitlement claim is
+   the native username, **one** otherwise. (The dummy `email` mapper in delta 6 is SEPARATE — an
+   unconditional transitional artifact until the auth fix rolls, independent of this count.)
 3. **Human mint = TWO mapper hops** (the tricky species): Ping asserts an attribute → Keycloak IdP mapper
    imports it → a client/protocol mapper projects it into the claim `USER_ENTITLEMENT_CLAIM` names, as the
    employee-id. *Check:* a real human logs in, decode their token, confirm the employee-id lands in that claim.
