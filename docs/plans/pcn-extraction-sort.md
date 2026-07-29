@@ -151,6 +151,13 @@ The birth rule now binds the UI (AGENTS.md, both repos). Same three piles for `c
     is then a ONE-FILE change. Return `"TASK"` becomes the honest default for an undeclared kind.
   - `registry/frontendCapabilities.ts` GROUPED_REVIEW / INSTANCES_BY_PROPERTY entries — the ADR-0017
     self-registration; already the `rendersAs` precursor. Promote when the graph declares archetypes.
+  - `lib/overviewTier.ts` (2026-07-29) — the citizen-shell OVERVIEW FRAME contract (StageCard owns the
+    frame; each archetype declares a `dense`/`compact`/`visual` tier driving preview-cap / centering /
+    scale-to-fit at overview zoom). Keyed on ARCHETYPE, never a domain term — deletion-test CLEAN by
+    construction. Shell-owned so N archetypes don't each hand-roll overflow (the taskKindLabel
+    consolidation at presentation altitude). Promote alongside `rendersAs` (the served declaration carries
+    the tier). Its capabilities-registry counterpart: APPROVAL_TASK is now REGISTERED (was presentation-
+    by-accident: an unregistered archetype inheriting a grid corner cell).
 - **plugin-residue (domain UI behind the archetype boundary):**
   - `components/GroupedReview/*` (the disposition-review renderer — parts/MPN/disposition table) +
     `lib/dispositions.ts` (the `dispatchLTB/Qualification/AltSourcing/archive` vocab + presenter). This is
