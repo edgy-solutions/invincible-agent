@@ -388,6 +388,19 @@ async def start_review(
     return out
 
 
+def _restate_key(k: str) -> str:
+    """URL-encode a Restate virtual-object key for safe embedding in an ingress
+    URL path. A key derived from a notice_id can carry spaces or '#' (messy
+    extraction doc_ids, e.g. 'PCN # 23-002'); left raw, the '#' truncates the URL
+    as a fragment and the Restate call fails — which is why the batch/submit/approve
+    calls returned 502 (review_batch_unreachable) and the UI card rendered empty.
+    Encoding is a no-op for already-clean keys, so it also recovers reviews that
+    were STARTED under a messy key (the SDK keyed them fine; only the URL lookup
+    broke)."""
+    from urllib.parse import quote
+    return quote(k or "", safe="")
+
+
 @app.get("/reviews/{workflow_id}/batch")
 async def get_review_batch(
     workflow_id: str,
@@ -415,7 +428,7 @@ async def get_review_batch(
             # get_batch takes NO input — send an EMPTY body. A JSON `{}` body is rejected 400 by Restate
             # (input supplied to a no-input handler); an empty POST is the correct invocation.
             rr = await client.post(
-                f"{_RESTATE_INGRESS_URL}/GroupedReview/{workflow_id}/get_batch",
+                f"{_RESTATE_INGRESS_URL}/GroupedReview/{_restate_key(workflow_id)}/get_batch",
             )
             rr.raise_for_status()
     except Exception as exc:
@@ -438,34 +451,92 @@ async def get_review_batch(
 # ── PCN notice PROVENANCE feeder (evidence card) ──────────────────────────────
 # Read-side join at DISPLAY time (NOT batch payload): where a review value came
 # from in the source document. Extraction stays the authority; the graph's lossy
-# projection isn't widened. TEMPORARY FIXTURE — real doc-tools `review.json`
-# (field_path/source_snippet/bboxes/page_dims/match_method/region/needs_review +
-# page image + S3 crop) replaces `_PROV_FIXTURE` when a notice has a source PDF.
-# The demo notices are synthetic (no PDF), so this serves shaped placeholder
-# provenance so the evidence-card INTERACTION + not_found path are demonstrable;
-# the box rendering itself is sealed by the overlay-drift unit test in cortex-ui.
-_PAGE_DIMS = {"width": 1700, "height": 2200}  # 200 DPI US-letter
-_PROV_FIXTURE = {
-    "NSR01L30NXT5G": {"bboxes": [[170, 440, 1530, 640]], "region": "table",
-                      "match_method": "unique", "match_confidence": 1.0, "needs_review": False},
-    "NSR02F30NXT5G": {"bboxes": [[170, 640, 1530, 840]], "region": "table",
-                      "match_method": "unique", "match_confidence": 1.0, "needs_review": False},
-    # The unverified part — the extractor could not anchor it (this is why the
-    # override ceremony fires): no box, needs_review, verify against the crop.
-    "NSR05F20NXT5G": {"bboxes": [], "region": "table",
-                      "match_method": "not_found", "match_confidence": 0.0, "needs_review": True},
-}
-
-
-# notice_id -> the doc-tools output prefix in MinIO. INTERIM index (the outputs
-# key off the upload path, not the notice id; they coincide only when the PDF was
-# uploaded under a path carrying the id). Follow-up: store the S3 pointer on the
-# SustainmentNotice Neo4j node so this map isn't hand-maintained.
+# projection isn't widened. The REAL doc-tools artifacts (review.json + text.json
+# + manifest.json + table crops + page renders) are read from MinIO, located by
+# DERIVING the notice's prefix from its own review.json (_resolve_notice_prefix
+# below). A notice with no extraction returns EMPTY provenance — an HONEST absence,
+# never fabricated.
+#
+# REMOVED (2026-07-28): the _PROV_FIXTURE / _PAGE_DIMS demo placeholders that
+# invented shaped MPNs (NSR…) for two synthetic notices. They served fake evidence
+# for every UNMAPPED notice — i.e. every real extraction — so the evidence card
+# looked green while showing another document's fabricated parts. Honest-empty
+# beats fabricated-green; the real artifacts are what the card must show.
 _ARTIFACT_BUCKET = "processing-artifacts"
-_NOTICE_ARTIFACT_PREFIX = {
-    "IPCN25300X": "sustainment/inbound/onsemi_ipcn/generated/onsemi_Generic_IPCN25300X_pdf",
-    "ADI_PDN_23_0120": "sustainment/inbound/adi_23_0120/generated/ADI_PDN_23_0120_pdf",
-}
+# OPERATOR PIN OVERRIDES (notice_id -> prefix), EMPTY by default. The general case
+# is DERIVED per review.json doc_id (_resolve_notice_prefix / the index below); add
+# an entry here ONLY to force a specific notice to a specific prefix (e.g. to
+# disambiguate a doc_id collision). A pin wins over derivation. The two hardcoded
+# demo notices that used to live here were removed — the derived index resolves
+# them like every other real extraction.
+_NOTICE_ARTIFACT_PREFIX: dict = {}
+
+# The review-artifacts root scanned to DERIVE the prefix for any notice not in the
+# hand-maintained map above. The sensor writes each extraction's review.json under
+# here; its doc_id IS the notice_id and the review.json's parent path IS the prefix.
+_NOTICE_SCAN_ROOT = os.environ.get("REVIEW_WATCH_PREFIX", "sustainment/")
+_NOTICE_PREFIX_INDEX: dict = {}            # doc_id -> prefix, lazily derived
+_NOTICE_PREFIX_INDEX_AT: float = 0.0       # monotonic ts of the last full scan
+_NOTICE_PREFIX_INDEX_MIN_INTERVAL = 30.0   # a miss re-scans at most this often
+
+
+def _build_notice_prefix_index() -> dict:
+    """DERIVE notice_id -> artifact-prefix by scanning the review-artifacts root
+    for every '*/review.json' and reading its doc_id. This replaces the
+    hand-maintained _NOTICE_ARTIFACT_PREFIX for the general case (the twice-flagged
+    interim index): the doc_id INSIDE review.json is the notice_id, and the
+    review.json's parent path is exactly the prefix
+    _read_notice_provenance_from_store consumes — so evidence resolves for EVERY
+    extracted notice, not two demos. A single unreadable review.json is skipped,
+    never sinks the whole index."""
+    import json as _json
+    import boto3
+    from botocore.config import Config
+    s3 = boto3.client(
+        "s3", endpoint_url=_MINIO_ENDPOINT_URL, aws_access_key_id=_MINIO_ACCESS_KEY,
+        aws_secret_access_key=_MINIO_SECRET_KEY, region_name=_MINIO_REGION,
+        config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+    )
+    index: dict = {}
+    suffix = "/review.json"
+    for page in s3.get_paginator("list_objects_v2").paginate(
+        Bucket=_ARTIFACT_BUCKET, Prefix=_NOTICE_SCAN_ROOT
+    ):
+        for obj in (page.get("Contents") or []):
+            key = obj["Key"]
+            if not key.endswith(suffix):
+                continue
+            try:
+                rj = _json.loads(s3.get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read())
+            except Exception:  # noqa: BLE001
+                continue
+            doc_id = rj.get("doc_id")
+            if doc_id:
+                index[doc_id] = key[: -len(suffix)]
+    return index
+
+
+def _resolve_notice_prefix(notice_id: str) -> "Optional[str]":
+    """notice_id -> MinIO artifact prefix. The explicit map wins (the demo notices
+    / operator pins); otherwise the DERIVED index. On a miss the index is rebuilt
+    at most once per _NOTICE_PREFIX_INDEX_MIN_INTERVAL, so a freshly-landed notice
+    resolves without a restart while a genuinely-absent one can't thrash the scan."""
+    pinned = _NOTICE_ARTIFACT_PREFIX.get(notice_id)
+    if pinned:
+        return pinned
+    global _NOTICE_PREFIX_INDEX, _NOTICE_PREFIX_INDEX_AT
+    hit = _NOTICE_PREFIX_INDEX.get(notice_id)
+    if hit:
+        return hit
+    import time as _time
+    now = _time.monotonic()
+    if not _NOTICE_PREFIX_INDEX or (now - _NOTICE_PREFIX_INDEX_AT) >= _NOTICE_PREFIX_INDEX_MIN_INTERVAL:
+        try:
+            _NOTICE_PREFIX_INDEX = _build_notice_prefix_index()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notice prefix index rebuild failed: %s", exc)
+        _NOTICE_PREFIX_INDEX_AT = now
+    return _NOTICE_PREFIX_INDEX.get(notice_id)
 
 
 def _read_notice_provenance_from_store(prefix: str) -> list:
@@ -593,37 +664,24 @@ async def notice_provenance(
     notice_id: str,
     current_user: User = Depends(get_current_user),
 ):
-    """Serve a notice's extraction provenance for the evidence card. Reads the
-    REAL doc-tools review.json + table crops from MinIO for a mapped notice;
-    falls back to the shaped fixture for synthetic notices with no source PDF."""
+    """Serve a notice's extraction provenance for the evidence card: the REAL
+    doc-tools artifacts (review.json values + bboxes + table crops + page renders)
+    from MinIO, located by DERIVING the notice's prefix from its own review.json
+    (_resolve_notice_prefix). No fixture: a notice with no locatable extraction
+    returns EMPTY provenance — an honest absence, never fabricated evidence."""
     from starlette.concurrency import run_in_threadpool
-    prefix = _NOTICE_ARTIFACT_PREFIX.get(notice_id)
-    if prefix:
-        try:
-            items = await run_in_threadpool(lambda: _read_notice_provenance_from_store(prefix))
-            return {"notice_id": notice_id, "page_image_url": None, "items": items, "source": "doc-tools"}
-        except Exception as exc:  # noqa: BLE001 — fall back to fixture on any store error
-            logger.warning("notice provenance read failed for %s: %s", notice_id, exc)
-
-    items = []
-    for mpn, p in _PROV_FIXTURE.items():
-        items.append({
-            "field_path": f"parts[].affected_mpn ({mpn})",
-            "mpn": mpn,
-            "value": mpn,
-            "source_snippet": "" if p["match_method"] == "not_found" else mpn,
-            "page_number": 1,
-            "bboxes": p["bboxes"],
-            "page_dims": _PAGE_DIMS,
-            "region": p["region"],
-            "match_method": p["match_method"],
-            "match_confidence": p["match_confidence"],
-            "needs_review": p["needs_review"],
-            "review_reason": "MPN not located in document" if p["needs_review"] else None,
-            "crop_url": None,
-            "page_image_url": None,
-        })
-    return {"notice_id": notice_id, "page_image_url": None, "items": items, "fixture": True}
+    prefix = await run_in_threadpool(lambda: _resolve_notice_prefix(notice_id))
+    if not prefix:
+        logger.info("no artifact prefix resolved for notice %r — empty provenance", notice_id)
+        return {"notice_id": notice_id, "page_image_url": None, "items": [], "source": "none"}
+    try:
+        items = await run_in_threadpool(lambda: _read_notice_provenance_from_store(prefix))
+        return {"notice_id": notice_id, "page_image_url": None, "items": items, "source": "doc-tools"}
+    except Exception as exc:  # noqa: BLE001
+        # HONEST degrade: a store/parse error returns empty (with the reason logged),
+        # never fabricated placeholder evidence that masks the failure as green.
+        logger.warning("notice provenance read failed for %s (prefix %s): %s", notice_id, prefix, exc)
+        return {"notice_id": notice_id, "page_image_url": None, "items": [], "source": "error"}
 
 
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
@@ -814,7 +872,7 @@ async def act_on_human_task(
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(
-                    f"{_RESTATE_INGRESS_URL}/GroupedReview/{wf}/submit_decision",
+                    f"{_RESTATE_INGRESS_URL}/GroupedReview/{_restate_key(wf)}/submit_decision",
                     json={"decision": decision},
                 )
         except Exception as exc:
@@ -859,7 +917,7 @@ async def act_on_human_task(
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 rr = await client.post(
-                    f"{_RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{match['workflow_id']}/approve",
+                    f"{_RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{_restate_key(match['workflow_id'])}/approve",
                     json={"task_id": task_id, "status": status, "comments": req.comment},
                 )
                 resumed = rr.status_code == 200
