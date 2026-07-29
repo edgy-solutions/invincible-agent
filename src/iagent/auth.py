@@ -94,7 +94,11 @@ EntitlementSource = Literal["topaz", "none"]
 
 class User(BaseModel):
     id: str
-    email: str  # DISPLAY / AUDIT only — never an authorization key (use authz_id).
+    # DISPLAY / AUDIT only — never an authorization key (use authz_id). OPTIONAL:
+    # a service account (no mailbox) or a deployment whose entitlement claim
+    # isn't email carries none. Stays `None` — never defaulted to a non-mailbox
+    # value, so no consumer can mistake it for a real address.
+    email: Optional[str] = None
     # The AUTHORIZATION identity — the key Topaz/policy is seeded by, resolved
     # from USER_ENTITLEMENT_CLAIM (email by default; employee-ID at work-deploy),
     # falling back to `sub` when the claim is absent. This is what every
@@ -158,6 +162,34 @@ def _get_entitlement_cache() -> Optional[EntitlementCache]:
             _entitlement_cache = EntitlementCache(_topaz_client)
     return _entitlement_cache
 
+def resolve_token_identity(
+    payload: dict,
+) -> "tuple[Optional[str], str, Optional[str]]":
+    """Resolve (sub, authz_id, email) from an already-verified JWT payload.
+
+    AUTHENTICATE ON THE AUTHORIZATION IDENTITY, never on email. `authz_id` is the
+    USER_ENTITLEMENT_CLAIM claim (email in the default deployment; a different
+    claim where an operator sets it) with `sub` as the fallback — the SAME value
+    every enforcement gate keys on. `email` is DISPLAY/AUDIT only and MAY BE
+    ABSENT (a service account with no mailbox, or a deployment whose entitlement
+    claim isn't email); it is returned as-is, possibly None, and NEVER defaulted
+    to a non-mailbox value.
+
+    Raises ValueError only when NO authz identity resolves (neither the
+    entitlement claim nor `sub` is present) — the sole genuine "who is this?"
+    failure. The prior gate hard-required `email` here, which contradicted the
+    display-only contract and wrongly rejected mailbox-less tokens.
+    """
+    sub = payload.get("sub")
+    authz_id = payload.get(USER_ENTITLEMENT_CLAIM) or sub
+    if not authz_id:
+        raise ValueError(
+            "no authorization identity (neither the USER_ENTITLEMENT_CLAIM "
+            "claim nor 'sub' is present)"
+        )
+    return sub, authz_id, payload.get("email")
+
+
 def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     """
     FastAPI dependency to validate the incoming OIDC token.
@@ -177,25 +209,22 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             options={"verify_aud": False}
         )
         
-        user_id = payload.get("sub")
-        email = payload.get("email")
         realm_access = payload.get("realm_access", {})
         roles = realm_access.get("roles", [])
 
-        if not user_id or not email:
+        # AUTHENTICATE on the AUTHORIZATION identity, not on email. authz_id is the
+        # USER_ENTITLEMENT_CLAIM claim (`sub` fallback) — the same value every
+        # enforcement gate and the entitlement matrix below key on, so they never
+        # diverge when the claim is switched. `email` is display/audit only and
+        # may be None. The only genuine failure is no identity resolving at all.
+        try:
+            user_id, authz_id, email = resolve_token_identity(payload)
+        except ValueError as ve:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload: missing 'sub' or 'email'",
+                detail=f"Invalid token payload: {ve}",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
-        # The AUTHORIZATION identity: the claim Topaz/policy is keyed by
-        # (USER_ENTITLEMENT_CLAIM — email in sandbox, employee-ID at work-deploy),
-        # `sub` on absence. ONE knob controls every authz decision; `email` is
-        # display/audit only. Also the entitlement-matrix lookup key below, so the
-        # matrix and the enforcement gates key on the SAME identity (no divergence
-        # when the claim is switched).
-        authz_id = payload.get(USER_ENTITLEMENT_CLAIM) or user_id
 
         # ADR-0026 step 6: Topaz is the SOLE source of persona +
         # entitled_domains. Fetch the matrix first, then DERIVE
@@ -257,7 +286,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         )
 
         return User(
-            id=user_id,
+            id=user_id or authz_id,   # `sub` normally; authz_id if a token omits sub
             email=email,
             authz_id=authz_id,
             roles=roles,
