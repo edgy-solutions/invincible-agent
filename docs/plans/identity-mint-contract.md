@@ -109,6 +109,32 @@ directly against work's Keycloak. Federation and local service clients coexist b
 5. **Admin access is the REAL critical path.** Standing up a local client needs Keycloak realm-admin. If
    that is a platform team's, not yours, the TICKET to create the client is the demo's gating item — file it
    THIS WEEK, not demo-week. *Check now, not later:* confirm who owns realm admin on work's Keycloak.
+6. **The `email`-claim gate — RESOLVED, and a transitional workaround it forced (VALIDATED at the first
+   live service mint).** When `USER_ENTITLEMENT_CLAIM` is a NON-email claim and the service account has no
+   mailbox, `authz_id` resolves from that claim and `email` is legitimately ABSENT. cortex-bff `auth.py`
+   USED to hard-require an `email` claim (`if not user_id or not email`) — contradicting its own model
+   ("email: DISPLAY/AUDIT only — never an authorization key") and 401'ing the mailbox-less service token
+   with `missing 'sub' or 'email'`.
+   - **INTERIM — a transitional lie, retire on sight:** a SECOND hardcoded-claim mapper `email =
+     svc:review-starter`, added purely to pass that gate. It puts a non-mailbox value in a claim consumers
+     may read as an address — present ONLY to satisfy `auth.py`; NO consumer may parse it as a mailbox;
+     DELETE it the moment the fix below deploys. (Left un-recorded, this workaround outlives its reason — a
+     stale record in a claims payload.)
+   - **FIX (branch `fix-auth-email-optional-service-identity`):** `auth.py` now authenticates on the AUTHZ
+     identity (`resolve_token_identity`: `USER_ENTITLEMENT_CLAIM` → `sub` fallback), with `email` optional
+     and NEVER defaulted to a non-mailbox value. After it rolls, a service account needs ONLY the
+     entitlement-claim mapper. *Check:* decode the service token — `email` claim ABSENT, entitlement claim
+     == `svc:review-starter`, `/reviews` authenticates. Then remove the dummy `email` mapper.
+   - **Related, NOT on this path:** the data-plane read gate (central-gateway `can_read`) is separately
+     email-keyed, threaded via `X-Originator-Email` (see `data_analyst/main.py`). Same email-as-identity
+     class, different surface; banked for its own pass — it does not gate service-identity minting.
+
+**Config-as-you-go — capture, don't reconstruct.** Every mapper you create by hand in an external realm
+(claim name == `USER_ENTITLEMENT_CLAIM`; value `svc:<name>`; `access.token.claim=true`) goes into THIS
+section AS you set it, not from memory later — so the NEXT service identity (dispatcher, analyst-loop) is
+minted from the record, not tribal memory. And record WHO owns that realm's config long-term: if it is a
+platform team's, the hand-created client is itself a documented hand-off request (a paste of this block),
+not a meeting.
 
 ---
 
