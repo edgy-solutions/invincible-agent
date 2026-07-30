@@ -76,6 +76,12 @@ def test_payload_sources_parts_and_per_part_flag_from_review_json() -> None:
     # and the UI shows 'needs a disposition' on all of them. Regression guard for the live bug of
     # 2026-07-29 (the payload dropped categories entirely). Sourced from the header.categories item.
     assert payload["categories"] == ["Material", "Process"], payload["categories"]
+    # The sensor reads parts + their per-part needs_review STRAIGHT FROM review.json, so it ATTESTS
+    # the provenance of review-state. start_review's tripwire fires when this is ABSENT (a graph-built
+    # request can't honestly set it) instead of guessing from the {doc-flagged, no-part-flagged}
+    # silhouette — which a CORRECT extraction legitimately produces (Qorvo 23-0171 was refused that
+    # way). Drop this field and every doc-level-only review reason becomes a hard refusal again.
+    assert payload["review_state_source"] == "extraction", payload
 
 
 def test_categories_from_string_and_top_level_forms() -> None:

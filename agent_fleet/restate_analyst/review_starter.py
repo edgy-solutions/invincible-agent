@@ -177,7 +177,13 @@ def _no_reviewer_filter(approver: str, item) -> bool:
 # ---------------------------------------------------------------------------
 # Review-state sourcing tripwire — laundering-by-substrate-gap guard (STANDING INVARIANT)
 # ---------------------------------------------------------------------------
-def review_state_is_unsourced(doc_needs_review, impacted_parts) -> bool:
+# The one attestation value that disarms the review-state tripwire: per-part flags read
+# STRAIGHT FROM the doc-tools extraction (review.json), where they are authoritative.
+# A request built from the lossy graph simply cannot honestly set this.
+_REVIEW_STATE_FROM_EXTRACTION = "extraction"
+
+
+def review_state_is_unsourced(doc_needs_review, impacted_parts, review_state_source=None) -> bool:
     """The laundering-by-substrate-gap signature. Per-part ``needs_review`` exists ONLY in the extraction
     (`review.json`) — BOTH graphs drop it (doc-tools writes only the DOC-LEVEL flag to Neo4j; Jena drops
     it entirely). So the request MUST be built from the extraction, never the mesh graph. The tripwire:
@@ -187,7 +193,22 @@ def review_state_is_unsourced(doc_needs_review, impacted_parts) -> bool:
     exclusion → override-with-reason) would fire CLEAN on an unverified MPN. That defeats five sealed
     layers without touching any of them. Standing rule: EXTRACTION is authoritative for review-state;
     [[feedback_synthetic_data_no_mock_leak]] one layer up. ``doc_needs_review`` is None/absent -> can't
-    check (no-op); the request builder MUST pass it (from the extraction / Neo4j doc-level) to arm this."""
+    check (no-op); the request builder MUST pass it (from the extraction / Neo4j doc-level) to arm this.
+
+    POSITIVE ATTESTATION beats silhouette-inference (2026-07-29). The shape {doc flagged, no part
+    flagged} was only ever a PROXY for "built from the graph" — and it collides with legitimate
+    outcomes of a CORRECT extraction: a doc-level-only reason (unclassifiable doc_type, header
+    failure, a count cross-check) flags the document while every part extracts cleanly, and a
+    zero-part notice trips it VACUOUSLY (`not any([])` is True). That false-positive class refused
+    real notices outright (Qorvo 23-0171: a misparsed count number -> doc flagged -> both parts
+    clean -> refused). So the caller now ATTESTS where review-state came from:
+    ``review_state_source="extraction"`` means the per-part flags were read from review.json, where
+    they are authoritative — no laundering is possible, so the check does not apply. The tripwire
+    fires only when that attestation is ABSENT, which is exactly the graph-built request it was
+    written to catch. Same guard, same purpose, no false positives: a wiring mistake now has to
+    OMIT a declaration rather than merely produce an ambiguous silhouette."""
+    if review_state_source == _REVIEW_STATE_FROM_EXTRACTION:
+        return False
     if not doc_needs_review:
         return False
     return not any(bool(p.get("needs_review")) for p in (impacted_parts or []))
@@ -215,10 +236,29 @@ async def start_review(ctx: Context, request: dict) -> dict:
     # 0) Review-state sourcing tripwire (BEFORE anything else): a request whose doc-level flag says
     #    "needs review" but whose parts carry no per-part flag was built from a lossy graph projection —
     #    refuse rather than launder an unverified MPN through five sealed layers.
-    if review_state_is_unsourced(request.get("doc_needs_review"), request.get("impacted_parts")):
+    if review_state_is_unsourced(request.get("doc_needs_review"), request.get("impacted_parts"),
+                                 request.get("review_state_source")):
         return {"status": "REVIEW_STATE_UNSOURCED", "notice_id": notice_id,
-                "detail": "doc-level needs_review is set but no part carries it — per-part review-state "
-                          "was not sourced from the extraction (built from the lossy graph projection?)"}
+                "detail": "per-part review-state was not ATTESTED as extraction-sourced and no part "
+                          "carries the doc-level flag — the request was likely built from the lossy "
+                          "graph projection (set review_state_source='extraction' when the parts + "
+                          "their needs_review flags are read from the doc-tools review.json)"}
+
+    # 0.1) ZERO PARTS is its own honest outcome, NOT laundering and NOT 'no residue'. Conflating them
+    #      was misleading in both directions: the tripwire fired VACUOUSLY on an empty list, and once
+    #      attested past it a zero-part notice fell through to NO_RESIDUE — which claims parts were
+    #      FILTERED when in fact none were ever extracted. Distinguish by the extraction's own signal:
+    #      flagged + nothing extracted = the extraction is telling us it struggled (surface it);
+    #      unflagged + nothing extracted = a notice with genuinely no affected parts (honest skip).
+    if not (request.get("impacted_parts") or []):
+        if request.get("doc_needs_review"):
+            return {"status": "NO_PARTS_EXTRACTED", "notice_id": notice_id,
+                    "detail": "the extraction flagged this document for review AND produced no "
+                              "affected parts — parts were not extracted (check review.json "
+                              "review_reasons), rather than extracted-and-filtered"}
+        return {"status": "NO_AFFECTED_PARTS", "notice_id": notice_id,
+                "detail": "the extraction reports no affected parts and did not flag the document — "
+                          "nothing to review"}
 
     # 0.5) INITIATOR GATE (ADR-0029 capability, deny-by-default). Starting a review is INVOKING
     #      mesh:startReview — an EFFECT — so the initiator is gated on the single decider BEFORE any

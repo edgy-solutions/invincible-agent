@@ -118,6 +118,13 @@ def build_start_review_payload(
         "impacted_parts": impacted_parts,
         "in_scope_mpns": in_scope_mpns,
         "doc_needs_review": bool(review_json.get("needs_review")),
+        # ATTESTATION (not a hint): these parts and their per-part needs_review flags were read
+        # STRAIGHT FROM review.json above — the extraction, where review-state is authoritative —
+        # never reconstructed from the graph (which drops the per-part flag). start_review's
+        # review-state tripwire hunts graph-built requests; it fires when this attestation is
+        # ABSENT rather than guessing from the {doc-flagged, no-part-flagged} silhouette, which a
+        # CORRECT extraction can legitimately produce (a doc-level-only reason, or zero parts).
+        "review_state_source": "extraction",
         "domain": domain,
     }
 

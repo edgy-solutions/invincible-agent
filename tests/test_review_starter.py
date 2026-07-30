@@ -198,6 +198,80 @@ async def test_review_state_sourced_proceeds(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_attested_extraction_disarms_the_tripwire(monkeypatch):
+    """POSITIVE ATTESTATION over silhouette-inference. THE false-positive that refused a real notice
+    (Qorvo 23-0171): a CORRECT extraction flagged the DOCUMENT for a doc-level reason (a misparsed
+    count) while every part extracted cleanly — the exact {doc flagged, no part flagged} shape the
+    tripwire hunts. With review_state_source='extraction' the caller ATTESTS the per-part flags came
+    from review.json (where they are authoritative), so no laundering is possible and the review
+    proceeds. The guard keeps its purpose; it stops guessing."""
+    _wire(monkeypatch)
+    # EXACTLY the tripwire's silhouette — doc flagged, NOT ONE part flagged (the fixture's default
+    # carries a flagged part, which would make this pass without the attestation doing anything).
+    clean_parts = [
+        {"affected_mpn": "NSR01L30NXT5G", "replacement_mpn": "NSR01L30NXT5G-R", "needs_review": False},
+        {"affected_mpn": "MPN-UNRES", "replacement_mpn": "", "needs_review": False},
+    ]
+    req = _request(impacted=clean_parts, in_scope=["NSR01L30NXT5G", "MPN-UNRES"])
+    req["doc_needs_review"] = True          # doc-level reason (e.g. a count cross-check)
+    req["review_state_source"] = "extraction"
+    ctx = _FakeContext()
+    out = await _START(ctx, req)
+    assert out["status"] == "STARTED", (
+        f"an ATTESTED extraction must not trip the graph-laundering tripwire: {out}")
+
+
+@pytest.mark.asyncio
+async def test_unattested_request_still_bites(monkeypatch):
+    """DISCRIMINATION: the attestation is the ONLY thing that disarms it. The same shape WITHOUT the
+    declaration still refuses — so the graph-built request the tripwire exists for is still caught,
+    and the test above isn't passing for some unrelated reason."""
+    _wire(monkeypatch)
+    clean_parts = [                          # same silhouette as the test above
+        {"affected_mpn": "NSR01L30NXT5G", "replacement_mpn": "NSR01L30NXT5G-R", "needs_review": False},
+        {"affected_mpn": "MPN-UNRES", "replacement_mpn": "", "needs_review": False},
+    ]
+    req = _request(impacted=clean_parts, in_scope=["NSR01L30NXT5G", "MPN-UNRES"])
+    req["doc_needs_review"] = True
+    req["review_state_source"] = None       # a graph-built request cannot honestly attest
+    ctx = _FakeContext()
+    out = await _START(ctx, req)
+    assert out["status"] == "REVIEW_STATE_UNSOURCED", out
+    assert ctx.sends == []
+
+
+@pytest.mark.asyncio
+async def test_zero_parts_flagged_is_no_parts_extracted_not_laundering(monkeypatch):
+    """Zero parts tripped the old tripwire VACUOUSLY (`not any([])` is True) and, once past it, fell
+    through to NO_RESIDUE — which claims parts were FILTERED when none were ever extracted. It gets its
+    own outcome, discriminated by the extraction's own signal: flagged + nothing extracted means the
+    extraction struggled, and says so."""
+    _wire(monkeypatch)
+    req = _request(impacted=[], in_scope=[])
+    req["doc_needs_review"] = True
+    req["review_state_source"] = "extraction"
+    ctx = _FakeContext()
+    out = await _START(ctx, req)
+    assert out["status"] == "NO_PARTS_EXTRACTED", out
+    assert "review_reasons" in out["detail"], "must point the operator at the extraction's own reasons"
+    assert ctx.sends == []
+
+
+@pytest.mark.asyncio
+async def test_zero_parts_unflagged_is_an_honest_nothing_to_review(monkeypatch):
+    """The other half of the discrimination: no parts AND the extraction didn't flag the doc = a notice
+    with genuinely no affected parts. Honest skip, distinct from 'the extraction struggled'."""
+    _wire(monkeypatch)
+    req = _request(impacted=[], in_scope=[])
+    req["doc_needs_review"] = False
+    req["review_state_source"] = "extraction"
+    ctx = _FakeContext()
+    out = await _START(ctx, req)
+    assert out["status"] == "NO_AFFECTED_PARTS", out
+    assert ctx.sends == []
+
+
+@pytest.mark.asyncio
 async def test_start_review_invalid_ruleset_halts_honestly(monkeypatch):
     """An invalid ruleset (client status 'invalid') -> RULESET_INVALID with reasons, NO batch, NO
     workflow. report-don't-reject reaches its terminus at the caller's policy: don't dispatch under a
