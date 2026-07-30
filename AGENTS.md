@@ -206,6 +206,28 @@ pyproject.toml              # Orchestrator project config
 
 ## Workflow Rules
 
+### When adding an S3-watching Dagster sensor — use the shared cursor contract
+Do NOT hand-roll "what have I seen". `dag-tools`' `S3SensorComponent`
+(`dag_tools/components/s3_sensor/`) is the reference implementation; use it directly
+where the repo can depend on it (doc-tools does), and match its SEMANTICS where it
+cannot (invincible-agent's `extraction_review_sensor`, which has no dag_tools dep and
+no Dagster components system — see its docstring for the two upstream changes adopting
+the component would need). Two properties, both non-negotiable:
+
+1. **Cursor = arrival time (`LastModified`), never lexicographic.** A `StartAfter` key
+   cursor skips everything sorting BELOW it, permanently and silently. This lost two real
+   notices on 2026-07-30 (`.../onsemi_look/...` behind `.../onsemi_run6/...`;
+   `.../inbound/generated/...` behind the same). Sort position is not arrival order.
+2. **`run_key` = content hash + artifact key (`ETag`+`Key`), never a derived field.**
+   run_key was once `doc_id`, an LLM-extracted header value; when that model degraded,
+   every artifact in one prefix derived the same fallback and Dagster's run-key dedup
+   discarded all but the first — no run, no failure, no log line. **A model-derived value
+   must never key deterministic machinery.**
+
+Seal a new sensor with the three-object test: a late-arriving LOW-SORTING key fires · an
+untouched key skips · a rewritten key (same name, new content) fires. See
+`tests/test_sensor_cursor_contract.py`.
+
 ### When adding a new Dagster asset
 1. Create or edit a file in `src/iagent/defs/`.
 2. Use the `@asset` decorator from `dagster`.
