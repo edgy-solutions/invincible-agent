@@ -231,7 +231,17 @@ def mint_service_token(*, timeout: float = 15.0) -> str:
     return tok
 
 
-def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = 30.0,
+# start_review's composition cost scales with PART COUNT — it resolves a subject, checks
+# entitlement and evaluates the ruleset PER PART. 30s was sized when a notice meant a
+# handful of parts; the text-layer extractor routinely yields hundreds (402 on a real
+# Diodes notice), and the POST then times out client-side while the server keeps
+# composing — the intermittent httpx.ReadTimeout seen in production, reproduced here.
+# A timeout shorter than the work is not a safety property, it is a guaranteed failure at
+# scale. Env-tunable because the right value follows the largest notice in a corpus.
+_SUBMIT_TIMEOUT = float(os.getenv("REVIEW_SUBMIT_TIMEOUT", "300"))
+
+
+def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = _SUBMIT_TIMEOUT,
                   source: str = ""):
     """POST the payload to cortex-bff `/reviews` (single identity-stamped entry) and
     classify. RAISES dagster.Failure on a refusal (-> failed run). Returns (outcome, body)

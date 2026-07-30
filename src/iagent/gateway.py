@@ -379,7 +379,13 @@ async def start_review(
         "user_jwt": raw_token,
     }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Sized to the PART COUNT, not to a nominal request. start_review resolves a
+        # subject, checks entitlement and evaluates the ruleset PER PART, so a
+        # hundreds-of-parts notice (routine now that extraction reads the text layer)
+        # far outruns a 30s budget — and this ceiling sits INSIDE the caller's, so a
+        # short value here makes the sensor's longer timeout meaningless. Env-tunable.
+        _start_timeout = float(os.getenv("REVIEW_START_TIMEOUT", "300"))
+        async with httpx.AsyncClient(timeout=_start_timeout) as client:
             rr = await client.post(
                 f"{_RESTATE_INGRESS_URL}/ReviewStarter/start_review", json=body,
             )
