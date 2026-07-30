@@ -324,6 +324,16 @@ class ReviewStartRequest(_BaseModel):
     categories: Optional[list] = None
     in_scope_mpns: Optional[list] = None
     doc_needs_review: bool = False
+    # PROVENANCE ATTESTATION — "extraction" when the caller read the parts + their
+    # per-part needs_review straight from review.json. start_review's tripwire fires when
+    # this is ABSENT (a graph-built request cannot honestly set it). MUST be forwarded:
+    # dropping it here silently re-armed the tripwire against every honest sensor request
+    # and refused whole notices (live regression 2026-07-30).
+    review_state_source: Optional[str] = None
+    # Extraction-quality warnings that must reach the reviewer ("PARTS MAY BE MISSING:
+    # 2/5 table crops failed"). Dropping it here severed the warning thread at its FIRST
+    # hop, so a degraded extraction would have reviewed as though complete.
+    extraction_warnings: Optional[list] = None
     domain: str = "SUSTAINMENT"          # selects the review audience pcn_disposition:<domain>
     audience: Optional[str] = None        # override; defaults to pcn_disposition:<domain>
 
@@ -362,6 +372,8 @@ async def start_review(
         "impacted_parts": req.impacted_parts,     # extraction pass-through (tripwire source)
         "in_scope_mpns": req.in_scope_mpns,
         "doc_needs_review": req.doc_needs_review,
+        "review_state_source": req.review_state_source,   # attestation — arms/disarms the tripwire
+        "extraction_warnings": req.extraction_warnings,   # degradation warnings -> the reviewer
         "approver": current_user.authz_id,        # identity from the token — NOT client-supplied
         "audience": req.audience or f"pcn_disposition:{req.domain}",
         "user_jwt": raw_token,
