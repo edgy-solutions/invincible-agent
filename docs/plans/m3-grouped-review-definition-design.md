@@ -55,6 +55,94 @@ Notes: the extraction/matching/scoring stages are `spo_operation` steps in the f
 require registered verbs on real ontology classes (blocker 1) — omitted from this draft spine, which
 starts at the review (the human-await the current class implements).
 
+## TEAM STEPS — completion + claiming as DECLARED policy (folded in 2026-07-29)
+
+The live model is **any-one-of-the-audience acts for the team**: `register_task` materializes one row per
+entitled actor and the first decision resolves them all (`acted_by` stamped, others' rows flip, the loser
+now gets an honest 409-with-provenance — shipped `4b291d1`). That is correct and honest for a shared review
+audience, and M3 inherits it **unchanged**. What teams ask for next — *"shouldn't two people sign off on an
+LTB?"* and *"is someone already working this?"* — are NOT features to bolt onto the BFF. They change **what
+a `human_await` step MEANS**, and M3 is precisely the milestone where step meaning becomes ratifiable data.
+Building them as BFF patches now would hand-code workflow semantics one milestone before the point of M3 is
+retiring hand-coded workflow semantics.
+
+So they are **two orthogonal policy axes declared on `human_await`** — attributes, NOT new step kinds, so
+the doc's "zero new workflow-model step kinds" claim survives intact:
+
+```yaml
+  - kind: human_await
+    id: review
+    audience: "disposition_review:SUSTAINMENT"
+    completion: {kind: any-of}        # any-of (DEFAULT, today) | n-of-m {n: 2} | all-of
+    claiming:   {kind: none}          # none (DEFAULT, today) | advisory | exclusive
+```
+
+**Defaults are today's behavior (`any-of` / `none`), so every existing definition is unchanged BY
+CONSTRUCTION** — the fold cannot regress a deployed workflow. This also forces the answer to the doc's open
+seal-inheritance question: **completion and claiming are EXECUTOR-owned semantics driven by declared
+policy**, not per-definition machinery. A definition author writes `completion: {kind: n-of-m, n: 2}`; the
+executor provides the join.
+
+**The quorum engine already exists — this is the bulk-resolve pattern repeating, not new invention.**
+Slice-5's multi-approval join (`slice-5-multi-approval-join.md`) is core-complete and sealed 12/12: the join
+evaluator, suspend-vs-fail routing, the `PENDING → UNSATISFIABLE` oracle, and satisfiability re-evaluation
+when entitlements change (the flip rider). It has been sitting **sealed at the core and unwired at the
+driver** — the exact status bulk-resolve had before M1 wired it. M3.2's executor wiring a declared
+`completion` policy to that evaluator is a **driver window over a sealed core**. When the N-of-M request
+arrives (and a five-name audience says it will, within weeks of the first any-one-of deployment), the answer
+is "the core is sealed, here is the wiring cost" — not a design effort.
+
+`claiming: exclusive` (a hard lock) is **deliberately out of v1**: a lease needs expiry/steal/
+release-on-navigate-away, and a claimed-then-abandoned task strands work. But the AXIS existing means
+exclusive is an EXTENSION, not a redesign.
+
+### Claim visibility is a property of the AUDIENCE, not of the step
+`claiming: advisory` broadcasts that work is underway — which is where the collision-avoidance value
+actually lives (*don't start what someone started*). But **naming the claimer discloses actor identity
+across an audience**, and the observation model was built on not doing that casually (Slice-3's
+existence-oracle closure, the `observer_view`/`audit_record` split, and Decision D's parked anonymous-count
+question). A shared review audience is the weakest-privacy case — all five already see the same task and
+will see `acted_by` at resolution — so naming is *probably* fine **here**; hardcoding "probably fine here"
+into the projection is how it becomes the precedent for task kinds where it is NOT (the access-request
+queue, cross-compartment cases).
+
+The shape that survives scrutiny, and the DECISION this doc takes:
+- **Claim STATE is always broadcast** in the anonymous form — *"in review since 14:02"*. That delivers the
+  whole collision-avoidance benefit with zero disclosure.
+- **Claimer IDENTITY is a per-audience disclosure declaration**, defaulting to anonymous, opted into where
+  the audience's social contract warrants (a mutually-visible team) — i.e. it belongs with the audience
+  declaration (`task_grants.yaml` / Topaz-adjacent), NOT as per-step boilerplate. Visibility is a fact
+  about the audience, not about one step, so it is declared once and every step over that audience inherits
+  it. Consequence: the access-request queue and the disposition team get DIFFERENT disclosure by their
+  declarations, with no code branching per kind.
+- This is **Decision D's sibling question, and it now has a forcing function** (parked questions with no
+  forcing function rot). Cross-reference: `slice-3-observation.md` Decision D.
+- Advisory-claim **expiry semantics need designing, not riding along**: *"bob is reviewing"* from a tab bob
+  closed an hour ago is a new small lie. A claim is a lease with a visible age, and a stale claim must read
+  as stale.
+
+### Decision merging under quorum — the genuinely NEW design surface
+The join math is sealed; the claim state is mechanical; **this** is the real work the fold introduces.
+Today's path bakes in *one decision, one payload*: `submit_decision` validates ONE `BulkDecision` against
+the server-authored batch and resolves a write-once promise. Under `n-of-m` there are **N partial approvals
+arriving over time, with possibly CONFLICTING per-item overrides** — approver A overrides part 3 to LTB with
+reason X while approver B accepts the proposal on part 3. What merged truth does the fan-out dispatch?
+
+- **last-writer-wins** — REJECTED: silently discards a human's recorded judgment.
+- **first-committed-per-item** — a middle path; still discards the later judgment, just less visibly.
+- **per-item agreement required among the quorum's approvers → conflicts surface as a NAMED outcome that
+  forces explicit reconciliation** — **the DECISION.** It is the only option that never launders an
+  override, and "never launder an override" is already the system's most defended property. It is also the
+  disposition-conflict rule one level up: honest ambiguity → forced human resolution (the proposer already
+  ABSTAINS rather than picking when rules disagree; a quorum should too).
+
+Corollary for the mechanics: **the write-once `decision` promise becomes a JOIN-COMPLETION promise resolved
+by the EVALUATOR**, not by any single submitter. Each approval is recorded; the evaluator decides when the
+completion policy is satisfied AND the per-item merge is conflict-free, and only then resolves. The
+concurrency seal already written (`tests/test_grouped_review_concurrency.py`) is the `any-of` case of that
+same invariant — exactly one resolve, therefore exactly one fan-out — and its quorum sibling must assert:
+N-1 approvals do NOT fan out, the Nth does, and a conflicting Nth fans out NOTHING and names the conflict.
+
 ## rendersAs — SKETCH ONLY (do not finalize)
 The presentation-per-step/verb layer (E-list `rendersAs` triples) is the M3 "PRESENTATION" third. The
 DECIDED projection already exists as `pcn-dashboard-payload-schema.md` (the hand-assembled version of the
@@ -109,3 +197,13 @@ The hand-coded `grouped_review_workflow.py` is deleted; the grouped review runs 
 `policy/workflows/grouped_review.yaml` via `_run_definition`; the sealed HITL mechanics (register-before-
 suspend, `can_act`, promise resolve, bulk-resolve) still pass their seals; and a NON-grouped definition
 (a plain approval) runs on the same executor — proving the runner is definition-driven, not class-driven.
+
+**And the sentence that makes "configurable workflow" FALSIFIABLE — the milestone's north star, not a
+feature request trailing behind it:**
+
+> A team step's **quorum and claiming behavior changes by editing the definition YAML — zero code.**
+
+Concretely: flipping `completion: {kind: any-of}` → `{kind: n-of-m, n: 2}` in
+`policy/workflows/grouped_review.yaml` makes the review require two sign-offs, with no deploy of engine-a,
+cortex-bff, or cortex-ui; flipping `claiming: none` → `advisory` makes concurrent work visible, same way.
+If either needs a code change, M3.2 has not landed — it has only moved the hand-coding.
