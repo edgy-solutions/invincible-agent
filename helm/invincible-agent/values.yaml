@@ -903,7 +903,27 @@ primeSubstrate:
     # Max seconds to wait for the sentinel before restarting anyway. A
     # timeout is best-effort, not failure: the DataHub→doc-tools sensor
     # registration path self-heals via retries once the classes land.
-    sentinelTimeout: 420
+    #
+    # SIZED TO THE REAL INGEST (raised 420 -> 900, 2026-07-30). prime launches
+    # ~13 ontology partitions and its own note says "~30-60s per partition";
+    # the Dagster run queue is effectively concurrency-1, so they run SERIALLY
+    # = 390-780s. At 420 the hook gave up right before the thing it waits for
+    # arrived — and giving up means engines re-register against a class graph
+    # that isn't populated yet, which is the exact silent generalist-degradation
+    # this hook exists to prevent.
+    #
+    # !! YOU MUST RAISE helm's --timeout TO MATCH !!
+    # helm's default --timeout is 5m (300s) and it bounds the WHOLE release
+    # INCLUDING hooks — prime AND this one, which run in sequence. With the
+    # defaults, helm gives up on the hook BEFORE the hook gives up on the
+    # sentinel: the release reports a timeout failure while the job is doing
+    # exactly what it was designed to do, and then completes fine a few minutes
+    # later. The cluster is healthy; only helm's report is wrong. Deploy with:
+    #     helm upgrade --install ... --timeout 20m
+    # (must exceed primeSubstrate's runtime + sentinelTimeout + the rollout
+    # restarts). Do NOT "fix" a helm timeout by lowering sentinelTimeout —
+    # that trades a cosmetic failure for the real one.
+    sentinelTimeout: 900
 
 # ==========================================================================
 # demoSeed — GATED reproducible DEMO CONTENT (bootstrap-state-debt #4).

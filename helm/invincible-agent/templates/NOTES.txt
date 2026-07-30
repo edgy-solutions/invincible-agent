@@ -1,6 +1,20 @@
 Thank you for installing {{ .Chart.Name }}!
 
 Your release "{{ .Release.Name }}" has been deployed.
+{{ if and .Values.primeSubstrate.enabled .Values.primeSubstrate.reregisterEngines.enabled }}
+!! IF HELM REPORTED A TIMEOUT, THE CLUSTER IS PROBABLY FINE — CHECK BEFORE RE-RUNNING !!
+  This release runs post-hooks IN SEQUENCE: prime-substrate, then engine-reregister,
+  which waits up to {{ .Values.primeSubstrate.reregisterEngines.sentinelTimeout }}s for the
+  ontology ingest to land its sentinel class. helm's --timeout bounds the WHOLE release
+  including those hooks, and its default is only 5m — so helm can give up while the hook
+  is still doing its job, then the hook finishes correctly a few minutes later.
+    Deploy with:  --timeout 20m
+    Check first:  kubectl get jobs -n {{ .Release.Namespace }} | grep -E 'prime|reregister'
+                  kubectl logs -n {{ .Release.Namespace }} job/{{ .Release.Name }}-engine-reregister
+  "[wait] ingest sentinel not present yet..." is NORMAL — prime FIRE-AND-FORGETS the
+  ingest, so the hook polls Neo4j until the classes actually exist. Watch
+  ingest_ontology_job in Dagster to see the real progress.
+{{ end }}
 
 == Services ==
 
