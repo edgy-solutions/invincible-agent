@@ -137,6 +137,10 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     ctx.set("notice_fingerprint", notice_fingerprint)
     ctx.set("notice_id", notice_id)
     ctx.set("doc_type", doc_type)
+    # Extraction-quality warnings travel with the batch so get_batch can hand them to the
+    # reviewer alongside the parts they qualify (a degraded extraction's parts list may be
+    # incomplete; unsaid, it reads as complete).
+    ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
 
     # ONE grouped HumanTask for the whole batch (1 approval resolves N). Register durably BEFORE
     # suspending, mirroring the sealed HITL mechanics.
@@ -254,4 +258,8 @@ async def get_batch(ctx: WorkflowSharedContext) -> dict:
         "notice_type": doc_type or "PCN",
         "notice_fingerprint": notice_fingerprint,
         "items": batch_items,   # exactly the authored per-approver batch — nothing else from state
+        # Extraction-quality warnings QUALIFYING that batch (e.g. "PARTS MAY BE MISSING: 2/5
+        # table crops failed"). Not per-approver state and not redacted content — a statement
+        # about how much to trust the list the reviewer is about to disposition.
+        "extraction_warnings": list(await ctx.get("extraction_warnings") or []),
     }

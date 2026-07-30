@@ -242,15 +242,39 @@ async def test_get_batch_serves_only_the_authored_batch():
     state = {
         "batch_items": authored, "approver": "alice@example.com",
         "notice_fingerprint": "IPCN25300X", "notice_id": "IPCN25300X", "doc_type": "PCN",
+        "extraction_warnings": ["PARTS MAY BE MISSING: 2/5 table crops failed"],
         "audit_withheld": [{"mpn": "SECRET-OTHER-APPROVER"}],  # decoy — MUST NOT leak
     }
     out = await _GET_BATCH(FakeSharedContext(state))
     assert out["items"] == authored, "batch-read must serve exactly the authored per-approver items"
     assert out["notice_type"] == "PCN" and out["notice_id"] == "IPCN25300X"
     assert out["approver"] == "alice@example.com"
+    # `extraction_warnings` WIDENS this contract deliberately (2026-07-29). It is doc-level
+    # EXTRACTION-QUALITY metadata ("a vision crop timed out, parts may be missing") — not
+    # per-approver residue and not document content, so every reviewer entitled to the batch
+    # is entitled to it; withholding it is what let a PARTIAL parts list read as complete.
+    # The exact-key-set assertion STAYS (a leak of anything else is still a failure) and the
+    # decoy assertion below is unchanged, so the widening is one named field, not a loosening.
     assert set(out.keys()) == {"batch_id", "approver", "notice_id", "notice_type",
-                               "notice_fingerprint", "items"}, "batch-read leaked an extra field"
+                               "notice_fingerprint", "items",
+                               "extraction_warnings"}, "batch-read leaked an extra field"
+    assert out["extraction_warnings"] == ["PARTS MAY BE MISSING: 2/5 table crops failed"]
     assert "SECRET-OTHER-APPROVER" not in json.dumps(out), "decoy state leaked into the batch-read"
+
+
+@pytest.mark.asyncio
+async def test_get_batch_warnings_default_empty_not_missing():
+    """A batch from a CLEAN extraction (or one started before the field existed) serves an
+    empty list, never a missing key — so the UI's banner condition is total, and the absence
+    of a warning is itself a positive statement rather than an unknown."""
+    state = {
+        "batch_items": [{"mpn": "A", "subject": None,
+                         "proposed_disposition": "dispatchQualification", "needs_review": False}],
+        "approver": "alice@example.com", "notice_fingerprint": "IPCN25300X",
+        "notice_id": "IPCN25300X", "doc_type": "PCN",
+    }
+    out = await _GET_BATCH(FakeSharedContext(state))
+    assert out["extraction_warnings"] == []
 
 
 @pytest.mark.asyncio

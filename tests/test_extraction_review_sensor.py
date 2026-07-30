@@ -84,6 +84,29 @@ def test_payload_sources_parts_and_per_part_flag_from_review_json() -> None:
     assert payload["review_state_source"] == "extraction", payload
 
 
+def test_extraction_warnings_are_carried_to_the_reviewer() -> None:
+    """A degraded extraction's warnings must RIDE WITH the batch. Live case (Diodes PCN 2683):
+    review.json recorded "2/5 table crops failed — extracted parts are likely INCOMPLETE" and
+    NOTHING downstream carried it, so the reviewer would have dispositioned a partial parts
+    list believing it complete — the missing parts silently getting no disposition. A partial
+    list is indistinguishable from a complete one unless the payload says so."""
+    rj = _review_json(doc_needs_review=True, part0_needs=False, part1_needs=False)
+    rj["doc_review_reasons"] = [
+        "PARTS MAY BE MISSING: 2/5 table crops failed (e.g. vision timeout) — "
+        "extracted parts are likely INCOMPLETE"
+    ]
+    payload = ers.build_start_review_payload(rj)
+    assert payload["extraction_warnings"] == rj["doc_review_reasons"], payload
+
+
+def test_no_warnings_on_a_clean_extraction() -> None:
+    """Absent field (older review.json) and clean extractions both yield [] — no phantom
+    banner, so the warning means something when it DOES appear."""
+    payload = ers.build_start_review_payload(
+        _review_json(doc_needs_review=False, part0_needs=False, part1_needs=False))
+    assert payload["extraction_warnings"] == []
+
+
 def test_categories_from_string_and_top_level_forms() -> None:
     """header.categories may be a LIST (rich extraction) or a comma/;-separated STRING (some
     viewers/exports); and a newer doc-tools writes a top-level `categories`. All three normalize

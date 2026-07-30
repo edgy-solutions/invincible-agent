@@ -125,6 +125,14 @@ def build_start_review_payload(
         # ABSENT rather than guessing from the {doc-flagged, no-part-flagged} silhouette, which a
         # CORRECT extraction can legitimately produce (a doc-level-only reason, or zero parts).
         "review_state_source": "extraction",
+        # EXTRACTION-QUALITY WARNINGS -> the reviewer. When the extraction degraded (a vision
+        # crop timed out, the header pass died), the parts list may be INCOMPLETE — and a
+        # partial list is indistinguishable from a complete one unless we say so. Diodes PCN
+        # 2683 recorded "2/5 table crops failed — parts likely INCOMPLETE" and it reached
+        # nobody, because nothing downstream carried it. Proceeding on degraded data is fine;
+        # proceeding SILENTLY is not. Falls back to [] for review.json written before the
+        # field existed (older extractions simply carry no warnings).
+        "extraction_warnings": list(review_json.get("doc_review_reasons") or []),
         "domain": domain,
     }
 

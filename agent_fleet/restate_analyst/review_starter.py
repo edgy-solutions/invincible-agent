@@ -314,6 +314,10 @@ async def start_review(ctx: Context, request: dict) -> dict:
             "notice_id": notice_id,
             "doc_type": request.get("doc_type", "PCN"),
             "batch_items": batch_items,
+            # Extraction-quality warnings ride WITH the batch to the reviewer: a review
+            # composed from a degraded extraction must SAY so, else a partial parts list
+            # looks complete and the missing parts get no disposition, silently.
+            "extraction_warnings": list(request.get("extraction_warnings") or []),
             "user_jwt": request.get("user_jwt", ""),
         },
     )

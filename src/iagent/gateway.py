@@ -445,6 +445,13 @@ async def get_review_batch(
         "notice_fingerprint": b.get("notice_fingerprint"),
         "approver": current_user.authz_id,
         "items": items,
+        # Extraction-quality warnings qualifying this batch — surfaced so the reviewer
+        # knows how much to trust the list before dispositioning it. A degraded
+        # extraction (timed-out vision crop, failed header pass) can yield a PARTIAL
+        # parts list that is indistinguishable from a complete one; missing parts get
+        # no disposition and nobody notices. Proceeding on degraded data is acceptable;
+        # proceeding silently is not.
+        "extraction_warnings": list(b.get("extraction_warnings") or []),
     }
 
 
