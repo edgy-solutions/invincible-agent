@@ -180,20 +180,65 @@ def _s3_client():
     )
 
 
-def _list_new_review_jsons(s3, bucket: str, prefix: str, since_key: Optional[str]) -> List[str]:
-    """New `**/review.json` keys under prefix, lexically after the cursor. Simple + cheap;
-    the endswith filter selects only the extraction-done artifact."""
-    keys: List[str] = []
+def _list_new_review_jsons(s3, bucket: str, prefix: str, since: Optional[str]) -> List[dict]:
+    """New `**/review.json` objects under prefix, CHRONOLOGICALLY after the cursor.
+
+    Returns full objects (Key + ETag + LastModified) because identity downstream is
+    content-addressed, not name-addressed.
+
+    THIS REPLACED A LEXICOGRAPHIC `StartAfter` CURSOR, which lost work twice in one day.
+    `StartAfter` skips everything sorting BELOW the cursor, forever and silently: a drop
+    at `.../onsemi_look/...` was invisible behind a cursor at `.../onsemi_run6/...`
+    ('l' < 'r'), and `.../inbound/generated/...` was invisible behind the same cursor
+    ('g' < 'o'). Sort position is not arrival order, so a lexicographic cursor cannot
+    answer "what is new" — and its failure mode is silence, which is the worst available.
+
+    Ordering by LastModified is arrival order, so a new object ANYWHERE in the keyspace
+    is seen. This is the contract dag-tools' S3SensorComponent already implements
+    (`dag_tools/components/s3_sensor/utils.py: get_s3_keys` — "chronological S3 keys
+    using LastModified for cursor pagination"); it is adopted here VERBATIM in semantics
+    so the two sensors agree. See the note in the sensor docstring on why this repo takes
+    the contract rather than the component itself.
+    """
+    objs: List[dict] = []
     paginator = s3.get_paginator("list_objects_v2")
-    kwargs = {"Bucket": bucket, "Prefix": prefix}
-    if since_key:
-        kwargs["StartAfter"] = since_key
-    for page in paginator.paginate(**kwargs):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for o in page.get("Contents", []) or []:
-            k = o["Key"]
-            if k.endswith("/review.json"):
-                keys.append(k)
-    return sorted(keys)
+            if o["Key"].endswith("/review.json") and o.get("LastModified"):
+                objs.append(o)
+    objs.sort(key=lambda o: (o["LastModified"], o["Key"]))
+    if not since:
+        return objs
+    # Strictly-after the cursor timestamp. Ties are broken by key so a cursor landing
+    # mid-second cannot drop its co-timestamped siblings.
+    return [o for o in objs if _cursor_of(o) > since]
+
+
+def _cursor_of(o: dict) -> str:
+    """The cursor value for an object: its arrival time, then its key as a tiebreak.
+    Sortable as a plain string, which is all Dagster's cursor storage carries."""
+    return f"{o['LastModified'].isoformat()}|{o['Key']}"
+
+
+def _run_key_of(o: dict) -> str:
+    """CONTENT-ADDRESSED run key: ETag (content hash) + the artifact key.
+
+    Identity comes from what the artifact IS and where it lives — never from a value
+    something else derived. The previous run_key was `doc_id`, an LLM-EXTRACTED header
+    field, so when the header model degraded every notice in one inbox derived the same
+    fallback and Dagster's run-key dedup silently ate all but the first. A model-derived
+    value must never key deterministic machinery.
+
+    ETag CAVEAT, declared rather than assumed: ETag is the content MD5 only for
+    single-part uploads. review.json is written by a single PUT (kilobytes, far under any
+    multipart threshold), so ETag is content-shaped on this path today. If a producer ever
+    switches to multipart, ETag becomes UPLOAD-shaped: identical content uploaded
+    differently yields a different ETag and the sensor RE-FIRES. That is degradation in
+    the SAFE direction — a re-fire is absorbed by the workflow's per-notice fingerprint
+    idempotency, whereas a missed fire is silent data loss. This asymmetry is why ETag is
+    acceptable here and would NOT be for a skip-on-match ledger.
+    """
+    return f"{o.get('ETag', 'no-etag').strip(chr(34))}-{o['Key']}"
 
 
 def mint_service_token(*, timeout: float = 15.0) -> str:
@@ -327,49 +372,52 @@ def start_review_job():
     minimum_interval_seconds=30,
 )
 def extraction_review_sensor(context: SensorEvaluationContext):
-    """Watch MinIO for completed extractions (review.json) and start ONE review per notice.
-    run_key = doc_id (the notice fingerprint) -> Dagster dedups re-ingests/restarts."""
+    """Watch MinIO for completed extractions (review.json) and start one review per ARTIFACT.
+
+    CURSOR = arrival time (LastModified), RUN_KEY = content hash + artifact key. Both are
+    the contract dag-tools' S3SensorComponent already implements; this repo adopts the
+    SEMANTICS rather than the component because invincible-agent does not depend on
+    dag_tools and does not use the Dagster components system — taking the component would
+    mean adding a cross-repo dependency AND adopting a framework here, which is an
+    architectural decision, not a port. (It would also need two upstream changes: the
+    component's `partition_name` is mandatory, and reviews should NOT be partitioned — a
+    backfill would mint duplicate reviews into humans' queues — and its default
+    `filter_patterns` EXCLUDES "/generated/", which is exactly where review.json lives, so
+    an unmodified adoption would silently match nothing.) If that dependency is later
+    taken, this function is the thing deleted, and the seal below carries over unchanged.
+
+    WHY THE IDENTITY CHANGED. run_key was `doc_id` — an LLM-EXTRACTED header field. When
+    the header model degraded, every notice in one inbox derived the same fallback
+    ("inbound"), and Dagster's run-key dedup silently discarded all but the first: no run,
+    no failure, no log line. A model-derived value must never key deterministic machinery.
+    `doc_id` is now what it should always have been — display/grouping metadata carried in
+    the payload — while identity comes from the artifact itself.
+    """
     s3 = _s3_client()
     since = context.cursor or None
-    keys = _list_new_review_jsons(s3, _ARTIFACT_BUCKET, _WATCH_PREFIX, since)
-    if not keys:
-        return SkipReason("no new extractions (review.json) since cursor")
+    objs = _list_new_review_jsons(s3, _ARTIFACT_BUCKET, _WATCH_PREFIX, since)
+    if not objs:
+        return SkipReason(f"no new extractions (review.json) after cursor {since}")
     requests = []
     last = since
-    # doc_id -> the key that claimed it, so a COLLISION is reported instead of vanishing.
-    # run_key is the doc_id (deliberately: one review per notice, so re-ingests dedup), but
-    # doc_id is DERIVED — and when the header pass fails it falls back to something that can
-    # repeat across documents. Live 2026-07-30: every PDF in one inbox derived the doc_id
-    # "inbound", so Dagster deduped them into a SINGLE run and every other notice was skipped
-    # with no run, no failure and no log line. Silent skipping of real work is the worst
-    # outcome available here; name it.
-    claimed: dict = {}
-    for key in keys:
+    for o in objs:
+        key = o["Key"]
         try:
             review = json.loads(s3.get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read())
         except Exception as exc:  # noqa: BLE001 — a malformed artifact shouldn't wedge the cursor
             context.log.warning(f"skip unreadable {key}: {exc}")
-            last = key
+            last = _cursor_of(o)
             continue
         notice_id = review.get("doc_id")
         if not notice_id:
-            last = key
+            context.log.warning(f"skip {key}: review.json carries no doc_id")
+            last = _cursor_of(o)
             continue
-        prior = claimed.get(str(notice_id))
-        if prior is not None:
-            context.log.warning(
-                f"DOC_ID COLLISION: {key} derives doc_id={notice_id!r}, already claimed by "
-                f"{prior}. run_key is the doc_id, so Dagster will DEDUP these into one run and "
-                f"this notice will NOT be reviewed. Usually means the header pass failed and the "
-                f"doc_id fell back to something shared (e.g. the inbox folder name) — check the "
-                f"extraction's header/review_reasons for this document."
-            )
-            last = key
-            continue
-        claimed[str(notice_id)] = key
         requests.append(
             RunRequest(
-                run_key=str(notice_id),   # ONE review per notice (fingerprint). Dagster dedups.
+                # Content-addressed: re-uploading identical content dedups; two DIFFERENT
+                # notices can no longer collide, however their doc_ids were derived.
+                run_key=_run_key_of(o),
                 run_config={
                     "ops": {"start_review_op": {"config": {
                         "review_json_url": f"s3://{_ARTIFACT_BUCKET}/{key}",
@@ -377,6 +425,9 @@ def extraction_review_sensor(context: SensorEvaluationContext):
                 },
             )
         )
-        last = key
+        # Advance only past objects we actually DISPATCHED or deliberately skipped, in
+        # arrival order — so a mid-tick failure re-sees the rest next tick instead of
+        # stepping over them.
+        last = _cursor_of(o)
     context.update_cursor(last or "")
     return SensorResult(run_requests=requests)
