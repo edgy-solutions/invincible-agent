@@ -231,10 +231,19 @@ def mint_service_token(*, timeout: float = 15.0) -> str:
     return tok
 
 
-def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = 30.0):
+def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = 30.0,
+                  source: str = ""):
     """POST the payload to cortex-bff `/reviews` (single identity-stamped entry) and
     classify. RAISES dagster.Failure on a refusal (-> failed run). Returns (outcome, body)
-    for started / no_residue_skip."""
+    for started / no_residue_skip.
+
+    `source` is the review.json this payload came FROM, and it is named in every failure
+    on purpose. The failure text used to carry only `notice_id` — which is DERIVED, and
+    when the header pass fails it degrades to a fallback that can be identical across
+    documents ("inbound" for every PDF in one inbox, live 2026-07-30). Triage then reads
+    "start_review refused for inbound" N times with no way to tell WHICH notice failed.
+    The s3 key is the one identifier that is unique by construction and points straight at
+    the artifact you need to open."""
     import httpx
 
     resp = httpx.post(
@@ -249,7 +258,11 @@ def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = 3
         body = {"raw": resp.text[:500]}
     outcome, detail = classify_start_review(resp.status_code, body)
     if outcome == "refused":
-        raise Failure(description=f"start_review refused for {payload.get('notice_id')}: {detail}")
+        where = f" [source: {source}]" if source else ""
+        raise Failure(
+            description=(f"start_review refused for notice_id={payload.get('notice_id')!r}"
+                         f"{where}: {detail}")
+        )
     return outcome, body
 
 
@@ -283,8 +296,14 @@ def start_review_op(context, config: StartReviewConfig) -> None:
         return
     bff_url = os.environ["CORTEX_BFF_URL"]
     token = mint_service_token()   # per-run client-credentials; RAISES loudly on mint failure (failed run)
-    outcome, body = submit_review(payload, bff_url=bff_url, token=token)
-    context.log.info(f"start_review {outcome}: notice={payload['notice_id']} -> {body}")
+    # Log the source BEFORE the call: if the POST times out or the process dies, this line
+    # is the only record of WHICH document the run was working on.
+    context.log.info(
+        f"start_review -> notice_id={payload['notice_id']!r} parts={len(payload['impacted_parts'])} "
+        f"attested={payload.get('review_state_source')!r} source={src}"
+    )
+    outcome, body = submit_review(payload, bff_url=bff_url, token=token, source=src)
+    context.log.info(f"start_review {outcome}: notice={payload['notice_id']} source={src} -> {body}")
 
 
 @job
@@ -307,6 +326,14 @@ def extraction_review_sensor(context: SensorEvaluationContext):
         return SkipReason("no new extractions (review.json) since cursor")
     requests = []
     last = since
+    # doc_id -> the key that claimed it, so a COLLISION is reported instead of vanishing.
+    # run_key is the doc_id (deliberately: one review per notice, so re-ingests dedup), but
+    # doc_id is DERIVED — and when the header pass fails it falls back to something that can
+    # repeat across documents. Live 2026-07-30: every PDF in one inbox derived the doc_id
+    # "inbound", so Dagster deduped them into a SINGLE run and every other notice was skipped
+    # with no run, no failure and no log line. Silent skipping of real work is the worst
+    # outcome available here; name it.
+    claimed: dict = {}
     for key in keys:
         try:
             review = json.loads(s3.get_object(Bucket=_ARTIFACT_BUCKET, Key=key)["Body"].read())
@@ -318,6 +345,18 @@ def extraction_review_sensor(context: SensorEvaluationContext):
         if not notice_id:
             last = key
             continue
+        prior = claimed.get(str(notice_id))
+        if prior is not None:
+            context.log.warning(
+                f"DOC_ID COLLISION: {key} derives doc_id={notice_id!r}, already claimed by "
+                f"{prior}. run_key is the doc_id, so Dagster will DEDUP these into one run and "
+                f"this notice will NOT be reviewed. Usually means the header pass failed and the "
+                f"doc_id fell back to something shared (e.g. the inbox folder name) — check the "
+                f"extraction's header/review_reasons for this document."
+            )
+            last = key
+            continue
+        claimed[str(notice_id)] = key
         requests.append(
             RunRequest(
                 run_key=str(notice_id),   # ONE review per notice (fingerprint). Dagster dedups.
