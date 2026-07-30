@@ -838,8 +838,28 @@ async def act_on_human_task(
         raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured"})
     match = next((t for t in rows if t["task_id"] == task_id), None)
     if match is None:
-        # Not in the caller's queue at all — deny-by-default, existence-oracle
-        # safe: don't reveal whether the task exists for someone else.
+        # Not PENDING for this caller. Two very different truths hide here, and
+        # conflating them is a lie the multiplayer case makes routine: a TEAMMATE
+        # already resolved it (any-one-of-the-audience acts for the team, so their
+        # action flipped THIS caller's row too), versus the caller never held it.
+        # Look up the caller's OWN row: if it carries a resolution, say so WITH its
+        # provenance (409) so the reviewer learns who settled it instead of "not
+        # found" — the settled-task story, reaching the concurrent case. The lookup
+        # is scoped to recipient_id = caller, so it can never become an existence
+        # oracle for another audience's queue; a non-recipient still gets 404.
+        settled = await run_in_threadpool(
+            lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+        )
+        if settled and settled.get("status") != "pending":
+            raise HTTPException(status_code=409, detail={
+                "error": "task_already_resolved",
+                "task_id": task_id,
+                "status": settled.get("status"),
+                "decision": settled.get("decision"),
+                "acted_by": settled.get("acted_by"),
+                "acted_at": settled.get("acted_at"),
+                "message": "This task was already resolved by a member of its audience.",
+            })
         raise HTTPException(status_code=404, detail={"error": "task_not_found"})
     audience = match["audience"]
     allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, current_user.authz_id))
@@ -880,6 +900,25 @@ async def act_on_human_task(
         if rr.status_code != 200:
             raise HTTPException(status_code=502, detail={"error": "review_submit_failed", "code": rr.status_code})
         sub = rr.json()
+        if sub.get("status") == "already_resolved":
+            # THE TIGHT RACE: this caller's row was still pending when we looked, but a
+            # teammate's decision has since been consumed by the workflow. NOT
+            # "still_pending" (it is settled) and NOT a hollow success — 409 with the
+            # winner's provenance, joined from the projection (the workflow keeps only a
+            # deterministic boolean). Same shape as the pre-submit 409 above, so the UI
+            # has ONE conflict outcome to handle regardless of which path detected it.
+            settled = await run_in_threadpool(
+                lambda: human_tasks.get_task_resolution(task_id, caller_id=current_user.authz_id)
+            ) or {}
+            raise HTTPException(status_code=409, detail={
+                "error": "task_already_resolved",
+                "task_id": task_id,
+                "status": settled.get("status") or "resolved",
+                "decision": settled.get("decision"),
+                "acted_by": settled.get("acted_by"),
+                "acted_at": settled.get("acted_at"),
+                "message": "This review was already resolved by a member of its audience.",
+            })
         if not sub.get("accepted"):
             # POLICY refusal — the review stays PENDING (projection NOT marked). Surface the reason.
             return {"task_id": task_id, "decision": req.decision, "accepted": False,

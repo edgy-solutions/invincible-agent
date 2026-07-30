@@ -164,6 +164,16 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
 
     # Suspend until submit_decision resolves the promise with a VALIDATED decision.
     raw_decision = await ctx.promise("decision", type_hint=dict).value()
+    # This batch is now SETTLED. Mark it so a SECOND submission (a teammate racing
+    # in the window before the projection rows flip) is refused with the truth
+    # instead of being re-validated into a hollow `accepted: true` while nothing
+    # further happens — the durable promise is write-once, so the second submit
+    # never woke anything, and reporting success for it is the worst of the three
+    # dishonest outcomes (the reviewer walks away believing their overrides landed).
+    # A deterministic BOOLEAN on purpose: WHO/WHEN provenance comes from the
+    # projection (acted_by/acted_at), so no non-deterministic clock enters the
+    # journaled workflow.
+    ctx.set("decision_consumed", True)
 
     # Re-derive resolutions from the server batch + the validated decision (authority stays server-side).
     batch = _reviewbatch_from_state(approver, batch_items)
@@ -196,6 +206,16 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
     batch_items = await ctx.get("batch_items")
     if batch_items is None:
         raise restate.TerminalError("no active grouped review for this workflow", status_code=404)
+    # ALREADY SETTLED (the multiplayer race): the batch's decision was consumed by a
+    # teammate. Refuse EXPLICITLY rather than re-validate into a hollow acceptance —
+    # the promise is write-once, so a second resolve wakes nothing, and returning
+    # `accepted: true` for it tells a reviewer their overrides landed when they were
+    # discarded. `already_resolved` is a distinct, terminal-for-this-caller outcome;
+    # cortex-bff maps it to 409 and joins the projection's acted_by/acted_at so the
+    # reviewer is told WHO settled it (state here stays a deterministic boolean).
+    if await ctx.get("decision_consumed"):
+        return {"status": "already_resolved", "accepted": False,
+                "reason": "this review was already resolved by a member of its audience"}
     approver = await ctx.get("approver")
     notice_fingerprint = await ctx.get("notice_fingerprint")
 

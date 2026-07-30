@@ -70,6 +70,69 @@ def test_nonempty_audience_passes_guard_and_returns_recipients():
     assert out["audience"] == "pcn_disposition:SUSTAINMENT"
 
 
+# ===========================================================================
+# CONCURRENCY SEAL, provenance half — the multiplayer review's honest 409.
+#
+# ANY ONE of the audience acts for the team (mark_task_resolved flips EVERY
+# recipient row), so the loser of the race used to get a misleading 404
+# "task_not_found" — when the truth is "a teammate settled it, here's who".
+# get_task_resolution supplies that provenance. The WORKFLOW half of this seal
+# (exactly-one-fan-out, no hollow acceptance) lives in
+# tests/test_grouped_review_concurrency.py, which runs in the restate env.
+# ===========================================================================
+def _fake_conn(row):
+    cur = mock.MagicMock()
+    cur.fetchone.return_value = row
+    cur_cm = mock.MagicMock()
+    cur_cm.__enter__ = mock.Mock(return_value=cur)
+    cur_cm.__exit__ = mock.Mock(return_value=False)
+    conn = mock.MagicMock()
+    conn.cursor.return_value = cur_cm
+    cm = mock.MagicMock()
+    cm.__enter__ = mock.Mock(return_value=conn)
+    cm.__exit__ = mock.Mock(return_value=False)
+    return cm, cur
+
+
+def test_resolution_lookup_carries_the_winners_identity():
+    """The 409 must NAME who settled it — the settled-task provenance story reaching
+    the concurrent case ("Resolved by alice at 14:02"), not a bare conflict code."""
+    row = {"task_id": "grouped:X:svc:review-starter", "kind": "grouped_review",
+           "status": "approved", "decision": "approved",
+           "acted_by": "alice@example.com", "acted_at": 1785000000000,
+           "audience": "pcn_disposition:SUSTAINMENT"}
+    cm, _ = _fake_conn(row)
+    with mock.patch.object(ht, "_pg_connect", return_value=cm):
+        out = ht.get_task_resolution("grouped:X:svc:review-starter", caller_id="bob@example.com")
+    assert out["acted_by"] == "alice@example.com"
+    assert out["acted_at"] == 1785000000000
+    assert out["status"] == "approved"
+
+
+def test_resolution_lookup_is_caller_scoped_not_an_existence_oracle():
+    """SECURITY property, asserted against the ACTUAL query: the lookup filters on
+    recipient_id = caller, so it can only ever speak about a task THIS caller genuinely
+    held. Unscoped, any caller could probe arbitrary task_ids and learn that another
+    audience's task exists — reopening the existence oracle slice 3 closed. A
+    non-recipient gets None, indistinguishable from 'no such task' (still a 404)."""
+    cm, cur = _fake_conn(None)
+    with mock.patch.object(ht, "_pg_connect", return_value=cm):
+        out = ht.get_task_resolution("grouped:SOMEONE-ELSES-TASK", caller_id="bob@example.com")
+    assert out is None, "a non-recipient must get None — never another audience's resolution"
+    sql, params = cur.execute.call_args[0][0], cur.execute.call_args[0][1]
+    assert "recipient_id = %s" in sql, f"lookup MUST be caller-scoped; SQL was: {sql}"
+    assert "bob@example.com" in params, params
+
+
+def test_resolution_lookup_rejects_empty_inputs_without_touching_the_db():
+    """A blank caller must never match a row — and must not even open a connection
+    (an unscoped query with an empty caller is exactly the oracle above)."""
+    with mock.patch.object(ht, "_pg_connect") as pg:
+        assert ht.get_task_resolution("", caller_id="bob@example.com") is None
+        assert ht.get_task_resolution("t", caller_id="") is None
+        pg.assert_not_called()
+
+
 if __name__ == "__main__":
     import sys
     failed = 0

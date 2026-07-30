@@ -282,6 +282,36 @@ def write_grant_and_sync(*, subject: str, asset: str, granted_by: str,
     }
 
 
+def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, Any]]:
+    """The resolution story of a task THIS caller was a recipient of, or None.
+
+    Answers "did a TEAMMATE already resolve this?" so the caller gets an honest
+    409-with-provenance instead of a misleading 404. Any-one-of-the-audience acts
+    for the team (`mark_task_resolved` flips EVERY recipient row), so a teammate's
+    action leaves the caller's own row non-pending — that row carries acted_by /
+    acted_at / decision, which is the settled-provenance the reviewer must see.
+
+    EXISTENCE-ORACLE SAFE BY SCOPING: filtered on `recipient_id = caller`, so it
+    only ever speaks about a task the caller genuinely held. A caller who was never
+    a recipient gets None — indistinguishable from "no such task", preserving the
+    deny-by-default 404 and never revealing another audience's queue.
+    """
+    if not task_id or not caller_id:
+        return None
+    with _pg_connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """SELECT task_id, kind, status, decision, acted_by, acted_at, audience
+                     FROM human_task_projection
+                    WHERE task_id = %s AND recipient_id = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1""",
+                (task_id, caller_id),
+            )
+            row = cur.fetchone()
+    return dict(row) if row else None
+
+
 def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
                        comment: str = "") -> int:
     """Mark ALL recipient rows of a logical task resolved (one human acted for the
