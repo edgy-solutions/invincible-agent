@@ -192,11 +192,35 @@ ODPS↔first workflow-promotion · CALM↔first external-architecture ask / work
 **`standards-posture.md`** — the standalone note the ADRs cite. M3's `rendersAs` presentation layer is Rule-2
 (graph-derived, not an imported presentation standard).
 
+## Admission lives OUTSIDE the definition — and M3.2's second definition now has a real customer
+(See [ADR-0034](../adr/ADR-0034-trust-lifecycle-admission-policy-decision-records-autonomous-path.md).)
+Two boundary facts M3 **inherits as constraints** rather than re-deciding:
+
+**The admission-vs-structure line.** *Whether* a notice enters the human path is an **admission** question
+(how far the pipeline is trusted for this input class), decided by a ratifiable **trust table** consulted by
+the starter. *What the process is* is a **structure** question, decided here. **No definition consults the
+trust table, and no trust rung names a step** — the gate selects BETWEEN declared definitions, which is
+legitimate (one gate, data-driven), rather than selecting behavior INSIDE one, which is the coupling
+ADR-0029 killed. If an M3 step ever appears to need a trust posture, that is the layer leak ADR-0034's
+acceptance sentences forbid: surface it, do not thread it.
+
+**Workflow 2 IS the acceptance criterion, arriving funded.** The "NON-grouped definition on the same
+executor" below was written as a discriminating test; ADR-0034's **autonomous disposition path** is that
+second definition, and it is a real requirement rather than a synthetic case. Its shape is the strongest
+available evidence the step model carved reality at the right joint: it is **the grouped review minus
+exactly one step** (`human_await`) — same rules-fetch, same proposer, same `plan_dispatch`, same per-item
+`DispatchItem` convergence. Build M3.2 expecting that diff, and treat *"the two definitions differ by one
+step and nothing else"* as the design's own check on itself. Also inherited: **escalation out of the
+autonomous path back into this one is mandatory** (ADR-0034 §7), and choosing its mechanism — a conditional
+human step (the expressiveness wake's first customer) vs. terminate-and-start-workflow-1 — is deliberately
+left as an **M3-time decision**.
+
 ## Acceptance when M3.2 lands
 The hand-coded `grouped_review_workflow.py` is deleted; the grouped review runs from
 `policy/workflows/grouped_review.yaml` via `_run_definition`; the sealed HITL mechanics (register-before-
 suspend, `can_act`, promise resolve, bulk-resolve) still pass their seals; and a NON-grouped definition
-(a plain approval) runs on the same executor — proving the runner is definition-driven, not class-driven.
+(a plain approval — or, per ADR-0034, the autonomous disposition path) runs on the same executor — proving
+the runner is definition-driven, not class-driven.
 
 **And the sentence that makes "configurable workflow" FALSIFIABLE — the milestone's north star, not a
 feature request trailing behind it:**
