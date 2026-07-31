@@ -133,6 +133,17 @@ At that point:
    routes it, which is where it belongs anyway, and it is where the trust gate will already live.
 3. This file's seal is rewritten against the two-definition shape.
 
+**MEASURED BASELINE (2026-07-31), so the trigger is observable rather than anecdotal.** PCN-2683
+composed **402 parts in 173s** against a 300s budget — comfortably inside, and the ceiling is
+**content-shaped**: composition resolves a subject, checks entitlement and evaluates the ruleset
+*per part*, so the cost scales with the notice. At ~0.43 s/part, the budget is exhausted somewhere
+around **700 parts**, and 402-part notices are already routine.
+
+> **Second trigger for the async wake: composition time TRENDING toward the budget** — not "someone
+> hits a timeout". Watch the ratio, not the incident. The first 900-part notice, or a work-cluster
+> latency profile slower than sandbox's, converts "inside the budget" into "*was* inside the
+> budget" — and a ceiling discovered by breaching it is the failure this baseline exists to avoid.
+
 **Why it is deliberately NOT done now.** The synchronous contract is not *wrong* — with the ingress
 idempotency key (landed 2026-07-30) the 300s hold is a bounded wait on a **deduplicated**
 invocation: ugly, but honest and safe. Doing the async conversion today would mean designing the

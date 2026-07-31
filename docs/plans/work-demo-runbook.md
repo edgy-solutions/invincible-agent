@@ -45,6 +45,20 @@ is toggled by `ENABLE_DISPOSITION_AUTHZ` — read this table before you decide w
 All grants go through `task_grant_sync` / `capability_sync` (validate → reconcile → readback →
 prune); never hand-surgery Topaz.
 
+> **AFTER SYNCING CAPABILITY GRANTS THAT AFFECT INGRESS OUTCOMES — BUMP
+> `REVIEW_REQUEST_KEY_EPOCH`.** A notice refused `NOT_ENTITLED_TO_INITIATE` is a COMPLETED
+> Restate invocation, and the ingress idempotency key is derived from the ARTIFACT. So once you
+> fix the grant, re-driving the identical notice ATTACHES to the stored 403 and replays the
+> refusal — the pipeline correctly refusing to redo work whose inputs are unchanged, while the
+> thing that actually changed was the environment. Hit live 2026-07-31; the symptom is a deny
+> that persists after Topaz itself answers `check: true`, which reads as a grant problem and is
+> not one.
+>
+> Content refusals need no bump (re-extracting changes the ETag, which changes the key on its
+> own). This is only for fixes that live OUTSIDE the artifact: grants, ruleset, gate flips,
+> deploys. The recurrence vector is exactly *"someone fixes the grants and forgets the epoch"* —
+> which is why it is written here, in the grant procedure, and not only in the code comment.
+
 > ### FLIP RIDER — sandbox is now `ENABLE_DISPOSITION_AUTHZ=true` (2026-07-31)
 > Sandbox **no longer runs the gate-off config described below.** It was flipped ON during the
 > refusal-routing witness, because the two sibling gates had drifted into different states and

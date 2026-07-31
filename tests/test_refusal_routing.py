@@ -365,3 +365,30 @@ def test_unflagged_zero_parts_stays_an_honest_empty():
         "expected exactly two triage filings in the op: the zero-parts flagged case and the "
         "refused_content case — a third means some other path started filing tasks"
     )
+
+
+# ── the failure-path fixture is a MAINTAINED artifact, and must still bite ──
+def test_cropfail_fixture_still_evokes_the_failure_it_was_built_for():
+    """A healthy pipeline starves its failure paths of organic inputs, so this fixture IS the
+    input — committed, versioned, derived from a real extraction. If a future edit makes it
+    reviewable, refusal routing's tests keep passing while exercising nothing, which is the
+    green-over-nothing shape twice over. See tests/fixtures/failure_path/README.md."""
+    from tests.fixtures.failure_path.cropfail_review import (  # noqa: PLC0415
+        assert_evokes_the_failure, make_cropfail_review,
+    )
+    real = {"doc_id": "PCN-2683", "doc_type": "PCN", "needs_review": False,
+            "categories": ["Material"], "pages": [{"page": 1}],
+            "review_items": [
+                {"field_path": "header.categories", "value": ["Material"]},
+                {"field_path": "parts[0].affected_mpn", "value": "MPN-A"},
+                {"field_path": "parts[0].replacement_mpn", "value": "MPN-A-R"},
+            ]}
+    fx = make_cropfail_review(real)
+    assert_evokes_the_failure(fx)
+    # And the sensor must actually classify it as the zero-parts case.
+    payload = ers.build_start_review_payload(fx)
+    assert payload["impacted_parts"] == []
+    assert payload["doc_needs_review"] is True
+    assert payload["extraction_warnings"] == ["PARTS MAY BE MISSING: 2/5 table crops failed"]
+    # Non-part signals survive the mutation — the fixture keeps the producer's real shape.
+    assert fx["categories"] == ["Material"] and fx["pages"] == [{"page": 1}]
