@@ -79,6 +79,19 @@ auto-dispatch.**
 - **`purpose: audit` step attribute.**
 - **Promotion-proposal-as-grouped-review** (the recursion: promotion is itself an approval).
 - **Capability-grant coupling mechanics** (ADR-0034 §6).
+- **The ingress goes ASYNC, and refusal routing relocates into the Restate handler.** Filed here because
+  several places already point at "ADR-0034 Phase 2" as this work's trigger
+  (`docs/plans/refusal-routing-design.md` §NAMED WAKE and `_ingress_idempotency_key`'s docstring), and a
+  wake that names a destination the destination does not acknowledge is how a deferral becomes a
+  disappearance. Today the BFF calls `start_review` **synchronously** and the sensor classifies the
+  response — which is what makes today's refusal routing possible at all. The autonomous path cannot work
+  that way: there is no human latency to wait on, the sensor fire-and-forgets into a definition, and there
+  is **no synchronous response left to classify**. So workflow 2 forces three coupled changes that must
+  land together: (1) the BFF `send`s and returns 202; (2) refusal routing moves INTO the handler — the
+  decider that knows the refusal routes it, which is also where the trust gate lives; (3)
+  `tests/test_refusal_routing.py` is rewritten against the two-definition shape. The ingress idempotency
+  key (landed `e513242`) is what makes deferring this safe: the synchronous hold is a bounded wait on a
+  **deduplicated** invocation — ugly, but honest.
 
 ## Refusals — slip-is-signal applies
 

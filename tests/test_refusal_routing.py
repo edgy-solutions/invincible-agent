@@ -51,21 +51,48 @@ from dagster import Failure  # noqa: E402
 
 
 def _bff_refusal(status: str) -> dict:
-    """How a refusal ACTUALLY looks on the wire: the BFF re-raises the engine body as
+    """How a 422 refusal ACTUALLY looks on the wire: the BFF re-raises the engine body as
     HTTPException(detail=...), and FastAPI wraps it in {"detail": ...}. Tests that
     hand-build a flat {"status": ...} body would pass while production mis-routed."""
     return {"detail": {"status": status, "notice_id": "PCN-2683"}}
 
 
+# ONLY THESE THREE become 422 (cortex-bff `_PCN_REVIEW_BAD_REQUEST`). Every other engine
+# status passes through with the ingress's own 200 — including two of the three PER-NOTICE
+# content codes. This asymmetry is not decorative: the original seal encoded the 422 shape
+# for all three, so it verified the wire for ONE code and ASSUMED it for the others, and
+# NO_PARTS_EXTRACTED / NO_AFFECTED_PARTS would have been reported to ops in production while
+# the tests stayed green. Caught by tracing reachability on the cluster.
+_ARRIVES_AS_422 = {"REVIEW_STATE_UNSOURCED", "RULESET_INVALID", "RULES_NOT_FOUND"}
+
+
+def _on_the_wire(status: str):
+    """(status_code, body) exactly as the sensor receives it for this engine status."""
+    if status in _ARRIVES_AS_422:
+        return 422, _bff_refusal(status)
+    return 200, {"status": status, "notice_id": "PCN-2683"}
+
+
 # ── PROPERTY 1: the split itself, over the real wire shape ──────────────────
 @pytest.mark.parametrize("code", ["REVIEW_STATE_UNSOURCED", "NO_PARTS_EXTRACTED", "NO_AFFECTED_PARTS"])
 def test_per_notice_content_refusals_route_to_the_reviewer(code):
-    """These are statements about THIS document. Only the reviewer can answer them."""
-    outcome, _ = ers.classify_start_review(422, _bff_refusal(code))
+    """These are statements about THIS document. Only the reviewer can answer them —
+    whichever HTTP status the BFF happens to give them."""
+    outcome, _ = ers.classify_start_review(*_on_the_wire(code))
     assert outcome == "refused_content", (
         f"{code} is a per-notice content problem — routing it systemic sends it back to "
         f"the one persona who cannot act on it, which is the bug this file seals"
     )
+
+
+def test_the_two_content_codes_that_arrive_as_200_are_not_mistaken_for_success():
+    """THE ASSUMPTION THAT WAS WRONG, pinned. NO_PARTS_EXTRACTED and NO_AFFECTED_PARTS come
+    back with HTTP 200 because the BFF only re-raises three statuses as 422. Treated as an
+    'unexpected 200' they route to OPS; treated as success they vanish entirely."""
+    for code in ("NO_PARTS_EXTRACTED", "NO_AFFECTED_PARTS"):
+        assert ers.classify_start_review(200, {"status": code})[0] == "refused_content", (
+            f"{code} arrives as HTTP 200 and must still be recognized as a per-notice refusal"
+        )
 
 
 @pytest.mark.parametrize("code", ["RULES_NOT_FOUND", "RULESET_INVALID"])
@@ -93,7 +120,7 @@ def test_unrecognized_status_defaults_to_systemic_not_content():
     """DEFAULT DIRECTION. An unknown refusal routed to a human asserts 'look at this
     document', which is a false statement when the truth is 'the pipeline is broken'.
     Unknown means unknown: it goes to ops."""
-    outcome, _ = ers.classify_start_review(422, _bff_refusal("SOME_FUTURE_CODE"))
+    outcome, _ = ers.classify_start_review(*_on_the_wire("SOME_FUTURE_CODE"))
     assert outcome == "refused_systemic"
 
 
@@ -106,7 +133,7 @@ def test_the_content_set_is_closed_not_open():
     the default drift is not."""
     assert "REVIEW_STATE_UNSOURCED" in ers._CONTENT_REFUSALS
     for invented in ("", "ANYTHING_ELSE", "REVIEW_STATE_UNSOURCED_V2", "rules_not_found"):
-        assert ers.classify_start_review(422, _bff_refusal(invented))[0] == "refused_systemic", (
+        assert ers.classify_start_review(*_on_the_wire(invented))[0] == "refused_systemic", (
             f"{invented!r} is not a known per-notice code and must route to ops"
         )
 
@@ -273,7 +300,7 @@ def test_no_triage_task_is_ever_FILED_for_a_systemic_refusal(monkeypatch, code):
 
     def _record(url, **kw):
         calls.append(url)
-        return _Resp(422, _bff_refusal(code))
+        return _Resp(*_on_the_wire(code))
 
     _patch_post(monkeypatch, _record)
     with pytest.raises(Failure):
@@ -298,3 +325,43 @@ def test_submit_review_returns_content_refusals_for_the_caller_to_route(monkeypa
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ── REACHABILITY: does anything actually ARRIVE at the routing? ─────────────
+# The original seal tested the routing thoroughly and never asked whether the sensor could
+# REACH it. It could not: the op returned early on zero parts, so the design's own flagship
+# example — "the extraction did not produce any affected parts (2/5 table crops failed)" —
+# was swallowed one layer above the code written to route it, and the run went GREEN. A
+# seal that tests a mechanism but not its inputs is [[feedback_fixture_must_exercise_paths]]
+# at the call-graph level.
+def _op_source() -> str:
+    return _SENSOR.read_text(encoding="utf-8")
+
+
+def test_zero_parts_with_a_flagged_doc_is_routed_not_skipped():
+    """The flagged-and-empty case must REACH triage. Asserted against the op's source
+    because the op is Dagster-bound; the behaviour is a branch, and the branch must exist."""
+    src = _op_source()
+    body = src[src.index("def start_review_op"):src.index("@job")]
+    assert 'if payload["doc_needs_review"]:' in body, (
+        "the zero-parts branch no longer distinguishes a FLAGGED document from an honest "
+        "empty — the flagged case is a notice we could not prepare and must be routed"
+    )
+    flagged = body[body.index('if payload["doc_needs_review"]:'):]
+    assert "file_triage_task(" in flagged, (
+        "a flagged document with zero extracted parts must be FILED, not logged and dropped"
+    )
+    assert 'reason_code="NO_PARTS_EXTRACTED"' in flagged
+
+
+def test_unflagged_zero_parts_stays_an_honest_empty():
+    """The other half, equally deliberate: not-flagged AND no parts is 'nothing to do', the
+    NO_RESIDUE shape. Filing a task for every one would flood the queue with noise — the
+    rubber-stamp pressure ADR-0034 exists to avoid."""
+    src = _op_source()
+    body = src[src.index("def start_review_op"):src.index("@job")]
+    assert "honest empty" in body
+    assert body.count("file_triage_task(") == 2, (
+        "expected exactly two triage filings in the op: the zero-parts flagged case and the "
+        "refused_content case — a third means some other path started filing tasks"
+    )

@@ -224,8 +224,18 @@ def classify_start_review(status_code: int, body: dict) -> Tuple[str, str]:
             return "started", f"workflow_id={body.get('workflow_id')} count={body.get('count')}"
         if status == "NO_RESIDUE":
             return "no_residue_skip", f"nothing to review: {body.get('counts')}"
+        # PER-NOTICE CONTENT REFUSALS THAT ARRIVE AS 200, NOT 422. The BFF re-raises only
+        # {REVIEW_STATE_UNSOURCED, RULESET_INVALID, RULES_NOT_FOUND} as 422
+        # (`_PCN_REVIEW_BAD_REQUEST`); every other engine status passes through with the
+        # ingress's own 200. So these two — both statements about THIS document — would
+        # otherwise fall to the "unexpected 200" branch below and be reported to OPS.
+        # Found by tracing reachability on the live cluster, not by the offline seal, which
+        # had encoded the 422 shape for all three content codes: the wire shape was verified
+        # for one and ASSUMED for the others.
+        if status in _CONTENT_REFUSALS:
+            return "refused_content", f"{status}: {body}"
         # The initiator deny no longer arrives as a 200 — it is a 403 NOT_ENTITLED_TO_INITIATE
-        # (handled below). Any other 200 status is unexpected.
+        # (handled below). Any other 200 status is unexpected, and unknown routes to ops.
         return "refused_systemic", f"unexpected 200 status={status!r} body={body}"
     if status_code == 403:
         return "refused_systemic", (
@@ -542,11 +552,43 @@ def start_review_op(context, config: StartReviewConfig) -> None:
                                          request_key=request_key)
     if not payload["notice_id"]:
         raise Failure(description=f"review.json {key} has no doc_id (notice_id)")
-    if not payload["impacted_parts"]:
-        context.log.info(f"no impacted parts in {key}; nothing to review — skipping")
-        return
     bff_url = os.environ["CORTEX_BFF_URL"]
     token = mint_service_token()   # per-run client-credentials; RAISES loudly on mint failure (failed run)
+    if not payload["impacted_parts"]:
+        # ZERO PARTS — and the two cases are NOT the same statement, so they must not share
+        # a fate. This branch used to log-and-return for both, which meant the flagship case
+        # of the refusal-routing design ("The extraction did not produce any affected parts
+        # (2/5 table crops failed)") could never REACH the routing built for it: the sensor
+        # swallowed it here, one layer above, and the run went GREEN. Found by tracing
+        # reachability on the cluster; the offline seal could not see it because it tested
+        # the routing, not whether anything arrives at the routing.
+        if payload["doc_needs_review"]:
+            # The document ITSELF says "review me" and extraction produced nothing to review.
+            # That is a document we could not prepare — exactly a per-notice content refusal,
+            # and the reviewer is the only one who can act on it. Routed WITHOUT calling
+            # start_review, because there is nothing to compose; the classification is
+            # already certain here.
+            triage = build_triage_payload(
+                source_key=key, notice_id=payload.get("notice_id"),
+                reason_code="NO_PARTS_EXTRACTED",
+                detail="the extraction flagged this document for review and produced no "
+                       "affected parts",
+                warnings=payload.get("extraction_warnings"),
+                domain=config.domain, audience=_TRIAGE_AUDIENCE or None,
+            )
+            filed = file_triage_task(triage, bff_url=bff_url, token=token, source=src)
+            context.log.warning(
+                f"NO_PARTS_EXTRACTED for notice={payload['notice_id']} source={src} -> routed "
+                f"to {filed.get('audience')} as task {filed.get('task_id')} "
+                f"({filed.get('status')}, recipients={filed.get('recipients', 'n/a')})"
+            )
+            return
+        # Not flagged AND no parts: an honest empty, the same shape as NO_RESIDUE. Filing a
+        # task for every one of these would flood the queue with "nothing to do" — the
+        # rubber-stamp pressure the trust work is explicitly trying to avoid.
+        context.log.info(f"no impacted parts in {key} and the doc is not flagged; "
+                         f"nothing to review — skipping (honest empty)")
+        return
     # Log the source BEFORE the call: if the POST times out or the process dies, this line
     # is the only record of WHICH document the run was working on.
     context.log.info(
