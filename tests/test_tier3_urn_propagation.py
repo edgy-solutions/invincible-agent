@@ -146,16 +146,26 @@ def test_resolve_subject_extracts_instance_id_from_provenance(supervisor_mod):
         )
 
     # Tuple shape: (subject_uri, confidence, reasoning, instance_id,
-    # subject_candidates, abstention_reason). 2026-07-02 (decision-path
-    # Part 0) added the 5th element (resolver candidate pool with scores);
-    # 2026-07-03 (abstention-gate arc) added the 6th — the structural
-    # instance_not_found marker Engine O sets in provenance.
-    assert len(result) == 6, (
+    # subject_candidates, abstention_reason, instance_label). 2026-07-02
+    # (decision-path Part 0) added the 5th element (resolver candidate pool with
+    # scores); 2026-07-03 (abstention-gate arc) added the 6th — the structural
+    # instance_not_found marker Engine O sets in provenance; 2026-07-10
+    # (answer-first instance headline, f9a9be0) added the 7th — the FRIENDLY
+    # instance label the summary leads with.
+    #
+    # THIS PIN WAS STALE FOR THREE WEEKS. f9a9be0 grew the tuple and did not
+    # update this assertion, so the file has been red since 2026-07-10 and the
+    # redness was read past as "the usual failures". An arity pin is exactly the
+    # test that SHOULD fail when a tuple grows — it did its job; nobody claimed
+    # the result. Growing this tuple again means updating this line, and the
+    # per-element assertions below, in the same commit.
+    assert len(result) == 7, (
         f"_resolve_subject returns (uri, conf, reasoning, instance_id, "
-        f"candidates, abstention_reason) — length 6. Got tuple of length "
-        f"{len(result)}: {result!r}"
+        f"candidates, abstention_reason, instance_label) — length 7. Got tuple "
+        f"of length {len(result)}: {result!r}"
     )
-    subject_uri, confidence, reasoning, instance_id, _candidates, _abstention = result
+    (subject_uri, confidence, reasoning, instance_id,
+     _candidates, _abstention, instance_label) = result
     assert subject_uri == "http://invincible-agent/idp#Table"
     assert confidence == 0.99
     assert "engine_d" in reasoning
@@ -163,6 +173,15 @@ def test_resolve_subject_extracts_instance_id_from_provenance(supervisor_mod):
         f"Tier-3 fix: provenance.instance_id must propagate as the 4th "
         f"tuple element. Got instance_id={instance_id!r}; expected the "
         f"URN from provenance.instance_id."
+    )
+    # The 7th element gets a real assertion, not just an arity bump: this
+    # fixture's provenance carries NO instance_label, and the contract is that a
+    # missing label is "" (not None), so the answer summary's truthy check falls
+    # back to the class label uniformly — the same empty-string discipline the
+    # instance_id assertions above enforce.
+    assert instance_label == "", (
+        f"instance_label must be empty string when provenance carries no label "
+        f"(not None). Got {instance_label!r}."
     )
 
 
@@ -183,7 +202,7 @@ def test_resolve_subject_empty_instance_id_when_no_provenance(supervisor_mod):
             _FakeCtx(), "What procedure data module covers X", "MAINTENANCE"
         )
 
-    _, _, _, instance_id, _, _ = result
+    _, _, _, instance_id, _, _, _ = result
     assert instance_id == "", (
         f"When provenance is None, instance_id must be empty string "
         f"(not None). Got {instance_id!r}."
@@ -212,7 +231,7 @@ def test_resolve_subject_empty_instance_id_when_instance_resolved_false(supervis
             _FakeCtx(), "Fetch absent_table_xyz", "DATA_ENGINEERING"
         )
 
-    _, _, _, instance_id, _, _ = result
+    _, _, _, instance_id, _, _, _ = result
     assert instance_id == "", (
         f"When provenance.instance_resolved=False, instance_id must be "
         f"empty (not None). This is the structural negative-control "
@@ -232,8 +251,11 @@ def test_resolve_subject_empty_instance_id_on_resolve_failure(supervisor_mod):
             _FakeCtx(), "Anything", "MAINTENANCE"
         )
 
-    assert len(result) == 6
-    subject_uri, confidence, reasoning, instance_id, _candidates, _abstention = result
+    assert len(result) == 7, "the unreachable path must return the SAME arity as the happy path"
+    (subject_uri, confidence, reasoning, instance_id,
+     _candidates, _abstention, instance_label) = result
+    assert instance_label == "", "the failure path must fill instance_label too, not drop it"
+
     assert subject_uri == "UNKNOWN"
     assert confidence == 0.0
     assert "unreachable" in reasoning

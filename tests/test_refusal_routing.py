@@ -97,6 +97,20 @@ def test_unrecognized_status_defaults_to_systemic_not_content():
     assert outcome == "refused_systemic"
 
 
+def test_the_content_set_is_closed_not_open():
+    """THE DIRECTION IS THE PROPERTY, not the current membership list. Routing is a
+    CLOSED allow-list of known per-notice codes; everything else falls to ops. Inverting
+    it — treating unrecognized as content — is a one-line refactor that still "works" on
+    every code in today's fixtures and starts telling humans to inspect documents when
+    the pipeline is down. Adding a code to _CONTENT_REFUSALS is a deliberate act; letting
+    the default drift is not."""
+    assert "REVIEW_STATE_UNSOURCED" in ers._CONTENT_REFUSALS
+    for invented in ("", "ANYTHING_ELSE", "REVIEW_STATE_UNSOURCED_V2", "rules_not_found"):
+        assert ers.classify_start_review(422, _bff_refusal(invented))[0] == "refused_systemic", (
+            f"{invented!r} is not a known per-notice code and must route to ops"
+        )
+
+
 def test_success_paths_are_untouched_by_the_split():
     assert ers.classify_start_review(200, {"status": "STARTED", "workflow_id": "w1"})[0] == "started"
     assert ers.classify_start_review(200, {"status": "NO_RESIDUE"})[0] == "no_residue_skip"
@@ -244,6 +258,30 @@ def test_submit_review_raises_only_for_systemic(monkeypatch):
     _patch_post(monkeypatch, lambda *a, **k: _Resp(422, _bff_refusal("RULES_NOT_FOUND")))
     with pytest.raises(Failure):
         ers.submit_review({"notice_id": "n"}, bff_url="http://bff", token="t", source="k")
+
+
+@pytest.mark.parametrize("code", ["RULES_NOT_FOUND", "SOME_FUTURE_CODE", "NOT_ENTITLED_TO_INITIATE"])
+def test_no_triage_task_is_ever_FILED_for_a_systemic_refusal(monkeypatch, code):
+    """THE DEFAULT DIRECTION, asserted at the CALL layer rather than the classifier.
+
+    Classification returning "refused_systemic" is necessary but not sufficient — what
+    actually matters is that no POST reaches /triage_tasks, i.e. that no human is told to
+    go look at a document when the pipeline is what is broken. This watches every outbound
+    call, so a future refactor that routes first and classifies second fails here even if
+    the classifier is still correct."""
+    calls = []
+
+    def _record(url, **kw):
+        calls.append(url)
+        return _Resp(422, _bff_refusal(code))
+
+    _patch_post(monkeypatch, _record)
+    with pytest.raises(Failure):
+        ers.submit_review({"notice_id": "n"}, bff_url="http://bff", token="t", source="k")
+    assert not any("triage" in u for u in calls), (
+        f"a systemic refusal ({code}) filed a triage task — that tells a reviewer to "
+        f"inspect a document when the truth is that the deployment is broken"
+    )
 
 
 def test_submit_review_returns_content_refusals_for_the_caller_to_route(monkeypatch):

@@ -206,6 +206,44 @@ pyproject.toml              # Orchestrator project config
 
 ## Workflow Rules
 
+### Running the tests — the extra is not optional
+`uv run --frozen --extra agent-fleet python -m pytest tests/ -q`
+
+`rdflib`, `restate-sdk` and `smolagents` live in the **`agent-fleet` optional extra**, so a
+plain `uv run --frozen` (or a bare system `python`/`py`) collects `test_review_starter`,
+`test_restate_analyst` and friends as import errors. Those are **environment selection**,
+not repo breakage — and reporting them as "pre-existing failures" is how a genuinely red
+test hides in the noise. If a suite is red, first re-run it with the extra before
+attributing the failure to anything.
+
+### The error path is itself an error surface — a reporter must fail louder than what it reports
+**A channel that reports failures must fail LOUDER than the failures it reports.** Every
+link in an error path — the notification POST, the token mint, the task registration, the
+audience resolution — can itself fail, and swallowing any of them hides the original
+problem behind a **green** run: strictly worse than the loud-but-misaddressed state you
+were fixing.
+
+Applied: the extraction→review sensor's triage POST raises on 403 / 422 / timeout, so a
+missing capability grant degrades refusals to the old bad behaviour LOUDLY instead of to
+silence; `mint_service_token` raises rather than quietly starting no reviews. The
+consequence to internalize is that such a grant is **load-bearing for VISIBILITY, not just
+permission** — unseeded, it silently reverts the fix, so it ships in the same window as
+the code that depends on it.
+
+Test it directly: enumerate every way the reporting call can fail and assert each RAISES
+(`tests/test_refusal_routing.py::test_triage_routing_failure_fails_the_run`). Sibling of
+the fail-to-NONE rule — a heuristic that can refuse degrades to no-check, never to a
+confident wrong answer; a reporter that can fail degrades to a loud failure, never to a
+quiet success.
+
+### When routing by audience, seal the DEFAULT DIRECTION, not just the mapping
+When work is routed by category (content→owner, systemic→ops), the membership list is the
+easy part; the **default for unrecognized input** is the load-bearing decision, because
+both directions "work" on every case in today's fixtures. Route unknown to the LOUD side:
+filing a per-item task asserts "look at this item", which is a false statement when the
+truth is "the system is broken". Keep the routed set a CLOSED allow-list, and pin the
+direction with a test that feeds it invented categories.
+
 ### When adding an S3-watching Dagster sensor — use the shared cursor contract
 Do NOT hand-roll "what have I seen". `dag-tools`' `S3SensorComponent`
 (`dag_tools/components/s3_sensor/`) is the reference implementation; use it directly
