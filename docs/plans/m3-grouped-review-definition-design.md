@@ -177,8 +177,41 @@ surface).
   steps + the SPO interview, ADR-0029 Slice-2).
 - **M3.2:** build the definition executor (stage-2 verifier + dispatch) + cut the runner over to
   `_run_definition`, behind its own seal; land `policy/workflows/grouped_review.yaml`.
-- **M3.3 (on the presentation trigger):** `rendersAs` triples; retire `taskKindRegistry` + the hand-fed
-  dashboard feeder. NOT before the second instances-by-property view.
+- **M3.3 (on the presentation trigger):** `rendersAs` triples; retire `taskKindRegistry` **and
+  `_VERBS_BY_KIND`** (see below) + the hand-fed dashboard feeder. NOT before the second
+  instances-by-property view.
+
+## TWO interim per-kind tables now, and they retire TOGETHER
+(Added 2026-07-31, from the triage-card work — recorded here because a coupling that exists only
+in someone's head between a branch and a milestone is a coupling that gets orphaned.)
+
+`cortex-ui`'s `taskKindRegistry` is no longer the only hardcoded per-kind lookup awaiting a served
+declaration. The triage-card fix added **`_VERBS_BY_KIND` in `src/iagent/human_tasks.py`** — which
+verbs each task species accepts (`extraction_refusal` → acknowledge/re-drive; everything else →
+approve/reject). Same shape, same interim status, different repo.
+
+**Naming only `taskKindRegistry` in M3.3 would orphan the other one** — the
+retire-coupled-mechanisms-together rule, and the failure mode is the worse half surviving: a
+served `rendersAs` declaration that says how a task RENDERS while a code table still decides what
+it can DO.
+
+### Verbs belong in the step schema — an M3.2 absorption item, not a new invention
+`HumanAwaitStep` today carries `audience / subject_ref / title / summary / requested_by` and **no
+verbs, no completion, no claiming.** But a step's verbs are the same *kind* of fact as its quorum
+and its claiming behaviour — part of what the step MEANS — and this milestone's own north star is:
+
+> A team step's quorum and claiming behavior changes by editing the definition YAML — zero code.
+
+So **verbs are inside that sentence's scope and are currently outside YAML's reach.** Be honest
+about how they got there: the triage task was recording `decision: approved` on *"this notice could
+not be prepared for review"* — a decision the data cannot represent, which ADR-0034's decision
+records would then archive immutably as promotion evidence. That could not wait for M3, so the
+vocabulary went into code **deliberately**, making M3.2's absorption list one item longer rather
+than letting the evidence corpus start polluted. The right trade, and a cost — not a freebie.
+
+When M3.2 lands, `HumanAwaitStep` should grow the declaration (verbs, and the `completion` /
+`claiming` the north-star sentence already names), and `_VERBS_BY_KIND` is deleted into it. Until
+then the table is the interim, and the deletion note lives on it.
 
 ## Standards posture (the gap this doc originally missed)
 This design covered BPMN→the SPO model but said nothing about ADR-0029's OTHER standards

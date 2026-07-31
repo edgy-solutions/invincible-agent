@@ -376,6 +376,15 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
 # kind": the old default was honest about LABELS ("TASK") and dishonest about AFFORDANCES
 # (APPROVAL_TASK), because a label that says nothing is harmless and an affordance that says
 # nothing still offers buttons.
+#
+# INTERIM — RETIRES AT M3.3, TOGETHER WITH cortex-ui's `taskKindRegistry`. This is the SECOND
+# hardcoded per-kind table awaiting a served declaration, and the two must retire in one change:
+# a `rendersAs` declaration that says how a task RENDERS while a code table still decides what it
+# can DO is the worse half surviving. A step's verbs are the same kind of fact as its quorum and
+# claiming — part of what the step MEANS — so they belong on `HumanAwaitStep`, inside the
+# milestone's own north star ("quorum and claiming change by editing the YAML — zero code").
+# They are here rather than there because the provenance bug could not wait for M3; see
+# docs/plans/m3-grouped-review-definition-design.md §"TWO interim per-kind tables".
 _VERBS_BY_KIND: dict[str, frozenset[str]] = {
     "extraction_refusal": frozenset({"acknowledged", "redriven"}),
 }
