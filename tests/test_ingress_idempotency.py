@@ -187,3 +187,39 @@ def test_bff_declares_request_key_so_it_is_not_dropped():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ── THE CACHED-SYSTEMIC-REFUSAL ESCAPE (found live 2026-07-31) ──────────────
+def test_epoch_absent_by_default_leaves_the_key_purely_artifact_derived():
+    """Default: no epoch, so the key is exactly ETag+location and normal retries attach."""
+    assert ers._REQUEST_KEY_EPOCH == "" or ers._REQUEST_KEY_EPOCH.endswith("|")
+
+
+def test_epoch_changes_the_key_so_a_cached_refusal_can_be_re_driven(monkeypatch):
+    """THE LIVE FINDING. A notice refused NOT_ENTITLED_TO_INITIATE (missing grant) is a
+    COMPLETED invocation; once the grant is fixed, re-driving the identical artifact attaches
+    to the stored 403 and replays the refusal — correct dedup, wrong outcome, because what
+    changed was the ENVIRONMENT and nothing about the artifact moved. Bumping the epoch
+    invalidates cached refusals without touching any artifact.
+
+    A CONTENT refusal needs no epoch: re-extracting changes the ETag, which changes the key
+    on its own. That asymmetry is why this knob exists and why it is ops-driven."""
+    k = _key()
+    artifact, approver = "etag-aaa-s/a/generated/review.json", "svc:review-starter"
+    before = k(artifact, approver)
+    after = k("epoch-2|" + artifact, approver)
+    assert before != after, (
+        "bumping the epoch must produce a different ingress key, or a cached systemic "
+        "refusal is unrecoverable without re-extracting an artifact that is not the problem"
+    )
+
+
+def test_epoch_is_a_prefix_not_a_replacement():
+    """The epoch must not erase artifact identity — supersede-vs-duplicate still has to work
+    WITHIN an epoch, or bumping it would make every retry a fresh composition forever."""
+    k = _key()
+    a = k("epoch-2|etag-aaa-s/a/generated/review.json", "svc")
+    b = k("epoch-2|etag-bbb-s/a/generated/review.json", "svc")
+    same = k("epoch-2|etag-aaa-s/a/generated/review.json", "svc")
+    assert a != b, "different content within one epoch must still be different work"
+    assert a == same, "identical content within one epoch must still attach"

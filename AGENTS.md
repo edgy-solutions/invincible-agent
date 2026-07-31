@@ -216,6 +216,29 @@ not repo breakage — and reporting them as "pre-existing failures" is how a gen
 test hides in the noise. If a suite is red, first re-run it with the extra before
 attributing the failure to anything.
 
+### Seals need a REACHABILITY class — "does anything arrive here?" is a separate property
+A seal proves the code under it behaves correctly **on the inputs it is given**. It says nothing
+about whether those inputs can ever arrive. Every seal built against a constructed fixture
+silently assumes reachability, and that assumption is invisible precisely because the tests are
+green.
+
+Completes the trilogy: **the seal must bite** (proven-to-bite), **the harness must be able to
+report the bite** (harness-can-fail), and **the sealed code must be reachable by the inputs the
+seal simulates**.
+
+Three instances: the discard-pattern's dead `recall_override` branch; the svc:review-starter
+witness that passed with its capability gate dark (so the gate was never exercised); and refusal
+routing — 25 tests, mutation-proven, direction-pinned, and a **no-op on the path that motivated
+it**, because the op returned early on zero parts one frame above the routing, and two of the
+three content codes arrived on a wire shape the fixture never modelled.
+
+Two rules fall out:
+- **Verify-the-pipe is PER-BRANCH, not per-endpoint.** Reading one real response and generalizing
+  to sibling codes is the same assumption one level out. Derive fixtures from the producer's real
+  behaviour (e.g. the BFF's actual 422 set) rather than hand-writing one shape for all cases.
+- **Ask "what produces this input, and can it?"** before trusting a green seal — and where the
+  answer is a call-graph fact, assert it (a branch exists, a filing count is exactly N).
+
 ### The error path is itself an error surface — a reporter must fail louder than what it reports
 **A channel that reports failures must fail LOUDER than the failures it reports.** Every
 link in an error path — the notification POST, the token mint, the task registration, the

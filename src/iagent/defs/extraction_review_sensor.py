@@ -520,6 +520,26 @@ def file_triage_task(triage: dict, *, bff_url: str, token: str, timeout: float =
 # durable part; which audience owns triage is a tuning knob.
 _TRIAGE_AUDIENCE = os.getenv("REVIEW_TRIAGE_AUDIENCE", "").strip()
 
+# OPS ESCAPE FROM A CACHED SYSTEMIC REFUSAL. The ingress idempotency key is derived from the
+# ARTIFACT, which is exactly right for a retry — and wrong for the case found live
+# (2026-07-31): a notice refused NOT_ENTITLED_TO_INITIATE because a capability grant was
+# missing. A refusal is a COMPLETED invocation, so once the grant was fixed, re-driving the
+# identical artifact ATTACHED to the stored 403 and replayed the refusal — the pipeline
+# correctly refusing to redo work whose inputs had not changed, while the thing that
+# actually changed was the ENVIRONMENT.
+#
+# The asymmetry is the point: a CONTENT refusal is fixed by re-extracting (new ETag -> new
+# key -> composes afresh, automatically). A SYSTEMIC refusal is fixed OUTSIDE the artifact —
+# a grant, a ruleset, a deploy — and nothing about the artifact moves, so nothing invalidates
+# the key. Bumping this epoch after such a fix invalidates every cached refusal at once,
+# which is precisely the ops intent ("I fixed the grant; re-drive everything").
+#
+# Deliberately MANUAL rather than derived from live config state: keying on a config hash
+# would silently re-compose every notice on any unrelated config change — the opposite
+# failure, and a far more expensive one at 173s/notice. An operator bumping a value is a
+# declared intent; a hash drifting is an accident.
+_REQUEST_KEY_EPOCH = (lambda e: f"{e}|" if e else "")(os.getenv("REVIEW_REQUEST_KEY_EPOCH", "").strip())
+
 
 class StartReviewConfig(Config):
     review_json_url: str  # s3://bucket/.../review.json
@@ -547,7 +567,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
     # The ETag comes from the SAME read that produced `review`, so the idempotency key and
     # the composed content cannot disagree — a separate HEAD could observe a re-extraction
     # landing between the two calls and key this request to content it did not read.
-    request_key = f"{(obj.get('ETag') or 'no-etag').strip(chr(34))}-{key}"
+    request_key = f"{_REQUEST_KEY_EPOCH}{(obj.get('ETag') or 'no-etag').strip(chr(34))}-{key}"
     payload = build_start_review_payload(review, doc_type=config.doc_type, domain=config.domain,
                                          request_key=request_key)
     if not payload["notice_id"]:

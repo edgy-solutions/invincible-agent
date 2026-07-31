@@ -45,7 +45,28 @@ is toggled by `ENABLE_DISPOSITION_AUTHZ` — read this table before you decide w
 All grants go through `task_grant_sync` / `capability_sync` (validate → reconcile → readback →
 prune); never hand-surgery Topaz.
 
-**If you leave `ENABLE_DISPOSITION_AUTHZ` unset (the fastest path — the sandbox-proven config):**
+> ### FLIP RIDER — sandbox is now `ENABLE_DISPOSITION_AUTHZ=true` (2026-07-31)
+> Sandbox **no longer runs the gate-off config described below.** It was flipped ON during the
+> refusal-routing witness, because the two sibling gates had drifted into different states and
+> that asymmetry is the dangerous one: `mesh:fileTriageTask` is enforced in cortex-bff with **no
+> toggle** (always live, fail-closed), while `mesh:startReview` sat behind this unset env and
+> **no-op-returned True**. One live gate + one dark gate reads as "the gates are on" — and it had
+> already corrupted a claim: the svc:review-starter witness passed **without its capability gate
+> ever being exercised**.
+>
+> **Both gates are now live in sandbox and both grants are synced** (`capability_grant_sync`,
+> readback `checked=3 failures=0`), witnessed deny-before-grant, then allow.
+>
+> **What work's equivalent state must be at deploy — decide it EXPLICITLY, do not inherit it.**
+> If work runs `ENABLE_DISPOSITION_AUTHZ=true`, `capability_grants.yaml` must carry BOTH
+> `mesh:startReview` **and** `mesh:fileTriageTask` for the service identity, or notices refuse
+> loudly at start and refusals fail to route. If work leaves it unset, note that
+> `mesh:fileTriageTask` is enforced **regardless** — the triage gate has no toggle — so that
+> grant is required in BOTH configurations. It is load-bearing for VISIBILITY, not just
+> permission.
+
+**If you leave `ENABLE_DISPOSITION_AUTHZ` unset (NO LONGER the sandbox config — see the flip
+rider above):**
 - ✅ **Drop** item 2 (the `can_invoke(mesh:startReview)` capability grant). With the gate off,
   `can_invoke_start_review` is a no-op, so the auto-starter needs no capability. This is exactly
   the hands-off witness config we ran in sandbox.
