@@ -146,15 +146,21 @@ def test_no_parts_yields_empty_impacted_parts() -> None:
 
 
 def test_classify_covers_every_outcome() -> None:
+    """The outcomes. `refused` SPLIT into refused_content / refused_systemic when refusal
+    routing landed: a per-notice content problem goes to the reviewers who own the answer
+    (triage task, run COMPLETES); a deployment problem stays with ops (failed run). The
+    split is sealed in tests/test_refusal_routing.py — including over the real
+    {"detail": {...}} wire shape, which these flat bodies deliberately do not exercise."""
     assert ers.classify_start_review(200, {"status": "STARTED", "workflow_id": "wf1", "count": 2})[0] == "started"
     assert ers.classify_start_review(200, {"status": "NO_RESIDUE", "counts": {}})[0] == "no_residue_skip"
-    # NOT_ENTITLED_TO_INITIATE comes back 403 (the auto-starter lacks can_invoke) -> surface as a failure.
-    assert ers.classify_start_review(403, {"status": "NOT_ENTITLED_TO_INITIATE"})[0] == "refused"
-    # 422 = the tripwire / rules refusals.
-    assert ers.classify_start_review(422, {"status": "REVIEW_STATE_UNSOURCED"})[0] == "refused"
-    assert ers.classify_start_review(422, {"status": "RULES_NOT_FOUND"})[0] == "refused"
-    # 502 unreachable / any non-200 -> refused.
-    assert ers.classify_start_review(502, {"error": "review_start_unreachable"})[0] == "refused"
+    # NOT_ENTITLED_TO_INITIATE comes back 403 (the auto-starter lacks can_invoke) -> a CONFIG
+    # gap that fails every notice identically, so it stays a loud failed run for ops.
+    assert ers.classify_start_review(403, {"status": "NOT_ENTITLED_TO_INITIATE"})[0] == "refused_systemic"
+    # 422 = the tripwire / rules refusals — now routed by WHO OWNS THE ANSWER.
+    assert ers.classify_start_review(422, {"status": "REVIEW_STATE_UNSOURCED"})[0] == "refused_content"
+    assert ers.classify_start_review(422, {"status": "RULES_NOT_FOUND"})[0] == "refused_systemic"
+    # 502 unreachable / any non-200 -> systemic.
+    assert ers.classify_start_review(502, {"error": "review_start_unreachable"})[0] == "refused_systemic"
 
 
 class _FakeResp:
@@ -168,8 +174,13 @@ class _FakeResp:
 
 
 def test_submit_review_raises_on_refusal_returns_on_started(monkeypatch=None) -> None:
-    """The honest-failure seam: a refusal RAISES dagster.Failure (=> failed run); a start
-    returns normally. Monkeypatch httpx.post so no network is touched."""
+    """The honest-failure seam: a SYSTEMIC refusal RAISES dagster.Failure (=> failed run);
+    a start returns normally. Monkeypatch httpx.post so no network is touched.
+
+    The refusal used here is RULES_NOT_FOUND, not REVIEW_STATE_UNSOURCED — a deployment
+    problem, which is what still belongs to ops. A per-notice CONTENT refusal deliberately
+    no longer raises here: it is returned so the caller can route it to the reviewers who
+    own the answer, and that path is sealed in tests/test_refusal_routing.py."""
     import httpx
     from dagster import Failure
 
@@ -183,19 +194,19 @@ def test_submit_review_raises_on_refusal_returns_on_started(monkeypatch=None) ->
     orig = httpx.post
     httpx.post = fake_post
     try:
-        # refusal -> Failure
-        fake_post._resp = (422, {"status": "REVIEW_STATE_UNSOURCED", "notice_id": "IPCN25300X"})
+        # systemic refusal -> Failure
+        fake_post._resp = (422, {"status": "RULES_NOT_FOUND", "notice_id": "IPCN25300X"})
         raised = False
         try:
             ers.submit_review({"notice_id": "IPCN25300X"}, bff_url="http://bff", token="t")
         except Failure:
             raised = True
-        assert raised, "a 422 refusal must raise dagster.Failure (failed run)"
+        assert raised, "a systemic 422 refusal must raise dagster.Failure (failed run)"
         assert captured["url"] == "http://bff/reviews"
 
-        # started -> returns ("started", body)
+        # started -> returns ("started", detail, body)
         fake_post._resp = (200, {"status": "STARTED", "workflow_id": "wf1", "count": 2})
-        outcome, body = ers.submit_review({"notice_id": "IPCN25300X"}, bff_url="http://bff", token="t")
+        outcome, _detail, body = ers.submit_review({"notice_id": "IPCN25300X"}, bff_url="http://bff", token="t")
         assert outcome == "started" and body["workflow_id"] == "wf1"
     finally:
         httpx.post = orig

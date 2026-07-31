@@ -19,10 +19,21 @@ Design (the three seams, per the ruling):
     `review.json`'s `review_items`, the ONLY place per-part `needs_review` exists — NEVER
     reconstructed from the graph. So `REVIEW_STATE_UNSOURCED` stays honest by the sensor's
     OWN source choice, by construction.
-  * HONEST FAILURE = if `start_review` REFUSES (422 tripwire/rules, or 403
-    NOT_ENTITLED_TO_INITIATE — the auto-starter lacks can_invoke(mesh:startReview)), the op
-    RAISES -> the Dagster run FAILS, visible to the operator. The sensor is now that operator;
-    nothing swallowed. (NO_RESIDUE = an honest non-start, logged + skipped, not a failure.)
+  * HONEST FAILURE, ROUTED BY WHO OWNS THE ANSWER = a refusal is surfaced to the persona
+    who can act on it, which is not always the operator:
+      - SYSTEMIC (RULES_NOT_FOUND / RULESET_INVALID, 403 NOT_ENTITLED_TO_INITIATE, 502,
+        anything unrecognized) = a statement about the DEPLOYMENT, true of every notice
+        equally -> the op RAISES, the Dagster run FAILS, once, loudly, for ops.
+      - PER-NOTICE CONTENT (REVIEW_STATE_UNSOURCED, NO_PARTS_EXTRACTED, NO_AFFECTED_PARTS)
+        = a statement about THIS document -> a triage HumanTask to the audience that owns
+        it, and the run COMPLETES. Sending these to Dagster was the bug: three notices hit
+        REVIEW_STATE_UNSOURCED live and each ceased to exist for everyone whose job is
+        processing notices, because the only trace was a red run in a tool the reviewer
+        does not open, phrased in pipeline vocabulary. The refusal was real; the AUDIENCE
+        was wrong — the invisible-dead-notice failure this sensor rejected polling to
+        avoid, reintroduced through the error path. Routing failure itself RAISES, so the
+        fix can never become a quieter version of the bug.
+    (NO_RESIDUE = an honest non-start, logged + skipped, not a failure.)
 
 The manual `POST /reviews` survives as the ops / re-drive path (same status as re-running
 a partition) — NOT the primary trigger.
@@ -30,6 +41,7 @@ a partition) — NOT the primary trigger.
 NB: no `from __future__ import annotations` here on purpose — dagster's pythonic `@op`
 config inference needs `StartReviewConfig` as a real type, not a stringized annotation.
 """
+import hashlib
 import json
 import os
 import re
@@ -137,19 +149,63 @@ def build_start_review_payload(
     }
 
 
+# PER-NOTICE CONTENT refusals: statements about THIS document, which only the
+# sustainment reviewer can answer ("this notice could not be prepared"). Everything else
+# — RULES_NOT_FOUND, RULESET_INVALID, a missing capability grant, a 502 — is a statement
+# about the DEPLOYMENT or the PIPELINE, affects every notice equally, and belongs to ops.
+# The distinction was always encoded in these status codes; it just was not acted on, so
+# content problems went to the one persona who cannot fix them.
+_CONTENT_REFUSALS = frozenset({
+    "REVIEW_STATE_UNSOURCED",
+    "NO_PARTS_EXTRACTED",
+    "NO_AFFECTED_PARTS",
+})
+
+
+def _status_of(body: dict) -> Optional[str]:
+    """The engine's own status string, wherever the HTTP layer put it.
+
+    A 200 carries it at the top level; a refusal is re-raised by the BFF as
+    `HTTPException(detail=<engine body>)`, and FastAPI serializes that as
+    `{"detail": {...}}`. Reading only the top level therefore sees None for EVERY
+    refusal — which is fine while all refusals share one fate, and silently wrong the
+    moment they don't. Routing depends on this string, so it is unwrapped explicitly.
+    """
+    if not isinstance(body, dict):
+        return None
+    if isinstance(body.get("status"), str):
+        return body["status"]
+    detail = body.get("detail")
+    if isinstance(detail, dict) and isinstance(detail.get("status"), str):
+        return detail["status"]
+    return None
+
+
 def classify_start_review(status_code: int, body: dict) -> Tuple[str, str]:
     """Map a `/reviews` response to a sensor outcome (PURE).
 
-    Returns (outcome, detail): "started" (success), "no_residue_skip" (honest non-start —
-    nothing to review, not an error), or "refused" (surface as a FAILED run).
-      - 200 STARTED               -> started
-      - 200 NO_RESIDUE            -> no_residue_skip
-      - 403 NOT_ENTITLED_TO_INITIATE -> refused (a CONFIG gap: the auto-starter lacks
-                                   can_invoke(mesh:startReview) — the loud-fail outcome for the operator)
-      - 422 (REVIEW_STATE_UNSOURCED / RULESET_INVALID / RULES_NOT_FOUND) -> refused
-      - anything else (502 unreachable / non-200) -> refused
+    Returns (outcome, detail), where outcome is one of:
+      * "started"           — 200 STARTED
+      * "no_residue_skip"   — 200 NO_RESIDUE (an honest non-start, not an error)
+      * "refused_content"   — this NOTICE is unprocessable -> route to the reviewers who
+                              own the answer (a triage task), and let the run COMPLETE
+      * "refused_systemic"  — the deployment/pipeline is broken -> FAIL the Dagster run,
+                              loudly, once, for ops
+
+    THE SPLIT IS THE POINT. Both used to be "refused" -> failed run, so a vendor's PCN
+    that failed content validation left one trace: a red run phrased in pipeline
+    vocabulary, in a tool the reviewer does not open. Reserving `failed` for
+    infrastructure also stops content problems from polluting the pipeline's health
+    signal.
+
+    Systemic by construction: 403 NOT_ENTITLED_TO_INITIATE (a missing capability grant —
+    every notice fails the same way), RULES_NOT_FOUND / RULESET_INVALID (a deployment
+    condition; fifty identical triage tasks would be worse than one loud failure), any
+    5xx/transport error, and anything unrecognized. Unknown statuses route SYSTEMIC on
+    purpose: filing a triage task tells a human "look at this document", which is a
+    false statement when the truth is "the pipeline is broken."
     """
-    status = (body or {}).get("status")
+    status = _status_of(body)
     if status_code == 200:
         if status == "STARTED":
             return "started", f"workflow_id={body.get('workflow_id')} count={body.get('count')}"
@@ -157,15 +213,82 @@ def classify_start_review(status_code: int, body: dict) -> Tuple[str, str]:
             return "no_residue_skip", f"nothing to review: {body.get('counts')}"
         # The initiator deny no longer arrives as a 200 — it is a 403 NOT_ENTITLED_TO_INITIATE
         # (handled below). Any other 200 status is unexpected.
-        return "refused", f"unexpected 200 status={status!r} body={body}"
+        return "refused_systemic", f"unexpected 200 status={status!r} body={body}"
     if status_code == 403:
-        return "refused", (
+        return "refused_systemic", (
             f"NOT_ENTITLED_TO_INITIATE — the auto-starter (svc:review-starter) lacks "
             f"can_invoke(mesh:startReview); grant it in capability_grants.yaml: {body}"
         )
+    if status_code == 422 and status in _CONTENT_REFUSALS:
+        return "refused_content", f"{status}: {body}"
     if status_code == 422:
-        return "refused", f"start_review refused (tripwire/rules): {body}"
-    return "refused", f"start_review failed: HTTP {status_code} {body}"
+        return "refused_systemic", f"start_review refused (ruleset/deployment): {body}"
+    return "refused_systemic", f"start_review failed: HTTP {status_code} {body}"
+
+
+# Human-readable renderings of the refusal codes a reviewer will actually see. The queue
+# row is the ONLY thing they get, so it says what happened to their document in their
+# vocabulary — not the engine's status constant.
+_REFUSAL_PROSE = {
+    "REVIEW_STATE_UNSOURCED": (
+        "The extraction did not attest where its review flags came from, so the notice "
+        "could not be prepared for review."
+    ),
+    "NO_PARTS_EXTRACTED": "No parts could be read out of this notice.",
+    "NO_AFFECTED_PARTS": "The notice was read, but no affected parts were found in it.",
+}
+
+
+def _label_from_key(source_key: str) -> str:
+    """A human-recognizable name for a document when the header pass produced NO doc_id.
+
+    doc-tools writes `<dir>/generated/<filename_with_dots_as_underscores>/review.json`, so
+    the document's own name is the last path segment that is neither the artifact filename
+    nor the structural `generated/` marker. Walking back past those matters: the naive
+    "parent directory" is `generated` for one layout and the real name for another, and a
+    row titled "Notice generated could not be prepared" tells a reviewer nothing about
+    which document to open — which is the entire job of this row.
+    """
+    parts = [p for p in source_key.split("/") if p][:-1]        # drop review.json
+    while parts and parts[-1] == "generated":
+        parts.pop()
+    return parts[-1] if parts else (source_key or "(unnamed)")
+
+
+def build_triage_payload(*, source_key: str, notice_id: Optional[str], reason_code: str,
+                         detail: str, warnings: Optional[List[str]] = None,
+                         domain: str = "SUSTAINMENT", audience: Optional[str] = None) -> dict:
+    """Build the `/triage_tasks` body for a content-refused notice (PURE).
+
+    `task_id` is derived from the ARTIFACT KEY, which is unique by construction — NOT
+    from `notice_id`, which is an LLM-extracted field that degrades to a shared fallback
+    exactly when extraction is going wrong (every PDF in one inbox became "inbound",
+    live 2026-07-30). Keying triage on it would collapse N dead notices into one task and
+    re-create, inside the fix, the same silent loss the fix exists to end. The design note
+    that first specified this said "key the task on doc_id the way the sensor keys its
+    runs" — the sensor stopped keying runs that way for this reason, and the two moved
+    together.
+
+    The notice_id still travels, as DISPLAY: a human recognizes "PCN-2683", not a hash.
+    """
+    label = notice_id or _label_from_key(source_key)
+    prose = _REFUSAL_PROSE.get(reason_code, "This notice could not be prepared for review.")
+    lines = [f"Notice {label} could not be prepared for review.", prose]
+    for w in warnings or []:
+        lines.append(str(w))
+    lines.append(f"Extraction artifact: {source_key}")
+    return {
+        "task_id": "triage-" + hashlib.sha1(source_key.encode()).hexdigest()[:12],
+        "subject_ref": source_key,
+        "title": f"Notice {label} could not be prepared for review",
+        "summary": " ".join(lines),
+        "reason_code": reason_code or "UNKNOWN",
+        "domain": domain,
+        "audience": audience,
+        # Clearance-safe: identifiers and the refusal reason, never notice content.
+        "payload": {"notice_id": notice_id, "source_key": source_key,
+                    "detail": detail[:500], "warnings": list(warnings or [])},
+    }
 
 
 # ── S3 + HTTP glue (cluster-side; mocked in tests) ───────────────────────────
@@ -289,8 +412,9 @@ _SUBMIT_TIMEOUT = float(os.getenv("REVIEW_SUBMIT_TIMEOUT", "300"))
 def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = _SUBMIT_TIMEOUT,
                   source: str = ""):
     """POST the payload to cortex-bff `/reviews` (single identity-stamped entry) and
-    classify. RAISES dagster.Failure on a refusal (-> failed run). Returns (outcome, body)
-    for started / no_residue_skip.
+    classify. RAISES dagster.Failure on a SYSTEMIC refusal (-> failed run, for ops).
+    Returns (outcome, detail, body) for started / no_residue_skip / refused_content —
+    the caller routes a content refusal to the humans who own the answer.
 
     `source` is the review.json this payload came FROM, and it is named in every failure
     on purpose. The failure text used to carry only `notice_id` — which is DERIVED, and
@@ -312,19 +436,72 @@ def submit_review(payload: dict, *, bff_url: str, token: str, timeout: float = _
     except Exception:  # noqa: BLE001
         body = {"raw": resp.text[:500]}
     outcome, detail = classify_start_review(resp.status_code, body)
-    if outcome == "refused":
+    if outcome == "refused_systemic":
         where = f" [source: {source}]" if source else ""
         raise Failure(
             description=(f"start_review refused for notice_id={payload.get('notice_id')!r}"
                          f"{where}: {detail}")
         )
-    return outcome, body
+    return outcome, detail, body
+
+
+def file_triage_task(triage: dict, *, bff_url: str, token: str, timeout: float = 30.0,
+                     source: str = "") -> dict:
+    """POST a content refusal to cortex-bff `/triage_tasks` so it lands in the queue of
+    the people who own the answer about that notice.
+
+    EVERY failure here RAISES. That is the load-bearing decision: this call is the only
+    thing standing between a refused notice and invisibility, so a routing failure must
+    degrade to the OLD behaviour (a loud red Dagster run) and never to silence. A 403
+    means the service lacks can_invoke(mesh:fileTriageTask); a 422 means the audience has
+    zero entitled actors — both are deployment gaps that would otherwise make refusals
+    vanish exactly as before, behind a green run that looks like it worked. A gate that
+    quietly swallows the thing it guards is the broken-closed failure, not a safety
+    property.
+    """
+    import httpx
+
+    try:
+        resp = httpx.post(
+            f"{bff_url.rstrip('/')}/triage_tasks",
+            json=triage,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=timeout,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise Failure(description=(
+            f"triage routing UNREACHABLE for {source or triage.get('subject_ref')}: {exc}. "
+            f"The notice was refused AND could not be routed — failing loudly so it is not lost."
+        ))
+    try:
+        body = resp.json()
+    except Exception:  # noqa: BLE001
+        body = {"raw": resp.text[:500]}
+    if resp.status_code != 200:
+        raise Failure(description=(
+            f"triage routing REFUSED (HTTP {resp.status_code}) for "
+            f"{source or triage.get('subject_ref')}: {body}. The notice was refused AND could "
+            f"not be routed to a human — failing loudly so it is not lost."
+        ))
+    return body
 
 
 # ── Dagster op / job / sensor ────────────────────────────────────────────────
+# Where a content refusal is routed. EMPTY (the default) means the BFF's default: the
+# domain's own review audience — the people already responsible for these notices. That is
+# right while refusals are rare, which they should now be (the text-layer extractor removed
+# the failure mode that produced most of them). SWITCH CONDITION, stated so the decision is
+# revisitable rather than forgotten: if refusals become common enough to clutter the review
+# queue, point this at a dedicated `triage:<compartment>` audience and grant it in
+# task_grants.yaml. The routing rule — content to the owner, systemic to ops — is the
+# durable part; which audience owns triage is a tuning knob.
+_TRIAGE_AUDIENCE = os.getenv("REVIEW_TRIAGE_AUDIENCE", "").strip()
+
+
 class StartReviewConfig(Config):
     review_json_url: str  # s3://bucket/.../review.json
     doc_type: str = "PCN"
+    domain: str = "SUSTAINMENT"   # selects both the review audience and the triage audience
 
 
 @op
@@ -343,7 +520,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
     key = src[len(f"s3://{bucket}/"):] if src.startswith(f"s3://{bucket}/") else src
     s3 = _s3_client()
     review = json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
-    payload = build_start_review_payload(review, doc_type=config.doc_type)
+    payload = build_start_review_payload(review, doc_type=config.doc_type, domain=config.domain)
     if not payload["notice_id"]:
         raise Failure(description=f"review.json {key} has no doc_id (notice_id)")
     if not payload["impacted_parts"]:
@@ -357,7 +534,26 @@ def start_review_op(context, config: StartReviewConfig) -> None:
         f"start_review -> notice_id={payload['notice_id']!r} parts={len(payload['impacted_parts'])} "
         f"attested={payload.get('review_state_source')!r} source={src}"
     )
-    outcome, body = submit_review(payload, bff_url=bff_url, token=token, source=src)
+    outcome, detail, body = submit_review(payload, bff_url=bff_url, token=token, source=src)
+    if outcome == "refused_content":
+        # THIS NOTICE is unprocessable — a statement only the reviewer can answer. Route it
+        # to them and let the run COMPLETE: a content problem is not a pipeline failure, and
+        # recording it as one both misaddresses the message and poisons the health signal.
+        # The refusal is NOT swallowed — file_triage_task raises if it cannot deliver.
+        triage = build_triage_payload(
+            source_key=key, notice_id=payload.get("notice_id"),
+            reason_code=_status_of(body) or "", detail=detail,
+            warnings=payload.get("extraction_warnings"),
+            domain=config.domain, audience=_TRIAGE_AUDIENCE or None,
+        )
+        filed = file_triage_task(triage, bff_url=bff_url, token=token, source=src)
+        context.log.warning(
+            f"start_review refused_content ({triage['reason_code']}) for notice="
+            f"{payload['notice_id']} source={src} -> routed to {filed.get('audience')} "
+            f"as task {filed.get('task_id')} ({filed.get('status')}, "
+            f"recipients={filed.get('recipients', 'n/a')})"
+        )
+        return
     context.log.info(f"start_review {outcome}: notice={payload['notice_id']} source={src} -> {body}")
 
 

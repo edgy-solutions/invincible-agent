@@ -70,3 +70,31 @@ capabilities:
       requested_by provenance on the inaugural automated run). Who may REVIEW is granted separately.
     grant_to:
       - svc:review-starter
+
+  # Filing a TRIAGE task — routing an input that could NOT be prepared for review to the humans
+  # who own the answer about it. An EFFECT (it materializes rows in people's queues), so it is
+  # gated here like every other effect, deny-by-default, and separately from mesh:startReview:
+  # the ability to START a review and the ability to say "this one could not be started" are
+  # different powers, and a caller may hold either without the other.
+  #
+  # DISTINCT AGAIN from who may ACT on the resulting task (task_grants.yaml
+  # pcn_disposition:<compartment>, enforced at /act): the service FILES, humans ACT — the same
+  # split mesh:startReview draws above, for the same reason.
+  #
+  # DEPLOY NOTE — this grant is load-bearing for VISIBILITY, not only for permission. Ungranted,
+  # the sensor's triage POST is denied 403, which it surfaces as a FAILED Dagster run rather than
+  # swallowing: refusals degrade to the old (bad) behaviour LOUDLY instead of vanishing behind a
+  # green run. That degradation is deliberate — but it means an unseeded grant quietly reverts the
+  # routing fix, so seed it in the same window as the sensor.
+  mesh:fileTriageTask:
+    granted_by: cnogradi
+    reason: >-
+      svc:review-starter (the extraction→review Dagster sensor's client-credentials identity) may
+      invoke mesh:fileTriageTask — file a triage task when a notice is refused for a PER-NOTICE
+      CONTENT reason (REVIEW_STATE_UNSOURCED / NO_PARTS_EXTRACTED / NO_AFFECTED_PARTS), so the
+      refusal reaches the reviewers who own the answer instead of dying as a red Dagster run in a
+      tool they do not open. Three live notices died exactly that way; this grant is the repair.
+      Systemic refusals (ruleset/deployment/transport) still FAIL the run for ops and never use
+      this capability — routing by who owns the answer is the whole point of the split.
+    grant_to:
+      - svc:review-starter

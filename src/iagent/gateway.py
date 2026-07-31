@@ -294,6 +294,95 @@ async def create_access_request(
             "approvers": len(result.get("recipients", []))}
 
 
+class TriageTaskRequest(_BaseModel):
+    """File a TRIAGE task: an input that could not be prepared for review, routed to
+    the humans who own the answer about it.
+
+    WHY THIS EXISTS. A content refusal (the extraction produced nothing reviewable,
+    the review-state was unsourced) used to surface ONLY as a failed Dagster run —
+    pipeline vocabulary, in a tool the reviewer does not open. The notice then ceased
+    to exist for everyone whose job is processing notices: the invisible-dead-notice
+    failure the sensor design rejected polling to avoid, reintroduced through the
+    ERROR path. Three live notices died this way.
+
+    Deliberately GENERIC (no domain in the route, the kind, or this model): `domain`
+    selects the audience and `subject_ref` names the artifact. A refused ANYTHING can
+    be filed here; sustainment notices are simply the first caller.
+    """
+    subject_ref: str                      # the artifact that could not be prepared (s3 key / URN)
+    title: str
+    summary: str
+    reason_code: str = ""                 # the refusal status, e.g. REVIEW_STATE_UNSOURCED
+    task_id: Optional[str] = None         # caller-supplied dedup key; derived from subject_ref if absent
+    domain: str = "SUSTAINMENT"           # selects the audience
+    audience: Optional[str] = None        # override; defaults to the domain's review audience
+    payload: Optional[dict] = None
+
+
+# The capability a caller must be able to INVOKE to file a triage task. Filing one is an
+# EFFECT (it materializes rows in humans' queues), so it is gated in the capability
+# namespace like every other effect — deny-by-default, git-asserted in
+# policy/capability_grants.yaml. DISTINCT from who may ACT on the resulting task (the
+# task_audience gate, enforced at /act): a service files, humans act.
+_MESH_FILE_TRIAGE = "mesh:fileTriageTask"
+
+
+@app.post("/triage_tasks")
+async def file_triage_task(
+    req: TriageTaskRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Route an unprocessable input to the audience that owns the answer about it.
+
+    IDEMPOTENT on `task_id`: a notice refused twice must not mint two tasks, so a
+    re-drive returns ALREADY_FILED (200) rather than duplicating. The caller supplies
+    a task_id derived from the ARTIFACT's identity — never from an extracted field
+    (that is what made `doc_id` collide across documents).
+
+    The requester is stamped from the authenticated identity, so the queue records
+    which identity filed it (a service, honestly, when a service did).
+    """
+    from starlette.concurrency import run_in_threadpool
+    from . import human_tasks
+    allowed = await run_in_threadpool(
+        lambda: human_tasks.check_can_invoke(_MESH_FILE_TRIAGE, current_user.authz_id)
+    )
+    if not allowed:
+        raise HTTPException(status_code=403, detail={
+            "error": "not_entitled_to_file_triage",
+            "capability": _MESH_FILE_TRIAGE,
+            "message": (f"{current_user.authz_id} lacks can_invoke({_MESH_FILE_TRIAGE}); "
+                        f"grant it in capability_grants.yaml"),
+        })
+    import hashlib
+    task_id = req.task_id or ("triage-" + hashlib.sha1(req.subject_ref.encode()).hexdigest()[:12])
+    audience = req.audience or f"pcn_disposition:{req.domain}"
+    try:
+        if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
+            logger.info("triage_task already filed: task_id=%s subject=%s", task_id, req.subject_ref)
+            return {"task_id": task_id, "status": "ALREADY_FILED", "audience": audience}
+        result = await run_in_threadpool(
+            lambda: human_tasks.register_task(
+                kind="extraction_refusal", task_id=task_id, audience=audience,
+                title=req.title, summary=req.summary,
+                requested_by=current_user.authz_id,   # species-honest: a service says so
+                subject_ref=req.subject_ref,
+                payload={**(req.payload or {}), "reason_code": req.reason_code,
+                         "domain": req.domain},
+            )
+        )
+    except human_tasks.HumanTaskConfigError as exc:
+        raise HTTPException(status_code=503, detail={"error": "hitl_unconfigured", "message": str(exc)})
+    except human_tasks.NoEntitledRecipients as exc:
+        # TERMINAL 4xx: an audience with zero actors cannot receive the refusal, and a triage task
+        # nobody sees is the very failure this route exists to end. The caller must surface it.
+        raise HTTPException(status_code=422, detail={"error": "no_entitled_recipients", "message": str(exc)})
+    logger.info("triage_task filed: task_id=%s reason=%s audience=%s recipients=%d",
+                task_id, req.reason_code, audience, len(result.get("recipients", [])))
+    return {"task_id": task_id, "status": "FILED", "audience": audience,
+            "recipients": len(result.get("recipients", []))}
+
+
 @app.get("/me/human_tasks")
 async def get_my_human_tasks(current_user: User = Depends(get_current_user)):
     """The caller's pending queue (REST initial-load; the live path is the

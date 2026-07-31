@@ -152,6 +152,58 @@ def check_can_act(audience: str, caller_id: str) -> bool:
         return False  # fail-closed
 
 
+def check_can_invoke(capability: str, caller_id: str) -> bool:
+    """Application-layer gate for an EFFECT: Topaz ``can_invoke(caller, capability)``
+    on the ``capability`` namespace (the sixth; git-asserted in
+    ``policy/capability_grants.yaml``). Same single decider and the same fail-closed
+    posture as :func:`check_can_act` above — only the namespace differs, because
+    INVOKING an effect is not ACTING on a task.
+
+    Deny-by-default: an ungranted capability is "object not found" -> False, and any
+    error -> False. Callers must treat a False as a REFUSAL THEY REPORT LOUDLY, never
+    as a reason to skip quietly — a gate that silently swallows the thing it was
+    guarding is the broken-closed failure, not a safety property.
+    """
+    if not capability or not caller_id or not _TOPAZ_DIRECTORY_URL:
+        return False
+    payload = {
+        "object_type": "capability",
+        "object_id": capability,
+        "relation": "can_invoke",
+        "subject_type": "user",
+        "subject_id": caller_id,
+    }
+    try:
+        with httpx.Client(base_url=_TOPAZ_DIRECTORY_URL, timeout=5.0) as c:
+            r = c.post("/api/v3/directory/check", json=payload)
+            r.raise_for_status()
+            return bool(r.json().get("check"))
+    except Exception:
+        return False  # fail-closed
+
+
+def task_exists(task_id: str) -> bool:
+    """Has a logical task with this id already been registered (any recipient, any
+    status)?
+
+    Registration is NOT idempotent — :func:`register_task` inserts one row per actor
+    unconditionally — so a caller that can fire twice for the same real-world event
+    needs this check to stay at one task. Deliberately NOT scoped to a caller (unlike
+    :func:`get_task_resolution`, which is existence-oracle-safe by scoping): this is
+    asked by a SERVICE identity about a task id IT constructs from an artifact it can
+    already read, so there is no queue to leak. Do not reuse it on a human path.
+    """
+    if not task_id:
+        return False
+    with _pg_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM human_task_projection WHERE task_id = %s LIMIT 1",
+                (task_id,),
+            )
+            return cur.fetchone() is not None
+
+
 # ── Registration (materialize rows from the Topaz decision) ──────────────────
 
 def register_task(

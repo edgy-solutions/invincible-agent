@@ -1,8 +1,13 @@
 # Refusal routing — a refused notice is a TASK, not (only) a failed run
 
-**Status:** DESIGN (filed 2026-07-29, not built). Raised from live operation: three notices hit
+**Status:** BUILT 2026-07-30 (design filed 2026-07-29). Raised from live operation: three notices hit
 `REVIEW_STATE_UNSOURCED` at work and each one **ceased to exist** for everyone whose job is processing
 notices. The refusal was real; the audience was wrong.
+
+**As built:** `classify_start_review` returns `refused_content` / `refused_systemic`; content refusals
+POST to a new generic `/triage_tasks` (capability `mesh:fileTriageTask`, deny-by-default) and the run
+COMPLETES; systemic refusals still fail the run. Sealed in `tests/test_refusal_routing.py`, including
+the two traps that would have made it a silent no-op — see the amendments below.
 
 ## The gap
 
@@ -55,8 +60,38 @@ reason as auditable provenance, `NoEntitledRecipients` if the audience is empty.
    form-field feature lands), does the triage task offer **re-drive** (re-fire the sensor for that
    notice — the run_key/`doc_id` idempotency already supports it) or does the human re-drop the
    document? **Recommend re-drive**: better UX, and it is one button over machinery that exists.
-4. **Do not duplicate.** A notice refused twice must not mint two triage tasks — key the task on
-   `doc_id` the way the sensor keys its runs.
+4. **Do not duplicate.** A notice refused twice must not mint two triage tasks.
+
+   > **AMENDED AT BUILD TIME (2026-07-30).** This clause originally said *"key the task on `doc_id`
+   > the way the sensor keys its runs."* **The sensor no longer keys its runs that way, and the
+   > reason is this exact hazard.** `doc_id` is LLM-extracted, and when the header pass degrades it
+   > falls back to a value that can be **identical across documents** — every PDF in one inbox
+   > derived `"inbound"` (live 2026-07-30), and Dagster's run-key dedup silently ate all but the
+   > first. Keying triage on it would collapse N dead notices into one task: the same silent loss,
+   > reproduced *inside the cure*. Triage is keyed on the **artifact** (`sha1(source_key)`), unique
+   > by construction, matching the sensor's ETag+Key run identity. `doc_id` still travels as
+   > **display** — a human recognizes "PCN-2683", not a hash. See `feedback_sensor_cursor_contract`:
+   > *a model-derived value must never key deterministic machinery.*
+   >
+   > Generalized: this design and the sensor cursor were **coupled without either document saying
+   > so**. Two artifacts naming the same key had to move together, and only one of them knew why.
+
+## Two traps found while building (neither was in the design)
+
+1. **The status is not where the design assumed it was.** A 200 carries `status` at the top level, but
+   a refusal is re-raised by the BFF as `HTTPException(detail=<engine body>)` and FastAPI serializes
+   that as `{"detail": {...}}`. Reading only the top level sees `None` for **every** refusal — which
+   was harmless while all refusals shared one fate, and silently wrong the instant routing depends on
+   it. Everything would have classified systemic: the fix would ship, pass a smoke test, and change
+   nothing for the reviewer. Sealed by `test_status_is_read_through_the_fastapi_detail_wrapper`, and
+   mutation-proven (restoring the naive read fails 5 tests).
+2. **The routing call is itself a place notices can die.** The triage POST can be denied (403, missing
+   capability grant), refused (422, zero entitled recipients in the audience), or time out. Swallowing
+   any of those would hide the notice behind a **green** run — strictly worse than the red run being
+   replaced. So every failure of the routing call **raises**: refusals degrade to the old bad
+   behaviour *loudly*, never to silence. This makes `mesh:fileTriageTask` load-bearing for
+   **visibility**, not just permission — an unseeded grant quietly reverts the fix, which is why it
+   ships in the same window.
 
 ## Why this is the right altitude
 
@@ -73,3 +108,22 @@ changes how noisy this channel will be). Reassess the triage-audience choice the
 the reviewer audience is right; if they stay common, a dedicated `triage:` audience keeps the review
 queue clean. Either way the routing decision — **content → owner, systemic → ops** — is the durable
 part.
+
+**Resolved as built.** The vision-timeout work landed first, so refusals should now be rare: triage
+defaults to the domain's own review audience (`pcn_disposition:<domain>`) — the people already
+responsible for these notices, and no new grant to seed. `REVIEW_TRIAGE_AUDIENCE` switches it to a
+dedicated `triage:<compartment>` audience if the queue gets noisy; that audience would need a
+`task_grants.yaml` entry first, and until it has one, `NoEntitledRecipients` → 422 → failed run
+(loud, not silent). The switch condition is recorded next to the env var, so it stays a decision
+rather than a forgotten default.
+
+## Remaining
+
+- **UI:** the `extraction_refusal` task kind renders with the default queue treatment. It carries
+  title/summary/subject_ref like any task, so it is visible and actionable — but the design's
+  `[Re-drive]` / `[Acknowledge]` affordances are not built. **Re-drive already works** without them:
+  re-uploading or re-extracting the document writes a new `review.json`, which the sensor sees by
+  arrival time and fires under a new content-addressed run key.
+- **Live seal:** drop one of the three known-refusing PDFs and witness the task land in a reviewer's
+  queue. The offline seal covers routing and the fail-loud behaviour; it does not prove the audience
+  resolves to a real human in a real cluster — that needs the composed path.
