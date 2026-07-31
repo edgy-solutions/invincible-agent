@@ -72,7 +72,8 @@ _PART_FIELD = re.compile(r"parts\[(\d+)\]\.(\w+)")
 
 # ── PURE, unit-testable core ─────────────────────────────────────────────────
 def build_start_review_payload(
-    review_json: dict, *, doc_type: str = "PCN", domain: str = "SUSTAINMENT"
+    review_json: dict, *, doc_type: str = "PCN", domain: str = "SUSTAINMENT",
+    request_key: str = "",
 ) -> dict:
     """Build the `/reviews` (start_review) payload from a doc-tools `review.json`.
 
@@ -81,6 +82,14 @@ def build_start_review_payload(
     replacement_mpn row. This is deliberately NOT read from the graph (which drops the
     per-part flag): it is what keeps the REVIEW_STATE_UNSOURCED tripwire honest.
     `doc_needs_review` = review.json's DOC-LEVEL `needs_review`. `notice_id` = `doc_id`.
+
+    `request_key` is the ARTIFACT's identity (ETag + key — the same string the sensor's
+    run_key is built from), forwarded so the BFF can give Restate an idempotency key. It
+    makes a retry after a client timeout ATTACH to the in-flight composition instead of
+    racing a second one, and it moves when the CONTENT moves — so a re-extraction correctly
+    composes afresh while a retry does not. Third enforcement point of the same rule the
+    run_key and the triage task_id already carry: identity from the artifact, never from
+    the model-derived `doc_id`.
     """
     by_idx = {}  # type: dict
     for it in review_json.get("review_items", []) or []:
@@ -146,6 +155,10 @@ def build_start_review_payload(
         # field existed (older extractions simply carry no warnings).
         "extraction_warnings": list(review_json.get("doc_review_reasons") or []),
         "domain": domain,
+        # Transport-level artifact identity for ingress idempotency (see docstring). Empty
+        # for a caller that cannot name an artifact — the BFF then sends NO key rather than
+        # inventing one, so the call is honestly non-idempotent instead of falsely deduped.
+        "request_key": request_key,
     }
 
 
@@ -519,8 +532,14 @@ def start_review_op(context, config: StartReviewConfig) -> None:
     src = config.review_json_url
     key = src[len(f"s3://{bucket}/"):] if src.startswith(f"s3://{bucket}/") else src
     s3 = _s3_client()
-    review = json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
-    payload = build_start_review_payload(review, doc_type=config.doc_type, domain=config.domain)
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    review = json.loads(obj["Body"].read())
+    # The ETag comes from the SAME read that produced `review`, so the idempotency key and
+    # the composed content cannot disagree — a separate HEAD could observe a re-extraction
+    # landing between the two calls and key this request to content it did not read.
+    request_key = f"{(obj.get('ETag') or 'no-etag').strip(chr(34))}-{key}"
+    payload = build_start_review_payload(review, doc_type=config.doc_type, domain=config.domain,
+                                         request_key=request_key)
     if not payload["notice_id"]:
         raise Failure(description=f"review.json {key} has no doc_id (notice_id)")
     if not payload["impacted_parts"]:

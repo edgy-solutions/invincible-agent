@@ -117,6 +117,29 @@ dedicated `triage:<compartment>` audience if the queue gets noisy; that audience
 (loud, not silent). The switch condition is recorded next to the env var, so it stays a decision
 rather than a forgotten default.
 
+## NAMED WAKE — refusal routing relocates when the ingress goes async
+
+**Trigger: when workflow selection lands (ADR-0034 Phase 2 / the trust lifecycle's autonomous
+path).** Not a someday — a scheduled change with a named beneficiary.
+
+Today the BFF calls `start_review` **synchronously** and the sensor classifies the response, which
+is what makes the routing in this document possible: the sensor *sees* `REVIEW_STATE_UNSOURCED`
+and files the triage task. The autonomous path cannot work that way — there is no human latency to
+wait on, the sensor fire-and-forgets into a definition, and the ingress must be **async-shaped**.
+At that point:
+
+1. The BFF `send`s and returns 202; nobody holds a connection.
+2. **The refusal routing MOVES INTO the Restate handler** — the decider that knows the refusal
+   routes it, which is where it belongs anyway, and it is where the trust gate will already live.
+3. This file's seal is rewritten against the two-definition shape.
+
+**Why it is deliberately NOT done now.** The synchronous contract is not *wrong* — with the ingress
+idempotency key (landed 2026-07-30) the 300s hold is a bounded wait on a **deduplicated**
+invocation: ugly, but honest and safe. Doing the async conversion today would mean designing the
+ingress contract **twice** — once against the current single-workflow shape, once when the gate
+starts selecting between definitions — and rewriting a seal the day after it bit its first
+mutation. Doing it *then* is one design.
+
 ## Remaining
 
 - **UI:** the `extraction_refusal` task kind renders with the default queue treatment. It carries

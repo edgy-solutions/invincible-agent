@@ -28,6 +28,7 @@ except ImportError:
     pass
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -425,6 +426,61 @@ class ReviewStartRequest(_BaseModel):
     extraction_warnings: Optional[list] = None
     domain: str = "SUSTAINMENT"          # selects the review audience pcn_disposition:<domain>
     audience: Optional[str] = None        # override; defaults to pcn_disposition:<domain>
+    # ARTIFACT IDENTITY for ingress idempotency: content-hash + location of the extraction
+    # this request was built from (ETag+key, exactly what the sensor's run_key uses). It is
+    # NOT the notice id — see _ingress_idempotency_key. Absent for hand-driven ops calls,
+    # which are then honestly non-idempotent rather than falsely deduplicated.
+    request_key: Optional[str] = None
+
+
+def _ingress_idempotency_key(request_key: Optional[str], approver: str) -> Optional[str]:
+    """The Restate ingress idempotency key, or None to send no key at all.
+
+    WHAT IT FIXES. `start_review` composes per-part (resolve subject, entitlement, ruleset
+    evaluation), so a hundreds-of-parts notice can outrun the caller's HTTP budget. Restate
+    keeps composing after the client gives up — the invocation is durable — but the caller
+    sees a ReadTimeout, the Dagster run fails, and a re-drive starts a SECOND composition
+    racing the first. Durability was never the gap; the gap was that the front door had no
+    way to say "this is the same attempt". With a key, a retry ATTACHES to the in-flight
+    invocation and returns its real outcome. Exactly-once is already sealed INSIDE the
+    workflow; this closes the same property at ingress.
+
+    KEYED ON THE ARTIFACT, NEVER ON `notice_id`. notice_id is `doc_id` — LLM-extracted, and
+    it degrades to a shared fallback exactly when extraction is failing ("inbound" for every
+    PDF in one inbox, live 2026-07-30). Keying here on it would make two DIFFERENT documents
+    attach to each other's composition, so one notice would silently receive the other's
+    review. That is the same hazard the sensor's run_key and the triage task_id already
+    refused; this is its third enforcement point.
+
+    The distinction the key must preserve is SUPERSEDE vs DUPLICATE: a RE-EXTRACTION (new
+    content at the same location) is new work and must get a NEW invocation, while a RETRY
+    (same content) must attach. ETag+key gives exactly that, because it moves when the
+    content moves and holds still when it doesn't.
+
+    APPROVER IS STAMPED SERVER-SIDE into the key, because the composed workflow_id is
+    `pcn-review-{notice_id}-{approver}`: two initiators on one artifact are two different
+    outcomes, and sharing a key would hand the second caller the first's workflow. Adding
+    it from the authenticated identity (not the body) also stops a caller from aiming at
+    someone else's invocation slot.
+
+    NO KEY WHEN THE CALLER CANNOT NAME AN ARTIFACT (the hand-driven ops/re-drive path).
+    Returning None sends NO header, which is honestly non-idempotent — the alternative,
+    inventing a key from whatever fields happen to be present, is an optimistic default
+    that would look safe while silently deduplicating unrelated requests. A human
+    re-driving a notice generally WANTS a fresh attempt anyway.
+
+    NAMED WAKE — this synchronous shape is transitional. When workflow selection lands
+    (ADR-0034 Phase 2 / the autonomous trust path) the ingress goes async: the BFF `send`s
+    and returns 202, and the sensor's refusal routing moves INTO the Restate handler,
+    because there will be no synchronous response left to classify. Until then the 300s
+    hold is a bounded wait on a DEDUPLICATED invocation — ugly, honest, safe. See
+    docs/plans/refusal-routing-design.md ("NAMED WAKE") for why converting early would mean
+    designing the ingress contract twice.
+    """
+    rk = (request_key or "").strip()
+    if not rk:
+        return None
+    return hashlib.sha1(f"{rk}|{approver}".encode()).hexdigest()
 
 
 # start_review outcomes that mean "the request/ruleset was bad", surfaced as 422 (not 200).
@@ -467,6 +523,9 @@ async def start_review(
         "audience": req.audience or f"pcn_disposition:{req.domain}",
         "user_jwt": raw_token,
     }
+    # NB `request_key` is deliberately NOT in the forwarded body — it is transport-level
+    # identity for the ingress, not an input to composition. It reaches Restate as the
+    # idempotency-key header below.
     try:
         # Sized to the PART COUNT, not to a nominal request. start_review resolves a
         # subject, checks entitlement and evaluates the ruleset PER PART, so a
@@ -474,9 +533,15 @@ async def start_review(
         # far outruns a 30s budget — and this ceiling sits INSIDE the caller's, so a
         # short value here makes the sensor's longer timeout meaningless. Env-tunable.
         _start_timeout = float(os.getenv("REVIEW_START_TIMEOUT", "300"))
+        # Idempotency at the FRONT DOOR: a retry after a client timeout attaches to the
+        # in-flight composition instead of racing a second one against it. Absent when the
+        # caller named no artifact — no header, honestly non-idempotent.
+        _idem = _ingress_idempotency_key(req.request_key, current_user.authz_id)
+        _headers = {"idempotency-key": _idem} if _idem else {}
         async with httpx.AsyncClient(timeout=_start_timeout) as client:
             rr = await client.post(
                 f"{_RESTATE_INGRESS_URL}/ReviewStarter/start_review", json=body,
+                headers=_headers,
             )
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"error": "review_start_unreachable", "message": str(exc)})
