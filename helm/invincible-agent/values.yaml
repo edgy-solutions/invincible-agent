@@ -565,6 +565,32 @@ userDeployments:
         # "datahub-datahub-gms" — the prefix comes from the acryl
         # helm chart's release name.
         DATAHUB_SERVER: "http://datahub-datahub-gms:8080"
+        # Cap DuckDB's memory. Its default budget is a fraction of
+        # DETECTED SYSTEM RAM, not the pod's cgroup limit, so on a large
+        # PUB LOG CSV it exceeds the limit and the pod is OOMKilled
+        # instead of spilling to disk. Not theoretical: a 251 MB CSV
+        # conversion killed this pod at the 1 Gi default, and because
+        # Dagster's run worker dies with it, the run then sat STARTED for
+        # hours with no failure event ever written.
+        #
+        # Capping is close to free — measured at 5M rows, a 256MB cap cut
+        # peak RSS from 434 MB to 136 MB for ~6% more wall time.
+        DUCKDB_MEMORY_LIMIT: "256MB"
+      # Sized from the measured conversion cost, not a round number.
+      # Per concurrent step: ~256 MB DuckDB (capped above) plus ~250 MB
+      # of Python/Dagster subprocess, so ~500 MB each; the parent run
+      # process adds ~300 MB. At publog's max_concurrent of 4 that is
+      # ~2.3 Gi, so 3 Gi leaves headroom without over-reserving.
+      #
+      # Raising PUBLOG_MAX_CONCURRENT means raising this too: six
+      # concurrent steps need ~3.3 Gi and would OOMKill at this limit.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 3Gi
     broker:
       replicas: 1
       port: 8000
