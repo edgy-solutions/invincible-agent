@@ -35,6 +35,23 @@ SCHEMA_VERSION = "1"
 # (ADR-0034 §7 — the road back from autonomy, which must be paved rather than improvised).
 ADMITTED_BY = ("policy", "content", "escalation")
 
+# WHICH OF ITS OWN RECORDS THE CORPUS COUNTS. The first records come from witness re-drives,
+# CROPFAIL synthetics and hand-clicking — legitimate emissions, but NOT promotion evidence.
+# Declared at emit rather than inferred later from dates, because records are IMMUTABLE by
+# construction: "which era was this?" is impossible to retrofit honestly once written, and
+# "everyone remembers which week was the shakedown" is exactly the institutional memory that
+# stops being true the moment it matters. Flip DECISION_RECORD_ERA to `production` when the
+# system is declared commissioned.
+COMMISSIONING, PRODUCTION = "commissioning", "production"
+ERAS = (COMMISSIONING, PRODUCTION)
+
+# A notice can be decided BEFORE any ruleset is consulted (zero parts extracted -> the sensor
+# never composes). `governing.ruleset_ref` is still REQUIRED, because a record that omits its
+# policy state is unclassifiable — so the honest answer is a DECLARED sentinel rather than an
+# empty string. Empty would read as "we forgot"; this reads as "composition never ran", which
+# is a different and true fact.
+NOT_COMPOSED = "none:no-composition"
+
 
 class DecisionRecordInvalid(ValueError):
     """The record is not admissible evidence. Raised at EMIT, never swallowed."""
@@ -88,6 +105,7 @@ def build_decision_record(
     checks: list,
     governing: dict,
     trust_rung: str,
+    era: str = COMMISSIONING,
     warnings: Optional[list] = None,
 ) -> dict:
     """Assemble a record. PURE and total — every rejection is a raise, never a silent default.
@@ -118,6 +136,9 @@ def build_decision_record(
              "governing.trust_table_ref is required — the admission posture is policy state "
              "too, and a corpus spanning a table edit must be able to tell the halves apart")
     _require(bool(trust_rung), "trust_rung is required")
+    _require(era in ERAS,
+             f"era must be one of {ERAS}, got {era!r} — promotion queries exclude the "
+             f"commissioning period BY DECLARATION, never by remembering which dates were tests")
 
     for c in checks:
         _require(isinstance(c, dict), "each check must be a dict from make_check()")
@@ -135,6 +156,7 @@ def build_decision_record(
         "outcome": outcome,
         "admitted_by": admitted_by,
         "trust_rung": trust_rung,
+        "era": era,
         "checks": list(checks),
         "governing": dict(governing),
         "warnings": list(warnings or []),
@@ -152,9 +174,10 @@ def validate_decision_record(rec: dict) -> None:
     _require(isinstance(rec, dict), "record must be a dict")
     for field in ("schema_version", "record_id", "request_key", "source_key",
                   "pipeline_version", "format_fingerprint", "outcome", "admitted_by",
-                  "trust_rung", "checks", "governing"):
+                  "trust_rung", "era", "checks", "governing"):
         _require(field in rec, f"record is missing required field {field!r}")
     _require(rec["admitted_by"] in ADMITTED_BY, f"bad admitted_by {rec['admitted_by']!r}")
+    _require(rec["era"] in ERAS, f"bad era {rec['era']!r}")
     _require(rec["record_id"] == record_id_for(rec["request_key"]),
              "record_id does not match its request_key — the corpus would not join to the "
              "run, the triage task or the invocation that share that identity")
