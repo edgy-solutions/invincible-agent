@@ -1444,8 +1444,10 @@ except ImportError:  # pragma: no cover - import path differs by runtime
 
 try:
     from state_sparql import build_item_state_update as _build_state_update, build_instances_by_property_query as _build_parts_query  # type: ignore[no-redef]
+    from state_sparql import sparql_lit as _sparql_lit  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.state_sparql import build_item_state_update as _build_state_update, build_instances_by_property_query as _build_parts_query
+    from agent_fleet.ontology_service.state_sparql import sparql_lit as _sparql_lit
 
 try:
     from policy_rules_sparql import build_rules_construct, build_graph_probe_ask  # type: ignore[no-redef]
@@ -2548,6 +2550,102 @@ async def write_item_state(request: WriteItemStateRequest) -> dict:
     update = _build_state_update(s, request.disposition_state, request.disposition_ref, request.proposed_by_ruleset)
     await _execute_sparql_update(update)
     return {"ok": True, "subject_iri": s, "disposition_state": request.disposition_state}
+
+
+class WriteDecisionRecordRequest(BaseModel):
+    """ADR-0034 Phase 1: one notice's decision record, appended to the domain's DECISIONS graph.
+
+    GENERIC AT BIRTH: the route carries no domain name — `domain` selects the graph
+    (`<DOMAIN>_DECISIONS`), exactly as it does for the instance graphs. A second domain
+    emitting records needs no new surface."""
+    record_id: str
+    domain: str = "SUSTAINMENT"
+    # The record as built by iagent's decision_record.build_decision_record — already
+    # schema-validated there and re-validated at emit. Stored as one canonical JSON literal:
+    # the record is EVIDENCE, and evidence is read back whole, never partially re-assembled
+    # from triples that might have drifted. The indexed fields below are projections FOR
+    # querying, not the record itself.
+    canonical: str
+    # Projections that make the corpus queryable by property — the shape every named consumer
+    # has (promotion: "corrections across the last N records for format F"; the demotion
+    # tripwire: a standing query over recent records). Indexing these is the whole reason the
+    # store is the graph rather than a blob.
+    format_fingerprint: str
+    pipeline_version: str
+    outcome: str
+    admitted_by: str
+    trust_rung: str
+    ruleset_ref: str
+    trust_table_ref: str
+    emitted_at_ms: int
+
+
+_DECISION_NS = "http://internal/decision#"
+
+
+def _decisions_graph(domain: str) -> str:
+    """`<http://internal/{DOMAIN}_DECISIONS>` — a DEDICATED RUNTIME graph.
+
+    NEVER a vocabulary graph and NEVER prime: decision records are non-reproducible runtime
+    output with a different reproducibility class than the ontologies, and mixing producers of
+    different reproducibility into one graph is what the collision incident wrote in blood.
+    Separate graph, separate lifecycle, separate blast radius."""
+    return f"http://internal/{(domain or 'SUSTAINMENT').strip().upper()}_DECISIONS"
+
+
+@app.post("/write_decision_record")
+async def write_decision_record(request: WriteDecisionRecordRequest) -> dict:
+    """APPEND a decision record. Append-only, with IMMUTABILITY ENFORCED HERE at the writer.
+
+    A record already present is REFUSED (409), never overwritten. Corrections JOIN to a record;
+    they do not rewrite it — an audit trail that can be edited in place is not one, and the
+    whole point of the corpus is that a promotion decision can be re-examined against what was
+    actually recorded at the time. Convention is not enough for this: "append-only by
+    convention" is a comment, and a comment is not a gate, so the refusal is executable.
+
+    Idempotent-safe for the caller: a re-emitted IDENTICAL record returns ok with
+    `already_present`, so a retry after a transport failure is not an error — only a DIFFERENT
+    record under an existing id is a conflict."""
+    rid = (request.record_id or "").strip()
+    if not rid or not rid.replace("-", "").isalnum():
+        raise HTTPException(status_code=400, detail="record_id must be a simple slug")
+    graph = _decisions_graph(request.domain)
+    subject = f"{_DECISION_NS}{rid}"
+
+    exists = await _run_ask(
+        f"ASK {{ GRAPH <{graph}> {{ <{subject}> ?p ?o }} }}"
+    )
+    if exists:
+        same = await _run_ask(
+            f"ASK {{ GRAPH <{graph}> {{ <{subject}> <{_DECISION_NS}canonical> "
+            f'"{_sparql_lit(request.canonical)}" }} }}'
+        )
+        if same:
+            return {"ok": True, "record_id": rid, "status": "already_present", "graph": graph}
+        raise HTTPException(status_code=409, detail={
+            "error": "decision_record_immutable",
+            "record_id": rid,
+            "message": "a DIFFERENT record already exists under this id — records are "
+                       "append-only; corrections join, they do not overwrite",
+        })
+
+    def lit(v):
+        return f'"{_sparql_lit(str(v))}"'
+
+    triples = "\n".join([
+        f"<{subject}> a <{_DECISION_NS}DecisionRecord> .",
+        f"<{subject}> <{_DECISION_NS}canonical> {lit(request.canonical)} .",
+        f"<{subject}> <{_DECISION_NS}formatFingerprint> {lit(request.format_fingerprint)} .",
+        f"<{subject}> <{_DECISION_NS}pipelineVersion> {lit(request.pipeline_version)} .",
+        f"<{subject}> <{_DECISION_NS}outcome> {lit(request.outcome)} .",
+        f"<{subject}> <{_DECISION_NS}admittedBy> {lit(request.admitted_by)} .",
+        f"<{subject}> <{_DECISION_NS}trustRung> {lit(request.trust_rung)} .",
+        f"<{subject}> <{_DECISION_NS}rulesetRef> {lit(request.ruleset_ref)} .",
+        f"<{subject}> <{_DECISION_NS}trustTableRef> {lit(request.trust_table_ref)} .",
+        f"<{subject}> <{_DECISION_NS}emittedAtMs> {lit(request.emitted_at_ms)} .",
+    ])
+    await _execute_sparql_update(f"INSERT DATA {{ GRAPH <{graph}> {{\n{triples}\n}} }}")
+    return {"ok": True, "record_id": rid, "status": "appended", "graph": graph}
 
 
 class InstancesByPropertyRequest(BaseModel):

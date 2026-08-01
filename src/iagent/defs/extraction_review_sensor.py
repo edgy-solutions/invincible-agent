@@ -509,6 +509,102 @@ def file_triage_task(triage: dict, *, bff_url: str, token: str, timeout: float =
     return body
 
 
+
+# ── ADR-0034 Phase 1: a decision record for EVERY processed notice ──────────
+_PIPELINE_VERSION = os.getenv("PIPELINE_VERSION", "unset")
+
+
+def _format_fingerprint(review: dict, key: str) -> str:
+    """A first-cut vendor-format key: <mfr>/<doc_type>/<layout-era>.
+
+    DELIBERATELY COARSE AND DECLARED AS SUCH. ADR-0034 open question 3 says the fingerprint
+    needs real corpus data to sharpen — too coarse silently grants trust ACROSS a format
+    boundary, too fine and nothing ever accumulates enough evidence to promote. It is recorded
+    on every record from day one precisely so the corpus can tell us which way it is wrong;
+    a fingerprint invented later cannot be applied to immutable records already written.
+    """
+    mfr = ""
+    for it in review.get("review_items") or []:
+        if it.get("field_path") == "header.mfr":
+            mfr = str(it.get("value") or "").strip().lower()
+            break
+    return f"{mfr or 'unknown'}/{str(review.get('doc_type') or 'PCN').lower()}/v1"
+
+
+def _emit_record(context, *, review: dict, key: str, request_key: str, outcome: str,
+                 checks: list, ruleset_ref: str, admitted_by: str = "content",
+                 warnings=None) -> None:
+    """Record what was decided and WHAT IT WAS DECIDED ON. Never raises past a bug in the
+    record itself: the writer fails soft on transport (an audit outage must not become a
+    review outage) while a malformed record still raises, because that is an emitter bug."""
+    try:
+        from ..decision_record import NOT_COMPOSED, build_decision_record  # noqa: PLC0415
+        from ..decision_record_writer import DECISION_RECORD_ERA, graph_writer  # noqa: PLC0415
+        from ..trust_table import DEFAULT_RUNG  # noqa: PLC0415
+        rec = build_decision_record(
+            request_key=request_key,
+            source_key=key,
+            notice_id=review.get("doc_id"),
+            pipeline_version=_PIPELINE_VERSION,
+            format_fingerprint=_format_fingerprint(review, key),
+            outcome=outcome,
+            admitted_by=admitted_by,
+            checks=checks,
+            governing={"ruleset_ref": ruleset_ref or NOT_COMPOSED,
+                       "trust_table_ref": _trust_table_ref(),
+                       "domain": "SUSTAINMENT"},
+            trust_rung=DEFAULT_RUNG,
+            era=DECISION_RECORD_ERA,
+            warnings=list(warnings or []),
+        )
+        res = graph_writer(rec)
+        context.log.info(f"decision record {rec['record_id']} outcome={outcome} "
+                         f"era={rec['era']} -> {res}")
+    except Exception as exc:  # noqa: BLE001
+        # A record must never take down the pipeline that produces it (see the writer's
+        # docstring for why this is the one place the reporting path fails SOFT). Logged at
+        # WARNING with the artifact named, so a hole in the corpus is findable.
+        context.log.warning(f"decision record NOT emitted for {key}: {type(exc).__name__}: {exc}")
+
+
+def _trust_table_ref() -> str:
+    """The trust table's content hash rides into every record. Phase 1 does not yet CONSULT
+    the table for routing (that is 1.3); recording its state from day one means the corpus can
+    later tell records written under different admission policy apart."""
+    try:
+        from ..trust_table import load_trust_table  # noqa: PLC0415
+        return load_trust_table().ref
+    except Exception:  # noqa: BLE001
+        return "trust@unavailable"
+
+
+def _extraction_checks(review: dict, payload: dict) -> list:
+    """The checks the pipeline ALREADY ran, recorded with their INPUTS rather than as
+    verdicts. Nothing new is computed here — this is the discard-pattern cure: values the
+    extraction already produced stop being thrown away."""
+    from ..decision_record import make_check  # noqa: PLC0415
+    stats = review.get("stats") or {}
+    checks = [
+        make_check("parts_extracted", verdict="ok" if payload["impacted_parts"] else "none",
+                   inputs={"extracted": len(payload["impacted_parts"]),
+                           "doc_flagged": bool(payload["doc_needs_review"]),
+                           "text_layer_parts": stats.get("text_layer_parts"),
+                           "vision_used": stats.get("vision_used")}),
+        make_check("crops", verdict="degraded" if stats.get("crops_failed") else "ok",
+                   inputs={"used": stats.get("n_crops_used"), "failed": stats.get("crops_failed"),
+                           "missing": stats.get("crops_missing"),
+                           "truncated": stats.get("crops_truncated")}),
+    ]
+    # Both reason fields — `doc_review_reasons` AND `review_reasons`. Two producers write
+    # them under different names and the sensor historically read only the first, so the
+    # cross-check findings were dropped before anyone could see them (live 2026-07-31).
+    reasons = list(review.get("doc_review_reasons") or []) + list(review.get("review_reasons") or [])
+    if reasons:
+        checks.append(make_check("extraction_reasons", verdict="flagged",
+                                 inputs={"reasons": reasons[:10], "count": len(reasons)}))
+    return checks
+
+
 # ── Dagster op / job / sensor ────────────────────────────────────────────────
 # Where a content refusal is routed. EMPTY (the default) means the BFF's default: the
 # domain's own review audience — the people already responsible for these notices. That is
@@ -602,12 +698,21 @@ def start_review_op(context, config: StartReviewConfig) -> None:
                 f"to {filed.get('audience')} as task {filed.get('task_id')} "
                 f"({filed.get('status')}, recipients={filed.get('recipients', 'n/a')})"
             )
+            _emit_record(context, review=review, key=key, request_key=request_key,
+                         outcome="NO_PARTS_EXTRACTED", checks=_extraction_checks(review, payload),
+                         ruleset_ref="", warnings=payload.get("extraction_warnings"))
             return
         # Not flagged AND no parts: an honest empty, the same shape as NO_RESIDUE. Filing a
         # task for every one of these would flood the queue with "nothing to do" — the
         # rubber-stamp pressure the trust work is explicitly trying to avoid.
         context.log.info(f"no impacted parts in {key} and the doc is not flagged; "
                          f"nothing to review — skipping (honest empty)")
+        # A record HERE is the point of "every processed notice". This branch is the quietest
+        # outcome in the pipeline — no review, no task, no failure — so without a record it is
+        # the one decision that leaves no trace at all, which is exactly the audit gap.
+        _emit_record(context, review=review, key=key, request_key=request_key,
+                     outcome="NO_AFFECTED_PARTS", checks=_extraction_checks(review, payload),
+                     ruleset_ref="", warnings=payload.get("extraction_warnings"))
         return
     # Log the source BEFORE the call: if the POST times out or the process dies, this line
     # is the only record of WHICH document the run was working on.
@@ -628,6 +733,11 @@ def start_review_op(context, config: StartReviewConfig) -> None:
             domain=config.domain, audience=_TRIAGE_AUDIENCE or None,
         )
         filed = file_triage_task(triage, bff_url=bff_url, token=token, source=src)
+        _emit_record(context, review=review, key=key, request_key=request_key,
+                     outcome=_status_of(body) or "REFUSED_CONTENT",
+                     checks=_extraction_checks(review, payload),
+                     ruleset_ref=(body or {}).get("ruleset_ref", ""),
+                     warnings=payload.get("extraction_warnings"))
         context.log.warning(
             f"start_review refused_content ({triage['reason_code']}) for notice="
             f"{payload['notice_id']} source={src} -> routed to {filed.get('audience')} "
@@ -636,6 +746,20 @@ def start_review_op(context, config: StartReviewConfig) -> None:
         )
         return
     context.log.info(f"start_review {outcome}: notice={payload['notice_id']} source={src} -> {body}")
+    from ..decision_record import make_check as _mk  # noqa: PLC0415
+    _checks = _extraction_checks(review, payload)
+    _counts = (body or {}).get("counts") or {}
+    if _counts:
+        # The funnel's own numbers — input/residue/filtered/auto_disposed — are INPUTS, not a
+        # verdict. "NO_RESIDUE" alone cannot tell a later reader whether nothing was in scope
+        # or everything was auto-disposed, and those are different facts about the pipeline.
+        _checks.append(_mk("residue_funnel",
+                                  verdict="residue" if _counts.get("residue") else "empty",
+                                  inputs=dict(_counts)))
+    _emit_record(context, review=review, key=key, request_key=request_key,
+                 outcome=_status_of(body) or outcome.upper(), checks=_checks,
+                 ruleset_ref=(body or {}).get("ruleset_ref", ""),
+                 warnings=payload.get("extraction_warnings"))
 
 
 @job
