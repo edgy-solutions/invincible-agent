@@ -30,6 +30,7 @@ The notice's affected parts + needs_review flags are the doc-tools EXTRACTION, p
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Callable, Optional
 
@@ -154,6 +155,49 @@ def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live 
         return bool(resp.json().get("check", False))   # absent/not-found/error -> deny (fail-closed)
     except Exception:  # noqa: BLE001 — fail-closed (deny) on any error, like the ontology gate
         return False
+
+
+def compose_workflow_id(notice_id: str, approver: str, request_key: Optional[str] = None) -> str:
+    """The grouped review's Restate workflow key. PURE, so its properties are testable.
+
+    RESTATE WORKFLOW KEYS ARE SINGLE-USE. A key can be submitted exactly once, ever; a second
+    ``workflow_send`` to the same key does nothing — and because that send is fire-and-forget,
+    ``start_review`` still returns STARTED. Combine that with a key derived from ``notice_id``
+    (the LLM-extracted doc_id) and two failures compound into one silent, permanent one:
+
+      * TWO DOCUMENTS SHARING A doc_id collapse into ONE review — a real hazard, since doc_id
+        degrades to a shared fallback exactly when extraction is going wrong.
+      * A NOTICE WHOSE FIRST ATTEMPT DIED can never produce a review again. The key is spent,
+        re-extraction cannot change it (the header pass yields the same doc_id), and every
+        retry logs STARTED. Live at work 2026-07-31: eleven notices, eleven STARTED, ONE
+        review — the other ten permanently unrecoverable without hand-editing doc_ids.
+
+    So the key carries the ARTIFACT's identity (ETag + s3 key, hashed) as a discriminator —
+    the same identity the sensor's run_key, the triage task_id and the ingress idempotency key
+    already use. FOURTH enforcement point of one rule: identity comes from what the artifact
+    IS and where it lives, never from a value a model derived.
+
+    What each case now does:
+      * same artifact re-sent      -> same key -> correctly idempotent, no duplicate review
+      * RE-EXTRACTION (new bytes)  -> new key  -> a genuinely new review, which is the point:
+                                      a corrected extraction must be reviewable, and today it
+                                      silently is not
+      * two docs, one doc_id       -> different keys -> no collision
+
+    `notice_id` stays in the key as a HUMAN-READABLE prefix: these keys are read in Restate's
+    UI and in logs during incidents, and an opaque hash would have made this very bug harder
+    to see. Readability is the reason it is there — it is no longer load-bearing for identity.
+
+    NO request_key (the hand-driven ops/re-drive path) falls back to the old shape. That path
+    is then subject to the single-use constraint, exactly as before — honest rather than
+    silently uniquified, and the same choice the ingress key makes when it cannot name an
+    artifact.
+    """
+    base = f"pcn-review-{notice_id}-{approver}"
+    rk = (request_key or "").strip()
+    if not rk:
+        return base
+    return f"{base}-{hashlib.sha1(rk.encode()).hexdigest()[:10]}"
 
 
 def _no_reviewer_filter(approver: str, item) -> bool:
@@ -303,7 +347,7 @@ async def start_review(ctx: Context, request: dict) -> dict:
         # is gated at the task layer (register_task per-actor + /act), not by pre-filtering the batch.
         return {"status": "NO_RESIDUE", "notice_id": notice_id, "counts": build["counts"]}
 
-    workflow_id = f"pcn-review-{notice_id}-{approver}"
+    workflow_id = compose_workflow_id(notice_id, approver, request.get("request_key"))
     ctx.workflow_send(
         grouped_review_run,
         key=workflow_id,

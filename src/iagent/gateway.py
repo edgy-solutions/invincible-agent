@@ -523,9 +523,14 @@ async def start_review(
         "audience": req.audience or f"pcn_disposition:{req.domain}",
         "user_jwt": raw_token,
     }
-    # NB `request_key` is deliberately NOT in the forwarded body — it is transport-level
-    # identity for the ingress, not an input to composition. It reaches Restate as the
-    # idempotency-key header below.
+    # `request_key` IS forwarded now — it was originally withheld as "transport-level identity
+    # for the ingress, not an input to composition", and review IDENTITY turned out to be
+    # exactly what needed it. The composed workflow key derived from `notice_id` (the
+    # LLM-extracted doc_id), which made two documents sharing a doc_id collapse into ONE
+    # review and — because Restate workflow keys are SINGLE-USE — left a notice whose first
+    # attempt died unable to ever produce a review again. Live at work 2026-07-31: eleven
+    # notices, eleven `STARTED` logs, one review.
+    body["request_key"] = req.request_key or ""
     try:
         # Sized to the PART COUNT, not to a nominal request. start_review resolves a
         # subject, checks entitlement and evaluates the ruleset PER PART, so a

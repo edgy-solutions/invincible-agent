@@ -145,7 +145,14 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
     # ONE grouped HumanTask for the whole batch (1 approval resolves N). Register durably BEFORE
     # suspending, mirroring the sealed HITL mechanics.
     grouped_task = {
-        "task_key": f"grouped:{notice_fingerprint}:{approver}",
+        # DERIVED FROM THE WORKFLOW KEY, not re-invented from the notice. This was
+        # `grouped:{notice_fingerprint}:{approver}` — a SECOND independent derivation from the
+        # LLM-extracted doc_id, carrying the same collision hazard as the workflow key it sits
+        # beside: two documents sharing a doc_id produced one task id as well as one workflow.
+        # The grouped task is 1:1 with this workflow, so its identity should COME FROM the
+        # workflow rather than be computed in parallel and hope to agree. One identity, one
+        # derivation, N consumers.
+        "task_key": f"grouped:{ctx.key()}",
         # This workflow's OWN key — the address submit_decision is invoked on
         # (GroupedReview/{workflow_id}/submit_decision). Carried into the register body so cortex-bff's
         # /human_tasks/{id}/act can resume THIS workflow when the reviewer approves. Without it the
