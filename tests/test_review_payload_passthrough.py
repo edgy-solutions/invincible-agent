@@ -107,12 +107,22 @@ def test_forwarded_body_carries_them_not_just_the_model():
     hand-enumerating AGAIN, so a field can be accepted and still dropped one line later.
     Assert against the handler's source that both names reach the forwarded body."""
     src = (_ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
-    start = src.index("_RESTATE_INGRESS_URL}/ReviewStarter/start_review")
-    window = src[max(0, start - 2000):start]     # the body dict immediately above the POST
+    # Scope to the HANDLER, not a byte window. This assertion previously scanned the 2000
+    # characters above the POST, which made it a distance check disguised as a content check:
+    # adding a comment block between the body dict and the call pushed the dict out of range
+    # and the test failed while the code was correct (2026-07-31). A window measures layout;
+    # the function body is what the claim is actually about.
+    start = src.index("async def start_review(")
+    end = src.index("\ndef ", start)             # first top-level def after the handler
+    handler = src[start:end]
     for field in ("review_state_source", "extraction_warnings"):
-        assert f'"{field}": req.{field}' in window, (
+        assert f'"{field}": req.{field}' in handler, (
             f"{field} is declared on the model but never forwarded in the start_review body"
         )
+    # request_key joined them: review IDENTITY is derived from it downstream (the workflow key),
+    # so dropping it here silently restores the single-use-key trap that made ten notices at
+    # work permanently unable to produce a review.
+    assert 'body["request_key"] = req.request_key or ""' in handler
 
 
 if __name__ == "__main__":
