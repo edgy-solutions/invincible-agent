@@ -140,6 +140,18 @@ emission**, immutable, self-versioned. Contents:
 > that says *what was compared against what* answers "why was this not reviewed?" **from the artifact**,
 > which is the coherence-seal principle: the served artifact must contain the claim. A promotion decision
 > made on bare verdicts is a promotion made on the pipeline's self-report.
+>
+> **THE INCIDENT THAT MAKES THIS NON-NEGOTIABLE (2026-07-31, live).** Two work notices carried a
+> cross-check reason, and both numbers were invented: *"summary implies ~89 parts but 2 were extracted"*
+> was the count parser reading a **package type** (`SOT‑89`); *"summary implies ~2024 parts but 1 were
+> extracted"* was a **year**. Stored as `{"verdict": "mismatch"}`, both would have entered the corpus as
+> evidence that **the extraction was unreliable** — and a vendor could have been held back from promotion
+> on the strength of a regex bug, permanently, since records are immutable. Stored with their inputs, a
+> reader sees immediately that the 89 came from `"SOT‑89 package parts"` and dismisses it.
+>
+> This is the clause a future simplifier will try to lose ("we only need the verdict"). The answer is that
+> **a check's verdict without its inputs is not evidence, it is an assertion** — and the corpus governs
+> whether a pipeline may act unsupervised.
 
 This directly answers the user-facing requirement: **the audit of a decision NOT to review is a stored
 artifact, not a re-run.**
@@ -226,6 +238,18 @@ deciding the workflow model's expressiveness as a side effect of a trust decisio
 2. **Sampling-rate governance for `monitored`** — who sets it, is it per-format, and does it decay with
    accumulated evidence? Sampling is the evidence engine of the middle rung, so its rate is policy, not a
    constant.
+
+2b. **Does a reason have to be a GOOD reason? — arrived in live practice on day one.** The triage card
+   requires a non-empty reason on Acknowledge, and the very first real acknowledgement (2026-07-31,
+   sandbox, witnessed) recorded **`comment: 'sasa'`**. The non-empty *floor* is enforced and held; reason
+   **quality** is now demonstrably the open governance question, with `'sasa'` as its founding exhibit.
+   This matters here and not only in the UI: the corpus reads human corrections as promotion evidence, and
+   *"parts entered in the legacy system"* versus *"notice withdrawn by the vendor"* versus `'sasa'` are
+   three very different facts about a pipeline — the third being no fact at all. No gate can enforce
+   meaningfulness, so the candidates are a structured reason (select-from-authorized-set, this codebase's
+   standing preference over free text), a minimum-signal heuristic (which would have to fail to NONE), or
+   accepting that low-signal reasons are themselves a measurable quality signal about the review process.
+   **Do not silently treat all non-empty reasons as equal evidence when computing a correction rate.**
 3. **Format-fingerprint sharpening** (§2) — a fingerprint too coarse silently grants trust across a format
    boundary; too fine and no format ever accumulates enough evidence to promote. Needs real corpus data.
 4. **Do decision records live in the graph or a table?** Graph is the lean — promotion queries are
