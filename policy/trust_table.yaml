@@ -1,0 +1,59 @@
+# TRUST TABLE — the ADMISSION posture per vendor-format x pipeline-version.
+#
+# ADR-0034. This file answers ONE question: may the pipeline act on this class of input
+# WITHOUT a human? It does NOT decide whether a review starts (that is the starter, posture
+# AND content) and it does NOT decide what the process is (that is the workflow definition).
+# No entry here may name a step; no definition may read this file.
+#
+# THE CONJUNCTION THAT MATTERS: `supervised` forces the review path REGARDLESS of content.
+# `monitored` / `trusted` DEFER to the content chain — they never override a content refusal
+# into silence. Trust buys the absence of a HUMAN, never the absence of a CHECK.
+#
+# ── THE RUNGS ────────────────────────────────────────────────────────────────
+#   supervised  every notice enters the human queue. Full decision records. THE DEFAULT.
+#   monitored   auto-proceeds, SAMPLED into the human queue, full records on every notice.
+#   trusted     auto-proceeds; records still emitted; sampling optional.
+#
+# `supervised -> trusted` IS NOT A PERMITTED TRANSITION. `monitored` is not a formality on the
+# way to automation — it is the only rung that produces COUNTERFACTUAL evidence: what the
+# pipeline would have done, checked against what a human did, on traffic it is already
+# handling. Skipping it promotes on evidence gathered under a different regime.
+#
+# ── WHY THE KEY IS vendor-format x PIPELINE-VERSION ──────────────────────────
+# Never vendor alone. Three notices broke this pipeline in one week (Qorvo, Diodes, onsemi)
+# and they broke on format variation WITHIN a vendor, while the extractor changed underneath
+# them mid-arc (vision -> text-layer). A vendor is not a stable unit of format. Worse, trust
+# keyed on vendor alone would SURVIVE A PIPELINE UPGRADE — exactly when accumulated evidence
+# stops applying, because the thing that earned the trust is no longer the thing running.
+#
+# ── DENY-BY-DEFAULT FOR AUTONOMY ─────────────────────────────────────────────
+# An unlisted vendor-format is `supervised`, computed from ABSENCE. A table that must LIST a
+# format in order to supervise it fails OPEN on the format nobody added — and the format
+# nobody added is precisely the one nobody has looked at.
+#
+# ── HOW TO CHANGE IT ─────────────────────────────────────────────────────────
+# git-asserted, content-hashed, validated at load, fails LOUD. Every entry states WHO ratified
+# it and on WHAT evidence — an unexplained trust grant is not a grant, for the same reason an
+# unexplained capability grant is not one (capability_grants.yaml). Promotion is an approval
+# (ADR-0027) and the evidence is the decision-record corpus, not a hunch.
+#
+# NOTHING IS PROMOTED YET, deliberately: the corpus starts empty, so every real format sits at
+# the born-default until there is something to read. An empty `formats` map is the honest
+# starting state, not an unconfigured one.
+
+version: 1
+formats: {}
+
+# Shape of an entry, for when the first promotion is ratified:
+#
+# formats:
+#   "<vendor>/<doc-kind>/<layout-fingerprint>":
+#     rung: monitored              # supervised | monitored | trusted
+#     pipeline_version: "doc-tools@446fbae"   # the version this rung was earned UNDER
+#     sample_rate: 0.25            # monitored only — the counterfactual evidence engine
+#     ratified_by: <accountable human>
+#     ratified_on: 2026-08-01
+#     evidence: >-
+#       Correction rate over N records at this pipeline version, and the span they cover.
+#       CORRECTIONS-weighted, never approval-count: N approvals measures that humans clicked,
+#       not that the pipeline was right.
