@@ -1005,8 +1005,11 @@ async def act_on_human_task(
     foundation validates the gate + resolution bookkeeping."""
     from starlette.concurrency import run_in_threadpool
     from . import human_tasks
-    if req.decision not in ("approved", "rejected"):
-        raise HTTPException(status_code=400, detail={"error": "bad_decision"})
+    # NB the verb is validated PER KIND below, once the task's kind is known — not against a
+    # hardcoded pair here. A triage task ("this notice could not be prepared") accepts
+    # acknowledge/re-drive and must REFUSE approve/reject, because storing "approved" on an
+    # extraction failure writes a decision the task's semantics cannot represent, and
+    # ADR-0034's decision records would archive it immutably as promotion evidence.
     # Look up the task's audience (from any of the caller's recipient rows) to
     # re-check. Keyed on authz_id — same as the replication filter.
     try:
@@ -1044,6 +1047,18 @@ async def act_on_human_task(
     allowed = await run_in_threadpool(lambda: human_tasks.check_can_act(audience, current_user.authz_id))
     if not allowed:
         raise HTTPException(status_code=403, detail={"error": "not_authorized_to_act", "audience": audience})
+
+    # VERB VALIDATION, per the task's OWN species — after authz (never leak a kind to an
+    # unauthorized caller through a validation error) and before any write.
+    try:
+        human_tasks.validate_decision(match.get("kind") or "", req.decision, req.comment)
+    except human_tasks.InvalidDecisionForKind as exc:
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_decision_for_kind",
+            "kind": match.get("kind"),
+            "allowed": sorted(human_tasks.verbs_for_kind(match.get("kind") or "")),
+            "message": str(exc),
+        })
 
     # FULFILLMENT (grouped_review): the decision must be VALIDATED by the workflow
     # (GroupedReview.submit_decision) BEFORE the projection is resolved. submit_decision

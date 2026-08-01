@@ -364,13 +364,74 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
     return dict(row) if row else None
 
 
+# WHICH VERBS EACH TASK SPECIES ACCEPTS. A task kind's verbs are part of its meaning, not
+# a UI choice: "approve" on *"this notice could not be prepared for review"* is not merely an
+# awkward label, it records a decision the data cannot represent — and ADR-0034's decision
+# records would then archive that nonsense IMMUTABLY, as evidence, into the corpus that governs
+# promotion. So the vocabulary is declared HERE, next to the write, and a verb that does not
+# belong to the kind is REFUSED rather than stored.
+#
+# Undeclared kinds keep the approve/reject default — that is the honest default for a task that
+# IS a decision. The lesson from the triage bug is narrower and sharper than "register your
+# kind": the old default was honest about LABELS ("TASK") and dishonest about AFFORDANCES
+# (APPROVAL_TASK), because a label that says nothing is harmless and an affordance that says
+# nothing still offers buttons.
+#
+# INTERIM — RETIRES AT M3.3, TOGETHER WITH cortex-ui's `taskKindRegistry`. This is the SECOND
+# hardcoded per-kind table awaiting a served declaration, and the two must retire in one change:
+# a `rendersAs` declaration that says how a task RENDERS while a code table still decides what it
+# can DO is the worse half surviving. A step's verbs are the same kind of fact as its quorum and
+# claiming — part of what the step MEANS — so they belong on `HumanAwaitStep`, inside the
+# milestone's own north star ("quorum and claiming change by editing the YAML — zero code").
+# They are here rather than there because the provenance bug could not wait for M3; see
+# docs/plans/m3-grouped-review-definition-design.md §"TWO interim per-kind tables".
+_VERBS_BY_KIND: dict[str, frozenset[str]] = {
+    "extraction_refusal": frozenset({"acknowledged", "redriven"}),
+}
+_DEFAULT_VERBS = frozenset({"approved", "rejected"})
+
+# Verbs whose meaning is empty without a stated reason. "Parts entered in the legacy system"
+# and "notice withdrawn by the vendor" are entirely different facts about the pipeline, and a
+# bare acknowledgement erases the difference — which is precisely the evidence ADR-0034 needs.
+_REASON_REQUIRED = frozenset({"acknowledged"})
+
+
+class InvalidDecisionForKind(ValueError):
+    """The verb is not in this task species' vocabulary (or its reason is missing)."""
+
+
+def verbs_for_kind(kind: str) -> frozenset[str]:
+    return _VERBS_BY_KIND.get(kind, _DEFAULT_VERBS)
+
+
+def validate_decision(kind: str, decision: str, comment: str = "") -> None:
+    """PURE. Raise InvalidDecisionForKind unless `decision` is meaningful for `kind`."""
+    allowed = verbs_for_kind(kind)
+    if decision not in allowed:
+        raise InvalidDecisionForKind(
+            f"{decision!r} is not a valid action on a {kind!r} task — allowed: "
+            f"{sorted(allowed)}. Recording it would write a decision the task's own "
+            f"semantics cannot represent."
+        )
+    if decision in _REASON_REQUIRED and not (comment or "").strip():
+        raise InvalidDecisionForKind(
+            f"{decision!r} on a {kind!r} task REQUIRES a reason — an unexplained "
+            f"acknowledgement erases the difference between the outcomes it covers."
+        )
+
+
 def mark_task_resolved(task_id: str, *, caller_id: str, decision: str,
                        comment: str = "") -> int:
     """Mark ALL recipient rows of a logical task resolved (one human acted for the
     audience). `caller_id` (authz_id) recorded as acted_by. Returns rows updated.
-    Caller MUST have passed check_can_act first."""
+    Caller MUST have passed check_can_act first (and validate_decision).
+
+    `status` carries the DECISION's own vocabulary rather than being coerced into
+    approved/rejected: an acknowledged triage task was not "rejected", and a projection that
+    says so is a lie the audit trail keeps. Only `pending` is load-bearing for queue queries;
+    everything else is terminal, so widening the terminal vocabulary is safe."""
     now = int(time.time() * 1000)
-    status = "approved" if decision == "approved" else "rejected"
+    status = decision if decision in ("approved", "acknowledged", "redriven") else "rejected"
     with _pg_connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
