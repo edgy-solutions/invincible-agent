@@ -1,0 +1,133 @@
+# SOURCE MAPPING TEMPLATE — one contract per source, ODCS-shaped.
+#
+# ============================================================================
+# THIS TEMPLATE IS DELIBERATELY EMPTY ON THE SOURCE SIDE, AND THAT IS THE DESIGN.
+#
+# The canonical vocabulary is open and standards-cited; the mapping from a real
+# source is INTERNAL and stays where the data lives. So this repo ships the
+# QUESTIONS and the SHAPE; you clone it where the source is, fill it against the
+# real columns, and it never leaves. Nothing here needs a sheet name, a column
+# name, or a part number to be useful.
+#
+# The split it enforces: the open side teaches you how to DECLARE what your
+# source is and what it CANNOT say; you fill in the declaration where the data
+# lives. The writer never sees source columns at all — mappings feed it.
+# ============================================================================
+#
+# WHY A CONTRACT AND NOT A SCRIPT. A mapping expressed as transformation code
+# hides its lossiness in control flow: the fields it cannot populate simply never
+# appear, and a structural absence is the hardest debt to retire because nothing
+# marks it as missing. Declared as data, the gaps are ENUMERATED — `cannot_populate`
+# is a first-class section, so "this source has no revision" is a fact you can
+# query, not a silence you have to notice.
+
+odcs_version: "1.0"
+contract_id: ""          # e.g. "bom-<source>-v1" — no external names required
+
+# ---------------------------------------------------------------------------
+# SECTION 1 — SOURCE INVENTORY   (team question 1: which sources?)
+#
+# One contract per source. If a "source" is really several exports with different
+# shapes, they are several sources — collapsing them here would average away the
+# very differences the degradation model exists to expose.
+# ---------------------------------------------------------------------------
+source:
+  label: ""              # internal shorthand; never needs to be meaningful outside
+  # WHO OWNS THE TRUTH. The SAME value for every path, always — this is lineage,
+  # not source identity. Every degradation path mirrors ONE authoritative system.
+  authoritative_source: "windchill"
+  # THE DEGRADATION PATH — direct | etl | warehouse | manual-export.
+  # This is the field the acceptance queries group by, so it must be honest:
+  # a manual export declared as `etl` erases the distance it exists to record.
+  obtained_via: ""
+  # The source's trust rung AT THE TIME OF WRITE (ADR-0034 rungs, reused for data).
+  # `commissioning` until a freshness contract is demonstrated. NOT a judgement of
+  # the people who maintain it — a statement about what can be CONTRACTED.
+  standing: "commissioning"
+
+# ---------------------------------------------------------------------------
+# SECTION 2 — as_of CONVENTION   (team question 3: how do we know the truth-date?)
+#
+# `as_of` is when the SOURCE last reflected PDM truth — not when we ingested it.
+# The two diverge exactly when it matters most.
+#
+# THE SENTINEL IS PRE-WIRED AS THE DEFAULT ANSWER, on purpose: for most manual
+# exports the honest answer IS "unknown", and a blank would collapse "we could
+# not know" into "we forgot to record". An undateable claim is not fresh — it is
+# a claim whose age cannot be established, and the acceptance query buckets it
+# separately rather than counting it as current.
+# ---------------------------------------------------------------------------
+as_of:
+  strategy: "unknown"    # unknown | column | filename | ingest-time-is-truth-time
+  detail: ""             # e.g. "date is in the export filename" — no name needed
+  # Set true ONLY for a source where ingest time genuinely IS truth time (a direct
+  # read). For any export or copy this is false, and claiming otherwise makes a
+  # stale mirror look live.
+  ingest_time_is_truth_time: false
+
+# ---------------------------------------------------------------------------
+# SECTION 3 — TRUTH COLUMNS vs LOCAL ANNOTATIONS
+#              (team question 2: which columns are PDM-derived?)
+#
+# A spreadsheet exported from a system and then worked in contains TWO different
+# kinds of thing wearing one grid:
+#   * PDM-DERIVED columns — degraded copies of truth. These map to canonical.
+#   * LOCAL ANNOTATIONS — why someone exported it, work-in-progress notes,
+#     hand dispositions. These are NOT product data. Blending them into
+#     where-used truth is how a note becomes a fact.
+#
+# Declare every column as one or the other. An undeclared column is DROPPED —
+# silence must not default to ingestion.
+#
+# (Local annotations are arguably proto-decision-records: someone doing this
+# matching by hand is the manual ancestor of the workflow being built. If they
+# are ever captured, they are separate assertions with their own source, never
+# product truth. ADR-0035 open question 3.)
+# ---------------------------------------------------------------------------
+columns:
+  pdm_derived: []        # - source_column: ""   canonical_field: ""
+  local_annotation: []   # - source_column: ""   disposition: drop | capture-separately
+
+# ---------------------------------------------------------------------------
+# SECTION 4 — CANONICAL FIELDS: fill or declare unfillable
+#
+# Every canonical field appears below. Map it, or say plainly that this source
+# cannot populate it. THERE IS NO THIRD OPTION — an omitted row is the structural
+# absence this whole file exists to prevent.
+# ---------------------------------------------------------------------------
+canonical:
+  Part:
+    partNumber: ""       # <- source column
+    revision: ""
+  PartUsage:
+    parent: ""
+    child: ""
+    quantity: ""
+    referenceDesignator: ""
+    applicability: ""    # effectivity, under S3000L's own name
+  ManufacturerPart:
+    mpn: ""
+  ApprovedSourceRelationship:
+    forPart: ""
+    forManufacturerPart: ""
+    qualificationStatus: ""
+
+# WHAT THIS SOURCE CANNOT SAY. Enumerated, with a reason — the degradation is
+# visible in the mapping file instead of invisible in the schema. This section
+# being non-empty is normal and healthy; a source claiming to populate everything
+# is the one to distrust.
+cannot_populate: []
+  # - field: "PartUsage.applicability"
+  #   reason: "the export drops effectivity entirely"
+  # - field: "Part.revision"
+  #   reason: "flattened at export; revision not recoverable"
+
+# ---------------------------------------------------------------------------
+# SECTION 5 — a sanity check that crosses no boundary
+#
+# If a review of the mapping is ever wanted without exposing content, describe
+# only its SHAPE: how many columns mapped, how many excluded as local, where the
+# export date lives. That is enough to confirm the template was exercised
+# correctly, and it names nothing.
+# ---------------------------------------------------------------------------
+shape_summary: ""
