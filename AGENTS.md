@@ -239,6 +239,27 @@ Two rules fall out:
 - **Ask "what produces this input, and can it?"** before trusting a green seal — and where the
   answer is a call-graph fact, assert it (a branch exists, a filing count is exactly N).
 
+### Build the fixture as a SUPERSET of reality, not an approximation of it
+Where the real input cannot enter the repo (restricted boundary) or does not exist yet, build the
+fixture **deliberately as degraded as the contract permits**, so any real input is a SUBSET of it.
+That inverts the usual fixture relationship: instead of the test approximating reality, reality is
+guaranteed to be easier than the test, and the code meets nothing new when the real thing arrives.
+It is a coverage argument BY CONSTRUCTION rather than by enumeration — you do not have to have
+seen the real input to have covered it.
+
+Applies wherever the input is unavailable rather than merely inconvenient: restricted sources,
+vendor formats you cannot obtain, failure modes a healthy pipeline no longer produces. Pair it
+with a guard that asserts the fixture still EVOKES what it claims
+(`tests/fixtures/failure_path/`), or a later tidy-up quietly turns the superset back into a
+sample.
+
+### A query that has never returned a row is a query nobody has tested
+Ship every acceptance/diagnostic query with something for it to FIND — a deliberate disagreeing
+pair, a planted stale record. A query that has only ever returned empty is indistinguishable from
+one that is silently broken (wrong graph, wrong predicate, a FILTER that excludes everything), and
+the first time it matters is exactly when you need to trust it. Reachability applied to queries:
+the mechanism must be witnessed returning a row before an empty result means anything.
+
 ### A probe must demonstrate it can SEE the category of thing it is checking for
 Six instances now, and this is the rule's final form. A probe that returns zero because it was
 looking in the wrong place — or at the wrong KIND of thing — is indistinguishable from a probe

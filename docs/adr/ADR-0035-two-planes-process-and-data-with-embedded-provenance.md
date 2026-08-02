@@ -180,5 +180,15 @@ not a TODO. The PCN classes shipped exactly that way.
    triage card's Re-drive is the first instance, currently a direct call. If that becomes common, the
    boundary needs a declared request/response shape rather than a point-to-point call.
 2. **What does the read-only provenance view actually render?** §3 rules it visible; the shape is UI work.
+4. **CAPABILITY degradation is a second axis, and it has no query yet.** Sources differ in what
+   they CAN SAY, not only in when they last spoke — a source that structurally cannot carry
+   effectivity is degraded along an axis no `as_of` measures, and the mapping contract's
+   `cannot_populate` section was always secretly recording it. So `staleness-by-consumer` should
+   eventually gain a sibling: **capability-by-consumer** — *"which downstream decisions rest on
+   sources that cannot express the field the decision needs?"* The data already exists (declared
+   per mapping, before ingestion); only the query is missing. **Wake:** the first time someone
+   asks why an answer fed by a lossy path cannot do effectivity-scoped matching — because the
+   honest answer is in the contract and nobody will think to look there.
+
 3. **Where do human annotations on a stopgap source live?** They are process knowledge, not source truth,
    and must not blend into it — arguably proto-decision-records. Ruled at ingestion time, per source.
