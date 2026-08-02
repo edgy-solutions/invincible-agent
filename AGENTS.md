@@ -239,6 +239,22 @@ Two rules fall out:
 - **Ask "what produces this input, and can it?"** before trusting a green seal — and where the
   answer is a call-graph fact, assert it (a branch exists, a filing count is exactly N).
 
+### A probe must demonstrate it can SEE the category of thing it is checking for
+Six instances now, and this is the rule's final form. A probe that returns zero because it was
+looking in the wrong place — or at the wrong KIND of thing — is indistinguishable from a probe
+that correctly found nothing, and the two states it exists to separate are exactly the two it
+cannot.
+
+The instances: `helm template -s` selecting nothing; a `--with` overlay supplying a dep the
+image lacked; a mutation test invoking a `python` that did not exist; `pytest` silently skipping
+9 of 12; a `grep` against a container path that did not exist (the image flattens directories);
+and an S3000L coverage query that asked only for owl:Class and reported `quantity: 0` when
+`quantityOfChildElement` is a PROPERTY — which would have been written up as a standards gap.
+
+**So: locate before you grep, list before you count, and ask for every category the answer could
+live in.** The general statement, of which "prove the harness can fail" is the test-shaped case:
+**every verification needs a demonstration that it can return the other answer.**
+
 ### Provenance is a field, never a join
 **No assertion enters a graph without its provenance riding in the same write.** A sidecar audit
 table you *could* join against always decays, because the join is OPTIONAL and optional joins stop

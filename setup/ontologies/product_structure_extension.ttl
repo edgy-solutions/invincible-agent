@@ -1,0 +1,151 @@
+@prefix ps:    <http://internal/sustainment/product#> .
+@prefix s3kl:  <http://www.lksoft.com/s3kl#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix mesh:  <http://internal/mesh#> .
+
+# ============================================================================
+# CANONICAL PRODUCT-STRUCTURE VOCABULARY (ADR-0035 data plane)
+#
+# THE THESIS: this is not four BOM sources. It is ONE mirror of the authoritative
+# PDM system with several degradation paths, each honest about its distance.
+# The graph therefore speaks TRUTH'S language — the canonical shape — and every
+# stopgap source declares a lossy mapping INTO it. Modelling from a source (a
+# spreadsheet export, say) would inherit that export's omissions as STRUCTURAL
+# ABSENCES, and a structural absence is the hardest debt to retire because
+# nothing marks it as missing.
+#
+# VOCABULARY: S3000L (already in the prime manifest, sustainment/S3000L.ttl —
+# 773 classes, 373 properties, verified in the live graph before this file was
+# written). Every derivedFrom below cites a class/property CONFIRMED PRESENT.
+#
+# ANCESTRY, HONESTLY SCOPED: S3000L is architect-asserted to build on
+# ISO 10303-239 (PLCS). That claim is NOT verified here and is NOT cited as a
+# derivedFrom target — nothing in the ingested triples references ISO 10303.
+# derivedFrom points at S3000L directly, which is verified. If ISO conformance
+# is ever asked for, the trigger is to read S3000L's own normative-references
+# section; see ADR-0035 "Standards context".
+#
+# WHAT STEP 0 CHANGED — the coverage check earned its cost twice:
+#   * product structure is Breakdown / BreakdownElement, NOT Assembly/Component
+#   * effectivity is APPLICABILITY (s3kl:ApplicabilityStatement)
+# A model authored without reading the standard would have invented all three
+# names and silently forfeited the citation while looking standards-aligned.
+# ============================================================================
+
+ps: a owl:Ontology ;
+    rdfs:label "Canonical product structure (sustainment)" ;
+    rdfs:comment """One PDM mirror with several degradation paths. S3000L-derived where the
+standard covers the need; house convention, labelled, where the process's semantics exceed
+it. Never contort the process to fit a citation.""" ;
+    owl:imports <http://www.lksoft.com/s3kl> .
+
+# ── Part ────────────────────────────────────────────────────────────────────
+ps:Part a owl:Class ;
+    rdfs:label "Part" ;
+    rdfs:comment "An internally-identified part. Identity + revision; usage lives on ps:PartUsage." ;
+    mesh:derivedFrom s3kl:PartAsDesigned .
+
+ps:partNumber a owl:DatatypeProperty ;
+    rdfs:domain ps:Part ; rdfs:range xsd:string ;
+    mesh:derivedFrom s3kl:partIdentifier_partNumber .
+
+ps:revision a owl:DatatypeProperty ;
+    rdfs:domain ps:Part ; rdfs:range xsd:string ;
+    rdfs:comment "Revision as the source states it. NOT a version ordering — sources differ." ;
+    mesh:derivedFrom s3kl:BreakdownElementRevision .
+
+# ── PartUsage — REIFIED, and the reification is load-bearing ────────────────
+ps:PartUsage a owl:Class ;
+    rdfs:label "Part usage" ;
+    rdfs:comment """One parent-uses-child assertion. REIFIED because (a) provenance rides on
+every assertion (ADR-0035 §4) and an edge cannot carry a provenance block, and (b) two sources
+may assert DIFFERENT usage for the same pair — which must be representable as two assertions
+that disagree, not silently collapsed into one edge that the last writer wins.""" ;
+    mesh:derivedFrom s3kl:BreakdownElementUsageInBreakdown .
+
+ps:parent a owl:ObjectProperty ; rdfs:domain ps:PartUsage ; rdfs:range ps:Part ;
+    mesh:derivedFrom s3kl:Breakdown .
+ps:child  a owl:ObjectProperty ; rdfs:domain ps:PartUsage ; rdfs:range ps:Part ;
+    mesh:derivedFrom s3kl:BreakdownElement .
+ps:quantity a owl:DatatypeProperty ; rdfs:domain ps:PartUsage ; rdfs:range xsd:decimal ;
+    mesh:derivedFrom s3kl:quantityOfChildElement .
+ps:referenceDesignator a owl:DatatypeProperty ; rdfs:domain ps:PartUsage ; rdfs:range xsd:string ;
+    rdfs:comment "House convention — no confirmed S3000L element; left uncited deliberately." .
+
+ps:applicability a owl:ObjectProperty ;
+    rdfs:domain ps:PartUsage ;
+    rdfs:comment """Effectivity, under the standard's own name. S3000L expresses 'when does
+this usage apply' as APPLICABILITY, not 'effectivity' — adopting its term keeps the citation
+and avoids a synonym nobody can trace.""" ;
+    mesh:derivedFrom s3kl:ApplicabilityStatement .
+
+# ── Approved-source bridge — HOUSE CONVENTION, enrichment over the standard ─
+# RULED 2026-08-01. S3000L carries manufacturer part numbers as IDENTIFIER VARIANTS on a part
+# (partIdentifier_oemPartNumber / _supplierPartNumber / _customerPartNumber). That shape cannot
+# express what this system's own process manipulates:
+#
+#   * APPROVED SOURCING IS MANY-TO-MANY. One MPN qualified into several internal parts; one
+#     internal part with several approved MPNs — the latter IS what an AML is.
+#   * `dispatchQualification` LITERALLY MEANS "add an approved source". The disposition
+#     workflow already dispatches it, and an identifier attribute gives that outcome no
+#     first-class object to be written onto.
+#   * PER-RELATIONSHIP PROVENANCE is required by ADR-0035 §4 — who qualified it, when, on what
+#     evidence. An attribute on a part structurally cannot carry a provenance block.
+#   * QUALIFICATION HAS A LIFECYCLE (pending / approved / last-time-buy-only) that has to land
+#     somewhere.
+#
+# So this is an ENRICHMENT OVER the standard, not a fork FROM it: the manufacturer-part side
+# ALSO populates s3kl:partIdentifier_oemPartNumber, so anything reading pure S3000L still sees
+# the identifiers and only loses the relationship semantics it never had. That is the
+# internal-maps-to-standard rule in its intended direction — adopt where the standard covers,
+# house-convention-honestly-labelled where the process's semantics exceed it.
+#
+# FORWARD NOTE (empty-slot-with-a-wake): PLCS proper is asserted to carry richer
+# product-supplier structure than S3000L's profile exposes. If that is confirmed, this bridge
+# may earn a real ancestry citation. Wake: a compliance ask, or a second consumer needing it.
+
+ps:ManufacturerPart a owl:Class ;
+    rdfs:label "Manufacturer part" ;
+    rdfs:comment "A manufacturer-identified part (the MPN a change notice names)." ;
+    rdfs:seeAlso s3kl:partIdentifier_oemPartNumber .
+
+ps:mpn a owl:DatatypeProperty ; rdfs:domain ps:ManufacturerPart ; rdfs:range xsd:string ;
+    rdfs:comment "Co-populated to s3kl:partIdentifier_oemPartNumber by the writer." ;
+    rdfs:seeAlso s3kl:partIdentifier_oemPartNumber .
+
+ps:ApprovedSourceRelationship a owl:Class ;
+    rdfs:label "Approved source relationship" ;
+    rdfs:comment """HOUSE CONVENTION (no S3000L equivalent — see the block above). Reified
+Part <-> ManufacturerPart with qualification status and its own provenance. NAMING AND THE
+STATUS VOCABULARY ARE FLAGGED FOR THE AUTHORING SESSION — deliberately not settled here.""" .
+
+ps:forPart          a owl:ObjectProperty ; rdfs:domain ps:ApprovedSourceRelationship ; rdfs:range ps:Part .
+ps:forManufacturerPart a owl:ObjectProperty ; rdfs:domain ps:ApprovedSourceRelationship ; rdfs:range ps:ManufacturerPart .
+ps:qualificationStatus a owl:DatatypeProperty ; rdfs:domain ps:ApprovedSourceRelationship ; rdfs:range xsd:string ;
+    rdfs:comment "DRAFT vocabulary: pending | approved | last-time-buy-only. Settled at authoring." .
+
+# ── Provenance, on every assertion (ADR-0035 §4) ────────────────────────────
+# The claim that cannot say where it came from doesn't get written. Enforced at the WRITER
+# (src/iagent/provenance.py), declared here so the shape is visible in the vocabulary.
+ps:authoritativeSource a owl:DatatypeProperty ;
+    rdfs:comment "Who OWNS the truth — the same value for every path to it." .
+ps:obtainedVia a owl:DatatypeProperty ;
+    rdfs:comment "The degradation path: direct | etl | warehouse | manual-export." .
+ps:asOf a owl:DatatypeProperty ;
+    rdfs:comment "Truth-date. 'unknown' is a SENTINEL, never a blank." ;
+    mesh:derivedFrom prov:generatedAtTime .
+ps:ingestRun a owl:DatatypeProperty ;
+    rdfs:comment "Chains claim -> run -> sensor -> source object -> ETag." .
+ps:standing a owl:DatatypeProperty ;
+    rdfs:comment "The source's trust rung FROZEN at write time (ADR-0034 rungs)." .
+ps:derivedFromSource a owl:ObjectProperty ;
+    mesh:derivedFrom prov:wasDerivedFrom .
+
+# ── Deliberately OUT of v1, each waking on its consumer ─────────────────────
+# CAD structure · alternates / substitution groups · full effectivity algebra.
+# Named so their absence is a decision on the record rather than an oversight.
