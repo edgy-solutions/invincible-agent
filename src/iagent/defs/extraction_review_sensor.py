@@ -280,7 +280,8 @@ def _label_from_key(source_key: str) -> str:
 
 def build_triage_payload(*, source_key: str, notice_id: Optional[str], reason_code: str,
                          detail: str, warnings: Optional[List[str]] = None,
-                         domain: str = "SUSTAINMENT", audience: Optional[str] = None) -> dict:
+                         domain: str = "SUSTAINMENT", audience: Optional[str] = None,
+                         pages: Optional[List[dict]] = None) -> dict:
     """Build the `/triage_tasks` body for a content-refused notice (PURE).
 
     `task_id` is derived from the ARTIFACT KEY, which is unique by construction — NOT
@@ -309,8 +310,18 @@ def build_triage_payload(*, source_key: str, notice_id: Optional[str], reason_co
         "domain": domain,
         "audience": audience,
         # Clearance-safe: identifiers and the refusal reason, never notice content.
+        # PAGE RENDERS — the card's INSTRUMENT, and the reason this task needs evidence MORE
+        # than a review does, not less. Alice is asked to judge whether a notice the machine
+        # COULD NOT READ matters; without the pages she has strictly less to look at than for
+        # a notice it read fine, which is backwards. The failed extraction still ran the
+        # partition, so the renders exist — they were simply never carried.
+        #
+        # Clearance-safe: these are s3 URLs + page numbers, the same references the review
+        # card already carries, never notice content.
         "payload": {"notice_id": notice_id, "source_key": source_key,
-                    "detail": detail[:500], "warnings": list(warnings or [])},
+                    "detail": detail[:500], "warnings": list(warnings or []),
+                    "pages": [{"page": p.get("page"), "s3_url": p.get("s3_url")}
+                              for p in (pages or []) if p.get("s3_url")]},
     }
 
 
@@ -691,6 +702,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
                        "affected parts",
                 warnings=payload.get("extraction_warnings"),
                 domain=config.domain, audience=_TRIAGE_AUDIENCE or None,
+                pages=review.get("pages"),
             )
             filed = file_triage_task(triage, bff_url=bff_url, token=token, source=src)
             context.log.warning(
@@ -731,6 +743,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
             reason_code=_status_of(body) or "", detail=detail,
             warnings=payload.get("extraction_warnings"),
             domain=config.domain, audience=_TRIAGE_AUDIENCE or None,
+            pages=review.get("pages"),
         )
         filed = file_triage_task(triage, bff_url=bff_url, token=token, source=src)
         _emit_record(context, review=review, key=key, request_key=request_key,
