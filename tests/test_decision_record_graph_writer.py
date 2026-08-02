@@ -103,3 +103,26 @@ def test_the_record_id_is_validated_before_it_reaches_a_query():
     """It is interpolated into SPARQL, so it must be a slug — an unvalidated id here is an
     injection into the store the audit trail lives in."""
     assert "isalnum()" in _HANDLER and "400" in _HANDLER
+
+
+# ── the era flag must be QUERYABLE, not merely present ─────────────────────
+def test_era_is_indexed_as_its_own_triple():
+    """THE HOLE THIS FILE MISSED FIRST TIME. `era` was added to the record schema and then
+    carried through neither the writer payload nor the store, so it existed inside the
+    canonical JSON blob and nowhere a query could reach it — and the ruling that
+    commissioning records are "excluded by the era filter" could not have been executed.
+
+    A declaration that cannot be queried is a comment. The general form: a field added for
+    FILTERING must be asserted at every layer between the builder and the query, and the seal
+    for it belongs at the layer that does the filtering, not the one that does the building."""
+    assert "era" in _HANDLER
+    assert f'era>' in _HANDLER or "}era>" in _HANDLER, "era is not written as its own predicate"
+    model = _MAIN[_MAIN.index("class WriteDecisionRecordRequest"):_MAIN.index("_DECISION_NS = ")]
+    assert "era:" in model, "the request model cannot even accept an era"
+
+
+def test_the_writer_client_sends_era():
+    """Both halves: indexing it is useless if the emitter never puts it on the wire — the
+    payload-drop class, which this codebase has now hit five times."""
+    src = (_ROOT / "src" / "iagent" / "decision_record_writer.py").read_text(encoding="utf-8")
+    assert '"era": record["era"]' in src

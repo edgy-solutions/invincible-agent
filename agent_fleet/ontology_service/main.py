@@ -2575,6 +2575,11 @@ class WriteDecisionRecordRequest(BaseModel):
     outcome: str
     admitted_by: str
     trust_rung: str
+    # WHICH RECORDS THE CORPUS COUNTS. Indexed as its own triple, not left inside the
+    # canonical blob: the whole point of the era flag is that promotion queries EXCLUDE the
+    # commissioning period, and an exclusion that requires parsing a JSON literal in every row
+    # is not a filter anyone will write. A declaration that cannot be queried is a comment.
+    era: str = "commissioning"
     ruleset_ref: str
     trust_table_ref: str
     emitted_at_ms: int
@@ -2640,6 +2645,7 @@ async def write_decision_record(request: WriteDecisionRecordRequest) -> dict:
         f"<{subject}> <{_DECISION_NS}outcome> {lit(request.outcome)} .",
         f"<{subject}> <{_DECISION_NS}admittedBy> {lit(request.admitted_by)} .",
         f"<{subject}> <{_DECISION_NS}trustRung> {lit(request.trust_rung)} .",
+        f"<{subject}> <{_DECISION_NS}era> {lit(request.era)} .",
         f"<{subject}> <{_DECISION_NS}rulesetRef> {lit(request.ruleset_ref)} .",
         f"<{subject}> <{_DECISION_NS}trustTableRef> {lit(request.trust_table_ref)} .",
         f"<{subject}> <{_DECISION_NS}emittedAtMs> {lit(request.emitted_at_ms)} .",
