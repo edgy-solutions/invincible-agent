@@ -239,6 +239,48 @@ Two rules fall out:
 - **Ask "what produces this input, and can it?"** before trusting a green seal — and where the
   answer is a call-graph fact, assert it (a branch exists, a filing count is exactly N).
 
+### Provenance is a field, never a join
+**No assertion enters a graph without its provenance riding in the same write.** A sidecar audit
+table you *could* join against always decays, because the join is OPTIONAL and optional joins stop
+happening — the query that omits it is shorter, works, and becomes the one everyone copies.
+Embedded provenance cannot be skipped: reading the claim IS reading its origin.
+
+The doctrine line: **the claim that cannot say where it came from doesn't get written.** Enforced,
+not documented — `src/iagent/provenance.py` refuses an incomplete block at WRITE
+(`validate_ruleset` discipline applied to instance data). Block: `authoritative_source` (who owns
+the truth — the same value for every path to it), `obtained_via` (the degradation path),
+`as_of` (**`unknown` is a sentinel, never a blank**), `ingested_at`, `ingest_run` (chains claim →
+run → sensor → source object → ETag), `standing` (the source's rung FROZEN at write time, because
+"standing now" is a different fact from "standing then").
+
+This was decided piecemeal five times before it was named — `ruleset_ref`, `resolved_via`,
+`requested_by`, decision records' inputs-not-verdicts, and source lineage. See ADR-0035 §4.
+
+### Sentinels over empties, for immutable evidence
+An empty string collapses "we could not know" into "we forgot to record". For data that is written
+once and read forever, that collapse is unrecoverable and poisons the corpus's own audit — an
+analyst counting gaps cannot tell instrument failure from process fact. Use a DECLARED sentinel:
+`as_of: "unknown"`, `ruleset_ref: "none:no-composition"`, `trust@unavailable`. Sibling of
+inputs-not-verdicts: both refuse to let a record be silent about its own limits.
+
+### A field's seal lives at its point of CONSUMPTION, not its construction
+`era` was added to the decision-record schema, sealed at the builder, and green — while it reached
+neither the writer payload nor the store, so "exclude commissioning records" filtered nothing. The
+builder tests were **true and useless**: they asserted the field existed where it was built and
+nothing asserted it survived to where it filters. Fifth instance of the payload-drop class.
+
+Generalizes the reachability rule to the query side, and shares a parent with per-branch
+wire-shape verification: **assert a field where it is USED.** Corollary for temporal data —
+**absence maps to the older, less-trusted state, never the more-trusted one** (a record with no
+`era` counts as commissioning), which is deny-by-default for time.
+
+### Two escapers are two chances to disagree about what a quote means
+The single-decider rule applied to string semantics. When a repo already has an escaper, a
+serializer, or an identity derivation, USE IT — a second one is not duplication of code, it is
+duplication of *meaning*, and the two will disagree exactly once, in production. Caught mid-write
+on the decision-record writer (a second SPARQL escaper) and in the review identity (`task_key`
+re-deriving what `ctx.key()` already knew).
+
 ### The error path is itself an error surface — a reporter must fail louder than what it reports
 **A channel that reports failures must fail LOUDER than the failures it reports.** Every
 link in an error path — the notification POST, the token mint, the task registration, the
