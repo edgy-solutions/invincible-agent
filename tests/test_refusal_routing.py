@@ -225,7 +225,11 @@ def test_triage_payload_is_clearance_safe():
     authorized actor in the audience."""
     t = ers.build_triage_payload(source_key="s/a/generated/review.json", notice_id="PCN-1",
                                  reason_code="X", detail="d")
-    assert set(t["payload"]) <= {"notice_id", "source_key", "detail", "warnings"}
+    # The allow-list is DELIBERATE, and it just did its job: adding `pages` for the evidence
+    # summon failed here until it was admitted explicitly. That is the point — a payload field
+    # reaches every authorized actor in the audience, so new ones are admitted by a human
+    # deciding they are clearance-safe, never by a writer adding a key.
+    assert set(t["payload"]) <= {"notice_id", "source_key", "detail", "warnings", "pages"}
 
 
 # ── PROPERTY 2: routing failure must RAISE, never swallow ──────────────────
@@ -392,3 +396,54 @@ def test_cropfail_fixture_still_evokes_the_failure_it_was_built_for():
     assert payload["extraction_warnings"] == ["PARTS MAY BE MISSING: 2/5 table crops failed"]
     # Non-part signals survive the mutation — the fixture keeps the producer's real shape.
     assert fx["categories"] == ["Material"] and fx["pages"] == [{"page": 1}]
+
+
+# ── the evidence summon: the card's INSTRUMENT ─────────────────────────────
+def test_page_renders_ride_the_triage_payload():
+    """THE INVERSION THIS FIXES. Alice is asked to judge whether a notice the machine COULD NOT
+    READ matters — and before this she had strictly LESS to look at than for a notice it read
+    fine: a raw S3 path in monospace, while the review card summons page renders. The failed
+    extraction still ran the partition, so the renders existed and were simply never carried."""
+    t = ers.build_triage_payload(
+        source_key="s/a/generated/review.json", notice_id="PCN-1",
+        reason_code="NO_PARTS_EXTRACTED", detail="d",
+        pages=[{"page": 1, "s3_url": "s3://b/p1.jpg"}, {"page": 2, "s3_url": "s3://b/p2.jpg"}])
+    assert [p["page"] for p in t["payload"]["pages"]] == [1, 2]
+
+
+def test_pages_without_a_url_are_dropped_not_rendered_as_gaps():
+    """A page record with no render is not a page the reviewer can look at. Carrying it would
+    put an empty slot on the card that reads as a broken image rather than an absent one."""
+    t = ers.build_triage_payload(source_key="s/a/generated/review.json", notice_id="P",
+                                 reason_code="X", detail="d",
+                                 pages=[{"page": 1}, {"page": 2, "s3_url": "s3://b/p2.jpg"}])
+    assert [p["page"] for p in t["payload"]["pages"]] == [2]
+
+
+def test_no_pages_is_expressible_rather_than_indistinguishable_from_missing():
+    """An extraction that produced NO renders must be representable — the card says so out
+    loud instead of rendering an empty region, because a silently absent instrument reads as
+    'nothing to see' when the truth is a fact about the pipeline."""
+    t = ers.build_triage_payload(source_key="s/a/generated/review.json", notice_id="P",
+                                 reason_code="X", detail="d", pages=None)
+    assert t["payload"]["pages"] == []
+
+
+def test_the_summon_carries_references_never_content():
+    """Clearance-safe: page numbers and s3 URLs, the same references the review card already
+    carries. The triage row is visible to every authorized actor in the audience."""
+    t = ers.build_triage_payload(source_key="s/a/generated/review.json", notice_id="P",
+                                 reason_code="X", detail="d",
+                                 pages=[{"page": 1, "s3_url": "s3://b/p1.jpg", "text": "SECRET"}])
+    assert set(t["payload"]["pages"][0]) == {"page", "s3_url"}
+
+
+def test_both_triage_paths_carry_pages():
+    """The op files triage from TWO places — the flagged zero-parts branch and the
+    refused_content branch. A summon wired into one of them is a card that has evidence
+    sometimes, which is worse than never because nobody knows which case they are looking at."""
+    src = _op_source()
+    body = src[src.index("def start_review_op"):src.index("@job")]
+    assert body.count("pages=review.get(\"pages\")") == 2, (
+        "one of the two triage-filing paths does not carry page renders"
+    )

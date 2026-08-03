@@ -21,6 +21,7 @@ express, rather than one built around guesses about a source nobody here has see
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from .provenance import validate_provenance
@@ -52,6 +53,40 @@ def product_graph(domain: str = "SUSTAINMENT") -> str:
     return f"http://internal/{(domain or 'SUSTAINMENT').strip().upper()}{PRODUCT_GRAPH_SUFFIX}"
 
 
+_QUALIFICATION_VOCAB_FILE = "setup/ontologies/qualification_status_vocabulary.ttl"
+
+
+def load_qualification_statuses(path: Optional[str] = None) -> set:
+    """The ratified status menu, read from the VOCABULARY FILE — never an enum in code.
+
+    This is the §6 ruling made mechanical: statuses are policy vocabulary, so the writer
+    validates against ratifiable data. A work-side addition is then a TTL entry through the
+    normal path (auditable, git-blamed), not a code change — and a TYPO cannot mint a phantom
+    state that quietly accumulates rows nobody can explain.
+
+    An unreadable vocabulary RAISES rather than degrading to "accept anything": a validator
+    that fails open is not a validator, and the failure it would hide is precisely a
+    mis-seeded menu.
+    """
+    import re
+    p = Path(path or _QUALIFICATION_VOCAB_FILE)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parents[2] / p
+    text = p.read_text(encoding="utf-8")           # FileNotFoundError propagates, deliberately
+    return set(re.findall(r"^qs:(\w+)\s+a\s+qs:QualificationStatus", text, re.M))
+
+
+def validate_qualification_status(value: str, *, allowed: Optional[set] = None) -> None:
+    """LOUD ingest-time refusal for an unrecognized status."""
+    menu = allowed if allowed is not None else load_qualification_statuses()
+    if value not in menu:
+        raise CanonicalAssertionInvalid(
+            f"qualificationStatus {value!r} is not in the ratified vocabulary "
+            f"({sorted(menu)}). Add it to {_QUALIFICATION_VOCAB_FILE} — statuses are policy "
+            f"DATA, so extending the menu is a ratified entry, never a code change. Refusing "
+            f"here is what stops a typo becoming a phantom state with rows behind it")
+
+
 def validate_canonical(assertion: dict) -> None:
     """PURE. Refuse anything that is not a well-formed canonical assertion with provenance."""
     if not isinstance(assertion, dict):
@@ -69,6 +104,8 @@ def validate_canonical(assertion: dict) -> None:
             f"{kind}: {sorted(unknown)} are not canonical fields. Either a SOURCE COLUMN leaked "
             f"past the mapping — the writer must never see one — or the vocabulary grew without "
             f"the mapping template being updated. Both are worth stopping for")
+    if kind == "ApprovedSourceRelationship" and "qualificationStatus" in fields:
+        validate_qualification_status(str(fields["qualificationStatus"]))
     try:
         validate_provenance(assertion.get("provenance"))
     except Exception as exc:  # noqa: BLE001
