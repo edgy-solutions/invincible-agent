@@ -438,12 +438,28 @@ def test_the_summon_carries_references_never_content():
     assert set(t["payload"]["pages"][0]) == {"page", "s3_url"}
 
 
+def test_the_summon_reads_the_MANIFEST_not_review_json():
+    """THE SOURCE-END REACHABILITY BUG, pinned. The summon was wired to review.json["pages"] —
+    a field review.json does not have and never had; ZERO artifacts in the bucket carry one.
+    The renders are written by doc-tools into manifest.json, its sibling. So the card would
+    have shown its no-renders state for every notice forever, while these tests stayed green,
+    because they PASS pages in explicitly and never asked whether any producer emits them.
+
+    Sealing the transport of a value nobody produces is the reachability class at the source
+    end. This pins the SOURCE so the wiring cannot silently drift back."""
+    src = _op_source()
+    assert "manifest.json" in src, "the summon no longer reads the manifest"
+    assert 'review.get("pages")' not in src, (
+        "the summon is reading review.json['pages'] again — that field does not exist"
+    )
+
+
 def test_both_triage_paths_carry_pages():
     """The op files triage from TWO places — the flagged zero-parts branch and the
     refused_content branch. A summon wired into one of them is a card that has evidence
     sometimes, which is worse than never because nobody knows which case they are looking at."""
     src = _op_source()
     body = src[src.index("def start_review_op"):src.index("@job")]
-    assert body.count("pages=review.get(\"pages\")") == 2, (
+    assert body.count("pages=_page_renders(s3, bucket, key)") == 2, (
         "one of the two triage-filing paths does not carry page renders"
     )
