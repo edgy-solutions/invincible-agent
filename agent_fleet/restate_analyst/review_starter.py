@@ -20,7 +20,7 @@ name, so neither seam mints pcn-named surface:
     NOT a pcn-named route — the domain is the ``graph`` argument.
   * ``can_act``         -> WIRED onto WORK'S EXISTING ``task_audience`` HITL mechanism (single-decider):
     a grouped review is a HITL task; "who may act on a class of HITL tasks in a compartment" IS
-    ``task_audience`` (key ``pcn_disposition:<domain>``, permission ``can_act``, grantable direct or via
+    ``task_audience`` (key ``disposition_review:<domain>``, permission ``can_act``, grantable direct or via
     group). Direct Topaz DIRECTORY check, deny-by-default; grants arrive by the git-rails seed CronJob
     (`task_grants.yaml`), never hand-surgery. Reading work's rails RETIRED the bespoke ``disposition_item``
     type + rego (they were reinventing this). Still deploy-gated (needs the seed + the grants).
@@ -115,7 +115,7 @@ TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
 # capability grant is seeded (capability_grants.yaml), then flipped for this gate alone. Off -> no-op True
 # (like the other gates when their flag is off). (Name kept as ENABLE_DISPOSITION_AUTHZ to avoid deploy-env
 # churn mid-flight — it has always been the review-start authz switch.) WHO may REVIEW is a SEPARATE gate
-# that lives at the HITL task layer (task_audience pcn_disposition:<compartment>, enforced at task
+# that lives at the HITL task layer (task_audience disposition_review:<compartment>, enforced at task
 # registration + /act) — not here. Conflating "may initiate" with "is a reviewer" was the latent bug the
 # first non-human initiator (svc:review-starter) exposed; this split is its repair.
 ENABLE_DISPOSITION_AUTHZ = os.getenv("ENABLE_DISPOSITION_AUTHZ", "false").lower() in ("true", "1", "yes")
@@ -131,7 +131,7 @@ def can_invoke_start_review(initiator: str) -> bool:  # pragma: no cover - live 
 
     Starting a review INVOKES a capability; it does not ACT on a HITL task — so the initiator is gated in
     the CAPABILITY namespace (capability_grants.yaml → capability_grant_sync.py), deny-by-default. This is
-    deliberately DISTINCT from who may REVIEW (the human ``task_audience`` ``pcn_disposition:<compartment>``,
+    deliberately DISTINCT from who may REVIEW (the human ``task_audience`` ``disposition_review:<compartment>``,
     enforced downstream at task registration + /act): a service identity may initiate without ever being a
     reviewer, and a reviewer needn't be able to initiate. Direct Topaz DIRECTORY check; an ungranted
     capability is "object not found" -> deny.
@@ -202,7 +202,7 @@ def compose_workflow_id(notice_id: str, approver: str, request_key: Optional[str
 
 def _no_reviewer_filter(approver: str, item) -> bool:
     """The per-item reviewer filter injected into grouped_review. TODAY the identity function: the single
-    review audience (``pcn_disposition:<compartment>``) has no COMPOSITION-time per-item differential, so
+    review audience (``disposition_review:<compartment>``) has no COMPOSITION-time per-item differential, so
     every residue item flows into the batch for the audience to triage; who may REVIEW is enforced at the
     HITL task layer (register_task materializes one row per audience actor, refusing a zero-recipient task;
     /act re-checks). NB the Slice-3 grouped-review filter already handles the per-approver VIEW (redacting a

@@ -70,9 +70,9 @@ audiences:
     grant_to:
       - alice@example.com
 
-  # PCN/PDN sustainment — the disposition-REVIEW audience for the SUSTAINMENT
-  # compartment. The extraction→review sensor (svc:review-starter, capability
-  # can_invoke mesh:startReview) STARTS the grouped review; the actors here are the
+  # The disposition-REVIEW audience for the SUSTAINMENT compartment. The
+  # extraction→review sensor (svc:review-starter, capability can_invoke
+  # mesh:startReview) STARTS the grouped review; the actors here are the
   # humans who see + approve it. This is the trap the work-runbook §B calls out: it
   # is NOT gated by ENABLE_DISPOSITION_AUTHZ (that gates only the initiator capability)
   # — it is deny-by-default ROUTING. Without it register_task materializes zero rows
@@ -80,7 +80,21 @@ audiences:
   # this relation was live in sandbox Topaz from M1 but was never committed; the next
   # task_grant_sync prune would have deleted it. Now git-asserted so the manifest
   # reproduces the working demo AND travels to work (rebind to the employee-id there).
-  pcn_disposition:SUSTAINMENT:
+  #
+  # RENAMED M3.1 (was `pcn_disposition:SUSTAINMENT`) — the audience key is authz
+  # vocabulary and carries no domain name per [[generic-at-birth]]; M3's definitions
+  # declare `audience: disposition_review:<compartment>` (design blocker 3). This is a
+  # KEY rename, so it needs its Topaz reseed: task_grant_sync writes the new
+  # `task_audience:disposition_review:SUSTAINMENT` relation and prunes the old
+  # `pcn_disposition:*` one. Between the git edit and that sync the review routes to
+  # NOBODY — run the sync in the same window, then re-drive one notice.
+  #
+  # DELIBERATELY NOT RENAMED: the TASK KIND string `pcn_disposition` (dispatch_plan.py,
+  # dispatch_driver.py) is a cross-repo contract with cortex-ui's taskKindRegistry.
+  # It rides M3.3's `rendersAs` migration, which retires that registry wholesale. Two
+  # identical-looking strings, one authz key and one render contract — the inconsistency
+  # below is a decision, not an oversight.
+  disposition_review:SUSTAINMENT:
     granted_by: cnogradi
     reason: >-
       The disposition-review audience for the SUSTAINMENT compartment. The

@@ -38,8 +38,8 @@ steps:
   # 1. The grouped human review — 1 approval resolves N (bulk-resolve substrate, already built).
   - kind: human_await
     id: review
-    audience: "disposition_review:SUSTAINMENT"   # GENERIC audience (see blocker 3); today's live
-                                                 # value is task_audience pcn_disposition:<compartment>
+    audience: "disposition_review:SUSTAINMENT"   # GENERIC audience — this IS the live key as of the
+                                                 # M3.1 tail (blocker 3 cleared; sync still owed)
     subject_ref: null                            # the notice ref, threaded at start
     title: "Review affected part(s)"
     summary: "Affected parts need a disposition review"
@@ -161,14 +161,77 @@ surface).
 1. **Ontology classes + verbs don't exist** (ADR-0029 Slice-2 dependency): Part / Notice / BOM classes
    with registered verbs. Without them the `spo_operation` steps can't declare real `(subject, verb)`
    URIs, and the stage-2 eligibility verifier has nothing to verify against.
+
+   **AMENDED 2026-08-03 — this blocks LESS than it was read to block, and the correction matters
+   because a work packet was written against the stronger reading.** The classes half landed in M3.1
+   (`product_structure_extension.ttl` + `qualification_status_vocabulary.ttl`, both in the prime
+   manifest). The verbs half blocks **the FULLER `spo_operation` stage model** — the extraction /
+   matching / scoring stages this doc's own draft spine already omits. It does **NOT** block M3.2's
+   acceptance: that spine is `human_await` + `direct_call`, and §Acceptance's second definition
+   (ADR-0034's autonomous path) is that spine minus one step. Neither declares an `spo_operation`.
+
+   The stage-2 verifier's fixture is likewise **already live**: `mesh:proposeDisposition` on
+   `pcn:SustainmentNotice` is a real registered `(subject, verb)` pair reachable through
+   `/find_compatible_verbs`, with parent-registration inheritance to PCN/PDN
+   (`pcn-menu-growth-exhibit.md`). M3.2 verifies against that; it needs no new registration.
+
+   **Three candidate verbs were assessed for registration and ALL THREE were declined** — the
+   assessment is the deliverable, so it is recorded rather than left as an absence:
+   - `mesh:composeReviewBatch` — **no compose-only ingress exists.** Composition is the
+     `build_review_batch` step *inside* `ReviewStarter/start_review`, a handler already bound to
+     `mesh:proposeDisposition`. Registering it is literally the dead-end menu entry
+     `pcn_extension.ttl:10`'s standing rule forbids (verbs wake per-endpoint, never before): a menu
+     item whose endpoint is step 2 of another verb's handler routes nowhere on its own.
+   - `mesh:dispatchDisposition` — **declined as dangerous, not merely premature.** It is declared in
+     this doc as a `direct_call` gated on capability `mesh:dispatchDispositions`. As a *verb edge* it
+     would make dispatch reachable from the menu without the review, converting the approval gate from
+     mandatory to optional-by-menu. Promotion-to-verb stays the already-named future candidate; the
+     admission-gate architecture of workflow 2 argues it should never become menu-visible.
+   - `mesh:resolveReview` — has a real endpoint (`GroupedReview/{key}/submit_decision`) and still
+     fails, on a category argument: the interview offers verbs to **authors composing a workflow**,
+     and resolution is a **participant act on an existing suspended instance**, not a step an author
+     declares. Offering it would teach the menu a confusion it should not carry.
+   **NAMED WAKE for M3.2 — there is no INTERNAL-VERB class, and the one verb that behaves like one
+   escapes the menu by accident.** Declining all three above leaves a real hole documented rather than
+   patched: `/operable_subjects` and `/find_compatible_verbs` treat **every** edge with `r.iri IS NOT
+   NULL` as menu-eligible, so the capability graph has exactly one kind of registered verb — user-facing.
+   `mesh:resolveInstance` is already the counter-example (ADR-0006 §"router-support predicates sit
+   outside the invariant"), and it stays out of the SPO menu **only** because its pseudo-class input node
+   carries no `domain`, so `/operable_subjects`' `s.domain = $domain` filter drops it. That is an
+   accident of a missing property, not a rule, and it would stop protecting us the moment a
+   process-internal verb is registered on a real domain-carrying class.
+
+   The distinction is deliberately NOT designed here. A scope property on the registration shape
+   (user-facing vs definition-only) is **declaration-layer schema**, and this doc's own §Status forbids
+   finalizing that under pressure — it becomes the contract every future registration writes to. It also
+   has a constraint that only its consumer can state: the split must be at the **menu** layer, never at
+   the eligibility layer, because M3.2's stage-2 verifier must still be able to verify an internal verb
+   it must never offer. **So it is defined FROM THE VERIFIER'S SIDE in M3.2, where it is first
+   consumed** — one real consumer beats a speculative field. Until then the accident is documented as an
+   accident, which is the minimum honest state. (ADR-0006 §Indicators already anticipates this exact
+   move: *"the registration shape's vocabulary needs to grow, not the source-substrate invariant to
+   weaken."*)
+
 2. **The executor + runner cutover is a separate SEALED increment** (Slice-1 doc): `workflow_definition.py`
    is schema+loader ONLY. Running a definition needs the stage-2 verifier + dispatch + cutting the
    `BPMNWorkflowRunner` from the inline `GroupedReview` class to `_run_definition` — it touches the sealed
    runner and gets its own proven-to-bite seal. Not a thing to do unsupervised.
-3. **Generic audience naming**: the live audience is `pcn_disposition:<compartment>` (task_audience). The
-   definition should carry a generic `disposition_review:<compartment>` (or `review:<compartment>`) — but
-   that's a git-rails grant rename (`task_grants.yaml`) coordinated with a live Topaz reseed, which is a
-   deploy-time change, not a branch edit.
+3. ~~**Generic audience naming**~~ — **CLEARED (git side) 2026-08-03, M3.1 tail.** The audience is now
+   `disposition_review:<compartment>`: renamed in `task_grants.yaml`, in the two constructions in
+   `src/iagent/gateway.py`, in `review_starter.py`'s contract docstrings, and in `AGENTS.md` — whose
+   doctrine passage had been citing the domain-named key as its own example of doing this right (a
+   generic TYPE carrying a domain-named INSTANCE key is still the domain in the entitlement model, one
+   level down). Guarded by `test_cross_repo_contracts.py`, where **the colon is the discriminator**:
+   `pcn_disposition:` is forbidden, bare `pcn_disposition` is not, because the TASK KIND of that name is
+   a cortex-ui render contract that deliberately survives until M3.3 retires `taskKindRegistry`. Seal
+   shown RED in both halves (grants + code) and restored byte-identical before it was trusted.
+
+   **REMAINING, and it is a deploy step not a branch edit:** `task_grant_sync` must run to seed
+   `task_audience:disposition_review:SUSTAINMENT` and prune the old relation. Between the git edit and
+   that sync **the review routes to NOBODY** — `register_task` materializes zero rows →
+   `NoEntitledRecipients` → 422 → the notice never reaches a human. Run the sync in the same window and
+   re-drive one notice to witness it. This is the same proven sync the discrimination seal ran; the
+   original "deploy-time" framing meant *lands with a sync step*, not *needs a deploy window*.
 
 ## Sequencing (per ADR-0029 slices)
 - **Now (M2, done on this branch):** de-pcn the mechanism (engine-a/o + BFF + UI renamed generic). The

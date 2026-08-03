@@ -42,10 +42,24 @@ FORBIDDEN = [
     "PcnGroupedReview", "PcnReviewStarter", "PcnDispatchItem",
     "pcn_grouped_review", "write_pcn_disposition_state", "pcn_parts_by_state",
     "resolve_pcn_instance",
+    # M3.1 audience rename. THE COLON IS THE DISCRIMINATOR and it is load-bearing: the
+    # audience KEY is `pcn_disposition:<compartment>` (renamed -> disposition_review:) while
+    # the task KIND is bare `pcn_disposition` (dispatch_plan.py / dispatch_driver.py), which
+    # DELIBERATELY survives as a cortex-ui render contract until M3.3 retires taskKindRegistry.
+    # A bare `pcn_disposition` token here would fail on the kind and force the two-repo rename
+    # this milestone chose not to do — so the seal must be able to tell them apart, and this is
+    # the character that does it. Two identical-looking strings, one renamed, one kept.
+    "pcn_disposition:",
 ]
 MECHANISM = [BFF, RA / "main.py", RA / "grouped_review_workflow.py", RA / "dispatch_driver.py",
              RA / "review_starter.py", RA / "review_composer.py", RA / "dispatch_plan.py",
              EO / "main.py"]
+
+# The git-rails grant files are where the audience key is DECLARED, so that is where a rename
+# regression would actually land. Scanned separately from MECHANISM because the honest history
+# note in task_grants.yaml names the old key in PROSE — the seal asserts on live YAML keys, not
+# on comments, or documenting the rename would trip the guard against the rename.
+GRANT_FILES = [_REPO / "policy" / "task_grants.yaml", _REPO / "policy" / "capability_grants.yaml"]
 
 
 def test_producer_consumer_agree() -> None:
@@ -60,6 +74,24 @@ def test_no_pcn_named_surface_in_mechanism() -> None:
         t = _txt(f)
         for bad in FORBIDDEN:
             assert bad not in t, f"pcn-named surface {bad!r} still in {f.name} (deletion-test regression)"
+
+
+def _live_lines(p: Path) -> list[str]:
+    """YAML lines with comment-only lines dropped — the DECLARED surface, not the prose about it."""
+    return [ln for ln in _txt(p).splitlines() if ln.strip() and not ln.strip().startswith("#")]
+
+
+def test_no_pcn_named_audience_key_in_grants() -> None:
+    """The audience key is DECLARED in the grant rails; a rename that updates the code and not the
+    rails routes every review to NOBODY (register_task materializes zero rows -> NoEntitledRecipients
+    -> 422), which is exactly the silent-wrong-grant shape task_grants.yaml's own header warns about.
+    Comment lines are excluded so the file can keep an honest record of the old name."""
+    for f in GRANT_FILES:
+        for ln in _live_lines(f):
+            assert "pcn_disposition:" not in ln, (
+                f"pcn-named AUDIENCE key still declared in {f.name}: {ln.strip()!r} "
+                f"(renamed to disposition_review:<compartment> in M3.1)"
+            )
 
 
 if __name__ == "__main__":

@@ -158,7 +158,7 @@ string is the only per-environment difference — it is the `authz_id` in that e
 | grant | sandbox subject | work subject |
 |---|---|---|
 | `capability_grants.yaml` `can_invoke mesh:startReview` (INITIATE) | `svc:review-starter` | `svc:review-starter` (service format is env-independent) |
-| `task_grants.yaml` `pcn_disposition:SUSTAINMENT` `can_act` (REVIEW) | `alice@example.com` | the reviewer's employee-id |
+| `task_grants.yaml` `disposition_review:SUSTAINMENT` `can_act` (REVIEW) | `alice@example.com` | the reviewer's employee-id |
 | `users.yaml` seed | `svc:review-starter` (+ human emails) | `svc:review-starter` (+ human employee-ids) |
 
 The initiator (service) and the reviewer (human) are DIFFERENT subjects in DIFFERENT namespaces — the

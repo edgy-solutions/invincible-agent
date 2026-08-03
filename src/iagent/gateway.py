@@ -357,7 +357,7 @@ async def file_triage_task(
         })
     import hashlib
     task_id = req.task_id or ("triage-" + hashlib.sha1(req.subject_ref.encode()).hexdigest()[:12])
-    audience = req.audience or f"pcn_disposition:{req.domain}"
+    audience = req.audience or f"disposition_review:{req.domain}"
     try:
         if await run_in_threadpool(lambda: human_tasks.task_exists(task_id)):
             logger.info("triage_task already filed: task_id=%s subject=%s", task_id, req.subject_ref)
@@ -424,8 +424,8 @@ class ReviewStartRequest(_BaseModel):
     # 2/5 table crops failed"). Dropping it here severed the warning thread at its FIRST
     # hop, so a degraded extraction would have reviewed as though complete.
     extraction_warnings: Optional[list] = None
-    domain: str = "SUSTAINMENT"          # selects the review audience pcn_disposition:<domain>
-    audience: Optional[str] = None        # override; defaults to pcn_disposition:<domain>
+    domain: str = "SUSTAINMENT"          # selects the review audience disposition_review:<domain>
+    audience: Optional[str] = None        # override; defaults to disposition_review:<domain>
     # ARTIFACT IDENTITY for ingress idempotency: content-hash + location of the extraction
     # this request was built from (ETag+key, exactly what the sensor's run_key uses). It is
     # NOT the notice id — see _ingress_idempotency_key. Absent for hand-driven ops calls,
@@ -520,7 +520,7 @@ async def start_review(
         "review_state_source": req.review_state_source,   # attestation — arms/disarms the tripwire
         "extraction_warnings": req.extraction_warnings,   # degradation warnings -> the reviewer
         "approver": current_user.authz_id,        # identity from the token — NOT client-supplied
-        "audience": req.audience or f"pcn_disposition:{req.domain}",
+        "audience": req.audience or f"disposition_review:{req.domain}",
         "user_jwt": raw_token,
     }
     # `request_key` IS forwarded now — it was originally withheld as "transport-level identity

@@ -1,5 +1,17 @@
 # can_act — the Topaz binding, RECONCILED onto `task_audience` (live session reads this)
 
+> **RENAMED 2026-08-03 (M3.1 tail) — the audience key is now `disposition_review:<compartment>`.**
+> Read this FIRST because it is the one change below that will silently misroute you: everything
+> beneath still says `pcn_disposition:<compartment>`, which was the key at the time each section was
+> written and, for the seal legs, the key actually observed. The BINDING is unchanged — same
+> `task_audience` type, same `can_act` permission, same compartment-in-the-key discrimination the legs
+> below prove. Only the key string moved, because a generic Topaz TYPE carrying a domain-named
+> INSTANCE key still writes the domain into the entitlement model. **Grant
+> `disposition_review:SUSTAINMENT`, never the old key**, and note the rename needs its
+> `task_grant_sync` run to seed the new relation and prune the old — between the two, reviews route to
+> nobody. Prose below is left as written: the seal legs are EVIDENCE of a run that happened under the
+> old key, and rewriting them would make them claim something that was never observed.
+
 > **RECONCILED 2026-07-24 — `disposition_item` RETIRED.** Reading work's git-rails policy repo
 > (`C:\tmp\iagent-policy`) before building revealed that a grouped review IS a HITL task, and "who may
 > act on a class of HITL tasks in a compartment" is EXACTLY the existing Topaz **`task_audience`** type
