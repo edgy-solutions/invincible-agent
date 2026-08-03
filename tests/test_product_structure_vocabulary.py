@@ -31,7 +31,7 @@ _QUERIES = _ROOT / "setup" / "queries" / "product_structure_acceptance.sparql"
 # Verified present in the LIVE SUSTAINMENT graph on 2026-08-01 (773 classes / 373 properties,
 # namespace http://www.lksoft.com/s3kl#). Anything cited must be in this set.
 _S3000L_VERIFIED = {
-    "PartAsDesigned", "Breakdown", "BreakdownElement", "BreakdownElementRevision",
+    "PartAsDesigned", "Breakdown", "BreakdownElement",
     "BreakdownElementUsageInBreakdown", "ApplicabilityStatement",
     "quantityOfChildElement", "partIdentifier_partNumber", "partIdentifier_oemPartNumber",
 }
@@ -48,6 +48,21 @@ def test_every_s3000l_citation_names_something_that_exists():
         f"confirm them in the graph and add them here, or leave the slot empty and labelled, "
         f"which is the honest state"
     )
+
+
+def test_the_ratified_wrong_citation_stays_dead():
+    """RATIFICATION OUTCOME, pinned. `ps:revision` briefly cited s3kl:BreakdownElementRevision
+    and the domain owner ruled it WRONG: that revisions a POSITION IN A STRUCTURE, ours revisions
+    the PART. Removed from the verified set as well as the file, so a future re-citation fails
+    the enumeration seal rather than passing unnoticed — a rejected citation that stays
+    'available' is a rejection that only held once."""
+    # Assert the CITATION FORM, not the bare string — my first version failed on the comment
+    # that EXPLAINS the removal, which is the docstring-matching bug again (a keyword check over
+    # source matches the prose documenting a rule as readily as a violation of it). The prose is
+    # not merely harmless here, it is the record of why the slot is empty and must survive.
+    assert "mesh:derivedFrom s3kl:BreakdownElementRevision" not in _TTL
+    assert "BreakdownElementRevision" not in _S3000L_VERIFIED
+    assert "WRONG in review" in _TTL, "the reason the slot is empty must stay in the file"
 
 
 def test_the_standards_real_names_are_used_not_invented_synonyms():
