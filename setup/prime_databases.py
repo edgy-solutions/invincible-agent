@@ -225,6 +225,34 @@ CANONICAL_TTL_MANIFEST = [
         "path": "ontologies/pcn_disposition_rules.ttl",
     },
 
+    # M3.1 — canonical PRODUCT STRUCTURE (ADR-0035 data plane). S3000L-derived where the
+    # standard covers the need (Breakdown/BreakdownElement for structure, ApplicabilityStatement
+    # for effectivity — the standard's OWN names, found by reading it rather than inventing
+    # Assembly/Component/Effectivity and silently forfeiting three citations). The approved-source
+    # bridge is HOUSE CONVENTION, labelled as such and NOT carrying a derivedFrom, because S3000L
+    # models manufacturer part numbers as identifier variants and that shape cannot express the
+    # many-to-many, provenance-bearing, lifecycle-carrying relationship the disposition process
+    # manipulates. Every citation is verified present in the live S3000L graph — a cited-but-
+    # invented IRI is worse than an empty slot, because it looks like compliance and cannot be
+    # traced. See docs/adr/ADR-0035 and setup/queries/product_structure_acceptance.sparql.
+    {
+        "domain": "SUSTAINMENT",
+        "name": "product_structure_extension",
+        "s3_key": "sustainment/product_structure_extension.ttl",
+        "path": "ontologies/product_structure_extension.ttl",
+    },
+    # M3.1 — QUALIFICATION STATUS vocabulary (ADR-0035 §6). A SEED MENU, not an enum: statuses are
+    # policy vocabulary, so the writer validates against THIS FILE and an unrecognized status is a
+    # loud ingest-time refusal. A state nobody uses sits inert; a state that turns out to be needed
+    # arrives as one more entry through this same path — which is why a wrong seed costs nothing
+    # and why `qualifying` ships flagged in-file as the split most likely to be wrong.
+    {
+        "domain": "SUSTAINMENT",
+        "name": "qualification_status_vocabulary",
+        "s3_key": "sustainment/qualification_status_vocabulary.ttl",
+        "path": "ontologies/qualification_status_vocabulary.ttl",
+    },
+
     # ----- LAYER 3: DATA_ENGINEERING (idp catalog / lineage) -----
     # The semantic domain is DATA_ENGINEERING, not IDP.
     # The resolver queries with semantic domain names (the architect's
