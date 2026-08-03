@@ -1,0 +1,88 @@
+@prefix qs:   <http://internal/sustainment/qualification#> .
+@prefix ps:   <http://internal/sustainment/product#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+# ============================================================================
+# QUALIFICATION STATUS VOCABULARY — a SEED MENU, not an enum.
+#
+# WHY THIS IS DATA AND NOT CODE (the ruling, and the reason a wrong seed is cheap):
+# these statuses are POLICY VOCABULARY, not mechanism. They belong exactly where
+# the disposition rules live — ratifiable data, content-hashed, validated at
+# ingest. A state nobody uses sits inert; a state that turns out to be needed
+# arrives as one more entry through the same path. Nothing here requires a code
+# change, a migration, or a deploy to correct against reality.
+#
+# So this file is a STARTING MENU, seeded from what the process already does
+# rather than invented, and expected to be updated at work against how engineers
+# actually talk. The deliberation happens there, with them — not here.
+#
+# THE WRITER VALIDATES AGAINST THIS FILE, NOT AGAINST AN ENUM. An unrecognized
+# status is a LOUD ingest-time refusal, never a silent accept: that way a work-side
+# addition requires a ratified entry (auditable, git-blamed) and a TYPO cannot mint
+# a phantom state that then accumulates rows nobody can explain.
+# ============================================================================
+
+qs: a owl:Ontology ;
+    rdfs:label "Qualification status vocabulary (seed)" ;
+    rdfs:comment "Ratifiable policy vocabulary. Update at work against reality; no code change." .
+
+qs:QualificationStatus a owl:Class ;
+    rdfs:label "Qualification status" ;
+    rdfs:comment "The state an approved-source relationship holds." .
+
+# ── The seed, each justified by something the process ALREADY does ──────────
+
+qs:proposed a qs:QualificationStatus ;
+    skos:prefLabel "Proposed" ;
+    rdfs:comment """A dispatch created this relationship — `dispatchQualification` fired and
+nothing human has happened yet. This state MUST exist because it is what the workflow's own
+output writes: without it, the disposition pipeline would have no first-class value to record
+its result as, which is the exact gap the house bridge was created to close.""" .
+
+qs:qualifying a qs:QualificationStatus ;
+    skos:prefLabel "Qualifying" ;
+    rdfs:comment """An engineer has taken the task up — work in progress. Distinct from
+`proposed` because 'the task is in someone's queue' and 'someone is working it' are different
+facts, and a dashboard that cannot tell them apart cannot show where work is actually stuck.
+FLAGGED AS THE SEED'S MOST QUESTIONABLE SPLIT: if engineers do not experience these as two
+states, delete this entry — it costs nothing, which is the point of the vocabulary being
+data.""" .
+
+qs:approved a qs:QualificationStatus ;
+    skos:prefLabel "Approved" ;
+    rdfs:comment """Qualified. The state relevance-matching trusts and the AML means.""" .
+
+qs:ltb_only a qs:QualificationStatus ;
+    skos:prefLabel "Last-time-buy only" ;
+    rdfs:comment """Approved for existing use, not for new designs — what `dispatchLTB`'s
+outcome implies and what last-time-buy semantics require.""" .
+
+qs:withdrawn a qs:QualificationStatus ;
+    skos:prefLabel "Withdrawn" ;
+    rdfs:comment """Was approved, no longer. EXISTS SO THE VOCABULARY HAS AN EXIT THAT IS NOT
+DELETION: without it, retiring a source means removing rows, and this graph's doctrine is that
+evidence does not delete. A discontinued source's history stays queryable, which is what an
+auditor of an AML actually needs.""" .
+
+# ── Deliberately NOT seeded, each waking on work-side reality ───────────────
+# `rejected` as distinct from `withdrawn` · conditional / program-scoped approvals ·
+# a supplier-vs-manufacturer distinction. Named so their absence is a decision on the
+# record rather than an oversight, and each is addable as PURE DATA.
+
+# ── Expected transitions — ADVISORY DOCUMENTATION, deliberately NOT enforced ─
+# proposed -> qualifying -> approved · approved -> ltb_only -> withdrawn
+#
+# Enforcing transition legality in v1 would be a rules-engine temptation this arc has
+# declined before. The graph RECORDS what happened; the vocabulary CONSTRAINS what can be
+# said; transition governance waits for evidence that anyone actually violates these paths.
+# A state machine built before its first violation is a guess with a runtime cost.
+qs:expectedTransitions a owl:AnnotationProperty ;
+    rdfs:comment "Advisory only — documentation, not a gate." .
+
+qs:proposed  qs:expectedTransitions qs:qualifying .
+qs:qualifying qs:expectedTransitions qs:approved .
+qs:approved  qs:expectedTransitions qs:ltb_only .
+qs:ltb_only  qs:expectedTransitions qs:withdrawn .
+qs:approved  qs:expectedTransitions qs:withdrawn .

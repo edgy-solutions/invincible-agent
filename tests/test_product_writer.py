@@ -159,3 +159,91 @@ def test_the_template_has_no_source_side_content():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ── §6: qualification status is DATA, validated loudly ─────────────────────
+from src.iagent.product_writer import (  # noqa: E402
+    load_qualification_statuses, validate_qualification_status,
+)
+
+
+def test_the_status_menu_comes_from_the_vocabulary_file_not_an_enum():
+    """THE §6 RULING made mechanical. Statuses are POLICY VOCABULARY, so the writer validates
+    against ratifiable data — which is why a wrong seed costs nothing: a state nobody uses sits
+    inert, a state that turns out to be needed is one TTL entry through the normal path. If
+    this ever becomes a Python set, the work-side update stops being a data edit and the whole
+    reason the seed could be decided without the engineers is gone."""
+    assert load_qualification_statuses() == {"proposed", "qualifying", "approved", "ltb_only",
+                                             "withdrawn"}
+
+
+def test_a_status_added_to_the_FILE_is_accepted_with_no_code_change(tmp_path, monkeypatch):
+    """THE ACTUAL PROPERTY, and my first version of this test did not test it — it asserted the
+    vocabulary FILENAME appeared in the source, which stayed true when I mutated the menu into a
+    hardcoded Python set. The mutation passed and the seal was decorative.
+
+    This is the point-of-consumption rule again: assert what the field DOES, not that it is
+    mentioned. Here the doing is "a new status ratified in the FILE works, with no code touched"
+    — which is the entire reason a wrong seed costs nothing."""
+    vocab = tmp_path / "v.ttl"
+    vocab.write_text(
+        "qs:approved a qs:QualificationStatus ." + chr(10) +
+        "qs:program_scoped a qs:QualificationStatus ." + chr(10),
+        encoding="utf-8")
+    # Exercise the DEFAULT path — not `allowed=`. My first two attempts at this test both
+    # passed under a mutation that hardcoded the menu, because they either checked that the
+    # filename was mentioned or passed the menu in explicitly. Neither touched the branch the
+    # mutation changed. Point-of-consumption, third time: drive the code path that would break.
+    import src.iagent.product_writer as _pw
+    monkeypatch.setattr(_pw, "_QUALIFICATION_VOCAB_FILE", str(vocab))
+    _pw.validate_qualification_status("program_scoped")      # default path, no `allowed`
+    menu = load_qualification_statuses(str(vocab))
+    assert menu == {"approved", "program_scoped"}, (
+        "the menu did not come from the file — a work-side addition would need a code change, "
+        "which is exactly what the config-native ruling exists to prevent"
+    )
+    validate_qualification_status("program_scoped", allowed=menu)
+
+
+def test_an_unratified_status_is_refused_loudly():
+    """A typo must not mint a phantom state that then accumulates rows nobody can explain."""
+    with pytest.raises(CanonicalAssertionInvalid) as exc:
+        validate_qualification_status("aproved", allowed={"approved"})
+    assert "ratified vocabulary" in str(exc.value)
+
+
+def test_every_seeded_status_is_accepted():
+    for s in load_qualification_statuses():
+        validate_qualification_status(s)
+
+
+def test_the_status_is_validated_on_the_assertion_path():
+    """Not just as a helper — the writer itself must refuse it, or the validation is optional."""
+    bad = {"kind": "ApprovedSourceRelationship",
+           "fields": {"forPart": "P", "qualificationStatus": "invented"},
+           "provenance": _prov()}
+    with pytest.raises(CanonicalAssertionInvalid):
+        validate_canonical(bad)
+
+
+def test_dispatchQualifications_own_output_state_exists():
+    """`proposed` must exist because it is what the workflow WRITES: without it the disposition
+    pipeline has no first-class value to record its result as — the exact gap the house bridge
+    was created to close."""
+    assert "proposed" in load_qualification_statuses()
+
+
+def test_the_vocabulary_has_an_exit_that_is_not_deletion():
+    """`withdrawn` exists so retiring a source does not mean removing rows. This graph's
+    doctrine is that evidence does not delete, and a discontinued source's history staying
+    queryable is what an auditor of an AML actually needs."""
+    assert "withdrawn" in load_qualification_statuses()
+
+
+def test_transitions_are_advisory_documentation_not_an_enforced_machine():
+    """A state machine built before its first violation is a guess with a runtime cost. The
+    graph records what happened; the vocabulary constrains what can be SAID."""
+    ttl = (_ROOT / "setup" / "ontologies" / "qualification_status_vocabulary.ttl").read_text(encoding="utf-8")
+    assert "expectedTransitions" in ttl and "Advisory only" in ttl
+    src = (_ROOT / "src" / "iagent" / "product_writer.py").read_text(encoding="utf-8")
+    assert "expectedTransitions" not in src, "transitions leaked into enforcement"
