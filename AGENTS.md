@@ -260,6 +260,34 @@ one that is silently broken (wrong graph, wrong predicate, a FILTER that exclude
 the first time it matters is exactly when you need to trust it. Reachability applied to queries:
 the mechanism must be witnessed returning a row before an empty result means anything.
 
+### A rejection must be STRUCTURAL, or it only held once
+When a review rejects something — a citation, a status, a grant — remove it from the
+**enforcement layer**, not just the artifact. Killing a wrong citation in the file while leaving
+its target in the seal's verified set locks the door and leaves the key in it: the next author
+re-cites it, the seal passes it as previously-verified, and the ruling silently reverses.
+
+Removing it from the verified set converts the ruling from an EDIT into an ENFORCEMENT —
+re-citation now fails loudly, and reversing the decision requires re-adding it visibly, which is
+a diff a reviewer sees. That is where a reversal belongs. Same shape as revocation-by-removal in
+the rails: **absence from the authoritative set is a first-class, enforced state.**
+
+The clause: *ratification outcomes live in the enforcement layer, not just the artifact — a WRONG
+updates the seal's world, or it is advisory.*
+
+### Negative assertions over source must be scoped to the SYNTACTIC FORM they forbid
+`assert "X" not in source` bans the string, which includes **the prose explaining why X is
+banned**. Three instances: `"prime" not in fn.lower()` matching the docstring that said "NEVER
+prime"; a byte-window standing in for a content check; and — the perfect form —
+`"BreakdownElementRevision" not in _TTL` failing on the comment that documented its removal. The
+assertion failed on the explanation of why the assertion should pass.
+
+Scope to the form: `"mesh:derivedFrom s3kl:BreakdownElementRevision"`, not the bare name.
+
+**And seal the explanation's SURVIVAL.** An empty-and-labelled slot whose label gets tidied away
+regresses to a bare empty, which regresses to "someone forgot" — the exact ambiguity the label
+existed to kill. The record of why something is absent is sealed CONTENT, not commentary, so
+something must bite if it leaves.
+
 ### A probe must demonstrate it can SEE the category of thing it is checking for
 Six instances now, and this is the rule's final form. A probe that returns zero because it was
 looking in the wrong place — or at the wrong KIND of thing — is indistinguishable from a probe
