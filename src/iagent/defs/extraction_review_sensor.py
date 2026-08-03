@@ -521,6 +521,33 @@ def file_triage_task(triage: dict, *, bff_url: str, token: str, timeout: float =
 
 
 
+
+def _page_renders(s3, bucket: str, review_key: str) -> list:
+    """Page renders for this notice — from MANIFEST.json, its SIBLING, not from review.json.
+
+    THE BUG THIS FIXES, found before the eyeball rather than by it: the summon was wired to
+    `review.json["pages"]`, and review.json HAS NO SUCH FIELD. Zero artifacts in the bucket
+    carry one. The renders are written by doc-tools' document_parser into the MANIFEST
+    (`pages: [{page, s3_url, basename, width, height, dpi}]`), which sits beside review.json in
+    the same generated/ directory. So the card would have rendered its no-renders state for
+    every notice, forever, while the tests stayed green — because they PASSED pages in
+    explicitly and never asked whether the producer emits that field at all.
+
+    That is the reachability class at the source end: I sealed the transport of a value nobody
+    produces. The seal below now pins the SOURCE (manifest, not review) so the wiring cannot
+    silently drift back.
+
+    Missing/unreadable manifest -> [] , which the card renders as its honest no-renders state.
+    A notice whose manifest is gone genuinely has no renders to show.
+    """
+    key = review_key.rsplit("/", 1)[0] + "/manifest.json"
+    try:
+        m = json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
+    except Exception:  # noqa: BLE001
+        return []
+    return [p for p in (m.get("pages") or []) if p.get("s3_url")]
+
+
 # ── ADR-0034 Phase 1: a decision record for EVERY processed notice ──────────
 _PIPELINE_VERSION = os.getenv("PIPELINE_VERSION", "unset")
 
@@ -702,7 +729,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
                        "affected parts",
                 warnings=payload.get("extraction_warnings"),
                 domain=config.domain, audience=_TRIAGE_AUDIENCE or None,
-                pages=review.get("pages"),
+                pages=_page_renders(s3, bucket, key),
             )
             filed = file_triage_task(triage, bff_url=bff_url, token=token, source=src)
             context.log.warning(
@@ -743,7 +770,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
             reason_code=_status_of(body) or "", detail=detail,
             warnings=payload.get("extraction_warnings"),
             domain=config.domain, audience=_TRIAGE_AUDIENCE or None,
-            pages=review.get("pages"),
+            pages=_page_renders(s3, bucket, key),
         )
         filed = file_triage_task(triage, bff_url=bff_url, token=token, source=src)
         _emit_record(context, review=review, key=key, request_key=request_key,
