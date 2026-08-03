@@ -1,4 +1,24 @@
-# M3.1 — citation ratification list (READ BEFORE INGEST)
+# M3.1 — citation ratification list — **DISPOSED 2026-08-03**
+
+> **OUTCOME: 1 WRONG, 2 OK-with-notes, 18 clean.** The WRONG is the success this list was built to
+> produce — a citation that would have looked like compliance and traced to the wrong concept died
+> in review instead of living in the graph. The weakest-link flag caught exactly the adjacency it
+> predicted.
+>
+> * **Row 1 `ps:revision` — WRONG, slot emptied + labelled.** S3000L revisions a POSITION IN A
+>   BREAKDOWN STRUCTURE (revised when structure reorganizes); ours revisions the PART (revised when
+>   the design changes). Removed from the seal's verified set too, so a re-citation fails rather
+>   than passing unnoticed. Named wake: a real part-revision element may exist deeper in the 773
+>   classes — reading task triggered by the first compliance conversation.
+> * **Row 2 `ps:Part` — OK**, with the design-view choice now recorded in the class comment so it
+>   reads as a decision when someone asks why installed-config queries do not work.
+> * **Row 3 `ps:applicability` — OK.** The coverage caveat (no current source can populate it)
+>   belongs in the mapping templates' `cannot_populate`, not in the citation — capability
+>   degradation is a mapping fact, not a citation weakness.
+> * **Remaining 18 — ratified as listed.**
+
+## Original list (retained as the record of what was asked)
+
 
 **Why this exists and why it is pre-ingest.** The agent verified that every cited IRI **EXISTS** in
 the committed S3000L graph (all 9 confirmed present, live, before this list was written). Only you

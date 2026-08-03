@@ -47,7 +47,15 @@ it. Never contort the process to fit a citation.""" ;
 # ── Part ────────────────────────────────────────────────────────────────────
 ps:Part a owl:Class ;
     rdfs:label "Part" ;
-    rdfs:comment "An internally-identified part. Identity + revision; usage lives on ps:PartUsage." ;
+    rdfs:comment """An internally-identified part. Identity + revision; usage lives on ps:PartUsage.
+
+    DESIGN VIEW, DELIBERATELY. S3000L splits as-designed from as-maintained, and BOM where-used
+    IS the design view: what the engineering structure says goes where — what PDM holds, what a
+    change notice's affected-parts question runs against, what qualification dispatch consults.
+    As-maintained (what is actually installed in serial-numbered units) is a genuinely different
+    dataset we do not have and must not pretend to. If fleet-configuration data ever arrives it
+    is a DISTINCT vocabulary, not an extension of this one — recorded so the choice reads as a
+    decision when someone asks why installed-config queries do not work.""" ;
     mesh:derivedFrom s3kl:PartAsDesigned .
 
 ps:partNumber a owl:DatatypeProperty ;
@@ -56,8 +64,19 @@ ps:partNumber a owl:DatatypeProperty ;
 
 ps:revision a owl:DatatypeProperty ;
     rdfs:domain ps:Part ; rdfs:range xsd:string ;
-    rdfs:comment "Revision as the source states it. NOT a version ordering — sources differ." ;
-    mesh:derivedFrom s3kl:BreakdownElementRevision .
+    rdfs:comment """Revision as the source states it. NOT a version ordering — sources differ.
+
+    HOUSE CONVENTION: part-level revision per PDM practice. NO S3000L TARGET — and the slot is
+    empty ON PURPOSE. It briefly cited s3kl:BreakdownElementRevision, which was WRONG in review:
+    that revisions a POSITION IN A BREAKDOWN STRUCTURE, revised when the structure reorganizes.
+    Our revision belongs to the PART — part-number + revision is the identity unit this whole
+    model keys on, revised when the DESIGN changes. Two different things revised for two
+    different reasons, and the citation was adjacent enough to look grounded while tracing to a
+    concept that does not mean what we mean. Adjacency is exactly what a citation cannot survive.
+
+    NAMED WAKE: a real part-revision element may exist deeper in S3000L's 773 classes — it was
+    not among the nine verified. Trigger for that reading task: the first compliance conversation
+    that asks. Not a TODO; an honest empty with a condition.""" .
 
 # ── PartUsage — REIFIED, and the reification is load-bearing ────────────────
 ps:PartUsage a owl:Class ;
