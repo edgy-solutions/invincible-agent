@@ -292,6 +292,29 @@ old key **while the new one is declared alongside it AND a marker names the remo
 old-key-ALONE stays red (that is the real regression), and the marker stops an expand phase
 becoming permanent through amnesia.
 
+**FOURTH STEP, learned the hard way 2026-08-04: CONTRACT MUST ALSO ACCOUNT FOR DURABLE ROWS ALREADY
+CARRYING THE OLD KEY.** Expand/contract as written above migrates the *code path* and the *grant*. It
+does nothing for **data already in flight** — and in-flight rows are exactly where a renamed identity
+strands work. Observed immediately after the `pcn_disposition:` → `disposition_review:` contract: four
+pending `grouped_review` rows and two `extraction_refusal` rows had been materialized with
+`audience = pcn_disposition:SUSTAINMENT`. Because `resolve_task` **re-checks `can_act` against the
+task's STORED audience**, and the contract had just pruned that relation, those tasks became
+**visible but unactionable** — the reviewer sees them in her queue and every action is denied. No
+error, no alert; the queue simply stops clearing.
+
+So a contract phase asks a fourth question before it prunes: **what durable state already references
+the old identity, and what re-reads it?** Three honest answers, and the plan must name one:
+- **Migrate the rows** to the new key (a data migration, in the same window as the prune).
+- **Drain first** — let in-flight work finish under the old key, then contract (the M2 cutover answer).
+- **Make the names coincide by construction** so no in-flight state can disagree — the cheapest, when
+  the identity is derived rather than literal.
+
+Generalizes past authz keys to **every durable identity surface**: Restate promise names and
+VirtualObject keys are journal state, so the same three options apply to them
+([[feedback_grant_key_rename_needs_expand_contract]]). A suspended workflow whose new code awaits a
+renamed promise can never be resolved by any submission — suspended forever, no error, the kill-seal's
+failure mode wearing a promise's clothes.
+
 ### Build the fixture as a SUPERSET of reality, not an approximation of it
 Where the real input cannot enter the repo (restricted boundary) or does not exist yet, build the
 fixture **deliberately as degraded as the contract permits**, so any real input is a SUBSET of it.

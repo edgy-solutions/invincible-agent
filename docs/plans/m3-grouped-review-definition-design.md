@@ -373,9 +373,32 @@ cross-repo presentation contracts migrate together.
    persisted, validate-before-resolve with refusal-stays-suspended, `decision_consumed` race guard,
    post-resolution dispatcher fan-out — lifted from the hand-coded class into the executor as the step
    kind's owned behaviour, selected by declared `completion` policy.
-   **Known seam:** `submit_decision` is a SHARED handler and cannot move into `_run_definition`'s main
-   context, so the promise names must align — today the class awaits `ctx.promise("decision")` while
-   `_run_definition` awaits `approval_{step.id}`. That mismatch is the first thing to reconcile.
+   **Known seam, and it is NOT an internal detail — RULED 2026-08-04.** `submit_decision` is a SHARED
+   handler and cannot move into `_run_definition`'s main context, so the promise names must align:
+   today the class awaits `ctx.promise("decision")` while `_run_definition` awaits
+   `approval_{step.id}`.
+
+   **A Restate promise name is durable journal state, which makes it an IDENTITY SURFACE ON LIVE
+   DATA** — the same class as VirtualObject dedup keys at the M2 cutover, the `pcn_disposition:`
+   audience key, and the employee-id rebind ahead. Fourth instance. The failure mode is specific and
+   silent: a `GroupedReview` instance **suspended on `decision` at the moment of cutover**, whose new
+   delegated code resolves `approval_{step.id}`, can never be resolved by ANY submission — suspended
+   forever, no error, a task sitting in a queue that nothing can clear. That is the kill-seal's
+   failure mode wearing a promise's clothes, and it is not hypothetical: the M3.1 contract phase had
+   already stranded six pending task rows the same way, one layer down (see AGENTS.md, the FOURTH
+   STEP of expand/contract).
+
+   **RULING — make the names COINCIDE BY CONSTRUCTION: the grouped step's `id` IS `decision`,** so
+   `approval_{step.id}` and the handler's promise are the same string and no dual-name interval ever
+   exists. Chosen over resolving both names during a transition (managing an interval instead of
+   removing it) and over draining in-flight reviews (kept as the BELT — drain before cutover anyway,
+   since it costs nothing on a sandbox and removes the last in-flight unknown). It is also arguably
+   the right shape independent of the hazard: the step id is **definition content the author
+   controls**, so deriving the promise from it keeps the durable identity inside the declared
+   process rather than inside executor naming convention.
+   **Seal it:** assert the promise name the executor awaits equals the one `submit_decision`
+   resolves — a string-equality guard that goes red the moment either side is renamed, which is the
+   only thing standing between a future rename and a permanently suspended workflow.
 2. **`policy/workflows/grouped_review.yaml`** — the first real definition exercising it.
 3. **`GroupedReview.main()` delegates**; the two shared handlers stay.
 4. **Workflow 2** (ADR-0034's autonomous path) — a second YAML, one step absent, same executor. The
