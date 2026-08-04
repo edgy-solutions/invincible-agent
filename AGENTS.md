@@ -535,6 +535,20 @@ NOBODY. It carries its own positive control (if NOTHING resolves, that is a brok
 universe of revoked audiences — it returns INCONCLUSIVE rather than a confident RED, per the rule
 above). It found a second, unrelated orphan on its first run.
 
+### SERIAL FAILURES MASK — after a fix, re-verify the whole path, not just past the repaired step
+A failure early in a chain hides every failure after it. Fix the first and the second appears — not
+as a regression, but as something that was always there and unreachable. 2026-08-04: an expired
+credential killed a dispatch at the task-register step; repairing it revealed that the target
+audience (`procurement`) had **never been granted** and resolved to `[]`, so that dispatch would have
+died one step later anyway. Nothing could have found the second defect while the first was in the way.
+
+**So a fix's definition of done includes walking the REMAINING path's preconditions before executing
+it** — read the state the next step depends on, rather than running the step to discover it. This is
+the false-RED rule applied *prospectively*: **do not manufacture a red you can already see.** Where
+the execution consumes a finite identity (an idempotency key, a single-use workflow key, a one-shot
+token), the economics are explicit — spending one to witness a predictable failure spends evidence on
+a fact already in hand, and buys a cleanup afterwards.
+
 ### A guard's ANCHOR is part of its claim — source-anchored guards fire on refactors, not regressions
 Sixth in the probe-correctness set. A guard anchored to **where code lives** fires when code MOVES; a
 guard anchored to **what code does** fires when behaviour BREAKS. The failure mode is that the two are
