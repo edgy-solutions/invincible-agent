@@ -535,6 +535,34 @@ NOBODY. It carries its own positive control (if NOTHING resolves, that is a brok
 universe of revoked audiences — it returns INCONCLUSIVE rather than a confident RED, per the rule
 above). It found a second, unrelated orphan on its first run.
 
+### Provenance comes from PROVENANCE-BEARING fields — never inferred from CLASSIFICATION fields
+Third instance in two days, and the sharpest form of the naming rule. `kind` says what a row IS;
+`subject_ref` says where it CAME FROM. The M3.1 stranded-row split read `kind` — migrating two
+`extraction_refusal` rows as "real refusals with provenance" while expiring four `grouped_review`
+rows as residue. Both sets were residue. The rows' own `subject_ref` said so
+(`sustainment/inbound/witness_summon/…`, `witness_norender/…`) and was never read. **The split ran
+on the wrong axis.**
+
+The sibling instances, same fortnight: a ruling that read plausibly and evaluated false; a
+screenshot classification ("real inbound traffic") asserted from names and disproved on inspection.
+**A thing's dependency class — test vs live, fixture vs work — is established by INSPECTION, never
+by what it is called or what type it is.**
+
+And the trap has a second floor, found the same day: the convention that was supposed to carry
+provenance **did not even cover the artifact in question.** `witness_*` marked three fixture
+directories — but the one whose provenance was actually disputed, `Diodes_PCN_2683_FULLGREEN.pdf`,
+sat at `inbound/generated/` with no marker at all, and its projection row carried
+`subject_ref: NULL`. Classification fell back to name-inference precisely because the
+provenance-bearing field was empty. **A path convention is unenforced AND usually incomplete; the
+case it misses is the case you will argue about.**
+
+The settled form: **provenance is a DECLARED, REQUIRED field — an enumerated origin
+(`live` | `witness` | `synthetic`) populated at the front door and REFUSED when absent** — not a
+directory-name convention that humans read and nothing validates. Same shape as the audience
+binding: a string that means something must be made to prove it. Filed on the owed-engineering
+ledger; sibling to the cross-surface probe (one detects state that bypassed the settlement path,
+the other declares state that bypassed the provenance convention).
+
 ### Provenance is a field, never a join
 **No assertion enters a graph without its provenance riding in the same write.** A sidecar audit
 table you *could* join against always decays, because the join is OPTIONAL and optional joins stop
