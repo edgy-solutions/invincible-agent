@@ -244,6 +244,54 @@ Two rules fall out:
 - **Ask "what produces this input, and can it?"** before trusting a green seal — and where the
   answer is a call-graph fact, assert it (a branch exists, a filing count is exactly N).
 
+### Under a MUTABLE TAG a deploy is not an ACT — it is weather
+Every believed-deployed check in this arc assumes deploys are things someone *does*. Under a
+mutable image tag they are not: with `image: …/cortex-bff:latest` in the pod spec, an eviction, a
+node drain, an OOM restart or a rescheduling pulls whatever `latest` now points at. **The running
+code changes because the scheduler moved a pod, not because anyone rolled anything.** Nobody gets
+a decision point, nothing appears in a deploy log, and the change is invisible until something
+routes wrong.
+
+The corollary that bites hardest: **a pod inspection is a statement about NOW, never about
+tomorrow.** Confirming the live image builds the old key does not license a plan whose safety
+depends on it still doing so an hour later — which is exactly the shape of a
+migration's "dangerous interval" (see below). Found 2026-08-03 while sequencing the
+`pcn_disposition:` → `disposition_review:` audience rename: the pod check correctly showed the old
+code live, and the mutable tag meant the interval could still have opened *with nobody deploying*.
+
+Two rules:
+- **Rolled images pin a digest or an immutable tag.** `latest` is a build-side convenience and
+  never reaches a cluster spec. Without this, expand/contract's "deploy step" has no defined
+  moment, so its phases cannot be ordered against anything.
+- **Where a plan's safety rests on which code is live, make the plan safe in EVERY ordering
+  instead** — expand-first, dual-key, add-before-prune. A step that is safe regardless of what the
+  scheduler does needs no inspection to stay true.
+
+Inherited by every future migration on a live-synced identity surface — the employee-id rebind at
+work, and each rename after it. See `feedback_grant_key_rename_needs_expand_contract`.
+
+### Renames on live-synced identity surfaces run EXPAND/CONTRACT, never an edit
+Third instance of the identity-key-transition class (VirtualObject keys at the M2 cutover; this
+audience rename; the flip's employee-id migration ahead), so it gets the rule rather than a third
+retelling. When a key spans a **pruning sync** and **deployed code that CONSTRUCTS it**, renaming
+it is a two-phase migration: a lone sync deletes the relation the running image still builds, and
+both single-sided orders break.
+
+  EXPAND (both keys declared → sync) · DEPLOY · CONTRACT (drop old → sync)
+
+The dual-key interval is **explicit in the deploy plan**, and the expand step is the one to run
+first *because it is safe in every ordering* — adding a relation prunes nothing, so it closes the
+interval if open and pre-positions the migration if not. When two readers disagree about the
+current deployed state, run the safe step first and settle the disagreement after.
+
+The tell for whether this class applies: is the key a **literal in code** (`f"{kind}:{domain}"`)
+or a value read from data? Literal → expand/contract. Data → a sync suffices.
+
+Guard shape, because the naive seal forbids the only safe ordering: a rename guard must permit the
+old key **while the new one is declared alongside it AND a marker names the removal condition** —
+old-key-ALONE stays red (that is the real regression), and the marker stops an expand phase
+becoming permanent through amnesia.
+
 ### Build the fixture as a SUPERSET of reality, not an approximation of it
 Where the real input cannot enter the repo (restricted boundary) or does not exist yet, build the
 fixture **deliberately as degraded as the contract permits**, so any real input is a SUBSET of it.
