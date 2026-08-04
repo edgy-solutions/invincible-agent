@@ -35,12 +35,14 @@ from restate import Workflow, WorkflowContext, WorkflowSharedContext
 
 try:  # lazy-import dance (container flattens the dir)
     from workflow_bulk_resolve import BulkDecision, Override, PartItem, ReviewBatch, resolve_batch  # type: ignore[no-redef]
-    from dispatch_driver import _mint_dispatch_task, fan_out_dispatch  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.workflow_bulk_resolve import (
         BulkDecision, Override, PartItem, ReviewBatch, resolve_batch,
     )
-    from agent_fleet.restate_analyst.dispatch_driver import _mint_dispatch_task, fan_out_dispatch
+# NB: the dispatch imports (_mint_dispatch_task, fan_out_dispatch) retired with
+# _run_inline_LEGACY — the executor owns the register + fan-out now and imports them
+# itself. Left behind they would be dead imports pointing at the path this module no
+# longer takes, which is how a retired path looks alive to the next reader.
 
 
 # ---------------------------------------------------------------------------
@@ -185,99 +187,6 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         "count": grouped["count"],
         "dispatched_keys": grouped["dispatched_keys"],
     }
-
-
-async def _run_inline_LEGACY(ctx: WorkflowContext, request: dict) -> dict:
-    """The pre-M3.2 inline implementation, RETAINED UNWIRED as the cutover's reference.
-
-    Not dead code and not a fallback: nothing calls it, and it must not acquire a caller.
-    It is here so the drain/cutover can diff behaviour against the delegated path, and it
-    retires with the sealed inline-task path (the pre-existing follow-up) rather than on its
-    own schedule — the two are the same decision.
-    """
-    approver = request["approver"]
-    audience = request.get("audience") or approver
-    notice_fingerprint = request["notice_fingerprint"]
-    notice_id = request.get("notice_id", "")
-    doc_type = request.get("doc_type", "PCN")
-    user_jwt = request.get("user_jwt", "")
-    batch_items = request["batch_items"]
-
-    # Persist the server-authored batch — submit_decision validates against THIS, not client input.
-    # notice_id/doc_type are stored too so the reviewer's batch-read (get_batch) can label the notice
-    # without the client re-supplying it.
-    ctx.set("batch_items", batch_items)
-    ctx.set("approver", approver)
-    ctx.set("notice_fingerprint", notice_fingerprint)
-    ctx.set("notice_id", notice_id)
-    ctx.set("doc_type", doc_type)
-    # Extraction-quality warnings travel with the batch so get_batch can hand them to the
-    # reviewer alongside the parts they qualify (a degraded extraction's parts list may be
-    # incomplete; unsaid, it reads as complete).
-    ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
-
-    # ONE grouped HumanTask for the whole batch (1 approval resolves N). Register durably BEFORE
-    # suspending, mirroring the sealed HITL mechanics.
-    grouped_task = {
-        # DERIVED FROM THE WORKFLOW KEY, not re-invented from the notice. This was
-        # `grouped:{notice_fingerprint}:{approver}` — a SECOND independent derivation from the
-        # LLM-extracted doc_id, carrying the same collision hazard as the workflow key it sits
-        # beside: two documents sharing a doc_id produced one task id as well as one workflow.
-        # The grouped task is 1:1 with this workflow, so its identity should COME FROM the
-        # workflow rather than be computed in parallel and hope to agree. One identity, one
-        # derivation, N consumers.
-        "task_key": f"grouped:{ctx.key()}",
-        # This workflow's OWN key — the address submit_decision is invoked on
-        # (GroupedReview/{workflow_id}/submit_decision). Carried into the register body so cortex-bff's
-        # /human_tasks/{id}/act can resume THIS workflow when the reviewer approves. Without it the
-        # projection row's workflow_id is NULL and the approval can't reach the suspended promise.
-        "workflow_id": ctx.key(),
-        "audience": audience,
-        "kind": "grouped_review",
-        "disposition": "grouped_review",
-        "title": f"Review {len(batch_items)} affected part(s) — notice {notice_id or notice_fingerprint}",
-        "summary": f"{len(batch_items)} affected part(s) need a disposition review",
-        "mpn": "",
-        "notice_fingerprint": notice_fingerprint,
-        # The INITIATOR, honest on the reviewer's own card. For a pipeline-started review this is
-        # svc:review-starter (the sensor's service identity); the UI renders "(automated)" off the svc:
-        # PREFIX, not a name check, so every future service identity reads correctly for free. Previously
-        # omitted -> the grouped-review card shipped requested_by="" and showed no provenance at all.
-        "requested_by": approver,
-    }
-    await ctx.run("register_grouped_task", lambda: _mint_dispatch_task(grouped_task, user_jwt))
-
-    # Suspend until submit_decision resolves the promise with a VALIDATED decision.
-    raw_decision = await ctx.promise("decision", type_hint=dict).value()
-    # This batch is now SETTLED. Mark it so a SECOND submission (a teammate racing
-    # in the window before the projection rows flip) is refused with the truth
-    # instead of being re-validated into a hollow `accepted: true` while nothing
-    # further happens — the durable promise is write-once, so the second submit
-    # never woke anything, and reporting success for it is the worst of the three
-    # dishonest outcomes (the reviewer walks away believing their overrides landed).
-    # A deterministic BOOLEAN on purpose: WHO/WHEN provenance comes from the
-    # projection (acted_by/acted_at), so no non-deterministic clock enters the
-    # journaled workflow.
-    ctx.set("decision_consumed", True)
-
-    # Re-derive resolutions from the server batch + the validated decision (authority stays server-side).
-    batch = _reviewbatch_from_state(approver, batch_items)
-    submission = evaluate_submission(batch, raw_decision, notice_fingerprint=notice_fingerprint)
-    if not submission.accepted:
-        # Invariant: submit_decision only resolves accepted decisions. Reaching here is a broken
-        # invariant, not a user refusal — fail terminally (release), don't park.
-        raise restate.TerminalError(
-            f"grouped decision failed validation after wake: {submission.reason}", status_code=400,
-        )
-
-    # Fan out INSIDE the journaled workflow context: each send is durable/retryable, each item its own
-    # keyed VirtualObject invocation (per-item isolation — a poisoned item fails only itself).
-    keys = fan_out_dispatch(
-        ctx, submission.resolutions,
-        notice_fingerprint=notice_fingerprint, notice_id=notice_id, user_jwt=user_jwt,
-        requested_by=approver,   # the approver who resolved the batch is the task's requester
-    )
-    return {"status": "DISPATCHED", "count": len(keys), "dispatched_keys": keys}
 
 
 @grouped_review.handler()
