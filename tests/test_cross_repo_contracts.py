@@ -53,7 +53,15 @@ FORBIDDEN = [
 ]
 MECHANISM = [BFF, RA / "main.py", RA / "grouped_review_workflow.py", RA / "dispatch_driver.py",
              RA / "review_starter.py", RA / "review_composer.py", RA / "dispatch_plan.py",
-             EO / "main.py"]
+             EO / "main.py",
+             # SEED SCRIPTS ARE MECHANISM TOO (added 2026-08-04). seed_sandbox_predicates.py is the
+             # sandbox-side mirror of main.py's register_engine_to_mesh, and it kept the pre-M2
+             # `PcnReviewStarter/start_review` endpoint for a week after the rename — invisible to
+             # this seal because only engine/BFF sources were scanned. A stale endpoint in a SEED is
+             # the worst shape of this bug: it writes a DEAD endpoint into the capability graph on
+             # the next re-seed, and stays silent because the verb still RESOLVES — only dispatch
+             # fails, later, somewhere else. Anything that WRITES the substrate is mechanism.
+             _REPO / "scripts" / "seed_sandbox_predicates.py"]
 
 # The git-rails grant files are where the audience key is DECLARED, so that is where a rename
 # regression would actually land. Scanned separately from MECHANISM because the honest history

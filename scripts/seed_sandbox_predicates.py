@@ -179,7 +179,7 @@ ENGINES = [
         # restate_analyst/main.py's lifespan registration (engine_a_propose_
         # disposition). setup/ontologies/pcn_extension.ttl declared the pcn
         # subject classes but deliberately registered NO disposition verbs
-        # until each serving endpoint became real; PcnReviewStarter.start_review
+        # until each serving endpoint became real; ReviewStarter.start_review
         # is now live + proven end-to-end (the five-beats loop), so this wakes
         # the verb. input_uri is the PARENT pcn:SustainmentNotice so the
         # subClassOf walk offers it for PCN + PDN too — one edge, whole family.
@@ -188,7 +188,11 @@ ENGINES = [
         "verb_iri": "mesh:proposeDisposition",
         "input_uri": "http://internal/sustainment/pcn#SustainmentNotice",
         "output_uri": _MESH + "DispositionReview",
-        "endpoint_url": "http://iagent-restate:8080/PcnReviewStarter/start_review",
+        # M2 rename: the service is ReviewStarter (the Pcn- prefix was de-pcn'd).
+        # This seed is the sandbox-side mirror of main.py's registration, so a stale
+        # name here writes a DEAD endpoint into the capability graph on the next
+        # re-seed — silent, because the verb still resolves and only dispatch fails.
+        "endpoint_url": "http://iagent-restate:8080/ReviewStarter/start_review",
         "owner_persona": "SUSTAINMENT_ENGINEER",
         "domains": ["SUSTAINMENT"],
         "synonyms": ["propose disposition", "disposition review",
