@@ -388,14 +388,32 @@ cross-repo presentation contracts migrate together.
    already stranded six pending task rows the same way, one layer down (see AGENTS.md, the FOURTH
    STEP of expand/contract).
 
-   **RULING — make the names COINCIDE BY CONSTRUCTION: the grouped step's `id` IS `decision`,** so
-   `approval_{step.id}` and the handler's promise are the same string and no dual-name interval ever
-   exists. Chosen over resolving both names during a transition (managing an interval instead of
-   removing it) and over draining in-flight reviews (kept as the BELT — drain before cutover anyway,
-   since it costs nothing on a sandbox and removes the last in-flight unknown). It is also arguably
-   the right shape independent of the hazard: the step id is **definition content the author
-   controls**, so deriving the promise from it keeps the durable identity inside the declared
+   **RULING — make the durable name DECLARED CONTENT, so no dual-name interval ever exists:**
+   `_run_definition` awaits `step.promise_name or f"approval_{step.id}"`, and the `approve` handler
+   (main.py:1678, same construction at main.py:1631) honours the IDENTICAL rule — it must resolve
+   what the executor awaits. `grouped_review.yaml` declares `promise_name: decision`, matching the
+   name the shared handler already resolves; the prefixed default is retained so the dark-launched
+   `promote_answer_artifact` path is byte-identical.
+   Chosen over resolving both names during a transition (managing an interval instead of removing
+   it) and over draining in-flight reviews (kept as the BELT — drain before cutover anyway, since it
+   costs nothing on a sandbox and removes the last in-flight unknown). Rejected: dropping the
+   `approval_` prefix globally, the obvious-looking alternative — that is a rename on a durable
+   surface whose in-flight instances sit OUTSIDE the grouped-review drain's coverage, i.e. this same
+   hazard applied to a path nobody was looking at, because a dark-launched path does not announce
+   itself as live state.
+   It is also the right shape independent of the hazard, and more honestly so than the original:
+   the promise name is **definition content the author controls** OUTRIGHT, rather than a
+   coincidence engineered through id-naming, and the durable identity lives inside the declared
    process rather than inside executor naming convention.
+
+   **AMENDED 2026-08-03** (supersedes the mechanism ruled 2026-08-04; reasoning above is unchanged).
+   As originally written this asserted `approval_{step.id}` == `decision` for `step.id = "decision"`,
+   which is FALSE — evaluated, that is `approval_decision`, and the `approval_` prefix is an executor
+   literal no definition content can delete. So the original mechanism produced precisely the silent
+   permanent suspension this section was authored to prevent. The wrong ruling is left on the record
+   deliberately: it is the evidence the equality guard below cites for its own existence, and the
+   first instance of the conventions rule *a ruling that asserts a string identity gets EVALUATED,
+   not read* (AGENTS.md).
    **Seal it:** assert the promise name the executor awaits equals the one `submit_decision`
    resolves — a string-equality guard that goes red the moment either side is renamed, which is the
    only thing standing between a future rename and a permanently suspended workflow.

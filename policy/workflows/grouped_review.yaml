@@ -1,0 +1,96 @@
+# SPO-native re-expression of the grouped disposition-review workflow (ADR-0029 M3).
+# Git-asserted + reviewed like promote_answer_artifact.yaml, so classification + grants
+# compose. Executed on the Restate BPMNWorkflowRunner; steps run as the workflow INITIATOR.
+#
+# STATUS: definition ARTIFACT only (M3.1). NOT yet wired to _run_definition — the executor
+# (stage-2 verifier + runner cutover) is a separate SEALED increment, and the extraction/
+# scoring spo_operation steps are BLOCKED on the Part/Notice/BOM ontology classes + registered
+# verbs that don't exist yet (ADR-0029 Slice-2 prereq). This artifact + its validation test are
+# the buildable slice: the grouped-review expressed AS DATA, ready for the executor to consume.
+#
+# {placeholders} are bound at trigger time (the notice being reviewed + its compartment).
+id: grouped_review
+name: "Grouped disposition review (1 approval resolves N affected parts)"
+
+# The compartment gates who may OBSERVE (3-audience tiers). The grouped review is generic over
+# domain — the compartment is the notice's, bound at trigger via the audience below. Static
+# WorkflowDefinition.classification can't express a per-invocation compartment; until the model
+# grows per-trigger binding (M3 open item), author one definition per compartment OR leave null
+# and let the audience carry it. Left null here = observation gate deferred to the audience.
+classification: null
+
+participants:
+  - role: initiator                         # identity all steps execute as (the review starter)
+  - role: reviewer                          # resolved from the audience (per-approver-filtered batch)
+
+domain_stages: [scored, awaiting_review, dispatched]
+
+steps:
+  # NOTE (blocked, documented): the extraction / matching / relevance-scoring stages are
+  # `spo_operation` steps in the full model. They need Part/Notice/BOM ontology classes with
+  # registered verbs (which do not exist yet) so the stage-2 eligibility verifier has real
+  # (subject, verb) URIs to check. Omitted from this spine until that prereq lands (Slice-2).
+  # Per ADR-0029 the FAN-OUT to N parts is dissolved by per-item invocation + the dispatcher
+  # (outside the definition) — this spine is the single per-notice review + dispatch, ZERO new
+  # step kinds.
+
+  # 1:1 with today's sealed grouped HumanTask — register durable task -> suspend on the batch
+  # promise -> Topaz can_act on the audience -> bulk-resolve N promises. UNCHANGED mechanics.
+  - kind: human_await
+    id: decision
+    # The DURABLE promise this step suspends on — DECLARED, not derived from the id
+    # (design doc §1, AMENDED). `submit_decision` is a SHARED handler that resolves the
+    # literal `decision`; the executor's default would be `approval_{id}`, i.e.
+    # `approval_decision`, and a review suspended on one name cannot be woken by the
+    # other. Sealed by tests/test_promise_name_seal.py, which measures BOTH sides.
+    promise_name: decision
+    # HOW this step settles. `grouped` selects the server-authored-batch semantics in the
+    # executor: persist the batch before suspending, validate a submission against it
+    # BEFORE waking (a policy refusal leaves the review suspended), guard the multiplayer
+    # race with `decision_consumed` -> honest 409, fan out N per-item dispatches on wake.
+    # Declared here as an ATTRIBUTE; the mechanism stays executor-owned (the closed fork —
+    # batch/validator/payload fields never enter this plane).
+    completion:
+      mode: grouped
+      quorum: any_of        # the first authorized member of the audience settles the batch.
+                            # n_of_m is expressible but the runner REFUSES it (501) rather
+                            # than settling on one approval — a quorum it cannot honour must
+                            # not read as one it can.
+      claiming: false       # no advisory lock today: any audience member may decide, and the
+                            # race is caught after the fact by decision_consumed. Stated
+                            # explicitly because "unstated" would read as "unconsidered".
+    audience: "disposition_review:{compartment}"   # generic audience (M2 renamed from pcn_disposition);
+                                                    # {compartment} bound at trigger from the notice
+    subject_ref: "{notice_ref}"                     # the supplier notice under review
+    title: "Review {n} affected part(s) — notice {notice_id}"
+    summary: "Affected parts need a disposition review (accept-all with per-part exceptions)"
+
+  # REMOVED (M3.2): a `direct_call dispatch_dispositions` step used to sit here.
+  # Removed because THE FORK CLOSED AGAINST IT, not because it was wrong when written.
+  # It is M3.1-era authorship (2d268b7, "artifact only, not yet wired") that PREDATES the
+  # ruling that batch and fan-out are executor-owned semantics of the grouped `human_await`
+  # and never definition content. The declaration and the ruling contradicted each other
+  # because the declaration is the STALE RECORD — the same class as the milestone doc's
+  # "delete the file" line: an acceptance-shaped artifact written before the decision that
+  # invalidates it. The cherry-pick carried the step-id rename but nobody re-read the step
+  # LIST against the closed fork.
+  #
+  # THIS DOES NOT LEAVE DISPATCH UNGATED. The gate on this path is the grouped `human_await`
+  # itself: dispatch fires only downstream of a RESOLVED approval, and that approval is
+  # entitlement-checked at Topaz `can_act` against the audience relation above. The gate
+  # guards the DECISION; the fan-out is that decision's mechanical consequence. Gating the
+  # consequence separately would produce an approved review whose dispatch then 403s — a
+  # human decision the system accepted and won't execute, which is the stranded-work class
+  # this arc keeps burying.
+  #
+  # THE CAPABILITY GATE'S HOME IS WORKFLOW 2. On the autonomous path there is NO human gate,
+  # so `can_invoke(svc, mesh:dispatchDispositions)` is the ONLY gate — which is exactly why
+  # it belongs there. OWED, as ONE governed decision: that grant and the trust-table
+  # promotion are the entitlement-plane and admission-plane halves of "this pipeline may act
+  # unsupervised" — one authority, two enforcement points, ratified once, seeded through
+  # git-rails in the window where workflow 2 goes live. Its absence today is correct
+  # sequencing, not a defect to route around.
+
+observable_state:
+  visible: [domain_stages, decision.status]   # per 3-audience tiers (Slice 3)
+  internal: [decision.dispatched_keys]        # the fan-out is the grouped step's own result

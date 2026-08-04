@@ -113,14 +113,88 @@ def evaluate_submission(batch: ReviewBatch, raw_decision: dict, *, notice_finger
 grouped_review = Workflow("GroupedReview")
 
 
+def _compartment_from_request(request: dict) -> str:
+    """The compartment this review belongs to — the only part of the audience the TRIGGER
+    supplies.
+
+    The definition declares the audience SHAPE (``disposition_review:{compartment}``) and the
+    invocation supplies the compartment as DATA. That split is deliberate and is an authz
+    boundary, not a convenience: if the trigger could hand over a whole audience string, a
+    caller would be choosing who may act on its own review, which is laundering access
+    through the process plane. Taking only the tail means a caller can influence WHICH
+    compartment reviews it, never WHICH NAMESPACE decides — ``totally_other:X`` still yields
+    ``disposition_review:X``.
+    """
+    explicit = request.get("compartment")
+    if explicit:
+        return str(explicit)
+    audience = request.get("audience") or ""
+    return audience.split(":", 1)[1] if ":" in audience else ""
+
+
 @grouped_review.main()
 async def run(ctx: WorkflowContext, request: dict) -> dict:
-    """Register the grouped HumanTask, suspend, and — on an accepted decision — fan out N dispatches.
+    """DELEGATES to the git-asserted definition (M3.2 build 3).
 
-    ``batch_items`` is SERVER-AUTHORED upstream (funnel + per-approver filter already applied) and
-    persisted so ``submit_decision`` validates against it. The promise only ever resolves with a
-    decision ``submit_decision`` already accepted, so the wake path is the happy path; a defensive
-    re-validation keeps the server the authority that produces the resolutions."""
+    This handler used to carry the grouped mechanics inline. Those mechanics are now the
+    ``human_await`` step kind's OWNED behaviour in the executor, selected by the definition's
+    declared ``completion.mode: grouped`` — so this workflow's PROCESS lives in
+    ``policy/workflows/grouped_review.yaml`` (git-asserted, reviewed, diffable) and its
+    RUNNER is the same ``_run_definition`` that runs every other definition. That is the
+    whole M3.2 acceptance: the runner is definition-driven, not class-driven.
+
+    THREE THINGS DELIBERATELY DO NOT CHANGE, because they are frozen contract surfaces:
+      * the service name ``GroupedReview`` and the URLs cortex-bff calls by hand
+        (``/GroupedReview/{key}/submit_decision``, ``/get_batch``);
+      * ``submit_decision`` / ``get_batch`` themselves — still shared handlers reading the
+        same workflow-state keys, which is why the executor writes exactly those keys;
+      * this handler's RETURN SHAPE (``status``/``count``/``dispatched_keys``). The executor
+        returns a step-results envelope; it is mapped back here rather than propagated, so a
+        caller reading the workflow result sees no change.
+
+    The definition is loaded from the RUNTIME registry, never from the request. A
+    client-supplied process would be exactly the laundering ``_run_definition``'s stage-2
+    verifier exists to prevent.
+    """
+    try:  # lazy — main imports THIS module at load time, so the edge must be call-time
+        import main as _main  # type: ignore[no-redef]
+        from workflow_definition import get_workflow_definition  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.restate_analyst import main as _main
+        from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+
+    definition = get_workflow_definition("grouped_review")
+    trigger = {**request, "compartment": _compartment_from_request(request)}
+    envelope = await _main._run_definition(ctx, ctx.key(), definition.model_dump(), trigger)
+
+    grouped = next(
+        (r for r in envelope.get("step_results", []) if r.get("completion") == "grouped"),
+        None,
+    )
+    if grouped is None:
+        # The definition ran but no grouped step reported — the process no longer contains the
+        # step this handler exists to run. Loud, because a silent {} here would read to every
+        # caller as a review that completed with nothing to dispatch.
+        raise restate.TerminalError(
+            "grouped_review definition produced no grouped human_await result — "
+            f"steps ran: {[r.get('step_id') for r in envelope.get('step_results', [])]}",
+            status_code=500,
+        )
+    return {
+        "status": grouped["status"],
+        "count": grouped["count"],
+        "dispatched_keys": grouped["dispatched_keys"],
+    }
+
+
+async def _run_inline_LEGACY(ctx: WorkflowContext, request: dict) -> dict:
+    """The pre-M3.2 inline implementation, RETAINED UNWIRED as the cutover's reference.
+
+    Not dead code and not a fallback: nothing calls it, and it must not acquire a caller.
+    It is here so the drain/cutover can diff behaviour against the delegated path, and it
+    retires with the sealed inline-task path (the pre-existing follow-up) rather than on its
+    own schedule — the two are the same decision.
+    """
     approver = request["approver"]
     audience = request.get("audience") or approver
     notice_fingerprint = request["notice_fingerprint"]

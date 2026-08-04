@@ -26,13 +26,15 @@ This module is the **schema + loader only** (Slice-1 foundation). The executor
 (stage-2 verifier + dispatch) and the runner cutover are separate, reviewable
 increments — they touch the sealed runner and get their own seal.
 """
+import os
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 __all__ = [
+    "CompletionPolicy",
     "HumanAwaitStep",
     "SpoOperationStep",
     "DirectCallStep",
@@ -40,6 +42,8 @@ __all__ = [
     "WorkflowDefinitionError",
     "load_workflow_definition",
     "load_all_workflows",
+    "definitions_dir",
+    "get_workflow_definition",
 ]
 
 
@@ -48,11 +52,61 @@ class WorkflowDefinitionError(ValueError):
     definition is a config error (fail at load, never silently skip)."""
 
 
+class CompletionPolicy(BaseModel):
+    """HOW a ``human_await`` settles — declared, so the executor SELECTS its
+    resolution semantics rather than inferring them (M3.2 build 1).
+
+    ``mode``:
+      * ``single``  — a plain approval. One authorized human resolves the
+        promise via the ``approve`` handler. Today's sealed behaviour.
+      * ``grouped`` — one approval settles a SERVER-AUTHORED BATCH of N items:
+        the batch is persisted before the suspend, ``submit_decision``
+        validates a submission against it BEFORE waking (a policy refusal
+        leaves the review suspended), a ``decision_consumed`` guard makes a
+        second submission an honest 409 instead of a hollow accept, and the
+        wake fans out N per-item dispatches.
+
+    ``quorum`` says WHO settles it. ``any_of`` — the first authorized member of
+    the audience. ``n_of_m`` — N distinct approvals join one settlement
+    (ADR-0027); DECLARABLE but NOT yet implemented, and the executor FAILS
+    LOUDLY on it rather than silently settling on the first approval. A quorum
+    the runner cannot honour must not read as one it can.
+
+    ``claiming`` — the reviewer claims the batch before deciding (advisory
+    lock, surfaced to the UI). Declared here so it is process content, not
+    executor convention."""
+
+    mode: Literal["single", "grouped"] = "single"
+    quorum: Literal["any_of", "n_of_m"] = "any_of"
+    threshold: Optional[int] = None  # required iff quorum == n_of_m
+    claiming: bool = False
+
+    @model_validator(mode="after")
+    def _threshold_matches_quorum(self) -> "CompletionPolicy":
+        if self.quorum == "n_of_m":
+            if self.threshold is None or self.threshold < 2:
+                raise ValueError("quorum 'n_of_m' requires a threshold >= 2")
+        elif self.threshold is not None:
+            raise ValueError("threshold is only meaningful with quorum 'n_of_m'")
+        return self
+
+
 class HumanAwaitStep(BaseModel):
     """A designed await on an authorized human (Situation B). Carries the sealed
     HITL fields verbatim; ``audience`` is the Topaz ``task_audience`` gated by
     ``can_act``. Multi-approval = N of these JOINED (ADR-0027), not a parallel
-    engine."""
+    engine.
+
+    ``promise_name`` is the DURABLE Restate promise this step suspends on, and
+    it is declared content on purpose (design doc §1, AMENDED). A promise name
+    is durable journal state — an identity surface on live data — so it belongs
+    inside the declared process rather than inside executor naming convention.
+    Omitted, it defaults to ``approval_{id}``, which is the convention every
+    existing definition and the ``approve`` handler already use; declaring it
+    lets a definition suspend on a name a SHARED handler resolves (the grouped
+    review's ``submit_decision`` resolves ``decision``). The executor and the
+    resolving handler must agree on this string or the workflow suspends
+    forever with no error — sealed by a string-equality guard."""
 
     kind: Literal["human_await"]
     id: str
@@ -61,6 +115,14 @@ class HumanAwaitStep(BaseModel):
     title: Optional[str] = None
     summary: Optional[str] = None
     requested_by: Optional[str] = None
+    promise_name: Optional[str] = None
+    completion: CompletionPolicy = Field(default_factory=CompletionPolicy)
+
+    def resolved_promise_name(self) -> str:
+        """The durable promise name this step actually suspends on. ONE
+        derivation, so the executor and every seal ask the same function rather
+        than re-deriving the string in parallel and hoping to agree."""
+        return self.promise_name or f"approval_{self.id}"
 
 
 class SpoOperationStep(BaseModel):
@@ -131,6 +193,47 @@ def load_workflow_definition(path: str | Path) -> WorkflowDefinition:
         return WorkflowDefinition.model_validate(raw)
     except ValidationError as exc:
         raise WorkflowDefinitionError(f"{p}: invalid workflow definition:\n{exc}") from exc
+
+
+def definitions_dir() -> Path:
+    """Where the RUNNING SERVICE reads git-asserted definitions from.
+
+    Env-configurable because the repo path and the deployed path differ: in-repo
+    this is ``policy/workflows/``; in the pod it is wherever the definitions are
+    mounted or baked. Declaring the seam as an env var keeps the code identical
+    across both and makes the deploy step explicit rather than assumed.
+    """
+    env = os.environ.get("WORKFLOW_DEFINITIONS_DIR")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[2] / "policy" / "workflows"
+
+
+def get_workflow_definition(workflow_id: str) -> WorkflowDefinition:
+    """Fetch ONE git-asserted definition by id, for a runner that must not accept a
+    client-supplied process.
+
+    Fails LOUDLY and specifically when the definitions are ABSENT — which is the
+    expected failure until they are shipped into the pod. A definition that exists
+    in git but not in the running service is not a definition the runner has; the
+    error says which, and where it looked, because the alternative (an empty
+    registry read as "no such workflow") is the silent-degrade this whole arc
+    hunts. Presence in the repo is not presence in the running system.
+    """
+    d = definitions_dir()
+    if not d.is_dir():
+        raise WorkflowDefinitionError(
+            f"workflow definitions directory {d} does not exist in this runtime — "
+            "the git-asserted definitions are not shipped here. Set "
+            "WORKFLOW_DEFINITIONS_DIR or mount/bake policy/workflows/."
+        )
+    path = d / f"{workflow_id}.yaml"
+    if not path.is_file():
+        available = sorted(p.stem for p in d.glob("*.yaml"))
+        raise WorkflowDefinitionError(
+            f"no git-asserted definition {workflow_id!r} in {d} (have: {available})"
+        )
+    return load_workflow_definition(path)
 
 
 def load_all_workflows(directory: str | Path) -> dict[str, WorkflowDefinition]:

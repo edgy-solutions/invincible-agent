@@ -42,9 +42,48 @@ def test_promotion_definition_loads() -> None:
     assert pub.capability == "mesh:publishArtifact"
 
 
+def test_grouped_review_definition_loads() -> None:
+    """M3.2: the grouped disposition-review expressed as a WorkflowDefinition — ONE grouped
+    `human_await` that owns batch + fan-out as executor semantics. Asserts the DATA parses +
+    validates against the model, that the audience was de-pcn'd (M2) to a generic
+    compartment-bound key, and that the durable promise name is DECLARED (not derived from
+    the step id — see tests/test_promise_name_seal.py, which measures both sides)."""
+    path = _REPO / "policy" / "workflows" / "grouped_review.yaml"
+    d = wd.load_workflow_definition(path)
+    assert d.id == "grouped_review"
+    kinds = [s.kind for s in d.steps]
+    assert kinds == ["human_await"], kinds
+    aw = d.steps[0]
+    assert aw.audience.startswith("disposition_review:"), aw.audience   # generic, not pcn_disposition
+    assert aw.subject_ref == "{notice_ref}"
+    assert aw.promise_name == "decision"                # the name submit_decision resolves
+    assert aw.resolved_promise_name() == "decision"     # ONE derivation, no parallel re-derive
+    assert aw.completion.mode == "grouped"              # selects batch/validate/race/fan-out
+    assert aw.completion.quorum == "any_of"
+
+
+def test_grouped_review_has_no_direct_call_dispatch_step() -> None:
+    """The closed fork, asserted so it cannot silently reopen: batch and fan-out are
+    executor-owned semantics of the grouped `human_await`, NEVER definition content. The
+    M3.1 artifact declared a `direct_call dispatch_dispositions` step because it was written
+    BEFORE that ruling; it is the stale record, and re-adding it would both double-handle
+    dispatch and fail the workflow after the reviewer's approval already fanned out.
+
+    This is NOT an assertion that dispatch is ungated. The gate on this path is the grouped
+    `human_await` itself — Topaz `can_act` against the audience — which guards the DECISION;
+    the fan-out is that decision's mechanical consequence. The capability gate's home is
+    workflow 2, where no human gate exists and `can_invoke` is the only one."""
+    d = wd.load_workflow_definition(_REPO / "policy" / "workflows" / "grouped_review.yaml")
+    assert not [s for s in d.steps if s.kind == "direct_call"], (
+        "a direct_call dispatch step reappeared in grouped_review.yaml — the fork closed "
+        "against it (executor-owned fan-out); see the YAML's REMOVED note"
+    )
+
+
 def test_load_all_keys_by_id() -> None:
     workflows = wd.load_all_workflows(_REPO / "policy" / "workflows")
     assert "promote_answer_artifact" in workflows
+    assert "grouped_review" in workflows
 
 
 def test_direct_call_without_capability_is_rejected() -> None:

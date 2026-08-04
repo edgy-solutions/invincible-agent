@@ -418,6 +418,69 @@ whose failure would trigger a revert**. And note the specific mechanism here —
 part of its correctness**: an assertion that samples asynchronous state must either wait for the
 state it asserts on or assert on something synchronous with the call it made.
 
+### A ruling that asserts a string identity gets EVALUATED, not read
+Sibling of the false-RED rule above, and the same root: believing an assertion because of who
+produced it. 2026-08-04's promise-name ruling stated that `approval_{step.id}` and the handler's
+`decision` promise are "the same string by construction, since the grouped step's `id` IS
+`decision`." Evaluate it: `f"approval_{step.id}"` with `step.id = "decision"` is `approval_decision`.
+The `approval_` literal lives in the EXECUTOR, so no assignment to definition content can delete it.
+The ruling asserted an equality between two expressions and checked neither, and as written it
+produced the exact silent-suspension failure it was authored to prevent.
+
+Second instance this arc — the first was the M3.1 verb registrations, also caught by reading the
+source instead of executing the recipe.
+
+**So: an architect's ruling that asserts two names, keys, or paths are equal is a CLAIM, not a
+premise. Evaluate the expressions on both sides against the source before building on it.** The
+verification discipline applies to a ruling's sentences exactly as much as to green test output —
+a ruling is the highest-authority unverified assertion in the system, which is precisely why it
+gets attacked rather than deferred to. Where the identity matters, prefer making it DECLARED
+(explicit content the author controls) over ENGINEERED (a coincidence arranged through naming),
+and seal it with an equality guard: a construction you have to reason about is one a future rename
+can silently break.
+
+### A ruling made in CONVERSATION is UNSHIPPED until it is committed
+Second instance, and the mirror image of the first. In the §391 case the DOC carried a ruling the
+conversation had already invalidated. In the M3.2 shipping case the CONVERSATION carried a ruling the
+doc never received — image-baked definitions, decided with three reasons and a rider, present nowhere a
+future window could reach. The build re-raised it as an open question, which is not a lapse: it is the
+proof. A window holding the whole repo and no transcript cannot execute a decision that exists only in
+chat.
+
+**So: the transcript is where a decision is BORN; the repo is where it LIVES. A ruling is unshipped
+until it is committed — to the packet, the ADR, or these conventions — with its reasons attached.** The
+corollary binds the citer too: **a claim that something "was already decided" is INPUT requiring
+validation, not a premise, including when it comes from the architect.** If it cannot be sourced to a
+commit or to the transcript in hand, it does not get recorded as RULED on the citer's say-so — an
+unsourceable "RULED" is the §391 failure with the evidence deleted, and it costs a future window
+executing a decision it cannot audit. Re-raising a settled question costs one round trip; the asymmetry
+is not close.
+
+When a conversational ruling IS confirmed, record it with its origin stated exactly — ruled in-session
+on DATE, and whether it PRECEDED or POSTDATED the work that needed it. "Decided" and "decided in time"
+are different facts, and the second is what tells the next window whether the process worked.
+
+### A probe's OUTPUT is part of its claim — truncated, sampled or windowed output gets labeled in the line that reports it
+Third probe-correctness catch in the M3.2 build session, and three is where this arc files a rule. The
+other two: an assertion that sampled asynchronous state and reported RED on a healthy system (timing),
+and a gate stub patched onto the wrong module object so a DENY arm passed while the stub was never
+consulted (tautology — the ALLOW arm exposed it). This one: a full-suite run piped through
+`Select-Object -Last 14` reported `42 failed` above a list of 13 names. Nothing was wrong with the
+test run; the WINDOW was narrower than the measurement, and a partial list carries the shape of a
+complete one. Twenty-nine failures were invisible with no marker saying so.
+
+**So: a probe that truncates, samples, paginates, or windows its output must SAY SO in the same line
+that reports the result — `42 failed (showing 13)`, never `42 failed` over 13 rows.** The failure is
+not the truncation, which is often necessary; it is a result presented at a completeness it does not
+have. This is the reporting-side sibling of the RED rule above: there the probe's timing was part of
+its correctness, here its output window is.
+
+Corollary for comparison runs (base-vs-HEAD, before-vs-after): **classify environment-dependent tests
+BEFORE the comparison and exclude them from the verdict by name, or run them twice per arm.** Live-service
+and provider-env tests can lie in BOTH directions across two runs minutes apart — a flake that fails at
+base and passes at HEAD reads as "you fixed it"; the reverse reads as "you broke it". A verdict over the
+stable set with the exclusions named beats a wider verdict containing coin flips.
+
 ### A stored authz value re-checked at action time is a MIGRATION SURFACE that does not look like one
 Broader than the identity-key rule, and it is what actually bit the M3.1 rename. `audience` is a
 **denormalized authz value copied onto a durable row and RE-EVALUATED later** (`resolve_task`
