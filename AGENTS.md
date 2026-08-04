@@ -418,6 +418,27 @@ whose failure would trigger a revert**. And note the specific mechanism here —
 part of its correctness**: an assertion that samples asynchronous state must either wait for the
 state it asserts on or assert on something synchronous with the call it made.
 
+### A ruling that asserts a string identity gets EVALUATED, not read
+Sibling of the false-RED rule above, and the same root: believing an assertion because of who
+produced it. 2026-08-04's promise-name ruling stated that `approval_{step.id}` and the handler's
+`decision` promise are "the same string by construction, since the grouped step's `id` IS
+`decision`." Evaluate it: `f"approval_{step.id}"` with `step.id = "decision"` is `approval_decision`.
+The `approval_` literal lives in the EXECUTOR, so no assignment to definition content can delete it.
+The ruling asserted an equality between two expressions and checked neither, and as written it
+produced the exact silent-suspension failure it was authored to prevent.
+
+Second instance this arc — the first was the M3.1 verb registrations, also caught by reading the
+source instead of executing the recipe.
+
+**So: an architect's ruling that asserts two names, keys, or paths are equal is a CLAIM, not a
+premise. Evaluate the expressions on both sides against the source before building on it.** The
+verification discipline applies to a ruling's sentences exactly as much as to green test output —
+a ruling is the highest-authority unverified assertion in the system, which is precisely why it
+gets attacked rather than deferred to. Where the identity matters, prefer making it DECLARED
+(explicit content the author controls) over ENGINEERED (a coincidence arranged through naming),
+and seal it with an equality guard: a construction you have to reason about is one a future rename
+can silently break.
+
 ### A stored authz value re-checked at action time is a MIGRATION SURFACE that does not look like one
 Broader than the identity-key rule, and it is what actually bit the M3.1 rename. `audience` is a
 **denormalized authz value copied onto a durable row and RE-EVALUATED later** (`resolve_task`
