@@ -14,11 +14,12 @@ Implements [ADR-0038](../adr/ADR-0038-telemetry-as-provenance-projection-langfus
 
 **Leaf package `provenance-telemetry`** (new repo, published to the internal index):
 - `pyproject`: deps = `langfuse` + `opentelemetry-api` + `pydantic`/`pyyaml` (config) — **nothing else** (the dependency list is the adoption pitch).
+- **README = the birth certificate** — opens with the ADR's one-sentence model *and* the "the dependency list *is* the pitch" line. A work-side security review reads the `README` + `pyproject` first, and this package's entire adoption argument is visible in those two files: four dependencies, one doctrine, config-governed vocabulary.
 - **Mapping-config schema** — provenance-field → Langfuse-slot, `doc_kind`, content-bearing flags; **validates at load** (unknown slot → refuse; the `validate_ruleset` discipline for shape).
 - **`set_trace_standard(...)`** — the fail-soft emitter (moved + generalized from `baml_shared/telemetry.py`): sets trace-id / user_id / session_id / tags / metadata / scores from the config; `try/except` + miss-counter, **never raises** (witness-channel axiom).
 - **Explicit-span helper** for direct-provider calls (sandbox path) + a **litellm-metadata injector** (`existing_trace_id`/`trace_user_id`/`session_id`/`tags`) for the work path.
-- **Redaction hooks** — declare content-bearing fields; redact-by-class (no-op default).
-- *Leaf seals (red-first):* shape-validator refuses an unknown slot; Langfuse-down → no exception, miss counted.
+- **Redaction hooks** — declare content-bearing fields; default behavior **hash-don't-drop** (`sha1(value)` stays on the trace → a redacted trace remains *joinable* for debugging without exposing content — the provenance-without-disclosure shape the audit trail already uses).
+- *Leaf seals (red-first):* shape-validator refuses an unknown slot; Langfuse-down → no exception, miss counted; **no mesh vocabulary appears in the leaf's source** (the generic-at-birth deletion test — grep the leaf for `resolved_via`/`ruleset_ref`/etc. → zero hits; the vocabulary lives only in the mesh's seed mapping).
 
 **Mesh side (`invincible-agent`):**
 - add `provenance-telemetry` dep; `baml_shared/telemetry.py` → **re-export shim** (removal marker: "all three repos on the leaf").
@@ -31,7 +32,7 @@ Implements [ADR-0038](../adr/ADR-0038-telemetry-as-provenance-projection-langfus
 
 **Charts** (both `values.yaml`) — `LANGFUSE_RELEASE` (git SHA, baked in CI) + environment (sandbox→`dev`, work→`production`).
 
-**Phase seal:** a trace carries the full standard shape (env/release/user/session/tags/metadata); shape refuses unknown slot; mesh truth-check reddens on a nonexistent mapped field; fail-soft proven (Langfuse down → review still starts, miss counted).
+**Phase seal:** a trace carries the full standard shape (env/release/user/session/tags/metadata); shape refuses unknown slot; mesh truth-check reddens on a nonexistent mapped field; fail-soft proven (Langfuse down → review still starts, miss counted); **path-equivalence** — the sandbox explicit-span helper and the work litellm-injector, given the *same logical operation*, emit the **same span shape** (name grammar, attributes, nesting depth), differing only in transport. One fixture-driven comparison test, red-first — so the dual path is **one standard with two carriers**, not two standards under one name (the classic dual-emission drift, closed at exactly the environment boundary where comparison matters most).
 
 ## Phase 3 — doc-tools tracing, artifact-keyed
 
@@ -59,8 +60,8 @@ Phase 0 (confirmed) ─┬─→ Phase 2 (leaf + helper + wiring) ─┬─→ P
 ```
 Phase 2 is the unblocker; 3/4/5 parallelize once it lands. First two phases this week.
 
-## Open decisions to settle during Phase 2 (ADR-0038 open questions)
+## Dispositions (settled in review — Phase 2 doesn't stall on them)
 
-- **Score taxonomy + scales** — which honest-degradation signals become Langfuse scores (confidence tier / needs_review / coherence verdict / crops-failed) and their numeric encoding. Needed before spans emit scores.
-- **Redaction-class list** — which fields are content-bearing (MPNs, notice IDs, snippets) and the default hook behavior. Needed before work adoption.
-- (Deferred to their phases: LiteLLM exact metadata keys — resolved above; v3 timing — after v2 proves out.)
+- **Score taxonomy — derived, not designed.** The honest-degradation signals already have canonical homes/encodings in the **decision-record schema**; the Langfuse scores are a *projection of that schema* (the ADR's own doctrine). So the question reduces to "which decision-record fields project, at what encoding" — a mapping-config entry per the ratifiable-config rule, **seeded with the obvious four**: confidence tier (ordinal), `needs_review` rate (fraction), coherence (binary-per-join), crops-failed (count/total). Extended through governance. No design session for what the schema already decided.
+- **Redaction-class list — the fields the standard already names.** `content_bearing: true` on **MPNs, notice ids, document snippets, matched-text verbatims, and override reasons** — that last is the sleeper: `'sasa'` was harmless, but real override reasons carry engineering judgment about specific parts. Default hook = **hash-don't-drop** (above). Both land as **seed-mapping content**, extendable by work's overlay; neither blocks the leaf stand-up.
+- (LiteLLM metadata keys — resolved in Phase 0 above; v3 timing — after v2 proves out.)
