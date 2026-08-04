@@ -439,6 +439,27 @@ gets attacked rather than deferred to. Where the identity matters, prefer making
 and seal it with an equality guard: a construction you have to reason about is one a future rename
 can silently break.
 
+### A probe's OUTPUT is part of its claim — truncated, sampled or windowed output gets labeled in the line that reports it
+Third probe-correctness catch in the M3.2 build session, and three is where this arc files a rule. The
+other two: an assertion that sampled asynchronous state and reported RED on a healthy system (timing),
+and a gate stub patched onto the wrong module object so a DENY arm passed while the stub was never
+consulted (tautology — the ALLOW arm exposed it). This one: a full-suite run piped through
+`Select-Object -Last 14` reported `42 failed` above a list of 13 names. Nothing was wrong with the
+test run; the WINDOW was narrower than the measurement, and a partial list carries the shape of a
+complete one. Twenty-nine failures were invisible with no marker saying so.
+
+**So: a probe that truncates, samples, paginates, or windows its output must SAY SO in the same line
+that reports the result — `42 failed (showing 13)`, never `42 failed` over 13 rows.** The failure is
+not the truncation, which is often necessary; it is a result presented at a completeness it does not
+have. This is the reporting-side sibling of the RED rule above: there the probe's timing was part of
+its correctness, here its output window is.
+
+Corollary for comparison runs (base-vs-HEAD, before-vs-after): **classify environment-dependent tests
+BEFORE the comparison and exclude them from the verdict by name, or run them twice per arm.** Live-service
+and provider-env tests can lie in BOTH directions across two runs minutes apart — a flake that fails at
+base and passes at HEAD reads as "you fixed it"; the reverse reads as "you broke it". A verdict over the
+stable set with the exclusions named beats a wider verdict containing coin flips.
+
 ### A stored authz value re-checked at action time is a MIGRATION SURFACE that does not look like one
 Broader than the identity-key rule, and it is what actually bit the M3.1 rename. `audience` is a
 **denormalized authz value copied onto a durable row and RE-EVALUATED later** (`resolve_task`
