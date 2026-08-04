@@ -299,7 +299,11 @@ async def test_run_registers_task_then_fans_out_on_accept(monkeypatch):
     ]
     ctx = FakeWorkflowContext(decision={"overrides": {}})
     out = await _RUN(ctx, {
-        "approver": "qa", "audience": "qualification",
+        # M2-renamed audience shape. Under M3.2 delegation the definition declares the
+        # NAMESPACE (`disposition_review:{compartment}`) and the trigger supplies only the
+        # compartment, so a bare pre-rename audience is no longer expressible here — see
+        # test_unshaped_audience_fails_loudly_not_unactionably below.
+        "approver": "qa", "audience": "disposition_review:qualification",
         "notice_fingerprint": "IPCN25300X", "notice_id": "IPCN25300X",
         "batch_items": batch_items,
     })
@@ -313,6 +317,56 @@ async def test_run_registers_task_then_fans_out_on_accept(monkeypatch):
     assert grouped_register["kind"] == "grouped_review"
     assert grouped_register["workflow_id"] == ctx.key() == "pcn-review-IPCN25300X-qa", \
         "grouped-review register dropped workflow_id — /act could not resume the review"
+
+
+@pytest.mark.asyncio
+async def test_unshaped_audience_fails_loudly_not_unactionably(monkeypatch):
+    """M3.2: an audience with no compartment must FAIL, not register.
+
+    ``review_starter`` falls back to ``request.get("audience") or approver`` — so a trigger
+    that omits the audience yields a bare approver name like ``qa``, which is not a
+    ``disposition_review:<compartment>`` relation and matches NO Topaz grant. Registering a
+    grouped task against it would produce a review nobody is entitled to act on: no error,
+    no recipient, suspended forever. That is the audience-shaped twin of a promise-name
+    mismatch, and the fix is to be UNABLE to register it rather than to register it hopefully.
+    """
+    monkeypatch.setattr(dispatch_driver.requests, "post",
+                        lambda url, **k: _Resp(200, {"task_id": "t"}))
+    ctx = FakeWorkflowContext(decision={"overrides": {}})
+    with pytest.raises(restate.exceptions.TerminalError) as exc:
+        await _RUN(ctx, {
+            "approver": "qa",                       # no audience -> starter falls back to this
+            "notice_fingerprint": "IPCN25300X", "notice_id": "IPCN25300X",
+            "batch_items": [{"mpn": "A", "subject": "http://internal/components/A",
+                             "proposed_disposition": "dispatchQualification",
+                             "needs_review": False}],
+        })
+    assert "compartment" in str(exc.value)
+    assert "register_grouped_task" not in ctx.runs, (
+        "a task was registered against an unactionable audience — it would suspend forever"
+    )
+
+
+@pytest.mark.asyncio
+async def test_trigger_cannot_choose_its_own_audience_namespace(monkeypatch):
+    """The authz boundary in the definition/trigger split: the definition declares the
+    audience NAMESPACE and the trigger supplies only the compartment. A caller handing over
+    a whole audience string would be choosing who may act on its own review — laundering
+    access through the process plane. Only the tail is taken, so a hostile namespace is
+    discarded rather than honoured."""
+    posts = []
+    monkeypatch.setattr(dispatch_driver.requests, "post",
+                        lambda url, **k: (posts.append(k.get("json")), _Resp(200, {"task_id": "t"}))[1])
+    ctx = FakeWorkflowContext(decision={"overrides": {}})
+    await _RUN(ctx, {
+        "approver": "qa", "audience": "totally_other:EVERYTHING",
+        "notice_fingerprint": "IPCN25300X", "notice_id": "IPCN25300X",
+        "batch_items": [{"mpn": "A", "subject": "http://internal/components/A",
+                         "proposed_disposition": "dispatchQualification", "needs_review": False}],
+    })
+    assert posts[0]["audience"] == "disposition_review:EVERYTHING", (
+        f"trigger-chosen namespace survived: {posts[0]['audience']!r}"
+    )
 
 
 # ===========================================================================
