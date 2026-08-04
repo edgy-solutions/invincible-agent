@@ -1,0 +1,53 @@
+# The AUTONOMOUS path (ADR-0034 workflow 2) — the same disposition process with the human
+# decision absent. Git-asserted + reviewed like grouped_review.yaml, executed on the SAME
+# Restate runner (`_run_definition`) by the SAME step-kind executor.
+#
+# THIS FILE IS THE M3.2 ACCEPTANCE. Two YAMLs, one step different, one runner: if this needed
+# a second executor, a second handler, or one line of workflow-specific Python, the runner
+# would be class-driven wearing a definition's clothes. It needs none — which is the claim
+# the seals make checkable (tests/test_definition_driven.py).
+#
+# {placeholders} are bound at trigger time (the notice being dispositioned + its compartment).
+id: autonomous_review
+name: "Autonomous disposition (no human decision; capability-gated dispatch)"
+
+# Same observation gate as the supervised path: the compartment is carried per-invocation
+# rather than baked, so one definition serves every compartment (M3 open item — static
+# classification cannot express a per-invocation compartment).
+classification: null
+
+participants:
+  - role: initiator                       # the pipeline's SERVICE identity, not a person
+
+domain_stages: [scored, dispatched]       # note: no `awaiting_review` — nothing waits
+
+steps:
+  # THE ONE STEP THAT DIFFERS. Workflow 1 has a grouped `human_await` here; this path has
+  # nothing, and that absence is the whole point of the trust lifecycle.
+  #
+  # ON THIS PATH THE CAPABILITY IS THE ONLY GATE. Workflow 1's dispatch is gated by the
+  # grouped `human_await` itself — Topaz `can_act` against the audience — so the send is the
+  # mechanical consequence of an authorized human decision and needs no second gate (gating
+  # the consequence separately is how you strand approved work at a 403). Remove the human
+  # and that reasoning removes with it: `can_invoke(initiator, mesh:dispatchDispositions)` is
+  # the only thing standing between a pipeline and an unsupervised effect. That is why the
+  # capability declaration lives HERE and not in grouped_review.yaml.
+  #
+  # EXPECTED TO DENY TODAY, and that is honest state rather than a defect. The grant does not
+  # exist yet because it is not a config detail to be seeded ahead of the decision it encodes:
+  # `mesh:dispatchDispositions` granted to the pipeline's service identity is the
+  # entitlement-plane half of "this pipeline may act unsupervised", and the trust-table
+  # promotion is the admission-plane half. ONE governed decision, two enforcement points,
+  # ratified once, landed through git-rails in the window where this path goes live.
+  #
+  # ACCEPTANCE when that window opens: watch deny flip to allow for THIS initiator while any
+  # OTHER caller's can_invoke stays deny. The discriminating pair — the same shape as
+  # alice-sees / bob-doesn't — never a lone green, which proves only that something answered.
+  - kind: direct_call
+    id: dispatch_dispositions
+    endpoint: "{dispatch_endpoint}"
+    capability: "mesh:dispatchDispositions"
+
+observable_state:
+  visible: [domain_stages]                        # per 3-audience tiers (Slice 3)
+  internal: [dispatch_dispositions.result]
