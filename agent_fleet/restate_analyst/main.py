@@ -19,9 +19,11 @@ Run: uvicorn agent_fleet.restate_analyst.main:app --host 0.0.0.0 --port 8081
 from __future__ import annotations
 
 import json
+import re
 import sys
 import traceback
 from pathlib import Path
+from typing import Optional
 
 import os
 
@@ -1447,6 +1449,158 @@ def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
     return resp.json()
 
 
+_PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+
+def _bind_placeholders(
+    value: Optional[str], bindings: dict, *, where: str, strict: bool = False
+) -> Optional[str]:
+    """Bind ``{placeholder}`` occurrences in a declared string from the TRIGGER.
+
+    A definition is generic over its subject — ``disposition_review:{compartment}``
+    is one declaration serving every compartment, bound per invocation.
+
+    ``strict`` is reserved for fields where an unbound placeholder is
+    UNACTIONABLE rather than merely ugly. The audience is the case: a
+    ``human_await`` registered against the literal ``disposition_review:{compartment}``
+    matches no Topaz relation, so NOBODY can act on it and the workflow suspends
+    forever with no error — the same silent failure class as a promise-name
+    mismatch, one field over. That fails LOUDLY at bind time instead.
+
+    Display/reference fields (title, summary, subject_ref) stay NON-strict, and
+    that is a deliberate scope limit, not an oversight. ``promote_answer_artifact``
+    declares ``{artifact_label}`` / ``{artifact_urn}``; it is DARK-LAUNCHED and
+    live, and this branch re-executes on every replay BEFORE reaching the journaled
+    register. Failing an incompletely-triggered instance here would terminate
+    in-flight workflows on a path the grouped-review drain does not cover — the
+    exact hazard class this build exists to close. Pass-through preserves today's
+    behaviour byte-for-byte.
+    KNOWN, PRE-EXISTING, NOT FIXED HERE: an unsupplied display placeholder renders
+    literally on the reviewer's card (``Approve promotion of {artifact_label}``).
+    Real triggers supply it; an incomplete one is cosmetically wrong, not unsafe.
+    """
+    if value is None:
+        return None
+    missing: list[str] = []
+
+    def _sub(m: "re.Match[str]") -> str:
+        key = m.group(1)
+        if key not in bindings or bindings[key] in (None, ""):
+            missing.append(key)
+            return m.group(0)
+        return str(bindings[key])
+
+    bound = _PLACEHOLDER_RE.sub(_sub, value)
+    if missing and strict:
+        raise restate.TerminalError(
+            f"{where}: unbound placeholder(s) {sorted(set(missing))} in {value!r} — "
+            "the trigger must supply them (an unbound audience is unactionable)",
+            status_code=400,
+        )
+    return bound
+
+
+async def _run_grouped_human_await(
+    ctx: WorkflowContext, workflow_id: str, step, promise_name: str,
+    request: dict, bindings: dict, user_jwt: str,
+) -> dict:
+    """``completion.mode == "grouped"`` — one approval settles a SERVER-AUTHORED
+    batch of N items. The sealed ``GroupedReview`` mechanics, lifted into the
+    executor as the step kind's owned behaviour (M3.2 build 1) rather than
+    living in a hand-coded class.
+
+    Order is load-bearing and matches the sealed class VERBATIM:
+      1. persist the server-authored batch FIRST — ``submit_decision`` validates
+         against THIS, never client-supplied items;
+      2. register the grouped HumanTask durably BEFORE suspending, so the
+         audience can SEE it (register-then-suspend, never the reverse);
+      3. suspend on ``promise_name`` — the name the SHARED ``submit_decision``
+         handler resolves. A refusal never resolves it, so a policy-refused
+         submission leaves the review suspended (refusal-stays-suspended);
+      4. mark ``decision_consumed`` on wake, so a racing second submission is
+         refused with the truth (an honest 409) instead of re-validated into a
+         hollow ``accepted: true`` while nothing further happens;
+      5. re-derive resolutions server-side and fan out N per-item dispatches.
+
+    State keys are the SAME ones the shared handlers read, because delegation
+    keeps ``submit_decision``/``get_batch`` unchanged — they must find the state
+    where they already look.
+    """
+    try:  # same lazy-import dance as _run_definition
+        from grouped_review_workflow import (  # type: ignore[no-redef]
+            _reviewbatch_from_state, evaluate_submission,
+        )
+        from dispatch_driver import _mint_dispatch_task, fan_out_dispatch  # type: ignore[no-redef]
+    except ImportError:
+        from agent_fleet.restate_analyst.grouped_review_workflow import (
+            _reviewbatch_from_state, evaluate_submission,
+        )
+        from agent_fleet.restate_analyst.dispatch_driver import (
+            _mint_dispatch_task, fan_out_dispatch,
+        )
+
+    approver = request["approver"]
+    notice_fingerprint = request["notice_fingerprint"]
+    notice_id = request.get("notice_id", "")
+    doc_type = request.get("doc_type", "PCN")
+    batch_items = request["batch_items"]
+    audience = _bind_placeholders(
+        step.audience, bindings, where=f"step {step.id} audience", strict=True)
+
+    # 1. Persist the server-authored batch (submit_decision validates against THIS).
+    ctx.set("batch_items", batch_items)
+    ctx.set("approver", approver)
+    ctx.set("notice_fingerprint", notice_fingerprint)
+    ctx.set("notice_id", notice_id)
+    ctx.set("doc_type", doc_type)
+    ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
+
+    # 2. ONE grouped HumanTask for the whole batch — identity DERIVED from the
+    #    workflow key (one identity, one derivation, N consumers).
+    grouped_task = {
+        "task_key": f"grouped:{ctx.key()}",
+        "workflow_id": ctx.key(),
+        "audience": audience,
+        "kind": "grouped_review",
+        "disposition": "grouped_review",
+        "title": _bind_placeholders(step.title, bindings, where=f"step {step.id} title")
+        or f"Review {len(batch_items)} affected part(s) — notice {notice_id or notice_fingerprint}",
+        "summary": _bind_placeholders(step.summary, bindings, where=f"step {step.id} summary")
+        or f"{len(batch_items)} affected part(s) need a disposition review",
+        "mpn": "",
+        "notice_fingerprint": notice_fingerprint,
+        "requested_by": step.requested_by or approver,
+        # The step's declared claiming policy travels to the UI as process content.
+        "claiming": step.completion.claiming,
+    }
+    await ctx.run("register_grouped_task", lambda: _mint_dispatch_task(grouped_task, user_jwt))
+
+    # 3. Suspend on the DECLARED promise name — the one submit_decision resolves.
+    raw_decision = await ctx.promise(promise_name, type_hint=dict).value()
+    # 4. Settled — a second submission gets the truth, not a hollow accept.
+    ctx.set("decision_consumed", True)
+
+    # 5. Re-derive server-side; authority never moves to the client.
+    batch = _reviewbatch_from_state(approver, batch_items)
+    submission = evaluate_submission(batch, raw_decision, notice_fingerprint=notice_fingerprint)
+    if not submission.accepted:
+        # submit_decision only ever resolves ACCEPTED decisions, so reaching here is a
+        # broken invariant, not a user refusal — fail terminally (release), don't park.
+        raise restate.TerminalError(
+            f"grouped decision failed validation after wake: {submission.reason}", status_code=400,
+        )
+
+    keys = fan_out_dispatch(
+        ctx, submission.resolutions,
+        notice_fingerprint=notice_fingerprint, notice_id=notice_id, user_jwt=user_jwt,
+        requested_by=approver,
+    )
+    return {
+        "step_id": step.id, "kind": "human_await", "completion": "grouped",
+        "status": "DISPATCHED", "count": len(keys), "dispatched_keys": keys,
+    }
+
+
 async def _run_definition(
     ctx: WorkflowContext, workflow_id: str, definition: dict, request: dict
 ) -> dict:
@@ -1490,23 +1644,58 @@ async def _run_definition(
     }
     results: list[dict] = []
 
+    # Trigger-time bindings for the definition's {placeholders}. The definition is
+    # generic; the invocation supplies the subject. `n` is derived so a title can
+    # say how many items are under review without the trigger restating it.
+    bindings = {k: v for k, v in request.items() if isinstance(v, (str, int, float))}
+    if isinstance(request.get("batch_items"), list):
+        bindings["n"] = len(request["batch_items"])
+
     for step in wf.steps:
         if step.kind == "human_await":
+            # The DURABLE promise name — declared content, ONE derivation
+            # (workflow_definition.resolved_promise_name), never re-derived here.
+            promise_name = step.resolved_promise_name()
+
+            if step.completion.quorum == "n_of_m":
+                # DECLARABLE but not implemented. Fail LOUDLY: silently settling an
+                # n_of_m review on the first approval would be the declaration lying
+                # about the gate, which is worse than refusing to run it.
+                raise restate.TerminalError(
+                    f"step {step.id}: completion.quorum 'n_of_m' (threshold "
+                    f"{step.completion.threshold}) is declarable but NOT implemented "
+                    "by this runner — refusing rather than settling on one approval",
+                    status_code=501,
+                )
+
+            if step.completion.mode == "grouped":
+                results.append(await _run_grouped_human_await(
+                    ctx, workflow_id, step, promise_name, request, bindings, user_jwt,
+                ))
+                continue
+
             task = {
                 "id": step.id,
-                "audience": step.audience,
-                "title": step.title,
-                "summary": step.summary,
-                "subject_ref": step.subject_ref,
+                "audience": _bind_placeholders(
+                    step.audience, bindings, where=f"step {step.id} audience", strict=True),
+                "title": _bind_placeholders(
+                    step.title, bindings, where=f"step {step.id} title"),
+                "summary": _bind_placeholders(
+                    step.summary, bindings, where=f"step {step.id} summary"),
+                "subject_ref": _bind_placeholders(
+                    step.subject_ref, bindings, where=f"step {step.id} subject_ref"),
                 "requested_by": step.requested_by or identity["authz_id"],
                 "user_jwt": user_jwt,
+                # Carried so the resolver echoes it back — `approve` must resolve
+                # the name this step AWAITS, and it cannot see the definition.
+                "promise_name": promise_name,
             }
             # SEALED mechanics: durable register BEFORE suspend, then the promise.
             await ctx.run(
                 f"register_{step.id}",
                 lambda t=task: _register_human_task(workflow_id, t, user_jwt),
             )
-            approval = await ctx.promise(f"approval_{step.id}", type_hint=dict).value()
+            approval = await ctx.promise(promise_name, type_hint=dict).value()
             results.append({
                 "step_id": step.id, "kind": "human_await",
                 "status": approval.get("status", "APPROVED"), "approval": approval,
@@ -1675,7 +1864,12 @@ async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
         Confirmation dict.
     """
     task_id = request["task_id"]
-    promise_name = f"approval_{task_id}"
+    # The RESOLVE site of the durable promise. It must resolve the name the runner
+    # AWAITS, and it cannot see the definition — so a definition-driven step echoes
+    # its declared `promise_name` back through the registered task, and the inline
+    # BPMN path (which has no definition) keeps the `approval_{task_id}` convention
+    # as the default. Resolving a name nothing awaits wakes nothing, silently.
+    promise_name = request.get("promise_name") or f"approval_{task_id}"
 
     approval_payload = {
         "status": request.get("status", "APPROVED"),
