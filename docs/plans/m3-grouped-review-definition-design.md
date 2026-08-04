@@ -311,12 +311,92 @@ autonomous path back into this one is mandatory** (ADR-0034 §7), and choosing i
 human step (the expressiveness wake's first customer) vs. terminate-and-start-workflow-1 — is deliberately
 left as an **M3-time decision**.
 
+## M3.2 SHAPE — CLOSED 2026-08-04 after reading the built code (both forks decided)
+
+**The investigation's headline: the executor half is ALREADY BUILT, and the gap is EXPRESSIBILITY.**
+Read before planning, and it contradicts this doc's own "M3.2 = build the executor" framing:
+
+- `spo_step_executor.py` is **complete and Restate-pure** — `verify_spo_step` (the stage-2 structural
+  verifier against `/find_compatible_verbs`), `dispatch_spo_step`, `check_can_invoke`,
+  `execute_direct_call`, raising `StepFailAndRelease` for the runner to map.
+- `_run_definition` **exists and is wired**: `BPMNWorkflowRunner.run` dispatches to it whenever
+  `request["definition"]` is present — additive, dark-launched, the sealed inline loop untouched.
+- `promote_answer_artifact.yaml` is a working definition proving the language drives the sealed path.
+- `load_all_workflows` is called **only from a test**, so a new `policy/workflows/*.yaml` is inert at
+  runtime until something loads it — adding the YAML is safe, but it is committed-but-unwired until
+  the executor honours it, and must be labelled so ([[presence-in-repo-is-not-presence-in-running-system]]).
+
+**What is actually missing is the grouped-resolution semantics.** `_run_definition`'s `human_await` is
+a PLAIN approval: register task → `ctx.promise(f"approval_{id}").value()` → done. The hand-coded
+`GroupedReview` additionally (a) persists a **server-authored batch** the submission validates
+against, (b) **validates BEFORE resolving** — a refused submission leaves the workflow SUSPENDED with
+no promise resolved, (c) guards the multiplayer race via `decision_consumed` → the honest 409 with
+provenance, and (d) **fans out N** `DispatchItem` invocations. None of that has a home in the model.
+
+### DECISION 1 — batch + fan-out stay OUTSIDE the definition
+Not the cautious option, the doctrinally settled one. This doc already ruled it ("the fan-out is
+*dissolved* by per-item invocation + a dispatcher — zero new workflow-model step kinds"), and
+**ADR-0035's authorship criterion independently confirms it**: a step belongs in the definition if its
+author belongs to that plane's discipline. Batch composition, server-authored validation, race
+guarding and fan-out mechanics are **executor-discipline**, not process-owner declarations. A domain
+expert authoring `grouped_review.yaml` declares THAT there is a grouped review, with this audience and
+this completion policy — never HOW the server authors the batch or guards the 409.
+
+The rejected option ("grow `human_await` to carry a payload/validator") was argued as making the
+definition *truer*; it has it backwards. It would make the definition **leak executor internals**, and
+it would finalize declaration-layer schema under exactly the pressure §Status fences. The
+seal-inheritance ruling in the team-steps fold already answered this in principle: the sealed HITL
+behaviours are **step-kind semantics the executor OWNS**, inherited by every `human_await` whose
+resolution is a grouped decision. Declared policy SELECTS them; YAML never spells them. What the
+grouped review does need expressible — `completion` (`any-of` / `n-of-m`) and `claiming` — is already
+specced as declared ATTRIBUTES, which is the right altitude. **Policy in the definition, mechanism in
+the executor.**
+
+### DECISION 2 — `GroupedReview` KEEPS its service name; only its internals swap
+**Cross-repo fact this doc did not know when it wrote "delete the file":** cortex-bff calls
+`GroupedReview/{key}/submit_decision` and `/get_batch` **by URL** (`gateway.py:1094` / `:608`), and
+`GroupedReview` is a frozen row in `tests/test_cross_repo_contracts.py`. Deleting the class is a
+two-repo expand/contract migration with the same dangerous-interval shape as the M3.1 audience rename
+— **for zero behavioural gain**, because the acceptance criterion's SUBSTANCE ("runs from the YAML via
+`_run_definition`") is fully met by delegation.
+
+So: the service name is the **interface**, the YAML is the **behaviour**, and swapping behaviour behind
+a stable interface is what made every other migration in this arc safe. `GroupedReview.main()`
+delegates to `_run_definition`; `submit_decision` / `get_batch` stay exactly where cortex-bff expects
+them. **The acceptance criterion below is AMENDED accordingly** — acceptance criteria are records too,
+and a record written before a fact is known gets corrected, not obeyed. The name's retirement rides
+the same future window as the task-kind rename (M3.3's `taskKindRegistry` retirement), where
+cross-repo presentation contracts migrate together.
+
+### The resulting build list (bounded, and smaller than this doc's original framing)
+1. **Teach `_run_definition`'s `human_await` the grouped-resolution semantics** — server-authored batch
+   persisted, validate-before-resolve with refusal-stays-suspended, `decision_consumed` race guard,
+   post-resolution dispatcher fan-out — lifted from the hand-coded class into the executor as the step
+   kind's owned behaviour, selected by declared `completion` policy.
+   **Known seam:** `submit_decision` is a SHARED handler and cannot move into `_run_definition`'s main
+   context, so the promise names must align — today the class awaits `ctx.promise("decision")` while
+   `_run_definition` awaits `approval_{step.id}`. That mismatch is the first thing to reconcile.
+2. **`policy/workflows/grouped_review.yaml`** — the first real definition exercising it.
+3. **`GroupedReview.main()` delegates**; the two shared handlers stay.
+4. **Workflow 2** (ADR-0034's autonomous path) — a second YAML, one step absent, same executor. The
+   funded acceptance that the runner is definition-driven, not class-driven.
+5. **Regression gate = the EXISTING seals re-run against the delegated path** — the concurrency/race
+   test, refusal routing, kill-seal convergence. Same behaviours, new driver, witnessed equal. Plus a
+   proven-to-bite seal on the cutover itself.
+
 ## Acceptance when M3.2 lands
-The hand-coded `grouped_review_workflow.py` is deleted; the grouped review runs from
-`policy/workflows/grouped_review.yaml` via `_run_definition`; the sealed HITL mechanics (register-before-
-suspend, `can_act`, promise resolve, bulk-resolve) still pass their seals; and a NON-grouped definition
-(a plain approval — or, per ADR-0034, the autonomous disposition path) runs on the same executor — proving
-the runner is definition-driven, not class-driven.
+~~The hand-coded `grouped_review_workflow.py` is deleted~~ — **AMENDED 2026-08-04, see Decision 2:**
+`GroupedReview` KEEPS its Restate service name and its `submit_decision` / `get_batch` handlers,
+because cortex-bff calls them by URL and the name is a frozen contract-seal row; its **`main()`
+delegates to `_run_definition`**, so the hand-coded ORCHESTRATION is what dies, not the file. The
+original phrasing was written before that cross-repo fact was known.
+
+The grouped review runs from `policy/workflows/grouped_review.yaml` via `_run_definition`; the sealed
+HITL mechanics (register-before-suspend, `can_act`, promise resolve, bulk-resolve) still pass their
+seals — **re-run against the delegated path as the cutover's regression gate**, same behaviours, new
+driver, witnessed equal; and a NON-grouped definition (a plain approval — or, per ADR-0034, the
+autonomous disposition path) runs on the same executor — proving the runner is definition-driven, not
+class-driven.
 
 **And the sentence that makes "configurable workflow" FALSIFIABLE — the milestone's north star, not a
 feature request trailing behind it:**
