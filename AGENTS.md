@@ -535,6 +535,24 @@ NOBODY. It carries its own positive control (if NOTHING resolves, that is a brok
 universe of revoked audiences — it returns INCONCLUSIVE rather than a confident RED, per the rule
 above). It found a second, unrelated orphan on its first run.
 
+### A guard's ANCHOR is part of its claim — source-anchored guards fire on refactors, not regressions
+Sixth in the probe-correctness set. A guard anchored to **where code lives** fires when code MOVES; a
+guard anchored to **what code does** fires when behaviour BREAKS. The failure mode is that the two are
+**indistinguishable at alarm time** — so every legitimate refactor is taxed with a false-positive
+investigation, and a real regression hiding among them reads as "probably just the move again."
+
+Found 2026-08-04: `test_review_identity_from_artifact` asserted a source STRING inside
+`grouped_review_workflow.py`. M3.2's delegation moved that construction to `main.py`; the guard went
+red on a correct change while the PROPERTY it defends (task identity derived FROM the workflow key,
+never recomputed beside it) was never violated.
+
+- **Prefer behaviour-anchoring wherever it is possible** — assert what the code produces, not where
+  it is written.
+- **Where source-anchoring is genuinely required** — deletion seals, the de-pcn mechanism scan, the
+  seed-script scan — the **anchor list is maintenance-bearing**, and "does this move touch a guard's
+  anchors?" belongs in the mover's definition of done. An anchor list is a dependency nobody declares
+  unless it is written down as one.
+
 ### A status field asserts what its author WITNESSED — intent-only statuses get renamed
 `ctx.object_send` is fire-and-forget by construction: the caller **cannot** know delivery. So a
 workflow returning `{"status": "DISPATCHED", "count": 2}` is reporting journaled INTENT wearing an
@@ -561,6 +579,20 @@ Corollary that caused the bug: a token threaded from the human's action into POS
 is carrying two facts at once — **provenance** (who approved) and **authorization to execute
 effects** (the pipeline's own entitlement). Those separate. Provenance belongs in the decision
 record; effects run under the acting identity, minted AT USE.
+
+**AND THE SHARPER FORM, which is the one to quote when citing this rule: A DURABLE JOURNAL IS A TIME
+MACHINE.** The defect is not that a credential *went stale* — that framing makes lifetime the
+variable and invites the wrong fix (tune the TTL). The defect is that a credential was **placed in a
+replay medium**. A Restate `object_send` body is durable journal state and the object RETRIES, so
+anything put there will be **re-presented at arbitrary future moments** — after expiry, after
+rotation, after the grant that authorized it was revoked. No lifetime survives that; only *not
+storing it* does. So mint-at-use is not the better of two options, it is **the only shape that
+survives the medium**, and the standing guard is the one asserting the field cannot come back
+(`tests/test_dispatch_driver.py`: no `user_jwt` on any journaled payload).
+
+Generalises past credentials: **anything whose meaning is time-bound — a token, a signed URL, a
+freshness verdict, a "currently entitled" answer — must not be written into durable journal or
+event state.** Store the INPUTS needed to re-derive it, and re-derive at use.
 
 ### Provenance comes from PROVENANCE-BEARING fields — never inferred from CLASSIFICATION fields
 Third instance in two days, and the sharpest form of the naming rule. `kind` says what a row IS;
