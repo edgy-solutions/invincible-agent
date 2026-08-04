@@ -400,6 +400,46 @@ form: **a conclusion that travels by repetition rather than by evidence gets re-
 inherited** — chat-borne claims have no verification gate, so any claim important enough to cross
 a session or a handoff crosses as a checkable statement WITH its evidence, or not at all.
 
+### A RED result lies more dangerously than a green one, because nobody attacks it
+This arc's whole discipline aims at greens that lie. 2026-08-04 produced the mirror: a probe
+reported **RED on a healthy system**. It read the reviewer's queue immediately after `start_review`
+returned — but the grouped task registers INSIDE the workflow, so the response races the row
+materialising. The probe sampled the gap and reported failure.
+
+**The asymmetry is the point.** A false green gets hunted here by habit. A false red gets *believed*,
+because it confirms the caution everyone already feels — so nobody attacks it, and the plausible
+next move was rolling back a correct migration. A wrong red costs you the fix; a wrong green costs
+you the bug. Both are wrong; only one has a standing immune response.
+
+**So: probes get the same verification discipline as the system they probe. A probe that reports RED
+must be shown to report GREEN under a known-good condition before its RED is acted on.** The positive
+control is not only for absence-checks (the Fuseki `s3kl:` 4180 control); it is for **every assertion
+whose failure would trigger a revert**. And note the specific mechanism here — **a probe's TIMING is
+part of its correctness**: an assertion that samples asynchronous state must either wait for the
+state it asserts on or assert on something synchronous with the call it made.
+
+### A stored authz value re-checked at action time is a MIGRATION SURFACE that does not look like one
+Broader than the identity-key rule, and it is what actually bit the M3.1 rename. `audience` is a
+**denormalized authz value copied onto a durable row and RE-EVALUATED later** (`resolve_task`
+re-checks `can_act` against the task's STORED audience). Rename or revoke the audience and every row
+already carrying the old value is stranded.
+
+**The failure mode is SILENCE, not an error.** Deny-by-default plus a stale stored value produces a
+*correct denial*, so the loud-fail machinery never fires — and **a queue that has stopped clearing is
+indistinguishable from a queue nobody is working.** Six rows sat that way for an hour and were found
+by driving a live notice, not by anything automated.
+
+Generalise past keys: **any value copied onto durable state and later re-evaluated against live
+vocabulary is a migration surface, even when it is not an identity key and does not look like one.**
+Keys announce themselves; stored-and-rechecked values do not — which is how this got past a plan
+written by people who had just generalised the key rule.
+
+Standing assertion rather than another instruction:
+`tests/sandbox_e2e/_probe_orphaned_audiences.py` — live task rows whose stored audience grants
+NOBODY. It carries its own positive control (if NOTHING resolves, that is a broken resolver, not a
+universe of revoked audiences — it returns INCONCLUSIVE rather than a confident RED, per the rule
+above). It found a second, unrelated orphan on its first run.
+
 ### Provenance is a field, never a join
 **No assertion enters a graph without its provenance riding in the same write.** A sidecar audit
 table you *could* join against always decays, because the join is OPTIONAL and optional joins stop
