@@ -353,9 +353,29 @@ image lacked; a mutation test invoking a `python` that did not exist; `pytest` s
 and an S3000L coverage query that asked only for owl:Class and reported `quantity: 0` when
 `quantityOfChildElement` is a PROPERTY — which would have been written up as a standards gap.
 
+**Seventh, and the one that shows how the class survives verification: a grep for `@sensor`
+DECORATORS cannot see FACTORY-CONSTRUCTED sensors.** 2026-08-03, the question was whether an
+unattended ingest path existed. A decorator grep found only two sensors and concluded "no ontology
+sensor exists" — while `ontology_sensor` was defined as an `S3SensorComponent(...)` instance in
+`doc_tools/definitions.py` and was `RUNNING` in the deployed Dagster instance the whole time.
+Dagster sensors are built BOTH ways; the probe asked for one shape and reported on the category.
+
+The part worth keeping: a second search was run against the deployed pod to confirm it, and the
+pod search **used the same decorator pattern** — so it agreed, and the agreement was read as
+corroboration. **Two independent-looking verifications with one shared flaw are one verification
+wearing two coats.** Independence is a property of the METHOD, not of the number of times you run
+it or the number of places you run it against. When a second check confirms the first, ask what
+assumption they share before counting it as evidence — and if the answer is "the same query
+shape", it is not a second check. The thing that finally settled it was asking the RUNTIME what it
+had (`DagsterInstance.all_instigator_state()`), which cannot be fooled by how a sensor was
+declared.
+
 **So: locate before you grep, list before you count, and ask for every category the answer could
 live in.** The general statement, of which "prove the harness can fail" is the test-shaped case:
-**every verification needs a demonstration that it can return the other answer.**
+**every verification needs a demonstration that it can return the other answer.** And its social
+form: **a conclusion that travels by repetition rather than by evidence gets re-derived, not
+inherited** — chat-borne claims have no verification gate, so any claim important enough to cross
+a session or a handoff crosses as a checkable statement WITH its evidence, or not at all.
 
 ### Provenance is a field, never a join
 **No assertion enters a graph without its provenance riding in the same write.** A sidecar audit
