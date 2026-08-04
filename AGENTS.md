@@ -439,6 +439,38 @@ gets attacked rather than deferred to. Where the identity matters, prefer making
 and seal it with an equality guard: a construction you have to reason about is one a future rename
 can silently break.
 
+### The projection and the journal are TWO SURFACES OF ONE STATE — settle both, or record why not
+Found 2026-08-04 by joining them for the first time. M3.1 "expired" four stranded grouped reviews by
+UPDATEing projection rows; the durable Restate workflows kept waiting. Each surface was internally
+consistent — rows said settled, journals said suspended — and the disagreement was invisible from
+either side alone. Five instances were simultaneously **unresolvable** (audience pruned, so no human
+could act) and **invisible** (rows said expired, so nothing surfaced them).
+
+**Rule: any settlement on dual-surface state settles BOTH surfaces in the same operation, or records
+why not.** "Expire" was implemented as a row update when it needed to be a row update PLUS a
+cancellation.
+
+**The mechanism, identified — not merely the symptom.** The projection is maintained by the BFF layer:
+cortex-bff's `/human_tasks/{id}/act` resolves the row AND calls the workflow handler. So **every path
+that touches Restate directly — admin API, seals, migration scripts, future tooling — is a divergence
+source BY CONSTRUCTION and owes a join check after use.** Proven deliberately: calling
+`submit_decision` straight at the ingress during the M3.2 seals reproduced the divergence in seconds
+(Restate `completed`, projection `pending`). That makes the owed cross-surface probe's positive
+condition sharp — *any settlement that did not transit `/act`* — rather than "compare on a schedule".
+
+### Code renames orphan JOURNALS, not just keys
+The M2 review predicted the rename would strand in-flight state and named VirtualObject dedup keys as
+the surface. The actual casualty was one layer up: **workflow journals whose replayed code paths no
+longer match the deployed code.** Restate cannot make progress on those and retries forever — and
+`cancel` itself FAILS, because cancellation requires resuming the invocation to unwind it. Three
+instances carried `[570 journal mismatch]` and one `[404 service unregistered]`; all four needed
+`kill` after `cancel` provably failed at 8 retries. The date boundary was exact: everything created
+on or after the rename cancelled cleanly.
+
+**So: a rename or refactor of workflow code orphans every in-flight journal whose shape it changes,
+and those orphans are INVISIBLE until a join or a cancellation attempt touches them.** Drain before
+cutover, and try `cancel` FIRST — its documented failure is the evidence that licenses `kill`.
+
 ### A ruling made in CONVERSATION is UNSHIPPED until it is committed
 Second instance, and the mirror image of the first. In the §391 case the DOC carried a ruling the
 conversation had already invalidated. In the M3.2 shipping case the CONVERSATION carried a ruling the
