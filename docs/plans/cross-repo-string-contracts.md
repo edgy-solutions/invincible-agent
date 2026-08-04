@@ -28,13 +28,13 @@ checklist. Values shown POST-M2 (branch `m2-extraction-sort`); the pre-M2 name i
 | kind | PRODUCER (mints) | CONSUMERS (match) |
 |---|---|---|
 | `grouped_review` (was `pcn_grouped_review`) | restate_analyst/grouped_review_workflow.py | cortex-bff `/act` bridge + batch lookup; cortex-ui taskKindRegistry.ts (→ GROUPED_REVIEW archetype) |
-| `pcn_disposition` (UNCHANGED — consistent) | restate_analyst/dispatch_plan.py | cortex-ui taskKindRegistry.ts (→ APPROVAL_TASK). NB: still pcn-named; rename coherently when convenient. |
+| `pcn_disposition` (UNCHANGED — consistent) | restate_analyst/dispatch_plan.py | cortex-ui taskKindRegistry.ts (→ APPROVAL_TASK). NB: still pcn-named, and DELIBERATELY so as of M3.1 — it is a UI **render contract**, not authz vocabulary, so it retires with `taskKindRegistry` in M3.3 rather than in a two-repo string rename now. Do not conflate with the audience key in §4, which was renamed. |
 | `workflow_ack`, `access_request` | cortex-bff (register_task / access_requests) | cortex-ui taskKindRegistry.ts |
 
 ## 4. Topaz audience keys (task_audience `can_act` / grants)
 | key | PRODUCER (grants — git-rails) | CONSUMERS (register recipients + `/act` can_act) |
 |---|---|---|
-| `pcn_disposition:<compartment>` | task_grants.yaml (git-rails) → task_grant_sync | grouped review audience; cortex-bff `/act`. NB: still pcn-named; M3 → generic `disposition_review:<compartment>` (a git-rails + Topaz reseed, deploy-time). |
+| `disposition_review:<compartment>` (was `pcn_disposition:<compartment>`) | task_grants.yaml (git-rails) → task_grant_sync | grouped review audience; cortex-bff `/act`. RENAMED M3.1 — git side landed; needs its `task_grant_sync` run to seed the new Topaz relation and prune the old. Between the two the review routes to NOBODY (`NoEntitledRecipients` → 422), so sync in the same window. Guarded by `test_cross_repo_contracts.py` FORBIDDEN `pcn_disposition:` (the colon discriminates the audience key from the task kind in §3, which stays). |
 | `qualification` | task_grants.yaml | dispatch fan-out recipients |
 | `access_grant:<domain>` | task_grants.yaml | access_request routing |
 | `promotion:<domain>` | task_grants.yaml | workflow_ack promotion tasks |

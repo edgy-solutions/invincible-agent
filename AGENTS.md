@@ -104,13 +104,18 @@ Concretely, it already decides open questions rather than deferring them:
   `POST /pcn_disposition_rules`. "Fetch flat rule individuals from a named graph" knows nothing about
   PCN; the pcn-ness is the caller's arguments.
 - The authz check reuses the EXISTING workflow-model type `task_audience` (key
-  `pcn_disposition:<compartment>`), NOT a domain-named `pcn_disposition` type — Topaz types are contracts
+  `disposition_review:<compartment>`), NOT a domain-named `pcn_disposition` type — Topaz types are contracts
   with the auth layer; a domain-named type writes the domain into the entitlement model, the hardest
   layer to walk back. (Historical note: this was first designed as a bespoke-but-generic `disposition_item`
   type; reading work's policy rails showed `task_audience` already covers it, so the reconciliation went
   one better than "invent the generic version once" — it **reused** the existing generic type and deleted
   the invention as a diff. The deeper rule: before inventing generic surface, check whether the existing
   generic surface already answers it — the entitlement plane especially must not grow a second decider.)
+  (Second historical note, M3.1: the KEY was itself `pcn_disposition:<compartment>` until this rule was
+  read back against its own example — a generic TYPE carrying a domain-named INSTANCE key is still the
+  domain in the entitlement model, just one level down. Renamed to `disposition_review:<compartment>`.
+  The task KIND string `pcn_disposition` deliberately survives: it is a cortex-ui render contract, not
+  authz vocabulary, and it retires with `taskKindRegistry` in M3.3.)
 
 Existing domain-named surface is NOT retroactively force-renamed (don't generalize from one example) —
 it is sorted for the extraction milestone (`docs/plans/pcn-extraction-sort.md`): rename-and-promote /
@@ -239,6 +244,54 @@ Two rules fall out:
 - **Ask "what produces this input, and can it?"** before trusting a green seal — and where the
   answer is a call-graph fact, assert it (a branch exists, a filing count is exactly N).
 
+### Under a MUTABLE TAG a deploy is not an ACT — it is weather
+Every believed-deployed check in this arc assumes deploys are things someone *does*. Under a
+mutable image tag they are not: with `image: …/cortex-bff:latest` in the pod spec, an eviction, a
+node drain, an OOM restart or a rescheduling pulls whatever `latest` now points at. **The running
+code changes because the scheduler moved a pod, not because anyone rolled anything.** Nobody gets
+a decision point, nothing appears in a deploy log, and the change is invisible until something
+routes wrong.
+
+The corollary that bites hardest: **a pod inspection is a statement about NOW, never about
+tomorrow.** Confirming the live image builds the old key does not license a plan whose safety
+depends on it still doing so an hour later — which is exactly the shape of a
+migration's "dangerous interval" (see below). Found 2026-08-03 while sequencing the
+`pcn_disposition:` → `disposition_review:` audience rename: the pod check correctly showed the old
+code live, and the mutable tag meant the interval could still have opened *with nobody deploying*.
+
+Two rules:
+- **Rolled images pin a digest or an immutable tag.** `latest` is a build-side convenience and
+  never reaches a cluster spec. Without this, expand/contract's "deploy step" has no defined
+  moment, so its phases cannot be ordered against anything.
+- **Where a plan's safety rests on which code is live, make the plan safe in EVERY ordering
+  instead** — expand-first, dual-key, add-before-prune. A step that is safe regardless of what the
+  scheduler does needs no inspection to stay true.
+
+Inherited by every future migration on a live-synced identity surface — the employee-id rebind at
+work, and each rename after it. See `feedback_grant_key_rename_needs_expand_contract`.
+
+### Renames on live-synced identity surfaces run EXPAND/CONTRACT, never an edit
+Third instance of the identity-key-transition class (VirtualObject keys at the M2 cutover; this
+audience rename; the flip's employee-id migration ahead), so it gets the rule rather than a third
+retelling. When a key spans a **pruning sync** and **deployed code that CONSTRUCTS it**, renaming
+it is a two-phase migration: a lone sync deletes the relation the running image still builds, and
+both single-sided orders break.
+
+  EXPAND (both keys declared → sync) · DEPLOY · CONTRACT (drop old → sync)
+
+The dual-key interval is **explicit in the deploy plan**, and the expand step is the one to run
+first *because it is safe in every ordering* — adding a relation prunes nothing, so it closes the
+interval if open and pre-positions the migration if not. When two readers disagree about the
+current deployed state, run the safe step first and settle the disagreement after.
+
+The tell for whether this class applies: is the key a **literal in code** (`f"{kind}:{domain}"`)
+or a value read from data? Literal → expand/contract. Data → a sync suffices.
+
+Guard shape, because the naive seal forbids the only safe ordering: a rename guard must permit the
+old key **while the new one is declared alongside it AND a marker names the removal condition** —
+old-key-ALONE stays red (that is the real regression), and the marker stops an expand phase
+becoming permanent through amnesia.
+
 ### Build the fixture as a SUPERSET of reality, not an approximation of it
 Where the real input cannot enter the repo (restricted boundary) or does not exist yet, build the
 fixture **deliberately as degraded as the contract permits**, so any real input is a SUBSET of it.
@@ -300,9 +353,29 @@ image lacked; a mutation test invoking a `python` that did not exist; `pytest` s
 and an S3000L coverage query that asked only for owl:Class and reported `quantity: 0` when
 `quantityOfChildElement` is a PROPERTY — which would have been written up as a standards gap.
 
+**Seventh, and the one that shows how the class survives verification: a grep for `@sensor`
+DECORATORS cannot see FACTORY-CONSTRUCTED sensors.** 2026-08-03, the question was whether an
+unattended ingest path existed. A decorator grep found only two sensors and concluded "no ontology
+sensor exists" — while `ontology_sensor` was defined as an `S3SensorComponent(...)` instance in
+`doc_tools/definitions.py` and was `RUNNING` in the deployed Dagster instance the whole time.
+Dagster sensors are built BOTH ways; the probe asked for one shape and reported on the category.
+
+The part worth keeping: a second search was run against the deployed pod to confirm it, and the
+pod search **used the same decorator pattern** — so it agreed, and the agreement was read as
+corroboration. **Two independent-looking verifications with one shared flaw are one verification
+wearing two coats.** Independence is a property of the METHOD, not of the number of times you run
+it or the number of places you run it against. When a second check confirms the first, ask what
+assumption they share before counting it as evidence — and if the answer is "the same query
+shape", it is not a second check. The thing that finally settled it was asking the RUNTIME what it
+had (`DagsterInstance.all_instigator_state()`), which cannot be fooled by how a sensor was
+declared.
+
 **So: locate before you grep, list before you count, and ask for every category the answer could
 live in.** The general statement, of which "prove the harness can fail" is the test-shaped case:
-**every verification needs a demonstration that it can return the other answer.**
+**every verification needs a demonstration that it can return the other answer.** And its social
+form: **a conclusion that travels by repetition rather than by evidence gets re-derived, not
+inherited** — chat-borne claims have no verification gate, so any claim important enough to cross
+a session or a handoff crosses as a checkable statement WITH its evidence, or not at all.
 
 ### Provenance is a field, never a join
 **No assertion enters a graph without its provenance riding in the same write.** A sidecar audit

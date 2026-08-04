@@ -1,5 +1,10 @@
 # PCN five-beats loop — end-to-end LIVE on the rails (exhibit)
 
+> **Key renamed since this run (M3.1 tail, 2026-08-03): the review audience is now
+> `disposition_review:<compartment>`.** Left verbatim as the record of the 2026-07-24 run — beat 2
+> really did show audience `pcn_disposition:SUSTAINMENT` in alice's queue. Do not copy the old key
+> into a grant file; see `docs/plans/pcn-can-act-topaz-binding.md`.
+
 Ran 2026-07-24 on sandbox `edge`. Proves the WHOLE PCN grouped-review loop closes on the live cluster —
 notice → batch → grouped review in a reviewer's queue → approval → fan-out → per-part dispatch tasks in a
 DIFFERENT persona's queue → durable state stamps. The batch-diff proved the front half (`start_review`

@@ -32,7 +32,7 @@ def _register(**over):
     kw = dict(
         kind="grouped_review",
         task_id="grouped:IPCN25300X:svc:review-starter",
-        audience="pcn_disposition:SUSTAINMENT",
+        audience="disposition_review:SUSTAINMENT",
         title="Review 2 affected part(s)",
         summary="2 parts need a disposition review",
         requested_by="svc:review-starter",
@@ -67,7 +67,7 @@ def test_nonempty_audience_passes_guard_and_returns_recipients():
          mock.patch.object(ht.psycopg2.extras, "execute_values"):
         out = _register()
     assert out["recipients"] == ["alice@example.com"]
-    assert out["audience"] == "pcn_disposition:SUSTAINMENT"
+    assert out["audience"] == "disposition_review:SUSTAINMENT"
 
 
 # ===========================================================================
@@ -100,7 +100,7 @@ def test_resolution_lookup_carries_the_winners_identity():
     row = {"task_id": "grouped:X:svc:review-starter", "kind": "grouped_review",
            "status": "approved", "decision": "approved",
            "acted_by": "alice@example.com", "acted_at": 1785000000000,
-           "audience": "pcn_disposition:SUSTAINMENT"}
+           "audience": "disposition_review:SUSTAINMENT"}
     cm, _ = _fake_conn(row)
     with mock.patch.object(ht, "_pg_connect", return_value=cm):
         out = ht.get_task_resolution("grouped:X:svc:review-starter", caller_id="bob@example.com")

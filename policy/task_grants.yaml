@@ -70,9 +70,9 @@ audiences:
     grant_to:
       - alice@example.com
 
-  # PCN/PDN sustainment — the disposition-REVIEW audience for the SUSTAINMENT
-  # compartment. The extraction→review sensor (svc:review-starter, capability
-  # can_invoke mesh:startReview) STARTS the grouped review; the actors here are the
+  # The disposition-REVIEW audience for the SUSTAINMENT compartment. The
+  # extraction→review sensor (svc:review-starter, capability can_invoke
+  # mesh:startReview) STARTS the grouped review; the actors here are the
   # humans who see + approve it. This is the trap the work-runbook §B calls out: it
   # is NOT gated by ENABLE_DISPOSITION_AUTHZ (that gates only the initiator capability)
   # — it is deny-by-default ROUTING. Without it register_task materializes zero rows
@@ -80,7 +80,57 @@ audiences:
   # this relation was live in sandbox Topaz from M1 but was never committed; the next
   # task_grant_sync prune would have deleted it. Now git-asserted so the manifest
   # reproduces the working demo AND travels to work (rebind to the employee-id there).
+  #
+  # RENAMED M3.1 (was `pcn_disposition:SUSTAINMENT`) — the audience key is authz
+  # vocabulary and carries no domain name per [[generic-at-birth]]; M3's definitions
+  # declare `audience: disposition_review:<compartment>` (design blocker 3). This is a
+  # KEY rename, so it needs its Topaz reseed: task_grant_sync writes the new
+  # `task_audience:disposition_review:SUSTAINMENT` relation and prunes the old
+  # `pcn_disposition:*` one. Between the git edit and that sync the review routes to
+  # NOBODY — run the sync in the same window, then re-drive one notice.
+  #
+  # DELIBERATELY NOT RENAMED: the TASK KIND string `pcn_disposition` (dispatch_plan.py,
+  # dispatch_driver.py) is a cross-repo contract with cortex-ui's taskKindRegistry.
+  # It rides M3.3's `rendersAs` migration, which retires that registry wholesale. Two
+  # identical-looking strings, one authz key and one render contract — the inconsistency
+  # below is a decision, not an oversight.
+  # ===== EXPAND-PHASE-DUAL-KEY — the OLD audience key, retained DELIBERATELY and TEMPORARILY =====
+  # WHY THIS DUPLICATE EXISTS. `task_grant_sync` PRUNES, and the audience key is CONSTRUCTED in
+  # deployed code (`gateway.py`, `f"disposition_review:{req.domain}"`), not read from data. So this
+  # rename is a TWO-PHASE MIGRATION, never an edit — a lone sync deletes the relation the running
+  # image still builds, every review materializes zero recipients, `NoEntitledRecipients` → 422, and
+  # the reviews route to NOBODY. Both single-sided orders break; only expand/contract is safe:
+  #
+  #   1. EXPAND  (this commit)  both keys declared → `task_grant_sync` → both relations live.
+  #              Adding a relation prunes nothing, so this step is safe in EVERY ordering — which is
+  #              the point: it closes the dangerous interval if it is open and pre-positions the
+  #              migration if it is not. Verified 2026-08-03: the live cortex-bff pod constructs
+  #              `pcn_disposition:` ×4 and `disposition_review:` ×0, so the OLD key is still the
+  #              load-bearing one RIGHT NOW. The image tag is mutable (`cortex-bff:latest`), so a
+  #              restart could flip the running code at any time without a deliberate deploy —
+  #              which is precisely why both keys must be valid before that can happen.
+  #   2. DEPLOY  merge + roll cortex-bff. Either key resolves; no interval where neither does.
+  #   3. CONTRACT — THE REMOVAL CONDITION FOR THIS BLOCK: once the pod check shows the live gateway
+  #              constructing `disposition_review:` (and NOT `pcn_disposition:`), delete this entry,
+  #              re-run `task_grant_sync` to prune the old relation, and remove the
+  #              EXPAND-PHASE-DUAL-KEY marker from this file. `test_cross_repo_contracts.py` permits
+  #              the old key ONLY while the new one is declared alongside it AND this marker is
+  #              present — old-key-ALONE stays RED, so the guard still catches the real regression
+  #              while allowing the only safe migration order.
+  #
+  # DO NOT grant new actors here — this entry exists to keep EXISTING routing alive across the
+  # deploy, and its actor list must mirror `disposition_review:SUSTAINMENT` exactly.
   pcn_disposition:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      EXPAND-PHASE-DUAL-KEY (M3.1 tail): the pre-rename audience key, kept alive ONLY until
+      cortex-bff is deployed with the renamed key. task_grant_sync prunes and the key is built in
+      deployed code, so dropping this before the roll would route every disposition review to
+      nobody. Mirrors disposition_review:SUSTAINMENT exactly; delete it in the contract phase.
+    grant_to:
+      - alice@example.com
+
+  disposition_review:SUSTAINMENT:
     granted_by: cnogradi
     reason: >-
       The disposition-review audience for the SUSTAINMENT compartment. The

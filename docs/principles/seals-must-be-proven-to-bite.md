@@ -63,6 +63,41 @@ byte-identical" is the provenance a future reader needs to trust 8/8
 green. Put that sentence in the commit message; the mutation story is
 part of the seal, not a private step.
 
+## The count that matters is not refusals — it is catches from attacking your own green
+
+The human form of the rule the mutations mechanize, and the reason
+this practice is not optional for load-bearing seals.
+
+2026-08-03, mid-migration: a grants guard was written, run, and came
+back green. Green was *correct* — and the guard was still wrong. It
+tested for the new audience key by SUBSTRING, and both audience names
+also appeared in the `reason:` PROSE of the neighbouring entry. A
+`reason` line is not a comment, so the check would have passed on a
+**sentence about the key** while the key itself was gone. The bug
+surfaced only from asking *how would I make this fail?* — not from
+the run, which was green, and not from review, which had just
+credited the same author with avoiding exactly this class one message
+earlier.
+
+Two things generalize:
+
+- **Prose is not a declaration.** When a guard reads a structured file,
+  assert on the STRUCTURE (a mapping key: starts with the prefix, ends
+  with the colon), never on a substring that documentation, a comment,
+  or a `reason:` string can satisfy. A file that honestly records its
+  own history will contain every name the guard forbids.
+- **A green run is not evidence about the guard; it is evidence about
+  the current inputs.** The only thing that tests the guard is an
+  input built to defeat it. So the question after green is never
+  "does it pass?" but "what would slip past?" — and the answer is
+  found by writing that input, not by reasoning about it.
+
+Knowing the rule does not confer immunity to the class. The author
+here had the rule, had just been praised for applying it, and
+reintroduced it inside the same session — which is the argument for
+mechanizing the check rather than trusting the discipline. **Attack
+your own green; the catch comes from there or it does not come.**
+
 ## When this applies
 
 Not every test. The cost (mutate, run, revert) is justified for

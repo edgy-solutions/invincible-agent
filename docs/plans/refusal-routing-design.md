@@ -38,7 +38,7 @@ The mesh already owns the grammar for "a human in a specific role must look at t
 > The extraction did not produce any affected parts (2/5 table crops failed).
 > `[Re-drive]` `[Acknowledge]`
 
-Materialized to the owning audience (`pcn_disposition:<compartment>`, or a `triage:<compartment>`
+Materialized to the owning audience (`disposition_review:<compartment>`, or a `triage:<compartment>`
 sibling), it lands in the timeline of the people who own the answer, with the refusal reason threaded
 as provenance exactly as the degradation warnings now are.
 
@@ -110,7 +110,7 @@ queue clean. Either way the routing decision — **content → owner, systemic �
 part.
 
 **Resolved as built.** The vision-timeout work landed first, so refusals should now be rare: triage
-defaults to the domain's own review audience (`pcn_disposition:<domain>`) — the people already
+defaults to the domain's own review audience (`disposition_review:<domain>`) — the people already
 responsible for these notices, and no new grant to seed. `REVIEW_TRIAGE_AUDIENCE` switches it to a
 dedicated `triage:<compartment>` audience if the queue gets noisy; that audience would need a
 `task_grants.yaml` entry first, and until it has one, `NoEntitledRecipients` → 422 → failed run

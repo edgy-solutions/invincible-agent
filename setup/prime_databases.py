@@ -435,6 +435,32 @@ def upload_canonical_ttls() -> None:
     doc-tools 5c185fb) consumes from this bucket. Triggering the job
     is a separate step (see `trigger_ingest_jobs` below) — uploading
     is idempotent and safe to re-run.
+
+    THE UNATTENDED PATH HAS EXACTLY ONE DOMAIN SOURCE, AND IT IS THE
+    METADATA THIS FUNCTION WRITES. doc-tools' `ontology_sensor` (an
+    `S3SensorComponent` over this bucket, RUNNING in sandbox) picks up
+    new objects on its own and launches the job with both ops — so no
+    `--trigger-ingest` is needed. But the sensor builds run config
+    containing ONLY `file_url` (dag-tools `sensor_component.py`), so
+    `S3FileConfig.extra_metadata` is empty and
+    `ontology_assets`' domain resolution falls through to priority 2:
+    the object's `x-amz-meta-domain`. Set here; set nowhere else on
+    that path.
+
+    Consequence for anyone uploading BY HAND: `mc pipe` writes no user
+    metadata, so a hand-piped TTL reaches a running sensor with no
+    declared domain and the asset REFUSES ("Domain not declared for
+    ontology ..."). That refusal is the design working — the path's
+    first segment is deliberately NOT used to infer a domain, per the
+    domain-fix era — but it only reads as correct if you knew the
+    interlock. Use this function, or `mc cp --attr "domain=<DOMAIN>"`.
+
+    `--trigger-ingest` is immune to the trap for a specific reason
+    worth knowing rather than cargo-culting: it passes the domain
+    explicitly in the GraphQL run config (priority 1), so it does not
+    depend on the object metadata at all. That makes it the right
+    fallback when a hand-uploaded object is already in the bucket
+    without metadata, or when the sensor's cursor is misbehaving.
     """
     print("--- Uploading canonical TTLs to MinIO ---")
     if boto3 is None:

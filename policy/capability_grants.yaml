@@ -57,7 +57,7 @@ capabilities:
   # recipiency (task_grant materializes a queue row per actor); a `review_initiation` audience
   # would be a key whose defining property is that nothing must ever materialize for it — a
   # false statement in the fifth namespace (the disposition_item cosmetic-attribute death).
-  # DISTINCT from who may REVIEW (task_grants.yaml pcn_disposition:<compartment>): the service
+  # DISTINCT from who may REVIEW (task_grants.yaml disposition_review:<compartment>): the service
   # INITIATES; humans REVIEW. Instance-one of the service-identity pattern (dispatcher / analyst
   # loop follow the same shape). svc:review-starter is seeded in users.yaml (service species).
   mesh:startReview:
@@ -78,7 +78,7 @@ capabilities:
   # different powers, and a caller may hold either without the other.
   #
   # DISTINCT AGAIN from who may ACT on the resulting task (task_grants.yaml
-  # pcn_disposition:<compartment>, enforced at /act): the service FILES, humans ACT — the same
+  # disposition_review:<compartment>, enforced at /act): the service FILES, humans ACT — the same
   # split mesh:startReview draws above, for the same reason.
   #
   # DEPLOY NOTE — this grant is load-bearing for VISIBILITY, not only for permission. Ungranted,

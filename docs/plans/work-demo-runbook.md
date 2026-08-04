@@ -40,7 +40,7 @@ is toggled by `ENABLE_DISPOSITION_AUTHZ` — read this table before you decide w
 |---|---|---|
 | **1. auto-starter identity + token** (the sensor authenticates to `/reviews`) | Keycloak client-credentials client `iagent-review-starter` (or the static-token shim), **not** a grant | **no** — `/reviews` is `Depends(get_current_user)`; a valid token is ALWAYS required |
 | **2. auto-starter `can_invoke(mesh:startReview)` capability** | `policy/capability_grants.yaml` → `svc:review-starter` | **YES — this is the only thing the env gates** |
-| **3. reviewer / dispatch-actor audience grants** (WHO the tasks route to) | `policy/task_grants.yaml` audiences `pcn_disposition:SUSTAINMENT` + `qualification` | **no** — deny-by-default *routing*, not a togglable check |
+| **3. reviewer / dispatch-actor audience grants** (WHO the tasks route to) | `policy/task_grants.yaml` audiences `disposition_review:SUSTAINMENT` + `qualification` | **no** — deny-by-default *routing*, not a togglable check |
 
 All grants go through `task_grant_sync` / `capability_sync` (validate → reconcile → readback →
 prune); never hand-surgery Topaz.
@@ -91,14 +91,14 @@ rider above):**
   the review still POSTs, but `register_task` finds **zero entitled recipients** →
   `NoEntitledRecipients` → **422** → the review fails and **never reaches a human** (the loud
   zero-recipients fail-and-release, by design — better than a silent forever-suspend). Grant
-  `pcn_disposition:SUSTAINMENT` to your reviewer, and `qualification` to your dispatch-actor if the
+  `disposition_review:SUSTAINMENT` to your reviewer, and `qualification` to your dispatch-actor if the
   demo shows the approve→dispatch hop.
 
 So the minimum for the env-off demo is **token + reviewer audience grant** (+ `qualification` for
 the fan-out). The env buys you skipping the *capability* grant, not the token and not the routing.
 
 The BFF stamps the auto-starter as `approver` (the review *initiator*) — the human *reviewer* is
-still resolved from the `pcn_disposition:SUSTAINMENT` audience, never from this token. When you DO
+still resolved from the `disposition_review:SUSTAINMENT` audience, never from this token. When you DO
 turn the gate on (to prove enforcement), an ungranted initiator gets `NOT_ENTITLED_TO_INITIATE`
 (403) up front; grant item 2 to clear it. (Follow-up already noted: the review's `user_jwt` is
 reused for the dispatch mint at approval time, so a long-lived-enough service credential — the
@@ -183,7 +183,7 @@ If the notice hits a refusal, the **Dagster run for that notice FAILS visibly** 
 sensor surfacing what `POST /reviews` would have returned) — and nothing silently vanishes:
 - `RULES_NOT_FOUND` / `RULESET_INVALID` → the disposition ruleset isn't loaded/valid for this domain.
 - `NOT_ENTITLED_TO_INITIATE` (403) → the auto-starter `svc:review-starter` lacks `can_invoke(mesh:startReview)` — grant the capability (`capability_grants.yaml`, §B). The sensor surfaces this as a failed Dagster run.
-- `no_entitled_recipients` (422) → residue exists but no reviewer holds `pcn_disposition:SUSTAINMENT`, so the review would be a task nobody can act on — `register_task` refuses it and the workflow fails-and-releases (never parks). Grant the review audience (§B), re-drive.
+- `no_entitled_recipients` (422) → residue exists but no reviewer holds `disposition_review:SUSTAINMENT`, so the review would be a task nobody can act on — `register_task` refuses it and the workflow fails-and-releases (never parks). Grant the review audience (§B), re-drive.
 - `REVIEW_STATE_UNSOURCED` → the notice is doc-level-needs-review but no part carries the flag
   (the tripwire — the extraction is under-sourced; do NOT paper over it).
 - `NO_RESIDUE` → genuinely nothing to review (an honest non-start; the run SUCCEEDS with a skip log).
