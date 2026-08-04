@@ -51,6 +51,27 @@ _SUBMIT = grouped_review_workflow.submit_decision.__wrapped__
 _WORKFLOWS = _REPO / "policy" / "workflows"
 
 
+@pytest.fixture(autouse=True)
+def _stub_service_mint(monkeypatch):
+    """The AWAIT arm drives the real ``_run_definition``, which registers the grouped task — and that
+    register MINTS AT USE since 2026-08-04 (``docs/plans/2026-08-04-notice-a-dispatch-failure.md``).
+    Without a stub this seal would reach Keycloak and die on a bare ``KeyError``, which says nothing
+    about promise names.
+
+    STUBBING THE MINT DOES NOT WEAKEN THIS SEAL. Its claim is that the name AWAITED equals the name
+    RESOLVED; the credential used to register a task is orthogonal to both arms, and neither arm reads
+    it. What must stay un-stubbed is the promise plumbing, and it is.
+
+    Patches SOURCE modules as well as consumers: ``main`` imports ``dispatch_driver`` lazily inside
+    ``_run_definition``, so that module object may not exist yet when this fixture runs."""
+    stub = lambda **_: "svc-token-stub"  # noqa: E731
+    for _name in ("agent_fleet.utils.service_identity", "utils.service_identity",
+                  "dispatch_driver", "agent_fleet.restate_analyst.dispatch_driver"):
+        _mod = sys.modules.get(_name)
+        if _mod is not None:
+            monkeypatch.setattr(_mod, "mint_service_token", stub, raising=False)
+
+
 # ---------------------------------------------------------------------------
 # Fakes that RECORD THE NAME (the existing grouped-review fakes ignore it)
 # ---------------------------------------------------------------------------

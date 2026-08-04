@@ -38,6 +38,31 @@ _RUN = grouped_review_workflow.run.__wrapped__
 _GET_BATCH = grouped_review_workflow.get_batch.__wrapped__
 
 
+@pytest.fixture(autouse=True)
+def _stub_service_mint(monkeypatch):
+    """Task registration MINTS AT USE (2026-08-04) — see
+    ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``. Stub the mint rather than set fake env:
+    fake env would drive a REAL client-credentials POST at a nonexistent Keycloak and turn these unit
+    tests into network tests. Same fixture as tests/test_dispatch_driver.py, deliberately duplicated
+    per-suite because it is TEST SCAFFOLDING, not shared meaning.
+
+    PATCHES BOTH MODULE IDENTITIES. ``sys.path`` carries the repo root AND ``agent_fleet/restate_analyst``
+    (the container flattens that dir), so ``dispatch_driver`` and
+    ``agent_fleet.restate_analyst.dispatch_driver`` are TWO DISTINCT module objects with separate
+    globals. Patching one leaves the other live — which is how this fixture silently failed on first
+    write. Any monkeypatch against a flatten-dance module must name both."""
+    stub = lambda **_: "svc-token-stub"  # noqa: E731
+    # The SOURCE modules are patched too, not just the already-bound consumers: main.py imports
+    # dispatch_driver LAZILY (inside _run_definition), so that module object does not exist when this
+    # fixture runs and would bind the REAL mint mid-test. Patching the source makes the late import
+    # pick up the stub.
+    for _name in ("agent_fleet.utils.service_identity", "utils.service_identity",
+                  "dispatch_driver", "agent_fleet.restate_analyst.dispatch_driver"):
+        _mod = sys.modules.get(_name)
+        if _mod is not None:
+            monkeypatch.setattr(_mod, "mint_service_token", stub, raising=False)
+
+
 # ---------------------------------------------------------------------------
 # Small HTTP stub + a minimal journaling object ctx (poisoned-isolation seal)
 # ---------------------------------------------------------------------------

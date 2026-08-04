@@ -35,19 +35,39 @@ from agent_fleet.restate_analyst.workflow_bulk_resolve import ItemResolution  # 
 _DISPATCH = dispatch_driver.dispatch.__wrapped__  # unwrap the @handler coroutine to call it directly
 
 
+@pytest.fixture(autouse=True)
+def _stub_service_mint(monkeypatch):
+    """The register MINTS AT USE (2026-08-04), so every test touching the mint path would otherwise
+    reach Keycloak — and fail with a bare ``KeyError`` on the missing env, which is honest in
+    production and useless here. Stub the mint, do NOT set fake env: setting env would exercise a
+    REAL client-credentials POST against a nonexistent Keycloak and turn these unit tests into
+    network tests. The mint's own failure semantics are sealed separately; this suite seals the
+    driver's convergence, and the two must not be tangled.
+
+    PATCHES BOTH MODULE IDENTITIES — ``sys.path`` carries the repo root AND
+    ``agent_fleet/restate_analyst``, so ``dispatch_driver`` and
+    ``agent_fleet.restate_analyst.dispatch_driver`` are TWO distinct module objects with separate
+    globals; patching one can leave the other live."""
+    stub = lambda **_: "svc-token-stub"  # noqa: E731
+    for _name in ("dispatch_driver", "agent_fleet.restate_analyst.dispatch_driver"):
+        _mod = sys.modules.get(_name)
+        if _mod is not None:
+            monkeypatch.setattr(_mod, "mint_service_token", stub, raising=False)
+
+
 # ---------------------------------------------------------------------------
 # Payload builders — through the REAL plan_dispatch + plan_to_payload
 # ---------------------------------------------------------------------------
 def _payload(disposition, *, mpn="NSR01L30NXT5G",
              subject="http://internal/components/NSR01L30NXT5G",
-             needs_review=False, ruleset="rules@abc123def456", user_jwt="jwt-abc"):
+             needs_review=False, ruleset="rules@abc123def456"):
     res = ItemResolution(
         mpn=mpn, subject=subject, disposition=disposition,
         idempotency_key=f"IPCN25300X:{mpn}", needs_review=needs_review,
         override_reason=None, proposed_by_ruleset=ruleset,
     )
     plan = plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X")
-    return dispatch_driver.plan_to_payload(plan, user_jwt=user_jwt)
+    return dispatch_driver.plan_to_payload(plan)
 
 
 # ---------------------------------------------------------------------------
@@ -294,8 +314,15 @@ def test_fan_out_sends_one_keyed_invocation_per_item():
     ]
     ctx = _SendRecorder()
     keys = dispatch_driver.fan_out_dispatch(ctx, resolutions, notice_fingerprint="IPCN25300X",
-                                       notice_id="IPCN25300X", user_jwt="jwt-abc")
+                                       notice_id="IPCN25300X")
     assert keys == ["IPCN25300X:MPN-0", "IPCN25300X:MPN-1", "IPCN25300X:MPN-2"]
     assert [s["key"] for s in ctx.sends] == keys
     assert [s["idempotency_key"] for s in ctx.sends] == keys, "invocation dedup key must be the notice x part key"
     assert all(s["arg"]["human_task"]["audience"] == "qualification" for s in ctx.sends)
+    # NO CREDENTIAL IN A JOURNALED PAYLOAD (2026-08-04, the notice-A defect). An object_send body is
+    # durable journal state, so a token in it is a credential at rest that a retry can replay long
+    # after it expired. The register mints at use instead; this asserts the field cannot come back.
+    assert all("user_jwt" not in s["arg"] for s in ctx.sends), (
+        "a credential is riding the journaled dispatch payload — mint at use, never carry a token "
+        "across a suspend (docs/plans/2026-08-04-notice-a-dispatch-failure.md)"
+    )

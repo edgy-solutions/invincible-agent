@@ -114,10 +114,20 @@ def test_the_grouped_task_key_is_derived_from_the_workflow_key():
     so it carried the identical collision hazard sitting right beside the key it had to agree
     with. The grouped task is 1:1 with the workflow — its identity must COME FROM the workflow,
     not be recomputed in parallel and hope to match."""
-    src = (_ROOT / "agent_fleet" / "restate_analyst" / "grouped_review_workflow.py").read_text(
-        encoding="utf-8"
+    # RE-POINTED 2026-08-04, not weakened. M3.2's delegation moved the grouped-task construction out
+    # of grouped_review_workflow.py into main.py's _run_grouped_human_await; this assertion was
+    # source-ANCHORED to the old file and went red on a legitimate move — a guard orphaned by a
+    # refactor, indistinguishable from a real regression until someone reads it. The PROPERTY is
+    # unchanged and still asserted; only its address moved. (Standing lesson: an assertion anchored to
+    # a file path is a guard with a dependency nobody declares.)
+    _RA = _ROOT / "agent_fleet" / "restate_analyst"
+    src = "\n".join(
+        (_RA / f).read_text(encoding="utf-8") for f in ("main.py", "grouped_review_workflow.py")
     )
-    assert '"task_key": f"grouped:{ctx.key()}"' in src
+    assert '"task_key": f"grouped:{ctx.key()}"' in src, (
+        "the grouped task id is no longer derived from the workflow key in EITHER the executor or "
+        "the workflow module — identity must come FROM the workflow, not be recomputed beside it"
+    )
     assert '"task_key": f"grouped:{notice_fingerprint}:{approver}"' not in src, (
         "the grouped task id is being derived from the notice again — a second independent "
         "derivation of identity is how the two silently disagree"

@@ -47,6 +47,15 @@ try:  # same lazy-import dance as the other restate_analyst cores (container fla
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.dispatch_plan import plan_dispatch
 
+# MODULE-LEVEL ON PURPOSE (2026-08-04). Bound here, not inside the register, so a test can
+# monkeypatch ``dispatch_driver.mint_service_token`` — a function-local import is unpatchable, which
+# would leave the sealed two-direction failure-injection tests unable to run the mint path at all.
+# Testability is part of the contract: a credential seam nothing can stub is a seam nothing can seal.
+try:
+    from utils.service_identity import mint_service_token  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.utils.service_identity import mint_service_token
+
 CORTEX_BFF_URL = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090")
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
@@ -55,15 +64,21 @@ _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 # ---------------------------------------------------------------------------
 # Serialization — DispatchPlan (pure dataclass) -> a JSON-native invocation body
 # ---------------------------------------------------------------------------
-def plan_to_payload(plan, *, user_jwt: str = "", requested_by: str = "") -> dict:
+def plan_to_payload(plan, *, requested_by: str = "") -> dict:
     """Flatten a ``DispatchPlan`` to the payload the VirtualObject consumes. Kept flat + JSON-native so
     it rides a Restate invocation body; ``None`` graph_write / human_task pass through as ``None``
-    (an unresolved subject has no graph write; ``archive`` has no task)."""
+    (an unresolved subject has no graph write; ``archive`` has no task).
+
+    NO CREDENTIAL RIDES THIS PAYLOAD (2026-08-04). It used to carry ``user_jwt``. A Restate invocation
+    body is JOURNALED and DURABLE, so a token in it is a credential at rest with the journal's
+    retention, and — because this object retries — one that can be replayed long after it expired.
+    The register now mints at use under the pipeline's own identity, so the field had become dead
+    weight AND a standing exposure. Provenance still travels: ``requested_by`` names the human who
+    approved. See ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``."""
     gw = plan.graph_write
     ht = plan.human_task
     return {
         "idempotency_key": plan.resolution.idempotency_key,
-        "user_jwt": user_jwt,
         "graph_write": None if gw is None else {
             "subject_iri": gw.subject_iri,
             "disposition_state": gw.triples.get("dispositionState", ""),
@@ -106,14 +121,31 @@ def _fail_terminal_on_4xx(resp, what: str) -> None:
         )
 
 
-def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
+def _mint_dispatch_task(task: dict) -> dict:
     """TASK-FIRST executor: register the per-item HumanTask on the disposition's persona queue — the
     "another persona's queue" moment. Same cortex-bff endpoint + SUSPEND-VS-FAIL discipline as
     [[feedback_hitl_suspend_vs_fail_ruling]] / main's ``_register_human_task``: a persistent auth
     DENIAL (401/403) is a FAILURE (``TerminalError``, releases state), never a retry-and-park DoS;
     5xx/network stay retryable. ``task_key`` (notice x part) + the RE-LINK provenance (mpn,
     notice_fingerprint, subject_unresolved) ride in the body so an unresolved-subject task is never an
-    orphan — a later pass can stamp state retroactively when the subject becomes resolvable."""
+    orphan — a later pass can stamp state retroactively when the subject becomes resolvable.
+
+    MINTS AT USE (2026-08-04). This used to take a ``user_jwt`` captured when the review STARTED and
+    carried in Restate workflow state. A grouped review is DESIGNED to suspend for human latency, so
+    that token is ROUTINELY expired by approval time — notice ``M32-A-WITNESS`` sat ~90 minutes and
+    both dispatches died on ``401 -> fail-and-release`` 160ms after the approval, leaving the
+    projection reading ``approved`` with no effects
+    (``docs/plans/2026-08-04-notice-a-dispatch-failure.md``).
+
+    The token is now minted HERE, per call, under the pipeline's own identity. Why per-call and not
+    threaded from the fan-out: an ``object_send`` payload is JOURNALED, so a threaded token would be a
+    credential at rest in the journal — and this VirtualObject RETRIES, so a threaded token can be
+    stale on an attempt that lands minutes later. That is the same defect in miniature. Fresh per
+    attempt is the only shape with no staleness window.
+
+    PROVENANCE IS UNAFFECTED and does not travel in the token: ``requested_by`` (the human who
+    approved) rides in the body below. The token authorizes the EFFECT; the body records WHO decided.
+    Conflating those two facts in one credential is what broke."""
     audience = task.get("audience")
     if not audience:
         # CONFIG error, not transient — a task with no audience can never be actioned. Fail TERMINALLY.
@@ -148,7 +180,10 @@ def _mint_dispatch_task(task: dict, user_jwt: str) -> dict:
         "notice_fingerprint": task.get("notice_fingerprint"),
         "subject_unresolved": task.get("subject_unresolved", False),
     }
-    headers = {"Authorization": f"Bearer {user_jwt}"} if user_jwt else {}
+    # MINT AT USE — fresh service-identity token, never a stored one. A ServiceTokenError propagates
+    # (retryable): a Keycloak blip is transient INFRA, not an authorization denial, so it must NOT
+    # fail-and-release the way a 401 on the register does.
+    headers = {"Authorization": f"Bearer {mint_service_token()}"}
     resp = requests.post(
         f"{CORTEX_BFF_URL}/internal/human_tasks/register",
         json=body, headers=headers, timeout=_HTTP_TIMEOUT,
@@ -206,7 +241,6 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
     if prior:
         return prior
 
-    user_jwt = request.get("user_jwt", "")
     task = request.get("human_task")
     gw = request.get("graph_write")
     outcome = {
@@ -218,7 +252,7 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
 
     # 1) TASK FIRST — visible-and-recoverable if the second write never lands.
     if task:
-        minted = await ctx.run("mint_task", lambda t=task: _mint_dispatch_task(t, user_jwt))
+        minted = await ctx.run("mint_task", lambda t=task: _mint_dispatch_task(t))
         outcome["task_minted"] = True
         outcome["task"] = minted
 
@@ -247,7 +281,7 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Fan-out — one grouped approval -> N per-item dispatches (execution grain, §1)
 # ---------------------------------------------------------------------------
-def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "", user_jwt: str = "", requested_by: str = "") -> list[str]:
+def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "", requested_by: str = "") -> list[str]:
     """Fan ONE grouped approval out to N per-item dispatches. Each ``ItemResolution`` is planned then
     SENT (fire-and-forget) to its own ``DispatchItem`` keyed by ``idempotency_key`` — per-item,
     idempotent, OUTSIDE the workflow graph (§7). The Restate invocation ``idempotency_key`` is that
@@ -256,7 +290,7 @@ def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: st
     keys: list[str] = []
     for res in resolutions:
         plan = plan_dispatch(res, notice_fingerprint=notice_fingerprint, notice_id=notice_id)
-        payload = plan_to_payload(plan, user_jwt=user_jwt, requested_by=requested_by)
+        payload = plan_to_payload(plan, requested_by=requested_by)
         ctx.object_send(dispatch, key=res.idempotency_key, arg=payload, idempotency_key=res.idempotency_key)
         keys.append(res.idempotency_key)
     return keys

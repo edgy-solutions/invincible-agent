@@ -406,31 +406,27 @@ def mint_service_token(*, timeout: float = 15.0) -> str:
 
     Mint is part of the OBSERVABLE seam: a failure (Keycloak down, secret rotated, client disabled) RAISES
     dagster.Failure and NAMES the cause -> the Dagster run FAILS, visible. "Keycloak was down so no reviews
-    started and nothing said so" is precisely the invisible-dead-notice this pipeline was built to refuse."""
-    import httpx
+    started and nothing said so" is precisely the invisible-dead-notice this pipeline was built to refuse.
 
-    realm_url = os.environ["KEYCLOAK_REALM_URL"].rstrip("/")
-    client_id = os.environ["REVIEW_STARTER_CLIENT_ID"]
-    client_secret = os.environ["REVIEW_STARTER_CLIENT_SECRET"]
-    token_url = f"{realm_url}/protocol/openid-connect/token"
+    THIN WRAPPER since 2026-08-04. The mint LOGIC moved to ``agent_fleet/utils/service_identity.py`` so
+    engine-a can mint at the point of use too (the notice-A defect: a token captured at review START and
+    reused for the dispatch mint at APPROVAL time is stale by design across human latency — see
+    ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``). engine-a's image does NOT ship ``src/iagent``,
+    so this function was never importable there; ``agent_fleet/utils`` is the one tree BOTH runtimes carry.
+    ONE implementation, two callers — never two escapers of the same meaning.
+
+    This wrapper exists ONLY to keep the Dagster failure contract: the shared helper raises a plain
+    ``ServiceTokenError`` (engine-a must not depend on Dagster) and we re-raise it as ``dagster.Failure``
+    with the SAME description, so the sensor's proven test is unchanged and still discriminating."""
     try:
-        resp = httpx.post(
-            token_url,
-            data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=timeout,
-        )
-    except Exception as exc:  # noqa: BLE001 — transport failure is a loud, named failure, never silent
-        raise Failure(description=f"mint_service_token: Keycloak token endpoint unreachable at {token_url}: {exc}")
-    if resp.status_code != 200:
-        raise Failure(
-            description=f"mint_service_token: client-credentials mint failed HTTP {resp.status_code} for "
-            f"client {client_id!r} at {token_url}: {resp.text[:300]}"
-        )
-    tok = (resp.json() or {}).get("access_token")
-    if not tok:
-        raise Failure(description=f"mint_service_token: token response carried no access_token: {resp.text[:300]}")
-    return tok
+        from agent_fleet.utils.service_identity import ServiceTokenError, mint_service_token as _mint
+    except ImportError:  # container layout that flattens agent_fleet/utils -> utils
+        from utils.service_identity import ServiceTokenError, mint_service_token as _mint  # type: ignore[no-redef]
+
+    try:
+        return _mint(timeout=timeout)
+    except ServiceTokenError as exc:
+        raise Failure(description=str(exc))
 
 
 # start_review's composition cost scales with PART COUNT — it resolves a subject, checks

@@ -1573,7 +1573,10 @@ async def _run_grouped_human_await(
         # The step's declared claiming policy travels to the UI as process content.
         "claiming": step.completion.claiming,
     }
-    await ctx.run("register_grouped_task", lambda: _mint_dispatch_task(grouped_task, user_jwt))
+    # Mints its own service-identity token at use (2026-08-04) — the stored user_jwt is no longer
+    # threaded into task registration. Fresh here too, not only at dispatch: the same helper serves
+    # both call sites, so the staleness class is closed rather than the one instance that bit.
+    await ctx.run("register_grouped_task", lambda: _mint_dispatch_task(grouped_task))
 
     # 3. Suspend on the DECLARED promise name — the one submit_decision resolves.
     raw_decision = await ctx.promise(promise_name, type_hint=dict).value()
@@ -1592,8 +1595,8 @@ async def _run_grouped_human_await(
 
     keys = fan_out_dispatch(
         ctx, submission.resolutions,
-        notice_fingerprint=notice_fingerprint, notice_id=notice_id, user_jwt=user_jwt,
-        requested_by=approver,
+        notice_fingerprint=notice_fingerprint, notice_id=notice_id,
+        requested_by=approver,   # PROVENANCE — the human who approved; the effect's AUTHZ is minted at use
     )
     return {
         "step_id": step.id, "kind": "human_await", "completion": "grouped",
