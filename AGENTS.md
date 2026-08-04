@@ -439,6 +439,27 @@ gets attacked rather than deferred to. Where the identity matters, prefer making
 and seal it with an equality guard: a construction you have to reason about is one a future rename
 can silently break.
 
+### A ruling made in CONVERSATION is UNSHIPPED until it is committed
+Second instance, and the mirror image of the first. In the §391 case the DOC carried a ruling the
+conversation had already invalidated. In the M3.2 shipping case the CONVERSATION carried a ruling the
+doc never received — image-baked definitions, decided with three reasons and a rider, present nowhere a
+future window could reach. The build re-raised it as an open question, which is not a lapse: it is the
+proof. A window holding the whole repo and no transcript cannot execute a decision that exists only in
+chat.
+
+**So: the transcript is where a decision is BORN; the repo is where it LIVES. A ruling is unshipped
+until it is committed — to the packet, the ADR, or these conventions — with its reasons attached.** The
+corollary binds the citer too: **a claim that something "was already decided" is INPUT requiring
+validation, not a premise, including when it comes from the architect.** If it cannot be sourced to a
+commit or to the transcript in hand, it does not get recorded as RULED on the citer's say-so — an
+unsourceable "RULED" is the §391 failure with the evidence deleted, and it costs a future window
+executing a decision it cannot audit. Re-raising a settled question costs one round trip; the asymmetry
+is not close.
+
+When a conversational ruling IS confirmed, record it with its origin stated exactly — ruled in-session
+on DATE, and whether it PRECEDED or POSTDATED the work that needed it. "Decided" and "decided in time"
+are different facts, and the second is what tells the next window whether the process worked.
+
 ### A probe's OUTPUT is part of its claim — truncated, sampled or windowed output gets labeled in the line that reports it
 Third probe-correctness catch in the M3.2 build session, and three is where this arc files a rule. The
 other two: an assertion that sampled asynchronous state and reported RED on a healthy system (timing),
