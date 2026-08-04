@@ -195,18 +195,62 @@ def load_workflow_definition(path: str | Path) -> WorkflowDefinition:
         raise WorkflowDefinitionError(f"{p}: invalid workflow definition:\n{exc}") from exc
 
 
+def candidate_definition_dirs(module_path: Path) -> list[Path]:
+    """The ordered places a definitions directory can live, given this module's path.
+
+    TWO LAYOUTS, and the second one is why this is a function rather than a line:
+      * REPO — ``agent_fleet/restate_analyst/workflow_definition.py``, so the
+        definitions are three levels up at ``<repo>/policy/workflows``.
+      * CONTAINER — the image FLATTENS the service directory into ``/app``, so this
+        module is ``/app/workflow_definition.py`` and the definitions are baked
+        beside it at ``/app/policy/workflows``.
+
+    The repo candidate is GUARDED on depth. ``Path('/app/workflow_definition.py')``
+    has exactly two parents, so an unguarded ``parents[2]`` raises IndexError in the
+    container — which would crash BEFORE the loud, specific WorkflowDefinitionError
+    below could ever be raised. An honest error path that is unreachable in the only
+    environment that needs it is not an error path.
+    """
+    here = module_path.resolve()
+    out: list[Path] = []
+    if len(here.parents) >= 3:  # repo layout only; guarded, see docstring
+        out.append(here.parents[2] / "policy" / "workflows")
+    out.append(here.parent / "policy" / "workflows")  # flattened container layout
+    return out
+
+
 def definitions_dir() -> Path:
     """Where the RUNNING SERVICE reads git-asserted definitions from.
 
-    Env-configurable because the repo path and the deployed path differ: in-repo
-    this is ``policy/workflows/``; in the pod it is wherever the definitions are
-    mounted or baked. Declaring the seam as an env var keeps the code identical
-    across both and makes the deploy step explicit rather than assumed.
+    ``WORKFLOW_DEFINITIONS_DIR`` wins when set — the explicit deploy seam. Otherwise
+    the first candidate that EXISTS wins; if none exist, the first is returned so the
+    error names a concrete path rather than a guess.
     """
     env = os.environ.get("WORKFLOW_DEFINITIONS_DIR")
     if env:
         return Path(env)
-    return Path(__file__).resolve().parents[2] / "policy" / "workflows"
+    candidates = candidate_definition_dirs(Path(__file__))
+    for c in candidates:
+        if c.is_dir():
+            return c
+    return candidates[0]
+
+
+def describe_registry() -> dict:
+    """What the runtime ACTUALLY loaded — the startup/roll witness in one call.
+
+    Returns the resolved directory and the definition ids found there. Deliberately
+    reports the INVENTORY, not a count: "loaded 2 definitions" passes over the wrong
+    two as happily as the right two, and the roll's claim is that the image carries
+    the definitions the gate tested."""
+    d = definitions_dir()
+    if not d.is_dir():
+        return {"directory": str(d), "exists": False, "ids": []}
+    return {
+        "directory": str(d),
+        "exists": True,
+        "ids": sorted(p.stem for p in d.glob("*.yaml")),
+    }
 
 
 def get_workflow_definition(workflow_id: str) -> WorkflowDefinition:

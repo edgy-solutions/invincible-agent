@@ -109,6 +109,43 @@ _TRIGGER = {
 
 
 # ===========================================================================
+# The DEPLOY seam — caught pre-roll, not after breaking sandbox
+# ===========================================================================
+def test_registry_resolves_under_the_FLATTENED_container_layout():
+    """The image flattens the service dir into /app, so this module ships as
+    /app/workflow_definition.py — which has exactly TWO parents. The original
+    `parents[2]` raised IndexError there, crashing BEFORE the loud, specific
+    WorkflowDefinitionError could be raised: an honest error path that was
+    unreachable in the only environment needing it.
+
+    Asserted on the PURE candidate function, so it needs no container to run."""
+    from agent_fleet.restate_analyst.workflow_definition import candidate_definition_dirs
+
+    # Asserted as a RELATIONSHIP, not a literal path: on Windows `Path("/app/x").resolve()`
+    # yields `C:/app/x`, so a literal "/app/policy/workflows" comparison would fail on the
+    # host while passing in the container — a test whose verdict depends on where it runs.
+    flat = candidate_definition_dirs(Path("/app/workflow_definition.py"))
+    assert flat, "no candidates for the flattened layout — parents[2] would have raised"
+    assert flat[-1].parts[-3:] == ("app", "policy", "workflows"), flat
+    assert flat[-1].parent.parent.name == "app", flat
+
+    repo = candidate_definition_dirs(_RA / "workflow_definition.py")
+    assert repo[0] == _REPO / "policy" / "workflows", repo
+
+
+def test_registry_witness_reports_the_INVENTORY_not_a_count():
+    """Step 7's witness, as an assertion. The roll's claim is that the image carries
+    the definitions the gate tested, BY NAME — 'loaded 2' passes over the wrong two as
+    happily as the right two."""
+    from agent_fleet.restate_analyst.workflow_definition import describe_registry
+
+    w = describe_registry()
+    assert w["exists"] is True, w
+    assert "grouped_review" in w["ids"], w
+    assert "autonomous_review" in w["ids"], w
+
+
+# ===========================================================================
 # The pair differs by exactly one step, and both are the SAME runner
 # ===========================================================================
 def test_the_two_definitions_differ_by_exactly_the_human_step():

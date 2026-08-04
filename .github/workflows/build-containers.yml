@@ -248,6 +248,15 @@ jobs:
               fi
           COPY ${AGENT_DIR}/ /app/
           COPY baml_shared/baml_client/baml_client/ /app/baml_client/
+          # Git-asserted process definitions (ADR-0029). BAKED IN, not mounted: the gate
+          # tests executor-plus-YAML as ONE unit and the deploy must ship that unit;
+          # definitions have no validate->reconcile->readback discipline the way Topaz
+          # configs do; and hot-swap is a property a process should not have until it
+          # earns its own validation pipeline. Lands beside the FLATTENED service dir,
+          # which is why the registry's container candidate is /app/policy/workflows.
+          # Copied for every fleet service (two small YAMLs) — a conditional COPY would
+          # buy nothing and cost a build-arg branch.
+          COPY policy/workflows/ /app/policy/workflows/
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           COPY agent_fleet/utils/ /app/utils/
           COPY agent_fleet/core/ /app/core/
