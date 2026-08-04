@@ -100,10 +100,25 @@ the fan-out). The env buys you skipping the *capability* grant, not the token an
 The BFF stamps the auto-starter as `approver` (the review *initiator*) — the human *reviewer* is
 still resolved from the `disposition_review:SUSTAINMENT` audience, never from this token. When you DO
 turn the gate on (to prove enforcement), an ungranted initiator gets `NOT_ENTITLED_TO_INITIATE`
-(403) up front; grant item 2 to clear it. (Follow-up already noted: the review's `user_jwt` is
-reused for the dispatch mint at approval time, so a long-lived-enough service credential — the
-per-run client-credentials mint, not a hand-pasted static JWT — is what keeps it from going stale
-mid-review.)
+(403) up front; grant item 2 to clear it.
+
+> **SUPERSEDED 2026-08-04 — this follow-up's ANSWER was wrong, and the defect it predicted has now
+> fired live.** The note here used to say the review's `user_jwt` is reused for the dispatch mint at
+> approval time, so *"a long-lived-enough service credential is what keeps it from going stale
+> mid-review."* The diagnosis was right; the fix was not. A grouped review is DESIGNED to suspend for
+> human latency — hours, days, a weekend — so any credential captured at review start is ROUTINELY
+> stale at approval time, and lifetime-tuning to outlast human reviewers converges on effectively
+> unbounded tokens stored durably in journals.
+>
+> **The fix is MINT AT USE, under the ACTING identity:** the dispatch mint runs under
+> `svc:review-starter`'s own client-credentials mint at dispatch time — fresh by construction, no
+> stored credential, no lifetime knob. The stored `user_jwt` was carrying two different facts at once
+> (PROVENANCE of the human decision, and AUTHORIZATION to execute effects); they separate here.
+>
+> Fired live on notice `M32-A-WITNESS`: approved at 21:40 after ~90 minutes suspended, both
+> dispatches failed 160ms later with `401 → fail-and-release`, no tasks minted, projection still
+> reading `approved`. Full root cause, rulings and repair:
+> `docs/plans/2026-08-04-notice-a-dispatch-failure.md`.
 
 ---
 

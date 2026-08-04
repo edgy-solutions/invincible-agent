@@ -535,6 +535,33 @@ NOBODY. It carries its own positive control (if NOTHING resolves, that is a brok
 universe of revoked audiences — it returns INCONCLUSIVE rather than a confident RED, per the rule
 above). It found a second, unrelated orphan on its first run.
 
+### A status field asserts what its author WITNESSED — intent-only statuses get renamed
+`ctx.object_send` is fire-and-forget by construction: the caller **cannot** know delivery. So a
+workflow returning `{"status": "DISPATCHED", "count": 2}` is reporting journaled INTENT wearing an
+effect's name. Demonstrated 2026-08-04, and the counterexample is unarguable: notice A returned
+`DISPATCHED` for two dispatches that both **failed 160ms later**. Honest form is `RESOLVED` +
+`dispatch_enqueued: N`; a stronger claim requires awaiting outcomes, which is a design change, not a
+wording choice. Same class as the M2 upload reporting `[OK]` per file while every ingest failed on a
+metadata bug. **Either the status names what was observed, or it is never cited as proof.**
+
+### Seals resolve at MACHINE latency; some defects only exist at HUMAN latency
+A grouped review is designed to suspend for hours or days. Anything captured at suspend-time and
+used at resume-time (credentials above all) is therefore *routinely* stale in production and
+*never* stale under test — because every automated witness resolves in minutes. The suite is
+**structurally** incapable of finding that class: a defect whose trigger is ELAPSED TIME cannot be
+caught by witnesses that never elapse. Notice A's expired-JWT dispatch failure is instance one, and
+it survived a 12-seal M3.2 suite that passed green.
+
+**Closure is the kill-seal move: manufacture the condition, don't wait for it.** Inject a
+deliberately expired or near-expiry token and resolve the review with it — turning ninety minutes of
+wall clock into a fixture. Generalise: for any suspend/resume mechanism, ask *what expires while we
+are suspended?* and seal it by injection.
+
+Corollary that caused the bug: a token threaded from the human's action into POST-decision machinery
+is carrying two facts at once — **provenance** (who approved) and **authorization to execute
+effects** (the pipeline's own entitlement). Those separate. Provenance belongs in the decision
+record; effects run under the acting identity, minted AT USE.
+
 ### Provenance comes from PROVENANCE-BEARING fields — never inferred from CLASSIFICATION fields
 Third instance in two days, and the sharpest form of the naming rule. `kind` says what a row IS;
 `subject_ref` says where it CAME FROM. The M3.1 stranded-row split read `kind` — migrating two
