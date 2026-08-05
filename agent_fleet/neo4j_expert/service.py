@@ -740,7 +740,6 @@ You must ONLY use the following Nodes, Properties, and Relationships. Do not gue
         # Run 1: The Smolagents Graph Query Loop
         # --------------------------------------------------------------------------
         @safe_observe(name="smolagents_neo4j_execution")
-        @safe_observe(name="smolagents_neo4j_execution")
         async def run_smolagent() -> tuple[str, str]:
             try:
                 # Retrieve past successful memories to inject into the system prompt.
@@ -816,21 +815,13 @@ paths and titles in your final_answer so the downstream formatter can render the
 
                 final_prompt = f"{system_prompt_with_memory}\n\n{tool_reminder}\n\nUser Query: {user_query}"
                 
-                # Telemetry (ADR-0038): join Engine E's graph-reasoning generation(s) to the
-                # caller's trace when a trace id reaches its body; a standalone enriched trace
-                # otherwise. Fail-soft; no-op when disabled.
-                with observed_trace(MAPPING, build_trace_values(
-                    trace_id=request.get("trace_id"),
-                    engine="neo4j_expert",
-                    authz_id=request.get("user_id") or request.get("authz_id"),
-                    # Legibility of a KNOWN join gap: until a proxy threads the caller's trace
-                    # id into Engine E's restate BODY, its trace is an ORPHAN by limitation, not
-                    # by accident. Tag it so a reader sees the disconnect IN THE DATA, not only
-                    # in a handoff doc. Drops to None (joined) the moment a trace id arrives.
-                    join_status=("join:pending-proxy" if not request.get("trace_id") else None),
-                ), name="engine-e graph reasoning"):
-                    # Run the agent in a thread pool since smolagents is synchronous
-                    result = await asyncio.to_thread(agent.run, final_prompt)
+                # Run the agent in a thread pool since smolagents is synchronous. The
+                # ADR-0038 join boundary (observed_trace) is opened by the CALLER of
+                # run_smolagent (around ctx.run below), so E's ENTIRE trace — this smolagents
+                # span, mem0_context_retrieval, and the agent loop — nests under ONE
+                # caller-seeded trace instead of the boundary re-rooting a near-empty
+                # separate one. Mirrors Engine A, whose observed_trace also wraps its ctx.run.
+                result = await asyncio.to_thread(agent.run, final_prompt)
                 
                 # Build the UI trace from `agent.memory.steps` (smolagents 1.24;
                 # the old `agent.logs` attribute is gone — the previous block
@@ -905,7 +896,21 @@ paths and titles in your final_answer so the downstream formatter can render the
 
         # Standard 120s timeout from the orchestrator allows for extended searching
         try:
-            raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
+            # ADR-0038 — the analyst→E JOIN boundary, opened OUTERMOST (mirroring Engine A's
+            # observed_trace around its own ctx.run) so E's whole trace nests under ONE trace
+            # seeded on the caller's id: engine-e graph reasoning → smolagents_neo4j_execution
+            # → mem0_context_retrieval → the agent loop. Previously this wrapped only
+            # agent.run deep inside run_smolagent, so the caller-joined trace held just the
+            # boundary while the real work rooted a SEPARATE unseeded trace (the "detached E
+            # trace"). Fail-soft; join_status self-heals off the same request.get("trace_id").
+            with observed_trace(MAPPING, build_trace_values(
+                trace_id=request.get("trace_id"),
+                engine="neo4j_expert",
+                authz_id=request.get("user_id") or request.get("authz_id"),
+                domain=request.get("domain"),
+                join_status=("join:pending-proxy" if not request.get("trace_id") else None),
+            ), name="engine-e graph reasoning"):
+                raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
         finally:
             _emit_calib()
 
