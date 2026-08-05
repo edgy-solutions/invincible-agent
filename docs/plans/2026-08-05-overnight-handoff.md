@@ -101,7 +101,45 @@ cause    : cortex-bff register … rejected (422) — failing TERMINALLY (releas
 
 # NEXT SESSION — in this order
 
-## 1. THE OPEN FORK — who is the approver, and how does that reach the fan-out?
+## 1. ~~THE OPEN FORK~~ — RULED AND BUILT (`90464e7`); LIVE RE-VERIFICATION PENDING A ROLL
+
+**Ruling: thread the `/act` caller, with the field semantics settled first — because the fork as
+framed below slightly misstated what was broken.** `requested_by` was never lying about its own
+meaning; it faithfully records who STARTED the review. The lie was in what readers INFERRED, because
+no field carried the decision's actor at row level. So nothing is renamed: **the actor starts
+existing**, additively, and `requested_by` keeps its meaning as provenance-of-initiation. That is
+(b)'s outcome with (a)'s safety — no field changes meaning, one field starts existing everywhere it
+should have.
+
+**The one open question was verified before any code: the resolution payload does NOT carry the
+actor.** `/act` builds `decision = {"overrides": …}` and `submit_decision` resolves exactly that.
+But the identity is present AND authorized right there — `check_can_act(audience,
+current_user.authz_id)` runs immediately above — so this was a payload-schema addition, not an
+authz change. `_build_bulk_decision` reads only `overrides`, so the new key rides through validation
+untouched.
+
+**Landed:** `/act` stamps `acted_by` from the authenticated identity (never the body) → the workflow
+reads it off the resolved decision → the fan-out carries it → it lands on **ordinary dispatch rows
+as well as triage rows**, because the misattribution was never triage-only (EFFECTFAIL02's two
+surviving parts carried it too).
+
+**Named `approved_by` on the row, NOT `acted_by`, and the difference is load-bearing.** The
+projection already has an `acted_by` COLUMN meaning "who resolved THIS row", which must stay NULL on
+a freshly-registered dispatch task until its assignee acts. Two meanings behind one identifier is
+the collision this repo already documents for `pcn_disposition`. Rides in `payload` (pass-through
+jsonb): additive, no migration.
+
+**DEPLOY IS ORDER-INDEPENDENT — no dual-key interval needed.** engine-a first: `acted_by` is absent
+from the decision and falls back to `approver` (the old, misattributing behaviour — degraded, not
+broken). cortex-bff first: it sends a key engine-a's validator ignores. Both halves are safe alone,
+which is why this did not need expand/contract despite touching two services.
+
+**PENDING:** 49/49 offline, but the live re-drive needs BOTH services rolled onto `90464e7`. Not
+done because engine-a was being actively rolled for unrelated ADR-0038 telemetry work at the time.
+Re-run `_seal_effect_failure_surfacing.py` (fresh notice) and confirm `payload.approved_by ==
+alice@example.com` on **both** the triage row and the surviving `pcn_disposition` rows.
+
+<details><summary>The fork as originally framed (superseded, kept for the reasoning)</summary>
 
 **Decide this before touching the code it governs.** It is stated here rather than settled at 4am
 for the same reason the last packet stated its fork: that is how `promotion:DATA_ENGINEERING` got
@@ -144,6 +182,8 @@ authorization in the first place. Whichever wins, the rule that applied to the l
 here: **verify the value is non-empty on a real auto-started review before trusting it**, because
 the whole defect is that a plausible-looking identity was sitting in that field all along.
 
+</details>
+
 ## 2. `sourcing` grants nobody — and it is now load-bearing for a test
 
 Deliberately NOT granted (who buys alternate sourcing is a ruling, and policy does not grow to make
@@ -151,10 +191,15 @@ a demo path work — the same posture that priced Carol). Two consequences to ho
 
 - A reviewer choosing alternate sourcing today gets a dispatch that reaches no one. It is now
   VISIBLE (a triage row) rather than silent, which is a strictly better failure but still a failure.
-- **The live seal `_seal_effect_failure_surfacing.py` USES that gap as its fault injector.** Granting
-  `sourcing` will turn the seal green-for-the-wrong-reason: LEG 5 would find no triage row because
-  nothing failed. **Whoever grants it must re-point the seal at another terminal failure in the same
-  commit** — otherwise a passing seal starts meaning the opposite of what it says.
+- **The live seal uses that gap as its fault injector — and the seal now says so itself.** Relying
+  on the eventual fixer knowing this file exists was never a control, so **LEG 0 asserts its own
+  precondition**: it resolves `sourcing` through the same directory registration uses and exits
+  INCONCLUSIVE **with re-pointing instructions** the moment it is no longer empty. Granting
+  `sourcing` therefore produces a self-announcing failure instead of a green that means nothing.
+  Unreachable Topaz returns `None`, never `[]` — "nobody is granted" and "I could not find out" are
+  different answers, and collapsing them would let an outage read as a healthy injector. Verified to
+  discriminate before being trusted: `sourcing -> []`, `qualification -> ['bob@example.com']`, same
+  call.
 
 ## 3. ~~`promotion:` / `access_grant:` resolve to NOBODY~~ — CHECKED AND CLEAN, no action
 
