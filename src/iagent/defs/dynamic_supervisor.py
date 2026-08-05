@@ -118,6 +118,12 @@ class SupervisorQueryConfig(Config):
     # against the LLM's confidence from /classify_predicate, replacing the
     # BM25-era yellow-zone band + VerifyVerbChoice gate).
     predicate_fallback_score_threshold: float = _FALLBACK_SCORE_THRESHOLD_DEFAULT
+    # Telemetry (ADR-0038): the request's trace + session ids, threaded from the BFF's
+    # runConfig so execute_subtask can forward them to Engine A's /analyze — X-Trace-Id
+    # unifies the conversation's spans under one trace, X-Session-Id groups the sitting.
+    # Empty for older serialized runs / direct callers.
+    trace_id: str = ""
+    session_id: str = ""
 
 
 @op(out=DynamicOut(Dict[str, Any]))
@@ -952,9 +958,18 @@ def _call_engine_a_fallback(
         ),
     }
 
+    # Forward the request's trace + session ids so Engine A's /analyze proxy adopts them
+    # (X-Trace-Id -> the analyst trace's seed; X-Session-Id -> the Langfuse session). The
+    # conversation-path leg of ADR-0038: cortex-ui -> BFF -> supervisor -> Engine A.
+    _tele_headers = {}
+    if config.trace_id:
+        _tele_headers["X-Trace-Id"] = config.trace_id
+    if config.session_id:
+        _tele_headers["X-Session-Id"] = config.session_id
     response = requests.post(
         f"{RESTATE_ANALYST_URL}/analyze",
         json=payload,
+        headers=_tele_headers or None,
         timeout=300,
     )
     response.raise_for_status()

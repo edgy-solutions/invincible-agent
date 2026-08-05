@@ -2110,6 +2110,8 @@ async def _launch_supervisor_job(
     user_persona: str | None = None,
     entitled_domains: list[str] | None = None,
     entity_refs: list[str] | None = None,
+    trace_id: str = "",
+    session_id: str = "",
 ) -> str | None:
     """Launch the supervisor_query_job on Dagster.
 
@@ -2172,6 +2174,10 @@ async def _launch_supervisor_job(
         "entitled_domains": entitled_domains,
         "candidate_verb": candidate_verb,
         "entity_refs": entity_refs,
+        # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
+        # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
+        "trace_id": trace_id,
+        "session_id": session_id,
     }
 
     run_config = {
@@ -2493,6 +2499,7 @@ async def _get_ui_payload_output(run_id: str) -> dict:
 
 async def generate_dagster_stream(
     request: InterviewRequest,
+    trace_id: str = "",   # cortex-ui X-Trace-Id (ADR-0038); seeds the analyst trace via the supervisor
     user_id: str = "default_testing_user",
     # ADR-0025 hop 2: caller's entitlement key (email); threaded to Engine D
     # so query_metadata asks Topaz can_view. Parallels entitled_domains.
@@ -2762,6 +2769,8 @@ async def generate_dagster_stream(
         user_persona=user_persona,
         entitled_domains=entitled_domains,
         entity_refs=entity_refs,
+        trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
+        session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )
     if not run_id:
         yield _perror(
@@ -3273,7 +3282,8 @@ async def register_frontend_capabilities(
 
 @app.post("/orchestrate")
 @app.post("/interview/stream")
-async def orchestrate(request: InterviewRequest, current_user: User = Depends(get_current_user)):
+async def orchestrate(request: InterviewRequest, http_request: Request,
+                      current_user: User = Depends(get_current_user)):
     """
     Entry point for the Agentic Mesh.
     Delegates to Dagster GraphQL and streams step stats as SSE events
@@ -3301,6 +3311,10 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
          entitlements.
     """
     ent = current_user.entitlements
+    # Telemetry (ADR-0038): cortex-ui mints X-Trace-Id per request; thread it so the whole
+    # conversation (BFF -> supervisor -> Engine A) lands ONE Langfuse trace. Session grouping
+    # uses request.session_id (the conversation thread) downstream.
+    _trace_id = http_request.headers.get("X-Trace-Id", "")
     entitled_cells = [
         {"persona": c.persona, "domain": c.domain} for c in ent.cells
     ]
@@ -3416,6 +3430,7 @@ async def orchestrate(request: InterviewRequest, current_user: User = Depends(ge
         _keepalive_wrap(
             generate_dagster_stream(
                 request,
+                trace_id=_trace_id,
                 user_id=current_user.id,
                 # ADR-0025 hop 2 + identity consolidation (2026-07-09): the
                 # caller's AUTHORIZATION IDENTITY (authz_id — the
