@@ -366,3 +366,12 @@ jobs:
           python -m py_compile src/iagent/defs/dynamic_factory.py
           python -m py_compile agent_fleet/models.py
           echo "All syntax checks passed"
+
+      - name: Telemetry mapping truth-check (ADR-0038)
+        # The mesh telemetry mapping (baml_shared/telemetry-mapping.yaml) must name only
+        # fields build_trace_values produces — a dangling or unmapped field fails here,
+        # before it silently emits nothing to Langfuse. Needs just the leaf + pytest (the
+        # test puts baml_shared on sys.path itself), so it stays a fast PR check.
+        run: |
+          pip install pytest pydantic pyyaml "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git"
+          python -m pytest tests/test_telemetry.py -q
