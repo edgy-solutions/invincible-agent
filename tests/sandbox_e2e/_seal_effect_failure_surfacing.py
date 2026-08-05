@@ -186,7 +186,7 @@ async def main() -> int:
                 ("3b no DISPATCHED delivery claim", no_delivery_claim),
                 ("4 surviving dispatches landed (positive control)", leg4),
                 ("5 dead dispatch surfaced as a triage row", leg5),
-                ("6 the row names the approver", leg6)]
+                ("6 provenance is TRUE + points at acted_by", leg6)]
         for name, ok in legs:
             print(f"  {name}: {'PASS' if ok else 'FAIL'}")
         ok = all(v for _, v in legs)
