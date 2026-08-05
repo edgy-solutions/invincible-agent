@@ -248,6 +248,13 @@ jobs:
               fi
           COPY ${AGENT_DIR}/ /app/
           COPY baml_shared/baml_client/baml_client/ /app/baml_client/
+          # Telemetry shim + mesh mapping (ADR-0038). MUST land at /app (the flattened
+          # service root, on sys.path) so every service's `from telemetry import ...`
+          # resolves to the provenance-telemetry-backed shim instead of its ImportError
+          # no-op fallback. The shim reads telemetry-mapping.yaml from its own dir (/app).
+          # Copied for every fleet service (two small files), like baml_client above.
+          COPY baml_shared/telemetry.py /app/telemetry.py
+          COPY baml_shared/telemetry-mapping.yaml /app/telemetry-mapping.yaml
           # Git-asserted process definitions (ADR-0029). BAKED IN, not mounted: the gate
           # tests executor-plus-YAML as ONE unit and the deploy must ship that unit;
           # definitions have no validate->reconcile->readback discipline the way Topaz
