@@ -22,6 +22,7 @@ dependencies = [
     "ollama",
     "langfuse",
     "litellm",
+    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",  # ADR-0038 telemetry leaf (via baml_shared/telemetry.py shim)
     "packaging",
     "mcp",
     "acryl-datahub",

@@ -71,6 +71,9 @@ dev = [
     "pytest-asyncio",
     "weaviate-client>=4.4,<5.0",
     "lxml>=6.1.1",
+    # ADR-0038 telemetry leaf — lets the mesh-mapping truth-check (tests/test_telemetry.py)
+    # RUN rather than importorskip. Also declared in restate_analyst for runtime emission.
+    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
 ]
 
 [build-system]

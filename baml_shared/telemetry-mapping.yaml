@@ -1,0 +1,20 @@
+# iagent mesh telemetry mapping (ADR-0038). doc-tools ships its own; this is the
+# MESH's vocabulary. The provenance-telemetry leaf validates only the SHAPE (the
+# left-hand slots + score encodings are a closed set); the mesh owns TRUTH — the CI
+# truth-check pins these field names to baml_shared.telemetry.build_trace_values.
+version: 1
+
+slots:                       # langfuse slot  ->  mesh field
+  trace_id:   trace_id       # adopted from X-Trace-Id (cortex-ui mints one per request)
+  user_id:    authz_id       # the caller's identity (svc:* for service accounts)
+  session_id: session_id     # the UI conversation (X-Session-Id) — groups one sitting's traces
+  release:    build_sha      # deployed git SHA (CI-baked LANGFUSE_RELEASE)
+
+tags:     [engine, verb, domain, environment]
+
+metadata: [subject_class, resolved_via, chart_version]
+
+# NOTE: scores (confidence, coherence) are emitted from the RESPONSE downstream, not
+# at the entry boundary, so none are declared here yet.
+
+content_bearing: [task_description, mpn, notice_id, snippet, matched_text, override_reason]

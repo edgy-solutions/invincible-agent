@@ -42,6 +42,47 @@ def test_configure_litellm_no_langfuse(monkeypatch):
     monkeypatch.delenv("LITELLM_FAILURE_CALLBACKS", raising=False)
     
     telemetry.configure_litellm()
-    
+
     assert "LITELLM_SUCCESS_CALLBACKS" not in os.environ
     assert "LITELLM_FAILURE_CALLBACKS" not in os.environ
+
+
+# --- Leaf shim (ADR-0038): the provenance-telemetry primitives are re-exported -----
+
+def test_leaf_primitives_are_exported():
+    """The shim exposes the leaf's surface so services can migrate off safe_* onto it."""
+    for name in ("traced", "set_trace_standard", "observe_span", "litellm_metadata",
+                 "redact", "build_trace_values"):
+        assert hasattr(telemetry, name), f"telemetry.{name} missing from the shim"
+
+
+def test_traced_and_set_trace_standard_are_no_op_when_disabled(monkeypatch):
+    """With Langfuse off (and/or the leaf absent) the new primitives never raise and
+    never change behaviour — the witness-channel axiom."""
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+
+    @telemetry.traced(name="unit")
+    def work(x):
+        return x * 2
+    assert work(21) == 42
+
+    # A missing mapping / disabled emit must be a silent no-op, not an exception.
+    telemetry.set_trace_standard(telemetry.MAPPING, telemetry.build_trace_values(
+        trace_id="t", authz_id="svc:x", engine="restate_analyst"))
+
+
+def test_mesh_mapping_truth_check():
+    """Truth tier: the mesh mapping names ONLY fields build_trace_values produces.
+    The leaf validates the mapping's shape; this pins its field names to the code."""
+    pytest.importorskip("provenance_telemetry")
+    from provenance_telemetry import load_mapping
+
+    m = load_mapping(str(_BAML_SHARED_PATH / "telemetry-mapping.yaml"))
+    provided = set(telemetry.build_trace_values(
+        trace_id="t", authz_id="svc:review-starter", session_id="s",
+        engine="restate_analyst", verb="mesh:answerQuestion", domain="SUSTAINMENT",
+        subject_class="pcn:ChangeNotice", resolved_via="graph", chart_version="0.3.26"))
+    mapped = set(m.slots.values()) | set(m.tags) | set(m.metadata) | set(m.scores)
+    assert not (mapped - provided), f"mapping names fields with no provider: {sorted(mapped - provided)}"
+    assert not (provided - mapped), f"build_trace_values emits unmapped fields: {sorted(provided - mapped)}"
