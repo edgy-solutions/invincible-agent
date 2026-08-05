@@ -1483,7 +1483,7 @@ wheels = [
 [[package]]
 name = "provenance-telemetry"
 version = "0.1.0"
-source = { git = "https://github.com/edgy-solutions/provenance-telemetry.git#fc930a093d03f5d345e742f3db6db0edf3b16f36" }
+source = { git = "https://github.com/edgy-solutions/provenance-telemetry.git#9ca43d4002632e737c067b6384e53c4a5203cdd3" }
 dependencies = [
     { name = "langfuse" },
     { name = "opentelemetry-api" },
