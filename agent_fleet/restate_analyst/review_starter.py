@@ -50,6 +50,25 @@ except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.policy_rules_client import fetch_policy_rules
     from agent_fleet.restate_analyst.orchestrator.auth import current_trace_id
 
+# Telemetry (ADR-0038): baml_shared is on sys.path (the analyst app adds it at startup).
+# Guarded so the ReviewStarter runs identically when the shim/leaf is absent (no-op
+# primitives) — the witness channel never breaks the composition.
+try:
+    from telemetry import traced, set_trace_standard, build_trace_values, MAPPING  # type: ignore[no-redef]
+except Exception:  # pragma: no cover — telemetry is never load-bearing
+    def traced(name=None, as_type=None):  # type: ignore[misc]
+        def _d(f):
+            return f
+        return _d
+
+    def set_trace_standard(*_a, **_k):  # type: ignore[misc]
+        return None
+
+    def build_trace_values(**_k):  # type: ignore[misc]
+        return {}
+
+    MAPPING = None
+
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 
@@ -342,17 +361,35 @@ async def start_review(ctx: Context, request: dict) -> dict:
 
     # 2) Compose the batch (ok or empty ruleset — an empty ruleset abstains everything, which surfaces
     #    honestly as NO_RESIDUE below rather than a silent nothing).
-    build = await ctx.run(
-        "build_review_batch",
-        lambda: build_review_from_request(
+    # The composition runs as a Langfuse span RE-KEYED to the extraction's trace (ADR-0038)
+    # so bucket -> extraction -> review renders as ONE trace. @traced is a no-op when the
+    # leaf/Langfuse is absent; the emission sits INSIDE ctx.run, so it is journaled with the
+    # step (runs once, not re-emitted on a restate replay). Fail-soft throughout — telemetry
+    # never changes the composition or its result.
+    @traced(name="review composition")
+    def _compose_batch():
+        if _trace_id:
+            try:
+                set_trace_standard(MAPPING, build_trace_values(
+                    trace_id=_trace_id,
+                    authz_id=approver,
+                    engine="review_starter",
+                    verb="mesh:startReview",
+                    domain=request.get("domain"),
+                    subject_class=request.get("doc_type") or "PCN",
+                ))
+            except Exception:  # noqa: BLE001 — telemetry never breaks the compose
+                pass
+        return build_review_from_request(
             request,
             ruleset=rules["ruleset"],
             category_classes=rules["category_classes"],
             ruleset_ref=rules["ruleset_ref"],
             resolve_subject=resolve_subject_via_engine_o,
             can_act=_no_reviewer_filter,
-        ),
-    )
+        )
+
+    build = await ctx.run("build_review_batch", _compose_batch)
     batch_items = build["batch_items"]
     if not batch_items:
         # Nothing reached residue — every part filtered / auto-disposed. Honest empty (no workflow, no
