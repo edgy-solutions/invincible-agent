@@ -156,12 +156,24 @@ a demo path work — the same posture that priced Carol). Two consequences to ho
   nothing failed. **Whoever grants it must re-point the seal at another terminal failure in the same
   commit** — otherwise a passing seal starts meaning the opposite of what it says.
 
-## 3. `promotion:DATA_ENGINEERING` and `access_grant:DATA_ENGINEERING` resolve to NOBODY
+## 3. ~~`promotion:` / `access_grant:` resolve to NOBODY~~ — CHECKED AND CLEAN, no action
 
-Asserted in git, absent from live Topaz before tonight's sync; the sync has since added them
-(`+3 relations`). Confirm with `_probe_orphaned_audiences.py` that no pending rows were stranded
-under those keys while they were empty — the drift was live for an unknown period, and the
-orphaned-audience class is exactly "visible but unactionable".
+Both were asserted in git and absent from live Topaz; the sync added them (`+3 relations`). The
+worry was stranded rows — the orphaned-audience class is exactly "visible but unactionable", and the
+drift had been live for an unknown period. Checked rather than assumed:
+
+```
+dispatch_failure:SUSTAINMENT    kind=extraction_refusal   rows=2   actors=1
+disposition_review:SUSTAINMENT  kind=grouped_review       rows=1   actors=1
+procurement                     kind=pcn_disposition      rows=1   actors=1
+qualification                   kind=pcn_disposition      rows=7   actors=1
+
+CLEAN: 4 live audience(s), every one grants at least one actor.   (exit 0)
+```
+
+Nothing was ever queued against those two keys, so nothing was stranded. Closed. (The two
+`dispatch_failure:SUSTAINMENT` rows are `EFFECTFAIL02`/`03` from the live drives, both routable —
+the probe's own positive control that the new audience works end to end.)
 
 ## Also carried (unchanged owners)
 
