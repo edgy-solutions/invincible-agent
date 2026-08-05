@@ -73,7 +73,7 @@ except Exception:  # a malformed/absent mapping -> API stays live, emits nothing
 
 def build_trace_values(*, trace_id=None, authz_id=None, session_id=None, engine=None,
                        verb=None, domain=None, subject_class=None, resolved_via=None,
-                       chart_version=None) -> dict:
+                       chart_version=None, join_status=None) -> dict:
     """The flat provenance dict projected onto a mesh trace at the entry boundary.
 
     SINGLE SOURCE OF TRUTH for which fields the mesh carries — the CI truth-check pins
@@ -93,6 +93,10 @@ def build_trace_values(*, trace_id=None, authz_id=None, session_id=None, engine=
         "subject_class": subject_class,                # what the query resolved to
         "resolved_via": resolved_via,                  # the resolution rung (vector/graph/phonebook)
         "chart_version": chart_version or os.getenv("CHART_VERSION"),
+        # Legibility of a KNOWN join gap in the data itself (not just a handoff doc): a
+        # restate engine whose trace id doesn't yet reach it tags itself so a reader sees the
+        # orphan is by-limitation, not by-accident. None on the joined path -> no tag.
+        "join_status": join_status,
     }
 
 

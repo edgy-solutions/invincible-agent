@@ -823,6 +823,11 @@ paths and titles in your final_answer so the downstream formatter can render the
                     trace_id=request.get("trace_id"),
                     engine="neo4j_expert",
                     authz_id=request.get("user_id") or request.get("authz_id"),
+                    # Legibility of a KNOWN join gap: until a proxy threads the caller's trace
+                    # id into Engine E's restate BODY, its trace is an ORPHAN by limitation, not
+                    # by accident. Tag it so a reader sees the disconnect IN THE DATA, not only
+                    # in a handoff doc. Drops to None (joined) the moment a trace id arrives.
+                    join_status=("join:pending-proxy" if not request.get("trace_id") else None),
                 ), name="engine-e graph reasoning"):
                     # Run the agent in a thread pool since smolagents is synchronous
                     result = await asyncio.to_thread(agent.run, final_prompt)

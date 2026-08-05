@@ -10,7 +10,7 @@ slots:                       # langfuse slot  ->  mesh field
   session_id: session_id     # the UI conversation (X-Session-Id) — groups one sitting's traces
   release:    build_sha      # deployed git SHA (CI-baked LANGFUSE_RELEASE)
 
-tags:     [engine, verb, domain, environment]
+tags:     [engine, verb, domain, environment, join_status]
 
 metadata: [subject_class, resolved_via, chart_version]
 
