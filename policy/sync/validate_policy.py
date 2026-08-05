@@ -187,6 +187,30 @@ def validate(
     errors.extend(f"capability_grants.yaml: {e}" for e in cap_errors)
     print(f"  capability_grants.yaml: {len(caps)} capability(ies)")
 
+    # ADMISSION POSTURE (ADR-0034). Validated through the SAME parser the runtime loads with, so
+    # there is ONE definition of a well-formed table and this gate cannot drift from the loader.
+    # Added when the table acquired a production reader (phase 1.3) — before that it was a git
+    # artifact nothing consumed, and a validator for it would have guarded nothing.
+    #
+    # OPTIONAL BY DESIGN: a deployment with no trust table expresses no admission policy and
+    # supervises everything, which is the born-default, not an error.
+    trust_path = policy_dir / "trust_table.yaml"
+    if trust_path.exists():
+        trust_raw = _read_yaml(trust_path, errors)
+        try:
+            import sys as _sys
+            _root = Path(__file__).resolve().parents[2]
+            if str(_root) not in _sys.path:
+                _sys.path.insert(0, str(_root))
+            from agent_fleet.utils.trust_table import parse_trust_table  # noqa: PLC0415
+            parse_trust_table(trust_raw, ref="validate")
+            fmts = trust_raw.get("formats") or {}
+            n_promoted = sum(1 for e in fmts.values()
+                             if isinstance(e, dict) and e.get("rung") not in (None, "supervised"))
+            print(f"  trust_table.yaml: {len(fmts)} format(s), {n_promoted} above supervised")
+        except Exception as exc:  # noqa: BLE001 — a malformed table REFUSES, never warns
+            errors.append(f"trust_table.yaml: {exc}")
+
     # AUTHOR-BUG GATE, family-wide. ALL FOUR grant syncs write `user` subjects
     # UNCONDITIONALLY, so a grantee that isn't a known user seeds a phantom
     # `user:<name>` that PASSES readback while granting nothing (silent-wrong-grant).

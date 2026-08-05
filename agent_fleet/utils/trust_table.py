@@ -32,6 +32,24 @@ RUNGS = (SUPERVISED, MONITORED, TRUSTED)
 
 DEFAULT_RUNG = SUPERVISED
 
+# SENTINEL VERSIONS — values that mean "provenance is MISSING". Never a version.
+#
+# `unset` is the consumer side's env-var default; `unstamped` is the producer's build-arg default
+# (doc-tools bakes `doc-tools@<sha>` and falls back to `doc-tools@unstamped`). Both are deliberately
+# implausible so an unprovenanced artifact stands out in the corpus rather than blending in — and
+# that same property is what makes them recognisable here.
+#
+# Matched on the whole string AND on the tail after '@', because the real shape is `<tool>@<sha>`
+# and the sentinel rides in the sha position.
+_SENTINEL_VERSIONS = frozenset({"unset", "unstamped", "unknown", "none", ""})
+
+
+def _is_sentinel_version(value: str) -> bool:
+    s = (value or "").strip().lower()
+    tail = s.rsplit("@", 1)[-1] if "@" in s else s
+    return s in _SENTINEL_VERSIONS or tail in _SENTINEL_VERSIONS
+
+
 _TRUST_TABLE_FILE = os.getenv("TRUST_TABLE_FILE", "policy/trust_table.yaml")
 
 
@@ -127,6 +145,40 @@ def parse_trust_table(raw: dict, *, ref: str) -> TrustTable:
         # An unexplained trust grant is not a grant — the same rule capability_grants.yaml
         # enforces, for the same reason: this authorizes the pipeline to act unsupervised.
         if rung != SUPERVISED:
+            # NO RUNG ABOVE `supervised` MAY KEY ON A SENTINEL VERSION.
+            #
+            # A sentinel is not a version — it is the marker for "provenance is MISSING", so a
+            # trust rung keyed on one is a contradiction of this table's own semantics: it grants
+            # autonomy on the ABSENCE of the very evidence the key exists to carry.
+            #
+            # THE THREAT IS THE DEGENERATE PROMOTION, and it is the worst shape this arc has found.
+            # Promoting a SPECIFIC version prematurely fails SAFE — nothing matches, everything
+            # falls to the floor, and `admitted_by` makes it legible. Promoting the SENTINEL
+            # matches the ENTIRE unprovenanced corpus at once: not a ceremony that does nothing,
+            # but one that does EVERYTHING, indiscriminately, keyed on missing information.
+            #
+            # PERMANENT, NOT INTERIM. This is not a pin guarding the window before the consumer
+            # derive lands, so it carries no retirement condition: a future misconfigured build
+            # can regress to emitting the sentinel at any time, and this rule is what keeps the
+            # resulting artifacts unpromotable. It is a row in the definition of a well-formed
+            # table, in the same idiom as the two checks around it.
+            #
+            # DELIBERATELY A SHAPE CHECK, NOT A CORPUS QUERY. Refusing promotions "while the
+            # sentinel appears anywhere in the live corpus" was considered and REJECTED: a policy
+            # validator that reads live state inverts the rails' direction (git validates git; the
+            # corpus is reconciled TO policy, never consulted BY its validator), and it would make
+            # validity time- and environment-dependent. The narrow rule captures the dangerous
+            # case; the residual — a premature specific-version promotion — fails safe by
+            # non-match. Narrow and permanent beats broad and stateful.
+            if _is_sentinel_version(str(entry.get("pipeline_version") or "")):
+                raise TrustTableInvalid(
+                    f"{fp!r}: rung {rung!r} keys on the SENTINEL version "
+                    f"{entry.get('pipeline_version')!r}, which means 'provenance missing', not a "
+                    f"version. A rung above 'supervised' keyed on a sentinel would match every "
+                    f"unprovenanced artifact at once — granting autonomy on the ABSENCE of the "
+                    f"evidence the key exists to carry. Promote against a real "
+                    f"<tool>@<sha> emitted by the producer."
+                )
             if not entry.get("ratified_by"):
                 raise TrustTableInvalid(f"{fp!r}: rung {rung!r} needs an accountable ratified_by")
             if not entry.get("evidence"):

@@ -180,5 +180,63 @@ def test_a_malformed_table_raises_rather_than_degrading_quietly():
         parse_trust_table({"formats": ["not", "a", "mapping"]}, ref="trust@x")
 
 
+# ===========================================================================
+# NO RUNG ABOVE `supervised` MAY KEY ON A SENTINEL VERSION
+# ===========================================================================
+def _sentinel_entry(version, rung="monitored"):
+    return {"formats": {"qorvo/pcn/v1": {
+        "rung": rung, "pipeline_version": version,
+        "ratified_by": "cnogradi", "evidence": "fixture",
+    }}}
+
+
+@pytest.mark.parametrize("sentinel", [
+    "unset",                 # the consumer side's env-var default
+    "unstamped",
+    "doc-tools@unstamped",   # the producer's build-arg default — sentinel in the sha position
+    "doc-tools@unset",
+    "UNSET",                 # case must not launder it
+    "  unset  ",             # nor whitespace
+    "unknown",
+    "none",
+])
+def test_a_promotion_keyed_on_a_sentinel_version_is_REFUSED(sentinel):
+    """THE DANGEROUS PROMOTION — the inverse of the no-op, and the worse shape.
+
+    Promoting a SPECIFIC version prematurely fails SAFE: nothing matches, everything falls to the
+    supervised floor, and `admitted_by` makes it legible. Promoting the SENTINEL matches the ENTIRE
+    unprovenanced corpus at once — not a ceremony that does nothing, but one that does EVERYTHING,
+    indiscriminately, keyed on the ABSENCE of the evidence the key exists to carry.
+
+    PERMANENT, not an interim pin: a future misconfigured build can regress to emitting the
+    sentinel at any time, and this rule is what keeps the resulting artifacts unpromotable. So it
+    carries NO retirement condition — unlike scaffolding, which must declare one.
+    """
+    with pytest.raises(TrustTableInvalid) as ei:
+        parse_trust_table(_sentinel_entry(sentinel), ref="trust@x")
+    msg = str(ei.value)
+    assert "SENTINEL" in msg and "provenance missing" in msg, (
+        f"the refusal does not NAME the rule it enforces: {msg}")
+
+
+@pytest.mark.parametrize("rung", [MONITORED, TRUSTED])
+def test_a_real_version_passes_at_every_autonomy_rung(rung):
+    """THE OTHER ARM — without it the test above proves only that something refuses.
+
+    A genuine `<tool>@<sha>` is promotable at both autonomy-bearing rungs. If this goes red, the
+    sentinel check has widened into a ban on promotion itself.
+    """
+    table = parse_trust_table(_sentinel_entry("doc-tools@446fbae", rung=rung), ref="trust@x")
+    assert table.rung_for("qorvo/pcn/v1", "doc-tools@446fbae") == rung
+
+
+def test_supervised_may_key_on_anything():
+    """`supervised` is the FLOOR — it grants nothing, so a sentinel version there is harmless and
+    must stay expressible. Banning it would make the born-default unstatable, and a rule that
+    forbids the safe case is a rule that gets worked around."""
+    table = parse_trust_table(_sentinel_entry("unset", rung=SUPERVISED), ref="trust@x")
+    assert table.rung_for("qorvo/pcn/v1", "unset") == SUPERVISED
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
