@@ -128,3 +128,42 @@ audiences:
       real employee-id at work.
     grant_to:
       - bob@example.com
+
+  # DRIFT CLOSURE 2026-08-05, second instance of the shape the disposition_review block
+  # above records. `procurement` was granted BY HAND in sandbox Topaz on 2026-08-04 to clear
+  # notice A's SECOND defect (the empty audience the 401 was masking — see
+  # docs/plans/2026-08-04-notice-a-dispatch-failure.md). It was never committed. Live Topaz
+  # carried the relation; this file did not; and THIS SYNC PRUNES. So the fix for that defect
+  # was one `task_grant_sync` run away from being revoked — restoring the defect silently,
+  # under a green "+N relations, -1 revoked" line.
+  #
+  # THE CLASS, now that it has happened twice: a grant applied by hand to clear an incident is
+  # UNFINISHED until it is asserted in the file its own sync prunes from. The hand-grant is the
+  # mitigation; the commit is the fix. Filed as a rule in AGENTS.md.
+  #
+  # Derivation: dispatch_plan._DISPOSITION_QUEUE maps `dispatchLTB` -> `procurement`. alice's
+  # last-time-buy disposition routes here, so this audience is reachable from the live UI the
+  # moment a reviewer picks that option.
+  procurement:
+    granted_by: cnogradi
+    reason: >-
+      The dispatch-actor audience for last-time-buy dispositions. dispatch_plan routes
+      `dispatchLTB` -> `procurement`; on approval the review fans out one procurement task
+      per affected part and these actors act it. Granted live 2026-08-04 during the notice-A
+      repair (its emptiness was the second defect, masked by the 401); committed 2026-08-05 so
+      the sync reproduces it instead of pruning it. Sandbox = bob; bind to the buyer's real
+      employee-id at work.
+    grant_to:
+      - bob@example.com
+
+  # KNOWN GAP, DELIBERATELY NOT GRANTED — `sourcing` (dispatch_plan maps `dispatchAltSourcing`
+  # -> `sourcing`) is asserted in NEITHER git nor live Topaz. It is the same latent defect as
+  # `procurement` was, one disposition to the left: the first reviewer to choose alternate
+  # sourcing gets a dispatch that routes to NOBODY.
+  #
+  # Not granted here because WHO buys alternate sourcing is a policy ruling, and policy does not
+  # grow to pre-empt a demo path — the same posture that priced Carol rather than seeding her.
+  # What closed the gap structurally instead is `_probe_disposition_audiences.py`, which walks
+  # the WHOLE _DISPOSITION_QUEUE map and fails on any queue that resolves to zero actors. The
+  # probe converts this from a defect that waits for a reviewer into one that is visible now.
+  # Grant it when a ruling names the buyer.

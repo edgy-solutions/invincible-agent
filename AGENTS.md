@@ -315,6 +315,40 @@ VirtualObject keys are journal state, so the same three options apply to them
 renamed promise can never be resolved by any submission — suspended forever, no error, the kill-seal's
 failure mode wearing a promise's clothes.
 
+### A hand-grant that clears an incident is a MITIGATION; the commit is the fix
+Second instance 2026-08-05 (`procurement`, after `disposition_review:SUSTAINMENT` in M1), so it gets
+the rule. When an incident is cleared by applying a relation **directly to the live directory**, the
+work is not done — it is *inverted*. The system now looks healthy while the assertion that
+reproduces that health exists nowhere, and the sync that owns the relation **prunes what git does
+not assert**. The next routine sync therefore REVOKES the fix, silently, under a green
+`+N relations, -1 revoked` line that reads like success.
+
+The tell is the direction of the drift, and both directions are real — check for both:
+- **live-but-not-git** → one sync run from revocation (the incident returns).
+- **git-but-not-live** → already revoked, or never applied; the grant resolves to NOBODY *right now*
+  while the file says otherwise.
+
+Both were live in sandbox when this was written: `procurement` in the first state,
+`promotion:DATA_ENGINEERING` and `access_grant:DATA_ENGINEERING` in the second. A file read alone
+would have shown three healthy grants and missed all three faults, because **the file is the
+assertion, not the observation** — you have to ask the directory.
+
+Ordering is forced whenever a later change will run the sync: **commit the hand-grant BEFORE
+running the sync for anything else**, or the unrelated change takes the incident fix down as
+collateral.
+
+### Coverage over the audiences that EXIST is not coverage over the audiences code can PRODUCE
+The reachability class, in authz form. A probe that walks live rows can only see a queue something
+has already routed to; a queue no one has picked yet has no rows, so an ungranted audience is
+invisible until the first user reaches it — at which point the effect dies with the decision already
+recorded as settled. Enumerate from **the code's declared map**, not from the data
+(`_probe_disposition_audiences.py` imports `_DISPOSITION_QUEUE` rather than listing audiences).
+
+Applying it found that notice A's second defect was one of THREE: `procurement` empty (the one that
+bit), `sourcing` granted nowhere at all, and `procurement`'s own grant uncommitted. **The bug that
+bit was the only one anything could see, and it was not the only one there.** Enumerate the
+producer, then check each one it can emit.
+
 ### Build the fixture as a SUPERSET of reality, not an approximation of it
 Where the real input cannot enter the repo (restricted boundary) or does not exist yet, build the
 fixture **deliberately as degraded as the contract permits**, so any real input is a SUBSET of it.
