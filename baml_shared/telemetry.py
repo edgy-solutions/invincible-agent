@@ -26,6 +26,7 @@ try:
     from provenance_telemetry import (  # noqa: F401
         traced,
         set_trace_standard,
+        observed_trace,
         observe_span,
         litellm_metadata,
         redact,
@@ -43,6 +44,10 @@ except Exception:  # leaf not installed here -> pure no-ops, old surface still w
 
     def set_trace_standard(*_a, **_k):  # type: ignore[misc]
         return None
+
+    @contextmanager
+    def observed_trace(*_a, **_k):  # type: ignore[misc]
+        yield
 
     @contextmanager
     def observe_span(operation, **_attrs):  # type: ignore[misc]
@@ -101,8 +106,8 @@ def safe_observe(**kwargs) -> Callable:
 def safe_update_observation(input_data: Any = None, output_data: Any = None):
     if LANGFUSE_ENABLED:
         try:
-            from langfuse.decorators import langfuse_context
-            langfuse_context.update_current_observation(input=input_data, output=output_data)
+            from langfuse import get_client   # v4: update the current OTel span
+            get_client().update_current_span(input=input_data, output=output_data)
         except Exception:  # noqa: BLE001 — telemetry never breaks the work
             pass
 
@@ -110,7 +115,7 @@ def safe_update_observation(input_data: Any = None, output_data: Any = None):
 def get_langgraph_callbacks() -> list:
     if LANGFUSE_ENABLED:
         try:
-            from langfuse.callback import CallbackHandler
+            from langfuse.langchain import CallbackHandler   # v4 moved it here from langfuse.callback
             return [CallbackHandler()]
         except Exception:  # noqa: BLE001
             pass

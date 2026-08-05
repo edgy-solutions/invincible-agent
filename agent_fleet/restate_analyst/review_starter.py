@@ -54,15 +54,13 @@ except ImportError:  # pragma: no cover - import path differs by runtime
 # Guarded so the ReviewStarter runs identically when the shim/leaf is absent (no-op
 # primitives) — the witness channel never breaks the composition.
 try:
-    from telemetry import traced, set_trace_standard, build_trace_values, MAPPING  # type: ignore[no-redef]
+    from telemetry import observed_trace, build_trace_values, MAPPING  # type: ignore[no-redef]
 except Exception:  # pragma: no cover — telemetry is never load-bearing
-    def traced(name=None, as_type=None):  # type: ignore[misc]
-        def _d(f):
-            return f
-        return _d
+    from contextlib import contextmanager as _cm
 
-    def set_trace_standard(*_a, **_k):  # type: ignore[misc]
-        return None
+    @_cm
+    def observed_trace(*_a, **_k):  # type: ignore[misc]
+        yield
 
     def build_trace_values(**_k):  # type: ignore[misc]
         return {}
@@ -366,28 +364,27 @@ async def start_review(ctx: Context, request: dict) -> dict:
     # leaf/Langfuse is absent; the emission sits INSIDE ctx.run, so it is journaled with the
     # step (runs once, not re-emitted on a restate replay). Fail-soft throughout — telemetry
     # never changes the composition or its result.
-    @traced(name="review composition")
     def _compose_batch():
-        if _trace_id:
-            try:
-                set_trace_standard(MAPPING, build_trace_values(
-                    trace_id=_trace_id,
-                    authz_id=approver,
-                    engine="review_starter",
-                    verb="mesh:startReview",
-                    domain=request.get("domain"),
-                    subject_class=request.get("doc_type") or "PCN",
-                ))
-            except Exception:  # noqa: BLE001 — telemetry never breaks the compose
-                pass
-        return build_review_from_request(
-            request,
-            ruleset=rules["ruleset"],
-            category_classes=rules["category_classes"],
-            ruleset_ref=rules["ruleset_ref"],
-            resolve_subject=resolve_subject_via_engine_o,
-            can_act=_no_reviewer_filter,
-        )
+        # v4: open (or JOIN) the trace on the EXTRACTION's id so this composition nests
+        # under the SAME Langfuse trace as the doc-tools extraction — native, via
+        # create_trace_id(seed=trace_id). No seed (older review.json) -> a fresh trace.
+        # Enrichment + fail-soft are handled inside observed_trace.
+        with observed_trace(MAPPING, build_trace_values(
+            trace_id=_trace_id,
+            authz_id=approver,
+            engine="review_starter",
+            verb="mesh:startReview",
+            domain=request.get("domain"),
+            subject_class=request.get("doc_type") or "PCN",
+        ), name="review composition"):
+            return build_review_from_request(
+                request,
+                ruleset=rules["ruleset"],
+                category_classes=rules["category_classes"],
+                ruleset_ref=rules["ruleset_ref"],
+                resolve_subject=resolve_subject_via_engine_o,
+                can_act=_no_reviewer_filter,
+            )
 
     build = await ctx.run("build_review_batch", _compose_batch)
     batch_items = build["batch_items"]

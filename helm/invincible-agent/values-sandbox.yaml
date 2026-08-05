@@ -78,6 +78,9 @@ agentFleet:
     SMOLAGENTS_MODEL: "gpt-oss-128k:120b"
     OLLAMA_BASE_URL: "http://192.168.1.126:11434/v1"  # verified reachable from sandbox pods
     BAML_LOG_LEVEL: "info"
+    # Telemetry (ADR-0038): tags every trace with the cluster it ran in. The LANGFUSE_*
+    # creds ride in via agentFleet.secrets (values-sandbox.secret.yaml, gitignored).
+    DEPLOY_ENV: "sandbox"
 
     # MinIO / S3 — the SHARED config (iagent-config) the prime-substrate Job reads
     # (it bridges these to S3_ENDPOINT_URL / AWS_* via optional configMapKeyRefs).
