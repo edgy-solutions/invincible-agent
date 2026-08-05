@@ -354,9 +354,10 @@ def test_fallback_payload_for_no_match(supervisor_mod, monkeypatch):
     """no_predicate_matched fallback → task_description=sub_query,
     fallback_reason set, rejected_verb_iri null."""
     captured: dict = {}
-    def _capture_post(url, json, timeout):
+    def _capture_post(url, json, timeout, headers=None):
         captured["url"] = url
         captured["json"] = json
+        captured["headers"] = headers
         return _FakeResp({"status": "OK"})
     monkeypatch.setattr(supervisor_mod.requests, "post", _capture_post)
 
@@ -385,9 +386,10 @@ def test_fallback_payload_for_no_match(supervisor_mod, monkeypatch):
 def test_fallback_payload_for_low_confidence(supervisor_mod, monkeypatch):
     """low_confidence fallback → fallback_score plumbed, rejected_verb_iri set."""
     captured: dict = {}
-    def _capture_post(url, json, timeout):
+    def _capture_post(url, json, timeout, headers=None):
         captured["url"] = url
         captured["json"] = json
+        captured["headers"] = headers
         return _FakeResp({"status": "OK"})
     monkeypatch.setattr(supervisor_mod.requests, "post", _capture_post)
 
