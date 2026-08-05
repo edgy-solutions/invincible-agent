@@ -156,6 +156,46 @@ audiences:
     grant_to:
       - bob@example.com
 
+  # EFFECT-FAILURE audience (2026-08-05) — who learns that an APPROVED decision's effects died.
+  #
+  # THE LIE IT ENDS: a grouped review could read `approved` while its dispatches failed 160ms
+  # later, and nothing anywhere disagreed. The only dissent was a TerminalError in a Restate
+  # journal nobody reads. Notice A held that state for an hour.
+  #
+  # RULED, NOT IMPROVISED — option (b) of the evening packet's open fork. The workflow-1
+  # dispatch-gate ruling put effect execution under the pipeline's own identity: the reviewer's
+  # job ends at the DECISION. So an effect-failure belongs to whoever owns EXECUTION, not to the
+  # approver — routing it back to alice (option (a)) hands her a 401 she cannot fix, and routing
+  # it to the approver personally (option (c)) invents per-user routing no audience uses today.
+  #
+  # COMPARTMENT-SCOPED, unlike its flat siblings above (`qualification`, `procurement`,
+  # `sourcing`) — a deliberate divergence, written down before deviating. An effect-failure row
+  # NAMES A NOTICE, and existence-of-a-task is need-to-know (see the existence-oracle note at the
+  # top of this file). Flat would also mean ONE operator set for every compartment at work-deploy,
+  # and widening it afterwards is a rename on a live-synced identity surface — expand/contract,
+  # i.e. expensive. The siblings being flat is their unresolved question, not a precedent.
+  #
+  # THE SANDBOX BINDING IS A FIXTURE, and the distinction matters when reading a demo: bob is
+  # granted because he ACTS the dispatch queues (qualification/procurement) — an effect that never
+  # landed is his missing work — and, just as importantly, because he is NOT alice. Routing the
+  # failure to someone other than the decider is the visible content of ruling (b); binding it to
+  # alice would have made the demo indistinguishable from option (a) while claiming (b). At work
+  # this binds to the ops rota, not to a dispatch actor.
+  #
+  # VERIFIED NON-EMPTY BEFORE THE FIRST EMISSION, never by watching it fail — the serial-failures-
+  # mask rule applied to this fix's own precondition.
+  dispatch_failure:SUSTAINMENT:
+    granted_by: cnogradi
+    reason: >-
+      The effect-failure audience for the SUSTAINMENT compartment. When a per-item dispatch fails
+      TERMINALLY after a human already approved the disposition, the driver files a triage row here
+      (reason_code DISPATCH_FAILED_AFTER_APPROVAL) so that "approved but the effects never landed"
+      reaches someone instead of dying in a Restate journal. Deliberately NOT the reviewer audience:
+      the reviewer owns the decision, these actors own execution. Sandbox = bob (he acts the
+      dispatch queues, and he is not the approver); bind to the ops rota at work.
+    grant_to:
+      - bob@example.com
+
   # KNOWN GAP, DELIBERATELY NOT GRANTED — `sourcing` (dispatch_plan maps `dispatchAltSourcing`
   # -> `sourcing`) is asserted in NEITHER git nor live Topaz. It is the same latent defect as
   # `procurement` was, one disposition to the left: the first reviewer to choose alternate

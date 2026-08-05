@@ -96,5 +96,16 @@ capabilities:
       tool they do not open. Three live notices died exactly that way; this grant is the repair.
       Systemic refusals (ruleset/deployment/transport) still FAIL the run for ops and never use
       this capability — routing by who owns the answer is the whole point of the split.
+
+      SECOND CALLER 2026-08-05, recorded because a grant's reason IS its audit trail and an
+      unnamed dependent is an undeclared one. The PCN dispatch driver
+      (agent_fleet/restate_analyst/dispatch_driver.py) files a triage row under this SAME service
+      identity when a per-item dispatch fails TERMINALLY after a human already approved it
+      (reason_code DISPATCH_FAILED_AFTER_APPROVAL, audience dispatch_failure:<compartment>). Same
+      capability, same identity, one stage later — "approved but the effects never landed" is a
+      refusal AFTER the decision rather than before it. Revoking this grant now breaks TWO
+      surfaces, and the second one fails silently by design-of-the-old-world: it is the very
+      report that makes an invisible failure visible. That is the fact this paragraph exists to
+      put in front of whoever next considers pruning it.
     grant_to:
       - svc:review-starter

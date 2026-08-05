@@ -333,7 +333,15 @@ async def test_run_registers_task_then_fans_out_on_accept(monkeypatch):
         "batch_items": batch_items,
     })
     assert ctx.runs and ctx.runs[0] == "register_grouped_task", "grouped task not registered before suspend"
-    assert out["status"] == "DISPATCHED" and out["count"] == 2
+    # `RESOLVED` + `dispatch_enqueued`, not `DISPATCHED` (2026-08-05). `ctx.object_send` is
+    # fire-and-forget, so this workflow cannot witness delivery — notice A returned `DISPATCHED` for
+    # two dispatches that both died 160ms later. The status now claims only what its author saw:
+    # the review settled and N dispatches were ENQUEUED.
+    assert out["status"] == "RESOLVED" and out["count"] == 2
+    assert out["dispatch_enqueued"] == 2, (
+        "the honest replacement for the DISPATCHED claim did not survive the envelope mapping")
+    assert "DISPATCHED" not in repr(out), (
+        "a delivery claim came back — the workflow cannot know delivery, only enqueue")
     assert [s["key"] for s in ctx.sends] == ["IPCN25300X:MPN-0", "IPCN25300X:MPN-1"]
     assert [s["idempotency_key"] for s in ctx.sends] == ["IPCN25300X:MPN-0", "IPCN25300X:MPN-1"]
     # The grouped-task register (the FIRST post) MUST carry this workflow's own key as workflow_id —

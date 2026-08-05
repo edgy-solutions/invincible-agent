@@ -186,6 +186,12 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         "status": grouped["status"],
         "count": grouped["count"],
         "dispatched_keys": grouped["dispatched_keys"],
+        # `dispatch_enqueued` is the honest half of the old `DISPATCHED` claim (2026-08-05) and is
+        # mapped through explicitly — the envelope is projected field-by-field, so a field not named
+        # here is silently dropped, and a rename whose replacement never reaches the caller is worse
+        # than the lie it replaced. `.get` with a fallback because a definition executed before this
+        # field existed still reports `count`.
+        "dispatch_enqueued": grouped.get("dispatch_enqueued", grouped["count"]),
     }
 
 

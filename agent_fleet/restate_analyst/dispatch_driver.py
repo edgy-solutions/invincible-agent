@@ -64,7 +64,7 @@ _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 # ---------------------------------------------------------------------------
 # Serialization — DispatchPlan (pure dataclass) -> a JSON-native invocation body
 # ---------------------------------------------------------------------------
-def plan_to_payload(plan, *, requested_by: str = "") -> dict:
+def plan_to_payload(plan, *, requested_by: str = "", compartment: str = "") -> dict:
     """Flatten a ``DispatchPlan`` to the payload the VirtualObject consumes. Kept flat + JSON-native so
     it rides a Restate invocation body; ``None`` graph_write / human_task pass through as ``None``
     (an unresolved subject has no graph write; ``archive`` has no task).
@@ -74,11 +74,23 @@ def plan_to_payload(plan, *, requested_by: str = "") -> dict:
     retention, and — because this object retries — one that can be replayed long after it expired.
     The register now mints at use under the pipeline's own identity, so the field had become dead
     weight AND a standing exposure. Provenance still travels: ``requested_by`` names the human who
-    approved. See ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``."""
+    approved. See ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``.
+
+    ``compartment`` is DATA, not a credential, and it rides for one reason: if this dispatch dies
+    terminally after a human approved it, the effect-failure has to be ROUTED, and
+    ``dispatch_failure:<compartment>`` is the audience that owns it. Carrying it here keeps the
+    driver from having to parse a compartment out of an authz key at the moment it is handling a
+    failure — deriving identity by string-splitting is how a clean diff denies everyone."""
     gw = plan.graph_write
     ht = plan.human_task
     return {
         "idempotency_key": plan.resolution.idempotency_key,
+        "compartment": compartment,
+        # TOP-LEVEL TOO, not only inside human_task. An ``archive`` disposition has NO human_task
+        # (acknowledge-only, state write alone), so a terminal failure on its graph write would
+        # otherwise file an effect-failure row that cannot say whose decision failed to take
+        # effect — "(unrecorded)" on the one field an operator most needs.
+        "requested_by": requested_by,
         "graph_write": None if gw is None else {
             "subject_iri": gw.subject_iri,
             "disposition_state": gw.triples.get("dispositionState", ""),
@@ -219,6 +231,119 @@ def _write_disposition_state(gw: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# EFFECT-FAILURE SURFACING — "approved, but the effects died" is a refusal one stage later
+# ---------------------------------------------------------------------------
+# WHICH AUDIENCE OWNS AN EFFECT-FAILURE — ruled, not improvised (evening packet, addition 1).
+# `dispatch_failure:<compartment>` is an OPERATOR audience, deliberately NOT the reviewer's. The
+# workflow-1 dispatch-gate ruling put effect execution under the pipeline's own identity: the
+# reviewer's job ends at the DECISION. Routing an infrastructure failure back to the person who
+# made the decision (option (a)) hands alice a 401 she cannot fix; routing it to the approver
+# personally (option (c)) invents per-user routing no audience uses today.
+#
+# DIVERGENCE FROM ITS SIBLINGS, DELIBERATE AND WRITTEN DOWN BEFORE DEVIATING. The other dispatch
+# queues are compartment-FLAT (`qualification`, `procurement`, `sourcing`). This one is
+# compartment-SCOPED because existence-of-a-task is need-to-know (the same existence-oracle
+# argument policy/task_grants.yaml makes at the top), and an effect-failure row names a notice.
+# Flat would also mean one operator set for every compartment at work-deploy — and widening it
+# later is a rename on a live-synced identity surface, i.e. expand/contract, i.e. expensive. The
+# siblings being flat is their unresolved question, not a precedent to copy.
+_DISPATCH_FAILURE_AUDIENCE = "dispatch_failure:{compartment}"
+
+
+def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, task: dict,
+                                  cause: str, requested_by: str = "") -> dict:
+    """Mint a triage row for a dispatch that died TERMINALLY after a human already approved it.
+
+    THE LIE THIS ENDS. Before this existed, a grouped review could read ``approved`` while its
+    effects died 160ms later and NOTHING ANYWHERE DISAGREED — the human believes the decision
+    executed, the projection agrees, and the only dissent is a ``TerminalError`` in a Restate
+    journal nobody reads. Notice A produced exactly that state for an hour.
+
+    EMIT, DO NOT ONLY DETECT. The ``extraction_refusal`` shape already proves how an unprocessable
+    input reaches the people who own it; "approved but effects failed" is the same shape one stage
+    later, so it reuses the same route (``/triage_tasks``) rather than inventing a channel.
+
+    EVERY FAILURE HERE RAISES, and raises TERMINALLY — the same load-bearing decision as the
+    sensor's ``file_triage_task``. This call is the only thing standing between a dead effect and
+    invisibility, so a routing failure must be LOUDER than the failure it reports, never quieter.
+    Terminal rather than retryable because both plausible routing failures are deployment gaps that
+    do not heal on retry (403 = the pipeline lacks ``can_invoke(mesh:fileTriageTask)``; 422 = the
+    audience has zero entitled actors), and a retry loop on top of an already-terminal dispatch is
+    the retry-park DoS the suspend-vs-fail ruling forbids. The compound message names BOTH facts,
+    so whoever reads it learns the effect died AND that the report could not be delivered.
+    """
+    if not compartment:
+        # FAIL TO NONE AND ATTEST, never route to a broken key. `dispatch_failure:` with an empty
+        # tail matches no Topaz relation, so emitting it anyway would file a row that reaches
+        # nobody — an invisible report of an invisible failure, which is strictly worse than a
+        # loud refusal. An optimistic default here would be dishonest.
+        raise restate.TerminalError(
+            f"dispatch {idempotency_key!r} failed terminally ({cause}) AND the effect-failure could "
+            f"not be routed: no compartment on the payload, so the audience would be "
+            f"{_DISPATCH_FAILURE_AUDIENCE.format(compartment='')!r}, which grants nobody. "
+            f"An approval is now settled with no effects and no triage row.",
+            status_code=500,
+        )
+    audience = _DISPATCH_FAILURE_AUDIENCE.format(compartment=compartment)
+    mpn = task.get("mpn") or ""
+    # The task's own field first (it is the one the register used), then the payload-level fallback
+    # that covers the no-task dispositions.
+    requested_by = task.get("requested_by") or requested_by or ""
+    body = {
+        # Identity from the DISPATCH's own idempotency key (notice x part), so a redelivery that
+        # fails again files the SAME row rather than a second one — /triage_tasks is idempotent on
+        # task_id and answers ALREADY_FILED. Identity from the artifact, never model-derived.
+        "task_id": f"dispatch-failure:{idempotency_key}",
+        "audience": audience,
+        "domain": compartment,
+        "reason_code": "DISPATCH_FAILED_AFTER_APPROVAL",
+        "subject_ref": task.get("subject_ref") or mpn or idempotency_key,
+        "title": f"Dispatch failed after approval — {mpn or idempotency_key}",
+        "summary": (
+            f"A human approved this disposition and the dispatch then failed terminally, so the "
+            f"decision is recorded as settled but its effects never landed. "
+            f"Part: {mpn or '(unknown)'}. Queue: {task.get('audience') or '(none)'}. "
+            f"Disposition: {task.get('disposition') or '(none)'}. "
+            f"Approved by: {requested_by or '(unrecorded)'}. Cause: {cause}"
+        ),
+        "payload": {
+            "idempotency_key": idempotency_key,
+            "notice_fingerprint": task.get("notice_fingerprint") or "",
+            "mpn": mpn,
+            "disposition": task.get("disposition") or "",
+            "target_audience": task.get("audience") or "",
+            # PROVENANCE, kept separate from authorization on purpose — conflating "who decided"
+            # with "what authorized the effect" in one value is what caused notice A.
+            "approved_by": requested_by,
+            "cause": cause,
+        },
+    }
+    try:
+        resp = requests.post(
+            f"{CORTEX_BFF_URL}/triage_tasks", json=body,
+            headers={"Authorization": f"Bearer {mint_service_token()}"},
+            timeout=_HTTP_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001 — unreachable reporter is a LOUDER failure, never silent
+        raise restate.TerminalError(
+            f"dispatch {idempotency_key!r} failed terminally ({cause}) AND the effect-failure could "
+            f"not be routed: {CORTEX_BFF_URL}/triage_tasks unreachable ({exc}). An approval is now "
+            f"settled with no effects and no triage row.",
+            status_code=500,
+        ) from exc
+    if resp.status_code != 200:
+        raise restate.TerminalError(
+            f"dispatch {idempotency_key!r} failed terminally ({cause}) AND the effect-failure could "
+            f"not be routed: /triage_tasks answered {resp.status_code} for audience {audience!r} "
+            f"({resp.text[:200]}). A 403 means the pipeline lacks can_invoke(mesh:fileTriageTask); "
+            f"a 422 means that audience has zero entitled actors. An approval is now settled with "
+            f"no effects and no triage row.",
+            status_code=500,
+        )
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
 # The dispatcher — one VirtualObject per item, keyed by idempotency_key
 # ---------------------------------------------------------------------------
 dispatch_item = VirtualObject("DispatchItem")
@@ -250,24 +375,46 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
         "subject_unresolved": bool(task and task.get("subject_unresolved")),
     }
 
-    # 1) TASK FIRST — visible-and-recoverable if the second write never lands.
-    if task:
-        minted = await ctx.run("mint_task", lambda t=task: _mint_dispatch_task(t))
-        outcome["task_minted"] = True
-        outcome["task"] = minted
+    # A TERMINAL failure of either write means this dispatch will NEVER happen — and the human has
+    # ALREADY approved. So the failure is surfaced to the operators who own execution before it is
+    # re-raised. Only TerminalError is caught: a retryable failure has not given up yet, and filing
+    # a triage row for a blip Restate is about to retry successfully would cry wolf.
+    try:
+        # 1) TASK FIRST — visible-and-recoverable if the second write never lands.
+        if task:
+            minted = await ctx.run("mint_task", lambda t=task: _mint_dispatch_task(t))
+            outcome["task_minted"] = True
+            outcome["task"] = minted
 
-    # KILL-SEAL WINDOW A (env-gated, default 0 -> no-op): a DURABLE pause between the two writes, so a
-    # process kill during it lands PROVABLY after mint and before state — the Restate journal then shows
-    # mint_task completed + this sleep pending at kill. Test scaffolding for the live two-direction
-    # failure-injection seal; never fires in normal operation. See docs/plans/pcn-kill-seal-run-card.md.
-    if _SEAL_PAUSE_AFTER_MINT:
-        await ctx.sleep(timedelta(seconds=_SEAL_PAUSE_AFTER_MINT))
+        # KILL-SEAL WINDOW A (env-gated, default 0 -> no-op): a DURABLE pause between the two writes, so a
+        # process kill during it lands PROVABLY after mint and before state — the Restate journal then shows
+        # mint_task completed + this sleep pending at kill. Test scaffolding for the live two-direction
+        # failure-injection seal; never fires in normal operation. See docs/plans/pcn-kill-seal-run-card.md.
+        if _SEAL_PAUSE_AFTER_MINT:
+            await ctx.sleep(timedelta(seconds=_SEAL_PAUSE_AFTER_MINT))
 
-    # 2) STATE SECOND — idempotent (delete-then-insert); skipped honestly for an unresolved subject.
-    if gw:
-        written = await ctx.run("write_state", lambda g=gw: _write_disposition_state(g))
-        outcome["state_written"] = True
-        outcome["state"] = written
+        # 2) STATE SECOND — idempotent (delete-then-insert); skipped honestly for an unresolved subject.
+        if gw:
+            written = await ctx.run("write_state", lambda g=gw: _write_disposition_state(g))
+            outcome["state_written"] = True
+            outcome["state"] = written
+    except restate.TerminalError as exc:
+        # JOURNALED, so a replay does not re-file (and /triage_tasks is idempotent on task_id as the
+        # second line of defence — belt and braces, because this row is the ONLY dissent from a
+        # projection that reads "approved").
+        await ctx.run(
+            "file_dispatch_failure_triage",
+            lambda: _file_dispatch_failure_triage(
+                idempotency_key=key, compartment=request.get("compartment") or "",
+                task=task or {}, cause=str(exc),
+                requested_by=request.get("requested_by") or "",
+            ),
+        )
+        # RE-RAISE, ALWAYS. Surfacing the failure must never CONVERT it into a success: Restate still
+        # records a failed invocation, the item's keyed object is still released, and — critically —
+        # the `dispatched` marker below is NOT reached, so a later redelivery is free to try again
+        # rather than no-opping on a dispatch that never happened.
+        raise
 
     # KILL-SEAL WINDOW B (env-gated): a durable pause between the state write and the exactly-one marker,
     # so a kill here proves resume re-runs NEITHER write (both journaled) and still sets the marker once.
@@ -281,7 +428,8 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Fan-out — one grouped approval -> N per-item dispatches (execution grain, §1)
 # ---------------------------------------------------------------------------
-def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "", requested_by: str = "") -> list[str]:
+def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "",
+                     requested_by: str = "", compartment: str = "") -> list[str]:
     """Fan ONE grouped approval out to N per-item dispatches. Each ``ItemResolution`` is planned then
     SENT (fire-and-forget) to its own ``DispatchItem`` keyed by ``idempotency_key`` — per-item,
     idempotent, OUTSIDE the workflow graph (§7). The Restate invocation ``idempotency_key`` is that
@@ -290,7 +438,7 @@ def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: st
     keys: list[str] = []
     for res in resolutions:
         plan = plan_dispatch(res, notice_fingerprint=notice_fingerprint, notice_id=notice_id)
-        payload = plan_to_payload(plan, requested_by=requested_by)
+        payload = plan_to_payload(plan, requested_by=requested_by, compartment=compartment)
         ctx.object_send(dispatch, key=res.idempotency_key, arg=payload, idempotency_key=res.idempotency_key)
         keys.append(res.idempotency_key)
     return keys

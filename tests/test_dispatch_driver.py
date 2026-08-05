@@ -67,7 +67,12 @@ def _payload(disposition, *, mpn="NSR01L30NXT5G",
         override_reason=None, proposed_by_ruleset=ruleset,
     )
     plan = plan_dispatch(res, notice_fingerprint="IPCN25300X", notice_id="IPCN25300X")
-    return dispatch_driver.plan_to_payload(plan)
+    # A COMPARTMENT IS SUPPLIED DELIBERATELY (2026-08-05). Without it, a terminal write failure takes
+    # the effect-failure path's "cannot route" branch and raises a TerminalError about ROUTING —
+    # which the terminal-vs-park tests below would happily accept, since they only assert the TYPE.
+    # They would then pass while never reaching the denial they exist to measure. Supplying it keeps
+    # those tests pointed at their own subject and exercises the real emission.
+    return dispatch_driver.plan_to_payload(plan, compartment="SUSTAINMENT")
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +154,8 @@ class _Resp:
 
 @pytest.fixture
 def http(monkeypatch):
-    rec = {"mint": 0, "state": 0, "mint_bodies": [], "state_bodies": [], "status": {"mint": 200, "state": 200}}
+    rec = {"mint": 0, "state": 0, "mint_bodies": [], "state_bodies": [], "triage_bodies": [],
+           "status": {"mint": 200, "state": 200, "triage": 200}}
 
     def _post(url, json=None, headers=None, timeout=None):
         if url.endswith("/internal/human_tasks/register"):
@@ -160,6 +166,12 @@ def http(monkeypatch):
             rec["state"] += 1
             rec["state_bodies"].append(json)
             return _Resp(rec["status"]["state"], {"ok": True, "subject_iri": json["subject_iri"]})
+        if url.endswith("/triage_tasks"):
+            # The effect-failure surfacing (2026-08-05): a dispatch that dies TERMINALLY after a
+            # human approved it files a triage row before re-raising.
+            rec["triage_bodies"].append(json)
+            return _Resp(rec["status"]["triage"],
+                         {"task_id": (json or {}).get("task_id"), "status": "FILED", "recipients": 1})
         raise AssertionError(f"unexpected POST {url}")
 
     monkeypatch.setattr(dispatch_driver.requests, "post", _post)
@@ -264,9 +276,19 @@ async def test_auth_denial_on_mint_is_terminal_not_park(http):
     not bubble a retryable error that parks the durable execution (the DoS a denial must avoid).
     And the state write never happens (task-first, the denial stops the chain)."""
     http["status"]["mint"] = 403
-    with pytest.raises(restate.TerminalError):
+    with pytest.raises(restate.TerminalError) as ei:
         await _invoke(_payload("dispatchQualification"), {})
     assert http["state"] == 0, "state was written despite the task-mint denial (chain should have stopped)"
+    # ASSERT THE CAUSE, not merely the type. Since the effect-failure path also raises TerminalError,
+    # a bare `raises(TerminalError)` can no longer distinguish "the denial this test is about" from
+    # "the report of it failed to route" — and a test that cannot tell those apart has stopped
+    # measuring its own subject.
+    assert "access denied (403)" in str(ei.value), (
+        f"caught a TerminalError, but not the auth denial this test measures: {ei.value}")
+    # And the denial is SURFACED, not merely raised: the human already approved.
+    assert len(http["triage_bodies"]) == 1, (
+        "a post-approval dispatch died on a denial and no effect-failure row was filed")
+    assert http["triage_bodies"][0]["audience"] == "dispatch_failure:SUSTAINMENT"
 
 
 @pytest.mark.asyncio
@@ -276,9 +298,13 @@ async def test_malformed_mint_4xx_is_terminal_not_park(http, status):
     POISONED payload that won't heal on retry -> TerminalError (release), never retry-park. Found live:
     a 422 (missing requested_by) would otherwise have parked the item's object forever."""
     http["status"]["mint"] = status
-    with pytest.raises(restate.TerminalError):
+    with pytest.raises(restate.TerminalError) as ei:
         await _invoke(_payload("dispatchQualification"), {})
     assert http["state"] == 0
+    assert f"({status})" in str(ei.value), (
+        f"caught a TerminalError, but not the {status} this test measures: {ei.value}")
+    assert len(http["triage_bodies"]) == 1, (
+        f"a post-approval dispatch died on a {status} and no effect-failure row was filed")
 
 
 @pytest.mark.asyncio
@@ -289,6 +315,11 @@ async def test_rate_limited_mint_429_stays_retryable(http):
     with pytest.raises(Exception) as ei:
         await _invoke(_payload("dispatchQualification"), {})
     assert not isinstance(ei.value, restate.TerminalError), "429 (rate limit) must stay retryable, not terminal"
+    # AND IT MUST NOT CRY WOLF. The effect-failure row means "this dispatch will never happen" — a
+    # transient that Restate is about to retry successfully has not earned one. Filing on every
+    # blip would train operators to ignore the queue, which is how a real dead effect gets missed.
+    assert http["triage_bodies"] == [], (
+        "filed an effect-failure row for a RETRYABLE failure — the dispatch has not given up yet")
 
 
 # ===========================================================================
@@ -322,7 +353,27 @@ def test_fan_out_sends_one_keyed_invocation_per_item():
     # NO CREDENTIAL IN A JOURNALED PAYLOAD (2026-08-04, the notice-A defect). An object_send body is
     # durable journal state, so a token in it is a credential at rest that a retry can replay long
     # after it expired. The register mints at use instead; this asserts the field cannot come back.
-    assert all("user_jwt" not in s["arg"] for s in ctx.sends), (
-        "a credential is riding the journaled dispatch payload — mint at use, never carry a token "
-        "across a suspend (docs/plans/2026-08-04-notice-a-dispatch-failure.md)"
-    )
+    # NESTED, NOT TOP-LEVEL (strengthened 2026-08-05). This used to read `"user_jwt" not in s["arg"]`,
+    # which inspects only the OUTERMOST dict — so a deliberate regression that put the credential back
+    # where it would really go (inside `human_task`, the sub-dict the register body is built from)
+    # left this guard GREEN while a token rode the payload. Found by the break-on-purpose arm of
+    # tests/test_expired_token_seal.py, which is the argument for breaking passing guards on purpose:
+    # it did not fail, and the reason was a defect in the guard rather than health in the code.
+    def _all_keys(node, path=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                here = f"{path}.{k}" if path else str(k)
+                yield here
+                yield from _all_keys(v, here)
+        elif isinstance(node, (list, tuple)):
+            for i, v in enumerate(node):
+                yield from _all_keys(v, f"{path}[{i}]")
+
+    _cred = ("user_jwt", "jwt", "token", "access_token", "bearer", "authorization", "secret")
+    for s in ctx.sends:
+        offenders = [p for p in _all_keys(s["arg"]) if p.rsplit(".", 1)[-1].lower() in _cred]
+        assert not offenders, (
+            f"a credential is riding the journaled dispatch payload at {offenders} — mint at use, "
+            f"never carry a token across a suspend "
+            f"(docs/plans/2026-08-04-notice-a-dispatch-failure.md)"
+        )

@@ -1633,10 +1633,26 @@ async def _run_grouped_human_await(
         ctx, submission.resolutions,
         notice_fingerprint=notice_fingerprint, notice_id=notice_id,
         requested_by=approver,   # PROVENANCE — the human who approved; the effect's AUTHZ is minted at use
+        # Routing DATA for the effect-failure path: if a dispatch dies terminally after this
+        # approval, `dispatch_failure:<compartment>` is the audience that owns it. Supplied here
+        # because the workflow is the last place that legitimately knows the compartment.
+        compartment=request.get("compartment") or "",
     )
+    # STATUS ASSERTS WHAT ITS AUTHOR WITNESSED (2026-08-05). This used to say `DISPATCHED`, which
+    # is a claim about DELIVERY — and `ctx.object_send` is fire-and-forget, so this workflow cannot
+    # possibly know it. Notice A returned `{"status": "DISPATCHED", "count": 2}` for two dispatches
+    # that both failed 160ms later; the field was not merely optimistic, it was the surface that
+    # made "approved with no effects" look normal.
+    #
+    # `RESOLVED` + `dispatch_enqueued` says exactly what happened and no more: the review is
+    # settled and N dispatches were ENQUEUED. Whether they LANDED is a different fact, owned by the
+    # per-item objects and — when one dies after approval — by the `dispatch_failure:<compartment>`
+    # triage row. A stronger claim here would require awaiting outcomes, which is a design change
+    # nobody has ordered.
     return {
         "step_id": step.id, "kind": "human_await", "completion": "grouped",
-        "status": "DISPATCHED", "count": len(keys), "dispatched_keys": keys,
+        "status": "RESOLVED", "dispatch_enqueued": len(keys),
+        "count": len(keys), "dispatched_keys": keys,
     }
 
 
