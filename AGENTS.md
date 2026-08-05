@@ -349,6 +349,38 @@ bit), `sourcing` granted nowhere at all, and `procurement`'s own grant uncommitt
 bit was the only one anything could see, and it was not the only one there.** Enumerate the
 producer, then check each one it can emit.
 
+### A test that supplies its own provenance will agree with itself
+A seal that PASSES IN the value it later asserts has tested its own fixture. Every offline test of
+the effect-failure row handed the driver a `requested_by` and then checked the row carried it — all
+green, all meaningless, because the question was never "does the value survive" but "is the value
+the system actually has the RIGHT one". The first live drive answered it in one row: the field held
+`svc:review-starter` (whoever STARTED the review) while the approving human sat in `acted_by` one
+row away. The row said a service had approved a human's decision.
+
+Generalises past provenance to every value a test injects and then asserts: identity, timestamps,
+audience, compartment. The test proves TRANSPORT; it cannot prove SOURCING. Ask separately where
+the production value comes from, and get that from the running system — the composed-path seal
+applied to a field rather than to a call chain.
+
+Corollary, from the same hour: **a test asserting the wrong claim is worse than a missing test.**
+That live leg went RED against a system that could not possibly have satisfied it, and the correct
+fix was to the SEAL, not the code. A red you cannot satisfy is a red that will eventually be
+"fixed" by weakening something that was right.
+
+### A guard that has never failed has not been shown to guard anything
+Distinct from "verification must be able to fail", which is about a check with no failing path at
+all. This is narrower and nastier: a guard with a perfectly good failing path, aimed slightly wrong,
+that has therefore never fired. `assert "user_jwt" not in payload` inspected only the OUTERMOST
+dict. Reintroducing the credential where it would REALLY go — nested inside `human_task`, the
+sub-dict the request body is built from — left the guard green with a live token riding a durable
+journal payload. Two independent suites carried the same blind assertion.
+
+The technique that finds it is break-on-purpose, and the tell is the SHAPE of the break: reintroduce
+the defect the way the CODE would reintroduce it, not the way the guard expects to see it. If the
+guard stays green, you have found a defect in the guard — which is more valuable than the green was.
+Then widen from the one field that bit to the CLASS (a family of credential-shaped names, walked
+recursively), because guarding the instance is what left the hole.
+
 ### Build the fixture as a SUPERSET of reality, not an approximation of it
 Where the real input cannot enter the repo (restricted boundary) or does not exist yet, build the
 fixture **deliberately as degraded as the contract permits**, so any real input is a SUBSET of it.
