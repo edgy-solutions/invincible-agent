@@ -45,7 +45,7 @@ except IndexError:
 
 try:
     from telemetry import (safe_observe, safe_update_observation,
-                           set_trace_standard, build_trace_values, MAPPING,
+                           set_trace_standard, observed_trace, build_trace_values, MAPPING,
                            litellm_metadata)
 except ImportError:
     def safe_observe(**kwargs):
@@ -56,6 +56,10 @@ except ImportError:
         pass
     def set_trace_standard(*_a, **_k):
         pass
+    from contextlib import contextmanager as _cm
+    @_cm
+    def observed_trace(*_a, **_k):
+        yield
     def build_trace_values(**_k):
         return {}
     def litellm_metadata(operation, **_k):
@@ -1039,47 +1043,24 @@ to decide the next call. Use only what the tools return — never invent data.
 
                 model = get_smolagent_model()
                 
-                trace_id = current_trace_id.get()
-                if trace_id:
-                    os.environ["LANGFUSE_TRACE_ID"] = trace_id
-                    try:
-                        from langfuse.decorators import langfuse_context
-                        langfuse_context.update_current_trace(id=trace_id)
-                    except Exception:
-                        pass
-                    # Project the request's provenance onto the trace (ADR-0038): user +
-                    # session identity, tags (engine/verb/domain/env), metadata (resolved
-                    # subject class + resolution rung + chart version). Fail-soft in the
-                    # leaf, so a telemetry hiccup never touches the answer; a no-op if the
-                    # leaf/Langfuse is absent (the manual id-set above still stands).
-                    set_trace_standard(MAPPING, build_trace_values(
-                        trace_id=trace_id,
-                        authz_id=user_id,
-                        session_id=request.get("session_id"),
-                        engine="restate_analyst",
-                        verb=(routed_verb_iri or None),
-                        domain=(request.get("domain") or None),
-                        subject_class=(semantic_ctx.get("resolved_uri") or None),
-                        resolved_via=("supervisor" if semantic_ctx.get("from_supervisor") else "engine_o"),
-                    ))
-                    # Non-racy generation->trace linking (ADR-0038): stamp the per-request
-                    # trace/user/session onto THIS model's LiteLLM metadata so smolagents'
-                    # generations nest under our trace via LiteLLM's Langfuse callback — the
-                    # correct per-CALL path, vs. the process-global LANGFUSE_TRACE_ID env
-                    # above which races across concurrent requests. get_smolagent_model() is
-                    # per-request, so the metadata is request-scoped. Fail-soft; setdefault
-                    # never clobbers an operator-provided value.
-                    try:
-                        if isinstance(getattr(model, "kwargs", None), dict):
-                            model.kwargs.setdefault("metadata", litellm_metadata(
-                                "analyst generation",
-                                trace_id=trace_id,
-                                user_id=user_id,
-                                session_id=request.get("session_id"),
-                                tags=[t for t in ("restate_analyst", routed_verb_iri) if t],
-                            ))
-                    except Exception:  # noqa: BLE001 — telemetry never breaks the run
-                        pass
+                # Generation->trace linking (ADR-0038, v4): observed_trace at the run-smolagent
+                # call below opens + JOINS + enriches the analyst trace. Here, stamp the SAME
+                # joined id (create_trace_id(seed=request trace id)) onto the model's LiteLLM
+                # metadata so smolagents' generations attach to that trace — they also nest via
+                # the active OTel span. Per-request model -> request-scoped; fail-soft.
+                try:
+                    _tid = current_trace_id.get()
+                    if _tid and isinstance(getattr(model, "kwargs", None), dict):
+                        from langfuse import get_client as _get_client
+                        model.kwargs.setdefault("metadata", litellm_metadata(
+                            "analyst generation",
+                            trace_id=_get_client().create_trace_id(seed=_tid),
+                            user_id=user_id,
+                            session_id=request.get("session_id"),
+                            tags=[t for t in ("restate_analyst", routed_verb_iri) if t],
+                        ))
+                except Exception:  # noqa: BLE001 — telemetry never breaks the run
+                    pass
                 
                 # ToolCallingAgent (structured tool-calls) — NOT CodeAgent
                 # (free-form Python in <code> tags). gpt-oss intermittently
@@ -1273,7 +1254,20 @@ to decide the next call. Use only what the tools return — never invent data.
                     entity_type_override=s.get("type"),
                 )
         else:
-            raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
+            # v4 analyst-trace JOIN (ADR-0038): open the trace on the request's id
+            # (create_trace_id(seed=X-Trace-Id)) + enrich, so cortex-ui's trace id unifies the
+            # analyst trace, its run_smolagent child span, and the LLM generations. Fail-soft.
+            with observed_trace(MAPPING, build_trace_values(
+                trace_id=current_trace_id.get(),
+                authz_id=user_id,
+                session_id=request.get("session_id"),
+                engine="restate_analyst",
+                verb=(routed_verb_iri or None),
+                domain=(request.get("domain") or None),
+                subject_class=(semantic_ctx.get("resolved_uri") or None),
+                resolved_via=("supervisor" if semantic_ctx.get("from_supervisor") else "engine_o"),
+            ), name="analyst"):
+                raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
 
         summary_text = str(raw_agent_response)
         structured_data_str = None
