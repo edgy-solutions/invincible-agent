@@ -104,6 +104,30 @@ app = FastAPI(lifespan=lifespan)
 # Define the Restate Service
 data_analyst_service = Service("DataAnalystService")
 
+# ---------------------------------------------------------------------------
+# REPLAY-SEAL SCAFFOLDING (env-gated, default 0 = no-op; never fires in normal operation)
+# ---------------------------------------------------------------------------
+# Same shape as ``dispatch_driver``'s ``PCN_SEAL_PAUSE_AFTER_*``: durable-execution behaviour is
+# only observable across a REPLAY, and a replay has to be manufactured on purpose or the seal will
+# never run.
+#
+# WHY A DELIBERATE FAILURE AND NOT A POD KILL — measured, not assumed (2026-08-05). The obvious
+# manufacture is to delete the pod mid-handler. Restate does retry (witnessed: a handler killed at
+# t=5s returned 200 after 30.6s total), but the FIRST attempt's evidence dies with it: the OTel
+# batch exporter had not flushed, so the killed execution's boundary span never reached Langfuse
+# and the trace showed ONE span for TWO executions. **The instrument shared a fate with the thing
+# being killed** — it undercounts in exactly the scenario it exists to measure.
+#
+# Failing after the work instead keeps the process alive, so every counter (stdout, the exporter,
+# the journal) survives and reports honestly. It is also deterministic: no timing race against a
+# variable-length LLM round-trip.
+#
+# The failure is a PLAIN exception, deliberately NOT a TerminalError — Restate must RETRY it, which
+# is the whole point. The budget is per-process, so attempt 1 fails and attempt 2 completes; a
+# fresh pod resets it, which bounds the blast radius to one extra execution per pod.
+_SEAL_FAIL_AFTER_WORK = int(os.getenv("DA_SEAL_FAIL_AFTER_WORK", "0") or 0)
+_seal_failures_used = 0
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -455,6 +479,20 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         # the agent may have queried successfully before something else
         # blew up downstream (e.g. SQL syntax issue on a follow-up call).
         return {"status": "error", "message": str(e), "sources": sources_collected}
+
+    # REPLAY-SEAL INJECTION POINT (env-gated, default no-op). Placed AFTER the work and OUTSIDE the
+    # try/except above ON PURPOSE: inside it, the broad `except Exception` would swallow this and
+    # return an error dict, and Restate would never see a failure to retry. Here it propagates, the
+    # invocation is retried, and the handler re-enters from the top — which is the replay this seal
+    # exists to observe.
+    global _seal_failures_used
+    if _seal_failures_used < _SEAL_FAIL_AFTER_WORK:
+        _seal_failures_used += 1
+        raise RuntimeError(
+            f"DA_SEAL: deliberate post-work failure #{_seal_failures_used} to manufacture a "
+            f"Restate replay (DA_SEAL_FAIL_AFTER_WORK={_SEAL_FAIL_AFTER_WORK}). "
+            f"The agent work above ALREADY RAN — count it."
+        )
 
     # Phase 3 source attribution: attach the accumulated sources at
     # the top of the response. The supervisor's
