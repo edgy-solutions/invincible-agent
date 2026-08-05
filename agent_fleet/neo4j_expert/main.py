@@ -354,8 +354,26 @@ async def query_graph_proxy(request: Request) -> JSONResponse:
     """
     try:
         payload = await request.json()
+
+        # ADR-0038 — close the analyst→E JOIN at the one seam it was open. Restate
+        # handlers read the BODY, not HTTP headers, so a trace id must ride in the
+        # payload for Neo4jExpertService.observed_trace to seed on it (and E's graph
+        # spans nest under the caller's trace instead of orphaning). E has two caller
+        # shapes, unified on ONE field here:
+        #   - the supervisor's specialist dispatch puts `trace_id` directly in the body;
+        #   - the analyst's discovery tool sends it as the X-Trace-Id HEADER.
+        # Prefer an id already in the body; else adopt the header; else mint a root id
+        # (a fresh standalone trace — never a crash). This is the same header→body
+        # translation Engine D's /analyze_data proxy does, same field name, so the two
+        # restate engines share one convention rather than forking it. A trace id is a
+        # non-secret correlation identifier, so persisting it in Restate's durable
+        # journal carries no credential concern.
+        import uuid as _uuid
+        if not payload.get("trace_id"):
+            payload["trace_id"] = request.headers.get("X-Trace-Id") or str(_uuid.uuid4())
+
         target_url = f"{RESTATE_INGRESS_URL}/Neo4jExpertService/query_graph"
-        
+
         # Match the supervisor's per-engine call timeout. The Cypher-writing
         # smolagent loop can take several minutes per multi-step query on
         # slow Ollama backends; 300s reliably timed out mid-loop.

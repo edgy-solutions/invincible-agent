@@ -1544,6 +1544,17 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # instead of the URN key. Empty when no instance resolved; engines that
         # don't read it ignore it (forward-compatible).
         "resolved_instance_label": telemetry.get("subject_instance_label", ""),
+        # ADR-0038 — the DIRECT specialist leg of the E join. When a graph question
+        # routes cleanly to its predicate provider, the supervisor dispatches HERE,
+        # not via Engine A, so the analyst's discovery tool (which sends X-Trace-Id
+        # as a header) never runs — this leg had no trace threading at all and E's
+        # graph work orphaned. Carry the id in the BODY instead: Engine E's proxy
+        # forwards it to the durable handler, whose observed_trace joins the caller's
+        # trace and drops its join:pending-proxy tag. Additive and forward-compatible
+        # in the same spirit as resolved_subject_uri above — only Engine E reads this
+        # field today; every other specialist ignores it (their own direct-leg join is
+        # a separate ledger item, deliberately not entangled with this one).
+        "trace_id": config.trace_id or "",
     }
 
     context.log.info(
