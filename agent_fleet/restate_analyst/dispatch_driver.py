@@ -288,7 +288,21 @@ def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, tas
     mpn = task.get("mpn") or ""
     # The task's own field first (it is the one the register used), then the payload-level fallback
     # that covers the no-task dispositions.
-    requested_by = task.get("requested_by") or requested_by or ""
+    #
+    # WHAT THIS VALUE ACTUALLY IS, and why the row no longer calls it "approved by" (found live
+    # 2026-08-05, EFFECTFAIL02). It is the workflow's ``approver``, which start_review stamps from
+    # WHOEVER STARTED THE REVIEW — and in the canonical flow that is the sensor's service identity,
+    # not a human. The live row read "Approved by: svc:review-starter" while the grouped review's
+    # ``acted_by`` said ``alice@example.com``. So the field is not missing, it is MISATTRIBUTING:
+    # a false statement on the one field an effect-failure row exists to carry.
+    #
+    # Labelled truthfully rather than guessed. Threading the real approver means carrying the
+    # ``/act`` caller's identity through ``submit_decision`` into the fan-out — a provenance change
+    # that touches a field other surfaces already read, so it is FILED as a fork rather than
+    # decided here (docs/plans/2026-08-05-overnight-handoff.md). Until then the row says what it
+    # knows and names where the approver actually lives, which an operator can act on; "Approved
+    # by: <a service>" is not.
+    started_by = task.get("requested_by") or requested_by or ""
     body = {
         # Identity from the DISPATCH's own idempotency key (notice x part), so a redelivery that
         # fails again files the SAME row rather than a second one — /triage_tasks is idempotent on
@@ -304,7 +318,10 @@ def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, tas
             f"decision is recorded as settled but its effects never landed. "
             f"Part: {mpn or '(unknown)'}. Queue: {task.get('audience') or '(none)'}. "
             f"Disposition: {task.get('disposition') or '(none)'}. "
-            f"Approved by: {requested_by or '(unrecorded)'}. Cause: {cause}"
+            f"Review started by: {started_by or '(unrecorded)'} — the APPROVING human is the "
+            f"grouped review's acted_by for notice "
+            f"{task.get('notice_fingerprint') or '(unknown)'}, which this row cannot see. "
+            f"Cause: {cause}"
         ),
         "payload": {
             "idempotency_key": idempotency_key,
@@ -313,8 +330,13 @@ def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, tas
             "disposition": task.get("disposition") or "",
             "target_audience": task.get("audience") or "",
             # PROVENANCE, kept separate from authorization on purpose — conflating "who decided"
-            # with "what authorized the effect" in one value is what caused notice A.
-            "approved_by": requested_by,
+            # with "what authorized the effect" in one value is what caused notice A. NAMED FOR
+            # WHAT IT IS: the review's INITIATOR (a service, in the canonical sensor-driven flow),
+            # NOT the approver. See the comment above ``started_by``.
+            "review_started_by": started_by,
+            "approver_note": (
+                "not carried into the dispatch payload; read acted_by on the grouped review row"
+            ),
             "cause": cause,
         },
     }

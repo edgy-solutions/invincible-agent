@@ -383,14 +383,25 @@ async def test_terminal_dispatch_failure_after_approval_mints_a_triage_row(aging
         f"effect-failure routed to {body.get('audience')!r}; ruling (b) sends it to the operators "
         f"who own execution, never to the reviewer who owns the decision")
     assert body.get("subject_ref"), "a triage row with no subject cannot be actioned"
-    # Provenance survives the failure: WHO decided is a different fact from WHAT authorized it, and
-    # conflating those two is what caused the incident in the first place.
     payload_field = body.get("payload") or {}
-    assert "alice@example.com" in repr(body), (
-        "the approver is absent from the effect-failure row — the operator cannot tell whose "
-        "decision failed to take effect")
     assert payload_field.get("idempotency_key") or body.get("task_id"), (
         "the row carries no handle on the dispatch that failed — unactionable")
+
+    # PROVENANCE IS LABELLED TRUTHFULLY, NOT GUESSED. The value available here is the workflow's
+    # ``approver``, which start_review stamps from whoever STARTED the review — a service identity
+    # in the canonical sensor-driven flow, NOT the approving human (proven live: EFFECTFAIL02 had
+    # requested_by=svc:review-starter while the grouped review's acted_by was alice@example.com).
+    # So the row must not call it "approved by". This asserts the honest labelling AND that the row
+    # points at where the approver really lives — the fix for the misattribution is a filed fork.
+    assert "review_started_by" in payload_field, (
+        "the effect-failure row dropped the review-initiator provenance entirely")
+    assert "approved_by" not in payload_field, (
+        "the row is calling the review INITIATOR the approver again — that field is the "
+        "start_review caller (a service in the auto-started flow), and asserting it is the "
+        "approver is a false statement on the one field this row exists to carry")
+    assert "acted_by" in repr(body), (
+        "the row does not tell the operator WHERE the approving human is recorded, so a "
+        "misattribution becomes a dead end rather than a lookup")
 
 
 @pytest.mark.asyncio
@@ -421,9 +432,9 @@ async def test_archive_failure_still_names_the_approver(aging):
 
     assert aging["triage"], "an archive dispatch died terminally after approval and said nothing"
     body = aging["triage"][0]["body"]
-    assert "alice@example.com" in repr(body), (
-        "the effect-failure row for a no-task disposition lost the approver — the operator cannot "
-        "tell whose decision failed to take effect")
+    assert (body.get("payload") or {}).get("review_started_by") == "alice@example.com", (
+        "the effect-failure row for a no-task disposition lost its provenance entirely — with no "
+        "human_task to read, the payload-level fallback is the only source")
     assert body.get("audience") == "dispatch_failure:SUSTAINMENT"
 
 
