@@ -99,9 +99,15 @@ cause    : cortex-bff register … rejected (422) — failing TERMINALLY (releas
 
 ---
 
+# BOARD
+
+Items 1 and 2 are CLOSED (below, kept for their reasoning). What remains is not in this packet's
+scope and is listed here only so the board is readable in one place: **D**, **the Workflow-2
+ceremony** (the only item waiting on a decision rather than code), and **the silence-closure arc**.
+
 # NEXT SESSION — in this order
 
-## 1. ~~THE OPEN FORK~~ — RULED AND BUILT (`90464e7`); LIVE RE-VERIFICATION PENDING A ROLL
+## 1. ~~THE OPEN FORK~~ — RULED, BUILT (`90464e7`) AND WITNESSED LIVE (`3918c09`). CLOSED.
 
 **Ruling: thread the `/act` caller, with the field semantics settled first — because the fork as
 framed below slightly misstated what was broken.** `requested_by` was never lying about its own
@@ -134,10 +140,35 @@ from the decision and falls back to `approver` (the old, misattributing behaviou
 broken). cortex-bff first: it sends a key engine-a's validator ignores. Both halves are safe alone,
 which is why this did not need expand/contract despite touching two services.
 
-**PENDING:** 49/49 offline, but the live re-drive needs BOTH services rolled onto `90464e7`. Not
-done because engine-a was being actively rolled for unrelated ADR-0038 telemetry work at the time.
-Re-run `_seal_effect_failure_surfacing.py` (fresh notice) and confirm `payload.approved_by ==
-alice@example.com` on **both** the triage row and the surviving `pcn_disposition` rows.
+**WITNESSED LIVE — CLOSED (`EFFECTFAIL05`, all seven legs GREEN).** Both services rolled and the
+code verified IN both running images before driving: engine-a `sha256:506462f5…`, cortex-bff
+`sha256:251bacd1…`, one pod each, old pods gone first. Checked across ALL THREE rows, because the
+misattribution spanned the failure path AND the success path:
+
+```
+rows checked (triage + surviving dispatch): 3
+every row names alice as the approver:               True
+approver distinct from the review initiator:         True
+`acted_by` column NOT hijacked (empty while pending): True
+```
+
+**The avoided collision is proven, not merely argued** — the same rows, read from the projection:
+
+```
+dispatch-failure:EFFECTFAIL04:…  payload.approved_by=alice   acted_by COLUMN=None
+EFFECTFAIL04:NSR02F30NXT5G       payload.approved_by=alice   acted_by COLUMN=None
+EFFECTFAIL04:NSR05F20NXT5G       payload.approved_by=alice   acted_by COLUMN=None
+grouped:pcn-review-EFFECTFAIL04  payload.approved_by=(none)  acted_by COLUMN=alice
+```
+
+Both meanings coexist, exactly inverted between the dispatch rows and the grouped row. Had the
+approver been written under `acted_by`, **every pending dispatch row would have read as already
+resolved by alice** — the collision was not hypothetical.
+
+**The seal was wrong a second time getting here, in the opposite direction, and it is filed as a
+rule.** LEG 6 v2 asserted the row must NOT say `approved_by` — correct for the interim
+label-truthfully repair, and wrong the instant the real fix landed: `EFFECTFAIL04` went RED against
+a row that was finally right. *A seal pinned to an interim state becomes a brake on its own fix.*
 
 <details><summary>The fork as originally framed (superseded, kept for the reasoning)</summary>
 
