@@ -408,6 +408,45 @@ So a governed artifact is not shipped when it validates, or when its resolver is
 shipped when a CHANGE to it has been observed to move the system. Until then, treat every ceremony
 that depends on it as blocked, however complete the surrounding engineering looks.
 
+### A guard must assert a value the system CANNOT produce by default
+Eleventh probe-correctness instance, and a new species: a guard whose asserted value coincides with
+the default cannot distinguish **"the mechanism worked"** from **"the mechanism never ran."**
+
+Found 2026-08-05 stamping doc-tools' version into `review.json`. The verify-the-pipe guard asserted
+`"DOC_TOOLS_VERSION=doc-tools@"` appeared in the build workflow — a string the `ARG` line's OWN
+DEFAULT (`ARG DOC_TOOLS_VERSION=doc-tools@unstamped`) satisfies. Deleting the build-args pass
+entirely left the guard GREEN: the image would have shipped **permanently stamped `unstamped` while
+the suite claimed the pipe was verified.**
+
+This completes a family with the tautological guard and the uniform-zero probe. All three are
+instruments whose PASSING STATE IS REACHABLE WITHOUT THE MECHANISM UNDER TEST EXISTING — which is
+why none of them can be found by reading the assertion and agreeing with it.
+
+**The operational test: assert the NON-default, or inject a sentinel the default cannot collide
+with.** Here the fix was pinning `${{ github.sha }}` interpolation, which only the real pass
+contains.
+
+And note the discovery mode, because it is the only one that works: break-on-purpose found it by
+breaking the pipe and the guard NOT turning red. A guard's green surviving its mechanism's death is
+exactly what break-on-purpose exists to surface.
+
+### Every hop that REBUILDS a payload is a field-dropping surface
+Third instance, so it gets the rule. Any field a downstream tripwire or derive depends on gets a
+pin at EVERY hop between producer and consumer — not only at the ends.
+
+The three seams: **sensor→BFF**, **BFF→starter**, and **plugin→writer**. The first two are not
+hypothetical — a hand-enumerating `/reviews` handler ate `review_state_source` and
+`extraction_warnings`, and the downstream tripwire then did its job perfectly against a field the
+middle hop had silently removed, refusing every honest request for days.
+
+A wholesale copy (`dict(aug0.review)`) survives new fields BY CONSTRUCTION and is the right shape —
+but wholesale copies decay into hand-enumerated dicts under refactoring pressure, and that decay is
+silent. Pin the shape, so the decay is red.
+
+The tell for where to look: any place a payload is REBUILT rather than forwarded — a Pydantic model
+re-enumerated into a body, a dict comprehension, a hand-written literal. Forwarding preserves;
+rebuilding is where fields go to die.
+
 ### An instrument must not share FATE with the event it measures
 A witness that dies with the subject reports the subject's death as health. Tenth probe-correctness
 instance and a distinct species: not wrong about timing, scope, anchor or fixture — wrong about
