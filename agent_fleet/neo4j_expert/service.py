@@ -21,7 +21,8 @@ except IndexError:
 
 try:
     from telemetry import (safe_observe, safe_update_observation,
-                           observed_trace, MAPPING, build_trace_values)
+                           observed_trace, MAPPING, build_trace_values,
+                           mint_boundary_ids, boundary_parent, emit_boundary)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -35,6 +36,13 @@ except ImportError:
         yield
     def build_trace_values(**_k):
         return {}
+    def mint_boundary_ids(_seed=None):
+        return {"trace_id": None, "span_id": None}
+    @_cm
+    def boundary_parent(_ids):
+        yield {"started_at": None, "ended_at": None}
+    def emit_boundary(*_a, **_k):
+        pass
     MAPPING = None
 
 from restate import Context, Service
@@ -816,11 +824,13 @@ paths and titles in your final_answer so the downstream formatter can render the
                 final_prompt = f"{system_prompt_with_memory}\n\n{tool_reminder}\n\nUser Query: {user_query}"
                 
                 # Run the agent in a thread pool since smolagents is synchronous. The
-                # ADR-0038 join boundary (observed_trace) is opened by the CALLER of
-                # run_smolagent (around ctx.run below), so E's ENTIRE trace — this smolagents
-                # span, mem0_context_retrieval, and the agent loop — nests under ONE
-                # caller-seeded trace instead of the boundary re-rooting a near-empty
-                # separate one. Mirrors Engine A, whose observed_trace also wraps its ctx.run.
+                # ADR-0038 join boundary is opened by the CALLER of run_smolagent (the
+                # `boundary_parent` around ctx.run below), so E's ENTIRE trace — this
+                # smolagents span, mem0_context_retrieval, and the agent loop — nests under
+                # ONE caller-seeded trace instead of the boundary re-rooting a near-empty
+                # separate one. The parent is AMBIENT and non-recording, so nothing here
+                # changes: these spans nest through the ordinary OTel context either way.
+                # Mirrors Engine A, the reference impl, which uses the same primitives.
                 result = await asyncio.to_thread(agent.run, final_prompt)
                 
                 # Build the UI trace from `agent.memory.steps` (smolagents 1.24;
@@ -897,20 +907,38 @@ paths and titles in your final_answer so the downstream formatter can render the
         # Standard 120s timeout from the orchestrator allows for extended searching
         try:
             # ADR-0038 — the analyst→E JOIN boundary, opened OUTERMOST (mirroring Engine A's
-            # observed_trace around its own ctx.run) so E's whole trace nests under ONE trace
+            # boundary around its own ctx.run) so E's whole trace nests under ONE trace
             # seeded on the caller's id: engine-e graph reasoning → smolagents_neo4j_execution
             # → mem0_context_retrieval → the agent loop. Previously this wrapped only
             # agent.run deep inside run_smolagent, so the caller-joined trace held just the
             # boundary while the real work rooted a SEPARATE unseeded trace (the "detached E
             # trace"). Fail-soft; join_status self-heals off the same request.get("trace_id").
-            with observed_trace(MAPPING, build_trace_values(
+            # REPLAY-SAFE since the hoist: opening the boundary OUTERMOST fixed the
+            # detached trace but exposed the replay-double — `observed_trace` mints a
+            # fresh recording span on every entry, and Restate re-enters this block on
+            # replay while the memoized ctx.run does not re-execute (witnessed: 2x
+            # `engine-e graph reasoning` for one run). Same fix as Engine A, the
+            # reference impl: journaled ids, a non-emitting ambient parent, and the
+            # boundary observation emitted from its own ctx.run.
+            _boundary_ids = await ctx.run(
+                "mint-engine-e-boundary-ids",
+                lambda: mint_boundary_ids(request.get("trace_id")),
+            )
+            _boundary_values = build_trace_values(
                 trace_id=request.get("trace_id"),
                 engine="neo4j_expert",
                 authz_id=request.get("user_id") or request.get("authz_id"),
                 domain=request.get("domain"),
                 join_status=("join:pending-proxy" if not request.get("trace_id") else None),
-            ), name="engine-e graph reasoning"):
+            )
+            with boundary_parent(_boundary_ids) as _boundary_timing:
                 raw_agent_response, execution_trace = await ctx.run("run-smolagent", run_smolagent)
+            await ctx.run(
+                "emit-engine-e-boundary",
+                lambda: emit_boundary(MAPPING, _boundary_values, ids=_boundary_ids,
+                                      name="engine-e graph reasoning",
+                                      timing=_boundary_timing),
+            )
         finally:
             _emit_calib()
 

@@ -182,6 +182,7 @@ def test_trace_level_fields_ride_the_trace_body(enabled, monkeypatch):
 # defect-shape regex runs against every Restate engine rather than the two we fixed.
 _ENGINES = {
     "Engine A": (Path("agent_fleet") / "restate_analyst" / "main.py", "analyst"),
+    "Engine E": (Path("agent_fleet") / "neo4j_expert" / "service.py", "engine-e"),
 }
 
 
