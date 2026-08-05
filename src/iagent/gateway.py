@@ -434,6 +434,14 @@ class ReviewStartRequest(_BaseModel):
     # The doc-tools extraction trace id (review.json.trace_id), forwarded so the review
     # composition nests under the SAME Langfuse trace as the extraction (ADR-0038).
     trace_id: Optional[str] = None
+    # ── ADMISSION FACTS (ADR-0034 phase 1.3) ──────────────────────────────────────────────────
+    # The vendor-format x pipeline-version pair the trust table is keyed on. FACTS, forwarded
+    # verbatim — the BFF neither computes nor validates them, and crucially the caller does NOT
+    # get to send a rung or a workflow id. ReviewStarter derives the posture from these
+    # server-side and selects the workflow itself, so a caller can describe its input but never
+    # choose its own supervision level.
+    format_fingerprint: Optional[str] = None
+    pipeline_version: Optional[str] = None
 
 
 def _ingress_idempotency_key(request_key: Optional[str], approver: str) -> Optional[str]:
@@ -535,6 +543,11 @@ async def start_review(
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
+    # Admission FACTS -> ReviewStarter computes the rung from them (ADR-0034 phase 1.3). Forwarded,
+    # never interpreted here: the BFF's job on this pair is transport, and the authority decision
+    # belongs to the layer that owns the table.
+    body["format_fingerprint"] = req.format_fingerprint or ""
+    body["pipeline_version"] = req.pipeline_version or ""
     try:
         # Sized to the PART COUNT, not to a nominal request. start_review resolves a
         # subject, checks entitlement and evaluates the ruleset PER PART, so a

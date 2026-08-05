@@ -43,6 +43,29 @@ steps:
   # ACCEPTANCE when that window opens: watch deny flip to allow for THIS initiator while any
   # OTHER caller's can_invoke stays deny. The discriminating pair — the same shape as
   # alice-sees / bob-doesn't — never a lone green, which proves only that something answered.
+  #
+  # ── CEREMONY PRECONDITION, ADDED 2026-08-05 (phase 1.3): TWO LEGS, NOT ONE ─────────────────
+  # The grant is no longer the only thing ratification must verify. Phase 1.3 made this path
+  # REACHABLE: ReviewStarter computes rung_for(format_fingerprint, pipeline_version) SERVER-SIDE
+  # and sends here when a format is promoted. The rung never crosses a client boundary — but
+  # `format_fingerprint` DOES, as a caller-asserted fact nothing downstream can verify.
+  #
+  # Today that is harmless because THIS capability is granted to nobody: a caller who lies about
+  # its fingerprint routes autonomously and then dies at this gate, having bought nothing. The
+  # backstop IS the deny. **The deny expires at the ceremony.**
+  #
+  # Ratification MUST NOT PROCEED until one of these is closed:
+  #   (a) ReviewStarter DERIVES the fingerprint server-side from the artifact (it has no read
+  #       access to review.json today); or
+  #   (b) the fingerprint is made VERIFIABLE — signed by doc-tools at emission, or fetched and
+  #       hashed by ReviewStarter from the artifact store.
+  # A small design fork that deserves its own decided hour, not a bolt-on.
+  #
+  # WHY IT IS WRITTEN HERE and not only in a handoff: a ceremony with a NAMED UNMET PRECONDITION
+  # is a scheduled decision; a ceremony that lands on an unverifiable fingerprint is the no-op's
+  # EVIL TWIN — it would WORK, for anyone who lies. Granting this capability while (a)/(b) are
+  # open converts "choose your own supervision level" from a harmless lie into live privilege
+  # escalation, invisibly, because the system would behave exactly as designed.
   - kind: direct_call
     id: dispatch_dispositions
     endpoint: "{dispatch_endpoint}"

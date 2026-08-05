@@ -155,6 +155,24 @@ def build_start_review_payload(
         # field existed (older extractions simply carry no warnings).
         "extraction_warnings": list(review_json.get("doc_review_reasons") or []),
         "domain": domain,
+        # ── ADMISSION FACTS (ADR-0034 phase 1.3) ──────────────────────────────────────────────
+        # The pair the trust table is keyed on. Sent as FACTS ABOUT THE INPUT, never as a routing
+        # decision: ReviewStarter computes `rung_for(...)` from them SERVER-SIDE and picks the
+        # workflow itself. A caller may describe its input; it may never hand over the authority
+        # decision derived from that description — otherwise anyone entitled to mesh:startReview
+        # selects their own supervision level (the same confused-deputy shape the audience and
+        # compartment splits already refuse).
+        #
+        # These are the SAME two values stamped on the decision record, deliberately: the posture
+        # that ROUTED a notice and the posture RECORDED against it must derive from one pair, or
+        # the corpus documents a decision the pipeline did not make.
+        #
+        # KNOWN GAP, ceremony-blocking and filed there: `format_fingerprint` is caller-asserted and
+        # unverifiable downstream. Backstopped today because dispatch denies (the capability is
+        # granted to nobody), so a lie buys nothing. That backstop expires AT the ceremony —
+        # ratification must not proceed until the fingerprint is server-derived or signed.
+        "format_fingerprint": _format_fingerprint(review_json, request_key),
+        "pipeline_version": _PIPELINE_VERSION,
         # Transport-level artifact identity for ingress idempotency (see docstring). Empty
         # for a caller that cannot name an artifact — the BFF then sends NO key rather than
         # inventing one, so the call is honestly non-idempotent instead of falsely deduped.
@@ -579,7 +597,25 @@ def _emit_record(context, *, review: dict, key: str, request_key: str, outcome: 
     try:
         from ..decision_record import NOT_COMPOSED, build_decision_record  # noqa: PLC0415
         from ..decision_record_writer import DECISION_RECORD_ERA, graph_writer  # noqa: PLC0415
-        from ..trust_table import DEFAULT_RUNG  # noqa: PLC0415
+        from ..trust_table import DEFAULT_RUNG, load_trust_table  # noqa: PLC0415
+        # THE RUNG THE ROUTING ACTUALLY READ (ADR-0034 phase 1.3), not the born-default constant.
+        # Before 1.3 this was hardcoded `DEFAULT_RUNG` — honest while nothing consulted the table,
+        # and a lie the moment something did. The routing decision has just become consequential,
+        # so its provenance becomes row data on day ONE rather than being retrofitted after the
+        # first "why did this notice go autonomous?" question.
+        #
+        # DERIVED FROM THE SAME PAIR THE ROUTER USES, so the record documents the decision the
+        # pipeline actually made. `admitted_by` stays the caller's (`human` / `escalation`);
+        # `policy` is stamped only where no human was in the loop.
+        #
+        # FLOOR ON ANY DOUBT: an unreadable table records `supervised`, which is both the safe
+        # direction and the truth — ReviewStarter supervises on the same failure.
+        _rung = DEFAULT_RUNG
+        _fp = _format_fingerprint(review, key)
+        try:
+            _rung = load_trust_table().rung_for(_fp, _PIPELINE_VERSION)
+        except Exception:  # noqa: BLE001 — a bad table records the floor, never blocks the record
+            pass
         rec = build_decision_record(
             request_key=request_key,
             source_key=key,
@@ -592,7 +628,7 @@ def _emit_record(context, *, review: dict, key: str, request_key: str, outcome: 
             governing={"ruleset_ref": ruleset_ref or NOT_COMPOSED,
                        "trust_table_ref": _trust_table_ref(),
                        "domain": "SUSTAINMENT"},
-            trust_rung=DEFAULT_RUNG,
+            trust_rung=_rung,
             era=DECISION_RECORD_ERA,
             warnings=list(warnings or []),
         )

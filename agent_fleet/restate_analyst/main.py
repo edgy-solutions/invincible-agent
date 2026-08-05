@@ -2679,6 +2679,17 @@ except ImportError:
         grouped_review,
     )
 
+# AutonomousReview — workflow 2's host (ADR-0034 phase 1.3). The SIBLING of GroupedReview: same
+# runner, same executor, one step different. Registered unconditionally because reachability is not
+# the same as liveness — nothing routes here until the trust table promotes a format, and even then
+# the dispatch step denies until `mesh:dispatchDispositions` is granted at the ceremony.
+try:
+    from autonomous_review_workflow import autonomous_review  # noqa: E402  — container path
+except ImportError:
+    from agent_fleet.restate_analyst.autonomous_review_workflow import (  # noqa: E402
+        autonomous_review,
+    )
+
 # ReviewStarter — the explicit entry that composes a notice into a running grouped review.
 try:
     from review_starter import review_starter  # noqa: E402  — container path
@@ -2688,7 +2699,7 @@ except ImportError:
     )
 
 # Mount the Restate SDK so it handles /restate/* routes
-app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, dispatch_item, grouped_review, review_starter]))
+app.mount("/restate", restate.app(services=[analyst_service, bpmn_workflow, process_interviewer_service, process_interviewer_v2_service, run_tracker, dispatch_item, grouped_review, autonomous_review, review_starter]))
 
 
 # ---------------------------------------------------------------------------

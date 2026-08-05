@@ -128,6 +128,18 @@ def test_forwarded_body_carries_them_not_just_the_model():
     # trace_id joins them (ADR-0038): the extraction trace id must reach the ReviewStarter
     # so the review can nest under the SAME Langfuse trace as the extraction.
     assert 'body["trace_id"] = req.trace_id or ""' in handler
+    # ADMISSION FACTS join them (ADR-0034 phase 1.3) and carry the HIGHEST stakes of the set:
+    # ReviewStarter computes `rung_for(format_fingerprint, pipeline_version)` from this pair to
+    # choose between the supervised and autonomous workflows. Dropped here, the starter sees an
+    # empty pair, falls to the born-supervised floor, and EVERY promotion silently stops routing —
+    # the table goes back to being an artifact nothing reads, which is the exact defect 1.3 closed.
+    # It would fail SAFE (supervised) and therefore completely silently, which is why it is pinned
+    # rather than trusted to the generic check above.
+    for field in ("format_fingerprint", "pipeline_version"):
+        assert f'body["{field}"] = req.{field} or ""' in handler, (
+            f"{field} never reaches the forwarded body — the trust table stops routing, silently "
+            f"and in the safe direction, which is the hardest kind of stop to notice"
+        )
 
 
 if __name__ == "__main__":

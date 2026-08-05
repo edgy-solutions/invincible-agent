@@ -41,14 +41,28 @@ try:  # lazy-import dance (container flattens the dir)
     from review_composer import build_review_batch, resolve_subject_via_engine_o  # type: ignore[no-redef]
     from grouped_review_workflow import batch_items_to_state  # type: ignore[no-redef]
     from grouped_review_workflow import run as grouped_review_run  # type: ignore[no-redef]
+    from autonomous_review_workflow import run as autonomous_review_run  # type: ignore[no-redef]
     from policy_rules_client import fetch_policy_rules  # type: ignore[no-redef]
     from orchestrator.auth import current_trace_id  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.review_composer import build_review_batch, resolve_subject_via_engine_o
     from agent_fleet.restate_analyst.grouped_review_workflow import batch_items_to_state
     from agent_fleet.restate_analyst.grouped_review_workflow import run as grouped_review_run
+    from agent_fleet.restate_analyst.autonomous_review_workflow import run as autonomous_review_run
     from agent_fleet.restate_analyst.policy_rules_client import fetch_policy_rules
     from agent_fleet.restate_analyst.orchestrator.auth import current_trace_id
+
+# ADMISSION POLICY (ADR-0034 phase 1.3). Lives in `agent_fleet/utils/` — the ONE tree BOTH runtimes
+# carry — because engine-a's image has no `src/`, so `iagent.trust_table` was unreachable from here.
+# Same relocation, same reason, as `utils/service_identity.py`.
+try:
+    from utils.trust_table import (  # type: ignore[no-redef]
+        DEFAULT_RUNG, MONITORED, TRUSTED, load_trust_table,
+    )
+except ImportError:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.utils.trust_table import (
+        DEFAULT_RUNG, MONITORED, TRUSTED, load_trust_table,
+    )
 
 # Telemetry (ADR-0038): baml_shared is on sys.path (the analyst app adds it at startup).
 # Guarded so the ReviewStarter runs identically when the shim/leaf is absent (no-op
@@ -396,11 +410,59 @@ async def start_review(ctx: Context, request: dict) -> dict:
         # is gated at the task layer (register_task per-actor + /act), not by pre-filtering the batch.
         return {"status": "NO_RESIDUE", "notice_id": notice_id, "counts": build["counts"]}
 
+    # ── ADMISSION POSTURE: which workflow may handle this notice (ADR-0034 phase 1.3) ──────────
+    # THE RUNG IS COMPUTED HERE, SERVER-SIDE, AND NEVER ACCEPTED FROM THE REQUEST. The caller
+    # supplies FACTS about its input (`format_fingerprint`, `pipeline_version` — the same pair the
+    # sensor stamps on the decision record); the AUTHORITY DECISION derived from those facts is the
+    # server's alone. Handing the route over the wire would let anyone entitled to
+    # `mesh:startReview` select their own supervision level — the confused-deputy shape
+    # `_compartment_from_request` already refuses for audiences, on the same reasoning.
+    #
+    # THIS LAYER READS THE POSTURE; IT DOES NOT DECIDE IT. `rung_for` is the TABLE's resolver and
+    # the table owns the decision (ADR-0034 rule 1). The starter owns only the DISPATCH of it:
+    # rung -> definition, mechanically. No layer encodes another's decision.
+    #
+    # FLOOR PRESERVED: an unknown format, an absent table, or a `pipeline_version` mismatch all
+    # yield `supervised` — the last of those is the property the whole table exists to enforce
+    # (a rung earned under one pipeline version must not survive an upgrade), so it is inherited
+    # from `rung_for` untouched rather than re-implemented here.
+    #
+    # A BROKEN TABLE SUPERVISES, LOUDLY. `load_trust_table` raises rather than returning a
+    # permissive empty table; catching it HERE and forcing workflow 1 is the caller-side half of
+    # that contract — the safe behaviour happens, and the reason is logged at a layer that can
+    # say why.
+    rung = DEFAULT_RUNG
+    trust_ref = "trust@unavailable"
+    fmt_fp = str(request.get("format_fingerprint") or "")
+    pipe_v = str(request.get("pipeline_version") or "")
+    try:
+        _table = load_trust_table()
+        trust_ref = _table.ref
+        if fmt_fp and pipe_v:
+            rung = _table.rung_for(fmt_fp, pipe_v)
+        # An absent fact pair is NOT an error — it is an older caller, and older callers get the
+        # floor. Silently supervising is correct here precisely because the floor IS the safe side.
+    except Exception as exc:  # noqa: BLE001 — a bad table supervises; it never blocks the review
+        print(f"TRUST_TABLE unreadable ({type(exc).__name__}: {exc}) — supervising this notice",
+              flush=True)
+
+    autonomous = rung in (MONITORED, TRUSTED)
+    print(f"ADMISSION notice={notice_id} format={fmt_fp or '(none)'} "
+          f"pipeline={pipe_v or '(none)'} rung={rung} table={trust_ref} "
+          f"-> {'autonomous_review' if autonomous else 'grouped_review'}", flush=True)
+
     workflow_id = compose_workflow_id(notice_id, approver, request.get("request_key"))
     ctx.workflow_send(
-        grouped_review_run,
+        autonomous_review_run if autonomous else grouped_review_run,
         key=workflow_id,
         arg={
+            # The posture that SELECTED this path, carried so the workflow's own records can say
+            # what admitted them without re-deriving it (and without re-reading a table that may
+            # have changed since the decision).
+            "trust_rung": rung,
+            "trust_table_ref": trust_ref,
+            "format_fingerprint": fmt_fp,
+            "pipeline_version": pipe_v,
             "approver": approver,
             "audience": request.get("audience") or approver,
             "notice_fingerprint": notice_id,

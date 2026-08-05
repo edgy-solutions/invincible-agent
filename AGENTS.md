@@ -358,6 +358,33 @@ bit), `sourcing` granted nowhere at all, and `procurement`'s own grant uncommitt
 bit was the only one anything could see, and it was not the only one there.** Enumerate the
 producer, then check each one it can emit.
 
+### A caller may supply FACTS about itself; it may never supply the AUTHORITY computed from them
+Third instance, so it gets the rule: the audience string, the compartment namespace, and now the
+trust rung. **Facts cross the boundary; decisions don't.** Every field in a start-request payload is
+therefore one of two things — a fact the server verifies, or an authority the server must refuse to
+accept — and a payload that has never been sorted into those two piles has an unexamined confused
+deputy in it.
+
+The precedent states it exactly (`grouped_review_workflow._compartment_from_request`):
+
+> *"if the trigger could hand over a whole audience string, a caller would be choosing who may act
+> on its own review, which is laundering access through the process plane. Taking only the tail
+> means a caller can influence WHICH compartment reviews it, never WHICH NAMESPACE decides."*
+
+**The confused deputy hides in the WORDING of a plan, not just in code.** Phase 1.3 was packeted as
+"the sensor decides which workflow to start" — written imagining the sensor as part of the trusted
+mechanism. But the sensor's decision crosses an HTTP boundary (`POST /reviews`) and becomes a
+client-supplied field, at which point *every* caller entitled to `mesh:startReview` inherits the
+sensor's authority to choose its own supervision level. The enumeration caught it before it shipped;
+the fix was to send `format_fingerprint` + `pipeline_version` as FACTS and compute `rung_for(...)`
+server-side in `ReviewStarter`.
+
+The residual question the split always leaves: **are the facts themselves verifiable?** A
+caller-asserted fact that selects an authority is the same escalation one level down. Where it
+cannot be verified yet, the backstop must be named along with its EXPIRY — 1.3's fingerprint is
+unverifiable but harmless only while the dispatch capability is granted to nobody, so "close it
+before the grant lands" became a written precondition of the ceremony rather than a follow-up.
+
 ### A policy artifact without a PRODUCTION READER is unshipped policy
 Third instance, which is the filing threshold. The ratification test is behavioural:
 **changing the artifact must change behaviour, witnessed, before any real decision rides on it.**
