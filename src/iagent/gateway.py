@@ -431,6 +431,9 @@ class ReviewStartRequest(_BaseModel):
     # NOT the notice id — see _ingress_idempotency_key. Absent for hand-driven ops calls,
     # which are then honestly non-idempotent rather than falsely deduplicated.
     request_key: Optional[str] = None
+    # The doc-tools extraction trace id (review.json.trace_id), forwarded so the review
+    # composition nests under the SAME Langfuse trace as the extraction (ADR-0038).
+    trace_id: Optional[str] = None
 
 
 def _ingress_idempotency_key(request_key: Optional[str], approver: str) -> Optional[str]:
@@ -531,6 +534,7 @@ async def start_review(
     # attempt died unable to ever produce a review again. Live at work 2026-07-31: eleven
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
+    body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
     try:
         # Sized to the PART COUNT, not to a nominal request. start_review resolves a
         # subject, checks entitlement and evaluates the ruleset PER PART, so a

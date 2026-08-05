@@ -44,6 +44,7 @@ def _review_json() -> dict:
     it builds is the widest one the BFF must accept."""
     return {
         "doc_id": "PCN-23-0171",
+        "trace_id": "trace-abc-123",   # doc-tools stamps this; it must reach the ReviewStarter
         "doc_type": "PDN",
         "categories": ["Material", "Process"],
         "needs_review": True,
@@ -100,6 +101,7 @@ def test_attestation_is_actually_populated_by_the_sensor():
     payload = ers.build_start_review_payload(_review_json())
     assert payload["review_state_source"] == "extraction"
     assert payload["extraction_warnings"] == ["PARTS MAY BE MISSING: 2/5 table crops failed"]
+    assert payload["trace_id"] == "trace-abc-123"   # the extraction trace id, forwarded (ADR-0038)
 
 
 def test_forwarded_body_carries_them_not_just_the_model():
@@ -123,6 +125,9 @@ def test_forwarded_body_carries_them_not_just_the_model():
     # so dropping it here silently restores the single-use-key trap that made ten notices at
     # work permanently unable to produce a review.
     assert 'body["request_key"] = req.request_key or ""' in handler
+    # trace_id joins them (ADR-0038): the extraction trace id must reach the ReviewStarter
+    # so the review can nest under the SAME Langfuse trace as the extraction.
+    assert 'body["trace_id"] = req.trace_id or ""' in handler
 
 
 if __name__ == "__main__":

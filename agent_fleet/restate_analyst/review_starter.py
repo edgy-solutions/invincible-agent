@@ -42,11 +42,13 @@ try:  # lazy-import dance (container flattens the dir)
     from grouped_review_workflow import batch_items_to_state  # type: ignore[no-redef]
     from grouped_review_workflow import run as grouped_review_run  # type: ignore[no-redef]
     from policy_rules_client import fetch_policy_rules  # type: ignore[no-redef]
+    from orchestrator.auth import current_trace_id  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.review_composer import build_review_batch, resolve_subject_via_engine_o
     from agent_fleet.restate_analyst.grouped_review_workflow import batch_items_to_state
     from agent_fleet.restate_analyst.grouped_review_workflow import run as grouped_review_run
     from agent_fleet.restate_analyst.policy_rules_client import fetch_policy_rules
+    from agent_fleet.restate_analyst.orchestrator.auth import current_trace_id
 
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
@@ -276,6 +278,19 @@ async def start_review(ctx: Context, request: dict) -> dict:
     reaches residue, return ``NO_RESIDUE`` honestly — no workflow, no empty task."""
     notice_id = request["notice_id"]
     approver = request["approver"]
+
+    # Adopt the doc-tools extraction trace id (threaded from review.json via the sensor +
+    # gateway) into the request-scoped trace contextvar, so composition steps that become
+    # trace-aware key on the SAME trace as the extraction — one trace bucket -> extraction
+    # -> review (ADR-0038). Contextvar, not an env var: safe under concurrent requests.
+    # (The Langfuse-visible join lands when the composition itself is instrumented; the id
+    # is threaded and adopted here, ready for it.)
+    _trace_id = request.get("trace_id")
+    if _trace_id:
+        try:
+            current_trace_id.set(_trace_id)
+        except Exception:  # noqa: BLE001 — telemetry never breaks the compose
+            pass
 
     # 0) Review-state sourcing tripwire (BEFORE anything else): a request whose doc-level flag says
     #    "needs review" but whose parts carry no per-part flag was built from a lossy graph projection —

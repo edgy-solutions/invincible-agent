@@ -159,6 +159,11 @@ def build_start_review_payload(
         # for a caller that cannot name an artifact — the BFF then sends NO key rather than
         # inventing one, so the call is honestly non-idempotent instead of falsely deduped.
         "request_key": request_key,
+        # The doc-tools extraction's trace id (review.json.trace_id), carried through
+        # start_review so the review composition nests under the SAME Langfuse trace as
+        # the extraction — one trace bucket -> extraction -> review (ADR-0038). Empty for
+        # review.json written before doc-tools stamped it.
+        "trace_id": review_json.get("trace_id") or "",
     }
 
 
