@@ -52,8 +52,15 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "NEO4J_USER") }}
   NEO4J_USER: {{ include "invincible-agent.neo4jUsername" . | quote }}
   {{- end }}
-  WEAVIATE_HTTP_HOST: "{{ .Release.Name }}-weaviate:8080"
-  WEAVIATE_GRPC_HOST: "{{ .Release.Name }}-weaviate-grpc:50051"
+  {{- /* Weaviate wiring via the helpers (in-chart or externalWeaviate), with the
+  same hasKey guards as NEO4J_* so an agentFleet.env override REPLACES the key
+  instead of rendering it twice and surviving on last-wins. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "WEAVIATE_HTTP_HOST") }}
+  WEAVIATE_HTTP_HOST: {{ include "invincible-agent.weaviateHttpHost" . | quote }}
+  {{- end }}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "WEAVIATE_GRPC_HOST") }}
+  WEAVIATE_GRPC_HOST: {{ include "invincible-agent.weaviateGrpcHost" . | quote }}
+  {{- end }}
   JENA_SPARQL_ENDPOINT: "{{ include "invincible-agent.fusekiUrl" . }}/ds/query"
   DATABASE_URL: {{ include "invincible-agent.pgUri" . | replace "postgresql://" "postgresql+asyncpg://" | quote }}
 
@@ -108,7 +115,9 @@ data:
   # here from engineD.env.DATAHUB_GMS_URL was a duplicate source-of-truth that
   # would shadow operator overrides. Use agentFleet.env to set the cluster URL.
   SWARMS_MODEL: {{ .Values.engineC.env.SWARMS_MODEL | quote }}
-  KEYCLOAK_REALM_URL: "http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080/realms/{{ .Values.keycloak.realm }}"
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "KEYCLOAK_REALM_URL") }}
+  KEYCLOAK_REALM_URL: {{ include "invincible-agent.keycloakRealmUrl" . | quote }}
+  {{- end }}
 
   # ── Extraction→review sensor (iagent.defs.extraction_review_sensor) ──
   # The canonical trigger runs in the iagent Dagster code-location: it

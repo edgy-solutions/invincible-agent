@@ -1273,8 +1273,16 @@ weaviate:
   grpcEnabled: true
   grpcServicePort: 50051
 
+# Point the fleet at a Weaviate outside this release (e.g. a shared instance in
+# an infra namespace). Set `weaviate.enabled: false` and fill these in.
+# NOTE the two forms: the fleet's env vars are HOST:PORT (no scheme) while
+# `url` is scheme-ful. `httpHost` wins if set; otherwise it is derived from
+# `url` by stripping the scheme. `grpcHost` has NO url to derive from — set it
+# explicitly whenever the gRPC client is in play.
 externalWeaviate:
-  url: ""     # e.g. "http://my-weaviate.infra.svc:8080"
+  url: ""       # e.g. "http://my-weaviate.infra.svc.cluster.local:8080"
+  httpHost: ""  # e.g. "my-weaviate.infra.svc.cluster.local:8080" (overrides url)
+  grpcHost: ""  # e.g. "my-weaviate-grpc.infra.svc.cluster.local:50051"
 
 fuseki:
   enabled: true
@@ -1310,6 +1318,16 @@ externalDagster:
 # ==========================================================================
 # Identity Management (Keycloak)
 # ==========================================================================
+# Point the fleet at a Keycloak outside this release (e.g. a shared IdP in an
+# infra namespace). Set `keycloak.enabled: false` and fill ONE of these:
+#   * `url`      — base, realm path appended from `keycloak.realm` below;
+#   * `realmUrl` — full override, for an issuer whose path isn't /realms/<realm>.
+# `keycloak.realm` still applies with an external IdP: the realm NAME is
+# independent of where Keycloak runs.
+externalKeycloak:
+  url: ""       # e.g. "http://my-keycloak.infra.svc.cluster.local:8080"
+  realmUrl: ""  # e.g. "https://sso.example.com/auth/realms/corp" (overrides url)
+
 keycloak:
   enabled: true
   image:

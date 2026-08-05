@@ -191,13 +191,72 @@ Neo4j Password
 {{- end }}
 
 {{/*
-Weaviate URL
+Weaviate URL (scheme-ful form, for consumers that want a URL)
 */}}
 {{- define "invincible-agent.weaviateUrl" -}}
 {{- if .Values.weaviate.enabled -}}
 http://{{ .Release.Name }}-weaviate{{ include "invincible-agent.svcDomain" . }}:8080
 {{- else -}}
 {{ .Values.externalWeaviate.url }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Weaviate HOST:PORT — what the fleet actually reads (WEAVIATE_HTTP_HOST /
+WEAVIATE_GRPC_HOST are host:port, NOT URLs; the client adds the scheme).
+
+These exist because the ConfigMap previously hardcoded a BARE
+`<release>-weaviate:8080`, which had two consequences:
+  1. cross-namespace was impossible — `externalWeaviate` was declared but
+     nothing consumed it, so setting it changed nothing (dead config);
+  2. a bare name has no dots, so it does NOT suffix-match a NO_PROXY entry of
+     ".svc.cluster.local" — the same corporate-proxy trap documented on
+     svcDomain above, which killed supervisor verb dispatch once already.
+Routing these through svcDomain fixes both. In-namespace resolution is
+unchanged (the FQDN resolves identically), so this is safe for existing
+releases.
+
+The gRPC port is the literal 50051 to MATCH the Service in
+infrastructure.yaml, which also hardcodes it. `weaviate.grpcServicePort` is
+declared in values.yaml but consumed by nothing — deliberately not wired in
+here, because doing so would let a changed value point the fleet at a port
+the Service does not expose. Fix the Service first if that knob should live.
+*/}}
+{{- define "invincible-agent.weaviateHttpHost" -}}
+{{- if .Values.weaviate.enabled -}}
+{{ .Release.Name }}-weaviate{{ include "invincible-agent.svcDomain" . }}:8080
+{{- else if .Values.externalWeaviate.httpHost -}}
+{{ .Values.externalWeaviate.httpHost }}
+{{- else -}}
+{{ .Values.externalWeaviate.url | trimPrefix "https://" | trimPrefix "http://" | trimSuffix "/" }}
+{{- end -}}
+{{- end }}
+
+{{- define "invincible-agent.weaviateGrpcHost" -}}
+{{- if .Values.weaviate.enabled -}}
+{{ .Release.Name }}-weaviate-grpc{{ include "invincible-agent.svcDomain" . }}:50051
+{{- else -}}
+{{ .Values.externalWeaviate.grpcHost }}
+{{- end -}}
+{{- end }}
+
+{{/*
+Keycloak realm URL — in-chart deployment or external.
+
+`keycloak.enabled: false` removes the DEPLOYMENT but the realm URL used to be
+rendered unconditionally against `<release>-keycloak`, leaving a dangling
+in-namespace reference with no override. Two escape hatches, in precedence
+order: `externalKeycloak.realmUrl` (full override, for an issuer whose path
+isn't /realms/<realm>) then `externalKeycloak.url` (base, realm appended from
+`keycloak.realm` — the realm NAME is independent of where keycloak runs).
+*/}}
+{{- define "invincible-agent.keycloakRealmUrl" -}}
+{{- if .Values.keycloak.enabled -}}
+http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080/realms/{{ .Values.keycloak.realm }}
+{{- else if .Values.externalKeycloak.realmUrl -}}
+{{ .Values.externalKeycloak.realmUrl }}
+{{- else -}}
+{{ .Values.externalKeycloak.url | trimSuffix "/" }}/realms/{{ .Values.keycloak.realm }}
 {{- end -}}
 {{- end }}
 
