@@ -60,6 +60,16 @@ users:
                             # test fixture wearing the entitlement. If the
                             # demo stops needing a catalog-entitled alice,
                             # this line comes out.
+      - maintenance-mechanics  # FIXTURE grant (2026-08-05): gives the demo
+                            # power-user a MAINTENANCE cell so the ADR-0038
+                            # analyst→Engine-E join is witnessable on ORGANIC
+                            # traffic (E is MAINTENANCE-scoped; /resolve gates
+                            # the class pool by the caller's domains, so a
+                            # maintenance question from a non-maintenance cell
+                            # falls to the generalist). Fixture, not a claim
+                            # alice maintains aircraft — mirrors the data-
+                            # engineers fixture above. Remove when the E-join
+                            # demo no longer needs a maintenance-entitled actor.
     default:
       persona: DATA_ENGINEER
       domains: [AVIATION]

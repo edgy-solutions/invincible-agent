@@ -23,6 +23,18 @@ groups:
     grants:
       - {persona: MECHANIC, domain: AVIATION}
 
+  # MAINTENANCE-domain mechanic cell. Added 2026-08-05 so the ADR-0038
+  # analyst→Engine-E telemetry join is witnessable on ORGANIC traffic:
+  # Engine E serves the MAINTENANCE domain, and /resolve domain-scopes the
+  # OntologyClass pool to the caller's cells — so a maintenance graph question
+  # only grounds+routes to E from a MAINTENANCE cell, and no demo user had one.
+  # Distinct from aviation-mechanics (MECHANIC·AVIATION); E's knowledge-graph
+  # corpus is labelled MAINTENANCE. Files the live grant already written to the
+  # sandbox directory during the E-join witness (git↔directory now agree).
+  maintenance-mechanics:
+    grants:
+      - {persona: MECHANIC, domain: MAINTENANCE}
+
   enterprise-architects:
     grants:
       - {persona: ARCHITECT, domain: AVIATION}
