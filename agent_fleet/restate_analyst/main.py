@@ -2653,7 +2653,13 @@ async def analyze_proxy(request: Request) -> JSONResponse:
         import uuid
         trace_id = request.headers.get("X-Trace-Id") or str(uuid.uuid4())
         payload["trace_id"] = trace_id
-            
+        # Session id groups a conversation's traces into one Langfuse Session (ADR-0038);
+        # cortex-ui mints one per sitting in the same interceptor as X-Trace-Id. Adopted
+        # like the trace id so it reaches the boundary emit as request["session_id"].
+        session_id = request.headers.get("X-Session-Id")
+        if session_id:
+            payload["session_id"] = session_id
+
         target_url = f"{RESTATE_INGRESS_URL}/AnalystService/analyze"
 
         # Match the supervisor's per-engine call timeout (1800s post-
