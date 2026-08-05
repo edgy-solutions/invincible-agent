@@ -317,7 +317,36 @@ async def lifespan(app: FastAPI):
 
 
 # Initialize FastAPI
+# Telemetry (ADR-0038): join Engine W's work to the caller's trace. telemetry.py is at /app
+# in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
+try:
+    from telemetry import observed_trace, MAPPING, build_trace_values
+except Exception:  # pragma: no cover — telemetry never load-bearing
+    from contextlib import contextmanager as _cm
+
+    @_cm
+    def observed_trace(*_a, **_k):
+        yield
+
+    def build_trace_values(**_k):
+        return {}
+
+    MAPPING = None
+
 app = FastAPI(title="Engine W: Weaviate Semantic Expert", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _telemetry_join(request: Request, call_next):
+    # ADR-0038: join this engine to the CALLER's trace (X-Trace-Id from discovery.py) so every
+    # endpoint nests under it. Fail-soft; no-op without a trace id / when disabled.
+    tid = request.headers.get("X-Trace-Id")
+    if not tid:
+        return await call_next(request)
+    with observed_trace(MAPPING, build_trace_values(
+        trace_id=tid, engine="weaviate_expert", verb=request.url.path,
+    ), name="engine-w " + request.url.path):
+        return await call_next(request)
 
 # Restate App Binding
 app.mount("/restate", restate.app(services=[expert_service]))

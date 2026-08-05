@@ -27,6 +27,23 @@ try:
 except ImportError:
     from llm_utils import get_smolagent_model
 
+# Telemetry (ADR-0038): join Engine D's work to the caller's trace via observed_trace
+# (create_trace_id(seed=X-Trace-Id)). telemetry.py is at /app in the fleet image; guarded so
+# the engine runs identically when the shim/leaf is absent (no-op).
+try:
+    from telemetry import observed_trace, MAPPING, build_trace_values  # type: ignore[no-redef]
+except Exception:  # pragma: no cover — telemetry never load-bearing
+    from contextlib import contextmanager as _cm
+
+    @_cm
+    def observed_trace(*_a, **_k):  # type: ignore[misc]
+        yield
+
+    def build_trace_values(**_k):  # type: ignore[misc]
+        return {}
+
+    MAPPING = None
+
 try:
     from dag_tools.cortex_data.client import CortexDataClient
 except ImportError:
@@ -413,7 +430,16 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         # so running it inline starves the readiness probe and any concurrent
         # invocations. Offload to a worker thread so the event loop stays
         # responsive.
-        agent_result = await asyncio.to_thread(agent.run, augmented_prompt)
+        # Telemetry (ADR-0038): join Engine D's generation(s) to the caller's trace —
+        # observed_trace seeds create_trace_id on the forwarded X-Trace-Id, so these spans
+        # nest under the analyst trace that called this engine. Fail-soft; no-op if disabled.
+        with observed_trace(MAPPING, build_trace_values(
+            trace_id=request.get("trace_id"),
+            engine="data_analyst",
+            authz_id=request.get("user_id") or request.get("authz_id"),
+            domain=request.get("domain"),
+        ), name="data analyst"):
+            agent_result = await asyncio.to_thread(agent.run, augmented_prompt)
         _emit_fumble_metric("ok")
     except Exception as e:
         # Count the fumble even on a TOTAL failure (agent.run raised) — the

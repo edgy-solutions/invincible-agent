@@ -20,6 +20,8 @@ dependencies = [
     # rendersAs triples, so the agent MUST be able to re-register them on
     # startup — every other verb-registering engine already declares this.
     "acryl-datahub",
+    "langfuse>=3.0.0",   # ADR-0038 v4 telemetry
+    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
 ]
 
 [build-system]

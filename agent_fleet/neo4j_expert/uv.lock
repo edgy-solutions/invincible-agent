@@ -1043,7 +1043,7 @@ wheels = [
 
 [[package]]
 name = "langfuse"
-version = "4.5.1"
+version = "4.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "backoff" },
@@ -1055,9 +1055,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/48/bd/9b12c9dd3ae1883619b20daa6d60f20a780ce2d25564d9b2168db27cbeb0/langfuse-4.5.1.tar.gz", hash = "sha256:fe8f9219f4101c0921934b0aeb1b45834f8e7d248e5f830b2c89c5b40aea6d83", size = 279735, upload-time = "2026-04-24T15:21:43.976Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/7c/4cdf76a100f169a0855d4a7e69598a3bbe19bd2f048c5de3c298af1aa2c0/langfuse-4.14.2.tar.gz", hash = "sha256:76eb3f2c2106ddd63271154d1a33f8b3d4036f449a9f9b48403c36bd5e7c1bba", size = 389507, upload-time = "2026-07-30T11:54:48.46Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2b/63/77bd7220dfd60885a272a851f780b3f83e0f653ee3a852347552c3e24a28/langfuse-4.5.1-py3-none-any.whl", hash = "sha256:5923cafe8289c9e3c53cb6992f4b46ec3132473b9f9eb65eb33ad28e2682db81", size = 479527, upload-time = "2026-04-24T15:21:45.568Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/b5/1499bcedb6872e8acc4e7043c522c9f3a4fe2eafd78a6f37e73308d18753/langfuse-4.14.2-py3-none-any.whl", hash = "sha256:27879cbaea570e94323c6ced60a0997feedf5294f18b51436009947c42f9f92e", size = 688132, upload-time = "2026-07-30T11:54:49.553Z" },
 ]
 
 [[package]]
@@ -1277,6 +1277,7 @@ dependencies = [
     { name = "neo4j" },
     { name = "ollama" },
     { name = "packaging" },
+    { name = "provenance-telemetry" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "restate-sdk" },
@@ -1295,12 +1296,13 @@ requires-dist = [
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
     { name = "langchain-weaviate" },
-    { name = "langfuse" },
+    { name = "langfuse", specifier = ">=3.0.0" },
     { name = "litellm" },
     { name = "mem0ai", extras = ["nlp"] },
     { name = "neo4j" },
     { name = "ollama" },
     { name = "packaging" },
+    { name = "provenance-telemetry", git = "https://github.com/edgy-solutions/provenance-telemetry.git" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "restate-sdk", specifier = "==0.14.0" },
@@ -1597,6 +1599,17 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/ca/25afc144934014700c52e05103c2421997482d561f3101ff352e1292fb81/protobuf-6.33.6-cp39-abi3-manylinux2014_s390x.whl", hash = "sha256:c96c37eec15086b79762ed265d59ab204dabc53056e3443e702d2681f4b39ce3", size = 339381, upload-time = "2026-03-18T19:04:54.616Z" },
     { url = "https://files.pythonhosted.org/packages/16/92/d1e32e3e0d894fe00b15ce28ad4944ab692713f2e7f0a99787405e43533a/protobuf-6.33.6-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:e9db7e292e0ab79dd108d7f1a94fe31601ce1ee3f7b79e0692043423020b0593", size = 323436, upload-time = "2026-03-18T19:04:55.768Z" },
     { url = "https://files.pythonhosted.org/packages/c4/72/02445137af02769918a93807b2b7890047c32bfb9f90371cbc12688819eb/protobuf-6.33.6-py3-none-any.whl", hash = "sha256:77179e006c476e69bf8e8ce866640091ec42e1beb80b213c3900006ecfba6901", size = 170656, upload-time = "2026-03-18T19:04:59.826Z" },
+]
+
+[[package]]
+name = "provenance-telemetry"
+version = "0.1.0"
+source = { git = "https://github.com/edgy-solutions/provenance-telemetry.git#d3979704d89859fc1543f9c582433c3b36d76fe2" }
+dependencies = [
+    { name = "langfuse" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [[package]]

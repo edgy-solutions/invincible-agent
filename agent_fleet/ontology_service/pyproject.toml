@@ -13,6 +13,8 @@ dependencies = [
     "weaviate-client>=4.5.4",
     "neo4j",
     "packaging",
+    "langfuse>=3.0.0",   # ADR-0038 v4 telemetry
+    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
 ]
 
 [build-system]

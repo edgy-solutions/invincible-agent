@@ -20,7 +20,8 @@ except IndexError:
     pass
 
 try:
-    from telemetry import safe_observe, safe_update_observation
+    from telemetry import (safe_observe, safe_update_observation,
+                           observed_trace, MAPPING, build_trace_values)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -28,6 +29,13 @@ except ImportError:
         return decorator
     def safe_update_observation(input_data=None, output_data=None):
         pass
+    from contextlib import contextmanager as _cm
+    @_cm
+    def observed_trace(*_a, **_k):
+        yield
+    def build_trace_values(**_k):
+        return {}
+    MAPPING = None
 
 from restate import Context, Service
 from smolagents import CodeAgent, ToolCallingAgent
@@ -808,8 +816,16 @@ paths and titles in your final_answer so the downstream formatter can render the
 
                 final_prompt = f"{system_prompt_with_memory}\n\n{tool_reminder}\n\nUser Query: {user_query}"
                 
-                # Run the agent in a thread pool since smolagents is synchronous
-                result = await asyncio.to_thread(agent.run, final_prompt)
+                # Telemetry (ADR-0038): join Engine E's graph-reasoning generation(s) to the
+                # caller's trace when a trace id reaches its body; a standalone enriched trace
+                # otherwise. Fail-soft; no-op when disabled.
+                with observed_trace(MAPPING, build_trace_values(
+                    trace_id=request.get("trace_id"),
+                    engine="neo4j_expert",
+                    authz_id=request.get("user_id") or request.get("authz_id"),
+                ), name="engine-e graph reasoning"):
+                    # Run the agent in a thread pool since smolagents is synchronous
+                    result = await asyncio.to_thread(agent.run, final_prompt)
                 
                 # Build the UI trace from `agent.memory.steps` (smolagents 1.24;
                 # the old `agent.logs` attribute is gone — the previous block

@@ -30,7 +30,7 @@ import rdflib
 import weaviate
 import weaviate.classes as wvc
 from neo4j import GraphDatabase
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -48,6 +48,22 @@ except IndexError:
 from baml_client import b  # noqa: E402  — BAML async client
 from baml_client.types import SemanticResolution as BamlSemanticResolution  # noqa: E402
 from baml_client.type_builder import TypeBuilder
+
+# Telemetry (ADR-0038): join Engine O's work to the caller's trace. telemetry.py sits at /app
+# in the fleet image; guarded so the engine runs identically when the shim/leaf is absent.
+try:
+    from telemetry import observed_trace, MAPPING, build_trace_values  # noqa: E402
+except Exception:  # pragma: no cover — telemetry never load-bearing
+    from contextlib import contextmanager as _cm
+
+    @_cm
+    def observed_trace(*_a, **_k):  # type: ignore[misc]
+        yield
+
+    def build_trace_values(**_k):  # type: ignore[misc]
+        return {}
+
+    MAPPING = None
 
 # Initialize runtime BAML configuration logic
 try:
@@ -549,6 +565,20 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def _telemetry_join(request: Request, call_next):
+    # ADR-0038: join this engine's work to the CALLER's trace. The analyst forwards its trace
+    # id as X-Trace-Id (discovery.py); observed_trace seeds create_trace_id on it, so every
+    # endpoint nests under the caller's trace. Fail-soft; no-op without a trace id / when off.
+    tid = request.headers.get("X-Trace-Id")
+    if not tid:
+        return await call_next(request)
+    with observed_trace(MAPPING, build_trace_values(
+        trace_id=tid, engine="ontology_service", verb=request.url.path,
+    ), name="engine-o " + request.url.path):
+        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
