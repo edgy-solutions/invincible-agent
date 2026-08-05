@@ -31,7 +31,14 @@ except ImportError:
 # (create_trace_id(seed=X-Trace-Id)). telemetry.py is at /app in the fleet image; guarded so
 # the engine runs identically when the shim/leaf is absent (no-op).
 try:
-    from telemetry import observed_trace, MAPPING, build_trace_values  # type: ignore[no-redef]
+    # `observed_trace` is retained for reference/compat; D's handler now uses the REPLAY-SAFE
+    # boundary trio instead (mint ids inside ctx.run -> non-recording ambient parent -> emit from
+    # its own ctx.run). See the PLACEMENT MARKER in baml_shared/telemetry.py, which named D as the
+    # known future adopter of exactly this shape.
+    from telemetry import (  # type: ignore[no-redef]
+        observed_trace, MAPPING, build_trace_values,
+        mint_boundary_ids, boundary_parent, emit_boundary,
+    )
 except Exception:  # pragma: no cover — telemetry never load-bearing
     from contextlib import contextmanager as _cm
 
@@ -43,6 +50,19 @@ except Exception:  # pragma: no cover — telemetry never load-bearing
         return {}
 
     MAPPING = None
+
+    # Fail-soft fallbacks with the SAME shapes the real primitives return, so the handler's
+    # control flow is identical whether telemetry is present or absent. `mint_boundary_ids` must
+    # still yield a dict (it is journaled), and `boundary_parent` must still yield a timing dict.
+    def mint_boundary_ids(*_a, **_k):  # type: ignore[misc]
+        return {"trace_id": None, "span_id": None}
+
+    @_cm
+    def boundary_parent(_ids):  # type: ignore[misc]
+        yield {"started_at": None, "ended_at": None}
+
+    def emit_boundary(*_a, **_k):  # type: ignore[misc]
+        return None
 
 try:
     from dag_tools.cortex_data.client import CortexDataClient
@@ -448,28 +468,79 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             print(f"DA_FUMBLE_METRIC compute_failed structured={_use_structured} "
                   f"outcome={outcome} err={_me}", flush=True)
 
-    try:
-        # agent.run() is synchronous and blocks for the LLM round-trips
-        # (often 30s+ on slow Ollama backends). Hypercorn is single-event-loop,
-        # so running it inline starves the readiness probe and any concurrent
-        # invocations. Offload to a worker thread so the event loop stays
-        # responsive.
-        # Telemetry (ADR-0038): join Engine D's generation(s) to the caller's trace —
-        # observed_trace seeds create_trace_id on the forwarded X-Trace-Id, so these spans
-        # nest under the analyst trace that called this engine. Fail-soft; no-op if disabled.
-        with observed_trace(MAPPING, build_trace_values(
-            trace_id=request.get("trace_id"),
-            engine="data_analyst",
-            authz_id=request.get("user_id") or request.get("authz_id"),
-            domain=request.get("domain"),
-        ), name="data analyst"):
-            agent_result = await asyncio.to_thread(agent.run, augmented_prompt)
-        _emit_fumble_metric("ok")
-    except Exception as e:
-        # Count the fumble even on a TOTAL failure (agent.run raised) — the
-        # memory still holds the errored steps; a run that never recovered is
-        # the worst fumble and must not be invisible to the A/B.
-        _emit_fumble_metric("raised")
+    # ------------------------------------------------------------------
+    # DURABLE EXECUTION (2026-08-05). The agent work is now a JOURNALED STEP, so a Restate replay
+    # returns the memoized result instead of re-running the whole LLM loop. Measured before this
+    # landed: one manufactured replay produced TWO complete agent executions (DA_FUMBLE_METRIC x2,
+    # boundary span x2) for ONE invocation — the waste was real, which is exactly why D's span count
+    # looked honest.
+    #
+    # WRAPPING IS SAFE HERE, and that is a property of D's EFFECTS, not of this shape. D's only
+    # in-loop external effect is `query_datahub_asset` -> CortexDataClient.get_dataframe, a pure
+    # READ. Re-running it after a partial failure costs a duplicate query and nothing else. (The
+    # same coarse wrap around Engine A's loop would NOT be safe — A's loop can POST a Superset
+    # dataset+chart, and per-tool wrapping is ruled out because the tool order is LLM-chosen. That
+    # is filed separately: docs/plans/agent-loop-effect-idempotency-engine-a.md.)
+    #
+    # THE TRAP THIS RETURNS A DICT TO AVOID. `sources_collected`, `access_denials` and the fumble
+    # metric are all produced as SIDE EFFECTS inside the agent loop and read AFTER it. A ctx.run
+    # returns its memoized value and does NOT re-execute the body, so on replay those closures would
+    # still hold their INITIAL values — the response would carry the right answer with an empty
+    # provenance trail, and an empty `access_denials` would turn a genuine 403 into a success. That
+    # is a correctness regression introduced BY the durability fix, so the step RETURNS its outputs
+    # rather than mutating them through the closure.
+    async def run_agent() -> dict:
+        try:
+            # agent.run() is synchronous and blocks for the LLM round-trips
+            # (often 30s+ on slow Ollama backends). Hypercorn is single-event-loop,
+            # so running it inline starves the readiness probe and any concurrent
+            # invocations. Offload to a worker thread so the event loop stays
+            # responsive.
+            result = await asyncio.to_thread(agent.run, augmented_prompt)
+            _emit_fumble_metric("ok")
+            return {"ok": True, "result": result,
+                    "sources": list(sources_collected), "denials": list(access_denials)}
+        except Exception as e:  # noqa: BLE001
+            # Count the fumble even on a TOTAL failure (agent.run raised) — the
+            # memory still holds the errored steps; a run that never recovered is
+            # the worst fumble and must not be invisible to the A/B.
+            _emit_fumble_metric("raised")
+            # Caught INSIDE the step and returned as data, never re-raised: an agent failure is a
+            # RESULT of this engine ("I could not analyse that"), not an infrastructure fault, and
+            # re-raising would make Restate retry the whole LLM loop for a deterministic failure —
+            # burning the run again to reach the same answer.
+            return {"ok": False, "error": str(e),
+                    "sources": list(sources_collected), "denials": list(access_denials)}
+
+    # BOUNDARY, not leaf — per the PLACEMENT MARKER in baml_shared/telemetry.py. This span PARENTS
+    # the agent's generations, so it uses the three primitives: ids journaled inside ctx.run (stable
+    # across replays), a NON-RECORDING ambient parent (re-entering it on a replay exports nothing,
+    # so the replay-double cannot occur by construction), and the boundary observation emitted from
+    # its own ctx.run. `observed_trace` would have minted a fresh recording span on every replay —
+    # the exact hazard the marker warns whoever adds durability here will inherit.
+    _boundary_ids = await ctx.run(
+        "mint-analyst-boundary-ids",
+        lambda: mint_boundary_ids(request.get("trace_id")),
+    )
+    _boundary_values = build_trace_values(
+        trace_id=request.get("trace_id"),
+        engine="data_analyst",
+        authz_id=request.get("user_id") or request.get("authz_id"),
+        domain=request.get("domain"),
+    )
+    with boundary_parent(_boundary_ids) as _boundary_timing:
+        _work = await ctx.run("run-agent", run_agent)
+    await ctx.run(
+        "emit-analyst-boundary",
+        lambda: emit_boundary(MAPPING, _boundary_values, ids=_boundary_ids,
+                              name="data analyst", timing=_boundary_timing),
+    )
+
+    # Re-hydrate from the STEP'S RETURN VALUE, so a replay sees exactly what the original execution
+    # produced instead of the empty closures it would otherwise inherit.
+    sources_collected = _work.get("sources") or []
+    access_denials = _work.get("denials") or []
+    if not _work.get("ok"):
         # A gate access-denial surfaces STRUCTURALLY even if the agent's
         # error path fired — check it before the generic error so the UI
         # offers request-access, not a generic "something went wrong".
@@ -478,7 +549,8 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         # Even on error, return any sources we did manage to capture —
         # the agent may have queried successfully before something else
         # blew up downstream (e.g. SQL syntax issue on a follow-up call).
-        return {"status": "error", "message": str(e), "sources": sources_collected}
+        return {"status": "error", "message": _work.get("error", ""), "sources": sources_collected}
+    agent_result = _work.get("result")
 
     # REPLAY-SEAL INJECTION POINT (env-gated, default no-op). Placed AFTER the work and OUTSIDE the
     # try/except above ON PURPOSE: inside it, the broad `except Exception` would swallow this and
