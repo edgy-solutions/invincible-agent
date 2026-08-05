@@ -46,7 +46,8 @@ except IndexError:
 try:
     from telemetry import (safe_observe, safe_update_observation,
                            set_trace_standard, observed_trace, build_trace_values, MAPPING,
-                           litellm_metadata)
+                           litellm_metadata,
+                           mint_boundary_ids, boundary_parent, emit_boundary)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -64,6 +65,13 @@ except ImportError:
         return {}
     def litellm_metadata(operation, **_k):
         return {}
+    def mint_boundary_ids(_seed=None):
+        return {"trace_id": None, "span_id": None}
+    @_cm
+    def boundary_parent(_ids):
+        yield {"started_at": None, "ended_at": None}
+    def emit_boundary(*_a, **_k):
+        pass
     MAPPING = None
 
 from fastapi import FastAPI, Request
@@ -1043,8 +1051,9 @@ to decide the next call. Use only what the tools return — never invent data.
 
                 model = get_smolagent_model()
                 
-                # Generation->trace linking (ADR-0038, v4): observed_trace at the run-smolagent
-                # call below opens + JOINS + enriches the analyst trace. Here, stamp the SAME
+                # Generation->trace linking (ADR-0038, v4): the replay-safe boundary at the
+                # run-smolagent call below opens + JOINS + enriches the analyst trace on a
+                # JOURNALED trace id (same seed, so the join is unchanged). Here, stamp the SAME
                 # joined id (create_trace_id(seed=request trace id)) onto the model's LiteLLM
                 # metadata so smolagents' generations attach to that trace — they also nest via
                 # the active OTel span. Per-request model -> request-scoped; fail-soft.
@@ -1257,7 +1266,17 @@ to decide the next call. Use only what the tools return — never invent data.
             # v4 analyst-trace JOIN (ADR-0038): open the trace on the request's id
             # (create_trace_id(seed=X-Trace-Id)) + enrich, so cortex-ui's trace id unifies the
             # analyst trace, its run_smolagent child span, and the LLM generations. Fail-soft.
-            with observed_trace(MAPPING, build_trace_values(
+            # REPLAY-SAFE boundary (ADR-0038). The previous shape wrapped this ctx.run in
+            # `observed_trace`, which opens a RECORDING span with a fresh id on every entry
+            # — and Restate re-enters the block on replay while the memoized ctx.run body
+            # does not re-execute, so ONE run of the agent showed up as N `analyst` spans.
+            # Now: the ids are journaled (ctx.run), the parent context emits nothing, and
+            # the boundary observation is emitted from its own ctx.run. Replays add zero.
+            _boundary_ids = await ctx.run(
+                "mint-analyst-boundary-ids",
+                lambda: mint_boundary_ids(current_trace_id.get()),
+            )
+            _boundary_values = build_trace_values(
                 trace_id=current_trace_id.get(),
                 authz_id=user_id,
                 session_id=request.get("session_id"),
@@ -1266,8 +1285,14 @@ to decide the next call. Use only what the tools return — never invent data.
                 domain=(request.get("domain") or None),
                 subject_class=(semantic_ctx.get("resolved_uri") or None),
                 resolved_via=("supervisor" if semantic_ctx.get("from_supervisor") else "engine_o"),
-            ), name="analyst"):
+            )
+            with boundary_parent(_boundary_ids) as _boundary_timing:
                 raw_agent_response, execution_trace, conf = await ctx.run("run-smolagent", run_smolagent)
+            await ctx.run(
+                "emit-analyst-boundary",
+                lambda: emit_boundary(MAPPING, _boundary_values, ids=_boundary_ids,
+                                      name="analyst", timing=_boundary_timing),
+            )
 
         summary_text = str(raw_agent_response)
         structured_data_str = None
