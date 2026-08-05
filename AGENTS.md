@@ -358,6 +358,49 @@ bit), `sourcing` granted nowhere at all, and `procurement`'s own grant uncommitt
 bit was the only one anything could see, and it was not the only one there.** Enumerate the
 producer, then check each one it can emit.
 
+### An instrument must not share FATE with the event it measures
+A witness that dies with the subject reports the subject's death as health. Tenth probe-correctness
+instance and a distinct species: not wrong about timing, scope, anchor or fixture — wrong about
+**survival**.
+
+Measured 2026-08-05 building Engine D's replay seal. The obvious manufacture was killing the pod
+mid-handler; Restate retried (a handler killed at t=5s returned 200 after 30.6s), but the trace
+showed **ONE span for TWO executions** because the killed pod's OTel batch exporter never flushed.
+It undercounts in exactly the scenario it exists to measure, silently, **in the direction that reads
+as success** — had the fix already been in, that identical reading would have been indistinguishable
+from working. A false-green built into the METHOD rather than the code.
+
+The repair is the pattern: **manufacture the failure AFTER the work but WITHOUT killing the
+observer** — fail the handler, don't kill the pod. Every counter (stdout, exporter, journal)
+survives to report honestly, and it is deterministic instead of racing a 12–42s LLM window, so the
+seal is repeatable rather than lucky.
+
+Note the backward connection, because it stops this from over-generalising: Engines A and E's replay
+witnesses DID use pod kills and were valid — their instrument was the inner span count, which
+journals through **Restate**, not through the dying exporter. So the operational half is a question,
+not a ban: **before trusting any kill-based witness, ask which side of the kill the instrument's
+persistence lives on.**
+
+### A journaled step's contract is its RETURN VALUE — side effects do not replay
+The memoization mirror of the time-machine rule: a journal replays what was **returned**, not what
+was **done**. `ctx.run` memoizes the return value and does not re-execute the body, so anything the
+replay path needs must ride the return.
+
+This is a defect class the durability pattern ITSELF creates, which is why it needs its own line.
+Found in Engine D before the wrap landed: `sources_collected`, `access_denials` and the fumble
+metric were all produced as side effects INSIDE the agent loop and read AFTER it. Wrapping the loop
+naively would have returned the right answer with an **empty provenance trail**, and an empty
+`access_denials` turns a genuine 403 into a reported success — the durability fix minting a **silent
+authz-visibility regression**.
+
+Repair: the step returns its outputs; the caller re-hydrates from the return value, never from the
+closure. Check it by asking of every name read after a `ctx.run`: *was this written inside it?* If
+yes, it must come back through the return or it is empty on replay.
+
+Scales with the ambient state the body mutates — an agent loop mutates far more than a handler, so
+Engine A's eventual idempotency work meets this class at much larger surface area
+(`docs/plans/agent-loop-effect-idempotency-engine-a.md`).
+
 ### A fixture that collapses two roles into one identity cannot witness which role did what
 The tautological-guard class in provenance clothing, and the reason the approver misattribution
 survived so long: the seal's fixture passed ONE identity as both the review's initiator and its
