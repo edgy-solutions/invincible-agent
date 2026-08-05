@@ -44,7 +44,8 @@ except IndexError:
     pass
 
 try:
-    from telemetry import safe_observe, safe_update_observation
+    from telemetry import (safe_observe, safe_update_observation,
+                           set_trace_standard, build_trace_values, MAPPING)
 except ImportError:
     def safe_observe(**kwargs):
         def decorator(func):
@@ -52,6 +53,11 @@ except ImportError:
         return decorator
     def safe_update_observation(input_data=None, output_data=None):
         pass
+    def set_trace_standard(*_a, **_k):
+        pass
+    def build_trace_values(**_k):
+        return {}
+    MAPPING = None
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -1038,6 +1044,21 @@ to decide the next call. Use only what the tools return — never invent data.
                         langfuse_context.update_current_trace(id=trace_id)
                     except Exception:
                         pass
+                    # Project the request's provenance onto the trace (ADR-0038): user +
+                    # session identity, tags (engine/verb/domain/env), metadata (resolved
+                    # subject class + resolution rung + chart version). Fail-soft in the
+                    # leaf, so a telemetry hiccup never touches the answer; a no-op if the
+                    # leaf/Langfuse is absent (the manual id-set above still stands).
+                    set_trace_standard(MAPPING, build_trace_values(
+                        trace_id=trace_id,
+                        authz_id=user_id,
+                        session_id=request.get("session_id"),
+                        engine="restate_analyst",
+                        verb=(routed_verb_iri or None),
+                        domain=(request.get("domain") or None),
+                        subject_class=(semantic_ctx.get("resolved_uri") or None),
+                        resolved_via=("supervisor" if semantic_ctx.get("from_supervisor") else "engine_o"),
+                    ))
                 
                 # ToolCallingAgent (structured tool-calls) — NOT CodeAgent
                 # (free-form Python in <code> tags). gpt-oss intermittently
