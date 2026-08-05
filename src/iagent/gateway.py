@@ -1091,7 +1091,25 @@ async def act_on_human_task(
                 "message": "grouped-review rejection needs workflow cancellation (follow-up); "
                            "use per-part overrides to change dispositions, then approve"})
         # approved -> submit the (accept-all + optional per-part overrides) decision.
-        decision = {"overrides": req.overrides or {}}
+        #
+        # `acted_by` RIDES THE DECISION AS DATA (2026-08-05). Until now nothing carried the
+        # DECISION'S ACTOR past this point, so every row the resolution minted was attributed to
+        # `requested_by` — which faithfully records who STARTED the review (the sensor's service
+        # identity, in the canonical flow). `requested_by` was never lying about its own meaning;
+        # readers inferred "who decided" from "who requested" because no field carried the decider.
+        # Fixed ADDITIVELY: the actor becomes its own field and `requested_by` keeps its meaning,
+        # so no consumer has to coordinate a semantics change.
+        #
+        # STAMPED SERVER-SIDE FROM THE AUTHENTICATED IDENTITY, never from the request body — the
+        # same rule as `approver` at start_review. And it is the identity `check_can_act` just
+        # authorized above, so the value is the one the gate actually admitted rather than a claim
+        # travelling beside it.
+        #
+        # PROVENANCE, NOT AUTHORIZATION. This attributes; it does not authorize. The effect's
+        # credential is minted at use under the pipeline's own identity — keeping those two facts
+        # in separate fields is the notice-A ruling, and putting the actor here is what lets them
+        # travel separately instead of being conflated back into one value.
+        decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id}
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(

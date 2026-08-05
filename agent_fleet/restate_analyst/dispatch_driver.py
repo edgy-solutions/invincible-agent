@@ -64,7 +64,8 @@ _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 # ---------------------------------------------------------------------------
 # Serialization — DispatchPlan (pure dataclass) -> a JSON-native invocation body
 # ---------------------------------------------------------------------------
-def plan_to_payload(plan, *, requested_by: str = "", compartment: str = "") -> dict:
+def plan_to_payload(plan, *, requested_by: str = "", acted_by: str = "",
+                    compartment: str = "") -> dict:
     """Flatten a ``DispatchPlan`` to the payload the VirtualObject consumes. Kept flat + JSON-native so
     it rides a Restate invocation body; ``None`` graph_write / human_task pass through as ``None``
     (an unresolved subject has no graph write; ``archive`` has no task).
@@ -91,6 +92,9 @@ def plan_to_payload(plan, *, requested_by: str = "", compartment: str = "") -> d
         # otherwise file an effect-failure row that cannot say whose decision failed to take
         # effect — "(unrecorded)" on the one field an operator most needs.
         "requested_by": requested_by,
+        # THE DECIDING HUMAN, carried as its own fact (2026-08-05). Distinct from ``requested_by``
+        # (who STARTED the review — a service, in the canonical flow) and never merged into it.
+        "acted_by": acted_by,
         "graph_write": None if gw is None else {
             "subject_iri": gw.subject_iri,
             "disposition_state": gw.triples.get("dispositionState", ""),
@@ -110,7 +114,10 @@ def plan_to_payload(plan, *, requested_by: str = "", compartment: str = "") -> d
             "needs_review": ht.needs_review,
             "proposed_by_ruleset": ht.proposed_by_ruleset,
             "subject_unresolved": ht.subject_unresolved,
-            "requested_by": requested_by,   # the approver who resolved the batch (cortex-bff requires it)
+            # WHO REQUESTED THE WORK (the review's initiator). cortex-bff REQUIRES it — a 422
+            # without it. Its meaning is unchanged; see the note on the payload-level twin.
+            "requested_by": requested_by,
+            "acted_by": acted_by,           # the human who APPROVED — a different fact, its own field
         },
     }
 
@@ -191,6 +198,21 @@ def _mint_dispatch_task(task: dict) -> dict:
         "mpn": task.get("mpn"),
         "notice_fingerprint": task.get("notice_fingerprint"),
         "subject_unresolved": task.get("subject_unresolved", False),
+        # THE APPROVING HUMAN, on the ROW, at last (2026-08-05). Ordinary dispatch rows carried the
+        # same misattribution the effect-failure row did — `requested_by: svc:review-starter` — so
+        # this lands here too, not only on the triage path.
+        #
+        # NAMED `approved_by`, NOT `acted_by`, AND THE DIFFERENCE IS LOAD-BEARING. The projection
+        # already HAS an `acted_by` column, and it means "who resolved THIS row" — which for a
+        # freshly-registered dispatch task must stay NULL until its assignee acts. Writing the
+        # upstream approver under that name would put two different meanings behind one identifier,
+        # the exact hazard this repo already documents for the `pcn_disposition` kind-vs-audience
+        # collision. So: `payload.approved_by` = who approved the UPSTREAM review; the row's own
+        # `acted_by` column = who resolved THIS task. Neither can be mistaken for the other.
+        #
+        # Rides in `payload` (a pass-through jsonb) rather than as a new column: additive, no
+        # migration, and nothing existing changes shape.
+        "payload": {"approved_by": task.get("acted_by") or ""},
     }
     # MINT AT USE — fresh service-identity token, never a stored one. A ServiceTokenError propagates
     # (retryable): a Keycloak blip is transient INFRA, not an authorization denial, so it must NOT
@@ -249,9 +271,15 @@ def _write_disposition_state(gw: dict) -> dict:
 # siblings being flat is their unresolved question, not a precedent to copy.
 _DISPATCH_FAILURE_AUDIENCE = "dispatch_failure:{compartment}"
 
+# Shown when a review was resolved BEFORE the actor was carried through the decision payload — an
+# in-flight review at the 2026-08-05 deploy, and nothing else. Says WHY it is absent rather than
+# leaving a blank an operator would read as "nobody", because a missing value that explains itself
+# is actionable and one that does not is a second mystery.
+_NO_ACTOR = "(unrecorded — review resolved before the actor was carried)"
+
 
 def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, task: dict,
-                                  cause: str, requested_by: str = "") -> dict:
+                                  cause: str, requested_by: str = "", acted_by: str = "") -> dict:
     """Mint a triage row for a dispatch that died TERMINALLY after a human already approved it.
 
     THE LIE THIS ENDS. Before this existed, a grouped review could read ``approved`` while its
@@ -296,13 +324,12 @@ def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, tas
     # ``acted_by`` said ``alice@example.com``. So the field is not missing, it is MISATTRIBUTING:
     # a false statement on the one field an effect-failure row exists to carry.
     #
-    # Labelled truthfully rather than guessed. Threading the real approver means carrying the
-    # ``/act`` caller's identity through ``submit_decision`` into the fan-out — a provenance change
-    # that touches a field other surfaces already read, so it is FILED as a fork rather than
-    # decided here (docs/plans/2026-08-05-overnight-handoff.md). Until then the row says what it
-    # knows and names where the approver actually lives, which an operator can act on; "Approved
-    # by: <a service>" is not.
+    # RESOLVED 2026-08-05 (same night, ruled): the actor now travels from ``/act`` through the
+    # decision payload into the fan-out as DATA, so the row can finally name the approving human
+    # DIRECTLY instead of pointing at where to look. Both facts are kept, in separate fields,
+    # because they answer different questions and merging them is what produced the lie.
     started_by = task.get("requested_by") or requested_by or ""
+    approved_by = task.get("acted_by") or acted_by or ""
     body = {
         # Identity from the DISPATCH's own idempotency key (notice x part), so a redelivery that
         # fails again files the SAME row rather than a second one — /triage_tasks is idempotent on
@@ -318,9 +345,8 @@ def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, tas
             f"decision is recorded as settled but its effects never landed. "
             f"Part: {mpn or '(unknown)'}. Queue: {task.get('audience') or '(none)'}. "
             f"Disposition: {task.get('disposition') or '(none)'}. "
-            f"Review started by: {started_by or '(unrecorded)'} — the APPROVING human is the "
-            f"grouped review's acted_by for notice "
-            f"{task.get('notice_fingerprint') or '(unknown)'}, which this row cannot see. "
+            f"Approved by: {approved_by or _NO_ACTOR}. "
+            f"Review started by: {started_by or '(unrecorded)'}. "
             f"Cause: {cause}"
         ),
         "payload": {
@@ -334,9 +360,10 @@ def _file_dispatch_failure_triage(*, idempotency_key: str, compartment: str, tas
             # WHAT IT IS: the review's INITIATOR (a service, in the canonical sensor-driven flow),
             # NOT the approver. See the comment above ``started_by``.
             "review_started_by": started_by,
-            "approver_note": (
-                "not carried into the dispatch payload; read acted_by on the grouped review row"
-            ),
+            # The DECIDING human. Named `approved_by` rather than `acted_by` on purpose — the
+            # projection's own `acted_by` column means "who resolved THIS row" (i.e. the operator
+            # who works this triage task), and one identifier must not carry two meanings.
+            "approved_by": approved_by,
             "cause": cause,
         },
     }
@@ -430,6 +457,7 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
                 idempotency_key=key, compartment=request.get("compartment") or "",
                 task=task or {}, cause=str(exc),
                 requested_by=request.get("requested_by") or "",
+                acted_by=request.get("acted_by") or "",
             ),
         )
         # RE-RAISE, ALWAYS. Surfacing the failure must never CONVERT it into a success: Restate still
@@ -451,7 +479,8 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
 # Fan-out — one grouped approval -> N per-item dispatches (execution grain, §1)
 # ---------------------------------------------------------------------------
 def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: str = "",
-                     requested_by: str = "", compartment: str = "") -> list[str]:
+                     requested_by: str = "", acted_by: str = "",
+                     compartment: str = "") -> list[str]:
     """Fan ONE grouped approval out to N per-item dispatches. Each ``ItemResolution`` is planned then
     SENT (fire-and-forget) to its own ``DispatchItem`` keyed by ``idempotency_key`` — per-item,
     idempotent, OUTSIDE the workflow graph (§7). The Restate invocation ``idempotency_key`` is that
@@ -460,7 +489,8 @@ def fan_out_dispatch(ctx, resolutions, *, notice_fingerprint: str, notice_id: st
     keys: list[str] = []
     for res in resolutions:
         plan = plan_dispatch(res, notice_fingerprint=notice_fingerprint, notice_id=notice_id)
-        payload = plan_to_payload(plan, requested_by=requested_by, compartment=compartment)
+        payload = plan_to_payload(plan, requested_by=requested_by, acted_by=acted_by,
+                                  compartment=compartment)
         ctx.object_send(dispatch, key=res.idempotency_key, arg=payload, idempotency_key=res.idempotency_key)
         keys.append(res.idempotency_key)
     return keys

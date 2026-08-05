@@ -22,8 +22,13 @@ the one that died. A run where everything failed would be indistinguishable from
 Requires: alice (disposition_review:SUSTAINMENT), bob (qualification + dispatch_failure:SUSTAINMENT).
 Run:  kubectl port-forward -n sandbox svc/iagent-cortex-bff 18090:8090
       kubectl port-forward -n sandbox svc/iagent-keycloak 18083:8080
+      kubectl port-forward -n sandbox svc/topaz-svc 19393:9393      # LEG 0's precondition check
+      SVC_TOKEN=$(kubectl exec -n <ns> <engine-a-pod> -- python -c "import sys; \
+        sys.path.insert(0,'/app'); from utils.service_identity import mint_service_token; \
+        print(mint_service_token())")
       python tests/sandbox_e2e/_seal_effect_failure_surfacing.py
-Exit: 0 sealed · 1 a leg failed · 2 inconclusive (could not reach a precondition)
+Exit: 0 sealed · 1 a leg failed · 2 inconclusive (could not reach a precondition, OR the fault
+      injector healed and the seal needs re-pointing — see LEG 0)
 """
 from __future__ import annotations
 
@@ -43,6 +48,31 @@ DOMAIN = "SUSTAINMENT"
 MPNS = ["NSR01L30NXT5G", "NSR02F30NXT5G", "NSR05F20NXT5G"]
 DOOMED = MPNS[0]            # overridden to dispatchAltSourcing -> `sourcing` -> grants NOBODY
 PARTS = [{"affected_mpn": m, "replacement_mpn": m + "-R", "needs_review": False} for m in MPNS]
+
+
+TOPAZ_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://localhost:19393")
+
+
+async def _resolve_audience(c, audience: str):
+    """The actors granted `actor` on an audience — the SAME question registration asks, against the
+    SAME directory, so the precondition check and the behaviour under test cannot disagree.
+
+    Returns a list (possibly empty) or None if the directory could not be reached. None is NOT an
+    empty list: "nobody is granted" and "I could not find out" are different answers, and collapsing
+    them would let an unreachable Topaz read as a healthy fault injector — the seal would then
+    proceed on an assumption it had just failed to verify.
+    """
+    try:
+        r = await c.get(f"{TOPAZ_URL}/api/v3/directory/relations",
+                        params={"object_type": "task_audience", "object_id": audience,
+                                "relation": "actor"}, timeout=15.0)
+        r.raise_for_status()
+        body = r.json()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  (could not reach the Topaz directory at {TOPAZ_URL}: {exc})")
+        return None
+    return [rel.get("subject_id") for rel in (body.get("results") or body.get("relations") or [])
+            if rel.get("subject_type") == "user" and rel.get("subject_id")]
 
 
 async def _token(c, user, pw):
@@ -77,6 +107,33 @@ async def main() -> int:
             return 2
         HS = {"Authorization": f"Bearer {svc}"}
         print(f"NOTICE={NOTICE}  parts={MPNS}  doomed={DOOMED} (-> sourcing, grants nobody)\n")
+
+        print("=== LEG 0: the FAULT INJECTOR is still a fault ===")
+        # A seal whose fault injector is A DEFECT SOMEONE WILL EVENTUALLY FIX has a fuse burning
+        # toward a false green. This seal manufactures its terminal failure by routing a part to
+        # `sourcing`, an audience granted to NOBODY. The day someone grants `sourcing` — a correct
+        # and desirable fix — this drive stops failing, LEG 5 finds no triage row, and the seal
+        # reports RED for the opposite of the reason it was written... or worse, someone "fixes"
+        # LEG 5 and it reports GREEN while testing nothing.
+        #
+        # Relying on that person knowing this file exists is not a control. So the seal asserts its
+        # OWN PRECONDITION and fails with instructions: the positive-control rule applied to the
+        # injector itself, which turns a silent trap into a self-announcing one.
+        sourcing_actors = await _resolve_audience(c, "sourcing")
+        if sourcing_actors is None:
+            print("INCONCLUSIVE: could not resolve the `sourcing` audience to check the injector.")
+            return 2
+        if sourcing_actors:
+            print(f"  FAULT INJECTOR HEALED — `sourcing` now grants {sourcing_actors}.")
+            print("  This seal manufactures its terminal dispatch failure by routing a part to an")
+            print("  audience that grants NOBODY. That is no longer true, so this drive would")
+            print("  SUCCEED and LEG 5 would correctly find no triage row — a red that means the")
+            print("  opposite of what it says.")
+            print("  RE-POINT ME at another terminal failure (a 4xx from the register is the")
+            print("  cheapest: any audience with zero actors, or a deliberately malformed task),")
+            print("  then update DOOMED and this check together.")
+            return 2
+        print("  `sourcing` still grants NOBODY — the injected failure is genuine.\n")
 
         print("=== LEG 1: the SERVICE identity starts the review ===")
         r1 = await c.post(f"{mc.BFF_URL}/reviews", headers=HS, timeout=90.0,

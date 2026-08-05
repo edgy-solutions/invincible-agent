@@ -1657,7 +1657,21 @@ async def _run_grouped_human_await(
     keys = fan_out_dispatch(
         ctx, submission.resolutions,
         notice_fingerprint=notice_fingerprint, notice_id=notice_id,
-        requested_by=approver,   # PROVENANCE — the human who approved; the effect's AUTHZ is minted at use
+        # PROVENANCE-OF-INITIATION — who STARTED this review. In the canonical sensor-driven flow
+        # that is `svc:review-starter`, and that is CORRECT for this field: it has always meant
+        # "who requested the work", never "who decided". Left alone deliberately (2026-08-05) —
+        # three surfaces read it, so changing its meaning would be a rename on a live identity
+        # surface, i.e. expand/contract. The decision's actor gets its OWN field below instead.
+        requested_by=approver,
+        # PROVENANCE-OF-DECISION — the human `/act` authenticated and `check_can_act` authorized.
+        # New field, added rather than repurposing one: readers were inferring "who decided" from
+        # "who requested" because nothing carried the decider, and a row that named a SERVICE as
+        # the approver is the lie that produced. Additive, so no consumer coordinates a change.
+        #
+        # Falls back to `approver` ONLY for a submission minted before this field existed (a
+        # replay of an in-flight review). Not an optimistic default: on the live path the value is
+        # always present, and a review resolved under the old shape genuinely has no better answer.
+        acted_by=(raw_decision or {}).get("acted_by") or approver,
         # Routing DATA for the effect-failure path: if a dispatch dies terminally after this
         # approval, `dispatch_failure:<compartment>` is the audience that owns it. Supplied here
         # because the workflow is the last place that legitimately knows the compartment.

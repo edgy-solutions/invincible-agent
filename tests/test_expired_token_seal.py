@@ -85,21 +85,27 @@ def _minted_at_of(token: str) -> float:
 
 
 def _payload(disposition="dispatchQualification", *, mpn="NSR01L30NXT5G", compartment="SUSTAINMENT"):
-    """Through the REAL plan_dispatch + plan_to_payload — composed path, never a synthetic dict."""
+    """Through the REAL plan_dispatch + plan_to_payload — composed path, never a synthetic dict.
+
+    THE TWO IDENTITIES ARE DELIBERATELY DIFFERENT, and this fixture was WRONG until the live drive
+    corrected it. It originally passed ``requested_by="alice@example.com"`` — one identity for both
+    roles — which made every assertion about provenance pass trivially, because there was nothing
+    for the code to confuse. Production does not look like that: the sensor's SERVICE identity
+    starts the review and a HUMAN approves it. Mirroring that here is what lets a merge of the two
+    fields FAIL, and a fixture that cannot express the defect cannot catch it
+    ([[feedback_test_supplies_own_provenance]])."""
     res = ItemResolution(
         mpn=mpn, subject=f"http://internal/components/{mpn}", disposition=disposition,
         idempotency_key=f"M32-A-WITNESS:{mpn}", needs_review=False,
         override_reason=None, proposed_by_ruleset="rules@abc123def456",
     )
     plan = plan_dispatch(res, notice_fingerprint="M32-A-WITNESS", notice_id="M32-A-WITNESS")
-    try:
-        return dispatch_driver.plan_to_payload(
-            plan, requested_by="alice@example.com", compartment=compartment)
-    except TypeError:
-        # Pre-item-2 signature (no compartment kwarg). Kept so the SEAL's own red arm reports the
-        # missing EMISSION rather than dying on a signature mismatch — a test that errors before
-        # reaching its assertion has not measured anything.
-        return dispatch_driver.plan_to_payload(plan, requested_by="alice@example.com")
+    return dispatch_driver.plan_to_payload(
+        plan,
+        requested_by="svc:review-starter",   # who STARTED the review (a service, canonically)
+        acted_by="alice@example.com",        # who APPROVED it (the human `/act` authorized)
+        compartment=compartment,
+    )
 
 
 class _JournalingObjectContext:
@@ -387,21 +393,17 @@ async def test_terminal_dispatch_failure_after_approval_mints_a_triage_row(aging
     assert payload_field.get("idempotency_key") or body.get("task_id"), (
         "the row carries no handle on the dispatch that failed — unactionable")
 
-    # PROVENANCE IS LABELLED TRUTHFULLY, NOT GUESSED. The value available here is the workflow's
-    # ``approver``, which start_review stamps from whoever STARTED the review — a service identity
-    # in the canonical sensor-driven flow, NOT the approving human (proven live: EFFECTFAIL02 had
-    # requested_by=svc:review-starter while the grouped review's acted_by was alice@example.com).
-    # So the row must not call it "approved by". This asserts the honest labelling AND that the row
-    # points at where the approver really lives — the fix for the misattribution is a filed fork.
-    assert "review_started_by" in payload_field, (
-        "the effect-failure row dropped the review-initiator provenance entirely")
-    assert "approved_by" not in payload_field, (
-        "the row is calling the review INITIATOR the approver again — that field is the "
-        "start_review caller (a service in the auto-started flow), and asserting it is the "
-        "approver is a false statement on the one field this row exists to carry")
-    assert "acted_by" in repr(body), (
-        "the row does not tell the operator WHERE the approving human is recorded, so a "
-        "misattribution becomes a dead end rather than a lookup")
+    # TWO IDENTITIES, TWO FIELDS, NEVER MERGED. The row must name the DECIDING human
+    # (`approved_by`) and separately the review's INITIATOR (`review_started_by`). Merging them is
+    # what made the live row say a service had approved a human's decision.
+    assert payload_field.get("approved_by") == "alice@example.com", (
+        f"the effect-failure row does not name the approving human — got "
+        f"{payload_field.get('approved_by')!r}. An operator cannot tell whose decision died.")
+    assert payload_field.get("review_started_by") == "svc:review-starter", (
+        "the review-initiator provenance was lost or overwritten by the actor")
+    assert payload_field["approved_by"] != payload_field["review_started_by"], (
+        "the two identities collapsed into one value — 'who decided' and 'who requested' are "
+        "different facts, and conflating them is the defect this fix exists to end")
 
 
 @pytest.mark.asyncio
@@ -432,10 +434,42 @@ async def test_archive_failure_still_names_the_approver(aging):
 
     assert aging["triage"], "an archive dispatch died terminally after approval and said nothing"
     body = aging["triage"][0]["body"]
-    assert (body.get("payload") or {}).get("review_started_by") == "alice@example.com", (
-        "the effect-failure row for a no-task disposition lost its provenance entirely — with no "
-        "human_task to read, the payload-level fallback is the only source")
+    pf = body.get("payload") or {}
+    assert pf.get("approved_by") == "alice@example.com", (
+        "the effect-failure row for a no-task disposition lost the APPROVER — with no human_task "
+        "to read, the payload-level fallback is the only source, and it is the field an operator "
+        "most needs")
+    assert pf.get("review_started_by") == "svc:review-starter", (
+        "the no-task path lost the review-initiator provenance")
     assert body.get("audience") == "dispatch_failure:SUSTAINMENT"
+
+
+@pytest.mark.asyncio
+async def test_ordinary_dispatch_rows_also_name_the_approver(aging):
+    """THE MISATTRIBUTION WAS NEVER TRIAGE-ONLY, and fixing only the triage row would have left the
+    majority of it in place. Ordinary ``pcn_disposition`` rows — the ones that land in a persona's
+    queue on every successful approval — carried the same ``requested_by: svc:review-starter`` and
+    named no approver at all. Proven live on EFFECTFAIL02's two SURVIVING parts.
+
+    So the register body must carry the deciding human too. It rides in ``payload.approved_by``, NOT
+    under the name ``acted_by``: the projection already has an ``acted_by`` COLUMN meaning "who
+    resolved THIS row", which for a freshly-registered dispatch task must stay empty until its
+    assignee acts. Two meanings behind one identifier is the collision this codebase already
+    documents elsewhere, and it is avoided here by construction.
+    """
+    await _invoke(_payload("dispatchQualification"))
+
+    assert aging["register_status"] == [200]
+    body = aging["register"][0]["body"]
+    assert (body.get("payload") or {}).get("approved_by") == "alice@example.com", (
+        f"an ordinary dispatch row does not name the approving human — payload="
+        f"{body.get('payload')!r}. The queue-holder cannot tell whose decision produced their work.")
+    assert body.get("requested_by") == "svc:review-starter", (
+        "requested_by changed meaning — it must keep recording who STARTED the review, because "
+        "three surfaces read it and a meaning change there is an expand/contract migration")
+    assert "acted_by" not in (body.get("payload") or {}), (
+        "the upstream approver was written under the name `acted_by`, which the projection already "
+        "uses for 'who resolved THIS row' — one identifier, two meanings")
 
 
 @pytest.mark.asyncio
@@ -465,13 +499,20 @@ async def test_compartment_reaches_the_dispatch_payload_from_the_workflow(aging)
     ctx = _Sends()
     dispatch_driver.fan_out_dispatch(
         ctx, resolutions, notice_fingerprint="M32-A-WITNESS", notice_id="M32-A-WITNESS",
-        requested_by="alice@example.com", compartment="SUSTAINMENT")
+        requested_by="svc:review-starter", acted_by="alice@example.com",
+        compartment="SUSTAINMENT")
 
     assert len(ctx.sends) == 2
     for arg in ctx.sends:
         assert arg.get("compartment") == "SUSTAINMENT", (
             "the compartment did not reach the dispatch payload — every effect-failure from this "
             "notice would route to `dispatch_failure:` and reach NOBODY")
+        # Same verify-the-pipe argument for the actor: routing it correctly when HANDED one says
+        # nothing about whether it can arrive from the workflow's call site.
+        assert arg.get("acted_by") == "alice@example.com", (
+            "the approver did not reach the dispatch payload — every row this notice mints would "
+            "be unable to name whose decision produced it")
+        assert arg.get("requested_by") == "svc:review-starter"
 
 
 @pytest.mark.asyncio
