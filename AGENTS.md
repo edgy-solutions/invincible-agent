@@ -358,6 +358,29 @@ bit), `sourcing` granted nowhere at all, and `procurement`'s own grant uncommitt
 bit was the only one anything could see, and it was not the only one there.** Enumerate the
 producer, then check each one it can emit.
 
+### A policy artifact without a PRODUCTION READER is unshipped policy
+Third instance, which is the filing threshold. The ratification test is behavioural:
+**changing the artifact must change behaviour, witnessed, before any real decision rides on it.**
+
+The three:
+- **`trust_table.yaml`** — `rung_for()` is built, correct, and sealed, with zero production callers.
+  The sensor hardcodes `trust_rung=DEFAULT_RUNG` and loads the table only for its HASH. Promoting a
+  format today edits a YAML and changes a hash, and changes nothing else anywhere.
+- **git-asserted grants absent from live Topaz** — the file says granted, the directory says no.
+- **expired credentials still legible in suspended journals** — the record outlives its meaning.
+
+Each is locally consistent and silent at the join, which is why none of them announce themselves.
+
+The failure mode this rule exists to prevent is the worst of the three shapes: not a blocked
+decision but **a decision that appears to succeed**. Ratify a promotion against an unread table and
+the table reads `monitored`, the grant reads live, the pipeline stays `supervised`, and nothing
+anywhere disagrees — a no-op wearing a governed decision's clothes, arriving from the direction
+nobody watches.
+
+So a governed artifact is not shipped when it validates, or when its resolver is sealed. It is
+shipped when a CHANGE to it has been observed to move the system. Until then, treat every ceremony
+that depends on it as blocked, however complete the surrounding engineering looks.
+
 ### An instrument must not share FATE with the event it measures
 A witness that dies with the subject reports the subject's death as health. Tenth probe-correctness
 instance and a distinct species: not wrong about timing, scope, anchor or fixture — wrong about
