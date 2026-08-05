@@ -463,6 +463,23 @@ async def start_review(ctx: Context, request: dict) -> dict:
             "trust_table_ref": trust_ref,
             "format_fingerprint": fmt_fp,
             "pipeline_version": pipe_v,
+            # THE INITIATOR'S IDENTITY, and on the autonomous path it is LOAD-BEARING.
+            # `_run_definition` builds its identity as
+            #     request.get("authz_id") or request.get("caller_email") or ""
+            # and a `direct_call` step gates on `can_invoke(that identity, capability)`. Without
+            # this line the check runs for caller '' — witnessed live before it was added:
+            #     403 "caller '' is not authorized (can_invoke) for capability
+            #          'mesh:dispatchDispositions' — failing and releasing."
+            # Workflow 1 never exposed it: its gate is the audience `can_act` on the human step,
+            # so `direct_call` is unique to workflow 2 and the identity had never been needed.
+            #
+            # WHY IT MATTERS BEYOND A BUG: the ceremony's acceptance is "watch deny flip to allow
+            # for THIS initiator". A deny recorded against '' is not the before-side of an allow
+            # granted to `svc:review-starter` — they are different subjects, so the flip would be
+            # UNWITNESSABLE, and granting the capability would have changed nothing while looking
+            # like it should have. Found by capturing the before-picture on the deployed system,
+            # which is the only place it was visible.
+            "authz_id": approver,
             "approver": approver,
             "audience": request.get("audience") or approver,
             "notice_fingerprint": notice_id,

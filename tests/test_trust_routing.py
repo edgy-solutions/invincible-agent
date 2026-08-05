@@ -192,6 +192,33 @@ def test_starter_imports_both_handlers_and_the_resolver():
     assert "rung_for(" in src, "the starter no longer consults the table's resolver"
 
 
+def test_initiator_identity_reaches_the_workflow_send():
+    """THE CEREMONY'S FLIP DEPENDS ON THIS, and it was broken until the live before-picture
+    exposed it.
+
+    `_run_definition` derives its identity as `request.get("authz_id") or caller_email or ""`, and
+    workflow 2's `direct_call` gates on `can_invoke(that identity, mesh:dispatchDispositions)`.
+    With no `authz_id` in the send, the check ran for caller '' — witnessed on the deployed system:
+
+        403 "caller '' is not authorized (can_invoke) for capability
+             'mesh:dispatchDispositions' — failing and releasing."
+
+    Workflow 1 never exposed it (its gate is the audience `can_act`), so nothing offline could have
+    caught it: every unit test supplies its own identity, which is the supply-your-own-provenance
+    trap one layer out.
+
+    Why it is a CEREMONY blocker and not a cosmetic one: acceptance is "deny flips to allow for THIS
+    initiator". A deny against '' is not the before-side of an allow granted to `svc:review-starter`
+    — different subjects — so the grant would have landed and changed NOTHING, invisibly.
+    """
+    import review_starter as rs
+
+    src = (Path(rs.__file__)).read_text(encoding="utf-8")
+    assert '"authz_id": approver' in src, (
+        "the initiator identity is not carried into the workflow send — workflow 2's capability "
+        "check will run for caller '' and the ceremony's deny->allow flip cannot be witnessed")
+
+
 def test_the_route_is_never_taken_from_the_request():
     """THE CONFUSED-DEPUTY GUARD. A caller supplies FACTS about its input; it may never supply the
     authority decision computed from them. If the starter ever reads a rung/workflow/definition off
