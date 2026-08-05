@@ -45,6 +45,15 @@ branch to "fix" it). This is clause 2's write-serialization applied to git: a br
 and an unowned HEAD move is a collision, not a convenience. Per-commit verification is the floor; if
 agents run concurrently often, isolate with a `git worktree` per agent. Filed from that collision.
 
+**STAGE BY EXPLICIT PATH, never by pattern, in a shared tree (2026-08-05).** The same hazard one layer
+down: `git add -u` stages every tracked modification, and `git add -A` every file — including work
+someone else has in flight in the same working copy. Used `-u` while the human was mid-arc on an
+unrelated feature; it happened to catch only the intended five files, which is **luck wearing
+discipline's clothes** — the outcome was identical to the careful version and would have stayed
+identical right up until the once it wasn't. A pattern-stage that has never swept a stranger's file
+has not been shown to be safe, it has been shown to be untested (the guard-that-never-failed rule
+applied to a command). Name the paths; `git status --short` before, and read it.
+
 ## Runbook: engine-o's SELECT path drops RDF term types — typed reads go CONSTRUCT→parse (2026-07-23)
 
 `execute_sparql` returns `list[dict]` of `{var: string}` — it stringifies every RDF term (main.py
@@ -348,6 +357,33 @@ Applying it found that notice A's second defect was one of THREE: `procurement` 
 bit), `sourcing` granted nowhere at all, and `procurement`'s own grant uncommitted. **The bug that
 bit was the only one anything could see, and it was not the only one there.** Enumerate the
 producer, then check each one it can emit.
+
+### A fixture that collapses two roles into one identity cannot witness which role did what
+The tautological-guard class in provenance clothing, and the reason the approver misattribution
+survived so long: the seal's fixture passed ONE identity as both the review's initiator and its
+approver, so every who-did-what assertion passed BY CONSTRUCTION — there was nothing for the code to
+confuse. The guard could not fail, so its green was a claim about the fixture.
+
+**The defect was invisible in tests for the same reason it was invisible in production:** nothing
+distinguished the roles ANYWHERE. Production is a SERVICE starting the review and a HUMAN approving
+it; the fixture said "alice" twice.
+
+The repair is the two-independent-sources construction from the promise-name seal: give each role a
+DISTINCT value and assert they stay **different**. Then a future merge of the fields fails loudly
+instead of silently. Applies to every pair a system keeps deliberately separate — initiator vs
+actor, requester vs approver, subject vs caller, proposed vs ratified.
+
+### A seal pinned to an INTERIM state becomes a brake on its own fix
+Corollary of "a test asserting the wrong claim is worse than a missing test", and it bit twice in
+one arc on the same assertion, in opposite directions. v1 asserted the row NAMES the approver — red
+against a system that could not yet satisfy it. v2 asserted the row must NOT say `approved_by` —
+correct for the interim label-truthfully repair, and WRONG the instant the real fix landed, going
+red against a row that was finally right.
+
+When a repair is explicitly interim, its seal must assert the **end state's invariant**, not the
+interim shape. Where the interim genuinely needs pinning, say so IN the assertion message so the
+next person reads "this is scaffolding" rather than "this is the contract" — otherwise the seal
+quietly acquires standing it was never granted, and the fix arrives looking like a regression.
 
 ### A test that supplies its own provenance will agree with itself
 A seal that PASSES IN the value it later asserts has tested its own fixture. Every offline test of

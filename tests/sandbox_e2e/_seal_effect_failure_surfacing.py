@@ -218,24 +218,31 @@ async def main() -> int:
             print("  RED: the dispatch died and NOTHING reached a human — the approval reads "
                   "settled with no effects. This is precisely notice A.")
 
-        print("\n=== LEG 6: the row's provenance is TRUE, and points at the approver ===")
-        # THE FIRST RUN OF THIS SEAL FAILED HERE, AND IT WAS RIGHT TO. LEG 6 originally asserted the
-        # row NAMES the approver (alice). It does not — and could not: the value the dispatch
-        # payload carries is the workflow's `approver`, stamped by start_review from whoever STARTED
-        # the review, which in the canonical sensor-driven flow is `svc:review-starter`. The live
-        # row said "Approved by: svc:review-starter" while the grouped review's `acted_by` said
-        # `alice@example.com`. That is a MISATTRIBUTION, not an omission, and it predates this arc:
-        # the ordinary `pcn_disposition` dispatch rows carry the same wrong value.
-        #
-        # So the seal now asserts what is TRUE and ACTIONABLE — the row does not claim a service
-        # approved anything, and it names where the approving human is actually recorded. Fixing
-        # the attribution itself is a filed fork (it changes a field other surfaces read).
-        blob = json.dumps(doomed_rows)
-        no_false_claim = "Approved by" not in blob and "approved_by" not in blob
-        points_at_approver = "acted_by" in blob
-        leg6 = no_false_claim and points_at_approver
-        print(f"  does NOT claim a service approved it: {no_false_claim}")
-        print(f"  points the operator at the approver's real location: {points_at_approver}")
+        print("\n=== LEG 6: the row NAMES the approving human, and the two roles stay distinct ===")
+        # THIS LEG HAS BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, AND BOTH ARE WORTH KEEPING VISIBLE.
+        #   v1 asserted "the row names alice" — RED against a system that could not satisfy it,
+        #      because nothing carried the decision's actor. The seal was wrong, not the code.
+        #   v2 asserted "the row does NOT say approved_by" — correct for the INTERIM repair (label
+        #      truthfully, point at acted_by), and then WRONG the moment the real fix landed, which
+        #      is exactly what it did: RED on EFFECTFAIL04 against a row that was finally correct.
+        # A seal pinned to an interim state becomes a brake on its own fix. v3 asserts the END
+        # state — the claim that was load-bearing all along.
+        rows_ = doomed_rows + qual   # the failure row AND the surviving ones: the defect spanned both
+        named, distinct, no_hijack = [], [], []
+        for t in rows_:
+            pf = t.get("payload") or {}
+            named.append(pf.get("approved_by") == "alice@example.com")
+            # The two roles must not collapse back into one value.
+            distinct.append(pf.get("approved_by") != t.get("requested_by"))
+            # And the upstream approver must NOT be written under the projection's own `acted_by`,
+            # which means "who resolved THIS row" and must stay empty until bob acts.
+            no_hijack.append(t.get("status") == "pending" and not t.get("acted_by"))
+        leg6 = bool(rows_) and all(named) and all(distinct) and all(no_hijack)
+        print(f"  rows checked (triage + surviving dispatch): {len(rows_)}")
+        print(f"  every row names alice as the approver: {all(named) if rows_ else False}")
+        print(f"  approver distinct from the review initiator: {all(distinct) if rows_ else False}")
+        print(f"  `acted_by` column NOT hijacked (still empty while pending): "
+              f"{all(no_hijack) if rows_ else False}")
 
         print("\n================ EFFECT-FAILURE SURFACING VERDICT ================")
         legs = [("1 review started", True), ("2 grouped task visible", True),
@@ -243,7 +250,7 @@ async def main() -> int:
                 ("3b no DISPATCHED delivery claim", no_delivery_claim),
                 ("4 surviving dispatches landed (positive control)", leg4),
                 ("5 dead dispatch surfaced as a triage row", leg5),
-                ("6 provenance is TRUE + points at acted_by", leg6)]
+                ("6 rows name the approver; roles stay distinct", leg6)]
         for name, ok in legs:
             print(f"  {name}: {'PASS' if ok else 'FAIL'}")
         ok = all(v for _, v in legs)
