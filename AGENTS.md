@@ -721,6 +721,31 @@ whose failure would trigger a revert**. And note the specific mechanism here —
 part of its correctness**: an assertion that samples asynchronous state must either wait for the
 state it asserts on or assert on something synchronous with the call it made.
 
+### A guard that FAILS instead of SKIPPING when its precondition is absent is anesthesia
+The third species in the lying-result family, and a new one. The first two were greens that lie
+(pass without the mechanism under test existing) and reds that lie (measure the instrument, not the
+system). This is a red that means NOTHING — and says so 35 times per run.
+
+Measured 2026-08-05. `tests/routing/test_phrasing_independence.py` documents itself as "Skips if
+Engine O isn't reachable"; the skip guard does not fire, so with no port-forward to `localhost:8084`
+it emits 35 `ConnectionError` failures instead of 35 skips. Every one is an environmental fact
+wearing a defect's clothes.
+
+**The cost is not the failures — it is the TRAINING EFFECT.** A suite that cries wolf teaches every
+reader to wave through red, and that acquired immunity is exactly what makes the one real red
+invisible. The rule's own family depends on red being scarce enough to be attacked: "a false red
+gets believed because nobody attacks it" only holds while someone is still looking.
+
+**So: a suite's signal-to-noise is itself an instrument property, subject to the same discipline as
+any probe.** A precondition that is absent is a SKIP; a precondition that is present and unmet is a
+FAILURE. Collapsing the two converts environment into noise, and noise at volume is anesthesia.
+
+The adjudication tax is the part worth recording, because it is already paid: every before/after
+comparison in the 2026-08-05 telemetry arc had to carry a 35-red baseline exclusion BY NAME, and
+each exclusion had to be re-established by stashing the change and re-running to prove the failures
+predated it. That labor — repeated per session, per adjudicating agent — is what a broken skip-guard
+levies on everyone who adjudicates honestly. The repair is one guard; the debt compounds per run.
+
 ### A ruling that asserts a string identity gets EVALUATED, not read
 Sibling of the false-RED rule above, and the same root: believing an assertion because of who
 produced it. 2026-08-04's promise-name ruling stated that `approval_{step.id}` and the handler's
