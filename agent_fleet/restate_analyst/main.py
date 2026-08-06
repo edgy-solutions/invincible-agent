@@ -79,6 +79,27 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from restate import Context, ObjectContext, Service, VirtualObject, Workflow, WorkflowContext, WorkflowSharedContext
 
+# --- Replay seal (ADR-0038) — manufacture a replay by FAILING, not by killing ----
+# Adapted from Engine D's DA_SEAL_FAIL_AFTER_WORK (afb8cc7). Env-gated, default 0 = no-op.
+#
+# WHY NOT A POD KILL, and why this re-witness exists: A's and E's original replay
+# witnesses killed the pod mid-handler. That instrument SHARES A FATE with the subject —
+# the killed pod's OTel batch exporter never flushes, so attempt 1's boundary span is lost
+# and the trace reads boundary=1 WHETHER OR NOT the fix is present. The kill-based leg was
+# structurally incapable of returning red (AGENTS.md, tenth probe-correctness instance).
+#
+# Failing AFTER the work keeps the process alive, so every counter — stdout, the exporter,
+# the journal — survives to report honestly. Crucially it also DISCRIMINATES: attempt 1's
+# boundary has already closed and exported by the time we fail, so the UNFIXED code would
+# show two boundary spans here where the fixed code shows one. That is the same-mechanism
+# before/after pair the kill could never supply.
+#
+# Plain RuntimeError, deliberately NOT TerminalError — Restate must RETRY it, which is the
+# subject. Budget is per-process: attempt 1 fails, attempt 2 completes; a fresh pod resets
+# it, bounding the cost to one extra execution per pod.
+_SEAL_FAIL_AFTER_WORK = int(os.getenv("A_SEAL_FAIL_AFTER_WORK", "0") or 0)
+_seal_failures_used = 0
+
 # ---------------------------------------------------------------------------
 # Add baml_shared to the Python path for the generated BAML types.
 # In CNB containers, baml_client is copied locally — this is only for dev.
@@ -1293,6 +1314,22 @@ to decide the next call. Use only what the tools return — never invent data.
                 lambda: emit_boundary(MAPPING, _boundary_values, ids=_boundary_ids,
                                       name="analyst", timing=_boundary_timing),
             )
+
+            # REPLAY SEAL — placement is load-bearing. AFTER the work and AFTER the
+            # boundary emit, so on replay both ctx.run steps are memoized and the only
+            # thing that re-executes is the handler's own re-entry through
+            # boundary_parent — which is exactly the defect under test. The enclosing
+            # `except Exception` at the end of this handler RE-RAISES (`raise e`), so
+            # Restate still sees the failure and retries; it is not swallowed.
+            global _seal_failures_used
+            if _seal_failures_used < _SEAL_FAIL_AFTER_WORK:
+                _seal_failures_used += 1
+                raise RuntimeError(
+                    f"A_SEAL: deliberate post-work failure #{_seal_failures_used} to "
+                    f"manufacture a Restate replay (A_SEAL_FAIL_AFTER_WORK="
+                    f"{_SEAL_FAIL_AFTER_WORK}). The agent work and the boundary emit "
+                    f"above ALREADY RAN — the replay re-enters the boundary only."
+                )
 
         summary_text = str(raw_agent_response)
         structured_data_str = None

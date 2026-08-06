@@ -155,6 +155,22 @@ except ImportError:
 # handler-scope wrapper is defined alongside the other closure-bound
 # helpers (see query_graph()).
 
+# --- Replay seal (ADR-0038) — manufacture a replay by FAILING, not by killing ----
+# Adapted from Engine D's DA_SEAL_FAIL_AFTER_WORK (afb8cc7). Env-gated, default 0 = no-op.
+#
+# E's original replay witness killed the pod mid-handler. That instrument SHARES A FATE
+# with the subject: the killed pod's OTel batch exporter never flushes, so attempt 1's
+# boundary span dies with the process and the trace reads boundary=1 with or WITHOUT the
+# fix — a leg structurally incapable of red (AGENTS.md, tenth probe-correctness instance).
+#
+# Failing after the work keeps the process alive so stdout, the exporter and the journal
+# all survive, AND it discriminates: attempt 1's boundary has already closed and exported
+# by the time we fail, so unfixed code would show two boundary spans where fixed code
+# shows one. Plain RuntimeError, not TerminalError — the retry IS the subject. Budget is
+# per-process, bounding the cost to one extra execution per pod.
+_SEAL_FAIL_AFTER_WORK = int(os.getenv("E_SEAL_FAIL_AFTER_WORK", "0") or 0)
+_seal_failures_used = 0
+
 service = Service("Neo4jExpertService")
 
 def fetch_dynamic_schema_from_neo4j() -> str:
@@ -941,6 +957,20 @@ paths and titles in your final_answer so the downstream formatter can render the
             )
         finally:
             _emit_calib()
+
+        # REPLAY SEAL — see the block comment at _SEAL_FAIL_AFTER_WORK. Placed AFTER the
+        # try/finally so _emit_calib still runs, and after both ctx.run steps, so a replay
+        # re-executes only the handler's re-entry through boundary_parent. This handler has
+        # no enclosing `except Exception`, so the error propagates and Restate retries.
+        global _seal_failures_used
+        if _seal_failures_used < _SEAL_FAIL_AFTER_WORK:
+            _seal_failures_used += 1
+            raise RuntimeError(
+                f"E_SEAL: deliberate post-work failure #{_seal_failures_used} to "
+                f"manufacture a Restate replay (E_SEAL_FAIL_AFTER_WORK="
+                f"{_SEAL_FAIL_AFTER_WORK}). The graph work and the boundary emit above "
+                f"ALREADY RAN — the replay re-enters the boundary only."
+            )
 
         # --------------------------------------------------------------------------
         # Run 2: BAML Strict Formatting
