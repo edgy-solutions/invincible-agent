@@ -32,6 +32,23 @@ strings are now trust-key material and a mapping that lives in code is a mapping
 Deliberately NOT fuzzy matching — a canonicalization that *guesses* would merge vendors that merely
 look alike, which is the opposite failure and a worse one.
 
+**THE PRECEDENT, and it dictates the shape.** This exact disease was solved once already in this
+codebase as the **compact→full-IRI canonicalization** class-fix (`scripts/merge_compact_into_canonical.py`,
+`scripts/migrate_compact_to_full_iri.py`; named as a class at
+`src/iagent/defs/dynamic_supervisor.py:1539`). Its lesson: storage-form variation splits one logical
+entity into several records, and **the durable defence is canonical-form resolution at the
+comparison boundary — not cleaning up each duplicate.** `onsemi`/`ONSEM` is the same disease in a
+new organ: spelling divergence splitting one logical vendor into two trust keys.
+
+So: **canonicalize INSIDE `format_fingerprint()` itself**, which IS the comparison boundary. Then no
+storage-form variation in `header.mfr` can produce two keys for one vendor, by construction. A
+cleanup pass over artifacts is explicitly the wrong shape — you would never run it faster than
+extractions accrete.
+
+**Misses fail safe by construction:** an unmapped vendor canonicalizes to its own literal segment,
+which is simply a key nobody has promoted yet. And the degenerate end is already contained — the
+sentinel-fingerprint guard makes `unknown/*` unpromotable.
+
 ### 2. `doc_type` explicit-or-sentinel
 
 Today a missing `doc_type` silently becomes `pcn`. That default is **indistinguishable from a
@@ -52,6 +69,19 @@ applying (safe direction, invisible), and the accumulated evidence is orphaned.
 So: **normalize first, promote second.** The corpus is currently unpromotable anyway
 (`pipeline_version` is `(none)` on every real artifact until doc-tools rebuilds), which makes this
 window free — the ordering costs nothing if taken now and costs a migration if taken later.
+
+### SEQUENCE RULING — a CROSS-REPO constraint, stated as one
+
+> **Normalization merges before the doc-tools rebuild rolls.**
+
+The free window is real, but **it closes from the other repo's side.** The orphaning hazard is
+currently zero only because no artifact carries a stamp; the moment doc-tools is rebuilt and
+re-extracts, real artifacts start deriving full keys — and any promotion against a
+pre-normalization fingerprint becomes orphanable.
+
+Nothing in `invincible-agent` signals when that happens, which is exactly why this is written as an
+ordering constraint between repositories rather than as a preference. Whoever rolls the doc-tools
+rebuild needs to know this item gates it.
 
 ## Related
 

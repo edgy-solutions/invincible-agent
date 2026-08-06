@@ -408,6 +408,25 @@ So a governed artifact is not shipped when it validates, or when its resolver is
 shipped when a CHANGE to it has been observed to move the system. Until then, treat every ceremony
 that depends on it as blocked, however complete the surrounding engineering looks.
 
+### A field acquiring a NEW JOB is the moment to enumerate what it now couples
+A detection heuristic, not a post-mortem. Values accrete responsibilities quietly, and each new job
+creates couplings nobody chose — the couplings are invisible until two consumers collide on one.
+
+**The instance that produced it:** `request_key` was the artifact pointer; phase 1.3 made it the
+admission key; it was already the ingress idempotency key. Three jobs, one string — and the coupling
+surfaced only when two witness legs that differed *only* in server-side state collided on it and the
+second silently returned the first's result.
+
+**The field already visible as next:** `email` is the login identity, the entitlement claim, **and**
+now the subject the ceremony's `can_invoke` grant is keyed on. Three jobs, one string. The
+consequence is already on the work-translation list: a Ping broker mapping that lands the employee
+identity in a different claim than the local service mapper uses splits the contract — and one side
+of that split is now an autonomous effect gate rather than a queue filter.
+
+The check is cheap and belongs in review: *what else reads this value, and what breaks if two of
+those readers need it to mean different things?* Ask it when the job is ADDED, because that is the
+only moment the answer is small.
+
 ### The substrate's DEDUP can substitute a prior result for the experiment you meant to run
 Fifteenth probe-correctness instance, and a new species: not a bad instrument and not a bad fixture
 — **the experiment never executed, and the answer returned was another experiment's.**
