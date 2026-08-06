@@ -50,6 +50,41 @@ def _is_sentinel_version(value: str) -> bool:
     return s in _SENTINEL_VERSIONS or tail in _SENTINEL_VERSIONS
 
 
+# SENTINEL FINGERPRINTS — the SAME rule on the other axis, completed 2026-08-06.
+#
+# The fingerprint is `<manufacturer>/<doc_type>/<layout-era>`, and `format_fingerprint()` emits
+# `unknown` in the manufacturer position when the extraction carried no `header.mfr`. That is a
+# sentinel by exactly the test that made `unset` one: it means "this artifact was not IDENTIFIED",
+# not "this artifact is from a vendor called unknown".
+#
+# MEASURED, NOT HYPOTHETICAL: 4 of 16 real artifacts in `processing-artifacts` derive
+# `unknown/pcn/v1` — four unrelated vendors already sharing one key. A rung above `supervised` on
+# that key would grant autonomy to every unidentifiable artifact at once, which is the
+# matches-everything-on-absence hazard the version rule already forbids.
+#
+# The scope was never "the version axis" — it was "no rung above supervised may key on a value
+# meaning INFORMATION MISSING". This is the same rule; only its implementation was one-sided.
+# NB no "n/a": `/` is the fingerprint's own separator, so such a value can never survive as a clean
+# vendor SEGMENT (it splits to "n"). Listing it would be an entry that can never match — a guard
+# claiming coverage it does not have, which is the day's theme in miniature.
+_SENTINEL_VENDORS = frozenset({"unknown", "", "none", "unidentified"})
+
+
+def _is_sentinel_fingerprint(value: str) -> bool:
+    """True iff the fingerprint's MANUFACTURER segment identifies nothing.
+
+    Only the vendor segment is examined. The `doc_type` segment CANNOT be checked, and that gap is
+    deliberate and documented rather than papered over: `format_fingerprint()` defaults a missing
+    `doc_type` to `pcn`, which is INDISTINGUISHABLE from a genuine PCN — measured at 9 of 16 real
+    artifacts. Per the default-collision rule, a guard whose asserted value the system can produce
+    by default cannot tell "identified" from "defaulted", so guarding it here would be theatre.
+    The fix is upstream (make `doc_type` explicit-or-sentinel at emission), and it is filed as the
+    fingerprint-normalization item — NOT smuggled in as a check that cannot work.
+    """
+    vendor = (value or "").strip().lower().split("/", 1)[0].strip()
+    return vendor in _SENTINEL_VENDORS
+
+
 _TRUST_TABLE_FILE = os.getenv("TRUST_TABLE_FILE", "policy/trust_table.yaml")
 
 
@@ -170,6 +205,23 @@ def parse_trust_table(raw: dict, *, ref: str) -> TrustTable:
             # validity time- and environment-dependent. The narrow rule captures the dangerous
             # case; the residual — a premature specific-version promotion — fails safe by
             # non-match. Narrow and permanent beats broad and stateful.
+            # THE OTHER AXIS, same rule (completed 2026-08-06). A fingerprint whose manufacturer
+            # segment is `unknown` identifies nothing, so promoting it keys trust on the ABSENCE of
+            # identification and matches every unidentifiable artifact at once — four unrelated
+            # vendors already share `unknown/pcn/v1` in the live corpus.
+            #
+            # STILL A SHAPE CHECK, NOT A CORPUS QUERY. The broad alternative — refusing while the
+            # sentinel appears anywhere in live data — is declined again, for the reason it was
+            # declined the first time: a policy validator that reads live state inverts the rails'
+            # direction (git validates git) and makes validity time- and environment-dependent.
+            if _is_sentinel_fingerprint(str(fp)):
+                raise TrustTableInvalid(
+                    f"{fp!r}: rung {rung!r} keys on a SENTINEL FINGERPRINT — the manufacturer "
+                    f"segment identifies nothing, so this means 'provenance missing' on the format "
+                    f"axis exactly as `unset` does on the version axis. A rung above 'supervised' "
+                    f"here would match EVERY unidentifiable artifact at once, across unrelated "
+                    f"vendors. Promote against a fingerprint whose manufacturer was extracted."
+                )
             if _is_sentinel_version(str(entry.get("pipeline_version") or "")):
                 raise TrustTableInvalid(
                     f"{fp!r}: rung {rung!r} keys on the SENTINEL version "

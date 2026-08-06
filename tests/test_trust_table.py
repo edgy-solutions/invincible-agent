@@ -230,6 +230,66 @@ def test_a_real_version_passes_at_every_autonomy_rung(rung):
     assert table.rung_for("qorvo/pcn/v1", "doc-tools@446fbae") == rung
 
 
+def _vendor_entry(fingerprint, rung="monitored"):
+    return {"formats": {fingerprint: {
+        "rung": rung, "pipeline_version": "doc-tools@446fbae",
+        "ratified_by": "cnogradi", "evidence": "fixture",
+    }}}
+
+
+@pytest.mark.parametrize("fingerprint", [
+    "unknown/pcn/v1",       # what format_fingerprint() emits with no header.mfr — 4 of 16 live
+    "UNKNOWN/pcn/v1",       # case must not launder it
+    "  unknown  /pcn/v1",   # nor whitespace
+    "/pcn/v1",              # empty vendor segment
+    "none/pcn/v1",
+    # NB no "n/a": `/` is the fingerprint's own separator, so it can never survive as a clean
+    # vendor SEGMENT. Written as a case first, and its failure is what surfaced that — an
+    # unreachable sentinel entry would have claimed coverage the guard does not have.
+])
+def test_a_promotion_keyed_on_a_SENTINEL_FINGERPRINT_is_REFUSED(fingerprint):
+    """THE SAME RULE, OTHER AXIS. `unknown` in the manufacturer position means the artifact was not
+    IDENTIFIED — not that a vendor is named "unknown". Promoting it keys trust on the ABSENCE of
+    identification and matches every unidentifiable artifact at once.
+
+    Not hypothetical: 4 of 16 real artifacts already derive `unknown/pcn/v1`, so this single key
+    spans four unrelated vendors today.
+    """
+    with pytest.raises(TrustTableInvalid) as ei:
+        parse_trust_table(_vendor_entry(fingerprint), ref="trust@x")
+    msg = str(ei.value)
+    assert "SENTINEL FINGERPRINT" in msg and "identifies nothing" in msg, (
+        f"the refusal does not NAME the rule it enforces: {msg}")
+
+
+@pytest.mark.parametrize("rung", [MONITORED, TRUSTED])
+def test_a_real_fingerprint_stays_promotable_at_every_autonomy_rung(rung):
+    """THE POSITIVE CONTROL — without it, the arms above prove only that SOMETHING refuses. A check
+    that had widened into a general promotion ban would pass every sentinel test perfectly."""
+    table = parse_trust_table(_vendor_entry("qorvo/pcn/v1", rung=rung), ref="trust@x")
+    assert table.rung_for("qorvo/pcn/v1", "doc-tools@446fbae") == rung
+
+
+def test_a_vendor_merely_CONTAINING_unknown_is_not_a_sentinel():
+    """Precision: the check is on the vendor SEGMENT, not a substring. A real manufacturer whose
+    name happens to contain the word must stay promotable, or the guard starts eating valid keys."""
+    table = parse_trust_table(_vendor_entry("unknown-devices inc/pcn/v1"), ref="trust@x")
+    assert table.rung_for("unknown-devices inc/pcn/v1", "doc-tools@446fbae") == MONITORED
+
+
+def test_the_doc_type_default_is_NOT_guarded_and_that_is_deliberate():
+    """THE GAP, PINNED SO IT IS NOT MISTAKEN FOR COVERAGE.
+
+    `format_fingerprint()` defaults a missing `doc_type` to `pcn`, which is INDISTINGUISHABLE from
+    a genuine PCN (9 of 16 real artifacts are in this state). Per the default-collision rule, a
+    guard cannot separate "identified as PCN" from "defaulted to PCN", so none is written — the fix
+    is upstream, at emission. This test records that `<real vendor>/pcn/v1` REMAINS promotable, so
+    nobody later reads the sentinel guards as covering the doc_type axis too.
+    """
+    table = parse_trust_table(_vendor_entry("qorvo/pcn/v1"), ref="trust@x")
+    assert table.rung_for("qorvo/pcn/v1", "doc-tools@446fbae") == MONITORED
+
+
 def test_supervised_may_key_on_anything():
     """`supervised` is the FLOOR — it grants nothing, so a sentinel version there is harmless and
     must stay expressible. Banning it would make the born-default unstatable, and a rule that
