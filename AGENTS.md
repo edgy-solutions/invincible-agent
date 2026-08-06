@@ -496,6 +496,35 @@ journals through **Restate**, not through the dying exporter. So the operational
 not a ban: **before trusting any kill-based witness, ask which side of the kill the instrument's
 persistence lives on.**
 
+**AMENDMENT (2026-08-05, telemetry thread — the above is half right and the wrong half matters).**
+Checked against the source rather than inherited: `mem0_context_retrieval` is a `@safe_observe` OTel
+span (`restate_analyst/main.py:632`) created INSIDE the `run-smolagent` `ctx.run` body (`:1290`).
+Restate journals that step's RETURN VALUE, not its spans — the inner span count reaches Langfuse
+through the same batch exporter that dies with the pod. It survived A's kill by TIMING (the span had
+ended, so it had already flushed), not by structure. Applying the rule's own question to it: the
+instrument's persistence lived on the DYING side.
+
+The consequence is sharper than the exoneration, and it lands on this arc's own work. Under the
+UNFIXED code the killed attempt's boundary span never ENDS (the pod dies mid-work), so it never
+exports — a kill-based reading returns `boundary=1` whether or not the fix is present. **A and E's
+"after" leg cannot discriminate fixed from unfixed.** Their before-picture (`4d66e2903df6`,
+`analyst=2`) came from an ORGANIC replay with no kill, where both spans flushed — so the pair that
+was reported as "same instrument both times" matched the COUNTING tool while differing in the REPLAY
+MECHANISM, and the mechanism is what decides whether evidence survives.
+
+What still holds, stated exactly: the fix's mechanism is proven HERMETICALLY by
+`tests/test_replay_safe_boundary.py`, which re-enters the boundary twice against an in-memory
+exporter and asserts zero boundary exports — not subject to flush loss. The organic before-trace
+proves the defect was real. The live after-trace proves the DEPLOYED code emits one boundary and
+(via `mem0=2`, which can only overcount from real executions) that a replay occurred. What is
+missing is a same-mechanism before/after pair. **Ledger item: re-run A and E's witnesses with the
+fail-not-kill seal D now has.** Filed rather than quietly repaired, because a witness whose weakness
+is known and recorded is worth more than one silently re-run.
+
+The general form this adds: **an instrument that survived is not the same claim as an instrument
+that could not have died.** A and E's inner-span count survived; it was never structurally safe. Ask
+which, because only the second is a method.
+
 ### A journaled step's contract is its RETURN VALUE — side effects do not replay
 The memoization mirror of the time-machine rule: a journal replays what was **returned**, not what
 was **done**. `ctx.run` memoizes the return value and does not re-execute the body, so anything the
