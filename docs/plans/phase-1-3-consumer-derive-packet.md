@@ -44,6 +44,43 @@ Answer three questions before writing anything:
 Stop-and-report if the second caller cannot supply a pointer — that is a design question, not an
 implementation detail.
 
+### EXECUTED 2026-08-06 — the answer, and a defect found on the way
+
+**Caller 1 (sensor)** sends: `notice_id`, `doc_type`, `categories`, `impacted_parts`,
+`in_scope_mpns`, `doc_needs_review`, `review_state_source`, `extraction_warnings`, `domain`,
+`request_key`, `trace_id`. **The pointer is already there** (`request_key` = ETag + key). Nothing to
+add.
+
+**Caller 2 (router) cannot invoke `start_review` at all** — not "lacks a pointer", lacks
+*everything*. The supervisor's generic dispatch payload is `user_query`, `user_persona`,
+`answerer_persona`, `persona`, `domain`, `entitled_domains`, `user_email`, `dynamic_schema_map`,
+`user_id`, `predicate_verb_iri`, `routed_verb_iri`, `resolved_instance_id`, `resolved_subject_uri`.
+`start_review` hard-requires `notice_id`, `approver`, `impacted_parts`, `doc_type` — **none are
+present**, and there is zero special-casing for `ReviewStarter` anywhere in the supervisor. It would
+`KeyError` → 500. Matches the registration's own note: *"the router→start_review payload adapter is
+the dispatch concern of a later window."*
+
+So the derive proceeded: one live caller, and it already carries the pointer. **The requirement is
+recorded for whoever builds that adapter: it MUST supply `request_key`**, because the admission
+posture is derived from it and a caller that cannot name its artifact cannot be admitted at all.
+
+Consequence worth stating plainly: the router-laundering threat that motivated this ruling **was not
+live** — a caller that can supply nothing cannot assert a fingerprint. The ruling still stands and is
+cheaper now than after an adapter exists, but the urgency rested on a caller that cannot call.
+
+#### FOUND, NOT FIXED — `mesh:proposeDisposition` is a dead-end menu entry
+
+The verb is registered in the SPO menu with a **real** endpoint and no adapter, so a user who picks
+"propose disposition" gets a 500. The registration comment says verbs *"wake per-endpoint as each
+serving endpoint becomes real (registering a verb against a stub endpoint would recreate a dead-end
+menu)"* — the endpoint is not a stub, the **adapter** is missing, so the rule was satisfied in
+letter and violated in effect.
+
+Filed rather than fixed: it is outside this packet, and the fix is the adapter itself (a design
+piece), not a patch. Two honest options when it is taken up — build the adapter (and supply
+`request_key`), or **unregister the verb until the adapter exists**, which is what the wake-per-
+endpoint rule actually intends.
+
 ## Item 1 — one fingerprint function, one home
 
 `_format_fingerprint(review, key)` currently lives in the sensor and reads ONLY `review.json`
