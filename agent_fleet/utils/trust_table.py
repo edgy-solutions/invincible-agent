@@ -67,22 +67,37 @@ def _is_sentinel_version(value: str) -> bool:
 # NB no "n/a": `/` is the fingerprint's own separator, so such a value can never survive as a clean
 # vendor SEGMENT (it splits to "n"). Listing it would be an entry that can never match — a guard
 # claiming coverage it does not have, which is the day's theme in miniature.
+#
+# `unknown` is the token `format_fingerprint()` emits for an unidentified segment
+# (``UNKNOWN_SEGMENT``), imported rather than restated so the producer and this guard cannot drift
+# apart on the one string they must agree about.
 _SENTINEL_VENDORS = frozenset({"unknown", "", "none", "unidentified"})
+
+try:  # the ONE definition of the unidentified token, shared with the producer
+    from utils.format_fingerprint import UNKNOWN_SEGMENT  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover — import path differs by runtime
+    try:
+        from agent_fleet.utils.format_fingerprint import UNKNOWN_SEGMENT
+    except ImportError:  # pragma: no cover — utils not importable (validator-only contexts)
+        UNKNOWN_SEGMENT = "unknown"
 
 
 def _is_sentinel_fingerprint(value: str) -> bool:
-    """True iff the fingerprint's MANUFACTURER segment identifies nothing.
+    """True iff EITHER identifying segment of the fingerprint identifies nothing.
 
-    Only the vendor segment is examined. The `doc_type` segment CANNOT be checked, and that gap is
-    deliberate and documented rather than papered over: `format_fingerprint()` defaults a missing
-    `doc_type` to `pcn`, which is INDISTINGUISHABLE from a genuine PCN — measured at 9 of 16 real
-    artifacts. Per the default-collision rule, a guard whose asserted value the system can produce
-    by default cannot tell "identified" from "defaulted", so guarding it here would be theatre.
-    The fix is upstream (make `doc_type` explicit-or-sentinel at emission), and it is filed as the
-    fingerprint-normalization item — NOT smuggled in as a check that cannot work.
+    BOTH segments are now checked. Until 2026-08-06 only the manufacturer was, because
+    `format_fingerprint()` defaulted a missing `doc_type` to `pcn` — INDISTINGUISHABLE from a
+    genuine PCN (9 of 16 real artifacts), so per the default-collision rule a guard there could not
+    tell "identified" from "defaulted" and would have been theatre.
+
+    Normalisation fixed that at the source: an absent `doc_type` now yields `unknown`, so the
+    missing case is distinguishable and therefore guardable. This is the guard that became possible
+    — the check was never skipped for convenience, it was waiting on the emitter.
     """
-    vendor = (value or "").strip().lower().split("/", 1)[0].strip()
-    return vendor in _SENTINEL_VENDORS
+    parts = [p.strip() for p in (value or "").strip().lower().split("/")]
+    vendor = parts[0] if parts else ""
+    doc_type = parts[1] if len(parts) > 1 else ""
+    return vendor in _SENTINEL_VENDORS or doc_type in _SENTINEL_VENDORS
 
 
 _TRUST_TABLE_FILE = os.getenv("TRUST_TABLE_FILE", "policy/trust_table.yaml")
@@ -216,11 +231,12 @@ def parse_trust_table(raw: dict, *, ref: str) -> TrustTable:
             # direction (git validates git) and makes validity time- and environment-dependent.
             if _is_sentinel_fingerprint(str(fp)):
                 raise TrustTableInvalid(
-                    f"{fp!r}: rung {rung!r} keys on a SENTINEL FINGERPRINT — the manufacturer "
-                    f"segment identifies nothing, so this means 'provenance missing' on the format "
-                    f"axis exactly as `unset` does on the version axis. A rung above 'supervised' "
-                    f"here would match EVERY unidentifiable artifact at once, across unrelated "
-                    f"vendors. Promote against a fingerprint whose manufacturer was extracted."
+                    f"{fp!r}: rung {rung!r} keys on a SENTINEL FINGERPRINT — an identifying segment "
+                    f"(manufacturer or doc_type) is {UNKNOWN_SEGMENT!r}, which means 'this artifact "
+                    f"was not identified', exactly as `unset` means it on the version axis. A rung "
+                    f"above 'supervised' here would match EVERY unidentifiable artifact at once, "
+                    f"across unrelated vendors and document kinds. Promote against a fingerprint "
+                    f"whose manufacturer AND doc_type were extracted."
                 )
             if _is_sentinel_version(str(entry.get("pipeline_version") or "")):
                 raise TrustTableInvalid(

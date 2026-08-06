@@ -272,6 +272,17 @@ jobs:
           # and the policy it enforces ship as ONE unit, and so the content hash riding into every
           # decision record names something reproducible.
           COPY policy/trust_table.yaml /app/policy/trust_table.yaml
+          # VENDOR ALIASES (phase 1.3 normalization) — canonical-form resolution data for
+          # format_fingerprint(), which BOTH runtimes compute. If this file reached one image and
+          # not the other, the two would canonicalise differently and produce two trust keys for one
+          # vendor — precisely the split it exists to close, reintroduced by a packaging gap. The
+          # Dagster image already carries the whole policy/ directory; this line is what keeps the
+          # fleet image in step.
+          #
+          # NB the per-file COPY is itself the fragile part: the next shared-policy file will need
+          # another line here, and forgetting it fails SILENTLY (different values, no error). Copying
+          # the whole directory is the durable fix and is filed with the normalization item.
+          COPY policy/vendor_aliases.yaml /app/policy/vendor_aliases.yaml
           COPY agent_fleet/llm_utils.py /app/llm_utils.py
           COPY agent_fleet/utils/ /app/utils/
           COPY agent_fleet/core/ /app/core/

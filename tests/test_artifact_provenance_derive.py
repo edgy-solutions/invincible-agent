@@ -34,6 +34,9 @@ from agent_fleet.utils.artifact_provenance import (  # noqa: E402
 _REVIEW = {
     "doc_id": "PCN-1",
     "doc_type": "PCN",
+    # Attests the doc_type was EXTRACTED. Without it the segment reads `unknown`, because
+    # doc-tools defaults an unextracted doc_type to "PCN" and the value alone proves nothing.
+    "doc_type_source": "extraction",
     "pipeline_version": "doc-tools@446fbae",
     "review_items": [{"field_path": "header.mfr", "value": "Qorvo"}],
 }

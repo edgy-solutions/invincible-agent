@@ -1,0 +1,48 @@
+# VENDOR ALIASES — canonical-form resolution for the trust key's manufacturer segment.
+#
+# WHY THIS FILE EXISTS. `format_fingerprint()` was a recording device until ADR-0034 phase 1.3; now
+# it ROUTES — it is half the trust key that decides supervised vs autonomous. That promoted
+# `header.mfr` from an untidy string to TRUST-KEY MATERIAL, and storage-form variation in trust-key
+# material splits one logical vendor across several keys.
+#
+# Measured in the live corpus (16 artifacts, 2026-08-06): `onsemi` x6 and `ONSEM` x1 — one vendor,
+# two spellings, therefore two trust keys. A promotion for one silently excludes the other:
+# fail-safe and legible via `admitted_by`, but a trust decision fragmenting on ORTHOGRAPHY, and
+# evidence never accumulates for the split-off variant.
+#
+# THE SHAPE FOLLOWS A SETTLED PRECEDENT — the compact->full-IRI canonicalization class-fix
+# (scripts/merge_compact_into_canonical.py, scripts/migrate_compact_to_full_iri.py; named as a class
+# at src/iagent/defs/dynamic_supervisor.py:1539). Its lesson: storage-form variation splits one
+# logical entity across records, and the durable defence is CANONICAL-FORM RESOLUTION AT THE
+# COMPARISON BOUNDARY — not a cleanup pass over the duplicates, which never outruns accrual.
+# So resolution happens inside `format_fingerprint()` itself, and this file is its data.
+#
+# ── RULES THIS FILE OBEYS (enforced by parse_vendor_aliases, both gates) ─────────────────────────
+# EVERY ENTRY IS WITNESSED. An alias is added because a spelling was OBSERVED in the corpus, never
+# because someone imagined a vendor might also be written that way. `witnessed` records where.
+# Guessing here would merge vendors that merely look alike — the opposite failure, and a worse one,
+# because a wrong merge grants one vendor's accumulated trust to another's artifacts.
+#
+# NO FUZZY MATCHING, DELIBERATELY. Lookup is exact after case/whitespace normalisation only. Case
+# and whitespace insensitivity cannot merge two genuinely different names; stemming, substring or
+# edit-distance matching can, and would do it silently.
+#
+# NO CHAINS. An alias may not itself be a canonical form. One hop, always, so the mapping cannot
+# depend on resolution order.
+#
+# A MISS FAILS SAFE BY CONSTRUCTION. An unmapped vendor canonicalises to its own normalised literal
+# — simply a key nobody has promoted yet. The degenerate end (no manufacturer at all) is separately
+# contained: the sentinel-fingerprint rule makes `unknown/*` unpromotable at any autonomy rung.
+# Keys are LOWERCASED alias -> canonical. Only `onsem` is mapped today because it is the only split
+# ACTUALLY OBSERVED. `Diodes Incorporated` and `Analog Devices, Inc.` each appear in a single
+# spelling, so shortening them would be invention rather than canonicalisation — they are left alone
+# until a second spelling is witnessed.
+#
+# (Nothing but alias->canonical pairs may live under `aliases`. A note placed in here would parse as
+# a bogus alias — caught while writing this file, and the parser now refuses non-string values.)
+version: 1
+
+aliases:
+  # onsemi's extractor output truncates on some layouts. Both spellings observed in
+  # processing-artifacts; `onsemi` is the vendor's own form and the majority spelling (6 vs 1).
+  onsem: onsemi

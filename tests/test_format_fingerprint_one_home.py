@@ -33,7 +33,10 @@ from src.iagent.defs.extraction_review_sensor import _format_fingerprint as _via
 
 
 def _review(mfr="Qorvo", doc_type="PCN"):
+    """An artifact ATTESTING its doc_type was extracted. Unattested doc_types read as `unknown`
+    (doc-tools defaults an unextracted one to "PCN", so the value alone proves nothing)."""
     return {"doc_type": doc_type,
+            "doc_type_source": "extraction",
             "review_items": [{"field_path": "header.mfr", "value": mfr}]}
 
 
@@ -89,11 +92,23 @@ def test_the_shape_is_stable(mfr, doc_type, expected):
 
 def test_degraded_input_yields_unknown_rather_than_raising():
     """BOTH callers may hand it degraded input — the sensor a partial extraction, the starter
-    whatever the bucket returned. `unknown/...` cannot match a promoted format, which is the safe
-    direction; raising would turn a degraded artifact into an admission-path outage."""
-    assert _canonical({}) == "unknown/pcn/v1"
-    assert _canonical(None) == "unknown/pcn/v1"
-    assert _canonical({"review_items": ["not-a-dict"], "doc_type": "PCN"}) == "unknown/pcn/v1"
+    whatever the bucket returned. `unknown` segments cannot match a promoted format (and are barred
+    from promotion outright), which is the safe direction; raising would turn a degraded artifact
+    into an admission-path outage.
+
+    CONTRACT CHANGED 2026-08-06: an absent `doc_type` used to default to `pcn`, so a wholly
+    unidentified artifact keyed as `unknown/pcn/v1` — indistinguishable from a real PCN whose
+    manufacturer was missing. It now yields `unknown` on BOTH segments. Updated because the
+    behaviour deliberately changed, not to turn a red green: the collision this removes is precisely
+    what made the doc_type segment unguardable.
+    """
+    assert _canonical({}) == "unknown/unknown/v1"
+    assert _canonical(None) == "unknown/unknown/v1"
+    # doc_type present but UNATTESTED -> not trusted (doc-tools defaults an unextracted one to
+    # "PCN", so the value alone proves nothing). Attested, it is used.
+    assert _canonical({"review_items": ["not-a-dict"], "doc_type": "PCN"}) == "unknown/unknown/v1"
+    assert _canonical({"review_items": ["not-a-dict"], "doc_type": "PCN",
+                       "doc_type_source": "extraction"}) == "unknown/pcn/v1"
 
 
 def test_the_key_argument_is_ignored_and_optional():

@@ -258,7 +258,10 @@ def test_a_promotion_keyed_on_a_SENTINEL_FINGERPRINT_is_REFUSED(fingerprint):
     with pytest.raises(TrustTableInvalid) as ei:
         parse_trust_table(_vendor_entry(fingerprint), ref="trust@x")
     msg = str(ei.value)
-    assert "SENTINEL FINGERPRINT" in msg and "identifies nothing" in msg, (
+    # Message text updated 2026-08-06 when the guard grew to cover the doc_type segment too
+    # (normalisation made that segment distinguishable). The CLAIM is unchanged — the refusal must
+    # still name the rule it enforces — only the wording it names it with moved.
+    assert "SENTINEL FINGERPRINT" in msg and "was not identified" in msg, (
         f"the refusal does not NAME the rule it enforces: {msg}")
 
 

@@ -211,6 +211,27 @@ def validate(
         except Exception as exc:  # noqa: BLE001 — a malformed table REFUSES, never warns
             errors.append(f"trust_table.yaml: {exc}")
 
+    # VENDOR ALIASES (ADR-0034 phase 1.3 normalization). Validated through the SAME parser the
+    # producer loads with, so the gate cannot drift from the emitter. A malformed overlay must
+    # REFUSE rather than be skipped: silently ignoring it would canonicalise some artifacts and not
+    # others, producing the very vendor split it exists to prevent — intermittently, which is worse
+    # than consistently.
+    #
+    # Optional by design: a deployment with no witnessed splits declares no aliases.
+    alias_path = policy_dir / "vendor_aliases.yaml"
+    if alias_path.exists():
+        alias_raw = _read_yaml(alias_path, errors)
+        try:
+            import sys as _sys
+            _root = Path(__file__).resolve().parents[2]
+            if str(_root) not in _sys.path:
+                _sys.path.insert(0, str(_root))
+            from agent_fleet.utils.format_fingerprint import parse_vendor_aliases  # noqa: PLC0415
+            aliases = parse_vendor_aliases(alias_raw)
+            print(f"  vendor_aliases.yaml: {len(aliases)} alias(es)")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"vendor_aliases.yaml: {exc}")
+
     # AUTHOR-BUG GATE, family-wide. ALL FOUR grant syncs write `user` subjects
     # UNCONDITIONALLY, so a grantee that isn't a known user seeds a phantom
     # `user:<name>` that PASSES readback while granting nothing (silent-wrong-grant).
