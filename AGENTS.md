@@ -408,6 +408,39 @@ So a governed artifact is not shipped when it validates, or when its resolver is
 shipped when a CHANGE to it has been observed to move the system. Until then, treat every ceremony
 that depends on it as blocked, however complete the surrounding engineering looks.
 
+### The substrate's DEDUP can substitute a prior result for the experiment you meant to run
+Fifteenth probe-correctness instance, and a new species: not a bad instrument and not a bad fixture
+— **the experiment never executed, and the answer returned was another experiment's.**
+
+Witnessed 2026-08-06. Two witness legs differed only in SERVER-SIDE state (the trust table) and were
+driven against the same artifact. cortex-bff derives an ingress idempotency key from
+`(request_key, approver)`, so the second drive produced the same key and Restate — correctly —
+ATTACHED to the first invocation instead of running one. Leg 3 returned leg 2's `workflow_id`, leg
+2's route and leg 2's admission line. The guard under test was never exercised **and the run looked
+successful.**
+
+**Witness legs that vary only in server-side state must vary the IDEMPOTENCY IDENTITY too, or they
+measure the first leg twice.** Standing line for every multi-leg drive: **assert each leg's
+invocation id is NOVEL before attributing its result.** Nothing goes red when this happens — the
+tell is a readback naming the wrong subject, so it has to be checked rather than assumed.
+
+Note the coupling that produced it, because it generalises: one value had quietly acquired three
+jobs — artifact pointer, admission key, and idempotency key. When a field takes a third job, ask
+what it now couples.
+
+### The DEPLOY LITANY — four rungs, each catching the one above's false positive
+Every rung was learned by nearly witnessing the wrong thing:
+
+1. **`kubectl rollout status` succeeded** — and the selector handed back a `Terminating` corpse.
+2. **The digest changed** — and the code was not in it: CI had failed upstream (runner acquisition)
+   and the new digest belonged to an older commit.
+3. **The code is present in the pod** (grep the running filesystem) — necessary, still not enough.
+4. **The behaviour is witnessed** — the only rung that is evidence.
+
+*rollout → digest changed → code present in pod → behaviour witnessed.* Skipping a rung rarely
+fails outright; it produces a confident wrong conclusion, which is worse. Run all four before
+attributing any live result to a change.
+
 ### A guard must assert a value the system CANNOT produce by default
 Eleventh probe-correctness instance, and a new species: a guard whose asserted value coincides with
 the default cannot distinguish **"the mechanism worked"** from **"the mechanism never ran."**
