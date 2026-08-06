@@ -155,24 +155,20 @@ def build_start_review_payload(
         # field existed (older extractions simply carry no warnings).
         "extraction_warnings": list(review_json.get("doc_review_reasons") or []),
         "domain": domain,
-        # ── ADMISSION FACTS (ADR-0034 phase 1.3) ──────────────────────────────────────────────
-        # The pair the trust table is keyed on. Sent as FACTS ABOUT THE INPUT, never as a routing
-        # decision: ReviewStarter computes `rung_for(...)` from them SERVER-SIDE and picks the
-        # workflow itself. A caller may describe its input; it may never hand over the authority
-        # decision derived from that description — otherwise anyone entitled to mesh:startReview
-        # selects their own supervision level (the same confused-deputy shape the audience and
-        # compartment splits already refuse).
+        # ── ADMISSION FACTS: DELIBERATELY NOT SENT (ADR-0034 phase 1.3, consumer half) ────────
+        # `format_fingerprint` and `pipeline_version` USED to ride here as caller-asserted facts.
+        # They are gone on purpose: ReviewStarter now DERIVES both from the artifact that
+        # `request_key` points at.
         #
-        # These are the SAME two values stamped on the decision record, deliberately: the posture
-        # that ROUTED a notice and the posture RECORDED against it must derive from one pair, or
-        # the corpus documents a decision the pipeline did not make.
+        # WHY REMOVING THEM IS THE FIX. A caller that can assert the trust key chooses which table
+        # row the lookup hits — i.e. selects its own supervision level. `start_review` is reachable
+        # as a registered mesh verb, so that was a real surface. Now a caller can lie about exactly
+        # ONE thing — WHICH artifact — and the artifact determines everything else, which collapses
+        # the trust question to "can the caller read that artifact".
         #
-        # KNOWN GAP, ceremony-blocking and filed there: `format_fingerprint` is caller-asserted and
-        # unverifiable downstream. Backstopped today because dispatch denies (the capability is
-        # granted to nobody), so a lie buys nothing. That backstop expires AT the ceremony —
-        # ratification must not proceed until the fingerprint is server-derived or signed.
-        "format_fingerprint": _format_fingerprint(review_json, request_key),
-        "pipeline_version": _PIPELINE_VERSION,
+        # DO NOT RE-ADD THEM. Sending them again would not be additive: the starter would still
+        # derive, and the two values would silently diverge from what routed the notice. The
+        # pointer below is the whole contract. Pinned by tests/test_review_payload_passthrough.py.
         # Transport-level artifact identity for ingress idempotency (see docstring). Empty
         # for a caller that cannot name an artifact — the BFF then sends NO key rather than
         # inventing one, so the call is honestly non-idempotent instead of falsely deduped.

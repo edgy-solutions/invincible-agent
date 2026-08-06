@@ -232,6 +232,16 @@ def test_the_route_is_never_taken_from_the_request():
     src = (Path(rs.__file__)).read_text(encoding="utf-8")
     for forbidden in ('request.get("trust_rung")', 'request.get("rung")',
                       'request.get("workflow")', 'request.get("definition")',
-                      'request.get("autonomous")'):
+                      'request.get("autonomous")',
+                      # PHASE 1.3 CONSUMER HALF: the trust key itself is now DERIVED from the
+                      # artifact. Reading either component off the request would restore the
+                      # caller-asserted key — the same confused deputy, one field lower.
+                      'request.get("format_fingerprint")',
+                      'request.get("pipeline_version")'):
         assert forbidden not in src, (
             f"the starter reads {forbidden} — the routing authority crossed the client boundary")
+    # ...and it must DERIVE instead. Asserting the absence alone would pass on a starter that
+    # simply stopped computing a rung at all.
+    assert "derive_provenance(" in src, (
+        "the starter no longer derives the trust key from the artifact — absence of the request "
+        "read is only half the claim")

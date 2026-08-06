@@ -434,14 +434,14 @@ class ReviewStartRequest(_BaseModel):
     # The doc-tools extraction trace id (review.json.trace_id), forwarded so the review
     # composition nests under the SAME Langfuse trace as the extraction (ADR-0038).
     trace_id: Optional[str] = None
-    # ── ADMISSION FACTS (ADR-0034 phase 1.3) ──────────────────────────────────────────────────
-    # The vendor-format x pipeline-version pair the trust table is keyed on. FACTS, forwarded
-    # verbatim — the BFF neither computes nor validates them, and crucially the caller does NOT
-    # get to send a rung or a workflow id. ReviewStarter derives the posture from these
-    # server-side and selects the workflow itself, so a caller can describe its input but never
-    # choose its own supervision level.
-    format_fingerprint: Optional[str] = None
-    pipeline_version: Optional[str] = None
+    # ── ADMISSION FACTS: REMOVED FROM THE CONTRACT (ADR-0034 phase 1.3, consumer half) ────────
+    # `format_fingerprint` / `pipeline_version` were briefly accepted here as caller-supplied
+    # facts. They are gone: ReviewStarter DERIVES both from the artifact `request_key` names.
+    #
+    # Removing them from the MODEL (not merely ignoring them) is the point — Pydantic drops
+    # undeclared keys, so an old caller still sending them is silently and correctly ignored
+    # rather than half-honoured. The admission posture now has exactly one client-suppliable
+    # input: the pointer.
 
 
 def _ingress_idempotency_key(request_key: Optional[str], approver: str) -> Optional[str]:
@@ -543,11 +543,10 @@ async def start_review(
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
-    # Admission FACTS -> ReviewStarter computes the rung from them (ADR-0034 phase 1.3). Forwarded,
-    # never interpreted here: the BFF's job on this pair is transport, and the authority decision
-    # belongs to the layer that owns the table.
-    body["format_fingerprint"] = req.format_fingerprint or ""
-    body["pipeline_version"] = req.pipeline_version or ""
+    # ADMISSION FACTS ARE NO LONGER FORWARDED (ADR-0034 phase 1.3, consumer half). ReviewStarter
+    # DERIVES `format_fingerprint` and `pipeline_version` from the artifact `request_key` points at,
+    # so a caller can no longer assert the trust key and thereby choose its own supervision level.
+    # The pointer (forwarded above) is the entire admission contract now.
     try:
         # Sized to the PART COUNT, not to a nominal request. start_review resolves a
         # subject, checks entitlement and evaluates the ruleset PER PART, so a

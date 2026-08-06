@@ -128,17 +128,26 @@ def test_forwarded_body_carries_them_not_just_the_model():
     # trace_id joins them (ADR-0038): the extraction trace id must reach the ReviewStarter
     # so the review can nest under the SAME Langfuse trace as the extraction.
     assert 'body["trace_id"] = req.trace_id or ""' in handler
-    # ADMISSION FACTS join them (ADR-0034 phase 1.3) and carry the HIGHEST stakes of the set:
-    # ReviewStarter computes `rung_for(format_fingerprint, pipeline_version)` from this pair to
-    # choose between the supervised and autonomous workflows. Dropped here, the starter sees an
-    # empty pair, falls to the born-supervised floor, and EVERY promotion silently stops routing —
-    # the table goes back to being an artifact nothing reads, which is the exact defect 1.3 closed.
-    # It would fail SAFE (supervised) and therefore completely silently, which is why it is pinned
-    # rather than trusted to the generic check above.
-    for field in ("format_fingerprint", "pipeline_version"):
-        assert f'body["{field}"] = req.{field} or ""' in handler, (
-            f"{field} never reaches the forwarded body — the trust table stops routing, silently "
-            f"and in the safe direction, which is the hardest kind of stop to notice"
+    # ── THE POINTER IS NOW THE WHOLE ADMISSION CONTRACT (ADR-0034 phase 1.3, consumer half) ────
+    # This pin USED to protect `format_fingerprint` / `pipeline_version`. Those are gone: the
+    # starter DERIVES both from the artifact `request_key` names, so a caller can no longer assert
+    # the trust key and choose its own supervision level.
+    #
+    # The pin therefore moves to the POINTER. `request_key` was already asserted above for review
+    # IDENTITY (the workflow key); it now ALSO carries the admission posture, so dropping it costs
+    # two things at once — and the admission half fails LOUDLY (the starter refuses an underivable
+    # posture) rather than silently, which is the whole point of the refuse-vs-floor split.
+    #
+    # Guarding fields nothing sends would be worse than not guarding: a green pin over a dead
+    # contract reads as coverage.
+    assert 'body["request_key"] = req.request_key or ""' in handler, (
+        "the artifact pointer no longer reaches the forwarded body — the starter cannot derive the "
+        "admission posture and every notice refuses"
+    )
+    for dead in ("format_fingerprint", "pipeline_version"):
+        assert f'body["{dead}"]' not in handler, (
+            f"{dead} is being forwarded again — it is DERIVED from the artifact now, and a "
+            f"caller-asserted copy would silently diverge from what actually routed the notice"
         )
 
 

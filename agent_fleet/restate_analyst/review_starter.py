@@ -59,9 +59,15 @@ try:
     from utils.trust_table import (  # type: ignore[no-redef]
         DEFAULT_RUNG, MONITORED, TRUSTED, load_trust_table,
     )
+    from utils.artifact_provenance import (  # type: ignore[no-redef]
+        ArtifactUnreadable, derive_provenance,
+    )
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.utils.trust_table import (
         DEFAULT_RUNG, MONITORED, TRUSTED, load_trust_table,
+    )
+    from agent_fleet.utils.artifact_provenance import (
+        ArtifactUnreadable, derive_provenance,
     )
 
 # Telemetry (ADR-0038): baml_shared is on sys.path (the analyst app adds it at startup).
@@ -431,17 +437,44 @@ async def start_review(ctx: Context, request: dict) -> dict:
     # permissive empty table; catching it HERE and forcing workflow 1 is the caller-side half of
     # that contract — the safe behaviour happens, and the reason is logged at a layer that can
     # say why.
+    # ── DERIVED FROM THE ARTIFACT, NOT ACCEPTED FROM THE CALLER (phase 1.3 consumer half) ──────
+    # The caller supplies a POINTER (`request_key`, the artifact identity it already sends). Both
+    # halves of the trust key are read from the artifact that pointer names. A caller can lie about
+    # exactly one thing — WHICH artifact — and the artifact determines everything else, which
+    # collapses the trust question to "can the caller read that artifact".
+    #
+    # FETCH FAILURE IS A REFUSAL, NOT A FLOOR-FALL. Floor-falling on an unreadable artifact would
+    # let an S3 outage silently convert every admission to supervised — safe, invisible, and
+    # indistinguishable from policy. Only a WELL-FORMED artifact with no producer stamp takes the
+    # floor, and it is attested as such so the back-corpus degrades legibly rather than silently.
     rung = DEFAULT_RUNG
     trust_ref = "trust@unavailable"
-    fmt_fp = str(request.get("format_fingerprint") or "")
-    pipe_v = str(request.get("pipeline_version") or "")
+    admitted_by = "content"
+    _pointer = str(request.get("request_key") or "")
+    try:
+        derived = derive_provenance(_pointer)
+    except ArtifactUnreadable as exc:
+        # TERMINAL: the admission posture is UNDECIDABLE, so no posture is assumed. Refusing is the
+        # only answer that cannot be mistaken for a policy decision.
+        raise restate.TerminalError(
+            f"cannot derive the admission posture for notice {notice_id!r}: {exc}. The trust key is "
+            f"derived from the artifact, so an unreadable artifact means the posture is UNKNOWN — "
+            f"and an unknown posture must refuse, never quietly supervise (an outage would then be "
+            f"indistinguishable from policy).",
+            status_code=422,
+        )
+
+    fmt_fp = derived.format_fingerprint
+    pipe_v = derived.pipeline_version
+    if derived.version_missing:
+        # The back-corpus: a well-formed artifact whose producer never stamped itself. Floor, and
+        # SAY SO — the sibling of `policy-default-missing-facts`.
+        admitted_by = "policy-default-missing-provenance"
     try:
         _table = load_trust_table()
         trust_ref = _table.ref
         if fmt_fp and pipe_v:
             rung = _table.rung_for(fmt_fp, pipe_v)
-        # An absent fact pair is NOT an error — it is an older caller, and older callers get the
-        # floor. Silently supervising is correct here precisely because the floor IS the safe side.
     except Exception as exc:  # noqa: BLE001 — a bad table supervises; it never blocks the review
         print(f"TRUST_TABLE unreadable ({type(exc).__name__}: {exc}) — supervising this notice",
               flush=True)
@@ -449,6 +482,7 @@ async def start_review(ctx: Context, request: dict) -> dict:
     autonomous = rung in (MONITORED, TRUSTED)
     print(f"ADMISSION notice={notice_id} format={fmt_fp or '(none)'} "
           f"pipeline={pipe_v or '(none)'} rung={rung} table={trust_ref} "
+          f"admitted_by={admitted_by} derived_from={_pointer or '(no pointer)'} "
           f"-> {'autonomous_review' if autonomous else 'grouped_review'}", flush=True)
 
     workflow_id = compose_workflow_id(notice_id, approver, request.get("request_key"))
@@ -463,6 +497,11 @@ async def start_review(ctx: Context, request: dict) -> dict:
             "trust_table_ref": trust_ref,
             "format_fingerprint": fmt_fp,
             "pipeline_version": pipe_v,
+            # HOW this notice was admitted: `content` normally, or
+            # `policy-default-missing-provenance` when the artifact carried no producer stamp and
+            # therefore took the floor. Carried so the decision record can say WHY a notice
+            # supervised, instead of leaving a floor-fall indistinguishable from a real posture.
+            "admitted_by": admitted_by,
             # THE INITIATOR'S IDENTITY, and on the autonomous path it is LOAD-BEARING.
             # `_run_definition` builds its identity as
             #     request.get("authz_id") or request.get("caller_email") or ""
