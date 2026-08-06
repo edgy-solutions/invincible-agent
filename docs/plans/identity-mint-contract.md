@@ -80,6 +80,47 @@ Run this for EVERY species after any realm/mapper change: mint a token, decode i
 `USER_ENTITLEMENT_CLAIM` names carries the intended `authz_id`. A mismatch here is the shared-sub bug's
 shape — catch it at the token, not at a broken isolation boundary.
 
+### EXECUTED 2026-08-05 (ADR-0034 phase 1.3) — sandbox, `svc:review-starter`
+
+Procedure converted to RECORD. Decoded from a live mint on the running engine-a pod:
+
+```
+email                svc:review-starter        <- the load-bearing claim (USER_ENTITLEMENT_CLAIM
+                                                  is unset, so auth.py's `email` default applies)
+sub                  0b9ad80d-3280-4579-…      <- the Keycloak UUID; NOT the authz_id
+azp / client_id      iagent-review-starter
+preferred_username   service-account-iagent-review-starter
+```
+
+**The contract above was already right — this is what "already right" looks like when checked rather
+than assumed.** There is NO claim named `authz_id` in the token; the identity rides `email`, exactly
+as §1 states. Recorded because the natural expectation is a claim named for the concept, and a
+reader who inferred `authz_id` from the prose would have verified the wrong field and found nothing.
+
+### THE WEIGHT OF THIS CLAIM DOUBLED ON 2026-08-05 — §2 inherits it
+
+Until phase 1.3 this claim decided login and routing. It now ALSO decides whether the **autonomous
+dispatch gate** resolves: the ceremony grants `can_invoke(mesh:dispatchDispositions)` to
+`svc:review-starter`, and the gate checks the caller that arrives from this claim. Witnessed in the
+Restate journal before the grant exists —
+
+```
+caller 'svc:review-starter' is not authorized (can_invoke) for capability
+'mesh:dispatchDispositions' — failing and releasing.
+```
+
+— the deny→allow flip's before-picture, whose subject comes from `email`.
+
+So the work-side risk is no longer "logins break." It is: **a Ping broker mapping that lands the
+employee identity in a DIFFERENT claim than the local service mapper uses splits the identity
+contract** — at exactly the seam the shared-`sub` bug taught us it breaks, except one side of the
+split is now an autonomous effect gate rather than a queue filter.
+
+**Verify BOTH species' tokens at work BEFORE the ceremony's grant is applied, not after.** A grant
+keyed on a claim the other path does not populate is a grant that appears to land and never
+resolves — the no-op's evil twin, in the identity plane, at the one moment nobody would be looking
+for it.
+
 ---
 
 ## Section 2 — Work translation (PREDICTIVE — written against a Ping realm never seen)

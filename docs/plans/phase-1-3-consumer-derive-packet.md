@@ -92,6 +92,32 @@ one thing — WHICH artifact — and the artifact determines everything else.** 
 question to "can the caller read that artifact," an entitlement question the system already knows
 how to ask.
 
+## Item 3b — RIDER: the registry-startup invariant (pulled forward, ruled 2026-08-05)
+
+**Not a silence-arc citizen any more — it rides THIS window's deploy.** The argument for pulling it
+forward is that the ceremony's aftermath is the first live autonomous traffic, and both exhibit
+classes are deploy-time failures that would surface *during* that traffic as routing mysteries. An
+invariant whose whole purpose is preventing misattributed witness failures should be standing
+BEFORE the highest-stakes witness this system runs.
+
+Both exhibits are witnessed, which is why it is well-specified rather than speculative:
+1. **definitions present in the image, directory empty** — the original exhibit.
+2. **service present in the image, absent from Restate's registry** — `AutonomousReview` shipped in
+   the image and was still missing from `deployments list`; every `workflow_send` would have failed
+   as service-not-found, and the 1.3 witness would have **measured a registration gap while looking
+   like a routing failure.** That misattribution is the invariant's justification, on file.
+
+The class, one line: **shipped is not registered — an artifact arriving in the pod proves nothing
+about the runtime knowing it exists.**
+
+Assert BOTH, fail LOUD:
+- expected workflow definitions loadable **by name** from the registry at startup
+- expected Restate services present in `deployments list` (startup check or deploy step)
+
+It is small — an expected-set assertion plus a list check — and it guards the exact roll this packet
+performs, since the derive rolls the starter anyway. Fix when it trips:
+`restate deployments register <endpoint> --force`.
+
 ## Item 4 — the deploy piece (NOT code)
 
 **ReviewStarter needs artifact-bucket read access** — new, read-only, scoped. Goes on the
