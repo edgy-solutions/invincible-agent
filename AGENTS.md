@@ -517,9 +517,30 @@ What still holds, stated exactly: the fix's mechanism is proven HERMETICALLY by
 exporter and asserts zero boundary exports — not subject to flush loss. The organic before-trace
 proves the defect was real. The live after-trace proves the DEPLOYED code emits one boundary and
 (via `mem0=2`, which can only overcount from real executions) that a replay occurred. What is
-missing is a same-mechanism before/after pair. **Ledger item: re-run A and E's witnesses with the
-fail-not-kill seal D now has.** Filed rather than quietly repaired, because a witness whose weakness
-is known and recorded is worth more than one silently re-run.
+missing is a same-mechanism before/after pair. ~~**Ledger item: re-run A and E's witnesses with the
+fail-not-kill seal D now has.**~~ Filed rather than quietly repaired, because a witness whose
+weakness is known and recorded is worth more than one silently re-run.
+
+**CLOSED 2026-08-06 (`0d8689c`).** A and E took D's seal (`A_SEAL_FAIL_AFTER_WORK` /
+`E_SEAL_FAIL_AFTER_WORK`), placed after the work AND after the boundary emit so both `ctx.run`
+steps are journaled and the replay re-executes only the handler's re-entry — the defect, isolated.
+Placement was checked per engine rather than copied: A's seal sits inside a broad `try` that is
+safe only because its `except` RE-RAISES; E has no enclosing except at all. Results, one
+manufactured replay each (seal `#1` only, verified by firing number — the string appears twice in
+A's log via the re-raise print and Restate's traceback, which is one firing, not two):
+
+| engine | seal firings | boundary span | inner spans |
+|---|---|---|---|
+| A | 1 | `analyst` = **1** | 1 each (memoized) |
+| E | 1 | `engine-e graph reasoning` = **1** | 1 each (memoized) |
+
+**Why this leg discriminates where the kill could not:** attempt 1's boundary has already closed
+and EXPORTED by the time the seal fires, so the unfixed code would read 2 exactly where the fixed
+code reads 1. The kill destroyed that evidence and returned 1 either way. Note also what changed
+about attestation: with the work memoized the inner-span count no longer doubles, so it cannot
+attest the replay — that evidence is the seal's log line plus the completing retry, both surviving
+because the process does. The A/E inversion table's shape was a property of killing MID-work, not
+of replay witnesses generally.
 
 The general form this adds: **an instrument that survived is not the same claim as an instrument
 that could not have died.** A and E's inner-span count survived; it was never structurally safe. Ask
