@@ -2317,10 +2317,61 @@ except ImportError:
     from agent_fleet.utils.mesh_registration import register_engine_to_mesh
 
 
+# ---------------------------------------------------------------------------
+# REGISTRY STARTUP INVARIANT — shipped is not registered
+# ---------------------------------------------------------------------------
+# THE CLASS, from two witnessed exhibits: an artifact arriving in the pod proves NOTHING about the
+# runtime knowing it exists.
+#   1. definitions present in the image, registry directory empty;
+#   2. `AutonomousReview` present in the image and ABSENT from Restate's `deployments list` — every
+#      workflow_send would have failed as service-not-found, and the phase-1.3 witness would have
+#      MEASURED A REGISTRATION GAP WHILE LOOKING LIKE A ROUTING FAILURE. That misattribution is
+#      this invariant's whole justification.
+#
+# Only the DEFINITION half is asserted here. The service half needs Restate's admin API, which is a
+# different process — asserting it at startup would make this engine's boot depend on Restate being
+# up, converting a deploy check into a liveness coupling. It is a DEPLOY STEP instead:
+# `tests/sandbox_e2e/_probe_registered_services.py`.
+#
+# FAILS LOUD, NEVER DEGRADES. A missing definition means a workflow that can be TRIGGERED but not
+# RUN — the trigger succeeds, the runner raises at first use, and the failure surfaces far from its
+# cause. Refusing to boot is the honest alternative, and it surfaces at deploy time where the fix is.
+_EXPECTED_DEFINITIONS = ("grouped_review", "autonomous_review")
+
+
+def _assert_definitions_registered() -> None:
+    """Every definition this engine can be asked to run must be loadable BY NAME, at boot."""
+    try:
+        from workflow_definition import get_workflow_definition  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.restate_analyst.workflow_definition import get_workflow_definition
+
+    missing = []
+    for wf_id in _EXPECTED_DEFINITIONS:
+        try:
+            get_workflow_definition(wf_id)
+        except Exception as exc:  # noqa: BLE001
+            missing.append(f"{wf_id} ({type(exc).__name__}: {exc})")
+    if missing:
+        raise RuntimeError(
+            "REGISTRY INVARIANT FAILED — expected workflow definition(s) not loadable by name: "
+            + "; ".join(missing)
+            + ". The image shipped them or it did not; either way this engine can be asked to run a "
+              "process it cannot load, so it refuses to start rather than fail at first use, far "
+              "from the cause."
+        )
+    logger.info("registry invariant OK — definitions loadable by name: %s",
+                ", ".join(_EXPECTED_DEFINITIONS))
+
+
 @asynccontextmanager
 async def lifespan(fastapi_app: FastAPI):
     # Boot Sequence
     logger.info("Initializing Engine A: Late Binding enabled (JIT Tool Injection).")
+
+    # SHIPPED IS NOT REGISTERED — assert before advertising anything to the mesh, so a pod that
+    # cannot run its own processes never becomes a routing target.
+    _assert_definitions_registered()
 
     # Register as typed predicate edges in the mesh routing graph.
     #
