@@ -26,6 +26,53 @@ grant must return TRUE from a topaz permission check, and any
 relation NOT in the YAML must NOT exist in the directory. Any
 divergence fails the sync loudly.
 
+### The transport/derivation boundary
+
+Stated explicitly because a co-located deployment shares this
+authorizer with another policy corpus (see below), and "we have sync
+tooling" can otherwise read as a contradiction of the asserted-in-git
+stance above:
+
+> **Sync tooling transports asserted, PR-reviewed policy content into
+> the authorizer; it never derives entitlements from a directory or any
+> other source.**
+
+"No directory sync" is a statement about **derivation**, not about
+**transport**. A directory may seed a *draft* for a human to review;
+the PR approval is what makes it an entitlement. `topaz_sync.py` is the
+pipe, and its readback gate is what enforces the boundary in practice —
+the directory is not permitted to contain anything the YAML did not
+assert.
+
+### Shared-authorizer deployments (mini-iagent on an OpenDDIL edge)
+
+When a reduced deployment of this project runs co-located on an
+OpenDDIL edge node, it shares **one Topaz instance and one decision
+log** with OpenDDIL's releasability enforcement. Two policy corpora,
+one authorizer.
+
+They compose as **distinct modules, not a merged grant model**, because
+they answer different questions about the same request:
+
+- **this corpus (capability):** which persona×domain cells is the
+  subject entitled to, which verbs/engines/tools may run, which
+  ontology compartments are reachable;
+- **OpenDDIL's corpus (releasability):** may the subject see this row,
+  given nations/clearance against the row's labels.
+
+Only the releasability module ever decides row access, so there is no
+second decider over the same rows.
+
+The coupling point is the **subject namespace**: both modules must
+recognise the same human as the same subject, or decisions cannot
+compose and the shared decision log cannot correlate. One subject
+record per human carries both attribute families — the persona×domain
+matrix from this corpus, plus nations + clearance from OpenDDIL's.
+
+See OpenDDIL `openddil-contracts/decisions/ADR-0029` (ABAC
+releasability) and `ADR-0031` (converged edge node) for the other half
+of this contract.
+
 Usage:
 
 ```bash
