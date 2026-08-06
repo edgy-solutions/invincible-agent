@@ -887,6 +887,30 @@ def _classify_route(
     return _ROUTING_MATCHED, predicate, telemetry
 
 
+def _telemetry_headers(config) -> Dict[str, str]:
+    """The ADR-0038 trace/session headers the supervisor puts on every outbound engine call.
+
+    SINGLE SOURCE for the header NAMES — this is a cross-service contract with three
+    consumers today (Engines W, O and F each read ``X-Trace-Id`` in their FastAPI
+    middleware). Rename a key here and those engines silently fall back to minting their
+    own trace id: no error, just orphaned traces. Pinned by
+    tests/test_specialist_dispatch_trace_headers.py.
+
+    TWO JOIN MECHANISMS, ON PURPOSE — state which one applies before instrumenting a new
+    engine, and do not pick by whichever example you read first:
+      * HTTP engines (W/O/F, FastAPI middleware) join on these HEADERS;
+      * RESTATE engines (E, and D) join on the ``trace_id`` BODY FIELD, because a durable
+        handler reads the request body and never sees HTTP headers.
+    Engine E's proxy exists precisely to translate the first into the second.
+    """
+    headers: Dict[str, str] = {}
+    if getattr(config, "trace_id", ""):
+        headers["X-Trace-Id"] = config.trace_id
+    if getattr(config, "session_id", ""):
+        headers["X-Session-Id"] = config.session_id
+    return headers
+
+
 def _call_engine_a_fallback(
     context,
     sub_query: str,
@@ -961,11 +985,7 @@ def _call_engine_a_fallback(
     # Forward the request's trace + session ids so Engine A's /analyze proxy adopts them
     # (X-Trace-Id -> the analyst trace's seed; X-Session-Id -> the Langfuse session). The
     # conversation-path leg of ADR-0038: cortex-ui -> BFF -> supervisor -> Engine A.
-    _tele_headers = {}
-    if config.trace_id:
-        _tele_headers["X-Trace-Id"] = config.trace_id
-    if config.session_id:
-        _tele_headers["X-Session-Id"] = config.session_id
+    _tele_headers = _telemetry_headers(config)
     response = requests.post(
         f"{RESTATE_ANALYST_URL}/analyze",
         json=payload,
@@ -1570,7 +1590,18 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # 300-iteration timeout still prevents this from being truly infinite.
     # Must move in lockstep with restate_analyst/main.py's /analyze
     # proxy timeout, or the inner 900s ceiling defeats this one.
-    response = requests.post(endpoint, json=payload, timeout=1800)
+    # ADR-0038 — the DIRECT specialist leg's join for HTTP engines. The body already
+    # carried `trace_id` (above) for Engine E, which reads the BODY because a Restate
+    # handler never sees HTTP headers. But W, O and F join in FastAPI middleware that
+    # reads the X-Trace-Id HEADER — and this POST sent none, so the id was on the wire
+    # in a form none of them reads and all three orphaned on the direct leg. One seam,
+    # three consumers: the same headers the Engine A leg already sends.
+    response = requests.post(
+        endpoint,
+        json=payload,
+        headers=_telemetry_headers(config) or None,
+        timeout=1800,
+    )
     response.raise_for_status()
 
     data = response.json()
