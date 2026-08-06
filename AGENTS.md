@@ -430,6 +430,32 @@ And note the discovery mode, because it is the only one that works: break-on-pur
 breaking the pipe and the guard NOT turning red. A guard's green surviving its mechanism's death is
 exactly what break-on-purpose exists to surface.
 
+### A proof's HARNESS must assert presence — detection by absence is the weakest signal
+Twelfth probe-correctness instance, and the one that diagnoses the family rather than adding to it.
+
+Break-on-purpose is how a guard is trusted. But the break-proof is itself a mechanism, and it can
+fail the same way the guard can. Observed 2026-08-05, proving a validator refused a sentinel-keyed
+promotion: the proof appended a second `formats:` key (**YAML silently deduplicates**, so the
+fixture asserted nothing) and read `tail`'s exit code instead of Python's through a pipeline
+(`cmd | tail; echo $?`). It reported success while testing nothing.
+
+**The only tell was a line of expected output that did not appear.** Nothing went red. Detection by
+absence is the weakest signal available — it depends on the reader remembering what should have been
+there.
+
+So: **a proof asserts a POSITIVE ARTIFACT of the mechanism firing, never a status code alone.** Not
+*"the run exited non-zero"* but *"the run exited non-zero AND the output names the rule I
+disabled."* Seals already do this (the break-on-purpose message check); this extends the same
+discipline to the harnesses that verify seals. Status codes are exactly where a pipeline lets `tail`
+answer for the program.
+
+**AND THE HARD PART, which is why this is filed as a construction rule rather than a lesson:** this
+defect was written by the same author who had filed the parent rule an hour earlier, in the commit
+enforcing it. **Knowing the rule does not prevent writing the defect** — the defect is invisible at
+write time by its nature: the proof looks right, runs green, and reads as evidence. So the class is
+not addressed by learning; it is addressed PER INSTANCE, by a guard, every time. That is what the
+guards are for, and it is why "we know about this one" is never a reason to skip one.
+
 ### Every hop that REBUILDS a payload is a field-dropping surface
 Third instance, so it gets the rule. Any field a downstream tripwire or derive depends on gets a
 pin at EVERY hop between producer and consumer — not only at the ends.
