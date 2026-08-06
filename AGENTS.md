@@ -742,6 +742,48 @@ whose failure would trigger a revert**. And note the specific mechanism here —
 part of its correctness**: an assertion that samples asynchronous state must either wait for the
 state it asserts on or assert on something synchronous with the call it made.
 
+### A grep proves presence; it NEVER proves absence of behavior
+The inverse of the membership error, and the fourteenth probe-correctness instance. The route
+conflation claimed an EDGE that did not exist from a PROPERTY that did (middleware possession vs
+verb-edge reachability). This one claims a GAP that does not exist from an ABSENCE that does.
+
+Measured 2026-08-06. Grepping `provenance_telemetry` and doc-tools for `flush|atexit|shutdown`
+returned nothing, and that true observation was turned into a false conclusion — "spans at risk on
+short-lived jobs" — which then led a live diagnosis. The read that settled it was one level down:
+the langfuse SDK registers `atexit.register(self.shutdown)` itself
+(`_client/resource_manager.py:279`, and the OTel TracerProvider at `sdk/trace/__init__.py:1347`),
+with the SDK's own docstring stating that relying on it "is sufficient". No amount of grepping the
+CALLER could have shown that, because the behavior is registered by the DEPENDENCY.
+
+**So: absence in your source is not absence in your process.** Before concluding a gap from a
+missing call, read what the libraries in the call path already register — atexit hooks, signal
+handlers, context managers, `__del__`, framework lifecycle hooks. The evidence was also sitting in
+plain sight and was ignored: traces WERE landing, which is only possible if something flushed.
+**When a claimed gap contradicts observed behavior, the gap is wrong, not the behavior.**
+
+Narrow the claim rather than dropping it: explicit flush still buys something where atexit never
+runs — SIGKILL, OOMKill, eviction, `os._exit`. That is the same mechanism as the shared-fate rule
+above: **atexit covers cooperative shutdown; nothing covers murder.** An instrument that must
+survive being killed needs its evidence somewhere the process's death cannot reach — the journal, a
+completing retry's log, an external counter.
+
+### A fix attached to a non-bug gets remembered as the cause
+The stale-record rule applied PROSPECTIVELY: do not mint the misleading record in the first place.
+
+2026-08-06's "missing traces" turned out to be zero telemetry loss — the trace id is seeded on
+`doc_id`, so re-runs APPEND to one trace and never surface in a recency-sorted UI. During the sweep
+a genuine-but-unrelated improvement surfaced (an explicit `flush()` at the job boundary). Landing it
+"in response" would have written a false causal record into history: the next person chasing a real
+missing trace finds that commit, concludes flush-placement is the known failure mode here, and
+spends their afternoon in the wrong layer.
+
+**So: the repair must match the ACTUAL defect, or the repair is itself a defect — in the audit
+trail.** Same discipline as refusing to widen an entitlement to make a seal pass. Land the unrelated
+improvement on its own merits, uncoupled, with a commit message that says what it is ("shortens the
+buffered window on abnormal exit") and not what it isn't. And fix the real thing, which here was
+that NOTHING said the semantics were append-by-design — a one-line comment at the seed site is the
+cheapest afternoon anyone will ever buy back.
+
 ### A guard that FAILS instead of SKIPPING when its precondition is absent is anesthesia
 The third species in the lying-result family, and a new one. The first two were greens that lie
 (pass without the mechanism under test existing) and reds that lie (measure the instrument, not the
