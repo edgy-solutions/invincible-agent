@@ -890,11 +890,18 @@ def _classify_route(
 def _telemetry_headers(config) -> Dict[str, str]:
     """The ADR-0038 trace/session headers the supervisor puts on every outbound engine call.
 
-    SINGLE SOURCE for the header NAMES — this is a cross-service contract with three
-    consumers today (Engines W, O and F each read ``X-Trace-Id`` in their FastAPI
-    middleware). Rename a key here and those engines silently fall back to minting their
-    own trace id: no error, just orphaned traces. Pinned by
-    tests/test_specialist_dispatch_trace_headers.py.
+    SINGLE SOURCE for the header NAMES. Rename a key here and the receiving engines
+    silently fall back to minting their own trace id: no error, just orphaned traces.
+    Pinned by tests/test_specialist_dispatch_trace_headers.py.
+
+    WHO ACTUALLY RECEIVES THIS, verified against the live verb registry rather than
+    assumed (`MATCH ()-[r]->() WHERE r.endpoint_url IS NOT NULL`):
+      * Engine W (`:8088/query_knowledge`) — registered specialist, joins on this header;
+      * Engine O (`:8084/resolve_instance`) — registered specialist, same middleware.
+    Engine F (presentation_agent) reads the SAME header name in its own middleware but is
+    NOT a registered specialist — nothing here ever calls it. Its caller is cortex-bff,
+    which is a separate seam and a separate ledger item; do not read F's middleware as
+    evidence that this call site feeds it.
 
     TWO JOIN MECHANISMS, ON PURPOSE — state which one applies before instrumenting a new
     engine, and do not pick by whichever example you read first:

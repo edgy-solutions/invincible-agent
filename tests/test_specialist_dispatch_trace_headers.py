@@ -43,12 +43,20 @@ SESSION_HEADER = "X-Session-Id"
 
 _SUPERVISOR = _ROOT / "src" / "iagent" / "defs" / "dynamic_supervisor.py"
 
-# The three HTTP consumers that join on the header, each in its own service.
+# The HTTP engines THIS call site actually reaches. Taken from the live verb registry
+# (`MATCH ()-[r]->() WHERE r.endpoint_url IS NOT NULL`), not from "which engines have
+# middleware" — those are different sets, and conflating them overstated this seam once
+# already.
 _HEADER_CONSUMERS = {
-    "Engine W": Path("agent_fleet") / "weaviate_expert" / "main.py",
-    "Engine O": Path("agent_fleet") / "ontology_service" / "main.py",
-    "Engine F": Path("agent_fleet") / "presentation_agent" / "main.py",
+    "Engine W": Path("agent_fleet") / "weaviate_expert" / "main.py",   # :8088/query_knowledge
+    "Engine O": Path("agent_fleet") / "ontology_service" / "main.py",  # :8084/resolve_instance
 }
+
+# Engine F reads the SAME header name but is NOT a registered specialist — no verb edge
+# points at it, so this dispatch never calls it. Its caller is cortex-bff (separate seam,
+# separate ledger item). Asserted separately so the contract string stays pinned across
+# all readers WITHOUT implying this call site feeds it.
+_OTHER_READER = Path("agent_fleet") / "presentation_agent" / "main.py"
 
 
 def _src(path: Path) -> str:
@@ -91,6 +99,13 @@ def test_http_engine_reads_the_header_the_supervisor_sends(engine):
     assert f'headers.get("{HEADER}")' in src, (
         f"{engine} does not read {HEADER} — the supervisor's direct leg would orphan"
     )
+
+
+def test_engine_f_reads_the_same_header_from_its_own_caller():
+    """F is not on this seam — but it reads the same contract string, so a rename here
+    would break it too, via cortex-bff. Pinned so the string stays global while the
+    ROUTING claim stays honest about who this call site reaches."""
+    assert f'headers.get("{HEADER}")' in _src(_OTHER_READER)
 
 
 def test_restate_engine_e_still_joins_on_the_body_not_the_header():
