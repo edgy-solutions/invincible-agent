@@ -525,6 +525,20 @@ The general form this adds: **an instrument that survived is not the same claim 
 that could not have died.** A and E's inner-span count survived; it was never structurally safe. Ask
 which, because only the second is a method.
 
+And its stronger statement, which subsumes the above and is the thirteenth probe-correctness
+instance: **an instrument's identity includes the MECHANISM THAT DELIVERS ITS EVIDENCE, not just
+the metric it counts.** Two reads that count the same thing through different survival paths are
+two instruments, and a before/after pair built across them is a comparison wearing a pair's
+clothes. That is exactly what "same instrument both times" hid here: true of the counting tool
+(the observations API), false of the replay mechanism (organic replay vs pod kill) — and the
+mechanism is the half that decides whether the evidence exists to be counted.
+
+Note the species, because it is the reason this one was hard to catch: the flawed exoneration was
+written INTO THIS FILE as settled, by the same thread that would later rely on it. A ruling that
+asserts a MECHANISM ("it journals through Restate") is the sibling of a ruling that asserts a
+string identity — both feel like reasoning and are actually claims, and both need the same
+treatment: trace where the thing actually lives before writing the ruling down.
+
 ### A journaled step's contract is its RETURN VALUE — side effects do not replay
 The memoization mirror of the time-machine rule: a journal replays what was **returned**, not what
 was **done**. `ctx.run` memoizes the return value and does not re-execute the body, so anything the
