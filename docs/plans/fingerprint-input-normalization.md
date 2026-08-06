@@ -83,6 +83,47 @@ Nothing in `invincible-agent` signals when that happens, which is exactly why th
 ordering constraint between repositories rather than as a preference. Whoever rolls the doc-tools
 rebuild needs to know this item gates it.
 
+## EXECUTED 2026-08-06 — built, deployed, verified in-pod
+
+Landed in `025c8ba` (consumer) + doc-tools `3db8dbb` (producer attestation). Verified against the
+REAL corpus through the deployed code and the pod's own overlay — not a local prediction:
+
+```
+alias overlay loaded from the pod: {'onsem': 'onsemi'}
+artifacts: 16   distinct keys: 4
+
+  onsemi/unknown/v1                 7    NO (sentinel)
+  unknown/unknown/v1                4    NO (sentinel)
+  diodes incorporated/unknown/v1    4    NO (sentinel)
+  analog devices, inc./unknown/v1   1    NO (sentinel)
+
+keys beginning 'onsemi/': ['onsemi/unknown/v1']  -> MERGED
+```
+
+**The witnessed split is closed:** `onsemi` ×6 and `ONSEM` ×1 now share one key, 7 artifacts, where
+two keys stood before. Five distinct keys became four.
+
+### Correction to an earlier prediction in this file's own session
+
+A local dry-run predicted `diodes incorporated/pcn/v1` for the four Diodes artifacts. In-pod they
+derive `diodes incorporated/**unknown**/v1`, and the deployed answer is the right one: that
+prediction was made BEFORE the `doc_type_source` attestation landed. Those artifacts carry
+`doc_type: "PCN"` with no attestation, and an unattested doc_type is not trusted — because
+doc-tools defaults an unextracted one to exactly that value.
+
+The discrepancy is recorded rather than quietly overwritten: it is the difference between a
+prediction and a witness, on this file's own subject.
+
+### Consequence — the whole corpus is currently unpromotable, by design
+
+All four keys are sentinel-blocked on the doc_type segment. Nothing regressed: these artifacts were
+already unpromotable because `pipeline_version` is `(none)` on every one of them. Both axes now say
+the same thing for the same reason — **no existing artifact carries producer-attested provenance**,
+and both gaps close together at the doc-tools rebuild + one re-extraction.
+
+That is the designed state, not a defect: the corpus becomes promotable exactly when it starts
+carrying the provenance a promotion would be ratified against.
+
 ## Related
 
 - The sentinel-fingerprint guard (`unknown/*` unpromotable) is landed and is the *containment*, not
