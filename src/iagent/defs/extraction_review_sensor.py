@@ -571,21 +571,34 @@ def _page_renders(s3, bucket: str, review_key: str) -> list:
 _PIPELINE_VERSION = os.getenv("PIPELINE_VERSION", "unset")
 
 
-def _format_fingerprint(review: dict, key: str) -> str:
-    """A first-cut vendor-format key: <mfr>/<doc_type>/<layout-era>.
+def _format_fingerprint(review: dict, key: str = "") -> str:
+    """Thin wrapper over the ONE implementation in ``agent_fleet/utils/format_fingerprint.py``.
 
-    DELIBERATELY COARSE AND DECLARED AS SUCH. ADR-0034 open question 3 says the fingerprint
-    needs real corpus data to sharpen — too coarse silently grants trust ACROSS a format
-    boundary, too fine and nothing ever accumulates enough evidence to promote. It is recorded
-    on every record from day one precisely so the corpus can tell us which way it is wrong;
-    a fingerprint invented later cannot be applied to immutable records already written.
+    MOVED 2026-08-06 (ADR-0034 phase 1.3). ``ReviewStarter`` now derives this same value from the
+    artifact it fetches, so there are two consumers — and two copies of an admission-key computation
+    are two chances to disagree. A disagreement here is SILENT AND SAFE: fingerprints stop matching
+    the table, every promoted format falls to the supervised floor, and nothing is wrong except that
+    a governed decision has no effect.
+
+    The wrapper survives so this module's existing call sites and their proven tests are UNCHANGED —
+    the same shape ``extraction_review_sensor.mint_service_token`` kept when its implementation moved
+    to ``utils/service_identity.py``. ``key`` is accepted and ignored, as it always was; it is
+    optional now so new callers do not have to pass a value the computation never read.
     """
-    mfr = ""
-    for it in review.get("review_items") or []:
-        if it.get("field_path") == "header.mfr":
-            mfr = str(it.get("value") or "").strip().lower()
-            break
-    return f"{mfr or 'unknown'}/{str(review.get('doc_type') or 'PCN').lower()}/v1"
+    # ABSOLUTE, NOT RELATIVE, and that is load-bearing: this module is loaded BY FILE PATH in
+    # several suites (importlib, no package context), where a `from ..x import y` raises
+    # "attempted relative import with no known parent package". The first cut used a relative
+    # import and broke five previously-green tests — the module has to stay importable standalone.
+    try:
+        from agent_fleet.utils.format_fingerprint import format_fingerprint  # noqa: PLC0415
+    except ImportError:  # pragma: no cover — repo root not on sys.path
+        import sys as _sys  # noqa: PLC0415
+        from pathlib import Path as _Path  # noqa: PLC0415
+        _root = _Path(__file__).resolve().parents[3]
+        if str(_root) not in _sys.path:
+            _sys.path.insert(0, str(_root))
+        from agent_fleet.utils.format_fingerprint import format_fingerprint  # noqa: PLC0415
+    return format_fingerprint(review)
 
 
 def _emit_record(context, *, review: dict, key: str, request_key: str, outcome: str,
