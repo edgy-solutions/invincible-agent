@@ -911,6 +911,31 @@ def _telemetry_headers(config) -> Dict[str, str]:
     Engine E's proxy exists precisely to translate the first into the second.
     """
     headers: Dict[str, str] = {}
+
+    # AUTHORIZATION RIDES THIS SAME HELPER, on purpose. Both outbound legs already share it
+    # for the telemetry headers; putting the credential anywhere else guarantees that one day
+    # a call site sends trace context without a token, or the reverse. One function, both
+    # legs, one thing to verify.
+    #
+    # OBSERVE-PHASE BEHAVIOUR: engines currently accept unauthenticated callers (the SDK's
+    # transport-auth default is OBSERVE), so a mint failure must NOT break dispatch — it is
+    # logged and the call proceeds token-less, which the receiving engine records as
+    # `caller: none`. That is the migration gauge filling in, not an outage. When
+    # REQUIRE_TRANSPORT_AUTH flips, the same failure becomes a hard 401 at the engine, which
+    # is the correct time for it to become loud.
+    #
+    # MINT AT USE — never a stored token (the time-machine rule). Shares the platform mint so
+    # there is ONE claim contract to verify.
+    try:
+        from agent_fleet.utils.service_identity import mint_service_token
+        headers["Authorization"] = f"Bearer {mint_service_token()}"
+    except Exception as exc:  # noqa: BLE001 — see OBSERVE-PHASE note above
+        logging.getLogger(__name__).warning(
+            "supervisor dispatch minting no token (%s: %s) — proceeding UNAUTHENTICATED; "
+            "engines record this as caller:none until svc:supervisor is configured",
+            type(exc).__name__, str(exc)[:120],
+        )
+
     if getattr(config, "trace_id", ""):
         headers["X-Trace-Id"] = config.trace_id
     if getattr(config, "session_id", ""):

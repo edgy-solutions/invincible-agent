@@ -92,6 +92,34 @@ def test_engine_a_leg_uses_the_same_source():
     assert src.count("_telemetry_headers(config)") >= 2
 
 
+
+# --- the credential rides the SAME helper as the telemetry headers ------------
+def test_authorization_is_minted_in_the_shared_header_helper():
+    """ONE SEAM for both. Both outbound legs already share `_telemetry_headers`; putting the
+    credential anywhere else guarantees a call site that one day sends trace context without
+    a token, or the reverse. Pinned so a future author cannot 'tidy' the mint into one leg."""
+    src = _src(_SUPERVISOR)
+    m = re.search(r"def _telemetry_headers\(.*?return headers", src, re.S)
+    assert m, "_telemetry_headers not found"
+    body = m.group(0)
+    assert "mint_service_token" in body, "the credential must be minted in the shared helper"
+    assert '"Authorization"' in body, "the shared helper must set Authorization"
+
+
+def test_mint_failure_does_not_break_dispatch_during_OBSERVE():
+    """THE SAFETY DIRECTION. Engines accept unauthenticated callers today (SDK transport-auth
+    defaults to OBSERVE), so a mint failure must log and PROCEED — the engine records
+    `caller: none` and the migration gauge fills in. Raising here would turn a Keycloak blip
+    into a fleet-wide dispatch outage BEFORE anything requires the token."""
+    src = _src(_SUPERVISOR)
+    m = re.search(r"def _telemetry_headers\(.*?return headers", src, re.S)
+    body = m.group(0)
+    assert re.search(r"except Exception", body), "mint must be guarded during the OBSERVE phase"
+    assert "UNAUTHENTICATED" in body or "caller:none" in body, (
+        "the fallback must SAY it is proceeding without a token — a silent token-less call is "
+        "indistinguishable from a working one"
+    )
+
 # --- the consumers ------------------------------------------------------------
 @pytest.mark.parametrize("engine", sorted(_HEADER_CONSUMERS))
 def test_http_engine_reads_the_header_the_supervisor_sends(engine):

@@ -1380,6 +1380,17 @@ keycloak:
     - clientId: "iagent-data-analyst"
       authzId: "svc:data-analyst"
       secretRef: "dataAnalystClientSecret"
+    # The SUPERVISOR's dispatch identity (2026-08-07). Engine calls currently carry NO
+    # Authorization at all; this is the credential those calls will present, so the
+    # transport-auth contract phase has something verifiable to accept. Without it, flipping
+    # REQUIRE_TRANSPORT_AUTH would deny the supervisor's own calls — the empty-caller failure,
+    # predicted from the caller graph rather than witnessed in an incident.
+    # TRANSPORT, NOT ENTITLEMENT: it says WHICH SERVICE dispatched, never whose data may be
+    # read. The acting human continues to travel as data (lock 2), derived from the
+    # front-door identity and guarded by tests/test_subject_derivation.py.
+    - clientId: "iagent-supervisor"
+      authzId: "svc:supervisor"
+      secretRef: "supervisorClientSecret"
 
   reviewStarterClientSecret: "sandbox-review-starter-secret"
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
@@ -1387,6 +1398,8 @@ keycloak:
   # they cannot drift. Override per deployment (a real secret at work); the sandbox default
   # is a dev value, not sensitive. Reaches DA as CORTEX_CLIENT_SECRET.
   dataAnalystClientSecret: "sandbox-data-analyst-secret"
+  # Supervisor dispatch identity — reaches the supervisor as SUPERVISOR_CLIENT_SECRET.
+  supervisorClientSecret: "sandbox-supervisor-secret"
   service:
     type: ClusterIP
     port: 8080

@@ -127,3 +127,11 @@ users:
   - id: svc:data-analyst
     display_name: data-analyst (service - Engine DA data-broker transport identity)
     groups: []
+
+  # Instance THREE (2026-08-07). The supervisor's DISPATCH identity — the credential its
+  # specialist POSTs will present once transport auth requires one. Seeded so the identity is
+  # legible and grantable; NO grants. Same caution as svc:data-analyst: the supervisor
+  # dispatches on behalf of every caller, so a read grant here would entitle all of them.
+  - id: svc:supervisor
+    display_name: supervisor (service - specialist dispatch transport identity)
+    groups: []
