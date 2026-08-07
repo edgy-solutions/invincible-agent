@@ -73,6 +73,12 @@ dev = [
     "lxml>=6.1.1",
     # ADR-0038 telemetry leaf — lets the mesh-mapping truth-check (tests/test_telemetry.py)
     # RUN rather than importorskip. Also declared in restate_analyst for runtime emission.
+    # Mesh membership package — owns transport auth (the app-factory dependency) and the
+    # ONE general mint. PINNED TO A TAG, never a branch: this package now governs fleet
+    # auth and identity minting, so a floating ref would let a single SDK commit change
+    # every engine's security behaviour at rebuild — the library-bump outage class with
+    # credentials attached (cf. the doc-tools floating-@rev finding).
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.0",
     "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
 ]
 

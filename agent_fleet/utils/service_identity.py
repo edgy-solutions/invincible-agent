@@ -34,56 +34,19 @@ import os
 __all__ = ["ServiceTokenError", "mint_service_token"]
 
 
-class ServiceTokenError(RuntimeError):
-    """The service-identity mint failed, with the cause NAMED.
-
-    Deliberately a plain exception, not ``dagster.Failure``: engine-a must not depend on Dagster.
-    Each caller maps it to its own runtime's loud failure — the sensor to ``dagster.Failure`` (failed
-    run), a Restate handler by letting it propagate (retryable; a Keycloak blip is transient infra,
-    NOT an authorization denial, so it must NOT fail-and-release the way a 401 on the action does)."""
-
-
-def mint_token(*, client_id: str, client_secret: str, realm_url: str = "",
-               timeout: float = 15.0) -> str:
-    """Mint a fresh access token for AN EXPLICITLY NAMED client identity.
-
-    THE GENERAL MINT. Every caller supplies ITS OWN credentials, because every service
-    identity has its own — that is what makes them identities. Added 2026-08-07 after
-    `mint_service_token()` (below) was found to be review-starter-SPECIFIC behind a GENERAL
-    NAME: the supervisor was wired against the name and would have authenticated as
-    `svc:review-starter`, carrying that role's can_invoke(mesh:startReview) on every
-    specialist dispatch — the confused deputy, introduced while fixing the confused deputy.
-
-    THE MINT'S WITNESS IS THE DECODED SUBJECT, NOT THE 200. A mint that returns a token
-    proves a mint happened; it does not prove WHOSE. Every new call site decodes its first
-    token and asserts the identity — the standing procedure that would have caught the bug
-    above in minutes.
-    """
-    import httpx
-
-    realm = (realm_url or os.environ["KEYCLOAK_REALM_URL"]).rstrip("/")
-    token_url = f"{realm}/protocol/openid-connect/token"
-    try:
-        resp = httpx.post(
-            token_url,
-            data={"grant_type": "client_credentials", "client_id": client_id,
-                  "client_secret": client_secret},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=timeout,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise ServiceTokenError(
-            f"mint_token: Keycloak token endpoint unreachable at {token_url}: {exc}"
-        ) from exc
-    if resp.status_code != 200:
-        raise ServiceTokenError(
-            f"mint_token: client-credentials mint failed HTTP {resp.status_code} for "
-            f"client {client_id!r} at {token_url}: {resp.text[:300]}"
-        )
-    tok = (resp.json() or {}).get("access_token")
-    if not tok:
-        raise ServiceTokenError("mint_token: token response carried no access_token")
-    return tok
+# ── THE ONE IMPLEMENTATION LIVES IN THE SDK (iagent_mesh >= 0.2.0) ──────────────────────
+# This module is now a set of THIN BINDINGS: each names one identity's credentials and calls
+# the SDK's general `mint_token`. The SDK is the mesh's membership package and a genuine leaf
+# (pydantic/fastapi/httpx, nothing platform-side), so platform -> SDK is the ordinary
+# shared-kernel direction. The reverse edge — the SDK reaching in here via a guarded import —
+# is gone as of iagent_mesh 0.2.0, and with it the inline transcription that had already
+# DIVERGED (MESH_CLIENT_ID here vs REVIEW_STARTER_CLIENT_ID there).
+#
+# WHY BINDINGS AND NOT ONE FUNCTION: identity is an ARGUMENT. Each service has its own
+# credential pair, because that is what makes them separate identities — the lesson from
+# `mint_service_token()`'s general name over review-starter-specific behaviour, which had the
+# supervisor dispatching as svc:review-starter with that role's capability grant (3ac573d).
+from iagent_mesh.service_identity import ServiceTokenError, mint_token  # noqa: F401
 
 
 def mint_supervisor_token(*, timeout: float = 15.0) -> str:
@@ -123,32 +86,8 @@ def mint_service_token(*, timeout: float = 15.0) -> str:
     Env (present on engine-a AND the Dagster user-code image — verified on the running pods):
     ``KEYCLOAK_REALM_URL``, ``REVIEW_STARTER_CLIENT_ID``, ``REVIEW_STARTER_CLIENT_SECRET``.
     """
-    import httpx
-
-    realm_url = os.environ["KEYCLOAK_REALM_URL"].rstrip("/")
-    client_id = os.environ["REVIEW_STARTER_CLIENT_ID"]
-    client_secret = os.environ["REVIEW_STARTER_CLIENT_SECRET"]
-    token_url = f"{realm_url}/protocol/openid-connect/token"
-    try:
-        resp = httpx.post(
-            token_url,
-            data={"grant_type": "client_credentials", "client_id": client_id,
-                  "client_secret": client_secret},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=timeout,
-        )
-    except Exception as exc:  # noqa: BLE001 — transport failure is a loud, named failure, never silent
-        raise ServiceTokenError(
-            f"mint_service_token: Keycloak token endpoint unreachable at {token_url}: {exc}"
-        ) from exc
-    if resp.status_code != 200:
-        raise ServiceTokenError(
-            f"mint_service_token: client-credentials mint failed HTTP {resp.status_code} for "
-            f"client {client_id!r} at {token_url}: {resp.text[:300]}"
-        )
-    tok = (resp.json() or {}).get("access_token")
-    if not tok:
-        raise ServiceTokenError(
-            f"mint_service_token: token response carried no access_token: {resp.text[:300]}"
-        )
-    return tok
+    return mint_token(
+        client_id=os.environ["REVIEW_STARTER_CLIENT_ID"],
+        client_secret=os.environ["REVIEW_STARTER_CLIENT_SECRET"],
+        timeout=timeout,
+    )

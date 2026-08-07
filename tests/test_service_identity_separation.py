@@ -30,12 +30,27 @@ def _src(p: Path) -> str:
     return p.read_text(encoding="utf-8")
 
 
-def test_a_general_mint_exists_taking_explicit_credentials():
-    """The repair: identity is an ARGUMENT, not an ambient env read."""
+def test_the_general_mint_comes_FROM_THE_SDK_not_a_local_copy():
+    """CONTRACT MOVED, deliberately. This asserted `def mint_token(...)` lived HERE. The one
+    implementation now lives in the SDK leaf (iagent_mesh.service_identity), and the platform
+    holds only thin per-identity BINDINGS. Asserting the import — rather than a local def —
+    is the stronger property: it cannot be satisfied by a second copy."""
     s = _src(_IDENTITY)
-    assert re.search(r"def mint_token\(\s*\*,\s*client_id", s), (
-        "no general mint — every identity re-reading ambient env is how the name lied"
+    assert re.search(r"from iagent_mesh\.service_identity import .*mint_token", s), (
+        "the platform must CONSUME the SDK's mint, not define its own"
     )
+
+
+def test_no_inline_mint_survives_in_the_platform():
+    """ONE IMPLEMENTATION, PROVEN BY ABSENCE. The two mints were never transcriptions — they
+    had different env contracts and had already drifted. A stray inline body here would be
+    the drift re-seeded, so the token-endpoint call and its response parsing must appear
+    NOWHERE in the platform's identity module."""
+    s = _src(_IDENTITY)
+    for stray in ("httpx.post", "access_token", "grant_type"):
+        assert stray not in s, (
+            f"inline mint body survives ({stray!r}) — that is a second implementation"
+        )
 
 
 def test_supervisor_mints_its_OWN_identity_not_the_review_starters():
