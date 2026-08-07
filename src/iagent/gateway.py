@@ -431,12 +431,20 @@ class ReviewStartRequest(_BaseModel):
     # NOT the notice id — see _ingress_idempotency_key. Absent for hand-driven ops calls,
     # which are then honestly non-idempotent rather than falsely deduplicated.
     request_key: Optional[str] = None
+    # ARTIFACT LOCATION — a full `s3://bucket/key`, and the ONE client-suppliable input to the
+    # admission posture. A SEPARATE field from `request_key` on purpose: that one is the artifact's
+    # IDENTITY (`{epoch}{ETag}-{key}`) and exists for ingress idempotency. They were conflated for a
+    # day and it refused every derive — the starter fetched the identity string and asked S3 for a
+    # key with an ETag glued to the front. Identity and location are different jobs; one string
+    # cannot hold both. Full URI rather than a bare key so this service and engine-a cannot disagree
+    # about which bucket the artifact lives in (bare-key tolerance WAS that coupling).
+    artifact_uri: Optional[str] = None
     # The doc-tools extraction trace id (review.json.trace_id), forwarded so the review
     # composition nests under the SAME Langfuse trace as the extraction (ADR-0038).
     trace_id: Optional[str] = None
     # ── ADMISSION FACTS: REMOVED FROM THE CONTRACT (ADR-0034 phase 1.3, consumer half) ────────
     # `format_fingerprint` / `pipeline_version` were briefly accepted here as caller-supplied
-    # facts. They are gone: ReviewStarter DERIVES both from the artifact `request_key` names.
+    # facts. They are gone: ReviewStarter DERIVES both from the artifact `artifact_uri` names.
     #
     # Removing them from the MODEL (not merely ignoring them) is the point — Pydantic drops
     # undeclared keys, so an old caller still sending them is silently and correctly ignored
@@ -543,8 +551,14 @@ async def start_review(
     # notices, eleven `STARTED` logs, one review.
     body["request_key"] = req.request_key or ""
     body["trace_id"] = req.trace_id or ""       # extraction trace id -> ReviewStarter adopts it (ADR-0038)
+    # THE ARTIFACT'S LOCATION — a DIFFERENT field from the identity above, and the entire admission
+    # contract. This is a REBUILDING HOP (the body is hand-enumerated twice over), which is exactly
+    # where `review_state_source` and `extraction_warnings` were silently dropped in 2026-07-30; a
+    # field that does not appear on this line does not exist downstream. Pinned by
+    # tests/test_review_payload_passthrough.py.
+    body["artifact_uri"] = req.artifact_uri or ""
     # ADMISSION FACTS ARE NO LONGER FORWARDED (ADR-0034 phase 1.3, consumer half). ReviewStarter
-    # DERIVES `format_fingerprint` and `pipeline_version` from the artifact `request_key` points at,
+    # DERIVES `format_fingerprint` and `pipeline_version` from the artifact `artifact_uri` points at,
     # so a caller can no longer assert the trust key and thereby choose its own supervision level.
     # The pointer (forwarded above) is the entire admission contract now.
     try:

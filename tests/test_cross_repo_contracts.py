@@ -17,6 +17,7 @@ _REPO = Path(__file__).resolve().parents[1]
 RA = _REPO / "agent_fleet" / "restate_analyst"
 EO = _REPO / "agent_fleet" / "ontology_service"
 BFF = _REPO / "src" / "iagent" / "gateway.py"
+SENSOR = _REPO / "src" / "iagent" / "defs" / "extraction_review_sensor.py"
 
 
 def _txt(p: Path) -> str:
@@ -35,6 +36,11 @@ CONTRACTS = [
     ("/write_item_state",       EO / "main.py", [RA / "dispatch_driver.py"]),
     ("/resolve_instance",       EO / "main.py", [RA / "review_composer.py"]),
     ("/instances_by_property",  EO / "main.py", [BFF]),
+    # IDENTITY-VS-POINTER (2026-08-06). The artifact's LOCATION is its own field, emitted by the
+    # sensor, carried verbatim by the BFF, consumed by the starter's derive. Every hop that
+    # REBUILDS the payload is a consumer here — a hop that drops the field leaves the derive with
+    # nothing and refuses every notice.
+    ("artifact_uri", SENSOR, [BFF, RA / "review_starter.py"]),
 ]
 
 # Old pcn-named surfaces that must NOT survive anywhere in the mechanism (deletion test, code layer).
@@ -138,6 +144,49 @@ def test_no_pcn_named_audience_key_in_grants() -> None:
             f"An expand phase without a declared removal condition is how a migration window becomes "
             f"permanent -- state the contract-phase trigger next to the old key."
         )
+
+
+def test_the_derive_reads_the_POINTER_field_not_the_IDENTITY_field() -> None:
+    """IDENTITY-VS-POINTER, pinned structurally (2026-08-06).
+
+    `derive_provenance` must be handed `artifact_uri`. It was handed `request_key` — the artifact's
+    IDENTITY, `{epoch}{ETag}-{key}` — which sent S3 a key with an ETag glued to the front and refused
+    every notice. The two strings are both "artifact-derived" and both live on the same payload, so
+    the conflation is invisible at a glance; this asserts on the CALL SITE because that is the only
+    place the distinction is observable in source.
+
+    A substring check for `artifact_uri` in the file is NOT enough — the field is also named in the
+    prose above the call, and prose-matching is a failure mode this suite has paid for before.
+    """
+    src = _txt(RA / "review_starter.py")
+    call = [ln.strip() for ln in src.splitlines()
+            if "derive_provenance(" in ln and not ln.strip().startswith(("#", "*"))
+            and "import" not in ln]
+    assert call, "no derive_provenance call site found in review_starter.py"
+    assigns = [ln.strip() for ln in src.splitlines()
+               if ln.strip().startswith("_pointer") and "request.get(" in ln]
+    assert assigns, "the derive's pointer is no longer assigned from the request — re-pin this"
+    for ln in assigns:
+        assert 'request.get("artifact_uri")' in ln, (
+            f"the derive's pointer comes from {ln!r} — it MUST be `artifact_uri` (the artifact's "
+            f"LOCATION). `request_key` is its IDENTITY and is not fetchable."
+        )
+        assert "request_key" not in ln, (
+            f"identity leaked back into the pointer: {ln!r}"
+        )
+
+
+def test_the_producer_still_emits_both_fields_separately() -> None:
+    """Both jobs, both fields. If the sensor ever stops emitting one, the other silently absorbs its
+    role again — which is exactly how this bug was born."""
+    t = _txt(SENSOR)
+    assert '"artifact_uri": artifact_uri' in t, "the sensor stopped emitting the LOCATION field"
+    assert '"request_key": request_key' in t, "the sensor stopped emitting the IDENTITY field"
+    assert 'artifact_uri = f"s3://{bucket}/{key}"' in t, (
+        "the sensor no longer builds a FULL s3:// URI — a bare key is refused by the consumer on "
+        "purpose (bare-key tolerance was the coupling: it required both runtimes to agree on an "
+        "ambient ARTIFACT_BUCKET)."
+    )
 
 
 if __name__ == "__main__":

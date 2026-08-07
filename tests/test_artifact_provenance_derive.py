@@ -95,11 +95,15 @@ def test_a_real_stamp_derives_both_components():
 # THE REFUSAL ARM — four modes, one verdict
 # ===========================================================================
 def test_unreachable_or_absent_REFUSES():
-    """Deliberately not distinguished into different verdicts: both are 'could not read', both
-    refuse. Splitting them would tempt a future author into floor-falling on one."""
+    """ONE VERDICT, TWO REASONS. Both refuse — splitting the VERDICT would tempt a future author
+    into floor-falling on one. But they carry different `reason`s, because a reader debugging
+    `artifact_absent` goes to the producer and one debugging `store_unreachable` goes to MinIO, and
+    a refusal that cannot say which sends them to the wrong subsystem (it did, live 2026-08-06).
+    Reason-legibility is asserted in tests/test_artifact_uri_contract.py."""
     with pytest.raises(ArtifactUnreadable) as ei:
         derive_provenance("s3://b/k", s3=_FakeS3(None, raises=RuntimeError("NoSuchKey")))
-    assert "could not read artifact" in str(ei.value)
+    assert ei.value.reason == "artifact_absent"
+    assert "s3://b/k" in str(ei.value), "a refusal must name the artifact it refused"
 
 
 def test_unparseable_REFUSES():
@@ -131,23 +135,44 @@ def test_an_absent_pointer_REFUSES_rather_than_defaulting():
 
 
 # ===========================================================================
-# Pointer shapes — the sensor's `request_key` is `<etag>:<key>`
+# Pointer shapes — ONE accepted form: `s3://bucket/key`
 # ===========================================================================
-def test_pointer_forms(monkeypatch):
-    monkeypatch.setenv("ARTIFACT_BUCKET", "processing-artifacts")
+# WHAT THIS SECTION USED TO ASSERT, AND WHY IT IS THE MOST INSTRUCTIVE THING IN THE FILE.
+#
+# It claimed the sensor's `request_key` was `<etag>:<key>` — COLON-separated — and pinned a strip
+# branch that resolved the remainder against `ARTIFACT_BUCKET`. The sensor has ALWAYS emitted
+# `{epoch}{ETag}-{key}` with a DASH. The colon format never existed anywhere: the parser invented
+# it, this fixture asserted the invention, and the two agreed with each other forever while neither
+# ever agreed with the producer. A fixture written from the same head as the code under test
+# measures self-consistency, not correctness — which is why the replacement contract test builds its
+# payload by CALLING the sensor's own builder (tests/test_artifact_uri_contract.py).
+#
+# The deeper error was upstream of the format: `request_key` is the artifact's IDENTITY, not its
+# LOCATION, so no parse of it could have been right. The pointer is now `artifact_uri`, a full URI,
+# and bare keys are REFUSED rather than resolved — tolerance was the coupling.
+def test_only_the_full_uri_form_is_accepted():
     assert parse_pointer("s3://b/some/key.json") == ("b", "some/key.json")
-    # the sensor's request_key: ETag rides in front for ingress idempotency, not part of the key
-    assert parse_pointer("abc123:notices/n1/generated/review.json") == (
-        "processing-artifacts", "notices/n1/generated/review.json")
-    assert parse_pointer("notices/n1/generated/review.json") == (
+    assert parse_pointer("s3://processing-artifacts/notices/n1/generated/review.json") == (
         "processing-artifacts", "notices/n1/generated/review.json")
 
 
-def test_no_bucket_anywhere_REFUSES_rather_than_guessing(monkeypatch):
-    monkeypatch.delenv("ARTIFACT_BUCKET", raising=False)
+def test_a_bare_key_REFUSES_even_with_a_bucket_in_the_env(monkeypatch):
+    """No fallback resolution. Filling the bucket in from an env var made the artifact's location
+    depend on two runtimes agreeing on ambient config — and a fallback path is where the next shape
+    assumption hides. The full URI carries its own bucket, so they cannot disagree."""
+    monkeypatch.setenv("ARTIFACT_BUCKET", "processing-artifacts")
     with pytest.raises(ArtifactUnreadable) as ei:
         parse_pointer("some/key.json")
-    assert "refusing to guess" in str(ei.value)
+    assert ei.value.reason == "malformed_pointer"
+
+
+def test_an_IDENTITY_string_REFUSES_as_a_pointer():
+    """The exact defect: `{epoch}{ETag}-{key}` handed to the parser. It must refuse, and refuse as a
+    MALFORMED POINTER — the artifact is fine, the caller named it wrong."""
+    with pytest.raises(ArtifactUnreadable) as ei:
+        parse_pointer("epoch|711028c340016a6a-sustainment/inbound/generated/review.json")
+    assert ei.value.reason == "malformed_pointer"
+    assert "identity and location are different fields" in str(ei.value)
 
 
 if __name__ == "__main__":

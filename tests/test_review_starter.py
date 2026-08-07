@@ -29,6 +29,7 @@ for p in (str(_RA), str(_REPO)):
 
 from agent_fleet.restate_analyst import review_starter as starter  # noqa: E402
 from agent_fleet.restate_analyst.policy_rules_loader import load_disposition_rules  # noqa: E402
+from agent_fleet.utils.artifact_provenance import DerivedProvenance  # noqa: E402
 
 _TTL = _REPO / "setup" / "ontologies" / "pcn_disposition_rules.ttl"
 _START = starter.start_review.__wrapped__
@@ -63,7 +64,17 @@ def _request(impacted=None, in_scope=None):
         "approver": "qa",
         "audience": "qualification",
         "user_jwt": "jwt-abc",
+        # THE ARTIFACT'S LOCATION — a precondition of `start_review` since ADR-0034 phase 1.3: the
+        # admission posture is DERIVED from the artifact, so a request that names none is refused
+        # (422) before composition is reached. Full `s3://bucket/key`; a bare key is refused, and
+        # `request_key` (the artifact's IDENTITY, `{epoch}{ETag}-{key}`) is not a location.
+        "artifact_uri": _ARTIFACT_URI,
     }
+
+
+# The pointer the fixture names. Asserted by the derive stub in `_wire`, so these tests still prove
+# the starter hands the derive the LOCATION field and not the identity field.
+_ARTIFACT_URI = "s3://processing-artifacts/sustainment/inbound/generated/IPCN25300X/review.json"
 
 
 def _ok_rules():
@@ -79,6 +90,24 @@ def _wire(monkeypatch, rules=None, resolve=None, can_invoke=lambda who: True):
     # The initiator gate (capability can_invoke mesh:startReview). WHO may review is a separate,
     # downstream gate (task_audience) — not exercised here.
     monkeypatch.setattr(starter, "can_invoke_start_review", can_invoke)
+    # THE ADMISSION DERIVE — a fourth injected seam, and the reason three tests in this file were RED
+    # at HEAD. Phase 1.3 made `start_review` fetch S3 before composing; these tests have no S3, so the
+    # derive refused (422) and composition was never reached. The failure was correct behaviour
+    # meeting a fixture that predated the precondition — filed here rather than left red, because a
+    # red nobody can satisfy eventually gets "fixed" by weakening something that was right.
+    #
+    # THE STUB ASSERTS ITS INPUT. Injecting a fixed posture without checking WHAT was handed to it
+    # would let the identity-vs-pointer conflation walk straight back in under a green suite: the
+    # starter could pass `request_key` again and this stub would happily supervise. It receives the
+    # LOCATION or it fails, so these tests still witness the field choice at the call site.
+    def _derive(pointer, **_kw):
+        assert pointer == _ARTIFACT_URI, (
+            f"start_review handed the derive {pointer!r} — it must be the artifact's LOCATION "
+            f"({_ARTIFACT_URI!r}), never its identity (`request_key`)")
+        return DerivedProvenance(format_fingerprint="onsemi/pcn/v1",
+                                 pipeline_version="doc-tools@test", version_missing=False)
+
+    monkeypatch.setattr(starter, "derive_provenance", _derive)
 
 
 # ===========================================================================

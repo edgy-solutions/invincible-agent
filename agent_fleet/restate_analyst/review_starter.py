@@ -438,10 +438,17 @@ async def start_review(ctx: Context, request: dict) -> dict:
     # that contract — the safe behaviour happens, and the reason is logged at a layer that can
     # say why.
     # ── DERIVED FROM THE ARTIFACT, NOT ACCEPTED FROM THE CALLER (phase 1.3 consumer half) ──────
-    # The caller supplies a POINTER (`request_key`, the artifact identity it already sends). Both
-    # halves of the trust key are read from the artifact that pointer names. A caller can lie about
-    # exactly one thing — WHICH artifact — and the artifact determines everything else, which
-    # collapses the trust question to "can the caller read that artifact".
+    # The caller supplies a POINTER (`artifact_uri` — a full `s3://bucket/key`). Both halves of the
+    # trust key are read from the artifact that pointer names. A caller can lie about exactly one
+    # thing — WHICH artifact — and the artifact determines everything else, which collapses the
+    # trust question to "can the caller read that artifact".
+    #
+    # IT READ `request_key` FOR ONE DAY, and that was a defect, not a shortcut. `request_key` is the
+    # artifact's IDENTITY (`{epoch}{ETag}-{key}`), minted for ingress idempotency; handing it to a
+    # fetch asks S3 for a key with an ETag glued to the front, so every derive refused. Identity and
+    # location are different jobs and one string cannot hold both — the same rule the run_key and the
+    # triage task_id already carry, applied in the other direction. Pinned by
+    # tests/test_artifact_uri_contract.py and tests/test_cross_repo_contracts.py.
     #
     # FETCH FAILURE IS A REFUSAL, NOT A FLOOR-FALL. Floor-falling on an unreadable artifact would
     # let an S3 outage silently convert every admission to supervised — safe, invisible, and
@@ -450,7 +457,10 @@ async def start_review(ctx: Context, request: dict) -> dict:
     rung = DEFAULT_RUNG
     trust_ref = "trust@unavailable"
     admitted_by = "content"
-    _pointer = str(request.get("request_key") or "")
+    # THE ARTIFACT'S LOCATION, not its identity. `request_key` is `{epoch}{ETag}-{key}` and exists
+    # for ingress idempotency; reading it as a pointer asked S3 for a key with an ETag glued to the
+    # front and refused every derive. One string cannot hold both jobs.
+    _pointer = str(request.get("artifact_uri") or "")
     try:
         derived = derive_provenance(_pointer)
     except ArtifactUnreadable as exc:

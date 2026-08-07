@@ -427,6 +427,40 @@ The check is cheap and belongs in review: *what else reads this value, and what 
 those readers need it to mean different things?* Ask it when the job is ADDED, because that is the
 only moment the answer is small.
 
+### KNOWING the rule did not prevent WRITING the defect — an artifact's IDENTITY is not a POINTER to it
+The entry above was filed using `request_key` as its worked example. Hours later, in the same
+session, the phase-1.3 derive was written to **fetch** `request_key`. It is
+`{epoch}{ETag}-{key}` — an identity minted for ingress idempotency — so the fetch asked S3 for a key
+with an ETag glued to the front, and every derive refused. The rule was stated correctly, in
+writing, about this exact string, by the same author, immediately before it was violated.
+
+That is the durable part, and it is not "be more careful." **A rule you have articulated does not
+fire at the moment you need it, because the moment is not a moment of doubt.** `request_key` is
+artifact-derived, it moves when the content moves, and the surrounding comments already called it
+"the artifact pointer" — it reads exactly like a location. Nothing felt uncertain. So the defence
+cannot be attention; it has to be a mechanism placed where the confusion is *observable*.
+
+Three self-references let it survive review, and they are the reusable diagnostic:
+1. **the format was invented.** The parser documented the producer as emitting `<etag>:<key>` —
+   COLON. The sensor has always emitted a DASH. Nobody read the emitter;
+2. **the fixture asserted the invention.** Written from the same head as the parser, it agreed with
+   the parser and never with the producer — the sibling of *a test that supplies its own provenance
+   will agree with itself* (below), one level up: not a supplied VALUE, a supplied FORMAT;
+3. **the live witness hand-supplied the input** in the shape the parser expected, so the composed
+   sensor path was never driven. Green over a path that never ran.
+
+Each alone is survivable. Together they form a closed loop that touches the producer at no point,
+and a closed loop can be arbitrarily wrong while every member of it is consistent.
+
+**The mechanism, not the resolve:** a test that proves a consumer reads the right field must obtain
+its payload **by calling the producer's own builder** (`tests/test_artifact_uri_contract.py`), and
+the field choice must be pinned at the **call site**, because a file-level substring check passes on
+the prose *about* the field (`test_the_derive_reads_the_POINTER_field_not_the_IDENTITY_field`).
+Naming the job in the field name — `artifact_uri` for LOCATION beside `request_key` for IDENTITY —
+is what makes the call site legible enough to pin at all. Species entry: §6 of
+`docs/plans/cross-repo-string-contracts.md`. Found by a reviewing agent tracing a live 422 back past
+the artifact to the field choice.
+
 ### The substrate's DEDUP can substitute a prior result for the experiment you meant to run
 Fifteenth probe-correctness instance, and a new species: not a bad instrument and not a bad fixture
 — **the experiment never executed, and the answer returned was another experiment's.**

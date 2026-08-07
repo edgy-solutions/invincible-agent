@@ -93,6 +93,10 @@ def test_the_two_fields_that_were_actually_dropped_are_declared():
     declared = _bff_fields()
     assert "review_state_source" in declared, "the tripwire attestation must survive the BFF"
     assert "extraction_warnings" in declared, "the reviewer-facing degradation warnings must survive the BFF"
+    # IDENTITY AND LOCATION, both declared, as SEPARATE fields. If either is undeclared Pydantic
+    # drops it and the other silently absorbs its role — which is how the conflation was born.
+    assert "request_key" in declared, "the artifact IDENTITY (ingress idempotency) must survive the BFF"
+    assert "artifact_uri" in declared, "the artifact LOCATION (admission derive) must survive the BFF"
 
 
 def test_attestation_is_actually_populated_by_the_sensor():
@@ -130,18 +134,26 @@ def test_forwarded_body_carries_them_not_just_the_model():
     assert 'body["trace_id"] = req.trace_id or ""' in handler
     # ── THE POINTER IS NOW THE WHOLE ADMISSION CONTRACT (ADR-0034 phase 1.3, consumer half) ────
     # This pin USED to protect `format_fingerprint` / `pipeline_version`. Those are gone: the
-    # starter DERIVES both from the artifact `request_key` names, so a caller can no longer assert
-    # the trust key and choose its own supervision level.
+    # starter DERIVES both from the artifact, so a caller can no longer assert the trust key and
+    # choose its own supervision level.
     #
-    # The pin therefore moves to the POINTER. `request_key` was already asserted above for review
-    # IDENTITY (the workflow key); it now ALSO carries the admission posture, so dropping it costs
-    # two things at once — and the admission half fails LOUDLY (the starter refuses an underivable
-    # posture) rather than silently, which is the whole point of the refuse-vs-floor split.
+    # THE POINTER IS `artifact_uri`, NOT `request_key`, and the correction is the whole lesson.
+    # This pin was first written against `request_key` — because the same comment above was already
+    # calling it "the artifact pointer", and it does move with the artifact, so it READS like one.
+    # It is not: `request_key` is `{epoch}{ETag}-{key}`, an IDENTITY minted for ingress idempotency.
+    # Fetching it asks S3 for a key with an ETag glued to the front, and every derive refused. The
+    # pin guarded the wrong string and stayed green, because a pin can only be as right as the
+    # contract it names.
+    #
+    # BOTH are now asserted, separately, because they do different jobs and a hop that drops either
+    # one loses something distinct: `request_key` -> ingress dedup + the workflow key;
+    # `artifact_uri` -> the admission posture. The admission half fails LOUDLY (the starter refuses
+    # an underivable posture) rather than silently, which is the refuse-vs-floor split working.
     #
     # Guarding fields nothing sends would be worse than not guarding: a green pin over a dead
     # contract reads as coverage.
-    assert 'body["request_key"] = req.request_key or ""' in handler, (
-        "the artifact pointer no longer reaches the forwarded body — the starter cannot derive the "
+    assert 'body["artifact_uri"] = req.artifact_uri or ""' in handler, (
+        "the artifact LOCATION no longer reaches the forwarded body — the starter cannot derive the "
         "admission posture and every notice refuses"
     )
     for dead in ("format_fingerprint", "pipeline_version"):

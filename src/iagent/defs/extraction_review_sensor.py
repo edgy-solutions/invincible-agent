@@ -73,7 +73,7 @@ _PART_FIELD = re.compile(r"parts\[(\d+)\]\.(\w+)")
 # ── PURE, unit-testable core ─────────────────────────────────────────────────
 def build_start_review_payload(
     review_json: dict, *, doc_type: str = "PCN", domain: str = "SUSTAINMENT",
-    request_key: str = "",
+    request_key: str = "", artifact_uri: str = "",
 ) -> dict:
     """Build the `/reviews` (start_review) payload from a doc-tools `review.json`.
 
@@ -155,10 +155,21 @@ def build_start_review_payload(
         # field existed (older extractions simply carry no warnings).
         "extraction_warnings": list(review_json.get("doc_review_reasons") or []),
         "domain": domain,
+        # THE ARTIFACT'S LOCATION — `s3://bucket/key`, the ONLY thing the admission posture is
+        # derived from. Distinct from `request_key` below, which is this artifact's IDENTITY
+        # (`{epoch}{ETag}-{key}`) and exists for ingress idempotency.
+        #
+        # THEY WERE CONFLATED ONCE, and it broke every derive: the consumer read `request_key` as a
+        # location and asked S3 for a key with an ETag glued to the front. Identity and location are
+        # different jobs; one string cannot hold both. Pinned in tests/test_cross_repo_contracts.py
+        # and tests/test_artifact_uri_contract.py — the latter builds its payload by calling THIS
+        # function, because the parser that broke was written against an invented format and its
+        # fixture asserted the same invention.
+        "artifact_uri": artifact_uri,
         # ── ADMISSION FACTS: DELIBERATELY NOT SENT (ADR-0034 phase 1.3, consumer half) ────────
         # `format_fingerprint` and `pipeline_version` USED to ride here as caller-asserted facts.
         # They are gone on purpose: ReviewStarter now DERIVES both from the artifact that
-        # `request_key` points at.
+        # `artifact_uri` points at.
         #
         # WHY REMOVING THEM IS THE FIX. A caller that can assert the trust key chooses which table
         # row the lookup hits — i.e. selects its own supervision level. `start_review` is reachable
@@ -748,8 +759,13 @@ def start_review_op(context, config: StartReviewConfig) -> None:
     # the composed content cannot disagree — a separate HEAD could observe a re-extraction
     # landing between the two calls and key this request to content it did not read.
     request_key = f"{_REQUEST_KEY_EPOCH}{(obj.get('ETag') or 'no-etag').strip(chr(34))}-{key}"
+    # THE ARTIFACT'S LOCATION, as its own field — never `request_key`, which is its IDENTITY.
+    # Full `s3://bucket/key` so the consumer never resolves a bare key against an ambient bucket
+    # env var; both halves travel together and the two runtimes cannot disagree about where this
+    # artifact lives. (`request_key` keeps doing exactly one job: ingress idempotency.)
+    artifact_uri = f"s3://{bucket}/{key}"
     payload = build_start_review_payload(review, doc_type=config.doc_type, domain=config.domain,
-                                         request_key=request_key)
+                                         request_key=request_key, artifact_uri=artifact_uri)
     if not payload["notice_id"]:
         raise Failure(description=f"review.json {key} has no doc_id (notice_id)")
     bff_url = os.environ["CORTEX_BFF_URL"]

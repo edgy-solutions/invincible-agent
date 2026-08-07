@@ -48,8 +48,20 @@ implementation detail.
 
 **Caller 1 (sensor)** sends: `notice_id`, `doc_type`, `categories`, `impacted_parts`,
 `in_scope_mpns`, `doc_needs_review`, `review_state_source`, `extraction_warnings`, `domain`,
-`request_key`, `trace_id`. **The pointer is already there** (`request_key` = ETag + key). Nothing to
-add.
+`request_key`, `trace_id`. ~~**The pointer is already there** (`request_key` = ETag + key). Nothing
+to add.~~
+
+> **CORRECTED 2026-08-06 — this answer was WRONG, and the derive was built on it.** `request_key` is
+> `{epoch}{ETag}-{key}`: the artifact's **IDENTITY**, minted for ingress idempotency. It is not a
+> **LOCATION** and cannot be fetched — the derive asked S3 for a key with an ETag glued to the front
+> and refused every notice. There WAS something to add: `artifact_uri`, a full `s3://bucket/key`,
+> now emitted by the sensor beside `request_key`, forwarded by the BFF, and consumed by the derive.
+>
+> The error is instructive because the question above asked exactly the right thing ("is the pointer
+> already present?") and got a confident wrong answer: `request_key` is artifact-derived, moves with
+> the content, and the code around it already called it "the artifact pointer". Presence was checked;
+> **fetchability** was not. Species entry §6 of `cross-repo-string-contracts.md`; lesson in AGENTS.md
+> ("KNOWING the rule did not prevent WRITING the defect").
 
 **Caller 2 (router) cannot invoke `start_review` at all** — not "lacks a pointer", lacks
 *everything*. The supervisor's generic dispatch payload is `user_query`, `user_persona`,
@@ -61,8 +73,11 @@ present**, and there is zero special-casing for `ReviewStarter` anywhere in the 
 the dispatch concern of a later window."*
 
 So the derive proceeded: one live caller, and it already carries the pointer. **The requirement is
-recorded for whoever builds that adapter: it MUST supply `request_key`**, because the admission
-posture is derived from it and a caller that cannot name its artifact cannot be admitted at all.
+recorded for whoever builds that adapter: it MUST supply `artifact_uri`** — a full `s3://bucket/key`
+(NOT `request_key`; see the correction above) — because the admission posture is derived from it and
+a caller that cannot name its artifact cannot be admitted at all. A bare key is refused rather than
+resolved against `ARTIFACT_BUCKET`: tolerance would make the artifact's location depend on two
+runtimes agreeing on an ambient env var.
 
 Consequence worth stating plainly: the router-laundering threat that motivated this ruling **was not
 live** — a caller that can supply nothing cannot assert a fingerprint. The ruling still stands and is
@@ -78,7 +93,7 @@ letter and violated in effect.
 
 Filed rather than fixed: it is outside this packet, and the fix is the adapter itself (a design
 piece), not a patch. Two honest options when it is taken up — build the adapter (and supply
-`request_key`), or **unregister the verb until the adapter exists**, which is what the wake-per-
+`artifact_uri`), or **unregister the verb until the adapter exists**, which is what the wake-per-
 endpoint rule actually intends.
 
 ## Item 1 — one fingerprint function, one home

@@ -34,9 +34,32 @@ __all__ = ["ArtifactUnreadable", "DerivedProvenance", "derive_provenance"]
 _SENTINELS = frozenset({"", "unset", "unstamped", "unknown", "none"})
 
 
+# WHY THE PRECONDITION IS NAMED, not just the failure (added 2026-08-06 after a live misdiagnosis).
+#
+# The first release of this module refused a malformed pointer with the SAME message shape as an
+# unreadable artifact — "could not read artifact s3://…". That is true and useless: the artifact was
+# perfectly readable; the POINTER was wrong. Debugging it worked despite the message, not because of
+# it. A refusal must be legible about WHICH PRECONDITION FAILED, or it sends the reader to the wrong
+# subsystem — here, to S3 instead of to the caller.
+REASON_MALFORMED_POINTER = "malformed_pointer"     # the caller's fault; the store was never asked
+REASON_ARTIFACT_ABSENT = "artifact_absent"         # the store answered, and said no such object
+REASON_STORE_UNREACHABLE = "store_unreachable"     # the store did not answer at all
+REASON_UNPARSEABLE = "unparseable"                 # bytes returned, not JSON
+REASON_SCHEMA_ALIEN = "schema_alien"               # JSON returned, not a review.json
+
+
 class ArtifactUnreadable(RuntimeError):
-    """The artifact could not be read or is not a review.json. NEVER a floor-fall — the caller
-    refuses. Carries the reason so the refusal names which of the four modes occurred."""
+    """The admission posture could not be DERIVED. NEVER a floor-fall — the caller refuses.
+
+    ``reason`` names which precondition failed, so a refusal points at the subsystem that actually
+    broke. ``artifact_absent`` and ``store_unreachable`` are deliberately DISTINCT: one is a
+    caller/data problem and one is an outage, they are told apart at the boto3 error, and conflating
+    them is how an outage gets debugged as a bad key.
+    """
+
+    def __init__(self, message: str, *, reason: str):
+        super().__init__(message)
+        self.reason = reason
 
 
 class DerivedProvenance:
@@ -77,31 +100,46 @@ def _client():
 
 
 def parse_pointer(pointer: str) -> tuple[str, str]:
-    """`s3://bucket/key` or a bare `key` (bucket from ``ARTIFACT_BUCKET``) -> (bucket, key).
+    """ONE accepted form: ``s3://bucket/key``. Anything else is REFUSED, naming what was received.
 
-    The sensor's `request_key` is `<etag>:<key>` — the ETag rides in front for idempotency. Split
-    it off here rather than at the call site, so exactly one place knows the pointer's shape.
+    NO BARE-KEY TOLERANCE, and that is the point. An earlier version accepted a bare key and filled
+    the bucket in from ``ARTIFACT_BUCKET`` — which quietly required producer and consumer to agree
+    on an ambient env var across two runtimes. Tolerance IS the coupling: a fallback path is where
+    the next shape assumption hides. The full URI carries its own bucket, so producer and consumer
+    cannot disagree about where the artifact lives.
+
+    IT ALSO ACCEPTED A FORMAT THAT NEVER EXISTED. It documented the sensor's `request_key` as
+    ``<etag>:<key>`` — colon-separated — and the sensor has always emitted
+    ``{epoch}{ETag}-{key}``. The stripping branch therefore never fired, the whole identity string
+    went to S3 as a key, and every derive refused. The parser was written against an INVENTED
+    producer format and its fixture asserted the same invention, so the two agreed with each other
+    and never with the producer. Hence: one form, refused otherwise, and a contract test that reads
+    the producer.
     """
     p = (pointer or "").strip()
     if not p:
-        raise ArtifactUnreadable("no artifact pointer supplied — nothing to derive from")
-    if p.startswith("s3://"):
-        rest = p[len("s3://"):]
-        bucket, _, key = rest.partition("/")
-        if not bucket or not key:
-            raise ArtifactUnreadable(f"malformed s3 pointer {pointer!r}")
-        return bucket, key
-    # `<etag>:<path/to/review.json>` — the ETag is an idempotency rider, not part of the key.
-    if ":" in p and not p.startswith("/"):
-        head, _, tail = p.partition(":")
-        if tail and "/" in tail:
-            p = tail
-    bucket = os.getenv("ARTIFACT_BUCKET") or ""
-    if not bucket:
         raise ArtifactUnreadable(
-            f"pointer {pointer!r} names no bucket and ARTIFACT_BUCKET is unset — refusing to guess "
-            f"which bucket an admission decision should be derived from")
-    return bucket, p
+            "no artifact_uri supplied — the admission posture is derived FROM the artifact, so "
+            "there is nothing to derive from",
+            reason=REASON_MALFORMED_POINTER,
+        )
+    if not p.startswith("s3://"):
+        raise ArtifactUnreadable(
+            f"artifact_uri {p!r} is not an s3:// URI. The ONLY accepted form is "
+            f"'s3://<bucket>/<key>' — a bare key is refused rather than resolved against an "
+            f"ambient bucket, because that makes the location depend on two runtimes agreeing on "
+            f"an env var. (If this looks like an idempotency key such as '<etag>-<key>', it is: "
+            f"identity and location are different fields.)",
+            reason=REASON_MALFORMED_POINTER,
+        )
+    bucket, _, key = p[len("s3://"):].partition("/")
+    if not bucket or not key:
+        raise ArtifactUnreadable(
+            f"artifact_uri {p!r} is malformed — 's3://<bucket>/<key>' needs both a bucket and a "
+            f"key; got bucket={bucket!r} key={key!r}",
+            reason=REASON_MALFORMED_POINTER,
+        )
+    return bucket, key
 
 
 def derive_provenance(pointer: str, *, s3=None) -> DerivedProvenance:
@@ -122,22 +160,37 @@ def derive_provenance(pointer: str, *, s3=None) -> DerivedProvenance:
     try:
         body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
     except Exception as exc:  # noqa: BLE001
-        # Covers unreachable AND absent. Deliberately NOT distinguished into different verdicts —
-        # both are "could not read", both refuse. Distinguishing them would tempt a future author
-        # into floor-falling on one of them.
+        # ABSENT vs UNREACHABLE are told apart HERE, and the verdict is the same (refuse) while the
+        # REASON is not. Both refuse — that part was always right — but a reader debugging
+        # "artifact_absent" goes to the producer and a reader debugging "store_unreachable" goes to
+        # MinIO, and sending them to the wrong one costs the whole debugging session.
+        code = ""
+        resp = getattr(exc, "response", None)
+        if isinstance(resp, dict):
+            code = str((resp.get("Error") or {}).get("Code") or "")
+        absent = code in ("NoSuchKey", "NoSuchBucket", "404") or "NoSuchKey" in str(exc)
         raise ArtifactUnreadable(
-            f"could not read artifact s3://{bucket}/{key}: {type(exc).__name__}: {exc}"
+            (f"artifact s3://{bucket}/{key} does not exist ({code or type(exc).__name__}) — the "
+             f"store answered and said so, so this is a bad pointer or a missing object, NOT an "
+             f"outage")
+            if absent else
+            (f"artifact store did not answer for s3://{bucket}/{key}: "
+             f"{type(exc).__name__}: {exc} — this is an OUTAGE, not a bad pointer; the posture is "
+             f"undecidable until it returns"),
+            reason=REASON_ARTIFACT_ABSENT if absent else REASON_STORE_UNREACHABLE,
         ) from exc
 
     try:
         review = json.loads(body)
     except Exception as exc:  # noqa: BLE001
         raise ArtifactUnreadable(
-            f"artifact s3://{bucket}/{key} is not parseable JSON: {exc}") from exc
+            f"artifact s3://{bucket}/{key} is not parseable JSON: {exc}",
+            reason=REASON_UNPARSEABLE) from exc
 
     if not isinstance(review, dict):
         raise ArtifactUnreadable(
-            f"artifact s3://{bucket}/{key} parsed to {type(review).__name__}, not an object")
+            f"artifact s3://{bucket}/{key} parsed to {type(review).__name__}, not an object",
+            reason=REASON_SCHEMA_ALIEN)
 
     # SCHEMA-ALIEN CHECK. A readable JSON object that is not a review.json must REFUSE, not derive
     # `unknown/pcn/v1` from nothing — otherwise pointing at any object in the bucket yields a
@@ -146,7 +199,8 @@ def derive_provenance(pointer: str, *, s3=None) -> DerivedProvenance:
         raise ArtifactUnreadable(
             f"artifact s3://{bucket}/{key} carries neither `review_items` nor `doc_id` — it is not "
             f"a review.json, and deriving an admission key from an unrelated object would let any "
-            f"readable object stand in for a review")
+            f"readable object stand in for a review",
+            reason=REASON_SCHEMA_ALIEN)
 
     fingerprint = format_fingerprint(review)
     raw_version = str(review.get("pipeline_version") or "").strip()

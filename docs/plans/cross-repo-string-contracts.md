@@ -44,8 +44,58 @@ checklist. Values shown POST-M2 (branch `m2-extraction-sort`); the pre-M2 name i
 |---|---|---|
 | `GROUPED_REVIEW`, `APPROVAL_TASK`, `INSTANCES_BY_PROPERTY`, `WORKFLOW_OBSERVATION`, `PROCESS_TOPOLOGY`, `HAZARD_DECLARATION`, `ASSET_STATE_METRIC`, `KNOWLEDGE_DOCUMENT`, `CHART_WIDGET` | feeders (cortex-bff) + taskKindRegistry archetype field | cortex-ui SemanticInterpreter.tsx `switch(comp.archetype)` — structural, no domain branch. Default = honest "UI COMPONENT NOT FOUND". |
 
+## 6. IDENTITY vs LOCATION — two artifact-derived strings on ONE payload (a different species)
+
+Rows 1–5 are all **one value, N repos**: the failure is a rename that lands unevenly. This row is the
+inverse and is worth naming separately: **two DIFFERENT strings, both derived from the same artifact, on
+the same payload**, where the failure is a consumer reading the wrong one. No rename is involved. Every
+per-hop test passes. The value is present, well-formed, and travels correctly end to end — it just does
+not mean what the consumer thinks it means.
+
+| field | WHAT IT IS | FORM | PRODUCER | CONSUMERS | job |
+|---|---|---|---|---|---|
+| `request_key` | the artifact's **IDENTITY** | `{epoch}{ETag}-{key}` | `extraction_review_sensor.start_review_op` | cortex-bff `_ingress_idempotency_key`; `ReviewStarter.compose_workflow_id` | ingress dedup + the Restate workflow key |
+| `artifact_uri` | the artifact's **LOCATION** | `s3://{bucket}/{key}` | `extraction_review_sensor.start_review_op` | cortex-bff forward; `ReviewStarter` → `derive_provenance` | the ADMISSION posture (ADR-0034 trust key) |
+
+**What happened (2026-08-06).** The phase-1.3 derive was written to fetch `request_key`. It is
+artifact-derived, it moves when the content moves, and the surrounding comments already called it "the
+artifact pointer" — so it *reads* like a location. It is not one. The fetch asked S3 for a key with an
+ETag glued to the front and **every derive refused**, which the refuse-not-floor ruling correctly turned
+into a loud 422 rather than a silent supervise.
+
+**Why nothing caught it** (three self-references, zero contact with the emitter):
+1. the parser's docstring declared the producer format as `<etag>:<key>` — COLON. The sensor has always
+   emitted a DASH. The format was **invented**;
+2. its fixture asserted the same invented format, so parser and test agreed with each other and neither
+   ever agreed with the producer;
+3. the live witness hand-supplied a bare key in the shape the parser expected, so the composed sensor
+   path was never driven.
+
+**The generalisable rule** — *when two fields on one payload are both derived from the same artifact, the
+test that proves a consumer reads the right one must obtain the payload FROM THE PRODUCER.* A hand-written
+fixture cannot distinguish them, because the author who confuses them writes the fixture the same way.
+Pinned by `tests/test_artifact_uri_contract.py` (payload built by calling the sensor's own
+`build_start_review_payload`) and `tests/test_cross_repo_contracts.py`
+(`test_the_derive_reads_the_POINTER_field_not_the_IDENTITY_field`, asserted on the CALL SITE — a
+file-level substring check passes on the prose *about* the field).
+
+**Bare-key tolerance was removed with it.** `parse_pointer` used to resolve a bare key against
+`ARTIFACT_BUCKET`, making the artifact's location depend on two runtimes agreeing on an ambient env var —
+a cross-repo string contract smuggled in as a fallback. One form only, refused otherwise: the full URI
+carries its own bucket. **Tolerance IS the coupling.**
+
+**Refusals are legible.** `ArtifactUnreadable.reason` ∈ {`malformed_pointer`, `artifact_absent`,
+`store_unreachable`, `unparseable`, `schema_alien`}. Same verdict (refuse), different *destination for the
+reader*: `artifact_absent` sends you to the producer, `store_unreachable` to MinIO. The first release
+refused a malformed pointer with the same message shape as an unreadable artifact — true, and useless.
+
 ## Rule
 A rename of ANY row is a coordinated multi-repo change (update every producer + consumer) followed by a
 loop re-verify — NOT a per-repo edit. Per-engine tests will pass while the contract is broken. The M3
 `rendersAs` layer eventually makes rows 3 + 5 (kinds, archetypes) *declared data* instead of stringly-typed
 code, which retires this table's most fragile rows. Until then, this doc is the checklist.
+
+**Row 6 adds a second rule, for a failure a rename checklist cannot catch:** when a payload carries two
+values of the same PROVENANCE but different JOB, name the job in the field name and pin the consumer's
+call site. Discovery credit for this instance goes to the reviewing agent that traced a 422 back to the
+conflation rather than to the artifact.
