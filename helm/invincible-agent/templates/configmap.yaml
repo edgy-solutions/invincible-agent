@@ -159,6 +159,13 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "CORTEX_CLIENT_ID") }}
   CORTEX_CLIENT_ID: "iagent-data-analyst"
   {{- end }}
+  {{- /* The SUPERVISOR's dispatch identity. Its OWN client — never the review starter's.
+  mint_service_token() reads REVIEW_STARTER_CLIENT_ID despite its general name, so a
+  supervisor wired to that helper authenticates as svc:review-starter and inherits
+  can_invoke(mesh:startReview) on every dispatch. Separate env pair = separate identity. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "SUPERVISOR_CLIENT_ID") }}
+  SUPERVISOR_CLIENT_ID: "iagent-supervisor"
+  {{- end }}
   {{- /* ENFORCEMENT POSTURE — declared, never implied (2026-08-07).
   A SECURITY POSTURE MUST NOT RIDE AN IMPLICIT DEFAULT, whichever way the default points: a
   reader cannot distinguish "deliberately off" from "nobody thought about it", and the next

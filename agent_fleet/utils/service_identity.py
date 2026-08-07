@@ -43,8 +43,73 @@ class ServiceTokenError(RuntimeError):
     NOT an authorization denial, so it must NOT fail-and-release the way a 401 on the action does)."""
 
 
+def mint_token(*, client_id: str, client_secret: str, realm_url: str = "",
+               timeout: float = 15.0) -> str:
+    """Mint a fresh access token for AN EXPLICITLY NAMED client identity.
+
+    THE GENERAL MINT. Every caller supplies ITS OWN credentials, because every service
+    identity has its own — that is what makes them identities. Added 2026-08-07 after
+    `mint_service_token()` (below) was found to be review-starter-SPECIFIC behind a GENERAL
+    NAME: the supervisor was wired against the name and would have authenticated as
+    `svc:review-starter`, carrying that role's can_invoke(mesh:startReview) on every
+    specialist dispatch — the confused deputy, introduced while fixing the confused deputy.
+
+    THE MINT'S WITNESS IS THE DECODED SUBJECT, NOT THE 200. A mint that returns a token
+    proves a mint happened; it does not prove WHOSE. Every new call site decodes its first
+    token and asserts the identity — the standing procedure that would have caught the bug
+    above in minutes.
+    """
+    import httpx
+
+    realm = (realm_url or os.environ["KEYCLOAK_REALM_URL"]).rstrip("/")
+    token_url = f"{realm}/protocol/openid-connect/token"
+    try:
+        resp = httpx.post(
+            token_url,
+            data={"grant_type": "client_credentials", "client_id": client_id,
+                  "client_secret": client_secret},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=timeout,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise ServiceTokenError(
+            f"mint_token: Keycloak token endpoint unreachable at {token_url}: {exc}"
+        ) from exc
+    if resp.status_code != 200:
+        raise ServiceTokenError(
+            f"mint_token: client-credentials mint failed HTTP {resp.status_code} for "
+            f"client {client_id!r} at {token_url}: {resp.text[:300]}"
+        )
+    tok = (resp.json() or {}).get("access_token")
+    if not tok:
+        raise ServiceTokenError("mint_token: token response carried no access_token")
+    return tok
+
+
+def mint_supervisor_token(*, timeout: float = 15.0) -> str:
+    """The SUPERVISOR's dispatch identity (`svc:supervisor`). Its OWN credentials — not the
+    review starter's, which is the bug this function exists to make unrepeatable."""
+    return mint_token(
+        client_id=os.environ["SUPERVISOR_CLIENT_ID"],
+        client_secret=os.environ["SUPERVISOR_CLIENT_SECRET"],
+        timeout=timeout,
+    )
+
+
 def mint_service_token(*, timeout: float = 15.0) -> str:
-    """Mint a FRESH access token for the pipeline's service identity (``svc:review-starter``) via
+    """THE REVIEW STARTER'S MINT — despite the general name. NEW CALLERS: DO NOT USE THIS.
+
+    NAME/BEHAVIOUR MISMATCH, kept only so the extraction->review sensor is untouched. This
+    reads REVIEW_STARTER_CLIENT_ID/SECRET, so ANY caller using it authenticates as
+    `svc:review-starter` and inherits that role's capability grant. The supervisor was wired
+    against this name on 2026-08-07 and would have dispatched under the review starter's
+    identity; a general NAME over specific BEHAVIOUR is the whole defect, and leaving the name
+    unmarked is how the next caller repeats it.
+
+    Use `mint_token(client_id=..., client_secret=...)` with YOUR identity, or a named wrapper
+    like `mint_supervisor_token()`. This one should retire once the sensor moves over.
+
+    Mint a FRESH access token for the pipeline's service identity (``svc:review-starter``) via
     Keycloak client-credentials. Fresh by construction — there is no stored JWT to go stale, and no
     lifetime knob to tune.
 

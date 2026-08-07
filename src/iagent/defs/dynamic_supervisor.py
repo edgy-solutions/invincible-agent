@@ -927,8 +927,14 @@ def _telemetry_headers(config) -> Dict[str, str]:
     # MINT AT USE — never a stored token (the time-machine rule). Shares the platform mint so
     # there is ONE claim contract to verify.
     try:
-        from agent_fleet.utils.service_identity import mint_service_token
-        headers["Authorization"] = f"Bearer {mint_service_token()}"
+        # mint_supervisor_token, NOT mint_service_token. The latter has a GENERAL NAME and
+        # REVIEW-STARTER-SPECIFIC behaviour (it reads REVIEW_STARTER_CLIENT_ID/SECRET), so
+        # this call site originally authenticated the supervisor as `svc:review-starter` and
+        # would have carried that role's can_invoke(mesh:startReview) on EVERY specialist
+        # dispatch — a confused deputy introduced while fixing the confused deputy. Inert only
+        # because nothing verifies yet.
+        from agent_fleet.utils.service_identity import mint_supervisor_token
+        headers["Authorization"] = f"Bearer {mint_supervisor_token()}"
     except Exception as exc:  # noqa: BLE001 — see OBSERVE-PHASE note above
         # THE GAUGE NEEDS THE DISCRIMINANT. A token-less dispatch caused by a mint FAILURE and
         # one from a caller that never minted both surface at the engine as `caller: none`.
