@@ -190,5 +190,37 @@ def test_a_producer_emitted_uri_derives_the_full_key():
     assert d.version_missing is False
 
 
+# ===========================================================================
+# THE REFUSAL MUST SURVIVE THE LAST HOP
+# ===========================================================================
+def test_the_bff_forwards_the_refusal_reason_instead_of_discarding_it():
+    """LEGIBILITY THAT STOPS AT THE POD BOUNDARY IS NOT LEGIBILITY.
+
+    `start_review`'s non-200 branch used to raise `502 {"error": ..., "code": <n>}` and DISCARD the
+    body. Witnessed live 2026-08-06: four deliberately different pointers all came back as the SAME
+    opaque 502 while Restate had answered 422 with the full reason each time. Every distinction this
+    module computes was destroyed one hop from the reader — which is why an earlier session was sent
+    to S3 to debug what was a caller-side field mistake.
+
+    Asserted against the handler's SOURCE, scoped to the function (a byte window measures layout, not
+    content — that mistake cost a false red here in 2026-07-31).
+    """
+    src = (_ROOT / "src" / "iagent" / "gateway.py").read_text(encoding="utf-8")
+    start = src.index("async def start_review(")
+    handler = src[start:src.index("\ndef ", start)]
+
+    assert '"message": _msg' in handler, (
+        "the starter's refusal message is not forwarded — every refusal reaches the caller identical"
+    )
+    assert 'if 400 <= rr.status_code < 500:' in handler, (
+        "a TERMINAL refusal is a statement about the REQUEST and must keep its own 4xx; reporting it "
+        "as 502 tells every caller the gateway is broken when the truth is their pointer is malformed"
+    )
+    # The exact discarding form must not come back.
+    assert 'detail={"error": "review_start_failed", "code": rr.status_code})' not in handler, (
+        "the body-discarding raise is back"
+    )
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

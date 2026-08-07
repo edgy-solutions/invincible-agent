@@ -581,7 +581,34 @@ async def start_review(
     except Exception as exc:
         raise HTTPException(status_code=502, detail={"error": "review_start_unreachable", "message": str(exc)})
     if rr.status_code != 200:
-        raise HTTPException(status_code=502, detail={"error": "review_start_failed", "code": rr.status_code})
+        # THE ERROR PATH IS ITSELF AN ERROR SURFACE, and this line was the counterexample. It used to
+        # raise a bare `502 {"error": "review_start_failed", "code": <n>}` and DISCARD the body — so
+        # every refusal the starter can produce arrived at the caller IDENTICAL. Witnessed live
+        # 2026-08-06: four deliberately different pointers (absent / an identity string / a bare key /
+        # a well-formed URI to a nonexistent object) all returned the same opaque 502, while Restate
+        # had answered `422` with the full reason each time. The classification was computed, correct,
+        # and thrown away at the last hop — legibility that stops at the pod boundary is not
+        # legibility, and this is why an earlier debugging session was sent to S3 for what was a
+        # caller-side field mistake.
+        #
+        # A TERMINAL refusal is a STATEMENT about the request, not a transport failure, so it keeps
+        # its own 4xx. Only a genuine 5xx stays a 502 — conflating them told every caller "the
+        # gateway is broken" when the truth was "your pointer is malformed". Consistent with the
+        # `_PCN_REVIEW_BAD_REQUEST` branch below, which already forwards the engine's own body.
+        try:
+            _rb = rr.json()
+        except Exception:  # noqa: BLE001 — a non-JSON body must not become an unrelated 500
+            _rb = {}
+        _msg = (_rb.get("message") if isinstance(_rb, dict) else None) or rr.text[:1000]
+        if 400 <= rr.status_code < 500:
+            raise HTTPException(
+                status_code=rr.status_code,
+                detail={"error": "review_start_refused", "code": rr.status_code, "message": _msg},
+            )
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "review_start_failed", "code": rr.status_code, "message": _msg},
+        )
     out = rr.json()
     logger.info("pcn review start: notice=%s approver=%s status=%s",
                 req.notice_id, current_user.authz_id, out.get("status"))
