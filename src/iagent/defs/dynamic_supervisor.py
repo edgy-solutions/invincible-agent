@@ -930,9 +930,19 @@ def _telemetry_headers(config) -> Dict[str, str]:
         from agent_fleet.utils.service_identity import mint_service_token
         headers["Authorization"] = f"Bearer {mint_service_token()}"
     except Exception as exc:  # noqa: BLE001 — see OBSERVE-PHASE note above
+        # THE GAUGE NEEDS THE DISCRIMINANT. A token-less dispatch caused by a mint FAILURE and
+        # one from a caller that never minted both surface at the engine as `caller: none`.
+        # Without a discriminant, a Keycloak blip during the migration reads as caller-readiness
+        # REGRESSING, and the gauge the contract flip depends on inherits noise it cannot
+        # explain. So the cause travels as a DIAGNOSTIC header.
+        #
+        # X-Auth-Status IS DIAGNOSTIC ONLY AND MUST NEVER REACH AN AUTHORIZATION DECISION: it is
+        # caller-asserted and therefore unverifiable — exactly the property that made the
+        # payload-written subject a spoofing surface. It is legal to LOG and illegal to TRUST.
+        headers["X-Auth-Status"] = f"mint-failed:{type(exc).__name__}"
         logging.getLogger(__name__).warning(
             "supervisor dispatch minting no token (%s: %s) — proceeding UNAUTHENTICATED; "
-            "engines record this as caller:none until svc:supervisor is configured",
+            "engines record caller:none (mint failed) until svc:supervisor is configured",
             type(exc).__name__, str(exc)[:120],
         )
 

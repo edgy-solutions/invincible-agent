@@ -135,3 +135,14 @@ users:
   - id: svc:supervisor
     display_name: supervisor (service - specialist dispatch transport identity)
     groups: []
+
+  # Instance FOUR (2026-08-07) — a PROCESS credential, not a role. Engine A hosts several
+  # ungoverned internal callers (decision_record_writer, review_composer,
+  # policy_rules_client) that reach Engine O; they hold no grants and are planned to hold
+  # none, so they share this one credential and attribute per-module in the payload.
+  # svc:review-starter runs in the SAME process and is deliberately NOT merged into this:
+  # it holds a capability grant, so it is a governed subject and keeps its own identity.
+  # IDENTITY GRANULARITY FOLLOWS GOVERNANCE, NOT TOPOLOGY — see identity-mint-contract.md.
+  - id: svc:engine-a
+    display_name: engine-a (service - process credential for ungoverned internal callers)
+    groups: []

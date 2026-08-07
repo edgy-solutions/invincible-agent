@@ -217,3 +217,45 @@ improvise a sibling. That is generic-at-birth for identities: the species is `se
 parameters. When you add the next one, the only new artifacts are: a client block (copy
 `iagent-review-starter`), a `users.yaml` service entry, its capability grant, and the mint→decode→confirm
 check. Everything else is already the pattern.
+
+## IDENTITY GRANULARITY FOLLOWS GOVERNANCE, NOT TOPOLOGY (ruled 2026-08-07)
+
+**A credential exists per GOVERNED SUBJECT. Ungoverned internals share their process's
+credential, with per-module attribution in the payload.**
+
+"Per-process identity" was shorthand for *don't mint identities that govern nothing* — never a
+licence to dissolve subjects that do. The question came up because Engine A's process hosts
+four callers of Engine O: three ungoverned helpers (`decision_record_writer`,
+`review_composer`, `policy_rules_client`) and `review_starter`, which holds
+`can_invoke(mesh:startReview)`.
+
+### THE OPERATIONAL TEST — so the next boundary question answers itself
+> **Would merging this identity change the answer to any `can_invoke` / `can_act` question,
+> now or in a planned grant?**
+> **Yes** → it is a governed subject; the identity survives as a boundary.
+> **No** → it is an ungoverned helper; it shares the process credential.
+
+Applied: `svc:review-starter` **survives**; the three helpers **merge** into `svc:engine-a`.
+
+### Why this is a ruling, not a preference
+1. **Merging silently rewrites a governed decision.** `svc:review-starter` was entitled because
+   someone deliberately entitled *the review-starter role* — the grant's subject IS the point
+   of the grant. Moving it to a process identity would make every module in that process able
+   to start reviews, with no commit saying so: the stored-authz migration class, executed by
+   refactor. The blast radius is already scheduled — the workflow-2 ceremony's grant targets
+   `svc:review-starter` **by name**, and the empty-caller incident showed exactly what a grant
+   aimed at a dissolved subject does: lands, denies forever, looks designed.
+2. **Topology is a fact that changes; grants must not follow it silently.** `review_starter`
+   living inside engine-a is a deployment detail — move it to its own service and, as a role
+   identity, the governance layer never notices. As a process identity, that move becomes an
+   identity migration with a grant transfer. Identity-follows-governance is what keeps deploys
+   and grants independently evolvable.
+3. **Audit legibility.** `requested_by: svc:review-starter` says *the review-starter acted* — a
+   statement about a governed role. `requested_by: svc:engine-a` says a process did something
+   and makes the reader reconstruct which resident. For the field the attribution arc spent a
+   week making truthful, the role name is the honest grain.
+
+### CAVEAT, stated so nobody mistakes it for more than it is
+Within a single process, role identities are **audit and governance boundaries, not security
+isolation**: any code in the process can reach the mint. The split buys legible grants and
+honest attribution — it does not buy a privilege wall, and must never be cited as one.

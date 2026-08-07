@@ -1391,6 +1391,15 @@ keycloak:
     - clientId: "iagent-supervisor"
       authzId: "svc:supervisor"
       secretRef: "supervisorClientSecret"
+    # Engine A's PROCESS credential (2026-08-07), for its UNGOVERNED resident callers:
+    # decision_record_writer, review_composer, policy_rules_client. They hold no grants and
+    # are planned to hold none, so they share one credential and attribute per-module in the
+    # payload. `svc:review-starter` lives in the same process and is NOT merged — it holds
+    # can_invoke(mesh:startReview), so it is a governed subject and survives as its own
+    # identity. See the IDENTITY GRANULARITY ruling in identity-mint-contract.md.
+    - clientId: "iagent-engine-a"
+      authzId: "svc:engine-a"
+      secretRef: "engineAClientSecret"
 
   reviewStarterClientSecret: "sandbox-review-starter-secret"
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
@@ -1400,6 +1409,8 @@ keycloak:
   dataAnalystClientSecret: "sandbox-data-analyst-secret"
   # Supervisor dispatch identity — reaches the supervisor as SUPERVISOR_CLIENT_SECRET.
   supervisorClientSecret: "sandbox-supervisor-secret"
+  # Engine A process credential — reaches engine-a as ENGINE_A_CLIENT_SECRET.
+  engineAClientSecret: "sandbox-engine-a-secret"
   service:
     type: ClusterIP
     port: 8080
