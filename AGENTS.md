@@ -529,6 +529,40 @@ Every rung was learned by nearly witnessing the wrong thing:
 3. **The code is present in the pod** (grep the running filesystem) — necessary, still not enough.
 4. **The behaviour is witnessed** — the only rung that is evidence.
 
+**FIFTH RUNG, PREPENDED 2026-08-07 — COMMITTED ≠ UPGRADED.** The litany began at rung 1 because
+it assumed the release had been upgraded at all. It had not: a chart commit was pushed, and the
+running ConfigMap it renders was stale, because nothing had run `helm upgrade` in four chart
+versions. Every rung below is a check on a deploy that HAPPENED; rung 0 asks whether it did.
+The chain is five: **committed → upgraded → digest changed → code present → behaviour witnessed.**
+
+### DECLARED-VS-RUNNING DRIFT REQUIRES NO MUTATION
+The whole hand-seeded-state class assumed someone TYPED something — a `kubectl set env`, a console
+click, a one-off `kcadm`. 2026-08-07 produced the case where nobody touched anything and the states
+diverged anyway.
+
+`values-sandbox.yaml` carried **two top-level `keycloak:` keys**. Helm's YAML parser takes
+**last-wins, silently** — valid render, wrong value — so the first block's `auth.adminPassword`
+override was discarded on every render and Keycloak booted on the CHART DEFAULT. The duplicate was
+fixed weeks later, and the fix **could structurally never reach the running server**, because
+Keycloak's admin bootstrap reads that value ONCE, at first boot.
+
+**A declaration error captured by a one-shot consumer outlives its own fix.** The birth value is
+whatever the declaration said AT BIRTH, including its bugs — and no amount of later correctness in
+git can dislodge it. Recovery required git-history archaeology against a live cluster whose admin
+credential nobody knew; the password was never lost, it was in the record.
+
+**THE FIRST-BOOT CLASS, COMPLETE TAXONOMY**: realm import (applies once), admin bootstrap (reads
+once), Restate registration (registered once, by a job that covered two of four services), and the
+compounding case above where *the frozen value was itself a bug*. **Every member has the same
+cure: a reconciler that runs EVERY deploy and fails LOUD.** As of 2026-08-07 the system has three —
+Topaz seed, workflow definitions, and realm identity — each converging running state to
+declaration, each failing loud, each with an explicit-and-announced escape hatch or none at all.
+The class stops being *caught* and becomes *unconstructable*.
+
+Authoring-time closure for the silent-merge half: CI refuses duplicate top-level keys in any values
+file (`build-containers.yml` lint job), **proven in both directions** — clean on the tree, exit 1
+naming the key and file when the historical duplicate is reintroduced.
+
 *rollout → digest changed → code present in pod → behaviour witnessed.* Skipping a rung rarely
 fails outright; it produces a confident wrong conclusion, which is worse. Run all four before
 attributing any live result to a change.
@@ -757,6 +791,13 @@ that has therefore never fired. `assert "user_jwt" not in payload` inspected onl
 dict. Reintroducing the credential where it would REALLY go — nested inside `human_task`, the
 sub-dict the request body is built from — left the guard green with a live token riding a durable
 journal payload. Two independent suites carried the same blind assertion.
+
+**This sentence is the header of the whole break-on-purpose doctrine, and every species in the
+probe-correctness catalogue is a way a never-failed guard turns out to guard nothing.** So the
+operational form is not "write the guard" but "make it fire once, deliberately, before trusting
+it". 2026-08-07's duplicate-top-level-key lint is the pattern in four lines: it passes on the
+tree AND exits 1 naming the key when the historical duplicate is re-introduced. That second run
+is what converts four lines of INTENTION into four lines of EVIDENCE — and it costs one command.
 
 The technique that finds it is break-on-purpose, and the tell is the SHAPE of the break: reintroduce
 the defect the way the CODE would reintroduce it, not the way the guard expects to see it. If the
