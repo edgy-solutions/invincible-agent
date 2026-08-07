@@ -88,8 +88,12 @@ spec:
               {{- $secret := get $.Values.keycloak $c.secretRef }}
               CID={{ $c.clientId | quote }}
               echo "-- $CID"
+              # FIRST "id" in the array, never a greedy last-match: a client
+              # representation nests objects carrying their own "id", so a
+              # `sed 's/.*"id":"..."/'` returns the LAST one — a valid-LOOKING
+              # uuid that 404s. This job's own set -e caught it.
               UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \
-                     | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
               if [ -z "$UUID" ]; then
                 echo "   absent -> creating"
@@ -151,7 +155,7 @@ spec:
               {{- range $c := .Values.keycloak.serviceClients }}
               CID={{ $c.clientId | quote }}
               UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \
-                     | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+                     | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
               if [ -z "$UUID" ]; then
                 echo "   FAIL $CID: client absent after reconcile"; rc=1
               elif ! curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
