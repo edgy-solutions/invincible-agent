@@ -1352,6 +1352,13 @@ keycloak:
   # never prunes. Disable only if an external process owns realm state.
   reconcileClients:
     enabled: true
+    # ESCAPE HATCH — explicit, announced, never default. The job BLOCKS the upgrade when it
+    # cannot reconcile, which is correct (a release whose identity plane is unverified is a
+    # failed release) but leaves one trap: a wedged release cannot upgrade to ship the fix
+    # for its own wedge. Set true ONLY to break that cycle. The job announces the skip in its
+    # log, so a bypassed reconcile is never silent — same discipline as the enforcement
+    # posture's startup announcement.
+    skip: false
   # ── SERVICE CLIENTS — ONE list, TWO consumers ────────────────────────────────────────
   # Drives BOTH the first-boot realm import (keycloak-configmap.yaml) AND the realm
   # reconcile job (realm-reconcile-job.yaml, every upgrade). Adding a service identity is

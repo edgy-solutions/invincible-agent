@@ -393,6 +393,35 @@ jobs:
           python -m py_compile agent_fleet/models.py
           echo "All syntax checks passed"
 
+      - name: Values files carry NO duplicate top-level keys
+        # THE SILENT-LAST-WINS CLASS, killed at authoring time. values-sandbox.yaml once
+        # carried TWO top-level `keycloak:` keys; helm's YAML parser takes last-wins with no
+        # warning, so the first block's auth.adminPassword override was DISCARDED on every
+        # render and Keycloak booted on the chart default instead. The duplicate was fixed
+        # weeks later — but Keycloak reads its admin password ONCE, at first boot, so the fix
+        # could structurally never reach the running server. Recovering it (2026-08-07) took
+        # a git-history archaeology run against a live cluster whose admin credential nobody
+        # knew. A declaration error captured by a one-shot consumer outlives its own fix.
+        # This check costs four lines and makes that class unwritable.
+        run: |
+          pip install pyyaml
+          python - <<'PY'
+          import sys, pathlib, collections, re
+          bad = 0
+          for f in sorted(pathlib.Path("helm").rglob("values*.yaml")):
+              seen = collections.Counter(
+                  m.group(1) for m in
+                  (re.match(r"^([A-Za-z_][\w-]*):", ln) for ln in f.read_text(encoding="utf-8").splitlines())
+                  if m
+              )
+              for key, n in seen.items():
+                  if n > 1:
+                      print(f"DUPLICATE top-level key {key!r} x{n} in {f} — helm takes LAST-WINS silently")
+                      bad += 1
+          print("no duplicate top-level keys" if not bad else f"{bad} duplicate key(s)")
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Telemetry mapping truth-check (ADR-0038)
         # The mesh telemetry mapping (baml_shared/telemetry-mapping.yaml) must name only
         # fields build_trace_values produces — a dangling or unmapped field fails here,

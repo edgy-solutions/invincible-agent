@@ -65,6 +65,18 @@ spec:
               set -eu
               echo "== keycloak realm reconcile =="
 
+              {{- if .Values.keycloak.reconcileClients.skip }}
+              # ESCAPE HATCH — explicit, announced, never default. A release whose identity
+              # plane cannot reconcile IS a failed release, so this job BLOCKS the upgrade by
+              # design. But a blocking hook with no bypass has a trap: a wedged release cannot
+              # upgrade to ship the fix for its own wedge. This flag is that bypass, and it
+              # follows the ENABLE_AGENTIC_AUTH shape exactly — relaxation is allowed, is
+              # explicit in values, and ANNOUNCES ITSELF so a skipped reconcile is never silent.
+              echo "identity reconcile SKIPPED by explicit config (keycloak.reconcileClients.skip)"
+              echo "   declared clients were NOT verified against the live realm."
+              exit 0
+              {{- end }}
+
               # Keycloak may still be starting even after the pod is Ready.
               i=0
               until curl -sf "$KC_BASE/realms/$KC_REALM/.well-known/openid-configuration" >/dev/null; do
