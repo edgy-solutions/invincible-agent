@@ -3,6 +3,10 @@ name = "swarms-scraper"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    # Mesh membership package — transport auth (the app dependency) + the ONE general
+    # mint. PINNED TO A TAG: this package governs fleet auth, so a floating ref would let
+    # one SDK commit change every engine's security behaviour at rebuild.
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.0",
     "fastapi",
     "uvicorn[standard]",
     "pydantic",

@@ -334,7 +334,16 @@ async def lifespan(app: FastAPI):
 
 
 # Initialize FastAPI
-app = FastAPI(title="Engine E: Neo4j Graph Expert", lifespan=lifespan)
+from fastapi import Depends
+# TRANSPORT AUTH (OBSERVE). One implementation, from the mesh membership package: validate
+# whatever arrives, log the caller posture per request, REFUSE NOTHING until
+# REQUIRE_TRANSPORT_AUTH flips. The announcement is the pre-positioned string the contract
+# phase's fresh-deploy test asserts against — an engine that takes the dependency but loses
+# the announcement has a real posture the gauge cannot read.
+from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+_announce_transport_auth(component="engine-e")
+app = FastAPI(dependencies=[Depends(_transport_auth("engine-e"))], title="Engine E: Neo4j Graph Expert", lifespan=lifespan)
 
 # Restate App Binding
 # This binds the previously defined expert_service (Neo4jExpertService)

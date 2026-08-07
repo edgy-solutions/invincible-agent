@@ -700,7 +700,17 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+from fastapi import Depends
+# TRANSPORT AUTH (OBSERVE). One implementation, from the mesh membership package: validate
+# whatever arrives, log the caller posture per request, REFUSE NOTHING until
+# REQUIRE_TRANSPORT_AUTH flips. The announcement is the pre-positioned string the contract
+# phase's fresh-deploy test asserts against — an engine that takes the dependency but loses
+# the announcement has a real posture the gauge cannot read.
+from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+_announce_transport_auth(component="engine-d")
 app = FastAPI(
+    dependencies=[Depends(_transport_auth("engine-d"))],
     title="DataHub Metadata Wrapper",
     description="Engine D — Dynamic proxy for DataHub GraphQL Search API",
     version="0.2.0",
