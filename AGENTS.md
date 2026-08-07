@@ -324,6 +324,45 @@ VirtualObject keys are journal state, so the same three options apply to them
 renamed promise can never be resolved by any submission — suspended forever, no error, the kill-seal's
 failure mode wearing a promise's clothes.
 
+### A FORMAT change to a PERSISTED value is a migration — even with no schema in sight
+The entry above is about a key whose NAME changes. This is its quieter sibling: a value whose NAME
+never changes and whose **encoding** does. There is no rename to notice, no sync to run, no grant to
+prune — and the same class of failure.
+
+**The instance (found live 2026-08-07, dead for over a week).** The extraction→review sensor's cursor
+moved from a lexicographic S3 key to `<iso>|<key>`. The code changed; the value already sitting in
+Dagster's cursor storage did not. Every tick then compared across the two forms —
+`"2026-08-07T…|sustainment/…" > "sustainment/inbound/zz_look/…"` — which is False for every object,
+because `'2' < 's'`. Seventeen artifacts under the prefix, zero considered new, and the daemon logged
+*"no new extractions (review.json) after cursor …"* every thirty seconds. Nothing was red.
+
+**THE MIGRATION BUG WORE THE COSTUME OF THE BUG THE MIGRATION FIXED.** The lexicographic cursor was
+replaced *precisely because* its failure mode was silent skipping. The replacement reintroduced silent
+skipping through its own changeover — same symptom, opposite cause, invisible either way. When a fix
+targets a silent-skip failure, ask what the CHANGEOVER does before the new code's first write.
+
+Three obligations, and they compose:
+1. **Distinguish the forms** — not by a cheap tell. Checking for the `|` separator alone would accept
+   `not-a-timestamp|key`; the probe parses the timestamp.
+2. **Translate when translation is faithful.** The old cursor named the last key processed, so that
+   object's `LastModified` is exactly the timestamp the new form should carry: nothing re-fires,
+   nothing is newly skipped.
+3. **Refuse loudly when it is not.** If the named object is gone, both guesses are bad — no-cursor
+   re-fires the whole corpus into humans' queues, `now` skips work in flight. An operator setting the
+   cursor is a declared intent; either guess is an accident.
+
+And the part that made it survive a week: **the wedge must not be reported in the idle state's
+words.** "No new extractions" is what a HEALTHY sensor says. A skip reason that reads identical to
+health is not a diagnostic, it is camouflage — the same finding as the opaque
+`review_start_failed` 502 that hid four distinct refusal reasons behind one code
+([[feedback_error_path_is_an_error_surface]]).
+
+**Corollary, paid for in the seal itself:** the first version of that seal did NOT bite. It sealed the
+helpers, then asserted against the sensor's *source* that the wedge branch preceded the idle branch.
+Deleting the migration CALL — the realistic regression, and the sandbox's literal state — left both
+strings in the surviving `try`/`except` and every test stayed green. A grep proves presence; it never
+proves behaviour. Drive the function ([[feedback_harness_must_prove_it_can_fail]]).
+
 ### A hand-grant that clears an incident is a MITIGATION; the commit is the fix
 Second instance 2026-08-05 (`procurement`, after `disposition_review:SUSTAINMENT` in M1), so it gets
 the rule. When an incident is cleared by applying a relation **directly to the live directory**, the
