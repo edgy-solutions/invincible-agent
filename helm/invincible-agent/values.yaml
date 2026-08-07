@@ -1342,6 +1342,38 @@ keycloak:
   # client-credentials identity). This ONE value feeds BOTH the client `secret` in the realm import
   # (keycloak-configmap.yaml) AND REVIEW_STARTER_CLIENT_SECRET in the Secret — they must match. Override
   # per deployment (a real secret at work); the sandbox default is a dev value, not sensitive.
+  # The claim the hardcoded-claim mapper writes = USER_ENTITLEMENT_CLAIM. `email` in
+  # sandbox; set to the employee-id claim at work so service authz_ids land in the same
+  # slot human ones do.
+  authzClaim: "email"
+  # Realm reconcile (realm-reconcile-job.yaml) — converges the serviceClients list below
+  # into the LIVE realm on every install/upgrade, because a realm import only applies at
+  # first boot. ADDITIVE ONLY: creates missing clients, repairs a missing authz-id mapper,
+  # never prunes. Disable only if an external process owns realm state.
+  reconcileClients:
+    enabled: true
+  # ── SERVICE CLIENTS — ONE list, TWO consumers ────────────────────────────────────────
+  # Drives BOTH the first-boot realm import (keycloak-configmap.yaml) AND the realm
+  # reconcile job (realm-reconcile-job.yaml, every upgrade). Adding a service identity is
+  # an edit HERE — never a kcadm command — in any environment.
+  #
+  # WHY THE RECONCILE JOB EXISTS: a realm import applies at FIRST BOOT ONLY. Before it,
+  # any client added to this chart after a realm was imported existed in git and not in the
+  # running Keycloak — the write-only-artifact shape, and the same hand-seeded-state class
+  # as the Restate registrations and DA's credentials. The chart declared it; nothing
+  # reconciled it. Now something does.
+  #
+  # `authzId` is the `svc:<name>` entitlement subject (docs/plans/identity-mint-contract.md);
+  # `clientId` is `iagent-<name>`; `secretRef` names the key under .Values.keycloak holding
+  # the secret, so this list and secrets.yaml cannot drift.
+  serviceClients:
+    - clientId: "iagent-review-starter"
+      authzId: "svc:review-starter"
+      secretRef: "reviewStarterClientSecret"
+    - clientId: "iagent-data-analyst"
+      authzId: "svc:data-analyst"
+      secretRef: "dataAnalystClientSecret"
+
   reviewStarterClientSecret: "sandbox-review-starter-secret"
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
   # review starter's above — this value AND the realm import's `secret` come from here, so

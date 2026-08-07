@@ -88,22 +88,23 @@ data:
                   "*"
               ]
           },
+          {{- range $i, $c := .Values.keycloak.serviceClients }}
           {
-              "clientId": "iagent-review-starter",
+              "clientId": {{ $c.clientId | quote }},
               "enabled": true,
               "publicClient": false,
               "serviceAccountsEnabled": true,
               "standardFlowEnabled": false,
               "directAccessGrantsEnabled": false,
-              "secret": "{{ .Values.keycloak.reviewStarterClientSecret | default "sandbox-review-starter-secret" }}",
+              "secret": {{ get $.Values.keycloak $c.secretRef | quote }},
               "protocolMappers": [
                   {
                       "name": "authz-id-svc",
                       "protocol": "openid-connect",
                       "protocolMapper": "oidc-hardcoded-claim-mapper",
                       "config": {
-                          "claim.name": "email",
-                          "claim.value": "svc:review-starter",
+                          "claim.name": {{ $.Values.keycloak.authzClaim | default "email" | quote }},
+                          "claim.value": {{ $c.authzId | quote }},
                           "jsonType.label": "String",
                           "access.token.claim": "true",
                           "id.token.claim": "true",
@@ -111,32 +112,8 @@ data:
                       }
                   }
               ]
-          },
-          {
-              "_comment": "Engine DA's TRANSPORT identity (ADR-0034 mint contract). Client-credentials only, per the svc:<name> / iagent-<name> convention iagent-review-starter established. NOT an entitlement answer: DA authenticating as svc:data-analyst says WHICH SERVICE is calling, never WHOSE data it may read. The acting human travels separately (X-Originator-Email -> the email-keyed can_read check), and formalising that delegation is its own governed decision. Replaces the hand-created sandbox client `engine-da-svc`, which followed neither half of the convention AND carried NO claim mapper — its token's authz_id fell back to the opaque Keycloak sub UUID, exactly the not-human-reviewable identity users.yaml refuses. NOTE: the realm import applies on FIRST BOOT only; an existing Keycloak needs this client created out-of-band.",
-              "clientId": "iagent-data-analyst",
-              "enabled": true,
-              "publicClient": false,
-              "serviceAccountsEnabled": true,
-              "standardFlowEnabled": false,
-              "directAccessGrantsEnabled": false,
-              "secret": "{{ .Values.keycloak.dataAnalystClientSecret | default "sandbox-data-analyst-secret" }}",
-              "protocolMappers": [
-                  {
-                      "name": "authz-id-svc",
-                      "protocol": "openid-connect",
-                      "protocolMapper": "oidc-hardcoded-claim-mapper",
-                      "config": {
-                          "claim.name": "email",
-                          "claim.value": "svc:data-analyst",
-                          "jsonType.label": "String",
-                          "access.token.claim": "true",
-                          "id.token.claim": "true",
-                          "userinfo.token.claim": "true"
-                      }
-                  }
-              ]
-          }
+          }{{ if lt (add1 $i) (len $.Values.keycloak.serviceClients) }},{{ end }}
+          {{- end }}
       ],
       "roles": {
           "realm": [

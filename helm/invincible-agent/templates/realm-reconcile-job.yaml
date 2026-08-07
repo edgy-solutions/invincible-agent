@@ -1,0 +1,167 @@
+{{- if and .Values.keycloak.enabled .Values.keycloak.reconcileClients.enabled }}
+{{- /*
+KEYCLOAK REALM RECONCILE — closes the "first-boot-only" hole in the chart's declarative surface.
+
+WHY THIS EXISTS. A Keycloak realm import applies exactly ONCE, at first boot. Every service
+client added to this chart AFTER a realm was imported therefore existed in git and NOT in the
+running Keycloak — declared, never reconciled. That is the write-only-artifact shape, and it is
+the same hand-seeded-state class this repo has now paid for three times (Restate deployments
+registering only A and E; DA's CORTEX_CLIENT_* absent from the chart; DA's Keycloak client
+hand-created under a name that matched neither half of the mint contract). Each one made sandbox
+work while making it WRONG AS EVIDENCE, and each surfaced at a fresh deploy as a new incident.
+
+The rule this restores: an identity comes into being because the chart declares it, in every
+environment, with the human decision recorded in the MERGE rather than in someone's shell
+history. That is stronger review than a command in a log — a diff is reviewable, a typed command
+leaves no rails record.
+
+SCOPE — ADDITIVE ONLY, NEVER PRUNES. It creates missing service clients and repairs a missing
+authz-id mapper. It does NOT delete clients absent from the list: this realm also holds
+human/UI clients and identities created by other means, and a pruning identity reconciler is a
+credential-revoking action that must never ride a routine upgrade hook. Removal stays a
+deliberate human act, exactly like a grant removal.
+
+READBACK GATES THE JOB, per the topaz-seed pattern: after converging, every declared client is
+re-read and its mapper verified. A failure exits non-zero so the Job fails LOUDLY — a
+reconciler that silently half-applies is how the original hand-seeded state got tolerated.
+
+MINTS NOTHING NEW: the secrets come from values (the same keys secrets.yaml reads), so this job
+cannot invent a credential that is not already declared in the chart.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-realm-reconcile
+  labels:
+    {{- include "invincible-agent.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # After keycloak is up (restate-init is weight 0); before the syncs that assume identities.
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "invincible-agent.selectorLabels" (dict "component" "realm-reconcile" "root" .) | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: realm-reconcile
+          image: {{ include "invincible-agent.image" (dict "name" "curl" "registry" .Values.utilImages.curl.registry "repository" .Values.utilImages.curl.repository "tag" .Values.utilImages.curl.tag "root" .) }}
+          env:
+            - name: KC_BASE
+              value: "http://{{ .Release.Name }}-keycloak{{ include "invincible-agent.svcDomain" . }}:8080"
+            - name: KC_REALM
+              value: {{ .Values.keycloak.realm | quote }}
+            - name: KC_ADMIN
+              value: {{ .Values.keycloak.auth.adminUser | quote }}
+            - name: KC_ADMIN_PASSWORD
+              value: {{ .Values.keycloak.auth.adminPassword | quote }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              echo "== keycloak realm reconcile =="
+
+              # Keycloak may still be starting even after the pod is Ready.
+              i=0
+              until curl -sf "$KC_BASE/realms/$KC_REALM/.well-known/openid-configuration" >/dev/null; do
+                i=$((i+1)); [ "$i" -gt 60 ] && echo "keycloak never became ready" && exit 1
+                sleep 5
+              done
+
+              TOKEN=$(curl -sf -X POST \
+                "$KC_BASE/realms/master/protocol/openid-connect/token" \
+                -d "grant_type=password" -d "client_id=admin-cli" \
+                -d "username=$KC_ADMIN" --data-urlencode "password=$KC_ADMIN_PASSWORD" \
+                | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+              [ -n "$TOKEN" ] || { echo "admin token mint FAILED"; exit 1; }
+
+              API="$KC_BASE/admin/realms/$KC_REALM"
+              AUTH="Authorization: Bearer $TOKEN"
+              rc=0
+
+              {{- $claim := .Values.keycloak.authzClaim | default "email" }}
+              {{- range $c := .Values.keycloak.serviceClients }}
+              {{- $secret := get $.Values.keycloak $c.secretRef }}
+              CID={{ $c.clientId | quote }}
+              echo "-- $CID"
+              UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \
+                     | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+
+              if [ -z "$UUID" ]; then
+                echo "   absent -> creating"
+                curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                  "$API/clients" -d '{
+                    "clientId": {{ $c.clientId | quote }},
+                    "enabled": true,
+                    "publicClient": false,
+                    "serviceAccountsEnabled": true,
+                    "standardFlowEnabled": false,
+                    "directAccessGrantsEnabled": false,
+                    "secret": {{ $secret | quote }},
+                    "protocolMappers": [{
+                      "name": "authz-id-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": {{ $claim | quote }},
+                        "claim.value": {{ $c.authzId | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }]
+                  }'
+                echo "   created"
+              else
+                # Present. Repair a MISSING mapper — the exact defect found in sandbox, where a
+                # hand-made client carried none and its token's authz_id fell back to the opaque
+                # Keycloak `sub` UUID. Does not overwrite an existing mapper: an operator who
+                # deliberately changed one should not have it silently reverted by an upgrade.
+                HAS=$(curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
+                      | grep -c 'authz-id-svc' || true)
+                if [ "$HAS" = "0" ]; then
+                  echo "   present, mapper MISSING -> adding"
+                  curl -sf -X POST -H "$AUTH" -H "Content-Type: application/json" \
+                    "$API/clients/$UUID/protocol-mappers/models" -d '{
+                      "name": "authz-id-svc",
+                      "protocol": "openid-connect",
+                      "protocolMapper": "oidc-hardcoded-claim-mapper",
+                      "config": {
+                        "claim.name": {{ $claim | quote }},
+                        "claim.value": {{ $c.authzId | quote }},
+                        "jsonType.label": "String",
+                        "access.token.claim": "true",
+                        "id.token.claim": "true",
+                        "userinfo.token.claim": "true"
+                      }
+                    }'
+                else
+                  echo "   present, mapper ok"
+                fi
+              fi
+              {{- end }}
+
+              # ── READBACK GATE — the claim is not "we applied it", it is "it is there" ──
+              echo "== readback =="
+              {{- range $c := .Values.keycloak.serviceClients }}
+              CID={{ $c.clientId | quote }}
+              UUID=$(curl -sf -H "$AUTH" "$API/clients?clientId=$CID" \
+                     | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
+              if [ -z "$UUID" ]; then
+                echo "   FAIL $CID: client absent after reconcile"; rc=1
+              elif ! curl -sf -H "$AUTH" "$API/clients/$UUID/protocol-mappers/models" \
+                     | grep -q {{ $c.authzId | quote }}; then
+                echo "   FAIL $CID: authz_id {{ $c.authzId }} not minted by any mapper"; rc=1
+              else
+                echo "   ok   $CID -> {{ $c.authzId }}"
+              fi
+              {{- end }}
+
+              [ "$rc" = "0" ] || { echo "READBACK FAILED — identities are NOT as declared"; exit 4; }
+              echo "== realm reconcile OK =="
+{{- end }}
