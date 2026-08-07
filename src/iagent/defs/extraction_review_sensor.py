@@ -407,6 +407,73 @@ def _cursor_of(o: dict) -> str:
     return f"{o['LastModified'].isoformat()}|{o['Key']}"
 
 
+def _is_current_cursor_form(cursor: str) -> bool:
+    """True when `cursor` is `<iso8601>|<key>` — the form `_cursor_of` writes.
+
+    The OLD form was a bare S3 key (lexicographic `StartAfter`). Telling them apart is the whole
+    migration: they are both non-empty strings, and comparing across the two is not merely
+    inaccurate, it is INCOHERENT.
+    """
+    head, sep, _ = (cursor or "").partition("|")
+    if not sep:
+        return False
+    from datetime import datetime  # noqa: PLC0415 — local; this is a format probe, not a clock read
+    try:
+        datetime.fromisoformat(head)
+    except ValueError:
+        return False
+    return True
+
+
+class _CursorUnmigratable(Exception):
+    """The stored cursor is in the old form and cannot be translated — surfaced, never swallowed."""
+
+
+def _migrate_cursor(s3, bucket: str, stored: Optional[str]) -> Optional[str]:
+    """Translate a PRE-MIGRATION cursor (a bare key) into the current `<iso>|<key>` form.
+
+    WHY THIS EXISTS — a live wedge, found 2026-08-07 and dead since the cursor change landed.
+    Switching from a lexicographic `StartAfter` cursor to a LastModified one changed the STORED
+    VALUE'S FORMAT, and nothing migrated the value already in Dagster's cursor storage. The
+    comparison `_cursor_of(o) > since` then ran an ISO timestamp against a bare S3 key:
+    `"2026-08-07T…|sustainment/…" > "sustainment/inbound/zz_look/…"` is FALSE for every object,
+    because `'2' < 's'`. Every review.json was filtered out, forever, and the sensor reported
+    *"no new extractions (review.json) after cursor …"* — a message that is false and looks healthy.
+
+    **The migration bug wears the costume of the bug the migration fixed.** The lexicographic cursor
+    was replaced precisely because its failure mode was silent skipping; the replacement reintroduced
+    silent skipping through its own changeover. A format change to a PERSISTED value is a migration
+    even when no schema is involved — the same expand/contract reasoning the audience-key rename got,
+    applied to a cursor.
+
+    Translation is faithful and automatic: the old cursor named the last KEY processed, so its
+    object's `LastModified` is exactly the timestamp the new cursor should carry. Nothing re-fires
+    and nothing is skipped that would not have been.
+
+    If that object is GONE it cannot be translated, and this RAISES rather than guessing. Both
+    guesses are bad: treating it as no-cursor re-fires the entire corpus into humans' queues, and
+    silently adopting `now` skips anything in flight. An operator setting the cursor is a declared
+    intent; either guess is an accident.
+    """
+    cur = (stored or "").strip()
+    if not cur or _is_current_cursor_form(cur):
+        return cur or None
+    try:
+        head = s3.head_object(Bucket=bucket, Key=cur)
+    except Exception as exc:  # noqa: BLE001
+        raise _CursorUnmigratable(
+            f"stored cursor {cur!r} is in the PRE-MIGRATION form (a bare S3 key) and the object it "
+            f"names no longer exists ({type(exc).__name__}), so it cannot be translated to the "
+            f"current '<iso>|<key>' form. Comparing the two forms filters out EVERY object — the "
+            f"sensor is wedged, not idle. Reset the cursor in Dagster (Sensors -> "
+            f"extraction_review_sensor -> Edit cursor) to '<iso8601>|<key>' at the point processing "
+            f"should resume, e.g. '2026-08-07T00:00:00+00:00|'."
+        ) from exc
+    migrated = f"{head['LastModified'].isoformat()}|{cur}"
+    print(f"CURSOR MIGRATED (pre-LastModified form): {cur!r} -> {migrated!r}", flush=True)
+    return migrated
+
+
 def _run_key_of(o: dict) -> str:
     """CONTENT-ADDRESSED run key: ETag (content hash) + the artifact key.
 
@@ -897,7 +964,17 @@ def extraction_review_sensor(context: SensorEvaluationContext):
     the payload — while identity comes from the artifact itself.
     """
     s3 = _s3_client()
-    since = context.cursor or None
+    # A STORED CURSOR IN THE OLD FORM IS NOT "no new work" — it is an incoherent comparison, and it
+    # must never be reported as an idle sensor. See `_migrate_cursor`: the format changed under a
+    # persisted value and the mismatch filtered out every object while the skip message read healthy.
+    try:
+        since = _migrate_cursor(s3, _ARTIFACT_BUCKET, context.cursor)
+    except _CursorUnmigratable as exc:
+        # LOUD, and distinct from the idle skip below. Raising every 30s would drown the daemon log;
+        # a skip whose reason NAMES the wedge and the operator action is the honest middle — the
+        # failure this whole guard exists to prevent was a skip reason that lied.
+        context.log.error(str(exc))
+        return SkipReason(f"CURSOR WEDGED — not idle: {exc}")
     objs = _list_new_review_jsons(s3, _ARTIFACT_BUCKET, _WATCH_PREFIX, since)
     if not objs:
         return SkipReason(f"no new extractions (review.json) after cursor {since}")
