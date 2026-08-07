@@ -6,7 +6,30 @@ from fastapi import Request, HTTPException, status, Depends
 from typing import Callable, Any
 
 # Environment configuration
-ENABLE_AGENTIC_AUTH = os.getenv("ENABLE_AGENTIC_AUTH", "false").lower() in ("true", "1", "yes")
+#
+# POSTURE ANNOUNCEMENT (2026-08-07). This flag DARK-LAUNCHES the enforcement arc
+# (ADR-0025): default OFF, and it flips LAST, after every enforcement point has migrated.
+# That default is deliberate and recorded — but a disabled gate that says nothing is
+# indistinguishable from an absent one, so the resolved posture is ANNOUNCED at import.
+#
+# The announcement names its SOURCE, not just its state, per the admitted_by pattern: after
+# the ADR-0025 flip, "DISABLED (DEFAULT)" must be impossible, and a log line that cannot
+# distinguish "nobody configured this" from "someone chose this" cannot show that. It also
+# makes the fresh-deploy posture assertion readable in a log as well as in a suite.
+#
+# ONE FLAG, THREE ENFORCEMENT POINTS (here, datahub_wrapper's can_view ask, weaviate_expert's
+# per-chunk can_read filter) — DELIBERATE, not a three-jobs defect. It means the system can
+# never occupy a PARTIAL enforcement state (door verified but chunks unfiltered, etc.), which
+# is the multiple-heads configuration ADR-0025 exists to kill. Staging the migration would
+# require SPLITTING the flag first; see the flip packet.
+_AGENTIC_AUTH_RAW = os.getenv("ENABLE_AGENTIC_AUTH")
+ENABLE_AGENTIC_AUTH = (_AGENTIC_AUTH_RAW or "false").lower() in ("true", "1", "yes")
+print(
+    f"agentic auth: {'ENFORCING' if ENABLE_AGENTIC_AUTH else 'DISABLED'} "
+    f"({'explicit config' if _AGENTIC_AUTH_RAW is not None else 'DEFAULT'}, "
+    f"dark-launch ADR-0025) [core.authz]",
+    flush=True,
+)
 TOPAZ_AUTHORIZER_URL = os.getenv("TOPAZ_AUTHORIZER_URL", "http://localhost:8282")
 TOPAZ_POLICY_PATH = os.getenv("TOPAZ_POLICY_PATH", "invincible_agent.authz")
 

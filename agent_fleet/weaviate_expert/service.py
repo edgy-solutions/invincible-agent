@@ -47,7 +47,17 @@ from baml_client import b
 # the filter code with the flag OFF is therefore a no-op (safe) — it does NOT
 # deny-all an un-seeded document directory until the flag is turned on.
 TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "http://topaz-svc:9393")
-ENABLE_AGENTIC_AUTH = os.getenv("ENABLE_AGENTIC_AUTH", "false").lower() in ("true", "1", "yes")
+# Posture ANNOUNCED at import, naming its SOURCE (2026-08-07) — see core/authz.py. A filter
+# that is OFF is a no-op by design here, which is exactly why its state must be legible: an
+# un-announced no-op filter and a missing filter look identical in a running system.
+_AGENTIC_AUTH_RAW = os.getenv("ENABLE_AGENTIC_AUTH")
+ENABLE_AGENTIC_AUTH = (_AGENTIC_AUTH_RAW or "false").lower() in ("true", "1", "yes")
+print(
+    f"agentic auth: {'ENFORCING' if ENABLE_AGENTIC_AUTH else 'DISABLED'} "
+    f"({'explicit config' if _AGENTIC_AUTH_RAW is not None else 'DEFAULT'}, "
+    f"dark-launch ADR-0025) [weaviate_expert: per-chunk can_read filter]",
+    flush=True,
+)
 
 
 def _can_read_document(caller_email: str, source_id: str) -> bool:

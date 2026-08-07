@@ -159,6 +159,27 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "CORTEX_CLIENT_ID") }}
   CORTEX_CLIENT_ID: "iagent-data-analyst"
   {{- end }}
+  {{- /* ENFORCEMENT POSTURE — declared, never implied (2026-08-07).
+  A SECURITY POSTURE MUST NOT RIDE AN IMPLICIT DEFAULT, whichever way the default points: a
+  reader cannot distinguish "deliberately off" from "nobody thought about it", and the next
+  fresh deploy inherits whichever the code happens to say. It is declared here so the chart —
+  not a fallback in three separate modules — is where the posture is read.
+  DIRECTION: false = the ADR-0025 enforcement gates are DARK-LAUNCHED (present in code,
+  inert). true = ENFORCING. The code default is also false and this value matches it
+  deliberately: the value is here to be VISIBLE, not to change behaviour.
+  ONE FLAG, THREE ENFORCEMENT POINTS — core/authz.py (JWT verification), datahub_wrapper
+  (query_metadata can_view ask), weaviate_expert (per-chunk can_read filter). That is the
+  design, not a three-jobs defect: it makes a PARTIAL enforcement state unreachable, which is
+  the multiple-heads configuration ADR-0025 exists to kill. Staging would require splitting
+  the flag first.
+  FLIPPING THIS IS NOT CONFIG HYGIENE — it is ADR-0025's final step ("flips LAST, after all
+  enforcement points migrate"). Its precondition enumeration includes the DA read path, whose
+  engine-side authz was deliberately removed in favour of a gateway gate whose subject is
+  currently payload-writable; flipping this flag does NOTHING for that path. See the flip
+  packet: docs/plans/enable-agentic-auth-flip-packet.md. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "ENABLE_AGENTIC_AUTH") }}
+  ENABLE_AGENTIC_AUTH: {{ .Values.enforcement.agenticAuth | default false | quote }}
+  {{- end }}
 
   # Shared Agent Fleet Configs
   {{- if .Values.agentFleet.env }}

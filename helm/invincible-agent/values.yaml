@@ -1682,6 +1682,26 @@ utilImages:
 # ==========================================================================
 # Secrets — override these in your values-production.yaml
 # ==========================================================================
+# ==========================================================================
+# Enforcement posture (ADR-0025)
+# ==========================================================================
+# DECLARED, NEVER IMPLIED. `false` = the enforcement gates are DARK-LAUNCHED:
+# present in code, inert at runtime. `true` = ENFORCING.
+#
+# This matches the code's own fallback deliberately — the point is that the
+# posture is VISIBLE here rather than living in three separate os.getenv
+# defaults, so a reader can tell "deliberately off" from "nobody decided".
+# Each service also ANNOUNCES its resolved posture at startup, naming whether
+# it came from explicit config or the default.
+#
+# Setting this to `true` is NOT a configuration change — it is ADR-0025's
+# final step ("flips LAST, after all enforcement points migrate"), and it
+# turns on THREE gates at once (JWT verification, catalog can_view, per-chunk
+# can_read). Read docs/plans/enable-agentic-auth-flip-packet.md first; its
+# precondition enumeration includes work that is not yet built.
+enforcement:
+  agenticAuth: false
+
 secrets:
   openaiApiKey: ""
   hfToken: ""

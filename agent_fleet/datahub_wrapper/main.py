@@ -405,7 +405,18 @@ _ENGINE_D_SERVED_DOMAIN = os.getenv("ENGINE_D_SERVED_DOMAIN", "DATA_ENGINEERING"
 # NOT here. The flag stays OFF until every enforcement point is migrated + the
 # directory is seeded (hop 1) — it flips LAST. OFF → the in-code gate holds,
 # behavior unchanged (dark launch).
-ENABLE_AGENTIC_AUTH = os.getenv("ENABLE_AGENTIC_AUTH", "false").lower() in ("true", "1", "yes")
+# Posture ANNOUNCED at import, naming its SOURCE (2026-08-07): a dark-launched gate that says
+# nothing is indistinguishable from an absent one. After the ADR-0025 flip, "DISABLED (DEFAULT)"
+# must be impossible — a line that cannot tell "nobody configured this" from "someone chose
+# this" cannot show that. Same wording in core/authz.py and weaviate_expert/service.py.
+_AGENTIC_AUTH_RAW = os.getenv("ENABLE_AGENTIC_AUTH")
+ENABLE_AGENTIC_AUTH = (_AGENTIC_AUTH_RAW or "false").lower() in ("true", "1", "yes")
+print(
+    f"agentic auth: {'ENFORCING' if ENABLE_AGENTIC_AUTH else 'DISABLED'} "
+    f"({'explicit config' if _AGENTIC_AUTH_RAW is not None else 'DEFAULT'}, "
+    f"dark-launch ADR-0025) [datahub_wrapper: query_metadata can_view]",
+    flush=True,
+)
 TOPAZ_AUTHORIZER_URL = os.getenv("TOPAZ_AUTHORIZER_URL", "http://topaz-svc:8383")
 _CATALOG_VIEW_POLICY_PATH = "invincible_agent.catalog.can_view"
 
