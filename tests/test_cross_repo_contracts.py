@@ -189,6 +189,74 @@ def test_the_producer_still_emits_both_fields_separately() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# SDK -> PLATFORM: the identity stanzas a scaffolded mesh tool ships with
+# ---------------------------------------------------------------------------
+# The SDK's scaffold emits IDENTITY.yaml so a new tool's service identity is a paste rather
+# than an undocumented Keycloak errand. But the SHAPE it emits must satisfy the platform's
+# realm-reconcile path — and the two live in DIFFERENT REPOS, which is the definition of the
+# class this file exists for. A stanza that pastes cleanly and reconciles NEVER is the
+# write-only-artifact shape: it looks like configuration and converges nothing.
+#
+# Pinned in BOTH directions, so a rename on either side goes red HERE:
+#   producer — the SDK emits clientId/authzId/secretRef and an svc:<name> user id;
+#   consumer — the chart's realm-reconcile job and realm import read exactly those keys.
+_SDK = _REPO.parent / "iagent-mesh-sdk"
+_RECONCILE = _REPO / "helm" / "invincible-agent" / "templates" / "realm-reconcile-job.yaml"
+_KC_REALM = _REPO / "helm" / "invincible-agent" / "templates" / "keycloak-configmap.yaml"
+
+
+def _sdk_stanzas(tool_name: str = "parts_lookup"):
+    """Import the SDK's PURE stanza builder — the same function the scaffold writes from."""
+    sdk = str(_SDK)
+    if sdk not in sys.path:
+        sys.path.insert(0, sdk)
+    from iagent_mesh.identity_stanzas import identity_stanzas  # type: ignore
+    return identity_stanzas(tool_name)
+
+
+def test_sdk_is_present_for_this_contract() -> None:
+    """Positive control: without the SDK checked out beside this repo the assertions below
+    would vacuously pass. Skip-shaped failures are how a cross-repo pin quietly stops
+    pinning."""
+    assert (_SDK / "iagent_mesh" / "identity_stanzas.py").exists(), (
+        f"SDK not found at {_SDK} — this contract cannot be verified, and silently passing "
+        "would be worse than failing"
+    )
+
+
+def test_sdk_stanza_keys_are_what_the_reconcile_job_reads() -> None:
+    """CONSUMER SIDE. The job dereferences $c.clientId / $c.authzId / $c.secretRef; the realm
+    import renders the same three. An SDK that emitted `client_id` would paste and reconcile
+    nothing."""
+    st = _sdk_stanzas()["serviceClient"]
+    assert set(st) == {"clientId", "authzId", "secretRef"}, (
+        f"SDK emits {sorted(st)} — the reconcile path reads clientId/authzId/secretRef"
+    )
+    job, realm = _txt(_RECONCILE), _txt(_KC_REALM)
+    for key in ("clientId", "authzId", "secretRef"):
+        assert f"$c.{key}" in job, f"reconcile job no longer reads {key}"
+        assert f"$c.{key}" in realm, f"realm import no longer reads {key}"
+
+
+def test_sdk_mints_the_mint_contract_shapes() -> None:
+    """`svc:<name>` is the entitlement subject, `iagent-<name>` the Keycloak clientId — the
+    convention iagent-review-starter set and the DA identity followed. A name invented
+    ad-hoc in a scaffold becomes the string a work grant keys on."""
+    st = _sdk_stanzas("parts_lookup")
+    assert st["serviceClient"]["clientId"] == "iagent-parts-lookup"
+    assert st["serviceClient"]["authzId"] == "svc:parts-lookup"
+    assert st["user"]["id"] == "svc:parts-lookup", "users.yaml seeds the svc:<name> subject"
+
+
+def test_scaffolded_identity_carries_no_grants() -> None:
+    """A scaffold that pre-granted its own identity would ship the confused deputy by
+    default: a service serving every caller, entitled to read on their behalf."""
+    st = _sdk_stanzas()
+    assert st["user"]["groups"] == [], "a scaffolded service identity must start ungranted"
+    assert "default" not in st["user"], "services carry no persona/domain cell"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -15,6 +15,27 @@
 # exception population; it fixes nothing. `ungated_by_accident` rows are FINDINGS whose fixes
 # are a separate, worst-first, seal-per-fix increment (see docs/architecture/endpoint-gating-audit.md).
 # Dark-launched gates (behind ENABLE_AGENTIC_AUTH, default off) count as "gate present", not none.
+#
+# AMENDMENT 2026-08-07 — THAT DEFINITION OF "PRESENT" ADMITTED THREE KINDS OF NOTHING.
+# The line above is kept as what was concluded; it is too weak, and the adjudication that
+# found this is now the standing method. A gate counts as PRESENT only if it is
+#   (a) APPLIED at an endpoint (wired, not merely importable),
+#   (b) VALIDATING THE CREDENTIAL'S CONTENT (not just its presence), and
+#   (c) FLAG-GATED (its posture declared and announced).
+# Three members of the class, all previously counted "present", all WORSE THAN ABSENT because
+# they survive an audit-by-name and train everyone to believe a property that does not hold:
+#   1. IMPORTABLE-BUT-UNAPPLIED — core/authz.py's auth_dependency is imported by NOBODY and
+#      applied nowhere; data_analyst imports the decorator and main.py:195 records that it
+#      "was removed from this handler". Flipping ENABLE_AGENTIC_AUTH turns on no JWT
+#      verification anywhere, because there is nothing wired to turn on.
+#   2. PRESENCE-ONLY — the SDK's /execute refused an ABSENT Authorization header and accepted
+#      ANY value present: `Bearer anything` passed, and LOCAL_DEV bypassed even that.
+#   3. ASSUMED-ELSEWHERE — the DA read path's engine-side authz was deliberately removed in
+#      favour of a gateway gate whose subject is a payload field the caller writes.
+# HOW PRESENCE IS VERIFIED FROM NOW ON: import-graph plus application-site read, never a
+# name-grep. A grep for Depends/verify_jwt/auth_dependency missed member 2 entirely, because
+# THE WEAKEST GATES ARE THE ONES GREP CANNOT FIND — they were never built as auth machinery,
+# so they carry none of its vocabulary.
 version: 1
 services:
 
