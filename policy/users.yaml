@@ -111,3 +111,19 @@ users:
   - id: svc:review-starter
     display_name: review-starter (service - extraction-to-review sensor)
     groups: []
+
+  # Instance TWO of the service species (2026-08-07). Engine DA's transport identity —
+  # `CortexDataClient` mints per call via client-credentials to reach the data broker.
+  # Seeded so the identity is LEGIBLE and grantable through the rails; NO grants are made
+  # here. Before granting anything to it, read this: the service credential says WHICH
+  # SERVICE is calling, not WHOSE data may be read. DA serves every caller, so a read grant
+  # on svc:data-analyst would entitle EVERY caller to whatever it can reach — the confused
+  # deputy the per-caller conjunction exists to prevent. The acting human currently rides
+  # separately (X-Originator-Email; the can_read gate is keyed on that), and formalising
+  # that delegation is an open design decision, not something to settle with a grant here.
+  # Replaces the hand-created sandbox client `engine-da-svc`, whose token carried no claim
+  # mapper at all — its authz_id fell back to the opaque Keycloak `sub` UUID, which is
+  # precisely the not-human-reviewable key this file exists to refuse.
+  - id: svc:data-analyst
+    display_name: data-analyst (service - Engine DA data-broker transport identity)
+    groups: []

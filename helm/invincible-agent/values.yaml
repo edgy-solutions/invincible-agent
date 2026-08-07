@@ -1343,6 +1343,11 @@ keycloak:
   # (keycloak-configmap.yaml) AND REVIEW_STARTER_CLIENT_SECRET in the Secret — they must match. Override
   # per deployment (a real secret at work); the sandbox default is a dev value, not sensitive.
   reviewStarterClientSecret: "sandbox-review-starter-secret"
+  # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
+  # review starter's above — this value AND the realm import's `secret` come from here, so
+  # they cannot drift. Override per deployment (a real secret at work); the sandbox default
+  # is a dev value, not sensitive. Reaches DA as CORTEX_CLIENT_SECRET.
+  dataAnalystClientSecret: "sandbox-data-analyst-secret"
   service:
     type: ClusterIP
     port: 8080

@@ -144,6 +144,21 @@ data:
   {{- if not (hasKey (.Values.agentFleet.env | default dict) "REVIEW_STARTER_CLIENT_ID") }}
   REVIEW_STARTER_CLIENT_ID: "iagent-review-starter"
   {{- end }}
+  {{- /* Engine DA's TRANSPORT identity — one pattern for service identities, not two. Mints per
+  call against KEYCLOAK_REALM_URL as this client; secret in CORTEX_CLIENT_SECRET; authz_id resolves
+  to svc:data-analyst via the hardcoded-claim mapper.
+  TRANSPORT, NOT ENTITLEMENT — read this before granting anything to svc:data-analyst. The service
+  credential says WHICH SERVICE is calling. It must never become the answer to WHOSE data may be
+  read: DA serves every caller, so entitling the service entitles every caller to whatever it can
+  reach — a confused deputy at the data plane. Today the acting human rides separately as
+  X-Originator-Email and the can_read gate is keyed on THAT, which is why this token's (previously
+  absent) email claim was never the gate's subject. Formalising that split — service credential
+  authorises the call, caller travels as data, enforcement scopes to the asserted subject, and the
+  right to assert on-behalf-of is itself a governed grant — is an open design item, deliberately
+  not decided by this wiring. */}}
+  {{- if not (hasKey (.Values.agentFleet.env | default dict) "CORTEX_CLIENT_ID") }}
+  CORTEX_CLIENT_ID: "iagent-data-analyst"
+  {{- end }}
 
   # Shared Agent Fleet Configs
   {{- if .Values.agentFleet.env }}
