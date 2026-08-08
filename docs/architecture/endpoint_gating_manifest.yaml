@@ -24,7 +24,12 @@
 #   (c) FLAG-GATED (its posture declared and announced).
 # Three members of the class, all previously counted "present", all WORSE THAN ABSENT because
 # they survive an audit-by-name and train everyone to believe a property that does not hold:
-#   1. IMPORTABLE-BUT-UNAPPLIED — core/authz.py's auth_dependency is imported by NOBODY and
+#   1. [CLOSED 2026-08-07 — the named instance is DELETED; see the retirement record at the
+#      foot of this file. The SPECIES stays documented: the class outlives the member, and
+#      this is the one an audit-by-name cannot see. Additionally, and not caught by the
+#      original finding: the helper never verified SIGNATURES (`verify_signature=False`), so
+#      it was unsound as well as unapplied — reading a gate's code beats reading its name.]
+#      IMPORTABLE-BUT-UNAPPLIED — core/authz.py's auth_dependency is imported by NOBODY and
 #      applied nowhere; data_analyst imports the decorator and main.py:195 records that it
 #      "was removed from this handler". Flipping ENABLE_AGENTIC_AUTH turns on no JWT
 #      verification anywhere, because there is nothing wired to turn on.
@@ -41,6 +46,18 @@ services:
 
   ontology_service:
     file: agent_fleet/ontology_service/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -173,6 +190,18 @@ services:
 
   datahub_wrapper:
     file: agent_fleet/datahub_wrapper/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -233,6 +262,18 @@ services:
 
   neo4j_expert:
     file: agent_fleet/neo4j_expert/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -269,6 +310,18 @@ services:
 
   weaviate_expert:
     file: agent_fleet/weaviate_expert/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -289,6 +342,18 @@ services:
 
   restate_analyst:
     file: agent_fleet/restate_analyst/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -325,6 +390,18 @@ services:
 
   data_analyst:
     file: agent_fleet/data_analyst/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -345,6 +422,18 @@ services:
 
   presentation_agent:
     file: agent_fleet/presentation_agent/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -365,6 +454,18 @@ services:
 
   mesh_registrar:
     file: agent_fleet/mesh_registrar/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -629,6 +730,18 @@ services:
 
   swarms_scraper:
     file: agent_fleet/swarms_scraper/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -649,6 +762,18 @@ services:
 
   langgraph_support:
     file: agent_fleet/langgraph_support/main.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
+    # is a FastAPI APP-LEVEL dependency: it covers every route below. Repeating it on each row
+    # would misdescribe an app-wide property as a per-route decision, which is how the old
+    # "gate present" rows came to mean less than they read.
+    # Satisfies all three clauses of the amended definition of PRESENT:
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
     routes:
       - method: GET
         path: /health
@@ -667,9 +792,29 @@ services:
         class: releasable_by_design
         justification: "templated triage/respond placeholder; no data-plane access"
 
-  # core/authz.py is a GATE HELPER (require_topaz_auth dependency factory), not a FastAPI
-  # service — it defines NO routes (the @app.post in its docstring is a usage example). It
-  # is the reusable Topaz-check dependency the ungated routes above should adopt.
-  core_authz:
-    file: agent_fleet/core/authz.py
-    routes: []
+  # RETIRED AND DELETED 2026-08-07 — `core_authz` (agent_fleet/core/authz.py).
+  #
+  # AMENDED ABOVE THE ORIGINAL, which is preserved here because the row itself was the
+  # defect worth remembering. It read:
+  #
+  #   "core/authz.py is a GATE HELPER (require_topaz_auth dependency factory), not a FastAPI
+  #    service — it defines NO routes... It is the reusable Topaz-check dependency the ungated
+  #    routes above should adopt."
+  #
+  # That last clause is the FALSE ROW. The manifest — the map of the fleet's gating posture —
+  # was actively RECOMMENDING that every ungated route adopt this helper. Anyone who followed
+  # the map would have wired an unsound gate across the fleet and recorded it as progress.
+  #
+  # WHY UNSOUND, not merely unapplied: it decoded the bearer with `verify_signature=False`,
+  # deferring to "the API Gateway/BFF" — security assumed at a boundary the process does not
+  # control. With ENABLE_AGENTIC_AUTH flipped it would have accepted any FORGED token carrying
+  # a `sub` claim and then asked Topaz about that unauthenticated identity. The flag would have
+  # read as enforcement while authenticating nobody: the audit-by-name failure this manifest's
+  # 2026-08-07 amendment exists to catch, found in the manifest's own recommendation.
+  #
+  # Deleted rather than repaired because a second implementation of inbound verification is
+  # precisely what the one-implementation ruling forbids. Verification now lives in
+  # `iagent_mesh.transport_auth`, declared per-service above as `inbound_transport_auth`.
+  #
+  # Species 1 of the amendment header (IMPORTABLE-BUT-UNAPPLIED) is hereby CLOSED: its named
+  # instance no longer exists. The species stays documented — the class outlives the member.

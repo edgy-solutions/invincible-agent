@@ -41,7 +41,12 @@ SERVICE_FILES: dict[str, str] = {
     "domain_broker": "helm/invincible-agent/files/domain-broker.py",
     "swarms_scraper": "agent_fleet/swarms_scraper/main.py",
     "langgraph_support": "agent_fleet/langgraph_support/main.py",
-    "core_authz": "agent_fleet/core/authz.py",
+    # `core_authz` removed 2026-08-07: agent_fleet/core/authz.py is DELETED. It defined no
+    # routes; it was carried here only so the manifest could describe the gate helper the
+    # ungated rows were told to adopt. That recommendation was the false row — the helper
+    # decoded bearers with verify_signature=False. Inbound verification is now the SDK's
+    # `iagent_mesh.transport_auth`, declared per-service in the manifest as
+    # `inbound_transport_auth` and asserted by tests/test_transport_auth_applied_everywhere.py.
 }
 
 _HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
