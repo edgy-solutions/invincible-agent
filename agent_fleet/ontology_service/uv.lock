@@ -582,8 +582,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.2.2"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.2.2#3911a122b616f441c385387809d43273e38f1019" }
+version = "0.2.3"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.2.3#f24fdfd85e4eaa848289c6d882509ce9847a108d" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "fastapi" },
@@ -827,7 +827,7 @@ requires-dist = [
     { name = "baml-py", specifier = "==0.219.0" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.2.2" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.2.3" },
     { name = "langfuse", specifier = ">=3.0.0" },
     { name = "neo4j" },
     { name = "packaging" },

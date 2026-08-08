@@ -2729,9 +2729,11 @@ from fastapi import Depends
 # phase's fresh-deploy test asserts against — an engine that takes the dependency but loses
 # the announcement has a real posture the gauge cannot read.
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 _announce_transport_auth(component="engine-a")
 app = FastAPI(
+    **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
     dependencies=[Depends(_transport_auth("engine-a"))],
     title="Engine A — Restate Analyst",
     description=(

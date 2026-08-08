@@ -24,6 +24,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 
 _announce_transport_auth(component="projector")
@@ -87,6 +88,7 @@ def create_app(loop: Optional[ApplyLoop] = None) -> FastAPI:
     # "fleet-wide" claim until 2026-08-07 purely because the applied-everywhere test derived its
     # population from `agent_fleet/*/main.py`: the GLOB was the boundary, not a decision.
     app = FastAPI(
+        **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
         lifespan=lifespan,
         title="iagent-projector",
         dependencies=[Depends(_transport_auth("projector"))],

@@ -27,6 +27,7 @@ from typing import Any, Dict
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 from pydantic import BaseModel
 
@@ -156,6 +157,8 @@ async def lifespan(app: FastAPI):
 _announce_transport_auth(component="domain-broker")
 
 app = FastAPI(
+
+    **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
     lifespan=lifespan,
     title="iagent Sandbox Domain Broker",
     dependencies=[Depends(_transport_auth("domain-broker"))],

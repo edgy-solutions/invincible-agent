@@ -33,7 +33,7 @@ dependencies = [
     # resolved fine in the dev venv and in tests, and would have ImportError'd at container
     # start — the failure mode that looks like a passing suite. Pinned to a TAG (see the
     # floating-ref guard in tests/test_no_floating_git_dependencies.py).
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.2",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.3",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
@@ -94,7 +94,7 @@ dev = [
     # auth and identity minting, so a floating ref would let a single SDK commit change
     # every engine's security behaviour at rebuild — the library-bump outage class with
     # credentials attached (cf. the doc-tools floating-@rev finding).
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.2",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.3",
     "provenance-telemetry==0.1.0",
 ]
 
