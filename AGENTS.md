@@ -890,6 +890,55 @@ form: **a conclusion that travels by repetition rather than by evidence gets re-
 inherited** — chat-borne claims have no verification gate, so any claim important enough to cross
 a session or a handoff crosses as a checkable statement WITH its evidence, or not at all.
 
+### A guard going QUIET and a guard going GREEN are indistinguishable in a summary line
+The inverse of the rule above, and a distinct species. That one is a probe reporting zero because
+it cannot see. This is a guard reporting zero violations **because nothing it watches exists any
+more** — its subjects migrated out of scope, and it kept passing, forever, about nothing.
+
+2026-08-08. Seven pyprojects carried `provenance-telemetry` as a bare git URL, tracked as named
+debt in a `_KNOWN_UNPINNED` allowlist so the floating-dependency guard could still block NEW
+violations. The package was then published to PyPI and all seven became
+`provenance-telemetry==0.1.0`. Emptying the allowlist looked like the debt closing. It was not:
+**every test in that file matches on `git+`**, so the moment those became index requirements they
+left the guard's jurisdiction entirely. The allowlist would have read as resolved while the check
+had gone blind — and the suite would have been greener, not less informative-looking, for having
+stopped checking.
+
+Note the shape of the trap: nothing failed, nothing was deleted, and no one made a mistake. A
+dependency changed *syntax*, and a guard silently retired. **Subjects migrating out of scope is
+how guards retire without anyone deciding** — the supply-chain form of the same undecided-change
+class the pin doctrine exists to forbid.
+
+**The paired rule: every scope-defined guard asserts that its scope is INHABITED.** "This guard
+currently watches N declarations, N > 0" is the assertion that separates *clean* from *vacant*;
+without it the two render identically. Pair it with a break-on-purpose that shows selectivity —
+one violation must fail its own case and nothing else — and the guard has proven both that it
+looks and that it bites.
+
+And when an obligation crosses a representation boundary, **re-home it rather than retire it**.
+The rule here was never "git refs must be pinned"; it was *a build input nobody decided is
+forbidden*. On an index that same failure wears different syntax — a bare name resolves to
+whatever is newest at build time — so the guard follows the rule, not the syntax it first met it in.
+
+### A range on a fleet-governing dependency is a floating ref with a ceiling
+Same 2026-08-08 repin. `>=0.1.0,<0.2` is narrower than `@master` and the same species: an upstream
+publish still changes seven components' behaviour on their next rebuild, with nobody deciding and
+no diff in this repo to review. The ceiling bounds the blast radius; it does not restore the
+decision.
+
+**The discriminating question is not "how risky is the upgrade" but "does this upgrade deserve a
+visible diff?"** For a leaf governing fleet telemetry — whose replay-safety semantics were settled
+by a week of manufactured-replay witnesses — yes, and `==` is precisely the mechanism that routes
+that decision to a human. For a third-party utility, usually no, and a range is right.
+
+Corollary, because the class recurs one level down: a leaf's OWN unbounded dependency is the same
+defect inherited. `provenance-telemetry` declares `langfuse>=3.0.0` with no upper bound while
+targeting v3/v4, so a future langfuse 5 would arrive unreviewed inside the package whose entire job
+is replay-safe span semantics. **Pin doctrine applies to what you publish, not only to what you
+consume.**
+
+**Loosen deliberately; never inherit silently.**
+
 ### A RED result lies more dangerously than a green one, because nobody attacks it
 This arc's whole discipline aims at greens that lie. 2026-08-04 produced the mirror: a probe
 reported **RED on a healthy system**. It read the reviewer's queue immediately after `start_review`

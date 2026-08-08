@@ -65,6 +65,18 @@ write endpoints on the decision plane.
 Note what the drift means independently of the test: these 12 endpoints exist and the fleet's
 own map does not know about them. The manifest's value is exactly its completeness.
 
+## Line of record — supply chain, 2026-08-08
+
+**No floating dependency anywhere in the repo; every pin tested; every guard proven inhabited.**
+
+`_KNOWN_UNPINNED` is empty. Every git dependency carries an immutable ref (semver tag or full
+40-hex SHA); every internal index dependency carries a version specifier; and each guard asserts
+its own scope is non-empty, so none of them can retire by having its subjects migrate away.
+
+The supply chain now holds the property the runtime earned this month: **nothing in it can change
+without a diff someone chose to merge.** Worth stating because it is a *perishable* property —
+one bare requirement string restores the old world, which is exactly what the guards are for.
+
 ## Method notes this session should encode
 
 Two instrument defects were found the expensive way during the triage. Both are general.
