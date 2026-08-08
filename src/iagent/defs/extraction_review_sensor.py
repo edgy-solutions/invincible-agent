@@ -799,6 +799,149 @@ _TRIAGE_AUDIENCE = os.getenv("REVIEW_TRIAGE_AUDIENCE", "").strip()
 _REQUEST_KEY_EPOCH = (lambda e: f"{e}|" if e else "")(os.getenv("REVIEW_REQUEST_KEY_EPOCH", "").strip())
 
 
+# ── AT-LEAST-ONCE DISPATCH: re-arm a REAPED run (2026-08-08) ─────────────────
+# THE DEFECT THIS CLOSES. `run_key` was consumed at DISPATCH, not at COMPLETION. Dagster's dedup is
+# keyed on submission, so once a RunRequest was submitted the sensor could never produce another run
+# for that artifact — no matter how the run ENDED. And the cursor had already advanced past the
+# object, so neither mechanism would ever re-see it. A run killed by run monitoring therefore dropped
+# its notice PERMANENTLY and SILENTLY: no retry, no log, no trace. That is at-most-once intake on a
+# pipeline whose entire contract is durable delivery, and it has the wedge's signature — nothing red,
+# the artifact simply absent.
+#
+# Observed live 2026-08-07: unwedging the cursor released a 9-artifact backlog in one tick, the
+# sandbox saturated (user-code gRPC health-check timeouts, cortex-bff liveness failures), and 6 of 9
+# runs were reaped — "marked as failed from outside the execution context".
+#
+# A REAP IS NOT A FAILURE, and the distinction is the whole design. This pipeline DELIBERATELY fails
+# a run on a systemic refusal (`classify_start_review` -> `refused_systemic` -> `raise Failure`): that
+# is a loud red run for ops, intended, and retrying it would just re-refuse until a human fixes the
+# grant or the ruleset — the `REVIEW_REQUEST_KEY_EPOCH` lever already exists for that. A REAP is the
+# opposite: the execution was LOST, the pipeline never reached a verdict, and there is nothing for a
+# human to act on. Re-arming everything would spam; re-arming nothing loses notices.
+#
+# THE DISCRIMINANT, validated against BOTH categories in real run history rather than assumed:
+#   reaped            -> FAILURE with ZERO `STEP_FAILURE` events (6/6 of the runs above)
+#   designed failure  -> FAILURE WITH a `STEP_FAILURE` event  (3/3 older systemic refusals)
+# `raise Failure(...)` inside the op always emits STEP_FAILURE; a monitoring kill emits only
+# PIPELINE_FAILURE. A probe that cannot see both categories cannot discriminate, so both were checked.
+_MAX_DISPATCH_ATTEMPTS = int(os.getenv("REVIEW_MAX_DISPATCH_ATTEMPTS", "3"))
+# How far back to look for re-armable runs. Bounded so the tick cost stays flat; event logs are read
+# only for the FAILED runs in this window, never for all of them.
+_REARM_SCAN_LIMIT = int(os.getenv("REVIEW_REARM_SCAN_LIMIT", "60"))
+
+TAG_ARTIFACT = "review/artifact_key"
+TAG_ATTEMPT = "review/attempt"
+
+
+def _rearm_run_key(base: str, attempt: int) -> str:
+    """Attempt 1 keeps the ORIGINAL key, so the normal path is byte-identical to before this feature.
+    Later attempts get a distinct suffix, because a used run_key can never produce a second run."""
+    return base if attempt <= 1 else f"{base}#a{attempt}"
+
+
+def _is_reaped(instance, run) -> bool:
+    """FAILED, but the step never failed — the execution was lost, not refused.
+
+    Reading the event log is the only place this is knowable; `run.status` says FAILURE for both.
+    """
+    from dagster import DagsterEventType  # noqa: PLC0415
+
+    for ev in instance.all_logs(run.run_id):
+        de = getattr(ev, "dagster_event", None)
+        if de is not None and de.event_type == DagsterEventType.STEP_FAILURE:
+            return False
+    return True
+
+
+_IN_FLIGHT = frozenset({"QUEUED", "NOT_STARTED", "STARTING", "STARTED", "MANAGED", "CANCELING"})
+
+
+def _rearm_requests(context) -> List[RunRequest]:
+    """One more dispatch for each artifact whose ONLY attempts were reaped.
+
+    UNTAGGED RUNS ARE INVISIBLE HERE, and that is deliberate rather than incidental. Only runs
+    dispatched by the tagging code carry `review/artifact_key`, so history predating this feature can
+    never be re-armed — including the six reaped runs that exposed the defect, which were prior
+    sessions' unsettled witness fixtures and extraction experiments. Re-driving those would file
+    experiments into humans' review queues. The tag IS the opt-in boundary, so no epoch, no cutoff
+    timestamp, and no deletion of anyone else's residue is required to bound this safely.
+    """
+    from dagster import RunsFilter  # noqa: PLC0415
+
+    # `context.instance` RAISES when no instance ref was provided — it does not return None — so a
+    # bare `getattr(..., None)` is not a guard here. Caught 2026-08-08 by two unrelated cursor tests
+    # going red: the re-arm was one attribute access away from becoming a PRECONDITION for new
+    # dispatch, which is exactly the inversion this feature must never make. A retry mechanism that
+    # can block first delivery is worse than the gap it fills. The access is inside the try for that
+    # reason, not for tidiness.
+    try:
+        inst = context.instance
+        runs = inst.get_runs(filters=RunsFilter(job_name="start_review_job"),
+                             limit=_REARM_SCAN_LIMIT)
+    except Exception as exc:  # noqa: BLE001 — re-arm must never wedge NEW dispatch
+        context.log.warning(f"re-arm scan unavailable ({type(exc).__name__}: {exc}); "
+                            f"new dispatch is unaffected")
+        return []
+
+    by_artifact: dict = {}
+    for r in runs:
+        art = (r.tags or {}).get(TAG_ARTIFACT)
+        if art:
+            by_artifact.setdefault(art, []).append(r)
+
+    out: List[RunRequest] = []
+    for art, group in by_artifact.items():
+        statuses = {r.status.value for r in group}
+        # SETTLED OR MOVING — nothing is owed. This is the LOAD-BEARING guard, and it is written as
+        # one condition on purpose: an earlier version also re-checked `latest.status != FAILURE`,
+        # which made this line redundant under the usual ordering and therefore un-sealable — the
+        # break-on-purpose for it stayed green because the other check absorbed the mutation. A guard
+        # a mutation cannot reach is decoration. Remove this and a live attempt gets re-armed
+        # alongside itself every tick: a delivery guarantee turned into the outage it was meant to
+        # prevent.
+        if "SUCCESS" in statuses or (statuses & _IN_FLIGHT):
+            continue
+        # A HUMAN STOPPED IT. Cancellation is intent, and re-arming over intent is worse than the
+        # gap this closes — the operator would have no way to make the pipeline stop trying.
+        if "CANCELED" in statuses:
+            continue
+        attempts = [int((r.tags or {}).get(TAG_ATTEMPT) or 1) for r in group]
+        latest = max(group, key=lambda r: int((r.tags or {}).get(TAG_ATTEMPT) or 1))
+        if not _is_reaped(inst, latest):
+            continue                                   # a DESIGNED failure stays failed, once, for ops
+        n = max(attempts)
+        if n >= _MAX_DISPATCH_ATTEMPTS:
+            # GIVING UP IS AN EVENT, NOT A DEFAULT. Exhausting retries silently would rebuild the
+            # exact hole this closes, one layer further in.
+            context.log.error(
+                f"DISPATCH EXHAUSTED for {art} after {n} attempts, all REAPED (never refused) — this "
+                f"notice has NOT been reviewed and will not be retried automatically. Re-drive it via "
+                f"the ops path, or raise REVIEW_MAX_DISPATCH_ATTEMPTS if the cause was load."
+            )
+            continue
+        cfg = latest.run_config or {}
+        url = (((cfg.get("ops") or {}).get("start_review_op") or {}).get("config") or {}).get(
+            "review_json_url")
+        if not url:
+            context.log.warning(f"cannot re-arm {art}: the reaped run carries no review_json_url")
+            continue
+        # The run_config is taken FROM THE REAPED RUN, not rebuilt from a fresh listing: the artifact
+        # may have moved or aged out of the cursor window, and the thing being retried is THAT
+        # dispatch. Downstream double-composition is already prevented — the BFF's ingress
+        # idempotency key is (request_key, approver) and request_key is ETag+key, so a retry ATTACHES
+        # to any in-flight or completed composition instead of racing a second one.
+        base = (latest.tags or {}).get("review/run_key_base") or art
+        context.log.warning(
+            f"RE-ARMING {art} (attempt {n + 1}/{_MAX_DISPATCH_ATTEMPTS}) — the previous run was "
+            f"REAPED, not refused, so the notice was never actually reviewed")
+        out.append(RunRequest(
+            run_key=_rearm_run_key(base, n + 1),
+            run_config={"ops": {"start_review_op": {"config": {"review_json_url": url}}}},
+            tags={TAG_ARTIFACT: art, TAG_ATTEMPT: str(n + 1), "review/run_key_base": base},
+        ))
+    return out
+
+
 class StartReviewConfig(Config):
     review_json_url: str  # s3://bucket/.../review.json
     doc_type: str = "PCN"
@@ -975,10 +1118,17 @@ def extraction_review_sensor(context: SensorEvaluationContext):
         # failure this whole guard exists to prevent was a skip reason that lied.
         context.log.error(str(exc))
         return SkipReason(f"CURSOR WEDGED — not idle: {exc}")
+    # RE-ARM BEFORE THE EMPTY CHECK. A reaped run is work the pipeline OWES, and it is owed whether
+    # or not a new artifact happened to land this tick — gating retries behind new arrivals would
+    # make delivery depend on unrelated traffic, which is the same "silent unless something else
+    # happens" shape as the wedge. Never allowed to wedge new dispatch: it fails soft to [].
+    rearms = _rearm_requests(context)
     objs = _list_new_review_jsons(s3, _ARTIFACT_BUCKET, _WATCH_PREFIX, since)
     if not objs:
+        if rearms:
+            return SensorResult(run_requests=rearms)
         return SkipReason(f"no new extractions (review.json) after cursor {since}")
-    requests = []
+    requests = list(rearms)
     last = since
     for o in objs:
         key = o["Key"]
@@ -1003,6 +1153,13 @@ def extraction_review_sensor(context: SensorEvaluationContext):
                         "review_json_url": f"s3://{_ARTIFACT_BUCKET}/{key}",
                     }}}
                 },
+                # THE TAGS ARE THE DELIVERY LEDGER. `run_key` alone cannot answer "was this artifact
+                # ever actually reviewed?" — it is consumed at dispatch and says nothing about how the
+                # run ended. These carry the artifact identity and the attempt number into the run
+                # record, which is the only durable place a later tick can read them from. They also
+                # BOUND the re-arm: history without them is invisible to it (see `_rearm_requests`).
+                tags={TAG_ARTIFACT: key, TAG_ATTEMPT: "1",
+                      "review/run_key_base": _run_key_of(o)},
             )
         )
         # Advance only past objects we actually DISPATCHED or deliberately skipped, in
