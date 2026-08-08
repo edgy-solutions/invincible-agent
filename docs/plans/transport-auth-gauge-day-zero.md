@@ -1,5 +1,47 @@
 # Transport-auth gauge — day zero
 
+> ## SUPERSEDED READING (2026-08-08, after SDK v0.2.2) — **22 / 0 verified / 22 unverified**
+>
+> The reading below (549) was taken before probe paths were exempt and is **kept as the
+> before-picture, not as the odometer's start**. After exempting kubelet paths in the SDK and
+> the registrar's `/v1/healthz` in the chart, the gauge is pure signal:
+>
+> | | 2026-08-08 (before exemption) | 2026-08-08 (after) |
+> |---|---:|---:|
+> | gauge lines, fleet | 549 | **22** |
+> | verified | 0 | 0 |
+> | unverified | 549 | **22** |
+> | of which probe traffic | ~527 | **0** |
+>
+> **All 22 are `path=/v1/register`, reason `absent, no mint attempted`** — engines
+> self-registering with no Authorization header, on nine of ten services silent. This is the
+> contract phase's entire remaining population, and it is now countable *because* the
+> instrument stopped counting things that can never migrate.
+>
+> **The flip's precondition is now satisfiable.** "Zero unverified on non-exempt paths" is a
+> number that can actually reach zero: 22 → 0 as the registration caller mints. Before the
+> exemption it could not, since probes kept it permanently nonzero — an unsatisfiable
+> precondition being one that eventually gets waived.
+>
+> Verified live under REQUIRE on a throwaway pod behind no Service (image `33e9dd8`):
+> `/health` no token → **200**; `/query_knowledge` no token → **401**; garbage bearer → **403**
+> (`invalid: DecodeError`); minted `svc:supervisor` → past the gate (502 from Restate, a
+> *handler* failure); and with `TRANSPORT_AUTH_EXEMPT_PATHS=/v1/healthz`, `/health` → **401**,
+> confirming replace-not-extend on the real image.
+>
+> **OPEN — found by that same witness:** `/openapi.json`, `/docs` and `/redoc` return **200
+> unauthenticated even under REQUIRE**. FastAPI registers them via Starlette's `add_route`, not
+> `add_api_route`, so app-level `dependencies=` never applies. The endpoint-gating manifest's
+> claim that the app-level dependency "covers every route" is therefore **false for three routes
+> on all twelve services**. Information disclosure (full API surface enumerable), not data
+> access. Needs a ruling: disable docs in deployed images, or gate them in the SDK's factory.
+>
+> **OPEN — the litany's leg 5 is currently vacuous.** It probes `/health`, which is now exempt,
+> so it reads 0 for every service and can no longer fail. My own instrument, broken by my own
+> fix — the guard-gone-quiet species. It needs a non-exempt probe path per service before it
+> counts as a check again.
+
+
 **Taken 2026-08-08, immediately after the OBSERVE roll completed** (invincible-agent `24c038a`,
 iagent-mesh-sdk `v0.2.1`, sandbox cluster `edge` / namespace `sandbox`).
 

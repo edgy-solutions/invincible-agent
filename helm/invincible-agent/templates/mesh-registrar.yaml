@@ -46,6 +46,21 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           env:
+            # This service probes /v1/healthz, which is NOT in the SDK's default exempt set
+            # ("/health", "/healthz", "/livez", "/readyz"). Measured after the v0.2.2 roll: of
+            # 51 gauge lines fleet-wide, 29 were this service's own probes — 57% of the entire
+            # remaining signal was noise from one path.
+            #
+            # That matters because the gauge is the contract flip's odometer: its precondition
+            # is "zero unverified on non-exempt paths", and probe traffic keeps the count
+            # permanently nonzero, making the precondition unsatisfiable. Exempting this path is
+            # what leaves the 22 /v1/register calls visible as the migration's ACTUAL work.
+            #
+            # The list REPLACES the SDK default rather than extending it, so the defaults are
+            # repeated here on purpose: the effective set must be readable off one value instead
+            # of being a union of a literal and a default nobody can see from here.
+            - name: TRANSPORT_AUTH_EXEMPT_PATHS
+              value: "/health,/healthz,/livez,/readyz,/v1/healthz"
             # Restate ingress URL — used by the v0.2 saga registration
             # workflow. Resolves to the chart-managed Restate service
             # when `restate.enabled=true`, or to `externalRestate.ingressUrl`
