@@ -257,7 +257,7 @@ jobs:
           COPY ${AGENT_DIR}/pyproject.toml* ${AGENT_DIR}/uv.lock* ./
           RUN --mount=type=cache,target=/root/.cache/uv \
               if [ -f "pyproject.toml" ]; then \
-                  uv sync --frozen --no-dev --no-install-project --compile-bytecode && \
+                  uv sync --locked --no-dev --no-install-project --compile-bytecode && \
                   uv pip install packaging setuptools wheel; \
               fi
           COPY ${AGENT_DIR}/ /app/
@@ -302,7 +302,7 @@ jobs:
           COPY agent_fleet/core/ /app/core/
           RUN --mount=type=cache,target=/root/.cache/uv \
               if [ -f "pyproject.toml" ]; then \
-                  uv sync --frozen --no-dev --no-install-project --compile-bytecode && \
+                  uv sync --locked --no-dev --no-install-project --compile-bytecode && \
                   uv pip install packaging setuptools wheel; \
               fi
 
