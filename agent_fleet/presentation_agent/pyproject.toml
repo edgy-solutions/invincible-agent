@@ -25,7 +25,7 @@ dependencies = [
     # startup — every other verb-registering engine already declares this.
     "acryl-datahub",
     "langfuse>=3.0.0",   # ADR-0038 v4 telemetry
-    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
+    "provenance-telemetry==0.1.0",
 ]
 
 [build-system]

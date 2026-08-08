@@ -34,11 +34,26 @@ _ROOT = Path(__file__).resolve().parents[1]
 _GIT_DEP = re.compile(r'"(?P<name>[A-Za-z0-9._-]+)\s*@\s*git\+(?P<url>[^"]+)"')
 _IMMUTABLE = re.compile(r"^(?:v\d+\.\d+\.\d+[\w.-]*|[0-9a-f]{40})$")
 
-# Known, NAMED debt — `provenance-telemetry` publishes NO TAGS upstream, so there is nothing to
-# pin to but a SHA, and freezing seven components' telemetry is a deployment decision, not a
-# test's to make. Listed so the guard still blocks NEW floating deps while this one is open.
-# Removing an entry here is the fix; adding one requires the same explicit argument.
-_KNOWN_UNPINNED = {"provenance-telemetry"}
+# CLOSED 2026-08-08 — was {"provenance-telemetry"}. That package published no tags, so seven
+# pyprojects carried it as a BARE git URL. It is now on PyPI at 0.1.0 and all seven declare
+# `provenance-telemetry==0.1.0`. Empty is the correct state; an entry here is open debt.
+_KNOWN_UNPINNED: set[str] = set()
+
+# THE OBLIGATION MOVED — it did not vanish, and that distinction is the whole point of this
+# block. Once a dependency is declared from an INDEX rather than from git, every test above
+# stops seeing it: they match on `git+`. So emptying the allowlist above would have read as
+# "resolved" when the check had merely lost jurisdiction — a guard going quiet and a guard
+# going green look identical in a summary line.
+#
+# The floating form on an index is a BARE NAME: `"provenance-telemetry"` with no specifier
+# resolves to whatever is newest at build time, which is the same "build input nobody decided"
+# the git rule exists to forbid, wearing different syntax.
+#
+# Scoped to the distributions WE publish, because these are the ones where an upstream commit
+# and a local rebuild are the same team's decision minutes apart — the case where drift is both
+# most likely and least noticed. Third-party ranges are a different risk conversation.
+_INTERNAL_DISTRIBUTIONS = {"provenance-telemetry", "iagent-mesh", "edgy-dag-tools", "dag-tools"}
+_HAS_SPECIFIER = re.compile(r"[=<>~!]")
 
 
 def _pyprojects() -> list[Path]:
@@ -81,6 +96,57 @@ def test_the_known_unpinned_set_does_not_grow():
     assert not unexpected, (
         f"new floating git dependencies appeared: {sorted(unexpected)}. Pin them to a tag or a "
         f"full SHA rather than adding them to _KNOWN_UNPINNED."
+    )
+
+
+@pytest.mark.parametrize("path", _pyprojects(),
+                         ids=lambda p: str(p.relative_to(_ROOT)).replace("\\", "/"))
+def test_internal_index_dependencies_carry_a_version(path: Path):
+    """An internal package declared from an index must carry a VERSION SPECIFIER.
+
+    This is the git rule's index-side twin, and it exists because the git-side tests cannot
+    see these declarations at all. `"provenance-telemetry"` bare resolves to whatever is
+    newest when the image builds; `"provenance-telemetry==0.1.0"` is a decision someone made
+    and someone can review in a diff.
+    """
+    src = path.read_text(encoding="utf-8")
+    # Only plain (non-git, non-path) requirement strings — git deps are covered above.
+    for m in re.finditer(r'"(?P<req>[A-Za-z0-9._-]+(?:\[[^\]]*\])?[^"]*)"', src):
+        req = m.group("req")
+        if "@" in req or "/" in req:
+            continue
+        name = re.split(r"[\[=<>~! ]", req, 1)[0].strip().lower()
+        if name not in _INTERNAL_DISTRIBUTIONS:
+            continue
+        assert _HAS_SPECIFIER.search(req), (
+            f"{path.relative_to(_ROOT)}: internal dependency {name!r} is declared as a BARE "
+            f"NAME ({req!r}) — it resolves to whatever is newest at BUILD time. That is the "
+            f"same undecided build input the git-ref rule forbids, in index syntax. Pin it."
+        )
+
+
+def test_the_internal_pin_guard_is_not_vacuous():
+    """Positive control: this guard is worthless if no internal dependency is declared anywhere.
+
+    A rule that matches nothing passes forever. When `provenance-telemetry` moved from a git
+    URL to an index requirement, every git-side test silently stopped covering it — so this
+    asserts the new guard actually has subjects, which is the specific failure that motivated
+    writing it.
+    """
+    found = set()
+    for path in _pyprojects():
+        src = path.read_text(encoding="utf-8")
+        for m in re.finditer(r'"(?P<req>[A-Za-z0-9._-]+(?:\[[^\]]*\])?[^"]*)"', src):
+            req = m.group("req")
+            if "@" in req or "/" in req:
+                continue
+            name = re.split(r"[\[=<>~! ]", req, 1)[0].strip().lower()
+            if name in _INTERNAL_DISTRIBUTIONS:
+                found.add(name)
+    assert found, (
+        "no internal index dependency found in any pyproject — either they all moved back to "
+        "git URLs (fine, the git tests cover them) or this guard's name set is stale. Either "
+        "way it is currently asserting nothing."
     )
 
 

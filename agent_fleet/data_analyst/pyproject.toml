@@ -21,7 +21,7 @@ dependencies = [
     "pyjwt[crypto]",
     "acryl-datahub",
     "langfuse>=3.0.0",   # ADR-0038 v4 telemetry (also pulled transitively by the leaf)
-    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
+    "provenance-telemetry==0.1.0",
 ]
 
 [build-system]

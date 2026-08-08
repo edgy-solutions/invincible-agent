@@ -95,7 +95,7 @@ dev = [
     # every engine's security behaviour at rebuild — the library-bump outage class with
     # credentials attached (cf. the doc-tools floating-@rev finding).
     "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.0",
-    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
+    "provenance-telemetry==0.1.0",
 ]
 
 [build-system]

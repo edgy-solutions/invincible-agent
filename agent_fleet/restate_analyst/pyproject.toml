@@ -28,7 +28,7 @@ dependencies = [
     # every engine's security behaviour at rebuild — the library-bump outage class with
     # credentials attached (cf. the doc-tools floating-@rev finding).
     "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.2.0",
-    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",  # ADR-0038 telemetry leaf (via baml_shared/telemetry.py shim)
+    "provenance-telemetry==0.1.0",  # ADR-0038 telemetry leaf (via baml_shared/telemetry.py shim)
     # ADR-0034 phase 1.3 — ReviewStarter fetches review.json to DERIVE the trust key from the
     # artifact instead of trusting a caller-asserted one. The MinIO credentials were already in
     # engine-a's env (ARTIFACT_BUCKET / MINIO_*) but no S3 client was: the auth was provisioned

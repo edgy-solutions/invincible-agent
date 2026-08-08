@@ -24,7 +24,7 @@ dependencies = [
     "ollama",
     "python-dotenv",
     "langfuse>=3.0.0",
-    "provenance-telemetry @ git+https://github.com/edgy-solutions/provenance-telemetry.git",
+    "provenance-telemetry==0.1.0",
     "litellm",
     "packaging",
     "acryl-datahub",
