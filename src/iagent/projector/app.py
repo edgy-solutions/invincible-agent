@@ -22,7 +22,11 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+
+_announce_transport_auth(component="projector")
 
 from .apply_loop import ApplyLoop, build_loop_from_env
 
@@ -78,7 +82,15 @@ def create_app(loop: Optional[ApplyLoop] = None) -> FastAPI:
                 except asyncio.TimeoutError:
                     _task.cancel()
 
-    app = FastAPI(lifespan=lifespan, title="iagent-projector")
+    # Inbound transport auth (OBSERVE by default) — the SDK's ONE implementation, applied as an
+    # app-level dependency so it covers every route below. The projector was outside the
+    # "fleet-wide" claim until 2026-08-07 purely because the applied-everywhere test derived its
+    # population from `agent_fleet/*/main.py`: the GLOB was the boundary, not a decision.
+    app = FastAPI(
+        lifespan=lifespan,
+        title="iagent-projector",
+        dependencies=[Depends(_transport_auth("projector"))],
+    )
 
     @app.get("/health")
     def health():

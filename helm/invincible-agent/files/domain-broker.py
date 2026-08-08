@@ -25,7 +25,9 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
@@ -132,7 +134,21 @@ async def lifespan(app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(lifespan=lifespan, title="iagent Sandbox Domain Broker")
+# Inbound transport auth (OBSERVE by default) — the SDK's ONE implementation, app-level so it
+# covers every route. Imported HARD, not behind a try/except: a guarded import is exactly the
+# "importable-but-unapplied" softness that let core/authz.py read as a gate for months. If the
+# module is missing the broker must fail loudly at start, not serve unauthenticated and silent.
+#
+# ROLL ORDERING: this file is mounted from the chart but EXECUTES in the iagent image, which
+# only carries `iagent_mesh` once rebuilt against the promoted root dependency. Rebuild the
+# iagent image BEFORE restarting this pod, or it will ImportError at start.
+_announce_transport_auth(component="domain-broker")
+
+app = FastAPI(
+    lifespan=lifespan,
+    title="iagent Sandbox Domain Broker",
+    dependencies=[Depends(_transport_auth("domain-broker"))],
+)
 
 
 @app.get("/health")

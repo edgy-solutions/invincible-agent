@@ -41,6 +41,36 @@
 # name-grep. A grep for Depends/verify_jwt/auth_dependency missed member 2 entirely, because
 # THE WEAKEST GATES ARE THE ONES GREP CANNOT FIND — they were never built as auth machinery,
 # so they carry none of its vocabulary.
+#
+# INBOUND TRANSPORT AUTH — WHAT "FLEET-WIDE" ENUMERATES (2026-08-07).
+# A coverage claim must name its population, or "complete" gets read into whatever the glob
+# happened to match. It enumerates TWELVE services, each declaring `inbound_transport_auth`:
+#   ten engines (agent_fleet/*/main.py) + projector (src/iagent/projector/app.py)
+#   + domain broker (helm/invincible-agent/files/domain-broker.py)
+# The last two were outside the claim until this date solely because the applied-everywhere
+# test derived its set from `agent_fleet/*/main.py`. THE GLOB WAS THE BOUNDARY, NOT A DECISION —
+# and a boundary nobody chose is the kind that gets reported as coverage.
+# Enforced by tests/test_transport_auth_applied_everywhere.py, which asserts three obligations
+# per service (applied, announced, no re-implemented mint), states the expected population, and
+# fails if a service silently leaves it.
+#
+# ONE NAMED EXCLUSION — src/iagent/gateway.py (cortex-bff). It is the USER plane, not the
+# service-transport plane: inbound auth there is Keycloak JWT verification at
+# `get_current_user` — signature verified against live JWKS, `algorithms=["RS256"]` PINNED
+# (closing alg:none and HS256-with-public-key), all failure paths 401 including the JWKS-fetch
+# catch-all, so a Keycloak outage denies rather than admits. That is a stronger and
+# semantically different contract than OBSERVE-mode transport auth; layering the fleet module
+# there would conflate two auth planes and let OBSERVE be read as covering the front door.
+#
+# THE GATEWAY'S VERIFICATION IS READ-CONFIRMED AND PROBED, NOT ASSUMED — because the deleted
+# core/authz.py deferred ITS signature verification to this gateway, making "the gateway
+# verifies" load-bearing for that module, the DA seam and the whole on_behalf_of design.
+# See tests/security/test_gateway_jwt_verification.py: a discriminating pair (attacker-signed
+# -> 401 naming the signature; JWKS-key-signed -> reaches identity resolution), proven by
+# regression. This is the THIRD instance this month of security-assumed-at-a-boundary-the-
+# component-does-not-control (with the DA read path and the SDK's MESH_DEV_TOKEN); two of the
+# three were wrong, which is why this one is probed rather than nodded at. A row asserting a
+# gate must name WHERE VERIFICATION ACTUALLY OCCURS, not merely that a check exists.
 version: 1
 services:
 
@@ -494,6 +524,18 @@ services:
 
   projector:
     file: src/iagent/projector/app.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — app-level, covering every route below.
+    # ADDED when "fleet-wide" was corrected: this service was outside the coverage claim only
+    # because the applied-everywhere test derived its population from `agent_fleet/*/main.py`.
+    # The GLOB was the boundary, not a decision. Population is now 12 and stated in that test.
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
+      pin_source: "root pyproject (ships in the iagent image; no pyproject of its own)"
     routes:
       - method: GET
         path: /health
@@ -710,6 +752,18 @@ services:
 
   domain_broker:
     file: helm/invincible-agent/files/domain-broker.py
+    # INBOUND TRANSPORT AUTH (2026-08-07) — app-level, covering every route below.
+    # ADDED when "fleet-wide" was corrected: this service was outside the coverage claim only
+    # because the applied-everywhere test derived its population from `agent_fleet/*/main.py`.
+    # The GLOB was the boundary, not a decision. Population is now 12 and stated in that test.
+    inbound_transport_auth:
+      implementation: iagent_mesh.transport_auth   # ONE implementation, SDK-owned
+      applied_as: "FastAPI app dependency — make_transport_auth_dependency()"   # (a) APPLIED
+      validates: "credential CONTENT against Keycloak JWKS, not mere presence"  # (b) CONTENT
+      posture_flag: REQUIRE_TRANSPORT_AUTH                                      # (c) FLAG-GATED
+      posture_default: "OBSERVE — logs unverified callers, refuses none"
+      announced_at_import: true
+      pin_source: "root pyproject (ships in the iagent image; no pyproject of its own)"
     routes:
       - method: GET
         path: /health
