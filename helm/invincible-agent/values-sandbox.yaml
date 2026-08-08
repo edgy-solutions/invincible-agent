@@ -387,9 +387,21 @@ ontologySeed:
 
 keycloak:
   enabled: true
-  auth:
-    adminUser: "admin"
-    adminPassword: "changeme-keycloak-sandbox"  # CHANGE
+  # ADMIN CREDENTIALS ARE DECLARED IN values-sandbox.secret.yaml — NOT HERE.
+  #
+  # This block used to say `adminPassword: "changeme-keycloak-sandbox"  # CHANGE`, and that
+  # value was NEVER this instance's password. The file carried two top-level `keycloak:` keys;
+  # helm's last-wins parse discarded this override on every render, so Keycloak first-booted on
+  # the CHART DEFAULT (`changeme-keycloak`) while this file looked like it had changed it. And
+  # KEYCLOAK_ADMIN_PASSWORD is first-boot-only, so the database has held that value ever since.
+  #
+  # Fixing the duplicate-key bug ACTIVATED this previously inert line. The first render after
+  # the fix (rev 65) handed the realm-reconcile hook a credential the database has never had and
+  # the release wedged on `invalid_grant`. THE BUG HAD BEEN MASKING A WRONG DECLARATION, so
+  # repairing the bug is what broke the deploy — the value was wrong the whole time and inert.
+  #
+  # Left with NO value on purpose: two declarations of one secret is how last-wins reasserted
+  # the wrong one, and a stale duplicate here would do it again. Exactly one home.
   ingress:
     # Keycloak ingress added 2026-06-04. Template (templates/keycloak.yaml)
     # adds KC_PROXY_HEADERS=xforwarded + KC_HTTP_ENABLED=true when
