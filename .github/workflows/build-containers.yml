@@ -176,12 +176,26 @@ jobs:
               UV_PROJECT_ENVIRONMENT=/app/.venv \
               UV_CACHE_DIR=/root/.cache/uv
           WORKDIR /app
+          # `--locked`, NOT `--frozen` (changed 2026-08-08 after this exact defect shipped).
+          #
+          # `--frozen` means "install exactly the lock, SKIP the freshness check". That converts
+          # a pyproject/uv.lock DIVERGENCE from a build failure into a WRONG ARTIFACT, built
+          # green every time. `iagent-mesh` was declared in ten engine pyprojects and present in
+          # ZERO uv.lock files; ten images were published without it, CI passed on all of them,
+          # and Engine W CrashLoopBackOff'd on `ModuleNotFoundError: No module named
+          # 'iagent_mesh'` the moment it was rolled. A 50-test suite asserting the wiring passed
+          # throughout, because every one of its assertions was about the SOURCE TREE.
+          #
+          # `--locked` fails the build when the lock does not match pyproject. That is the whole
+          # difference: a disagreement someone must resolve, instead of a silence someone must
+          # notice. Structural rather than procedural — "remember to run `uv lock`" is exactly
+          # the discipline that had already failed, and the class survives being named.
           COPY pyproject.toml uv.lock* requirements.txt* ./
           RUN --mount=type=cache,target=/root/.cache/uv \
-              if [ -f "uv.lock" ]; then uv sync --frozen --no-install-project --no-dev --compile-bytecode; else uv pip install --system -r requirements.txt; fi
+              if [ -f "uv.lock" ]; then uv sync --locked --no-install-project --no-dev --compile-bytecode; else uv pip install --system -r requirements.txt; fi
           COPY . /app
           RUN --mount=type=cache,target=/root/.cache/uv \
-              if [ -f "uv.lock" ]; then uv sync --frozen --no-dev --no-install-project --compile-bytecode; else uv pip install --system -e .; fi
+              if [ -f "uv.lock" ]; then uv sync --locked --no-dev --no-install-project --compile-bytecode; else uv pip install --system -e .; fi
           # Bake acryl-datahub into the venv — CONTROL-PLANE IMAGE ONLY — so the
           # gated demoSeed catalog seed (scripts/seed_datahub_catalog.py) can run.
           # The cluster has no PyPI egress, so it can't be pip-installed at Job
