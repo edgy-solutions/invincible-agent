@@ -27,6 +27,37 @@ landed.
 
 ## ONE FLAG, THREE ENFORCEMENT POINTS — the design, not a defect
 
+> **AMENDED 2026-08-07 — the membership of "three" changed, and the count's stability hid it.**
+> `core/authz.py` is **deleted** (retirement commit `4500f2a`), so the row below is kept as what
+> was concluded and is no longer true. Two corrections, both material to the flip:
+>
+> 1. **The original census was wrong when written.** `neo4j_expert/service.py` gates on this
+>    same flag (`service.py:597`, `642`, `721`) and was never listed. So the enforcement points
+>    were always **datahub_wrapper, weaviate_expert, neo4j_expert** plus the JWT row — four, not
+>    three. After the retirement it is genuinely three, and the count looking unchanged is
+>    exactly why nobody re-checked it. *A census that stays numerically stable across a real
+>    change is not thereby confirmed.*
+> 2. **This flag no longer controls any JWT verification.** The `core/authz.py` row was the only
+>    one, and what it controlled never verified signatures (`verify_signature=False`), so
+>    flipping this flag would have enforced authorization on **unauthenticated** identities.
+>
+> **Post-retirement, the flag governs DATA-PLANE gates only** — all three ask Topaz about a
+> caller identity someone else must have established:
+>
+> | site | gate |
+> |---|---|
+> | `datahub_wrapper/main.py` | `query_metadata` → Topaz `can_view` ask |
+> | `weaviate_expert/service.py` | per-chunk `can_read` filter before synthesis |
+> | `neo4j_expert/service.py` | per-result `can_read` filter (`_can_read_document`) |
+>
+> **Inbound transport verification is now a SEPARATE flag** — `REQUIRE_TRANSPORT_AUTH`, owned by
+> `iagent_mesh.transport_auth`, currently `OBSERVE`. The two flips are independent and ordered:
+> transport auth must be REQUIRE (every caller verifiable) **before** this flag is meaningful,
+> because `can_view`/`can_read` answers are only as trustworthy as the identity they are asked
+> about. The all-at-once argument below still holds *within* each flag; it no longer spans both.
+
+**Original (superseded), preserved:**
+
 | site | gate |
 |---|---|
 | `core/authz.py` | JWT verification (auth dependency + decorator) |
@@ -84,12 +115,39 @@ be what DA verifies **inbound**. The inbound caller is the supervisor.
 "just for DA" without SPLITTING the flag — the road already recorded as not taken. Lock 1 is this
 flip wearing a different name.
 
+> **AMENDED 2026-08-07 — error 2 is now RESOLVED, and by the road it called not-taken.**
+> The flag *was* split, deliberately: inbound verification moved to `REQUIRE_TRANSPORT_AUTH` in
+> `iagent_mesh.transport_auth`, applied at all ten engines and announced at each. Lock 1 is
+> therefore separable after all and no longer wears this flip's name.
+>
+> Two notes on how the original reasoning went wrong, since the shape recurs:
+> - The grep it rested on (`Depends|verify_jwt|auth_dependency`) **undercounted** — it missed
+>   the SDK's inline presence-only check, which carried none of auth's vocabulary. The weakest
+>   gates are the ones grep cannot find.
+> - It concluded "verification IS `core/authz.py`" from that module being the only *named*
+>   candidate. Verification was in fact **nowhere**: the module was imported by one consumer
+>   that never applied it, and would not have authenticated anyone if it had.
+
 ### NEW PRECONDITION — `svc:supervisor` must exist before the flip
 
 Flipping the flag makes `core/authz.py` verify JWTs fleet-wide, which requires **every legitimate
 caller to have a verifiable identity**. The supervisor's specialist dispatch sends **no
 Authorization header at all**, and `policy/users.yaml` holds exactly two service identities —
 `svc:review-starter` and `svc:data-analyst`. **There is no supervisor identity.**
+
+> **AMENDED 2026-08-07 — precondition SATISFIED, and it belongs to the other flag now.**
+> `svc:supervisor` exists, the supervisor mints at the shared dispatch seam
+> (`_telemetry_headers`), and its dispatch carries `Authorization`. The precondition was always
+> really about `REQUIRE_TRANSPORT_AUTH` (who may enter), not this flag (what a known caller may
+> see) — the two were conflated only because one module claimed to do both.
+>
+> The generalisation earned on the way: **the mint's witness is the decoded subject, not the
+> 200.** The first wiring of this seam called a helper named `mint_service_token()` that read
+> `REVIEW_STARTER_CLIENT_ID`, so the supervisor would have dispatched as `svc:review-starter`
+> and carried that role's grant on every call. It returned 200 throughout. Caught before roll
+> (`3ac573d`) only by decoding the token; identity is now an ARGUMENT, never an ambient env read.
+>
+> The remaining input to *this* flip is the unverified-caller gauge reading zero under OBSERVE.
 
 So flipping today would **deny the supervisor's own calls** — the same empty-caller/no-identity
 failure the ceremony work hit, predicted this time rather than witnessed. Required first:
