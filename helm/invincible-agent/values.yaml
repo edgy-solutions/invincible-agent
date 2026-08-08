@@ -1383,6 +1383,38 @@ keycloak:
   # `clientId` is `iagent-<name>`; `secretRef` names the key under .Values.keycloak holding
   # the secret, so this list and secrets.yaml cannot drift.
   serviceClients:
+    # REGISTRATION IDENTITIES (2026-08-08) — engines D, E, O and W.
+    #
+    # WHY PER-ENGINE AND NOT ONE SHARED MESH CREDENTIAL. Registration IS routing authority:
+    # verbs registered at the mesh-registrar point at endpoint URLs. Under a shared credential
+    # the registrar learns only that SOME legitimate mesh component called, while WHICH ENGINE
+    # is an unauthenticated payload claim — the on_behalf_of laundering shape at the routing
+    # plane. Any compromised or misconfigured component could register or overwrite verbs
+    # claiming to be engine W and point mesh:retrieveKnowledge at itself, and the token would
+    # vouch for it.
+    #
+    # Sharper still: the payload `name=` is VERB-scoped, not engine-scoped
+    # (engine_a_lookup_ownership AND engine_a_assess_impact), so a shared credential leaves the
+    # registrar checking a self-asserted string FINER-GRAINED than any identity it could verify.
+    # Per-engine identities let it bind every verb to an authenticated registrant, and make the
+    # future gate expressible: "may this caller register or overwrite THIS verb" is keyed on
+    # identity and is unanswerable under a shared credential.
+    #
+    # A and DA are absent from this list ON PURPOSE — they already have svc:engine-a and
+    # svc:data-analyst. See docs/plans/register-caller-enumeration.md for the full
+    # caller-to-identity mapping, stated by name so four-of-six never reads as a gap.
+    - clientId: "iagent-engine-d"
+      authzId: "svc:engine-d"
+      secretRef: "engineDClientSecret"
+    - clientId: "iagent-engine-e"
+      authzId: "svc:engine-e"
+      secretRef: "engineEClientSecret"
+    - clientId: "iagent-engine-o"
+      authzId: "svc:engine-o"
+      secretRef: "engineOClientSecret"
+    - clientId: "iagent-engine-w"
+      authzId: "svc:engine-w"
+      secretRef: "engineWClientSecret"
     - clientId: "iagent-review-starter"
       authzId: "svc:review-starter"
       secretRef: "reviewStarterClientSecret"
@@ -1410,6 +1442,14 @@ keycloak:
       authzId: "svc:engine-a"
       secretRef: "engineAClientSecret"
 
+  # Registration identity for engine-d (see serviceClients above).
+  engineDClientSecret: "sandbox-engine-d-secret"
+  # Registration identity for engine-e (see serviceClients above).
+  engineEClientSecret: "sandbox-engine-e-secret"
+  # Registration identity for engine-o (see serviceClients above).
+  engineOClientSecret: "sandbox-engine-o-secret"
+  # Registration identity for engine-w (see serviceClients above).
+  engineWClientSecret: "sandbox-engine-w-secret"
   reviewStarterClientSecret: "sandbox-review-starter-secret"
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
   # review starter's above — this value AND the realm import's `secret` come from here, so

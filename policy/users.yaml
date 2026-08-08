@@ -143,6 +143,22 @@ users:
   # svc:review-starter runs in the SAME process and is deliberately NOT merged into this:
   # it holds a capability grant, so it is a governed subject and keeps its own identity.
   # IDENTITY GRANULARITY FOLLOWS GOVERNANCE, NOT TOPOLOGY — see identity-mint-contract.md.
+  # REGISTRATION IDENTITIES (2026-08-08) — engines D, E, O, W.
+  # `groups: []` deliberately: registration needs an identity to MINT AS, not a capability.
+  # The governed act (may this caller register THIS verb) is a planned grant, and granting it
+  # before the gate exists would be a capability nothing checks — the shape this repo removes.
+  - id: svc:engine-d
+    display_name: engine-d (service - mesh registration identity)
+    groups: []
+  - id: svc:engine-e
+    display_name: engine-e (service - mesh registration identity)
+    groups: []
+  - id: svc:engine-o
+    display_name: engine-o (service - mesh registration identity)
+    groups: []
+  - id: svc:engine-w
+    display_name: engine-w (service - mesh registration identity)
+    groups: []
   - id: svc:engine-a
     display_name: engine-a (service - process credential for ungoverned internal callers)
     groups: []
