@@ -100,6 +100,42 @@ def test_every_declared_internal_dep_reaches_its_lock():
     )
 
 
+def test_domain_broker_sdk_version_matches_the_fleet_pin():
+    """The broker installs the SDK at POD START, so its version lives in values.yaml.
+
+    It runs on stock `python:3.12-slim` — NOT the iagent image, which a comment in
+    files/domain-broker.py wrongly claimed. That error would have been an outage: broker.py
+    imports `iagent_mesh.transport_auth` HARD, so the module could never have resolved there
+    however often the iagent image was rebuilt. The roll litany's pre-roll image-carries check
+    caught it before the pod was restarted; this test is what keeps it caught.
+
+    The version is asserted EQUAL to the engines' pyproject pin because the broker takes the
+    same inbound dependency as the fleet — a skew means it authenticates by different rules
+    than the services around it, which is precisely the divergence the one-implementation
+    ruling forbids. Two files, one truth, checked.
+    """
+    values = (_ROOT / "helm" / "invincible-agent" / "values.yaml").read_text(encoding="utf-8")
+    m = re.search(r"^\s*meshSdkVersion:\s*[\"']?(?P<v>v\d+\.\d+\.\d+)[\"']?", values, re.M)
+    assert m, "domainBroker.meshSdkVersion is missing from values.yaml"
+    chart_version = m.group("v")
+
+    pins = set()
+    for pp in _ROOT.rglob("pyproject.toml"):
+        if any(x in pp.parts for x in (".venv", ".venv.wsl", "node_modules")):
+            continue
+        for pm in re.finditer(r'"iagent-mesh @ git\+[^"@]+\.git@(?P<v>v\d+\.\d+\.\d+)"',
+                              pp.read_text(encoding="utf-8")):
+            pins.add(pm.group("v"))
+    assert pins, "no iagent-mesh pyproject pin found — cannot check the broker against the fleet"
+    assert len(pins) == 1, f"the fleet's own SDK pins disagree: {sorted(pins)}"
+    fleet_version = pins.pop()
+    assert chart_version == fleet_version, (
+        f"domain-broker installs iagent-mesh {chart_version} but the fleet pins {fleet_version}. "
+        f"The broker would authenticate by a different SDK build than the services it sits "
+        f"beside. Update helm/invincible-agent/values.yaml -> domainBroker.meshSdkVersion."
+    )
+
+
 def test_the_container_build_uses_locked_not_frozen():
     """`--frozen` installs the lock and SKIPS the freshness check: a wrong artifact, built green.
 

@@ -60,7 +60,27 @@ spec:
           args:
             - |
               set -e
-              pip install --no-cache-dir --quiet fastapi httpx pydantic hypercorn
+              {{- /*
+              iagent-mesh is installed HERE, not baked into an image, because this pod runs on
+              STOCK python:3.12-slim and pip-installs its deps at start. A code comment in
+              files/domain-broker.py previously claimed it "executes in the iagent image" — it
+              does not, and that error would have been an outage: broker.py imports
+              iagent_mesh.transport_auth HARD (no try/except, deliberately), so the module could
+              never have resolved here no matter how often the iagent image was rebuilt. Caught
+              by the roll litany's pre-roll image-carries check before the pod was restarted.
+
+              Installed from the GitHub TAG TARBALL, not `git+https://`: this image ships no
+              `git`, so a git+ requirement fails at pip with an error naming git rather than the
+              missing dependency. The tarball needs only https, which this pod already uses for
+              PyPI.
+
+              Version comes from `.Values.domainBroker.meshSdkVersion` and is asserted equal to
+              the engines' pyproject pin by tests/test_lock_coherence.py — otherwise the broker
+              silently runs a different SDK build than the fleet it authenticates against, which
+              is the drift the one-implementation rule exists to prevent.
+              */}}
+              pip install --no-cache-dir --quiet fastapi httpx pydantic hypercorn \
+                "iagent-mesh @ https://github.com/edgy-solutions/iagent-mesh-sdk/archive/refs/tags/{{ .Values.domainBroker.meshSdkVersion | default "v0.2.1" }}.tar.gz"
               exec hypercorn /code/broker.py:app --bind 0.0.0.0:8000
           env:
             - name: CENTRAL_GATEWAY_URL

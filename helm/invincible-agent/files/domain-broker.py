@@ -139,9 +139,20 @@ async def lifespan(app: FastAPI):
 # "importable-but-unapplied" softness that let core/authz.py read as a gate for months. If the
 # module is missing the broker must fail loudly at start, not serve unauthenticated and silent.
 #
-# ROLL ORDERING: this file is mounted from the chart but EXECUTES in the iagent image, which
-# only carries `iagent_mesh` once rebuilt against the promoted root dependency. Rebuild the
-# iagent image BEFORE restarting this pod, or it will ImportError at start.
+# CORRECTED 2026-08-08 — the previous note here claimed this file "EXECUTES in the iagent
+# image". IT DOES NOT. This pod runs STOCK `python:3.12-slim` and pip-installs its dependencies
+# at start (see the pip line in templates/domain-broker.yaml). Rebuilding the iagent image
+# would therefore never have satisfied the hard import above, and rolling this pod on that
+# belief would have CrashLoopBackOff'd it permanently. The roll litany's pre-roll
+# image-carries check caught it before any restart.
+#
+# `iagent-mesh` is installed from the GitHub TAG TARBALL, pinned by
+# `.Values.domainBroker.meshSdkVersion` and asserted equal to the engines' pyproject pin by
+# tests/test_lock_coherence.py. Not `git+https://` — this image ships no `git`.
+#
+# The general form, which is why the note was wrong in a way worth recording: A COMMENT
+# ASSERTING A DEPLOYMENT FACT IS AN UNTESTED CLAIM. This one was written from the shape of the
+# neighbouring services and never checked against the pod it described.
 _announce_transport_auth(component="domain-broker")
 
 app = FastAPI(

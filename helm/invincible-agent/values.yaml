@@ -447,6 +447,15 @@ centralGateway:
 domainBroker:
   enabled: true
   replicas: 1
+  # iagent-mesh SDK tag installed at pod start (see the pip line in
+  # templates/domain-broker.yaml). This pod runs STOCK python:3.12-slim and is NOT
+  # built from the iagent image, so the SDK cannot be baked in — it is fetched from
+  # the GitHub tag tarball (no `git` in this image, so `git+https://` would fail).
+  # MUST equal the engines' `iagent-mesh @ ...@vX.Y.Z` pyproject pin: the broker takes
+  # the same inbound transport-auth dependency as the fleet, and a version skew here
+  # means it authenticates by different rules than the services around it. Asserted
+  # equal by tests/test_lock_coherence.py.
+  meshSdkVersion: "v0.2.1"
   # Broker code runs inside a python:slim container — the code itself
   # is baked into a ConfigMap via .Files.Get, so any Python 3.12 slim
   # variant works. Override via image.* below or the chart-wide
