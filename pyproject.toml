@@ -17,7 +17,16 @@ dependencies = [
     "requests",
     "pyjwt[crypto]",
     "cryptography",
-    "dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@master",
+    # Upstream renamed the DISTRIBUTION (not the module) from `dag_tools` to `edgy-dag-tools`
+    # between v0.1.0 and v0.1.1. This requirement floated on @master, so it silently followed the
+    # rename into a metadata/name mismatch: uv refuses ("Package metadata name `edgy-dag-tools`
+    # does not match given name `dag-tools`"), pip tolerates it. A Windows venv installed before
+    # the rename kept working, so the break surfaced only on a fresh resolve — the floating-ref
+    # failure mode exactly. Pinned to a TAG; the import name is still `dag_tools` at v0.1.1.
+    # NOTE: agent_fleet/data_analyst pins the pre-rename SHA 61cbfa92 and is the only real
+    # importer. Moving it to v0.1.1 is an upstream UPGRADE, not this rename fix, so it is
+    # deliberately left alone — see the two-dists-one-module hazard if both land in one env.
+    "edgy-dag-tools @ git+https://github.com/edgy-solutions/dag-tools.git@v0.1.1",
     "mcp",
     # boto3 for cortex-bff's /federated_image endpoint: proxies MinIO image
     # reads through the same JWT + entitled_domains gate the rest of the bff
