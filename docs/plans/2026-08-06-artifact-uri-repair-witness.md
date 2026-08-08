@@ -183,11 +183,12 @@ monitoring — *"marked as failed from outside the execution context"*. Both sur
 for: one produced the ADMISSION line above; the other returned `NO_PARTS_EXTRACTED` and routed a
 triage task before reaching the starter, so it correctly has no admission line.
 
-1. **A reaped run permanently skips its artifact, silently.** The sensor consumed the `run_key`
-   before the run died, so Dagster's dedup will never re-dispatch it — no retry, no log, no trace.
-   That is the same silent-loss shape the content-addressed `run_key` was adopted to prevent,
-   entering through the run's *death* rather than its key. The question is whether `run_key`
-   should be consumed at dispatch or at successful completion.
+1. ~~**A reaped run permanently skips its artifact, silently.**~~ **RULED AND CLOSED 2026-08-08 —
+   see §8.** Sequenced *before* the ceremony: an autonomous pipeline whose intake can silently drop
+   notices under load is not the pipeline a signature vouches for. The sensor consumed the `run_key`
+   before the run died, so Dagster's dedup would never re-dispatch it — the same silent-loss shape
+   the content-addressed `run_key` was adopted to prevent, entering through the run's *death* rather
+   than its key.
 2. **The sensor dispatches an unbounded backlog in one tick.** Any cursor reset, first enable, or
    unwedging stampedes. A run-queue concurrency limit on `start_review_job` is the obvious lever;
    picking the number is an operational decision, not a patch.
@@ -201,6 +202,66 @@ bucket at all is its own small finding**: settlement discipline was not applied 
 were created.
 
 ---
+
+## 8. RULED AND CLOSED — at-least-once intake (2026-08-08)
+
+Filed above as a gap; **ruled a correctness defect on the ceremony's own admission path and sequenced
+before the signature** — an autonomous pipeline whose intake can silently drop notices under load is
+not the pipeline a signature vouches for.
+
+`run_key` was consumed at DISPATCH, not at COMPLETION, and the cursor had already advanced past the
+object, so a reaped run dropped its notice permanently with no retry, no log, no trace.
+
+**A reap is not a failure.** This pipeline deliberately fails a run on a systemic refusal — a loud
+red run for ops, intended, once — and retrying that just re-refuses until a human fixes the grant.
+A reap is the opposite: the execution was lost and no verdict was reached. The discriminant was
+**validated against both categories in real run history before any code was written**:
+
+| category | shape | live count |
+|---|---|---|
+| reaped | `FAILURE`, **zero** `STEP_FAILURE` events | 6/6 |
+| designed failure | `FAILURE` **with** a `STEP_FAILURE` event | 3/3 |
+
+`run.status` says `FAILURE` for both and cannot tell them apart.
+
+### Witnessed live
+
+| leg | observation |
+|---|---|
+| dispatch | attempt 1 tagged `review/artifact_key` + `review/attempt`, run_key **unchanged** (`{etag}-{key}`) |
+| reap | failed from outside the execution context → `FAILURE`, classified **REAPED** |
+| **re-arm** | attempt 2 dispatched, run_key `…#a2` — the notice that would have been lost |
+| settle | attempt 2 **SUCCESS** |
+| terminate | exactly 2 tagged runs; **no attempt 3** |
+| **residue** | 9 untagged failures before and after — **none re-armed** |
+
+The witness artifact was an **honest empty** (no parts, not doc-flagged) on purpose: it exercises
+dispatch → reap → re-arm → settle end to end while filing nothing into a human's queue. Removed
+afterward and confirmed absent; the bucket is back to its 16 real artifacts.
+
+**Untagged history is invisible to the re-arm, by construction.** The tag *is* the opt-in boundary,
+so the six reaped runs that exposed the defect — prior sessions' unsettled fixtures and extraction
+experiments — can never be re-driven into humans' queues, and no epoch, cutoff, or deletion of
+anyone else's residue was needed to bound it safely.
+
+### Two defects the break-on-purpose pass found in my own work
+
+1. **The in-flight guard was decoration.** A redundant `latest.status != FAILURE` check absorbed the
+   mutation, so deleting the guard left the suite green — and the test agreed with it by giving the
+   live run the *higher* attempt number. A guard a mutation cannot reach is not a guard.
+   Restructured so it is load-bearing, and the test now constructs the case that needs it.
+2. **`context.instance` RAISES when no instance ref was provided** — it does not return `None`, so
+   `getattr(..., None)` was a false guard and the re-arm was one attribute access from becoming a
+   *precondition* for first delivery. Found by two unrelated cursor tests going red, which is the
+   wrong way to find it; it now has its own pin.
+
+All six mutations bite; restores byte-identical.
+
+### One legibility note for operators
+
+The `RE-ARMING …` and `DISPATCH EXHAUSTED …` lines go to the **sensor's per-tick log**, not to the
+daemon's stdout — they do not appear in `kubectl logs deploy/iagent-dagster-daemon`. An operator
+looking for them in the obvious place will not find them. Stated rather than discovered later.
 
 ## What remains
 

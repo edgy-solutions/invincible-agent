@@ -363,6 +363,50 @@ Deleting the migration CALL — the realistic regression, and the sandbox's lite
 strings in the surviving `try`/`except` and every test stayed green. A grep proves presence; it never
 proves behaviour. Drive the function ([[feedback_harness_must_prove_it_can_fail]]).
 
+### A dedup key consumed at DISPATCH makes delivery at-most-once — consume it at COMPLETION
+An idempotency key answers "have I *started* this?" Delivery needs the answer to "have I *finished*
+it?" Those coincide right up until an execution dies without a verdict, and then they diverge
+silently and permanently.
+
+**The instance.** The extraction→review sensor keyed `RunRequest.run_key` on the artifact's ETag+key.
+Dagster dedups on SUBMISSION, so once a run was submitted no later tick could ever produce another
+for that artifact — however the run ENDED — and the cursor had already advanced past the object, so
+neither mechanism would re-see it. A run killed by run monitoring therefore dropped its notice
+forever: no retry, no log, no trace. Found when unwedging the cursor released a 9-artifact backlog,
+the sandbox saturated, and 6 of 9 runs were reaped.
+
+**The discriminant is the design, and it is not "did it fail".** A pipeline that deliberately fails
+on a policy refusal must not retry that — it is a loud red run for ops, intended, once, and retrying
+buries the signal it exists to raise. It MUST retry a LOST execution, where no verdict was ever
+reached and there is nothing for a human to act on. `run.status` says `FAILURE` for both. The tell
+lives in the event log:
+
+    reaped           -> FAILURE with ZERO step-failure events    (the run died)
+    designed failure -> FAILURE WITH a step-failure event        (the code refused)
+
+Validate that against **both** categories in real history before building on it. A probe that has
+only ever seen one category has not been shown to discriminate — it has been shown to agree
+([[feedback_integration_positive_controls]]).
+
+**Three properties the retry needs, each of which is a way to get it wrong:**
+- **A ledger the key cannot be.** `run_key` is consumed at dispatch and says nothing about outcome,
+  so the artifact identity and attempt number must be written somewhere durable — run tags here.
+  That ledger doubles as the **opt-in boundary**: history without the tag is invisible to the retry,
+  which bounds a new delivery guarantee without an epoch, a cutoff, or deleting anyone's residue.
+- **Retry is owed independently of new arrivals.** Gating it behind "did something new land" makes
+  delivery depend on unrelated traffic — silent unless something else happens, the wedge's shape.
+- **Exhaustion is an EVENT.** Bounded attempts that expire quietly rebuild the same hole one layer
+  in. Say what is true of the NOTICE ("has NOT been reviewed"), not of the retry budget.
+
+And suppress on **success, in-flight, and CANCELED**. Cancellation is human intent; re-arming over it
+leaves an operator no way to make the pipeline stop trying.
+
+**Corollary on guards, from the break-on-purpose pass on this very fix:** the in-flight guard was
+DECORATION — a redundant neighbouring check absorbed the mutation, so deleting the guard left the
+suite green, and the test agreed with it by constructing the case the neighbour already covered.
+*A guard a mutation cannot reach is not a guard.* When a break-on-purpose comes back green, the
+finding is about the guard, not the mutation.
+
 ### A hand-grant that clears an incident is a MITIGATION; the commit is the fix
 Second instance 2026-08-05 (`procurement`, after `disposition_review:SUSTAINMENT` in M1), so it gets
 the rule. When an incident is cleared by applying a relation **directly to the live directory**, the
