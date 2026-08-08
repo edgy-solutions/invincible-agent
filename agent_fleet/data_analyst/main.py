@@ -15,11 +15,21 @@ try:
     from utils.mesh_registration import register_engine_to_mesh
 except ImportError:
     from agent_fleet.utils.mesh_registration import register_engine_to_mesh
-# Fallback routing for Topaz Authz and Dag Tools
-try:
-    from agent_fleet.core.authz import require_topaz_auth_decorator
-except ImportError:
-    from core.authz import require_topaz_auth_decorator
+# RETIRED (2026-08-07): the `require_topaz_auth_decorator` import stood here, imported and
+# never applied — this module was the ONLY consumer, and the handler note below already
+# recorded that the decorator had been removed from it. An import with no call site is the
+# "importable-but-unapplied" species the endpoint-gating manifest names: it reads as coverage
+# to grep and to a reviewer, and gates nothing.
+#
+# It is not merely unapplied but UNSOUND, which is why it is deleted rather than wired up:
+# `core/authz.py` decoded the bearer with `verify_signature=False`, deferring to "the API
+# Gateway/BFF" — security assumed at a boundary this process does not control. Flipping
+# ENABLE_AGENTIC_AUTH would have made it accept any FORGED token carrying a `sub` and then ask
+# Topaz about that unauthenticated identity, turning the flag into a false sense of enforcement.
+#
+# Inbound verification now lives in ONE implementation: iagent_mesh.transport_auth, applied as
+# an app-level FastAPI dependency (see this module's FastAPI construction), which validates
+# credential CONTENT against Keycloak's JWKS instead of trusting a perimeter.
 # Shared smolagents model factory — honors SMOLAGENTS_PROVIDER/SMOLAGENTS_MODEL/OLLAMA_BASE_URL.
 # Avoids the hardcoded gpt-4o-mini that this engine had before.
 try:
