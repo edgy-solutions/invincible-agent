@@ -405,3 +405,53 @@ Unchanged by this work: `pipeline_version` reads `(none)` on every real notice u
 rebuilt and re-runs an extraction**. Until then every notice takes the floor as
 `policy-default-missing-provenance` — correct, legible, and the honest state. The remaining gap is
 corpus, not code.
+
+## 10. THE CEREMONY DID NOT COMPLETE — three layers, three defects, one day (2026-08-09)
+
+The re-promotion merged and the witness ran. It did **not** produce an autonomous disposition. Each
+attempt got strictly further and found the next thing that had never executed.
+
+| attempt | reached | failed on |
+|---|---|---|
+| 1 | the capability gate | `[403]` — grant absent (the designed before-picture) |
+| 2 | past the gate | `{dispatch_endpoint}` unbound → `Invalid URL`, retried 16× |
+| 3 | **engine-o itself** | `[422] body.subject_iri Field required` — terminal, **no retry storm** |
+
+Attempt 3 is the one worth reading twice: the gate passed, the URL bound to the real engine-o, the
+request ARRIVED, and the permanent-vs-transient taxonomy classified the answer correctly and failed
+**terminally on the first try** instead of spinning. Both prior fixes did exactly their job — and
+each one only revealed the next layer.
+
+### The finding: `direct_call` has no payload contract
+
+engine-o's `/write_item_state` requires `subject_iri`. `direct_call` posts a FIXED envelope —
+`{task_id, task_type, capability, user_jwt}` — and has no way to express a body. The supervised path
+builds a per-item payload in `dispatch_driver.py` and fans out **N** calls carrying the disposition
+state; the autonomous definition makes **one** call carrying none of it.
+
+This is not an unbound value. **The autonomous dispatch step was never designed to carry the work.**
+
+### The class, stated plainly
+
+Three defects in one day, all the same shape: *every layer behind an expected-deny had executed zero
+times.* The `[403]` was not one lid, it was the top of a stack — and each fix exposed the next. A
+grant's witness is a FIRST-EXECUTION witness, and this is the strongest possible evidence for that
+rule: the code behind a deny is not "untested", it is **unrun**, and unrun code fails in series.
+
+### State: demoted again, live
+
+`trust@eb3787d17399` · `onsemi/pcn/v1` → `supervised` · `is_autonomy_permitted → False`, verified in
+the pod. The reason has not weakened since the first demotion: with `monitored` standing, a notice
+routes autonomous, fails terminally, and **is never reviewed by a human** — strictly worse than
+supervised, where it would be. The failure is now clean and fast rather than a retry storm, but a
+cleanly dropped notice is still a dropped notice.
+
+The grant stays: `can_invoke(mesh:dispatchDispositions)` is granted-and-unexercised, a true state.
+Residue: **nothing minted** (dispatch never succeeded; projection join clean).
+
+### Stopped rather than designed forward
+
+Giving `direct_call` a payload contract — or replacing it with a real per-item fan-out — is a design
+decision about how an autonomous workflow carries work, adjacent to ADR-0029's own note that
+`direct_call` is a promotion candidate that should become a real verb. That is a decided hour, not a
+3am patch on the ceremony's critical path.
