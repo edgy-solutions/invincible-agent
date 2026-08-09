@@ -215,12 +215,43 @@ def execute_direct_call(
     if identity.get("user_jwt"):
         payload["user_jwt"] = identity["user_jwt"]
         headers["Authorization"] = f"Bearer {identity['user_jwt']}"
-    resp = requests.post(endpoint, json=payload, headers=headers, timeout=STEP_HTTP_TIMEOUT)
+    # PERMANENT vs TRANSIENT, second consumer of the taxonomy this module already applies to
+    # `spo_operation` (401/403 terminal · 5xx/network retryable). Added 2026-08-09 after a live
+    # miss: `{dispatch_endpoint}` reached this line unbound, `requests` raised MissingSchema
+    # BEFORE any response, nothing caught it, and Restate retried a PERMANENT error 16 times and
+    # counting. A malformed URL is not weather.
+    try:
+        resp = requests.post(endpoint, json=payload, headers=headers, timeout=STEP_HTTP_TIMEOUT)
+    except (requests.exceptions.MissingSchema,
+            requests.exceptions.InvalidSchema,
+            requests.exceptions.InvalidURL) as exc:
+        # The REQUEST could not be constructed. No retry can fix a URL — and note what this error
+        # looked like from the outside: "Invalid URL '{dispatch_endpoint}': No scheme supplied",
+        # three layers from the actual cause (an unbound placeholder). Say the cause here.
+        raise StepFailAndRelease(
+            f"direct_call {step.get('id')!r} has an UNUSABLE endpoint {endpoint!r}: {exc}. This is "
+            f"a DEPLOYMENT defect, not transport — it fails identically on every run and no retry "
+            f"can change it. If the value still contains '{{...}}' it is an UNBOUND PLACEHOLDER "
+            f"that should have been refused at admission (workflow_definition.bind_placeholders).",
+            status_code=500,
+        ) from exc
     if resp.status_code in (401, 403):
         raise StepFailAndRelease(
             f"access denied ({resp.status_code}) on direct_call {step.get('id')!r} -> "
             f"{endpoint}; failing and releasing.",
             status_code=403,
         )
+    if 400 <= resp.status_code < 500:
+        # A 4xx is a statement about THIS REQUEST — malformed body, wrong path, unprocessable
+        # entity. Retrying re-sends the identical request and re-earns the identical answer, so it
+        # burns the journal and delays the real signal. Terminal, like the denials above.
+        raise StepFailAndRelease(
+            f"direct_call {step.get('id')!r} -> {endpoint} refused permanently "
+            f"({resp.status_code}): {resp.text[:300]}. A 4xx is about the REQUEST; retrying sends "
+            f"the same one again.",
+            status_code=resp.status_code,
+        )
+    # 5xx and network errors fall through to raise_for_status / propagate — genuinely transient,
+    # genuinely worth retrying. That distinction is the whole point of the two branches above.
     resp.raise_for_status()
     return resp.json()
