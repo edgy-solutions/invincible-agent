@@ -33,6 +33,12 @@ from pathlib import Path
 
 import pytest
 
+# INTEGRATION: needs a live Engine O. SKIPS when unreachable, RUNS AND FAILS when it is up
+# (tests/routing/conftest.py). Before this marker existed the module documented itself as
+# "skips if Engine O isn't reachable" while actually emitting ConnectionError failures — an
+# environmental fact wearing a defect's clothes, ~32 per run, for months.
+pytestmark = pytest.mark.requires_engine_o
+
 
 _REPO = Path(__file__).resolve().parents[2]
 if str(_REPO) not in sys.path:

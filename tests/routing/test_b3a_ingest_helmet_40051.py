@@ -508,7 +508,11 @@ def test_helmet_demo_marker_absent_from_deploy_path_artifacts():
             continue
         files = [path] if path.is_file() else [
             p for p in path.rglob("*")
-            if p.is_file() and not DEPLOY_PATH_EXCLUDES.search(str(p))
+            # ORDER IS THE BUG: `p.is_file()` was evaluated FIRST, so a DANGLING WSL SYMLINK
+                # (agent_fleet/restate_analyst/.venv.wsl/lib64) raised OSError [WinError 1920]
+                # before the exclude — which already matches `.venv` — could reject it. Testing the
+                # cheap path filter first means the excluded tree is never stat`ed at all.
+                if not DEPLOY_PATH_EXCLUDES.search(str(p)) and p.is_file()
         ]
         for f in files:
             try:

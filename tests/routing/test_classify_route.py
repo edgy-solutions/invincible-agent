@@ -68,6 +68,12 @@ from typing import Optional
 import pytest
 import requests
 
+# INTEGRATION: needs a live Engine O. SKIPS when unreachable, RUNS AND FAILS when it is up
+# (tests/routing/conftest.py). Before this marker existed the module documented itself as
+# "skips if Engine O isn't reachable" while actually emitting ConnectionError failures — an
+# environmental fact wearing a defect's clothes, ~32 per run, for months.
+pytestmark = pytest.mark.requires_engine_o
+
 # Windows' default cp1252 console can't encode the Unicode hyphens / smart
 # quotes that show up in the diagnostic prints when a test case includes
 # them (e.g. "TEST-1234" with a U+2011 non-break hyphen). Reconfigure

@@ -64,6 +64,12 @@ from dataclasses import dataclass
 import pytest
 import requests
 
+# INTEGRATION: needs a live Engine O. SKIPS when unreachable, RUNS AND FAILS when it is up
+# (tests/routing/conftest.py). Before this marker existed the module documented itself as
+# "skips if Engine O isn't reachable" while actually emitting ConnectionError failures — an
+# environmental fact wearing a defect's clothes, ~32 per run, for months.
+pytestmark = pytest.mark.requires_engine_o
+
 _BASE = os.getenv("ROUTING_TEST_BASE_URL", "http://localhost:8084")
 _TIMEOUT_SEC = float(os.getenv("ROUTING_TEST_TIMEOUT_SEC", "45"))
 

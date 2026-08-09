@@ -50,6 +50,15 @@ def _valid_kwargs(**overrides):
     base = dict(
         id="test-sub",
         email="test@example.com",
+        # REQUIRED since the email->authz_id migration. This fixture predated it, so every `User(...)`
+        # here raised a pydantic ValidationError — red on every run, for a reason that had nothing to
+        # do with what the file actually guards (entitlement_source provenance).
+        #
+        # DELIBERATELY DIFFERENT FROM `email`. In sandbox the authz identity happens to BE the email,
+        # and a fixture that sets them equal cannot catch code assuming they always are — the
+        # assumption that breaks at any deploy keying entitlement on a non-email claim. A distinct
+        # value makes that conflation fail in a test rather than at a provider boundary.
+        authz_id="test-authz-id",
         roles=[],
         persona=None,
         entitled_domains=[],

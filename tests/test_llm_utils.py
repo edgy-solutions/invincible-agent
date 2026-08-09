@@ -56,7 +56,14 @@ def test_get_smolagent_model_openai(monkeypatch):
     model_class_name = model.__class__.__name__
     assert model_class_name in ["LiteLLMModel", "OpenAIServerModel"]
     
-    assert getattr(model, "model_id", "") == "gpt-4-turbo"
+    # PROVIDER-PREFIXED ON PURPOSE — this assertion was STALE, the code was not wrong.
+    # `agent_fleet/llm_utils.py` states the reason: LiteLLM's SDK needs a provider prefix on
+    # `model_id` to know which backend to route to; given a BARE name it tries to resolve the model
+    # against its own registry and fails. Every OpenAI-compatible upstream this repo targets (the
+    # LiteLLM proxy, vLLM, real OpenAI) is reached as "openai/<model>". The old assertion demanded
+    # exactly the behaviour that fix removed, so it went red on every run and was waved through.
+    # Do not "restore" it.
+    assert getattr(model, "model_id", "") == "openai/gpt-4-turbo"
 
 def test_get_smolagent_model_hf(monkeypatch):
     """Test Hugging Face fallback model initialization."""

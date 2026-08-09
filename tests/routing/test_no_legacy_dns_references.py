@@ -102,6 +102,37 @@ ALLOWLIST: list[tuple[str, str]] = [
 ]
 
 
+# Directories that are NOT this repo's source: virtualenvs, vendored deps, caches, VCS metadata.
+# EXCLUDING THEM IS A CORRECTNESS FIX, not just a speed one — a legacy-DNS string inside vendored
+# `site-packages` is not a "live default" of this repo, so scanning there could only ever produce a
+# FALSE POSITIVE. It is also what made this test crash: `agent_fleet/restate_analyst/.venv.wsl/lib64`
+# is a DANGLING WSL SYMLINK, and `Path.is_file()` on it raises OSError [WinError 1920] on Windows,
+# aborting the whole scan before a single file was checked. The test failed for months with an
+# environment error that looked nothing like the contract it guards.
+_SKIP_DIRS = {".venv", ".venv.wsl", "venv", "node_modules", "__pycache__", ".git",
+              ".pytest_cache", ".mypy_cache", ".ruff_cache", "site-packages", ".tox"}
+
+
+def _scan_files(base):
+    """Yield real files under `base`, pruning non-source trees and tolerating unreadable entries.
+
+    Prunes DURING the walk (os.walk + dirnames mutation) rather than filtering after, so a broken
+    symlink inside an excluded tree is never stat'ed at all — filtering afterwards would still have
+    to touch it to decide, which is exactly what crashed.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+    for dirpath, dirnames, filenames in _os.walk(base, onerror=lambda e: None, followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".venv")]
+        for name in filenames:
+            fp = _Path(dirpath) / name
+            try:
+                if fp.is_file():
+                    yield fp
+            except OSError:
+                continue
+
+
 def _repo_root() -> Path:
     # tests/routing/test_no_legacy_dns_references.py → parents[2] is the repo root.
     return Path(__file__).resolve().parents[2]
@@ -125,17 +156,18 @@ def test_no_live_legacy_dns_references() -> None:
     """
     root = _repo_root()
     offenders: list[tuple[str, int, str]] = []
+    assert SCANNED_DIRS, "nothing to scan — this guard would pass over an empty set"
 
     for d in SCANNED_DIRS:
         base = root / d
         if not base.exists():
             continue
-        for path in base.rglob("*"):
-            if not path.is_file() or path.suffix not in SCANNED_EXTS:
+        for path in _scan_files(base):
+            if path.suffix not in SCANNED_EXTS:
                 continue
             try:
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except (UnicodeDecodeError, PermissionError):
+            except (UnicodeDecodeError, PermissionError, OSError):
                 continue
             rel_path = str(path.relative_to(root))
             for lineno, text in enumerate(lines, start=1):
