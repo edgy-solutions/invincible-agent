@@ -66,12 +66,39 @@ formats:
   # LEGAL ONLY BECAUSE NORMALIZATION LANDED: a rung above `supervised` is REFUSED on a sentinel
   # segment on either axis. Before canonicalization + `doc_type_source`, this format derived
   # `onsemi/unknown/v1` and the validator would have rejected this entry outright.
+  # ── DEMOTED 2026-08-09, SAME DAY, BY DESIGN OF THE RAILS ────────────────────────────────────
+  # Promoted to `monitored`, witnessed, and demoted within the hour. Reason: the autonomous
+  # dispatch step failed on its FIRST EVER EXECUTION —
+  #
+  #   [500 Internal] Invalid URL '{dispatch_endpoint}': No scheme supplied.   (retry_count 16)
+  #
+  # `policy/workflows/autonomous_review.yaml` declares a templated endpoint that NOTHING IN THE
+  # RUNTIME BINDS. It was never caught because both existing tests INJECT the binding and then
+  # assert the workflow uses it (transport proven, sourcing never), and because the path sat behind
+  # `can_invoke(mesh:dispatchDispositions)` — denied, and therefore executed zero times. The gate
+  # that made the system safe also made the bug invisible.
+  #
+  # WHY DEMOTE RATHER THAN LEAVE IT AND FIX FORWARD: with `monitored` standing, this table promises
+  # autonomy for a key whose autonomous path terminally fails past the gate. That is WORSE than the
+  # pre-ceremony state, where the deny released cleanly by design; a notice arriving mid-fix would
+  # route autonomous and die spinning. The table must say what is TRUE at every moment, and right
+  # now the true statement is `supervised`.
+  #
+  # THE GRANT STAYS. With this entry demoted nothing routes autonomous, so
+  # `can_invoke(mesh:dispatchDispositions)` sits granted-and-unexercised — which is also a true
+  # state, and re-landing the promotion becomes the clean flip it was always meant to be.
+  # Re-promotion lands WITH the witnessed fix (runtime binder + a seal asserting every definition
+  # placeholder binds at admission), not before it.
   "onsemi/pcn/v1":
-    rung: monitored
+    rung: supervised
     pipeline_version: "doc-tools@d5b44829eb9bc29791aa71857b987c1d3256569c"
-    sample_rate: 1.0
+    sample_rate: 0.0
     ratified_by: cnogradi
     ratified_on: 2026-08-09
+    demoted_on: 2026-08-09
+    demotion_reason: >-
+      Autonomous dispatch binding defect found on first execution; promotion re-lands with the
+      witnessed fix.
     evidence: >-
       FIRST PROMOTION — entering `monitored` to BEGIN accumulating counterfactual evidence, not on
       the strength of accumulated evidence. Corpus at this pipeline version: N=1 (IPCN25300X,
