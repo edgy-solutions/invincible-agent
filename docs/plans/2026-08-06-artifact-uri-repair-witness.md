@@ -263,6 +263,119 @@ The `RE-ARMING …` and `DISPATCH EXHAUSTED …` lines go to the **sensor's per-
 daemon's stdout — they do not appear in `kubectl logs deploy/iagent-dagster-daemon`. An operator
 looking for them in the obvious place will not find them. Stated rather than discovered later.
 
+## 9. THE TRUTHFUL KEY — rebuild, re-extraction, legs 2/3 (2026-08-09)
+
+### Pre-flight found two defects in the path itself
+
+1. **doc-tools CI had stopped firing on push.** Three commits sat on `main` with zero run records —
+   no failures, no `[skip ci]`, Actions enabled, workflow `active`. Among them `3db8dbb`, the
+   `doc_type_source` attestation: merged, reading as shipped, present in no image. `workflow_dispatch`
+   fires fine. Added it (`d5b4482`) — intended as a durable manual-rebuild lever, and it turned out to
+   be **the only working trigger**. A build you cannot re-run on demand is one you take on faith.
+2. **The running doc-tools pod was three days stale on `:latest`** — created `2026-08-05T03:45`,
+   before any stamped build, never re-pulled. That, not a wiring bug, was why nothing carried
+   `pipeline_version`.
+
+**The ARG wiring was proven, not assumed**, by a throwaway pod on a freshly-pulled image — first on
+the old `:latest` (`doc-tools@c7ffe87…`, proving the build-arg bakes) and then on the new one
+(`doc-tools@d5b4482…` **plus** `doc_type_source` present in the shipped source) **before** rolling.
+Had the ARG been misrouted, the re-extraction would have produced sentinels and looked like a
+normalization failure.
+
+**The roll gotcha bit as filed.** After rolling `doc-tools`, its Dagster location *vanished* —
+`iagent`, `dag-tools`, `pub-tools` remained, `doc-tools` simply absent, no error logged. Restarting
+webserver + daemon restored it. The failure mode matters: an upload would then have triggered
+nothing, and the obvious reading is "the sensor didn't match" — sending a debugger to the filters
+instead of to a stale gRPC connection. Absence presenting as idleness, again.
+
+### The prediction, registered BEFORE the run
+
+| field | before | predicted after |
+|---|---|---|
+| `pipeline_version` | absent → `(none)` | `doc-tools@d5b4482…` — **required** |
+| `doc_type_source` | absent | `extraction` **or** `defaulted` |
+| doc_type segment | `unknown` | real type if attested; **honestly `unknown` if `defaulted`** |
+| vendor segment | `onsemi` | unchanged |
+
+Both branches were written down first so a green could not be read backwards. **The strong branch
+held** — `doc_type_source: 'extraction'`, meaning the header pass genuinely read `PCN` this time
+(the old artifact had `doc_type: None`). So the `pcn` segment is partly a fact about *this
+extraction* succeeding, not solely about the attestation mechanism. Had it come back `defaulted`,
+`unknown` would have been the mechanism **working**.
+
+### The line
+
+```
+ADMISSION notice=IPCN25300X format=onsemi/pcn/v1
+          pipeline=doc-tools@d5b44829eb9bc29791aa71857b987c1d3256569c
+          rung=supervised table=trust@1c45c6dc296e admitted_by=content
+          derived_from=s3://processing-artifacts/sustainment/inbound/onsemi_truthkey/
+                       generated/onsemi_Generic_IPCN25300X_pdf/review.json
+       -> grouped_review
+```
+
+**`admitted_by=content`, not `policy-default-missing-provenance`. It floors nothing.** Supervised
+because the committed table holds no entry for `onsemi/pcn/v1` — the born-supervised floor by
+*policy*, a decision — rather than because provenance was absent, which was a *degradation*. One
+field now distinguishes the two, which is what makes every future admission line auditable at a
+glance. One PDF upload drove sensor → extraction → review.json → review sensor → BFF → derive.
+
+### Legs 2/3, on the real key
+
+Both legs used **identical artifact content at distinct paths**, so `(request_key, approver)` could
+not dedup one onto the other — the trap that ate a leg of the previous witness. Verified: three
+distinct workflow keys, three distinct invocation ids.
+
+| leg | table | rung | route |
+|---|---|---|---|
+| baseline | `trust@1c45c6dc296e` (empty) | `supervised` | `grouped_review` |
+| **2 — promoted** | `trust@20eb25306ee7` | **`monitored`** | **`autonomous_review`** |
+| **3 — version mismatch** | `trust@90d0f4f06a1a` | `supervised` | `grouped_review` |
+
+Each table was **positive-controlled before driving the leg**: leg 2's resolver returned `monitored`
+for the real version and `supervised` for a different one; leg 3's returned `supervised` for the
+real version and `monitored` for the table's own — proving the entry was live, so leg 3 floors from
+**mismatch** and not from a malformed table (a bad table supervises, which would have made leg 3
+pass for entirely the wrong reason).
+
+Worth naming: a rung above `supervised` is **refused** on a sentinel segment on either axis. On the
+old key `onsemi/unknown/v1` this promotion would have been *illegal*. Normalization was not cosmetic
+— it was the precondition that makes promotion possible at all.
+
+### The deny, refreshed on the truthful key
+
+```
+inv_13mYPaB839LW09SeqPAgQ6cwIOouJgNF4D   AutonomousReview/run   completed / failure
+[403] caller 'svc:review-starter' is not authorized (can_invoke)
+      for capability 'mesh:dispatchDispositions' — failing and releasing.
+```
+
+Caller named, capability named, state **released** not suspended (the suspend-vs-fail ruling holding
+on a denial), on a notice whose admission line reads `admitted_by=content` with a full truthful key.
+This is the before-picture the ceremony's deny→allow flip will be measured against — now recorded on
+the real key rather than a fixture.
+
+### Settlement
+
+- **Table restored by construction**, not by retyping: rolling the pod restores the baked file
+  byte-exactly. Verified by readback — sha256 `5aac35d2…` **matches** baseline, ref
+  **`trust@1c45c6dc296e`** matches, and `onsemi/pcn/v1` resolves `supervised` again.
+- **Leg fixtures removed and confirmed absent.** Two IPCN25300X duplicates would double-count
+  evidence in any future promotion argument for this exact key.
+- **`onsemi_truthkey` KEPT — deliberately, and this deviates from "remove all witness artifacts".**
+  It is not a fixture: it is a genuine extraction by the deployed extractor carrying truthful
+  provenance, and the first properly-stamped member of the corpus. Corpus count 16 → 17.
+
+### Open residue — NOT cleaned, flagged for a ruling
+
+Leg 3's `GroupedReview` (`inv_1fLdI5e2Fqqx0g3J9JVoRMic2OfZmZeXgs`) is **suspended**, which by design
+means it registered a human task — and its artifact has been deleted. It was not cancelled, because
+cancelling a suspended workflow whose task sits in a queue risks leaving a **visible-but-unactionable
+row**, which this repo has already paid for once and which is worse than the residue itself. The
+reviewer's queue was not inspected: `/me/human_tasks` is per-caller, and querying it as
+`svc:review-starter` would return an honest empty for the *wrong* identity — a green that means
+nothing. Needs a decision, not a guess.
+
 ## What remains
 
 Unchanged by this work: `pipeline_version` reads `(none)` on every real notice until **doc-tools is
