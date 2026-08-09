@@ -27,6 +27,7 @@ This module is the **schema + loader only** (Slice-1 foundation). The executor
 increments — they touch the sealed runner and get their own seal.
 """
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Literal, Optional, Union
 
@@ -294,3 +295,111 @@ def load_all_workflows(directory: str | Path) -> dict[str, WorkflowDefinition]:
             )
         out[wf.id] = wf
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# PLACEHOLDER BINDING — strictly at ADMISSION, or fail loud THERE
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# THE DEFECT THIS CLOSES (2026-08-09, found on the FIRST EVER execution of the autonomous dispatch
+# path). `autonomous_review.yaml` declares `endpoint: "{dispatch_endpoint}"` and NOTHING bound it.
+# The literal string reached an HTTP client:
+#
+#     [500 Internal] Invalid URL '{dispatch_endpoint}': No scheme supplied.   retry_count 16
+#
+# Three things made that possible, and the fix has to answer all three:
+#
+#   1. NOTHING BOUND IT. `direct_call` passed `step.endpoint` through raw.
+#   2. NOTHING NOTICED. Both existing tests INJECT `dispatch_endpoint` into their bindings and then
+#      assert the workflow used it — transport proven, sourcing never. The tests agreed with
+#      themselves and never once asked the runtime.
+#   3. NOTHING RAN IT. The step sat behind `can_invoke(mesh:dispatchDispositions)`, granted to
+#      nobody, so it had executed ZERO times. The gate that made the system safe also made the bug
+#      invisible — every expected-deny is a lid over virgin code.
+#
+# THIRD MEMBER OF THE UNBOUND-PLACEHOLDER CLASS (`{compartment}` audience binding, `{artifact_label}`
+# cosmetics, now `{dispatch_endpoint}`), so it gets the general rule rather than a third patch:
+# **every placeholder in a definition binds at ADMISSION or fails loud there** — never at
+# HTTP-client time, sixteen retries deep, where the cause surfaces as a URL-parsing complaint three
+# layers away from the thing that was actually missing.
+#
+# ONE VALUE, ONE HOME. Config placeholders resolve from the SAME source of truth the working
+# supervised path already uses (`dispatch_driver.ENGINE_O_URL` <- ONTOLOGY_SERVICE_URL), never a
+# second declaration that can drift from it.
+
+_PLACEHOLDER_RE = re.compile(r"\{([a-z_][a-z0-9_]*)\}")
+
+
+class UnboundPlaceholder(WorkflowDefinitionError):
+    """A definition names a placeholder the runtime cannot bind. Raised at ADMISSION."""
+
+
+def collect_placeholders(node: object) -> set:
+    """Every placeholder reachable in a PARSED definition.
+
+    Parsed, never raw text: YAML comments are already gone, so prose that happens to contain
+    `{...}` cannot manufacture a phantom requirement. Only values the executor can actually
+    substitute are considered.
+    """
+    found: set = set()
+    if isinstance(node, str):
+        found.update(_PLACEHOLDER_RE.findall(node))
+    elif isinstance(node, dict):
+        for v in node.values():
+            found |= collect_placeholders(v)
+    elif isinstance(node, (list, tuple)):
+        for v in node:
+            found |= collect_placeholders(v)
+    return found
+
+
+def config_bindings() -> dict:
+    """Runtime CONFIG placeholders — the deployment's own wiring, not per-request data.
+
+    Sourced from the same env the working dispatch path reads, so the autonomous path cannot
+    disagree with the supervised one about where engine-o lives.
+    """
+    engine_o = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084").rstrip("/")
+    bff = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090").rstrip("/")
+    return {
+        # The disposition write engine-a already performs on the SUPERVISED path
+        # (`dispatch_driver`: f"{ENGINE_O_URL}/write_item_state"). Same endpoint, same source.
+        "dispatch_endpoint": f"{engine_o}/write_item_state",
+        "publish_endpoint": f"{bff}/internal/human_tasks/register",
+    }
+
+
+def bind_placeholders(definition: dict, trigger: dict) -> dict:
+    """Substitute every placeholder in `definition`, or RAISE naming the unbound ones.
+
+    Returns a bound COPY; the definition itself is git-asserted and never mutated.
+
+    Failing here is the whole point. An unbound placeholder is a DEPLOYMENT defect — it is true of
+    every run of this definition, not of this notice — so it must surface once, loudly, at
+    admission, rather than as a retryable-looking transport error per invocation.
+    """
+    bindings = {**config_bindings(),
+                **{k: v for k, v in (trigger or {}).items() if isinstance(v, (str, int, float))}}
+    required = collect_placeholders(definition)
+    missing = sorted(p for p in required if p not in bindings)
+    if missing:
+        raise UnboundPlaceholder(
+            f"workflow definition {definition.get('id')!r} names placeholder(s) {missing} that the "
+            f"RUNTIME does not bind. Available: config={sorted(config_bindings())} "
+            f"trigger={sorted(k for k in (trigger or {}) if isinstance((trigger or {})[k], (str, int, float)))}. "
+            f"This is a DEPLOYMENT defect, not a per-notice one — every run of this definition "
+            f"fails identically. Bind it in `config_bindings()` (config) or supply it on the "
+            f"trigger (data); do NOT let the literal reach a client, where it surfaces as a URL "
+            f"parse error three layers from its cause."
+        )
+
+    def _sub(node):
+        if isinstance(node, str):
+            return _PLACEHOLDER_RE.sub(lambda m: str(bindings[m.group(1)]), node)
+        if isinstance(node, dict):
+            return {k: _sub(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_sub(v) for v in node]
+        return node
+
+    return _sub(definition)

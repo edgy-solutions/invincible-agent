@@ -54,7 +54,24 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
 
     definition = get_workflow_definition("autonomous_review")
     trigger = {**request, "compartment": _compartment_from_request(request)}
-    envelope = await _main._run_definition(ctx, ctx.key(), definition.model_dump(), trigger)
+    # BIND AT ADMISSION, OR FAIL LOUD HERE. `autonomous_review.yaml` declares
+    # `endpoint: "{dispatch_endpoint}"` and nothing used to bind it — the literal string reached an
+    # HTTP client and surfaced, sixteen retries deep, as "Invalid URL '{dispatch_endpoint}': No
+    # scheme supplied", three layers from the thing that was actually missing. An unbound
+    # placeholder is a DEPLOYMENT defect (true of every run of this definition, not of this
+    # notice), so it belongs here — once, terminally — not as a retryable-looking transport error.
+    try:
+        from workflow_definition import UnboundPlaceholder, bind_placeholders  # type: ignore[no-redef]
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.restate_analyst.workflow_definition import (
+            UnboundPlaceholder, bind_placeholders,
+        )
+    try:
+        bound = bind_placeholders(definition.model_dump(), trigger)
+    except UnboundPlaceholder as exc:
+        # TERMINAL: retrying cannot bind a placeholder the deployment does not define.
+        raise restate.TerminalError(str(exc), status_code=500)
+    envelope = await _main._run_definition(ctx, ctx.key(), bound, trigger)
 
     dispatched = next(
         (r for r in envelope.get("step_results", []) if r.get("kind") == "direct_call"),
