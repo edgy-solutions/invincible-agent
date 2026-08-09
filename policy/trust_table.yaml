@@ -42,7 +42,50 @@
 # starting state, not an unconfigured one.
 
 version: 1
-formats: {}
+formats:
+  # ── FIRST PROMOTION (ADR-0034). Ratified as ONE governed act together with the
+  # `can_invoke(mesh:dispatchDispositions)` grant in capability_grants.yaml: the rung says the
+  # pipeline MAY act without a human, the grant says this identity MAY cause the effect. One
+  # authority, two enforcement points, ratified once — either alone dispatches nothing.
+  #
+  # READ THE EVIDENCE FIELD BEFORE THE RUNG. This is NOT a corrections-weighted promotion and does
+  # not pretend to be: the corpus at this pipeline version is N=1. `monitored` is the rung that
+  # BEGINS producing counterfactual evidence, and `supervised -> trusted` is forbidden precisely so
+  # that evidence must be earned here first. Entering `monitored` with no history is the designed
+  # way in; claiming a correction rate that does not exist would not be.
+  #
+  # sample_rate 1.0 for exactly that reason — every autonomous decision is sampled while the record
+  # is empty. Sampling is evidence gathered ALONGSIDE the autonomous run, never a human gate in
+  # front of it (`sample_rate_for`): autonomy still happens. Lowering it once there is a record to
+  # reason about is itself a ratified edit.
+  #
+  # KEYED ON BOTH AXES. The version is the extractor this rung was earned under; a doc-tools rebuild
+  # changes it, this entry stops matching, and the floor is restored with no edit required — the
+  # upgrade-invalidation property, witnessed as leg 3 on this exact key (2026-08-09).
+  #
+  # LEGAL ONLY BECAUSE NORMALIZATION LANDED: a rung above `supervised` is REFUSED on a sentinel
+  # segment on either axis. Before canonicalization + `doc_type_source`, this format derived
+  # `onsemi/unknown/v1` and the validator would have rejected this entry outright.
+  "onsemi/pcn/v1":
+    rung: monitored
+    pipeline_version: "doc-tools@d5b44829eb9bc29791aa71857b987c1d3256569c"
+    sample_rate: 1.0
+    ratified_by: cnogradi
+    ratified_on: 2026-08-09
+    evidence: >-
+      FIRST PROMOTION — entering `monitored` to BEGIN accumulating counterfactual evidence, not on
+      the strength of accumulated evidence. Corpus at this pipeline version: N=1 (IPCN25300X,
+      re-extracted 2026-08-09 by the deployed extractor). Correction rate at this version:
+      UNMEASURED — no autonomous decision has been sampled yet, so there is nothing to weight.
+      What IS established, and what this ratifies, is that the admission path is sound and
+      auditable: the trust key is DERIVED from the artifact on both axes (`admitted_by=content`,
+      no floor taken, hand-supplied at no hop), and the table alone decides the route — legs 2/3
+      witnessed promotion routing to `autonomous_review` and a version mismatch flooring to
+      `grouped_review`, with only `table=` and `rung=` differing between runs. The effect remains
+      separately gated by capability. Evidence for any later move to `trusted` must be
+      CORRECTIONS-weighted over the records this rung produces: approval counts measure that humans
+      clicked, not that the pipeline was right. Witness:
+      docs/plans/2026-08-06-artifact-uri-repair-witness.md §9.
 
 # Shape of an entry, for when the first promotion is ratified:
 #

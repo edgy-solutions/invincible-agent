@@ -109,3 +109,43 @@ capabilities:
       put in front of whoever next considers pruning it.
     grant_to:
       - svc:review-starter
+
+  # ── DISPATCHING DISPOSITIONS WITHOUT A HUMAN (ADR-0034 first promotion) ──────────────────────
+  # The effect half of ONE governed act. Its other half is the `onsemi/pcn/v1 x doc-tools@d5b4482…
+  # -> monitored` entry in policy/trust_table.yaml, and the two are ratified together on purpose:
+  #
+  #   the TRUST TABLE says the pipeline may act on this class of input without a human;
+  #   this GRANT says this identity may cause the resulting effect.
+  #
+  # ONE AUTHORITY, TWO ENFORCEMENT POINTS. Either alone dispatches nothing — a promoted rung with
+  # no grant fails exactly as recorded below, and a grant with no promotion never reaches an
+  # autonomous run at all. They are separable so that a DEMOTION does not silently leave a standing
+  # grant behind (the split-vendor case ADR-0034 names): revoking the rung stops the autonomy while
+  # this entry keeps saying, truthfully, who could act if a rung permitted it.
+  #
+  # THE BEFORE-PICTURE THIS FLIPS, recorded live on the truthful key 2026-08-09
+  # (inv_13mYPaB839LW09SeqPAgQ6cwIOouJgNF4D, AutonomousReview/run, completed/failure):
+  #
+  #   [403] caller 'svc:review-starter' is not authorized (can_invoke) for capability
+  #         'mesh:dispatchDispositions' — failing and releasing.
+  #
+  # Caller named, capability named, state RELEASED not suspended (a denial FAILS; only a designed
+  # await suspends). Merging this turns that exact line into an admission, and the discriminating
+  # control is that any OTHER caller must still receive it — deny-by-default is not weakened here,
+  # one subject is added to it.
+  mesh:dispatchDispositions:
+    granted_by: cnogradi
+    reason: >-
+      svc:review-starter (the extraction→review pipeline's client-credentials identity) may invoke
+      mesh:dispatchDispositions — cause the disposition effects of a review that completed WITHOUT
+      a human, when and only when the trust table admits that class of input autonomously. This is
+      the first grant in the system whose exercise is not preceded by a human decision on the
+      specific item, which is why it is ratified alongside the rung rather than on its own: the
+      accountable act is "these conditions permit autonomy", not "dispatch this notice". Scope is
+      bounded by the table, not by this file — an unpromoted or version-drifted format still routes
+      to grouped review and this capability is never reached. Revocation is symmetric and stays
+      governed: removing this entry re-instates the recorded 403 on the next autonomous run.
+      Distinct from who may REVIEW (task_grants.yaml disposition_review:<compartment>) and from
+      mesh:startReview, which only begins a review and causes no outward effect.
+    grant_to:
+      - svc:review-starter
