@@ -366,15 +366,38 @@ the real key rather than a fixture.
   It is not a fixture: it is a genuine extraction by the deployed extractor carrying truthful
   provenance, and the first properly-stamped member of the corpus. Corpus count 16 → 17.
 
-### Open residue — NOT cleaned, flagged for a ruling
+### Leg-3 residue — SETTLED on both surfaces (dual-surface procedure)
 
-Leg 3's `GroupedReview` (`inv_1fLdI5e2Fqqx0g3J9JVoRMic2OfZmZeXgs`) is **suspended**, which by design
-means it registered a human task — and its artifact has been deleted. It was not cancelled, because
-cancelling a suspended workflow whose task sits in a queue risks leaving a **visible-but-unactionable
-row**, which this repo has already paid for once and which is worse than the residue itself. The
-reviewer's queue was not inspected: `/me/human_tasks` is per-caller, and querying it as
-`svc:review-starter` would return an honest empty for the *wrong* identity — a green that means
-nothing. Needs a decision, not a guess.
+Leg 3's `GroupedReview` was **suspended**, meaning it had registered a human task, and its artifact
+had been deleted. Two refusals preceded the settlement and both were right: cancelling the
+invocation FIRST is the half-settlement that mints the zombie class (a visible-but-unactionable
+row), and querying `/me/human_tasks` as `svc:review-starter` would have returned an honest empty for
+the **wrong identity** — a green that means nothing.
+
+**The projection is the identity-neutral instrument**, and it answered what the per-caller API could
+not: one row, `alice@example.com`, `disposition_review:SUSTAINMENT`, `pending`. A real task had
+landed in a real queue for a deleted fixture.
+
+Settled as ONE operation, projection first, journal in the same breath:
+
+| surface | before | after |
+|---|---|---|
+| `human_task_projection` | `pending` | **`expired`**, `decision=NULL`, comment citing the leg |
+| Restate `sys_invocation` | `suspended` | **`completed / failure`** (cancelled, 202) |
+
+**Expired, never resolved** — `decision` stays NULL because no decision may be invented on a
+reviewer's behalf.
+
+**Joined in BOTH directions, with a control**, because direction 1 alone cannot distinguish a
+surgical settlement from an over-broad one:
+
+| workflow | projection | journal |
+|---|---|---|
+| leg 3 (fixture residue) | `expired` | `completed / failure` |
+| **baseline (real corpus artifact) — UNTOUCHED** | `pending` | `suspended` |
+
+A sloppy `WHERE` would have expired both and looked identical on the settled row. The control is
+what proves it did not.
 
 ## What remains
 
