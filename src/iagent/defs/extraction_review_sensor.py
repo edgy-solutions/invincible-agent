@@ -642,7 +642,12 @@ def _page_renders(s3, bucket: str, review_key: str) -> list:
 
 
 # ── ADR-0034 Phase 1: a decision record for EVERY processed notice ──────────
-_PIPELINE_VERSION = os.getenv("PIPELINE_VERSION", "unset")
+# RETIRED 2026-08-10. `PIPELINE_VERSION` was an env var the deploy never set, read here to
+# re-derive a decision the starter had already made. Both its consumers now take the starter's
+# returned `admission` instead. Left as a named tombstone rather than deleted silently, because the
+# next author reaching for "the pipeline version" should be sent to the artifact-derived one:
+#   the version that matters is the EXTRACTOR's, stamped into review.json by doc-tools and derived
+#   by ReviewStarter — never an env var on a reader.
 
 
 def _format_fingerprint(review: dict, key: str = "") -> str:
@@ -677,14 +682,13 @@ def _format_fingerprint(review: dict, key: str = "") -> str:
 
 def _emit_record(context, *, review: dict, key: str, request_key: str, outcome: str,
                  checks: list, ruleset_ref: str, admitted_by: str = "content",
-                 warnings=None) -> None:
+                 warnings=None, admission: dict = None) -> None:
     """Record what was decided and WHAT IT WAS DECIDED ON. Never raises past a bug in the
     record itself: the writer fails soft on transport (an audit outage must not become a
     review outage) while a malformed record still raises, because that is an emitter bug."""
     try:
         from ..decision_record import NOT_COMPOSED, build_decision_record  # noqa: PLC0415
         from ..decision_record_writer import DECISION_RECORD_ERA, graph_writer  # noqa: PLC0415
-        from ..trust_table import DEFAULT_RUNG, load_trust_table  # noqa: PLC0415
         # THE RUNG THE ROUTING ACTUALLY READ (ADR-0034 phase 1.3), not the born-default constant.
         # Before 1.3 this was hardcoded `DEFAULT_RUNG` — honest while nothing consulted the table,
         # and a lie the moment something did. The routing decision has just become consequential,
@@ -697,23 +701,41 @@ def _emit_record(context, *, review: dict, key: str, request_key: str, outcome: 
         #
         # FLOOR ON ANY DOUBT: an unreadable table records `supervised`, which is both the safe
         # direction and the truth — ReviewStarter supervises on the same failure.
-        _rung = DEFAULT_RUNG
-        _fp = _format_fingerprint(review, key)
-        try:
-            _rung = load_trust_table().rung_for(_fp, _PIPELINE_VERSION)
-        except Exception:  # noqa: BLE001 — a bad table records the floor, never blocks the record
-            pass
+        # RECORD THE DECISION; DO NOT RE-MAKE IT (2026-08-10).
+        #
+        # This block used to call `rung_for(fingerprint, _PIPELINE_VERSION)` — a SECOND derivation
+        # of a decision `start_review` had already made — using an env var the deploy never set.
+        # Result: every record in the corpus said `supervised` while the starter routed `monitored`,
+        # and `pipelineVersion` was the sentinel too. The audit trail answered the trust arc's
+        # central question wrong, plausibly, and invisibly.
+        #
+        # `admission` is the starter's OWN decision, returned in its response. When it is present we
+        # record it verbatim. When it is ABSENT — the NO_PARTS_EXTRACTED / NO_AFFECTED_PARTS
+        # branches, which never call start_review — there IS no admission decision, and the record
+        # says so with `not-admitted` rather than inventing a rung by asking the table a question
+        # nobody asked it. A record that fabricates a posture for a notice that was never admitted
+        # is the same lie one field over.
+        _adm = admission if isinstance(admission, dict) else {}
+        _fp = _adm.get("format_fingerprint") or _format_fingerprint(review, key)
+        _rung = _adm.get("rung") or "not-admitted"
+        # THE VERSION IS AN ARTIFACT FACT, NOT AN ADMISSION DECISION — so falling back to the
+        # artifact's own stamp is reading, not re-deriving. doc-tools writes `pipeline_version` into
+        # review.json; the starter DERIVES from that same stamp. Both read one producer fact, so
+        # they cannot disagree the way the old env var did. (The record schema requires it — "trust
+        # is keyed on it" — so a never-admitted notice still records the extractor that produced it.)
+        _pipe = _adm.get("pipeline_version") or str(review.get("pipeline_version") or "")
+        _tbl = _adm.get("trust_table_ref") or _trust_table_ref()
         rec = build_decision_record(
             request_key=request_key,
             source_key=key,
             notice_id=review.get("doc_id"),
-            pipeline_version=_PIPELINE_VERSION,
-            format_fingerprint=_format_fingerprint(review, key),
+            pipeline_version=_pipe,
+            format_fingerprint=_fp,
             outcome=outcome,
-            admitted_by=admitted_by,
+            admitted_by=_adm.get("admitted_by") or admitted_by,
             checks=checks,
             governing={"ruleset_ref": ruleset_ref or NOT_COMPOSED,
-                       "trust_table_ref": _trust_table_ref(),
+                       "trust_table_ref": _tbl,
                        "domain": "SUSTAINMENT"},
             trust_rung=_rung,
             era=DECISION_RECORD_ERA,
@@ -1048,6 +1070,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
         _emit_record(context, review=review, key=key, request_key=request_key,
                      outcome=_status_of(body) or "REFUSED_CONTENT",
                      checks=_extraction_checks(review, payload),
+                     admission=(body or {}).get("admission"),
                      ruleset_ref=(body or {}).get("ruleset_ref", ""),
                      warnings=payload.get("extraction_warnings"))
         context.log.warning(
@@ -1070,6 +1093,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
                                   inputs=dict(_counts)))
     _emit_record(context, review=review, key=key, request_key=request_key,
                  outcome=_status_of(body) or outcome.upper(), checks=_checks,
+                 admission=(body or {}).get("admission"),
                  ruleset_ref=(body or {}).get("ruleset_ref", ""),
                  warnings=payload.get("extraction_warnings"))
 

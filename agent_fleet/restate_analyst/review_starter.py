@@ -596,6 +596,26 @@ async def start_review(ctx: Context, request: dict) -> dict:
     )
     return {
         "status": "STARTED",
+        # THE ADMISSION DECISION, RETURNED SO NOBODY RECOMPUTES IT (2026-08-10).
+        #
+        # The decision record used to re-derive the rung itself — `rung_for(fingerprint,
+        # os.getenv("PIPELINE_VERSION", "unset"))` — from an env var the deploy never set. So every
+        # record in the corpus said `supervised` while this function routed `monitored`, and the
+        # audit trail answered the trust arc's central question WRONG. Not missing: wrong, which is
+        # worse, and invisible precisely because both values are plausible.
+        #
+        # THE ROOT WAS TWO DERIVATIONS OF ONE DECISION, not a bad env var. Two derivations disagree
+        # whenever their inputs differ, and this codebase has now paid for that at the starter
+        # (reader's env vs producer's artifact), at the fingerprint (two mints, two env contracts),
+        # and in the record. The admission happens HERE, once, with the artifact-derived key; every
+        # downstream reader is a RECORDER of that decision, never a second decider.
+        "admission": {
+            "rung": rung,
+            "trust_table_ref": trust_ref,
+            "admitted_by": admitted_by,
+            "format_fingerprint": fmt_fp,
+            "pipeline_version": pipe_v,
+        },
         "workflow_id": workflow_id,
         "count": len(batch_items),
         "ruleset_ref": build["ruleset_ref"],
