@@ -934,6 +934,47 @@ form: **a conclusion that travels by repetition rather than by evidence gets re-
 inherited** — chat-borne claims have no verification gate, so any claim important enough to cross
 a session or a handoff crosses as a checkable statement WITH its evidence, or not at all.
 
+### A failing test is a CLAIM about what should change, and the claim is checkable
+A red test proposes a repair. That proposal is an argument, not an instruction — and the
+pressure to obey it is strongest exactly when the test looks principled.
+
+2026-08-10. A newly written guard asserted ADR-0040 header conformance over every packet with
+frontmatter. It failed two packets carrying a **June convention** — prose statuses, no `id` —
+i.e. it failed them for not conforming to a spec written six weeks later. The repair it pushed
+toward was: invent an `id`, flatten a prose status the author would be *interpreting*, and
+fabricate a `closed-by` sha nobody had. Each step is a defect this catalogue already names, and
+all three arrived by trying to satisfy a test.
+
+**The second-order consequence is why this ranks above ordinary test-fixing.** The fabricated
+sha would then have passed the attribution seal — so the wrong repair would have been
+**laundered into looking evidenced**. A downstream check does not merely fail to catch a bad
+repair upstream of it; it CERTIFIES it. Provenance machinery is only as honest as the first
+value entered into it.
+
+The repair was to fix the test's SCOPE: assert conformance only over packets *claiming* it (an
+`id:` present), and let legacy packets be disclosed by a coverage line rather than coerced.
+**Ask what the test is entitled to assert before asking how to make it pass.**
+
+### A field demanded by a failing check is load-bearing; a field added from a review list is a guess
+Same day, same exercise. A review listed five findings, one of which was "the marker seal needs a
+`code-site:` field". Independently, the newly implemented attribution check *failed* on a real
+item — the closing commit touched the code, not the packet — and the only honest fix was to
+declare where the item lives. The field arrived **demanded by** a check rather than **satisfied
+because listed**, and that provenance is the difference between a field whose shape is proven by
+use and one whose shape is a guess.
+
+When a review yields a list, prefer the items another fix forces into existence. The rest are
+hypotheses until something needs them.
+
+### A parser bug wearing a data error's clothes is the most expensive kind to read
+`\s*` matches NEWLINES. An empty `closed-by:` therefore consumed its own line break and captured
+the following line, and the tool reported `closed-by: repo: invincible-agent does not resolve` —
+**accusing the data**. The next twenty minutes go to verifying facts that were never wrong.
+
+Match spaces and tabs explicitly (`[ \t]*`) when parsing line-oriented formats. And when a tool
+reports that your data is malformed in a way the data could not plausibly be, suspect the reader
+before the read.
+
 ### A guard going QUIET and a guard going GREEN are indistinguishable in a summary line
 The inverse of the rule above, and a distinct species. That one is a probe reporting zero because
 it cannot see. This is a guard reporting zero violations **because nothing it watches exists any
