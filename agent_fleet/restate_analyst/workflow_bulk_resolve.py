@@ -88,6 +88,27 @@ class BulkDecision:
     overrides: dict = field(default_factory=dict)  # mpn -> Override
 
 
+class BatchRefusal(ValueError):
+    """A DESIGNED policy refusal from `resolve_batch` — never a defect.
+
+    WHY THIS TYPE EXISTS (2026-08-09). `resolve_batch` refuses two conditions on purpose: an
+    unverified (`needs_review`) row that was not individually dispositioned, and a row with no
+    disposition at all. Workflow 2 (autonomous) must ESCALATE on exactly those and on nothing else.
+
+    A bare `except ValueError` there would make escalation an ERROR SINK: any genuine bug that
+    happens to raise ValueError — a batch-construction slip, a bad cast — would be silently
+    converted into human workload. The queue becomes where defects go to hide, each phantom review
+    looking exactly like policy working. That is the mirror of the retry misclassification this
+    module's sibling just fixed: there a permanent error was treated as transient and spun sixteen
+    times; here a defect would be treated as a refusal and filed forever.
+
+    SUBCLASSES ValueError DELIBERATELY, so every existing consumer is unchanged. `evaluate_submission`
+    catches `ValueError` and maps it to a refused `Submission` — both its callers (submit_decision's
+    pre-wake validator and the post-wake check) keep byte-identical behaviour. The new type is
+    ADDITIVE: only the autonomous path narrows to it, and anything else stays terminal and loud.
+    """
+
+
 @dataclass
 class ItemResolution:
     """One resolved item — execution grain. Idempotent on ``notice_fingerprint x mpn``; carries the
@@ -168,14 +189,14 @@ def resolve_batch(
         # be handled with an EXPLICIT individual override (whose reason records the verification). This
         # blocks the whole batch until it is handled — the same discipline as the no-disposition guard.
         if it.needs_review and ov is None:
-            raise ValueError(
+            raise BatchRefusal(
                 f"part {it.mpn!r} has an unverified MPN extraction (needs_review) and was not "
                 f"individually dispositioned — an unverified part cannot ride accept-all; handle it "
                 f"with an explicit override (which records the verifying reason)"
             )
         disposition = ov.disposition if ov is not None else it.proposed_disposition
         if not disposition:
-            raise ValueError(
+            raise BatchRefusal(
                 f"part {it.mpn!r} has no system-proposed disposition and no override — "
                 f"cannot resolve (would dispatch an effect with no disposition)"
             )

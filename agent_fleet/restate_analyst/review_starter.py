@@ -239,6 +239,51 @@ def compose_workflow_id(notice_id: str, approver: str, request_key: Optional[str
     return f"{base}-{hashlib.sha1(rk.encode()).hexdigest()[:10]}"
 
 
+ESCALATION_MARKER = "escalated-from"
+
+
+def escalation_request_key(request_key: str, refusing_invocation_id: str) -> str:
+    """The request_key an ESCALATED admission carries — derived, never reused.
+
+    THE TRAP THIS EXISTS TO AVOID, in production shape. When an autonomous run refuses (a
+    `needs_review` row, a row with no disposition) the notice must reach a human, and the honest way
+    is a fresh admission through the front door — same `ReviewStarter`, full provenance, real
+    audience. But the BFF derives its ingress idempotency key from `(request_key, approver)`, and an
+    escalation naturally carries the SAME artifact key and the SAME `svc:review-starter` as the
+    autonomous admission that just refused. Restate would therefore ATTACH the escalation to the
+    prior invocation and hand back the AutonomousReview's own result: the escalation silently
+    swallowed, the notice dropped, nothing red.
+
+    That is not a hypothetical — it is the leg-3 collision from the phase-1.3 witness, where two legs
+    differing only in table state shared an artifact and the second returned the first's answer. It
+    was caught there by a readback naming the wrong notice, not by anything going red.
+
+    So the escalated admission mints a DERIVED identity: the original key plus a marker naming the
+    refusing invocation. Same repair pattern as the dispatch re-arm's attempt suffix (`…#a2`) — a
+    genuinely new admission that still POINTS BACK, so the decision record can carry the chain
+    (`admitted_by: escalation`, the refusing run, the rule that refused) instead of a fresh identity
+    with no history.
+
+    Deterministic and idempotent BY CONSTRUCTION: escalating the same refusing run twice yields the
+    same key, so a workflow replay re-escalates onto the same admission rather than minting a second
+    review for one notice. Re-derivation is safe; that is the property Restate replay requires.
+    """
+    base = (request_key or "").strip()
+    inv = (refusing_invocation_id or "").strip()
+    if not inv:
+        # An escalation that cannot name its refusing run would be indistinguishable from a fresh
+        # admission — and would collide with it. Refuse rather than mint an ambiguous identity.
+        raise ValueError(
+            "escalation_request_key needs the REFUSING invocation id: without it the derived key "
+            "collapses onto the original admission's key and the escalation is swallowed by ingress "
+            "idempotency (the leg-3 collision, in production shape)."
+        )
+    if not base:
+        # No original key (the hand-driven ops path). Still derive something distinct and traceable.
+        return f"{ESCALATION_MARKER}:{inv}"
+    return f"{base}|{ESCALATION_MARKER}:{inv}"
+
+
 def _no_reviewer_filter(approver: str, item) -> bool:
     """The per-item reviewer filter injected into grouped_review. TODAY the identity function: the single
     review audience (``disposition_review:<compartment>``) has no COMPOSITION-time per-item differential, so
