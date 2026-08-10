@@ -44,6 +44,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+
+# The ONE authenticated registration transport (SDK v0.3.0). Carries the retry semantics
+# that used to live in this file — see the note at the call site for why the move went this
+# direction and not the other.
+from iagent_mesh.registration_transport import register_with_mesh
 from typing import Iterable, Optional
 
 logger = logging.getLogger("mesh_registration")
@@ -89,6 +94,7 @@ _PREDICATE_RENDERS_AS = "mesh:rendersAs"
 
 def _emit_to_registrar(
     *,
+    mint=None,
     registrar_url: str,
     name: str,
     description: str,
@@ -167,86 +173,44 @@ def _emit_to_registrar(
     #     probe discipline (tests/routing/test_resolve_instance_probes.py)
     #     catches "engine up but unregistered" as a named alarm so the
     #     failure mode has a name and a runbook, not a mystery.
-    sdk_max_attempts = int(os.getenv("MESH_REGISTRAR_SDK_MAX_ATTEMPTS", "4"))
-    sdk_initial_backoff = float(os.getenv("MESH_REGISTRAR_SDK_INITIAL_BACKOFF_S", "0.5"))
-    sdk_max_backoff = float(os.getenv("MESH_REGISTRAR_SDK_MAX_BACKOFF_S", "4.0"))
+    # ONE AUTHENTICATED TRANSPORT (2026-08-10, SDK v0.3.0).
+    #
+    # The retry machinery that stood here — 422 permanent (Contract D), 5xx bounded
+    # exponential backoff, env-tunable — was NOT deleted. It MOVED to
+    # `iagent_mesh.registration_transport` and this call consumes it.
+    #
+    # THE DIRECTION WAS NEARLY REVERSED, and the enumeration is what caught it: the SDK's own
+    # registration had NO retry at all (one POST, raise on any non-200), so the natural-sounding
+    # "platform binds the SDK" would have DELETED ADR-0006's ruled semantics in the name of
+    # having one implementation. The richer implementation moved; the poorer one retired.
+    #
+    # ONE SEAM FOR AUTH, N BODIES FOR CONTENT. The manifest above is this module's own; the
+    # SDK lifespan builds a different one. Only the POST — where the credential attaches and a
+    # divergence would be invisible — is shared.
+    #
+    # IDENTITY IS AN ARGUMENT: `mint` comes from the caller and is never read from ambient env
+    # here. A helper with a general name reading one service's credentials is exactly how the
+    # supervisor came to dispatch as the review starter.
+    result = register_with_mesh(
+        registrar_url, manifest, component=(urn or name), mint=mint, timeout=30.0,
+    )
+    if result.registered:
+        logger.info("✅ %s", result.announcement(urn or name))
+        return
 
-    backoff = sdk_initial_backoff
-    last_exc: Optional[Exception] = None
-    last_status: Optional[int] = None
-    last_body: Optional[str] = None
-    for attempt in range(1, sdk_max_attempts + 1):
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.post(f"{registrar_url}/v1/register", json=manifest)
-            last_status = resp.status_code
-            last_body = resp.text[:500]
-
-            if resp.status_code == 200:
-                logger.info(
-                    "✅ Registered engine %s via mesh-registrar v0.2 (%s -> %s) "
-                    "attempt=%d",
-                    urn, input_uri, output_uri, attempt,
-                )
-                return
-            if resp.status_code == 422:
-                # Contract D rejection — permanent. No point retrying
-                # against the same ontology state.
-                logger.warning(
-                    "⚠️ mesh-registrar rejected engine %s (Contract D): %s. "
-                    "Engine will keep serving; run the canonical ontology "
-                    "ingest then redeploy to retry.",
-                    urn, last_body,
-                )
-                return
-            if 500 <= resp.status_code < 600:
-                # Saga compensated — retry-safe per v0.2 contract.
-                if attempt < sdk_max_attempts:
-                    logger.warning(
-                        "⚠️ mesh-registrar returned HTTP %d for engine %s "
-                        "(attempt %d/%d); retrying in %.2fs. Body: %s",
-                        resp.status_code, urn, attempt, sdk_max_attempts,
-                        backoff, last_body,
-                    )
-                    import time as _t
-                    _t.sleep(backoff)
-                    backoff = min(backoff * 2, sdk_max_backoff)
-                    continue
-                # Fall through to the post-loop "exhausted" log.
-                break
-            # Other status codes are unexpected (3xx?). Log and stop.
-            logger.warning(
-                "⚠️ mesh-registrar returned unexpected HTTP %d for engine "
-                "%s: %s. Not retrying.",
-                resp.status_code, urn, last_body,
-            )
-            return
-        except Exception as e:  # noqa: BLE001 — ADR-0006: do not crash the engine
-            last_exc = e
-            if attempt < sdk_max_attempts:
-                logger.warning(
-                    "⚠️ mesh-registrar at %s unreachable for engine %s "
-                    "(attempt %d/%d): %s. Retrying in %.2fs.",
-                    registrar_url, urn, attempt, sdk_max_attempts, e, backoff,
-                )
-                import time as _t
-                _t.sleep(backoff)
-                backoff = min(backoff * 2, sdk_max_backoff)
-                continue
-            break
-
-    # Exhausted. Per ADR-0006 §Addendum §SDK side: log loudly and let
-    # the engine run unregistered. The existing probe discipline catches
-    # this as "engine up but unregistered" — a named alarm with a
-    # runbook, not a mystery.
+    # LOUD UNREGISTERED, WITH THE CAUSE NAMED. "mint failed" and "registrar refused" produce
+    # ONE symptom — the engine's verbs absent from routing — so the message is the only thing
+    # that can separate them, and an operator who cannot spends an incident's first hour
+    # learning which side of the call broke.
+    #
+    # Running unregistered is safe by a ROUTING-LAYER FACT, not optimism: routing is
+    # conjunctive, so a verb that never registered simply never routes. The engine is degraded
+    # and VISIBLE, never corrupt.
     logger.error(
-        "❌ mesh-registrar v0.2 retries EXHAUSTED for engine %s (%d attempts). "
-        "Last status=%s, last_body=%s, last_exc=%s. Engine will keep serving "
-        "but its verbs will NOT route until a successful re-registration on "
-        "next deploy or manual probe. This is a named alarm — see "
-        "tests/routing/test_resolve_instance_probes.py for the postcondition "
-        "test that catches 'engine up but unregistered' downstream.",
-        urn, sdk_max_attempts, last_status, last_body, last_exc,
+        "❌ %s — engine keeps serving but its verbs will NOT route until a successful "
+        "re-registration. This is a named alarm; see "
+        "tests/routing/test_resolve_instance_probes.py for the postcondition test.",
+        result.announcement(urn or name),
     )
 
 
