@@ -159,3 +159,38 @@ def test_the_escalation_branch_dispatches_NOTHING():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+# ===========================================================================
+# THE ENVELOPE READER — a renamed step must never report failure over landed effects
+# ===========================================================================
+def test_the_workflow_accepts_the_dispatch_kind_it_actually_RUNS():
+    """WITNESSED LIVE 2026-08-09, and the worst reporting direction available.
+
+    The step was renamed `direct_call` -> `dispatch_fanout`; this reader was not updated with it. So
+    the FIRST successful autonomous dispatch — two per-item DispatchItem invocations, both
+    `completed success` on the sealed keys — was followed by:
+
+        [500] autonomous_review definition produced no direct_call result
+
+    The effects had landed and the record denied them. "Approved but the effects never landed" has a
+    whole triage path in this codebase; this is its INVERSE, and it would send an operator to
+    re-drive work that already succeeded.
+
+    Asserted on the reader itself so the step kind and its consumer cannot drift apart again.
+    """
+    src = (_RA / "autonomous_review_workflow.py").read_text(encoding="utf-8")
+    reader = src[src.index("dispatched = next("):src.index("if dispatched is None:")]
+    assert '"dispatch_fanout"' in reader, (
+        "the workflow does not recognise the kind its own definition declares — a successful "
+        "dispatch will be reported as a failure")
+    assert '"direct_call"' in reader, "generic direct_call must stay accepted for its own callers"
+
+
+def test_ESCALATION_is_reported_as_an_OUTCOME_not_a_failure():
+    """A refused notice reached a human ON PURPOSE. Reporting that as failure would make every
+    escalation look like a broken pipeline, and `admitted_by` must say `escalation` rather than
+    repeat the rung — the record would otherwise claim policy acted where policy declined."""
+    src = (_RA / "autonomous_review_workflow.py").read_text(encoding="utf-8")
+    tail = src[src.index("_escalated = dispatched.get("):]
+    assert '"status": "ESCALATED" if _escalated else "RESOLVED"' in tail
+    assert '"admitted_by": "escalation" if _escalated else "policy"' in tail

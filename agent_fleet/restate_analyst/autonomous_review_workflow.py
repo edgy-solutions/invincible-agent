@@ -73,8 +73,20 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         raise restate.TerminalError(str(exc), status_code=500)
     envelope = await _main._run_definition(ctx, ctx.key(), bound, trigger)
 
+    # BOTH KINDS ACCEPTED. The autonomous step was renamed `direct_call` -> `dispatch_fanout`, and
+    # this reader was not updated with it — so the FIRST successful autonomous dispatch reported
+    # FAILURE after both per-item dispatches had already landed:
+    #
+    #   [500] autonomous_review definition produced no direct_call result
+    #         — steps ran: ['dispatch_dispositions']    (witnessed live 2026-08-09)
+    #
+    # That is the worst reporting direction available: the effects happened and the record denied
+    # them. "Approved but the effects never landed" has a whole triage path in this codebase; this
+    # is its inverse, and it would send an operator to re-drive work that had already succeeded.
+    # `direct_call` stays accepted because the generic kind survives for its own purposes.
     dispatched = next(
-        (r for r in envelope.get("step_results", []) if r.get("kind") == "direct_call"),
+        (r for r in envelope.get("step_results", [])
+         if r.get("kind") in ("dispatch_fanout", "direct_call")),
         None,
     )
     if dispatched is None:
@@ -83,13 +95,18 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
         # an autonomous run that completed with nothing to do, which on THIS path means "acted
         # without supervision and told nobody what it did".
         raise restate.TerminalError(
-            "autonomous_review definition produced no direct_call result — "
+            "autonomous_review definition produced no dispatch result — "
             f"steps ran: {[r.get('step_id') for r in envelope.get('step_results', [])]}",
             status_code=500,
         )
+    # ESCALATION IS AN OUTCOME, NOT A FAILURE. A refused notice reached a human on purpose, so the
+    # workflow COMPLETED — and it must say `escalation`, not the rung that admitted it, or the record
+    # reports policy acting where policy actually declined to.
+    _escalated = dispatched.get("status") == "ESCALATED"
     return {
-        "status": "RESOLVED",
-        "admitted_by": "policy",          # no human decided this; the trust table admitted it
+        "status": "ESCALATED" if _escalated else "RESOLVED",
+        # no human decided either outcome; `policy` dispatched, `escalation` handed it to one.
+        "admitted_by": "escalation" if _escalated else "policy",
         "dispatch": dispatched.get("result"),
         "step_results": envelope.get("step_results", []),
     }
