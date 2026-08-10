@@ -1,3 +1,14 @@
+---
+id:         ceremony-record
+status:     closed
+owner:      agent
+blocked-on: 
+closed-by:  96f2657
+code-site:  agent_fleet/utils/artifact_provenance.py
+repo:       invincible-agent
+summary:    ADR-0034 ceremony, end to end — identity-vs-pointer repair, cursor wedge, at-least-once intake, escalation, and the completion witness (dr-08a9c7e7a8c04e00, the corpus's first monitored row).
+---
+
 # IDENTITY vs LOCATION — the `artifact_uri` repair, witnessed. CLOSED.
 
 The admission posture is derived from the artifact's **LOCATION** (`artifact_uri`, a full
@@ -455,3 +466,69 @@ Giving `direct_call` a payload contract — or replacing it with a real per-item
 decision about how an autonomous workflow carries work, adjacent to ADR-0029's own note that
 `direct_call` is a promotion candidate that should become a real verb. That is a decided hour, not a
 3am patch on the ceremony's critical path.
+
+## 11. THE CEREMONY COMPLETED — both halves, witnessed (2026-08-10)
+
+**§10 above was true when written and is now the record's most misleading section.** It stopped one
+day short. Left alone it says the ceremony failed; it did not. The correction is appended rather
+than edited into §10, because how this went wrong is part of what the record is for.
+
+### The sentence, true and witnessed
+
+```
+ADMISSION notice=IPCN25300X format=onsemi/pcn/v1
+          pipeline=doc-tools@d5b44829eb9bc29791aa71857b987c1d3256569c
+          rung=monitored table=trust@99464394e80c admitted_by=content -> autonomous_review
+
+AutonomousReview  pcn-review-IPCN25300X-svc:review-starter-0ea2844441   completed / SUCCESS
+DispatchItem      IPCN25300X:NSR01L30NXT5G   completed success
+DispatchItem      IPCN25300X:NSR01F30NXT5G   completed success
+```
+
+**Negative control, contemporaneous:** `svc:review-starter` → allowed; `svc:some-other-pipeline`,
+`alice@example.com` and `''` → denied. Deny-by-default was not weakened; one subject was added to it.
+
+### The record half — what §10 was waiting on
+
+The fifth defect was real and was **the record, not the dispatch**: `_emit_record` re-derived the
+rung via `rung_for(fingerprint, os.getenv("PIPELINE_VERSION", "unset"))` — a *second derivation* of a
+decision the starter had already made, from an env var the deploy never set. Every record in the
+corpus said `supervised` while the router routed `monitored`. Both fields lied: the rung **and**
+`pipeline_version`.
+
+Fixed by threading rather than by correcting the input (`b0cae67`): `start_review` returns its
+admission, `_emit_record` records it verbatim, the recompute is deleted and `PIPELINE_VERSION`
+retired. Then the corpus's first true row:
+
+```
+dr-08a9c7e7a8c04e00   outcome STARTED
+  trustRung  monitored          trustTableRef  trust@99464394e80c
+  admittedBy content            formatFingerprint  onsemi/pcn/v1
+  pipelineVersion  doc-tools@d5b44829eb9bc29791aa71857b987c1d3256569c
+```
+
+Non-supervised records went **0 → 1**. `monitored` shows its work.
+
+### The effect, and why the graph looked empty
+
+The dispatch wrote **no** disposition state, and that is CORRECT. `DispatchItem` state records
+`state_written: false, subject_unresolved: true` — no resolved subject means no `graph_write`, and
+the task carries the re-link provenance instead. **All eight historical dispatch records show the
+identical shape: no dispatch in this system's history has ever written disposition state, and every
+one was correct not to.** `completed success` was honest every time.
+
+The effect is the task. Two pending qualification tasks for `bob@example.com`,
+`requested_by: svc:review-starter`, `acted_by: None` — a service recorded as the requester and never
+as an approver, which is what the 2026-08-05 field split was built to make expressible.
+
+**The autonomous path's terminal effect is a task for a human.** Trust bought the absence of a human
+*in the decision*; the work still knows whose it is.
+
+### What §10's "five defects in series" was actually measuring
+
+Every one was the first execution of code that had lived behind a deny. The fifth turned out to be a
+design working correctly, and the *sixth* — found while reading it — was the record's own recompute.
+The stack was deeper than the deny suggested, and each fix's success was the next layer's first run.
+
+**Open, and it is not autonomy-specific:** why a resolvable MPN composes as `subject_unresolved` —
+see `open-subject-resolution-at-composition.md`, now down to one hypothesis.

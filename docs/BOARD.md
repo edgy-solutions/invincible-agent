@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **11 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 47 are unheadered. Closing that gap is the migration._
+_Coverage: **14 of 61 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -26,9 +26,17 @@ _Coverage: **11 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: unassigned · blocked-on: an owner for the Dagster plane
   → [docs/plans/dagster-loader-call.md](plans/dagster-loader-call.md)
 
+- **doctools-ci-silent-on-push** — Pushes to doc-tools main produce ZERO CI runs — commits land unbuilt while reading as shipped. Use `gh workflow run`; verify the IMAGE, never the commit.
+  status: open · owner: unassigned
+  → [docs/plans/doctools-ci-silent-on-push.md](plans/doctools-ci-silent-on-push.md)
+
 - **endpoint-table-generation** — Generate the README endpoint table from the live route census instead of asserting it.
   status: open · owner: agent
   → [docs/plans/endpoint-table-generation.md](plans/endpoint-table-generation.md)
+
+- **subject-resolution-at-composition** — A resolvable MPN composes as subject_unresolved. Two hypotheses eliminated 2026-08-10; one survives (frozen-at-composition) with a named discriminating read.
+  status: open · owner: unassigned
+  → [docs/plans/open-subject-resolution-at-composition.md](plans/open-subject-resolution-at-composition.md)
 
 - **suite-signal** — master is not green. Measured census; recommended owner the telemetry agent.
   status: open · owner: agent
@@ -49,6 +57,10 @@ _Coverage: **11 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/watch-dashboard.md](plans/watch-dashboard.md)
 
 ## closed
+
+- **ceremony-record** — ADR-0034 ceremony, end to end — identity-vs-pointer repair, cursor wedge, at-least-once intake, escalation, and the completion witness (dr-08a9c7e7a8c04e00, the corpus's first monitored row).
+  status: closed · owner: agent · closed-by: 96f2657
+  → [docs/plans/2026-08-06-artifact-uri-repair-witness.md](plans/2026-08-06-artifact-uri-repair-witness.md)
 
 - **registration-wiring** — Six engines mint on /v1/register under decode-witnessed identities. Witnessed at a clean log boundary: 0 new unverified, 6 verified (svc:engine-o 1, svc:engine-w 5 — multiplicities matching each engine's verb count).
   status: closed · owner: agent · closed-by: 9d93146
