@@ -516,13 +516,14 @@ async def lifespan(app: FastAPI):
     # (bootstrap-state-debt). The /resolve fan-out then discovers it like any other provider.
     try:
         try:
-            from utils.mesh_registration import register_engine_to_mesh  # type: ignore[no-redef]
+            from utils.mesh_registration import engine_mint, register_engine_to_mesh  # type: ignore[no-redef]
         except ImportError:
-            from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+            from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
         _pcn_endpoint = os.getenv(
             "ONTOLOGY_SVC_SELF_URL", "http://iagent-engine-o:8084"
         ).rstrip("/") + "/resolve_instance"
         register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-o", secret_env="ENGINE_O_CLIENT_SECRET"),
             name="engine_o_sustainment_resolve_instance",
             description=(
                 "Resolves a PCN/PDN identifier — a manufacturer part number (e.g. NSR01L30NXT5G) or a "

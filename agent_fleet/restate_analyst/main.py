@@ -2418,9 +2418,9 @@ logger = logging.getLogger("RestateAnalyst")
 # engine to register; the others (E, DA, W, etc.) follow the same call
 # pattern when D.1 propagates.
 try:
-    from utils.mesh_registration import register_engine_to_mesh
+    from utils.mesh_registration import engine_mint, register_engine_to_mesh
 except ImportError:
-    from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+    from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
 
 
 # ---------------------------------------------------------------------------
@@ -2501,6 +2501,7 @@ async def lifespan(fastapi_app: FastAPI):
     _engine_a_domains = ["MAINTENANCE", "MANUFACTURING", "SUSTAINMENT", "DATA_ENGINEERING"]
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_lookup_ownership",
         description=(
             "Answers who owns a specific dataset, dashboard, or chart in "
@@ -2523,6 +2524,7 @@ async def lifespan(fastapi_app: FastAPI):
     )
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_trace_lineage",
         description=(
             "Walks the upstream/downstream lineage graph from a named "
@@ -2560,6 +2562,7 @@ async def lifespan(fastapi_app: FastAPI):
     )
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_assess_impact",
         description=(
             "Identifies the set of downstream assets impacted by a change "
@@ -2584,6 +2587,7 @@ async def lifespan(fastapi_app: FastAPI):
     )
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_find_schema",
         description=(
             "Returns the column schema of a named dataset in DataHub: "
@@ -2606,6 +2610,7 @@ async def lifespan(fastapi_app: FastAPI):
     )
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_check_freshness",
         description=(
             "Reports the last-updated timestamp of a named dataset and "
@@ -2628,6 +2633,7 @@ async def lifespan(fastapi_app: FastAPI):
     )
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_filter_by_tag",
         description=(
             "Returns datasets, dashboards, or charts matching a given tag "
@@ -2656,6 +2662,7 @@ async def lifespan(fastapi_app: FastAPI):
     )
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_describe_asset",
         description=(
             "Returns a structured profile of a named asset in the DataHub "
@@ -2690,6 +2697,7 @@ async def lifespan(fastapi_app: FastAPI):
     )
 
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_enumerate_catalog",
         description=(
             "Returns a flat list of data assets (tables, datasets, "
@@ -2734,6 +2742,7 @@ async def lifespan(fastapi_app: FastAPI):
     # everything else falls through to this entry. Scheduled for removal
     # per ADR-0017 §1 open item.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_restate_analyst",
         description=(
             "Metadata analysis engine. Answers questions ABOUT datasets, "
@@ -2788,6 +2797,7 @@ async def lifespan(fastapi_app: FastAPI):
     # directly. First user of ADR-0008 verb_anti_synonyms: repel pure-lookup
     # intents ("what does the notice say") so a read never routes to an action.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_propose_disposition",
         description=(
             "Starts a grouped disposition review for a sustainment notice "

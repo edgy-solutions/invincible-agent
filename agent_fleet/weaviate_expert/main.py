@@ -20,9 +20,9 @@ from fastapi.responses import JSONResponse
 # Engine self-registration for the predicate-graph routing layer
 # (iagent ADR-0004 Step D.1). Opt-in via MESH_REGISTER_ON_STARTUP.
 try:
-    from utils.mesh_registration import register_engine_to_mesh
+    from utils.mesh_registration import engine_mint, register_engine_to_mesh
 except ImportError:
-    from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+    from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
 
 try:
     # Standalone microservice mode (Workspace Root)
@@ -42,6 +42,7 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-w", secret_env="ENGINE_W_CLIENT_SECRET"),
         name="engine_w_weaviate_expert",
         description=(
             "Knowledge retrieval engine. Weaviate v4 hybrid search "
@@ -79,6 +80,7 @@ async def lifespan(app: FastAPI):
     # retrieveKnowledge-against-TechnicalManual registration; the same
     # capability typed against a different subject path.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-w", secret_env="ENGINE_W_CLIENT_SECRET"),
         name="engine_w_weaviate_expert_fault_isolation",
         description=(
             "Knowledge retrieval engine. Weaviate v4 hybrid search "
@@ -141,6 +143,7 @@ async def lifespan(app: FastAPI):
     # recording so the ADR's class-definition tuning targets the
     # weak boundaries.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-w", secret_env="ENGINE_W_CLIENT_SECRET"),
         # Same description as the primary registrations above —
         # BAML TypeBuilder dedupes enum values by name; last
         # add_value's description wins. Same capability, different
@@ -247,6 +250,7 @@ async def lifespan(app: FastAPI):
     #      instance duality is structurally encoded via the instance-
     #      resolution layer's fan-out, not just via class definitions.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-w", secret_env="ENGINE_W_CLIENT_SECRET"),
         name="engine_w_weaviate_expert_descriptive",
         description=(
             "Knowledge retrieval engine. Weaviate v4 hybrid search "
@@ -289,6 +293,7 @@ async def lifespan(app: FastAPI):
     # into a tracked source writer — re-seed + bounce regenerates the
     # row, no manual step needed.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-w", secret_env="ENGINE_W_CLIENT_SECRET"),
         name="engine_w_weaviate_expert_work_instruction",
         description=(
             "Knowledge retrieval engine. Weaviate v4 hybrid search "

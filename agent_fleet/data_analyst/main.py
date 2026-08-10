@@ -12,9 +12,9 @@ from smolagents import CodeAgent, tool
 # Engine self-registration for the predicate-graph routing layer
 # (iagent ADR-0004 Step D.1). Opt-in via MESH_REGISTER_ON_STARTUP.
 try:
-    from utils.mesh_registration import register_engine_to_mesh
+    from utils.mesh_registration import engine_mint, register_engine_to_mesh
 except ImportError:
-    from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+    from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
 # RETIRED (2026-08-07): the `require_topaz_auth_decorator` import stood here, imported and
 # never applied — this module was the ONLY consumer, and the handler note below already
 # recorded that the decorator had been removed from it. An import with no call site is the
@@ -94,6 +94,7 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-data-analyst", secret_env="CORTEX_CLIENT_SECRET"),
         name="engine_da_data_analyst",
         description=(
             "Data analysis engine. Executes SQL or Polars expressions over "

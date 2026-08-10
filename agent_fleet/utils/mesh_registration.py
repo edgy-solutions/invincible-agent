@@ -92,6 +92,25 @@ _TOOL_KIND_PRESENTATION = "Presentation"
 _PREDICATE_RENDERS_AS = "mesh:rendersAs"
 
 
+
+def engine_mint(*, client_id: str, secret_env: str):
+    """Return a mint callable for ONE engine's registration identity.
+
+    IDENTITY IS AN ARGUMENT. Both the client id and the env var holding its secret are named
+    BY THE CALLER, at the caller's own site. A shared helper that resolved the identity itself —
+    from the component name, or from a conventional env var — would be a general name over
+    specific behaviour, which is exactly how `mint_service_token()` came to read
+    REVIEW_STARTER_CLIENT_ID and made the supervisor dispatch as the review starter.
+
+    Returned lazily, not minted here: the token is obtained per registration ATTEMPT, so a
+    Keycloak blip at boot is retried by the transport rather than baked into a dead closure.
+    """
+    def _mint() -> str:
+        from iagent_mesh.service_identity import mint_token
+        return mint_token(client_id=client_id, client_secret=os.environ[secret_env])
+    return _mint
+
+
 def _emit_to_registrar(
     *,
     mint=None,
@@ -216,6 +235,7 @@ def _emit_to_registrar(
 
 def register_engine_to_mesh(
     *,
+    mint=None,
     name: str,
     description: str,
     verb: str,
@@ -265,6 +285,7 @@ def register_engine_to_mesh(
     registrar_url = os.getenv("MESH_REGISTRAR_URL", "").rstrip("/")
     if registrar_url:
         _emit_to_registrar(
+            mint=mint,
             registrar_url=registrar_url,
             name=name, description=description,
             verb=verb, input_uri=input_uri, output_uri=output_uri,

@@ -645,9 +645,9 @@ async def lifespan(app: FastAPI):
     # mesh predicate — it was a silent backend tool before.
     try:
         try:
-            from utils.mesh_registration import register_engine_to_mesh
+            from utils.mesh_registration import engine_mint, register_engine_to_mesh
         except ImportError:
-            from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+            from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
 
         _engine_d_endpoint = os.getenv(
             "DATAHUB_WRAPPER_SVC_URL",
@@ -655,6 +655,7 @@ async def lifespan(app: FastAPI):
         ).rstrip("/") + "/resolve_instance"
 
         register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-d", secret_env="ENGINE_D_CLIENT_SECRET"),
             name="engine_d_resolve_instance",
             description=(
                 "Resolves a named individual (catalog asset path, dotted "

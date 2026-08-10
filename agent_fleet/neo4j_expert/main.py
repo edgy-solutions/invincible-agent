@@ -31,9 +31,9 @@ from pydantic import BaseModel
 # Engine self-registration for the predicate-graph routing layer
 # (iagent ADR-0004 Step D.1). Opt-in via MESH_REGISTER_ON_STARTUP.
 try:
-    from utils.mesh_registration import register_engine_to_mesh
+    from utils.mesh_registration import engine_mint, register_engine_to_mesh
 except ImportError:
-    from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+    from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
 
 # B3 — shared DMC canonicalizer. Same code as the B2 ingest writer
 # (doc-tools' doc_tools/parsers/dmc_canonicalizer.py); a
@@ -63,6 +63,7 @@ except ImportError:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-e", secret_env="ENGINE_E_CLIENT_SECRET"),
         name="engine_e_neo4j_expert",
         description=(
             "Knowledge graph expert. Runs a smolagents CodeAgent over Neo4j "
@@ -123,6 +124,7 @@ async def lifespan(app: FastAPI):
     # surface the verb against the second subject it serves; identity
     # via (verb_iri, _tool_urn) keeps it as its own edge from a44b9fb.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-e", secret_env="ENGINE_E_CLIENT_SECRET"),
         # IMPORTANT: same description as the primary registration above.
         # BAML's TypeBuilder dedupes enum values by name; when two
         # candidate rows share verb_iri but disagree on description, the
@@ -191,6 +193,7 @@ async def lifespan(app: FastAPI):
     # similarity contest. See STATE_GATEWAY_V02.md "2026-06-16 verb 2
     # halt + reframe" for the trace.
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-e", secret_env="ENGINE_E_CLIENT_SECRET"),
         # Same description as the primary queryKnowledgeGraph
         # registration above — BAML TypeBuilder dedupes enum values by
         # name; last add_value's description wins. Same capability typed
@@ -241,6 +244,7 @@ async def lifespan(app: FastAPI):
         "http://iagent-engine-e:8086/resolve_instance",
     )
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-e", secret_env="ENGINE_E_CLIENT_SECRET"),
         name="engine_e_resolve_instance",
         description=(
             "Resolves a named individual (equipment serial, part number, "
@@ -296,6 +300,7 @@ async def lifespan(app: FastAPI):
         "http://iagent-engine-e:8086/resolve_dmc",
     )
     register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-e", secret_env="ENGINE_E_CLIENT_SECRET"),
         name="engine_e_dmc_resolve_instance",
         description=(
             "Resolves a Data Module Code (DMC) — the S1000D identity "
