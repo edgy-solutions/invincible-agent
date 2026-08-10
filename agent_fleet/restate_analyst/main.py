@@ -1864,6 +1864,112 @@ async def _run_definition(
                 "status": "SUCCESS", "result": result,
             })
 
+        elif step.kind == "dispatch_fanout":
+            # ── THE AUTONOMOUS COUNTERPART OF human_await, and its semantics live HERE ──────────
+            # The definition declares WHAT (a capability-gated dispatch of this review's batch);
+            # everything below is HOW, and it is executor-owned for the same reason human_await's
+            # mechanics are: these behaviours are what the step MEANS, so no definition author can
+            # omit them. Most importantly ESCALATION CANNOT BE FORGOTTEN, because it is not
+            # authored — a definition that dispatches without an escalation path is unexpressible.
+            try:  # lazy: review_starter imports the workflows, so a module-level import cycles
+                from workflow_bulk_resolve import (  # type: ignore[no-redef]  # noqa: PLC0415
+                    BatchRefusal, BulkDecision, resolve_batch,
+                )
+                from grouped_review_workflow import _reviewbatch_from_state  # type: ignore[no-redef]  # noqa: PLC0415
+                from grouped_review_workflow import run as grouped_review_run  # type: ignore[no-redef]  # noqa: PLC0415
+                from dispatch_driver import fan_out_dispatch  # type: ignore[no-redef]  # noqa: PLC0415
+                from review_starter import compose_workflow_id, escalation_request_key  # type: ignore[no-redef]  # noqa: PLC0415
+                from spo_step_executor import check_can_invoke  # type: ignore[no-redef]  # noqa: PLC0415
+            except ImportError:  # pragma: no cover — import path differs by runtime
+                from agent_fleet.restate_analyst.workflow_bulk_resolve import (  # noqa: PLC0415
+                    BatchRefusal, BulkDecision, resolve_batch,
+                )
+                from agent_fleet.restate_analyst.grouped_review_workflow import (  # noqa: PLC0415
+                    _reviewbatch_from_state,
+                )
+                from agent_fleet.restate_analyst.grouped_review_workflow import (  # noqa: PLC0415
+                    run as grouped_review_run,
+                )
+                from agent_fleet.restate_analyst.dispatch_driver import fan_out_dispatch  # noqa: PLC0415
+                from agent_fleet.restate_analyst.review_starter import (  # noqa: PLC0415
+                    compose_workflow_id, escalation_request_key,
+                )
+                from agent_fleet.restate_analyst.spo_step_executor import check_can_invoke  # noqa: PLC0415
+
+            _fp = request.get("notice_fingerprint") or request.get("notice_id") or ""
+            _approver = request.get("approver") or identity["authz_id"]
+
+            # 1. THE GATE, first and unconditionally — the capability the recorded [403] proved.
+            #    Journaled via ctx.run because it is an HTTP decision, and TERMINAL on deny: a
+            #    denial is a statement, never weather (fail-and-release, never retry-and-park).
+            def _gate(cap=step.capability, who=identity["authz_id"]):
+                if not check_can_invoke(cap, who):
+                    raise StepFailAndRelease(
+                        f"caller {who!r} is not authorized (can_invoke) for capability {cap!r} "
+                        f"— failing and releasing.", status_code=403)
+                return {"capability": cap, "caller": who, "granted": True}
+            try:
+                _gate_result = await ctx.run(f"gate_{step.id}", _gate)
+            except StepFailAndRelease as e:
+                raise restate.TerminalError(str(e), status_code=e.status_code)
+
+            # 2. THE DECISION, synthesized. An autonomous run's "decision" is accept-all-with-
+            #    exceptions carrying NO exceptions — which is exactly the empty BulkDecision the
+            #    shared core already understands. There is no proposal function: absent an override
+            #    `resolve_batch` takes each row's own `proposed_disposition`.
+            _batch = _reviewbatch_from_state(_approver, request.get("batch_items") or [])
+            try:
+                _resolutions = resolve_batch(
+                    _batch, BulkDecision(overrides={}), notice_fingerprint=_fp)
+            except BatchRefusal as refusal:
+                # 3a. ESCALATE THE WHOLE NOTICE. The grain is the notice, not the row: resolve_batch
+                #     refuses the batch on the first unverified/undispositioned row and returns NO
+                #     resolutions — so NOTHING has been dispatched and escalation is a pure
+                #     re-route with nothing to unwind.
+                #
+                #     A DERIVED IDENTITY, or the escalation is swallowed: workflow 1 and workflow 2
+                #     take the SAME trigger, so re-sending it under the SAME key would collide with
+                #     this very run. The derived key points back at the refusing workflow, and is
+                #     deterministic so a Restate replay re-escalates onto the same admission rather
+                #     than minting a second review for one notice.
+                _esc_key = escalation_request_key(request.get("request_key", ""), workflow_id)
+                ctx.workflow_send(
+                    grouped_review_run,
+                    key=compose_workflow_id(request.get("notice_id") or _fp, _approver, _esc_key),
+                    arg={
+                        **request,
+                        # THE POSTURE THAT ROUTED IT, and it must say escalation rather than the
+                        # rung that admitted it — a human is reviewing this because policy REFUSED,
+                        # not because the format was unpromoted.
+                        "admitted_by": "escalation",
+                        "escalated_from_workflow": workflow_id,
+                        "escalation_reason": str(refusal),
+                        "request_key": _esc_key,
+                    },
+                )
+                results.append({
+                    "step_id": step.id, "kind": "dispatch_fanout", "status": "ESCALATED",
+                    "result": {"reason": str(refusal), "escalated_from": workflow_id,
+                               "dispatched": 0},
+                })
+                continue
+
+            # 3b. DISPATCH — the SAME fan-out workflow 1 runs after a human decision, on the sealed
+            #     per-item exactly-once path (`notice_fingerprint:mpn`). One dispatcher, two
+            #     triggers. `acted_by` names POLICY, never a human: the field split made 2026-08-05
+            #     exists precisely so a service is never recorded as an approver.
+            _keys = fan_out_dispatch(
+                ctx, _resolutions,
+                notice_fingerprint=_fp, notice_id=request.get("notice_id") or "",
+                requested_by=_approver,
+                acted_by=f"policy:{request.get('trust_table_ref') or 'trust@unknown'}",
+                compartment=request.get("compartment") or "",
+            )
+            results.append({
+                "step_id": step.id, "kind": "dispatch_fanout", "status": "SUCCESS",
+                "result": {"dispatched": len(_keys), "keys": _keys, "gate": _gate_result},
+            })
+
     return {
         "workflow_id": workflow_id,
         "definition_id": wf.id,

@@ -585,6 +585,13 @@ async def start_review(ctx: Context, request: dict) -> dict:
             # looks complete and the missing parts get no disposition, silently.
             "extraction_warnings": list(request.get("extraction_warnings") or []),
             "user_jwt": request.get("user_jwt", ""),
+            # THE ARTIFACT'S IDENTITY, carried so an ESCALATION can derive a distinct one. When the
+            # autonomous path refuses (an unverified row, a row with no disposition) it must reach a
+            # human, and the escalated admission cannot reuse this key: the BFF keys ingress
+            # idempotency on (request_key, approver), so an escalation carrying the same pair would
+            # ATTACH to the invocation that just refused it and return that result — swallowed,
+            # dropped, nothing red. See `escalation_request_key`.
+            "request_key": request.get("request_key", ""),
         },
     )
     return {

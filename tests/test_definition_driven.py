@@ -76,6 +76,7 @@ class _Ctx:
         self.state: dict = {}
         self.runs: list = []
         self.sends: list = []
+        self.escalations: list = []
 
     def key(self):
         return self._key
@@ -99,12 +100,31 @@ class _Ctx:
     def object_send(self, tpe, key, arg, idempotency_key=None, **kw):
         self.sends.append(key)
 
+    def workflow_send(self, tpe, key, arg, **kw):
+        """ESCALATION's observable. Recorded separately from `sends` because the discriminating
+        claim is that a refused notice dispatches NOTHING and escalates instead — collapsing both
+        into one list would let a dispatch masquerade as an escalation."""
+        self.escalations.append({"key": key, "arg": arg})
+
+
+# A CLEAN batch: every row cleanly proposed, so the autonomous path resolves and fans out.
+# `dispatch_endpoint` is gone — the step no longer takes one, which is the point of the rename.
+_CLEAN_ITEM = {"mpn": "NSR01L30NXT5G", "relevance": 1.0,
+               "subject": "http://internal/components/NSR01L30NXT5G",
+               "proposed_disposition": "dispatchQualification", "needs_review": False,
+               "proposed_by_ruleset": "rules@abc"}
+# One UNVERIFIED row — `needs_review` with no override. resolve_batch refuses the WHOLE batch on it.
+_DIRTY_ITEM = {**_CLEAN_ITEM, "mpn": "MPN-UNVERIFIED", "needs_review": True}
 
 _TRIGGER = {
     "authz_id": _SERVICE_ID,
+    "approver": _SERVICE_ID,
     "compartment": "SUSTAINMENT",
-    "dispatch_endpoint": "http://engine-o/dispatch",
     "notice_id": "IPCN25300X",
+    "notice_fingerprint": "IPCN25300X",
+    "request_key": "epoch|abc123-sustainment/inbound/x/review.json",
+    "trust_table_ref": "trust@testref",
+    "batch_items": [_CLEAN_ITEM],
 }
 
 
@@ -153,7 +173,11 @@ def test_the_two_definitions_differ_by_exactly_the_human_step():
     autonomous = get_workflow_definition("autonomous_review")
 
     assert [s.kind for s in supervised.steps] == ["human_await"]
-    assert [s.kind for s in autonomous.steps] == ["direct_call"]
+    # RENAMED 2026-08-09 `direct_call` -> `dispatch_fanout`. The CLAIM is unchanged — the two
+    # definitions differ by exactly one step — only the autonomous step now has an honest name.
+    # It never made a generic HTTP call; it proved a capability gate, and the false generality is
+    # what let `{dispatch_endpoint}` sit unbound for months.
+    assert [s.kind for s in autonomous.steps] == ["dispatch_fanout"]
     assert not [s for s in autonomous.steps if s.kind == "human_await"], (
         "the autonomous path grew a human_await — it is no longer the unsupervised path"
     )
@@ -165,7 +189,7 @@ def test_the_two_definitions_differ_by_exactly_the_human_step():
 def test_every_definition_is_executable_by_the_one_runner():
     """No definition may require a step kind the single executor does not implement — that
     would be a class-driven runner with extra steps."""
-    implemented = {"human_await", "spo_operation", "direct_call"}
+    implemented = {"human_await", "spo_operation", "direct_call", "dispatch_fanout"}
     for wf_id, wf in load_all_workflows(_WORKFLOWS).items():
         for step in wf.steps:
             assert step.kind in implemented, f"{wf_id}/{step.id}: unrunnable kind {step.kind!r}"
@@ -180,11 +204,11 @@ def test_capability_gate_lives_on_the_unsupervised_path_only():
     the send produces an approved review whose dispatch 403s — a human decision the system
     accepted and won't execute."""
     autonomous = get_workflow_definition("autonomous_review")
-    assert [s.capability for s in autonomous.steps if s.kind == "direct_call"] == [
+    assert [s.capability for s in autonomous.steps if s.kind == "dispatch_fanout"] == [
         "mesh:dispatchDispositions"
     ]
     supervised = get_workflow_definition("grouped_review")
-    assert not [s for s in supervised.steps if s.kind == "direct_call"], (
+    assert not [s for s in supervised.steps if s.kind in ("direct_call", "dispatch_fanout")], (
         "the supervised path grew a capability-gated send — double-gating strands approved work"
     )
 
@@ -215,17 +239,77 @@ async def test_autonomous_dispatch_allows_for_the_granted_identity_only(monkeypa
         monkeypatch,
         lambda cap, caller, **k: caller == _SERVICE_ID and cap == "mesh:dispatchDispositions",
     )
-    calls: list = []
-    monkeypatch.setattr(requests, "post",
-                        lambda url, **k: (calls.append(url), _Resp(200, {"ok": True}))[1])
     wf = get_workflow_definition("autonomous_review")
 
-    out = await main._run_definition(_Ctx(), "autonomous-IPCN25300X", wf.model_dump(), _TRIGGER)
+    # OBSERVES THE FAN-OUT, not an HTTP post. Since the rename the step dispatches the review's own
+    # batch through `fan_out_dispatch` -> `ctx.object_send`, so the old `requests.post` observable
+    # would now be empty on BOTH arms — a discriminating pair that had stopped discriminating.
+    granted = _Ctx()
+    out = await main._run_definition(granted, "autonomous-IPCN25300X", wf.model_dump(), _TRIGGER)
     assert out["status"] == "COMPLETED"
-    assert calls, "granted identity was allowed but nothing was dispatched"
+    assert granted.sends == ["IPCN25300X:NSR01L30NXT5G"], (
+        f"granted identity was allowed but the per-item fan-out did not fire: {granted.sends}")
+    assert granted.escalations == [], "a clean notice must not escalate"
 
-    calls.clear()
+    denied = _Ctx()
     other = {**_TRIGGER, "authz_id": "svc:some-other-pipeline"}
     with pytest.raises(restate.exceptions.TerminalError):
-        await main._run_definition(_Ctx(), "autonomous-IPCN25300X", wf.model_dump(), other)
-    assert calls == [], "a non-granted identity reached the endpoint — the gate does not discriminate"
+        await main._run_definition(denied, "autonomous-IPCN25300X", wf.model_dump(), other)
+    assert denied.sends == [], "a non-granted identity dispatched — the gate does not discriminate"
+    assert denied.escalations == [], (
+        "a DENIED caller must not escalate either — a denial is not a refusal, and turning one into "
+        "a human review would file work for an authz failure")
+
+@pytest.mark.asyncio
+async def test_a_DIRTY_notice_escalates_WHOLE_and_dispatches_NOTHING(monkeypatch):
+    """THE ESCALATION MECHANISM'S OWN DISCRIMINATING PAIR.
+
+    Same definition, same granted identity, same everything — one row differs. A `needs_review` row
+    with no override makes `resolve_batch` refuse, and the refusal is at NOTICE grain: the clean row
+    sitting beside it is NOT dispatched. That is what "escalated whole" means, and it is the property
+    a per-row implementation would silently violate while still looking like it escalated.
+
+    Zero-compensation is asserted here too: `sends == []` means nothing was dispatched before the
+    refusal, so the escalation has no partial effects to unwind.
+    """
+    _stub_can_invoke(monkeypatch, lambda cap, caller, **k: caller == _SERVICE_ID)
+    wf = get_workflow_definition("autonomous_review")
+    ctx = _Ctx()
+    dirty = {**_TRIGGER, "batch_items": [_CLEAN_ITEM, _DIRTY_ITEM]}
+
+    out = await main._run_definition(ctx, "autonomous-IPCN25300X", wf.model_dump(), dirty)
+
+    assert ctx.sends == [], (
+        f"a refused notice dispatched {ctx.sends} — the clean row rode along, so the grain is the "
+        f"ROW not the NOTICE and a human will review a batch whose effects have already started")
+    assert len(ctx.escalations) == 1, f"expected exactly one escalation, got {ctx.escalations}"
+    esc = ctx.escalations[0]
+    assert esc["arg"]["admitted_by"] == "escalation", (
+        "the escalated review must say policy REFUSED, not repeat the rung that admitted it")
+    assert "MPN-UNVERIFIED" in esc["arg"]["escalation_reason"], (
+        "the record must name the row that refused — 'a check failed' sends a reviewer hunting")
+    assert esc["arg"]["batch_items"] == dirty["batch_items"], (
+        "the human must review the SAME batch that refused; re-composing could yield a different "
+        "one and the reviewer would be judging something the pipeline never saw")
+    assert out["status"] == "COMPLETED", (
+        "escalation is an OUTCOME, not a failure — the autonomous workflow did its job by refusing")
+
+
+@pytest.mark.asyncio
+async def test_the_escalated_start_uses_a_NOVEL_key(monkeypatch):
+    """THE LEG-3 LESSON AS A STANDING ASSERTION. Workflow 1 and workflow 2 take the SAME trigger, so
+    an escalation re-sent under the SAME key collides with the very run that refused it — Restate
+    attaches, returns the autonomous result, and the notice is dropped with nothing red."""
+    _stub_can_invoke(monkeypatch, lambda cap, caller, **k: caller == _SERVICE_ID)
+    wf = get_workflow_definition("autonomous_review")
+    ctx = _Ctx()
+    dirty = {**_TRIGGER, "batch_items": [_DIRTY_ITEM]}
+    await main._run_definition(ctx, "autonomous-IPCN25300X", wf.model_dump(), dirty)
+
+    esc = ctx.escalations[0]
+    assert esc["key"] != "autonomous-IPCN25300X", "the escalation reused the refusing run's key"
+    assert esc["arg"]["request_key"] != _TRIGGER["request_key"], (
+        "the escalation carries the ORIGINAL request_key — the BFF keys ingress idempotency on "
+        "(request_key, approver), so this would be swallowed by the admission that refused it")
+    assert "autonomous-IPCN25300X" in esc["arg"]["escalated_from_workflow"], (
+        "the escalation must point BACK at the refusing run, or the chain is lost")

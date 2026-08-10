@@ -66,16 +66,25 @@ def test_every_shipped_definition_binds_with_runtime_values_only(name, defn):
     assert not leftover, f"{name}: placeholders survived substitution: {sorted(leftover)}"
 
 
-def test_the_exact_defect_is_pinned_on_the_real_autonomous_definition():
-    """THE BUG, named. `autonomous_review.yaml` must declare `dispatch_endpoint` AND the runtime
-    must bind it — asserted separately, because the failure was that only one of those was true."""
+def test_the_exact_defect_is_now_STRUCTURALLY_IMPOSSIBLE_on_the_autonomous_path():
+    """THE BUG, re-pinned at its stronger form (2026-08-09).
+
+    This originally asserted that `autonomous_review.yaml` DECLARES `dispatch_endpoint` and that the
+    runtime BINDS it — the defect being that only the first was true. The step has since been
+    renamed `direct_call` -> `dispatch_fanout`, a kind with NO endpoint field at all: it dispatches
+    the review's own batch through the sealed fan-out, so there is no URL for a definition author to
+    supply or for the runtime to leave unbound.
+
+    The pin is therefore re-pointed rather than deleted, at the stronger property: the autonomous
+    definition declares NO endpoint placeholder, so this class of defect is now unexpressible there.
+    The runtime binding is still asserted because generic `direct_call` survives and can still use
+    it."""
     defn = yaml.safe_load((_WORKFLOWS / "autonomous_review.yaml").read_text(encoding="utf-8"))
-    assert "dispatch_endpoint" in collect_placeholders(defn), (
-        "the definition no longer declares dispatch_endpoint — re-point this pin at whatever "
-        "replaced it rather than deleting it")
+    assert "dispatch_endpoint" not in collect_placeholders(defn), (
+        "an endpoint placeholder is back on the autonomous path — the false generality that hid the "
+        "unbound literal for months")
     assert "dispatch_endpoint" in config_bindings(), (
-        "the RUNTIME does not bind dispatch_endpoint — this is the exact defect: declared, "
-        "unbound, and only discoverable by executing the path")
+        "the runtime must still bind it for generic direct_call callers")
 
 
 def test_the_endpoint_binds_to_the_SAME_target_the_supervised_path_uses():

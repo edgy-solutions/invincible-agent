@@ -39,6 +39,7 @@ __all__ = [
     "HumanAwaitStep",
     "SpoOperationStep",
     "DirectCallStep",
+    "DispatchFanoutStep",
     "WorkflowDefinition",
     "WorkflowDefinitionError",
     "load_workflow_definition",
@@ -158,9 +159,48 @@ class DirectCallStep(BaseModel):
     )
 
 
+class DispatchFanoutStep(BaseModel):
+    """Dispatch the review's batch WITHOUT a human — the autonomous counterpart of ``human_await``.
+
+    A STEP KIND WHOSE SEMANTICS ARE EXECUTOR-OWNED, and that is the whole design. The YAML declares
+    WHAT (a capability-gated dispatch of this review's batch); the executor owns HOW: assert
+    ``can_invoke``, synthesize the empty ``BulkDecision`` (accept-all-with-exceptions, which is what
+    an autonomous run's "decision" IS), run the shared pure core, and either fan out on the sealed
+    exactly-once path or ESCALATE the whole notice to a human.
+
+    WHY NOT DEFINITION CONTENT: the same reason ``human_await``'s mechanics are not. The load-bearing
+    behaviours — server-authored batch, the refusal checks, per-item idempotency, escalation — are
+    INTRINSIC to what the step means, so no definition author can omit them. **Escalation cannot be
+    forgotten because it is not authored.** A definition that dispatches without an escalation path
+    is unexpressible.
+
+    WHY IT IS NOT ``direct_call``. It was one, and that was a costume. ``direct_call`` is a generic
+    HTTP escape hatch, and this step never made a generic HTTP call — it POSTed a fixed envelope to
+    prove the capability gate existed, which it did faithfully for months while the gate denied it.
+    The false generality is exactly what let ``{dispatch_endpoint}`` sit unbound: a generic caller is
+    ALLOWED to have an arbitrary endpoint, so nothing could tell that this one was nonsense. Naming
+    the step for what it does makes its inputs checkable. Generic ``direct_call`` survives unchanged
+    for its own purpose and its ADR-0029 promotion path.
+
+    ``capability`` stays REQUIRED and Topaz-decided — the gate the recorded ``[403]`` proved, kept in
+    the declaration plane where "this process dispatches under this capability" belongs.
+    """
+
+    kind: Literal["dispatch_fanout"]
+    id: str
+    capability: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Topaz-decidable capability for the dispatch (can_invoke). REQUIRED — an autonomous "
+            "dispatch that could be declared ungated is the one thing this kind must not permit."
+        ),
+    )
+
+
 # Discriminated union on `kind` — an unknown/absent kind fails validation loudly.
 Step = Annotated[
-    Union[HumanAwaitStep, SpoOperationStep, DirectCallStep],
+    Union[HumanAwaitStep, SpoOperationStep, DirectCallStep, DispatchFanoutStep],
     Field(discriminator="kind"),
 ]
 

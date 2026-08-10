@@ -66,9 +66,17 @@ steps:
   # EVIL TWIN — it would WORK, for anyone who lies. Granting this capability while (a)/(b) are
   # open converts "choose your own supervision level" from a harmless lie into live privilege
   # escalation, invisibly, because the system would behave exactly as designed.
-  - kind: direct_call
+  # RENAMED from `direct_call` 2026-08-09. It was never a generic HTTP call — it POSTed a fixed
+  # envelope to prove the capability gate existed, which it did faithfully while the gate denied it.
+  # The false generality is what let `{dispatch_endpoint}` sit unbound for months: a generic caller
+  # is ALLOWED an arbitrary endpoint, so nothing could tell this one was nonsense. No `endpoint`
+  # here on purpose — this kind dispatches the review's OWN batch through the sealed fan-out, so
+  # there is no URL for a definition author to get wrong.
+  #
+  # Safe as an EDIT rather than a migration: every prior AutonomousReview invocation is terminal
+  # (killed or completed-failure), so no live journal holds the old step identity.
+  - kind: dispatch_fanout
     id: dispatch_dispositions
-    endpoint: "{dispatch_endpoint}"
     capability: "mesh:dispatchDispositions"
 
 observable_state:
