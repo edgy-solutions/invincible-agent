@@ -94,7 +94,7 @@ measured census).
 | **C** | Swarms.ai | 8083 | `/scrape` | Stateless heavy-compute extraction. |
 | **D** | httpx + DataHub GMS | 8085 | `/query_metadata`, `/lineage_by_platform` | Catalog wrapper — owner, lineage, freshness, tags, schema. |
 | **DA** | Restate + smolagents + Polars | 8089 | `/analyze_data` | Universal data plane. Postgres / ClickHouse / S3 Parquet / Delta / Iceberg via CortexDataClient, Topaz-enforced RLS/CLS. |
-| **E** | Restate + smolagents + Neo4j + mem0 | 8086 | `/query_proxy` | Knowledge-graph expert; bounded Cypher-flavoured API. |
+| **E** | Restate + smolagents + Neo4j + mem0 | 8086 | `/query_graph`, `/resolve_instance`, `/resolve_dmc` | Knowledge-graph expert; bounded Cypher-flavoured API. |
 | **F** | FastAPI + BAML | 8087 | `/render_ui` | Presentation router → typed `DashboardUI` archetypes. |
 | **W** | Restate + smolagents + Weaviate | 8088 | `/query_knowledge` | Semantic knowledge expert; per-domain segregation. |
 

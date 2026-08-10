@@ -27,17 +27,23 @@ NS="${NS:-sandbox}"
 # on its own terms (422 for a missing body) — either way the gauge line is what we assert on,
 # not the status.
 probe_path() {
+  # METHOD and PATH, both. Carrying only the path was a real defect: the probe POSTed to
+  # engine-o's GET-only /personas, FastAPI returned 405 BEFORE running app dependencies, and
+  # leg 5 reported "no gauge line" — correctly, but for a reason that was the instrument's
+  # fault rather than the fleet's. A 405 short-circuits the dependency exactly like a 404 does.
+  #
+  # Paths verified by enumerating each app's live routes, not from the README: engine-e serves
+  # /query_graph, NOT the /query_proxy this map used to claim.
   case "$1" in
-    iagent-mesh-registrar) echo "/v1/register" ;;
-    iagent-domain-broker)  echo "/api/v1/internal/resolve" ;;
-    iagent-projector)      echo "/projector/watermark" ;;
-    iagent-engine-w)       echo "/query_knowledge" ;;
-    iagent-engine-o)       echo "/personas" ;;
-    iagent-engine-d)       echo "/query_metadata" ;;
-    iagent-engine-e)       echo "/query_proxy" ;;
-    iagent-engine-f)       echo "/render_ui" ;;
-    iagent-engine-a)       echo "/analyze" ;;
-    iagent-data-analyst)   echo "/analyze_data" ;;
+    iagent-mesh-registrar) echo "POST /v1/register" ;;
+    iagent-domain-broker)  echo "POST /api/v1/internal/resolve" ;;
+    iagent-engine-w)       echo "POST /query_knowledge" ;;
+    iagent-engine-o)       echo "GET /personas" ;;
+    iagent-engine-d)       echo "POST /query_metadata" ;;
+    iagent-engine-e)       echo "POST /query_graph" ;;
+    iagent-engine-f)       echo "POST /render_ui" ;;
+    iagent-engine-a)       echo "POST /analyze" ;;
+    iagent-data-analyst)   echo "POST /analyze_data" ;;
     *)                     echo "" ;;
   esac
 }
@@ -71,8 +77,8 @@ for DEP in "$@"; do
   [ -z "$ANN" ] && { echo "  STOPPING: no posture announcement"; exit 1; }
 
   # LEG 5 — non-exempt probe, then a HAS-SUBJECTS assertion on the gauge.
-  PP=$(probe_path "$DEP")
-  if [ -z "$PP" ]; then
+  PM=$(probe_path "$DEP"); PV=${PM%% *}; PP=${PM#* }
+  if [ -z "$PM" ]; then
     echo "  LEG5 gauge     : NO PROBE PATH MAPPED for $DEP — leg 5 cannot run, and an"
     echo "                   unmapped service is an UNCHECKED one. Add it to probe_path()."
     fail=1
@@ -81,7 +87,7 @@ for DEP in "$@"; do
     PORT=$(kubectl -n "$NS" get deploy "$DEP" -o jsonpath='{.spec.template.spec.containers[0].ports[0].containerPort}' 2>/dev/null)
     kubectl -n "$NS" exec "$POD" -- python -c "
 import urllib.request
-r=urllib.request.Request('http://127.0.0.1:${PORT}${PP}', data=b'{}', headers={'Content-Type':'application/json'})
+r=urllib.request.Request('http://127.0.0.1:${PORT}${PP}', data=(b'{}' if '${PV}'=='POST' else None), headers={'Content-Type':'application/json'}, method='${PV}')
 try: urllib.request.urlopen(r, timeout=25)
 except Exception: pass
 " >/dev/null 2>&1
@@ -89,13 +95,13 @@ except Exception: pass
     AFTER=$(kubectl -n "$NS" logs "$POD" 2>/dev/null | grep -c "caller:")
     DELTA=$((AFTER - BEFORE))
     if [ "$DELTA" -ge 1 ]; then
-      echo "  LEG5 gauge     : ok — probe on ${PP} produced ${DELTA} new line(s)"
+      echo "  LEG5 gauge     : ok — probe on ${PV} ${PP} produced ${DELTA} new line(s)"
       kubectl -n "$NS" logs "$POD" 2>/dev/null | grep "caller:" | tail -1 | sed 's/^/                   /'
     else
       # THE HAS-SUBJECTS ASSERTION. Zero new lines means the probe path is exempt, the
       # dependency is not applied, or the gauge is dark — all three are failures, and all
       # three previously looked identical to "clean".
-      echo "  LEG5 gauge     : FAIL — probe on ${PP} produced NO gauge line."
+      echo "  LEG5 gauge     : FAIL — probe on ${PV} ${PP} produced NO gauge line."
       echo "                   Either that path became exempt, the dependency is unapplied,"
       echo "                   or the gauge is dark. A zero here is not 'clean'."
       fail=1
