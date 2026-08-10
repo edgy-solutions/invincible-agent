@@ -88,13 +88,13 @@ formats:
   # state routed and dispatched exactly as before. The table said what was TRUE at every moment,
   # including the moment it briefly was not — which is the property the whole trust arc is for.
   "onsemi/pcn/v1":
-    rung: supervised
+    rung: monitored
     pipeline_version: "doc-tools@d5b44829eb9bc29791aa71857b987c1d3256569c"
-    sample_rate: 0.0
+    sample_rate: 1.0
     ratified_by: cnogradi
     ratified_on: 2026-08-09
     repromoted_on: 2026-08-09
-    demoted_again_on: 2026-08-09
+    repromoted_on: 2026-08-10
     demotion_history: >-
       Promoted, witnessed, demoted the same day when the autonomous dispatch step failed on its
       FIRST EVER execution ({dispatch_endpoint} unbound). Re-promoted only after the fix landed
