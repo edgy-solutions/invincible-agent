@@ -1,6 +1,19 @@
+---
+id:         suite-signal
+status:     open
+owner:      agent
+blocked-on: 
+closed-by:  
+repo:       invincible-agent
+summary:    master is not green. Measured census; recommended owner the telemetry agent.
+---
+
 # Suite-signal session — restoring `master` to a readable green
 
-**Status:** approved, unscheduled. **Recommended owner:** the telemetry agent (queue clear).
+_Status is in this packet's YAML header — the single authority (ADR-0040). The prose
+status line that stood here was removed when the header landed: two declarations of one
+status is the two-homes defect, and a generated board reading the header would have
+silently disagreed with a reader trusting the prose._
 **Census taken:** 2026-08-07, as a by-product of triaging the transport-auth expand phase.
 
 ## Why this session exists

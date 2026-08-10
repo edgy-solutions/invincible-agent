@@ -94,6 +94,22 @@ Do not unify boards across projects. What is actually lost across projects is no
 - **Drift test:** the committed `BOARD.md` regenerates byte-identically from the packet headers. Broken-on-purpose to prove it bites.
 - **Orphan test, both directions:** no packet in `docs/plans/` without a board line, and no board line without a packet. Either direction alone permits a lie; the pair is what makes the board an index rather than a list.
 - **`closed-by:` shas must resolve in this repo.** The drift test only proves board-matches-headers; a packet marked `closed` with a fabricated, mistyped, or reverted sha passes every other seal while claiming evidence it does not have. This is the standing "committed is the evidence" rule applied to the field that carries the evidence — if the sha does not resolve, the claim of closure is unbacked and CI says so.
+- **AMENDED 2026-08-10 — `closed-by:` must RESOLVE *and* be ATTRIBUTABLE.** The original seal
+  required the sha to resolve. Its first real-world test found the hole: the seed board cited
+  `116fff0` for `registration-wiring` — a sha that resolves cleanly and is **the wrong commit**
+  (a follow-up litany fix; the closure was `9d93146`). It passed every seal while claiming
+  evidence for a different change. **Existence is not attribution**, and this is the same species
+  as grep-names-not-content and scan-vs-read: a check validating FORM where the claim is about
+  CONTENT. The strengthened rule: the `closed-by` commit must touch the packet's own file or its
+  declared code site. Imperfect — a commit can touch a file without closing the item — but it
+  converts "a sha exists" into "a sha related to this item exists", which is where the lie lived.
+
+- **A `?` in a committed board is a merge failure, absence-checked not presence-checked.** An
+  unreconciled seed must be physically unable to land, rather than landing with honest-looking
+  uncertainty that ages into apparent fact. The marker exists SOLELY TO BE CLEARED — it is never
+  a permanent convention, and a board carrying one is unfinished by definition. Same design as
+  `_KNOWN_UNPINNED` being empty by construction.
+
 - **Vocabulary test:** every `status:` value is one of the five. A sixth value is a merge failure, not a convention drifting.
 - **Marker test:** for items declaring a code site, the marker is present at that site — the `MIGRATION_MARKER` shape, where absence fails rather than merely being noticed.
 

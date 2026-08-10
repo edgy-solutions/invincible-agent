@@ -1,6 +1,19 @@
+---
+id:         engine-a-loop-idempotency
+status:     parked
+owner:      human
+blocked-on: design window (reserved)
+closed-by:  
+repo:       invincible-agent
+summary:    Non-idempotent Superset write inside the agent loop. FILED NOT FIXED; the packet forbids attaching it to a durability session.
+---
+
 # LEDGER ITEM — agent-loop effect idempotency (Engine A)
 
-**Status: FILED, NOT FIXED.** Needs design, not a rider. Do not attach this to a durability session.
+_Status is in this packet's YAML header — the single authority (ADR-0040). The prose
+status line that stood here was removed when the header landed: two declarations of one
+status is the two-homes defect, and a generated board reading the header would have
+silently disagreed with a reader trusting the prose._
 
 **Provenance.** Found 2026-08-05 while enumerating effects for the Engine D durability fix, under a
 packet that named the wrong service. The scope was contaminated; the enumeration was not. This is

@@ -1,3 +1,13 @@
+---
+id:         transport-gauge
+status:     closed
+owner:      agent
+blocked-on: 
+closed-by:  e18b5cf
+repo:       invincible-agent
+summary:    Gauge reads only migratable callers: probe paths exempt, 549 -> 22 -> 0-new-unverified.
+---
+
 # Transport-auth gauge — day zero
 
 > ## SUPERSEDED READING (2026-08-08, after SDK v0.2.2) — **22 / 0 verified / 22 unverified**

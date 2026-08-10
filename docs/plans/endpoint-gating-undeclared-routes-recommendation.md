@@ -1,3 +1,13 @@
+---
+id:         undeclared-routes
+status:     blocked-on-human
+owner:      human
+blocked-on: gate-class judgment per route
+closed-by:  
+repo:       invincible-agent
+summary:    12 routes undeclared in the gating manifest, incl. decision-plane writes.
+---
+
 # The 12 undeclared routes — evidence and a RECOMMENDATION (not a decision)
 
 `tests/test_endpoint_gating_manifest.py` has three reds. **The test is not broken** — it is correctly

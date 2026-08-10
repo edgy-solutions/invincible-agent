@@ -1,3 +1,13 @@
+---
+id:         registration-wiring
+status:     closed
+owner:      agent
+blocked-on: 
+closed-by:  9d93146
+repo:       invincible-agent
+summary:    Six engines mint on /v1/register under decode-witnessed identities. Witnessed at a clean log boundary: 0 new unverified, 6 verified (svc:engine-o 1, svc:engine-w 5 — multiplicities matching each engine's verb count).
+---
+
 # `/v1/register` caller enumeration — sizing the identity batch
 
 **Taken 2026-08-08**, against invincible-agent `e18b5cf` / iagent-mesh-sdk `v0.2.2`, with the

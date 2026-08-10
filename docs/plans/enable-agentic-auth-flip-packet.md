@@ -1,3 +1,13 @@
+---
+id:         transport-flip
+status:     blocked-on-human
+owner:      human
+blocked-on: work-deploy validated + witnessed zero at work
+closed-by:  
+repo:       invincible-agent
+summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
+---
+
 # `ENABLE_AGENTIC_AUTH` — the flip packet (ADR-0025's terminus)
 
 **What this is.** Turning `ENABLE_AGENTIC_AUTH` on is **not a configuration change**. It is the
