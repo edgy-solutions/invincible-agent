@@ -4,6 +4,8 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
+_Coverage: **6 of 55 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 47 are unheadered. Closing that gap is the migration._
+
 ## blocked-on-human
 
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.

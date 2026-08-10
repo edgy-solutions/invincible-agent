@@ -35,11 +35,35 @@ def headers():
     return out
 
 
+def coverage_line():
+    """The board must disclose its OWN incompleteness, in the artifact rather than around it.
+
+    Six items read as the whole board unless the board says otherwise. The honesty previously
+    lived in a conversation report — which is exactly the location ADR-0040 exists to evacuate.
+    """
+    total = len(list(PLANS.glob("*.md")))
+    headered, legacy = 0, 0
+    for p in sorted(PLANS.glob("*.md")):
+        t = p.read_text(encoding="utf-8")
+        if not t.startswith("---\n"):
+            continue
+        blk = t.split("---\n", 2)[1]
+        if any(l.startswith("id:") and l.split(":", 1)[1].strip() for l in blk.splitlines()):
+            headered += 1
+        else:
+            legacy += 1
+    return (f"_Coverage: **{headered} of {total} packets indexed** — {legacy} carry pre-ADR-0040 "
+            f"legacy frontmatter, {total - headered - legacy} are unheadered. "
+            f"Closing that gap is the migration._")
+
+
 def render(items):
+    coverage = coverage_line()
     L = ["# BOARD — invincible-agent", "",
          "**Generated — do not hand-edit.** Status lives in each item's packet header;",
          "`scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.",
-         "Hand-editing here is a lie the next regeneration silently reverts.", ""]
+         "Hand-editing here is a lie the next regeneration silently reverts.", "",
+         coverage, ""]
     for s in VOCAB:
         rows = [i for i in items if i.get("status") == s]
         if not rows:
@@ -74,13 +98,37 @@ def main():
         r = subprocess.run(["git", "cat-file", "-t", sha], cwd=ROOT, capture_output=True)
         if r.returncode != 0:
             print(f"UNRESOLVABLE: {i['id']} closed-by {sha} does not resolve"); return 1
+        # ATTRIBUTION, not merely existence. A resolving sha is not a correct sha: the seed
+        # board cited a sha that resolved cleanly and was the WRONG COMMIT (a follow-up fix,
+        # not the closure). It passed every seal while claiming evidence for another change.
+        # So the commit must TOUCH the packet or its declared code site.
+        files = subprocess.run(["git", "show", "--name-only", "--format=", sha],
+                               cwd=ROOT, capture_output=True, text=True).stdout
+        touched = {ln.strip().replace("\\", "/") for ln in files.splitlines() if ln.strip()}
+        targets = {i["_file"]}
+        if i.get("code-site"):
+            targets |= {t.strip() for t in i["code-site"].split(",") if t.strip()}
+        if not (touched & targets):
+            # HONEST ESCAPE HATCH. A real closure can legitimately touch neither — the work
+            # landed elsewhere, or the packet was written after the fact. Requiring a stated
+            # reason keeps that case legal WITHOUT letting the seal be silently ignored; a
+            # seal that produces false failures on legitimate closures gets overridden, and
+            # an overridden seal is a dead one.
+            if not i.get("closed-by-note"):
+                print(f"UNATTRIBUTED: {i['id']} closed-by {sha} touches neither "
+                      f"{i['_file']} nor any declared code-site. Add `closed-by-note:` "
+                      f"explaining why, or cite the commit that did the work."); return 1
     text = render(items)
     if "--check" in sys.argv:
         cur = BOARD.read_text(encoding="utf-8") if BOARD.exists() else ""
         if cur != text:
             print("DRIFT: docs/BOARD.md does not match the packet headers. Regenerate."); return 1
-        if "?" in cur:
-            print("UNRECONCILED: a '?' marker survives in the committed board."); return 1
+        # `??`, not a bare `?`: a lone question mark is legitimate prose ("retire the loader?")
+        # and checking for it would booby-trap every summary. The sentinel must be a string
+        # nobody writes by accident.
+        if "??" in cur or "<unreconciled>" in cur:
+            print("UNRECONCILED: a '??'/<unreconciled> marker survives in the committed board.")
+            return 1
         print(f"board is current ({len(items)} items)"); return 0
     BOARD.write_text(text, encoding="utf-8")
     print(f"wrote {BOARD.relative_to(ROOT)} — {len(items)} items")

@@ -4,6 +4,7 @@ status:     closed
 owner:      agent
 blocked-on: 
 closed-by:  9d93146
+code-site:  agent_fleet/utils/mesh_registration.py
 repo:       invincible-agent
 summary:    Six engines mint on /v1/register under decode-witnessed identities. Witnessed at a clean log boundary: 0 new unverified, 6 verified (svc:engine-o 1, svc:engine-w 5 — multiplicities matching each engine's verb count).
 ---

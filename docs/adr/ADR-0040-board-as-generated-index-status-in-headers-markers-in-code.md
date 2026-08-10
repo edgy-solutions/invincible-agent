@@ -57,8 +57,21 @@ owner:      agent | human | <thread-name>
 blocked-on: <what, or empty>
 closed-by:  <commit sha, or empty>
 repo:       <repo name>
+summary:    <one line — what the board displays for this item>
+code-site:  <path[,path] the item lives at, or empty>
+closed-by-note: <why closed-by touches neither packet nor code-site, or empty>
 ---
 ```
+
+**AMENDED 2026-08-10 — three fields the original schema omitted while the design required them.**
+`summary:` was load-bearing in the generator and absent from this schema: two declarations of one
+schema, disagreeing, which is exactly the defect this ADR's fourth alternative rejects.
+`code-site:` is what makes the marker seal implementable at all — §3 requires code-sited items to
+carry a marker and acceptance tests for it, while the schema gave the test nothing to read. Both
+are OPTIONAL: a packet with no natural code site declares none, and forcing a value would be
+schema-satisfaction over truth. `closed-by-note:` is the attribution seal's honest escape hatch —
+a real closure can legitimately touch neither packet nor code site, and a seal that produces false
+failures on legitimate closures gets overridden, which kills it.
 
 A script greps these and rewrites `BOARD.md`; a **drift test asserts the committed board matches what the headers produce.** Nobody maintains the board by hand, which is the only reason it will not rot. `closed-by:` being a commit sha matches the standing rule that a thing is closed when it is committed, not when someone says so — the sha *is* the evidence.
 
