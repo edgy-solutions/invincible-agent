@@ -1,0 +1,64 @@
+---
+id:         silence-closure-arc
+status:     parked
+owner:      agent
+blocked-on: inventory review
+closed-by:
+repo:       invincible-agent
+summary:    Inventory of failure modes presenting as silence rather than error; instances checked against the repo.
+---
+
+# Silence-closure arc
+
+Standing inventory of paths where failure is indistinguishable from healthy quiet.
+
+> **Provenance note.** Drafted from conversation, then **checked against the repo**. Two claims
+> were corrected in that pass, and the corrections are shown rather than silently applied — a
+> packet that quietly absorbs its own corrections teaches nothing about how it was wrong.
+
+## Witnessed instances
+
+### The lexicographic cursor — *verified*
+
+`tests/test_sensor_cursor_contract.py:66-77`. The sensor's cursor sorted keys
+**lexicographically** while "new" means **arrival order**. An object whose key sorted *below* the
+cursor (`'g' < 'o'`) was therefore invisible **forever**, and the sensor logged nothing unusual.
+The record states it *"silently lost two real notices."*
+
+> **Corrected from the draft.** The draft described an ISO-timestamp-vs-bare-key comparison
+> (`'2' < 's'`) and "nine artifacts accumulated". The repo supports neither the comparison nor
+> the count: the mechanism is lexicographic-vs-arrival ordering, and the loss was two notices.
+> The family was right; the specifics were reconstruction — which is exactly what a conversation
+> source produces, and why this pass ran.
+
+### The silent gauge — *verified first-hand, 2026-08-08*
+
+`transport_auth` logged caller posture at INFO; no engine configured logging, so records fell
+through to `logging.lastResort` (WARNING) and were **discarded**. Twelve services announced
+`OBSERVE` at startup and observed nothing — while the function's own docstring claimed it *"turns
+the migration into a gauge instead of a claim."* It was still a claim. Fixed in SDK v0.2.1
+(`ensure_gauge_visible`), which is additive and deferential so a configured host is left alone.
+
+The sharp edge: the contract flip's precondition is "the unverified count reads zero", and **a
+silent gauge satisfies that perfectly and falsely.** Zero-because-silent and zero-because-clean
+are the two states the instrument exists to separate.
+
+### Langfuse credential absence — *reported, then RETRACTED*
+
+The audit that raised it had been rendered **without the secret overlay**, so the credentials
+were present all along. Kept here as a **mechanism, not an incident**: the telemetry leaf no-ops
+when keys are missing, so a genuinely credential-less deploy emits zero telemetry, silently. The
+retraction is itself the entry's value — the false positive came from a positive control that
+exercised every *stage* but not every *input*.
+
+## The general shape
+
+A fail-safe path that is also **fail-silent** is only safe until something depends on it. The
+repair is always the same: make the softness loud *inside its own seal* — count it
+(`emit_misses()`), announce it at startup, or fail the build. **Fail-soft is honest only when it
+is countable.**
+
+## Status
+
+Parked. The inventory is stable; closure work is unscheduled and unowned. New entries should
+carry their verification state inline, as above.

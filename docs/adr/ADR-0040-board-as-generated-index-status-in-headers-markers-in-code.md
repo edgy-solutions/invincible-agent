@@ -53,7 +53,7 @@ Every `docs/plans/*.md` carries a required machine-readable header:
 ---
 id:         <stable-slug>
 status:     open | in-flight | blocked-on-human | parked | closed
-owner:      agent | human | <thread-name>
+owner:      agent | human | <thread-name> | <empty = unassigned>
 blocked-on: <what, or empty>
 closed-by:  <commit sha, or empty>
 repo:       <repo name>

@@ -88,7 +88,12 @@ def _blocks():
             yield p, text.split("---\n", 2)[1]
 
 
-@pytest.mark.parametrize("field", ["status", "owner", "repo"])
+# `owner` is NOT required. It may be empty, meaning UNASSIGNED, and the board renders it
+# as such. The first version of this test demanded it — and its first subject was
+# `dagster-loader-call`, a real item with genuinely no owner. The test was asking for a
+# fabricated value to satisfy a schema, which is the failing-test-is-a-checkable-claim
+# rule landing on this very file: the ADR got the amendment, the packet kept the truth.
+@pytest.mark.parametrize("field", ["status", "repo"])
 def test_adr0040_packets_carry_their_required_fields(field: str):
     """Scoped to packets CLAIMING ADR-0040 conformance — those carrying an `id:`.
 
