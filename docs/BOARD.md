@@ -13,7 +13,7 @@ _Coverage: **19 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
-  status: blocked-on-human · owner: human · blocked-on: enumeration across 5 repos + every candidate READ + the 9 stopping callers remediated — not merely enumerated
+  status: blocked-on-human · owner: human · blocked-on: 11 stopping callers remediated (platform, all 19 read) + 4 repos still unswept
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
 - **undeclared-routes** — 12 routes undeclared in the gating manifest, incl. decision-plane writes. BLOCKING THREE OTHER ITEMS — all wait on one unratified call: is in-cluster reachability an acceptable gate?

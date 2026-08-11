@@ -952,6 +952,35 @@ form: **a conclusion that travels by repetition rather than by evidence gets re-
 inherited** — chat-borne claims have no verification gate, so any claim important enough to cross
 a session or a handoff crosses as a checkable statement WITH its evidence, or not at all.
 
+### Automated passes over a readable corpus fail STRUCTURALLY and DIVERSELY — more passes add error modes, they do not triangulate
+2026-08-10, enumerating unminted outbound callers. **Four classifier passes over one tree produced
+four different answers, and every error was structural rather than a typo:**
+
+1. **Indirection defeats a string match.** The credential attaches inside
+   `_telemetry_headers(config)`, so searching the call block for `Authorization` finds nothing and
+   reports a minted caller as unminted.
+2. **Over-resolution drops true positives.** The fix for (1) narrowed the target regex and window
+   and lost four confirmed-minted calls.
+3. **A short window invents missing error handling.** These sites carry 15-line explanatory
+   comments *between* the request and its handling, so a 20-line window ended before both
+   `raise_for_status()` and the enclosing `except` — and reported "consumes a 401 body as a
+   result", an emergency that does not exist and was one step from being filed as a board item
+   above the flip in severity.
+4. **Proximity is not enclosure.** A backward scan for `try:` cannot tell which *branch* it
+   guards. `dynamic_supervisor.py:146` sits in the `else:` while the `try` guards the `if`, so it
+   read as caught when it stops.
+
+The tempting inference after (1) and (2) — *run more passes and cross-check them* — is wrong.
+The passes do not converge, because each new heuristic brings its own structural blind spot. Two
+disagreeing passes tell you only that at least one is wrong, never which.
+
+**Reading all nineteen sites took less time than the four passes did, and it was right the first
+time.** It also moved the count twice more (9 stops → 11), both times in the same direction.
+
+**So: for a corpus you can read, read it.** Scripts are for corpora too large to read — and when
+you use one there, its output is a CANDIDATE LIST whose closure condition is a read, stated in the
+artifact so nobody later mistakes the candidates for the answer.
+
 ### A failing test is a CLAIM about what should change, and the claim is checkable
 A red test proposes a repair. That proposal is an argument, not an instruction — and the
 pressure to obey it is strongest exactly when the test looks principled.

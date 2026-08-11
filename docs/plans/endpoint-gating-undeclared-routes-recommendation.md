@@ -19,6 +19,26 @@ the architect's.
 Every "gated" claim below was read from the route's actual dependency list, not inferred from its
 name or its neighbours.
 
+
+## INTERSECTION with transport-flip — `/write_item_state`, one specific line
+
+**Noted 2026-08-10 in both packets, because a defect visible from two items gets fixed twice or
+not at all.**
+
+`agent_fleet/restate_analyst/dispatch_driver.py:247` calls engine-o `/write_item_state` **with no
+credential**, and `/write_item_state` is one of the 12 undeclared routes in this packet. So the
+same endpoint is simultaneously:
+
+* an **unminted caller** (transport-flip's list — one of 11 that STOP under REQUIRE), and
+* an **unclassified gate** (this packet — no identity/gate/class row).
+
+Worse than either alone: `_fail_terminal_on_4xx` runs *before* `raise_for_status`, so a 401 is
+classed **terminal** and Restate will not retry. The disposition write fails permanently.
+
+Whoever classifies this route should know a caller is already broken against it; whoever mints
+that caller should know the route's gate class is undecided. **Neither fix is complete without
+the other.**
+
 ## cortex-bff (`src/iagent/gateway.py`) — 5 routes
 
 All five carry `current_user: User = Depends(get_current_user)`, verified per route:

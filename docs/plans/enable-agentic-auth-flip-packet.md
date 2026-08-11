@@ -71,6 +71,38 @@ auth-off must be explicit.* Deny-by-default applied to configuration — forgot-
 then established that the target already has a name, an ADR and a stated precondition, so the
 ruling is the DESTINATION and the ADR owns the PATH.
 
+
+## TWO NAMED CONSEQUENCES OF THE FLIP — not table rows
+
+### 1. The audit trail silently becomes partial
+
+`src/iagent/decision_record_writer.py:71` writes to engine-o `/write_decision_record` **with no
+credential**, and it DEGRADES on failure — its own log already reads *"the corpus has a HOLE
+here"*.
+
+Under REQUIRE that hole stops being exceptional and becomes **routine**: decisions execute
+normally and go unrecorded. Nothing stops, nothing errors, and the record quietly stops matching
+what happened.
+
+**This is the one degradation that undoes this arc's actual product.** A month of work went into
+making the record tell the truth — the `rung_for` recompute, the threaded admission,
+`dr-08a9c7e7a8c04e00` as the corpus's first true monitored row. Flipping REQUIRE without minting
+this caller converts that record into a partial one, and does it quietly enough that the first
+symptom is an audit someone cannot complete.
+
+**It must be minted before the flip, not after.** It degrades rather than stops, so it will not
+announce itself.
+
+### 2. `/write_item_state` — unminted caller AND unclassified gate, same endpoint
+
+`dispatch_driver.py:247` calls it with no credential (one of the 11 that STOP), and it is also one
+of the 12 undeclared routes awaiting gate-class judgment. Its 401 is classed **terminal** by
+`_fail_terminal_on_4xx`, so Restate will not retry — the disposition write fails permanently.
+
+Cross-noted in `endpoint-gating-undeclared-routes-recommendation.md`. **Neither fix is complete
+without the other**, and a defect visible from two items is one that gets fixed twice or not at
+all.
+
 ## Established by reading the code (2026-08-07)
 
 | fact | evidence |

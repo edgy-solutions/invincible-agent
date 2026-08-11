@@ -111,6 +111,52 @@ none was a typo. That is what "read the candidates" was for.
 engine-o, engine-A or DA — no third-party calls in this set. `transport-flip` has a real
 numerator for the first time.
 
+
+## SEAM READ — the 11 are 2 identities across 2 processes, not 11 edits
+
+**Done 2026-08-10, before scoping remediation, because "eleven edits" and "two seams" are very
+different sessions.**
+
+Every stopping caller sits in one of two processes, and the identity each should mint as follows
+from the process, not from the call:
+
+### Process A — engine-A's image (`agent_fleet/restate_analyst/*`) → `svc:engine-a`
+
+8 of the 11: `dispatch_driver.py:247` · `main.py:544` · `policy_rules_client.py:75` ·
+`review_composer.py:94` · `spo_interview.py:113,154,176` · `spo_step_executor.py:96`
+
+**A mint already exists in this process.** `main.py` carries `engine_mint(...)` (registration,
+`svc:engine-a`) and `dispatch_driver.py` carries `mint_service_token()`. What is missing is a
+shared outbound-header helper, not a credential.
+
+### Process B — the Dagster plane (`src/iagent/defs/*`) → `svc:supervisor`
+
+3 of the 11: `dynamic_supervisor.py:146` · `agent_routers.py:65,193`
+
+**The seam already exists and is already used**: `_telemetry_headers(config)` mints
+`svc:supervisor` and is applied at `dynamic_supervisor.py:1037` and `:1650`. Site `146` is in the
+same file and does not use it.
+
+### What this means for scoping
+
+| | count |
+|---|---|
+| call sites | 11 |
+| modules | 6 |
+| **processes / identities** | **2** |
+| **seams needing new code** | **1** (an engine-A outbound-header helper) |
+
+Process B needs no new mechanism — three calls need to pass the helper their own module already
+defines. Process A needs one helper, then eight call sites pass it.
+
+**Caveat, stated because it is the load-bearing assumption:** this says each caller *should* mint
+as its process identity. That is the per-engine ruling applied to outbound calls, and it is the
+right default — but `dispatch_driver` already mints via `mint_service_token()`, which reads
+`REVIEW_STARTER_CLIENT_ID` behind a general name. Whether engine-A's outbound calls should carry
+`svc:engine-a` or `svc:review-starter` **depends on which is the governed actor for each call**,
+and that is a ruling, not a read. It should be settled once, at the helper, rather than eleven
+times at the call sites.
+
 ## Not swept — the majority of remaining risk
 
 `iagent-mesh-sdk` (MeshClient.ask, registration transport), `dag-tools` (central_gateway,
