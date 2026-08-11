@@ -168,3 +168,21 @@ four-repo read. **Same read, two answers.** If it confirms zero consumers, disab
 one, the route stops being unused and gets classified like any other action route.
 
 **This item unblocks on the strength of these four dispositions.**
+
+## PROMOTED TO A STANDING RULE — 2026-08-11
+
+The per-class ruling above is no longer a disposition of twelve routes. It is
+`[[gate-class-follows-the-effect]]`, and **this packet is its first application, not its home.**
+
+**What promoted it:** two `dag-tools` findings — a different repo, sharing no code and not even
+depending on the mesh SDK — landed in its columns *without amendment*. A ruling that resolves
+cases it was not drafted against is a rule; one that only resolves its own is a disposition.
+Leaving it here would mean every cross-repo instance reopens a question that took an evening to
+settle.
+
+**Consequence for future findings:** classify against the law, file as your own item citing it,
+and **do not reopen this packet.** Its scope is the twelve platform routes; widening that to
+"anywhere the pattern appears" is what makes an item's boundary meaningless.
+
+**Not restated above, deliberately** — one home, not two. The law carries the columns, the closure
+condition on internal reads (which *expires* at the work deploy), and the application procedure.
