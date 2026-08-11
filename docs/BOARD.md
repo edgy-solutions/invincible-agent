@@ -29,7 +29,7 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/dag-tools-broker-register-unauthenticated.md](plans/dag-tools-broker-register-unauthenticated.md)
 
 - **dag-tools-gateway-unverified-subject** — HIGH — the DA data gateway never verifies a bearer and takes its authz subject from a request HEADER, so per-user scoping is advisory. THE DELIVERABLE IS THE SUBJECT-SOURCE GAUGE — how many live requests ASSERT a subject vs PROVE one. Verification is the easy part; the gauge decides whether killing the header override is a config change or a coordinated migration.
-  status: open · owner: agent · blocked-on: nothing — CLASSIFIED and the APPROACH IS RULED (2026-08-11): build as verify-if-present with posture logging first, never a direct flip. Remaining work is the build.
+  status: open · owner: agent · blocked-on: THE READING — the OBSERVE gauge is built and wired (2026-08-11); it must run on the live gateway and be counted before step 2 is scoped. Verification/header-override work waits on that number.
   → [docs/plans/dag-tools-gateway-unverified-subject.md](plans/dag-tools-gateway-unverified-subject.md)
 
 - **dagster-loader-call** — build_dynamic_jobs() runs unconditionally on every Dagster load; whether its catalog is empty is unconfirmed.

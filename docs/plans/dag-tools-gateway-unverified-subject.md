@@ -2,7 +2,7 @@
 id:         dag-tools-gateway-unverified-subject
 status:     open
 owner:      agent
-blocked-on: nothing — CLASSIFIED and the APPROACH IS RULED (2026-08-11): build as verify-if-present with posture logging first, never a direct flip. Remaining work is the build.
+blocked-on: THE READING — the OBSERVE gauge is built and wired (2026-08-11); it must run on the live gateway and be counted before step 2 is scoped. Verification/header-override work waits on that number.
 closed-by:  
 code-site:  dag_tools/central_gateway/main.py
 repo:       dag-tools
@@ -159,8 +159,89 @@ Three things, and the first two are not optional if the notebook design proceeds
    (`TOPAZ AUTHZ DENIED`, `AUTHZ_DENIED`); an allow logs nothing about *who*. A data plane that
    records only its refusals cannot answer "who read this."
 
+## THE GAUGE IS BUILT — 2026-08-11, OBSERVE only
+
+`dag_tools/central_gateway/subject_gauge.py`, wired at two points in `main.py`: `announce()` in
+the lifespan, `observe()` in `authorize_asset` on the same two inputs the gate itself uses.
+
+**Behaviourally inert by construction.** No refusal, no altered subject, no header removed, no
+REQUIRE path — the module contains none. The call site discards the return value and is wrapped
+in a blanket `except`, because **measuring must never be able to break the thing being measured**;
+a gauge defect degrades to a warning and the request proceeds exactly as it does today.
+
+### The buckets it emits
+
+```
+subject-source: source=header-only       agreement=-          token_verified=False token_reason=no-verification-key …
+subject-source: source=header-override   agreement=agreeing   …
+subject-source: source=header-override   agreement=divergent  …
+SUBJECT-SOURCE DIVERGENT: header names 'bob@…', token claims 'alice@…', token_verified=False —
+  removing the X-Originator-Email override would change this request's subject. urn=…
+```
+
+**The agree/diverge split is the deliverable, not a refinement.** `header-override` alone answers
+the wrong question: a thousand *agreeing* overrides is a one-line config change, ten *divergent*
+ones is a negotiation with ten callers. Only divergent rows warn, so the migration-sizing number
+is greppable without knowing the schema.
+
+`header-only` is expected to dominate today and is not a defect: the bearer is an M2M service
+token with no user email, so the end user's identity can only arrive by header. That is what the
+header is for. The question is how many callers *also* carry a subject in the token.
+
+### Verify-if-present
+
+Signatures are checked when a token carries one **and a key is configured** (`GATEWAY_JWKS_URL`,
+else `GATEWAY_JWT_PUBLIC_KEY`/`KEYCLOAK_PUBLIC_KEY`); the entitlement claim follows the mesh's
+`USER_ENTITLEMENT_CLAIM` so the gauge measures the subject the gate would authorize on. Anything
+unprovable is reported `verified=False` with the reason **named**, never silently trusted and
+never refused. A JWKS failure latches and degrades to honest-unverified rather than adding a
+network dependency that could wedge a live read path.
+
+### Two announcements that exist to prevent false readings
+
+* **`subject-gauge verification: NONE CONFIGURED`** — because a gauge reading `unverified` on
+  every request *because no key is set* looks identical to one reading `unverified` *because
+  every caller is forging tokens*. Startup separates them instead of leaving it to be inferred.
+* **A set `REQUIRE_GATEWAY_AUTH`/`REQUIRE_TRANSPORT_AUTH` is loudly IGNORED**, because an
+  operator who sets a require-shaped flag and gets silence would reasonably believe the gateway is
+  enforcing. A false belief in enforcement is worse than the absent enforcement.
+
+### The visibility lesson, inherited rather than relearned
+
+`ensure_gauge_visible()` mirrors the SDK's, for the reason the SDK's exists: twelve mesh services
+announced OBSERVE and then observed nothing, because nothing configured logging and the records
+fell through to `logging.lastResort` and were discarded. **Zero-because-silent and
+zero-because-clean are the two states this instrument exists to separate**, and a migration
+precondition of "the divergent count reads zero" is satisfied perfectly and falsely by a silent
+gauge. Additive and deferential: it does nothing when logging is already configured.
+
+Witnessed end-to-end with **no host logging configured at all** — announce plus all three buckets
+plus the divergent warning reached the stream.
+
+### Guarded by 23 pins — `dag_tools_tests/test_subject_source_gauge.py`
+
+Including the two that matter most: **the gateway must not branch on the reading** (source-level,
+so it cannot be satisfied by a runtime patch — the moment an outcome depends on it, this stops
+being a gauge and becomes an unreviewed enforcement path), and **the gauge must be visible with
+nothing configured**. The disable switch is exercised too: *a leg of a litany that has never gone
+red is not yet a check.*
+
+### Also fixed: an undeclared dependency that made the extra uninstallable
+
+`redis` and `PyJWT` are **module-level imports** in `central_gateway/main.py` and neither was
+declared, so `pip install "dag-tools[broker]"` produced a gateway that could not import. It worked
+only where something else pulled them in transitively — the dependency equivalent of a test
+passing for the wrong reason. Both added to the `broker` extra.
+
+### What this session did NOT do, by instruction
+
+No REQUIRE. No header removal. No JWKS pinned in the deployment. **The output is a running gauge,
+not a fix** — the reading comes first, and it decides the shape of everything below.
+
 ## Acceptance
 
+- **THE READING** — deploy, let it run, and count the buckets. `header-override/divergent` is the
+  number that decides whether step 2 is a config change or a coordinated migration.
 - A request with a forged/unsigned bearer is **rejected**, witnessed.
 - A request whose `X-Originator-Email` disagrees with a verified user token does **not** get the
   header's subject, witnessed.
