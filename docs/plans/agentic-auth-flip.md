@@ -1,8 +1,8 @@
 ---
 id:         agentic-auth-flip
-status:     blocked-on-human
-owner:      human
-blocked-on: transport-flip (REQUIRE_TRANSPORT_AUTH must land first — see ordering below)
+status:     open
+owner:      agent
+blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
 closed-by:
 repo:       invincible-agent
 summary:    ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.

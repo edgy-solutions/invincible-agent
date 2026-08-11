@@ -198,6 +198,42 @@ the actor rather than the ruler: the human said it once, and that was their part
 work, and the header. And `blocked-on-human` items are swept periodically with a single question:
 *has this actually been given?*
 
+### The sweep question has a second edge — CAN the human act?
+
+`transport-flip` survived the first pass of the sweep and failed the second. Nothing was awaited
+from the human, but it sat in `blocked-on-human` because *the flip act itself* is theirs. Its
+actual blockers were two decode-witnesses and two repo sweeps — **all agent work**.
+
+**A `blocked-on-human` column containing items the human cannot act on is the same lie, one column
+over.** It reads as a to-do list and is partly a waiting list. So the column means *"awaited from
+the human NOW"*, not *"will eventually require a human"* — an item whose preconditions are
+unfinished sits in `open` with the owner who owes the precondition, and returns when it is
+genuinely reachable. Ownership follows the **next** action, never the last one.
+
+### HUMAN-PERFORMED CLOSURES — cite the recording commit, and say that is what it is
+
+Deploys, seedings, flips, live-state writes and rulings are closures **with no sha of their own**.
+Without a rule, each one either fabricates attribution or cannot close at all — and the first is
+the defect this ADR's attribution amendment exists to prevent.
+
+> **A human-performed closure cites the commit that RECORDED it, with a `closed-by-note:`
+> distinguishing record from act.**
+
+`work-deploy` is the first instance: `closed-by: ecdd944`, noted as *"the deploy was a HUMAN ACT
+with no commit of its own; ecdd944 is the commit that recorded its completion, not the commit that
+performed it."*
+
+**This widens `closed-by-note:` beyond its original job, deliberately.** As implemented, the note
+is *required* only when the sha touches neither the packet nor a declared code-site — an escape
+hatch for work that landed elsewhere. Here the sha **does** touch the packet, so every seal passes
+without a note; the note is written anyway, because the seal it satisfies is not the one at risk.
+The risk is a reader inferring that a docs commit performed a deploy. Attribution that passes CI
+and misleads a human is exactly the class this ADR keeps rediscovering.
+
+**Two closures also take two commits, and that is correct rather than clumsy.** `closed-by` must
+name a sha that already exists, so a closure recorded and closed in one commit would have to cite
+a sha it cannot know. Record first, close second, citing the first.
+
 ## Explicitly out of scope
 
 - **Retrofitting headers onto all 55 packets** is the migration, not the decision. It should be its own scheduled item — and it is the first item the board will carry.

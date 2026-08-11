@@ -1,8 +1,8 @@
 ---
 id:         transport-flip
-status:     blocked-on-human
-owner:      human
-blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 2 repos still unswept (doc-tools, cortex-ui)
+status:     open
+owner:      agent
+blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 2 repos still unswept (doc-tools, cortex-ui). Returns to blocked-on-human when those land; the flip act is the human's.
 closed-by:  
 repo:       invincible-agent
 summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.

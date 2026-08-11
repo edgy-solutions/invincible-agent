@@ -1,8 +1,8 @@
 ---
 id:         dag-tools-gateway-unverified-subject
 status:     open
-owner:      human
-blocked-on: gate-class ruling — same column as dag-tools-broker-register-unauthenticated
+owner:      agent
+blocked-on: nothing — CLASSIFIED and the APPROACH IS RULED (2026-08-11): build as verify-if-present with posture logging first, never a direct flip. Remaining work is the build.
 closed-by:  
 code-site:  dag_tools/central_gateway/main.py
 repo:       dag-tools
@@ -112,7 +112,23 @@ covered *whose* deny it was.
 * **Not a `transport-flip` blocker.** dag-tools binds no transport auth at all; the flip neither
   fixes nor worsens this.
 
-## Remediation shape (not yet ruled)
+## Remediation shape — RULED 2026-08-11
+
+> **Build it as verify-if-present with posture logging first. Never a direct flip.**
+
+**The blast radius is why, and it is not the severity.** Every caller today arrives with a
+self-minted token and an asserted header — turning verification on refuses *all of them at once*.
+That is the same migration shape as transport auth, and it earns the same treatment: verify what
+arrives, log the posture **and the subject-source** per request, **refuse nothing**, then read who
+would break before anything starts breaking.
+
+The subject-source log is the part that has no analogue in the transport-auth migration and is the
+more valuable half here: it answers *"how many live requests are asserting a subject via header
+rather than proving one via token"* — a number nobody currently has, and the one that decides
+whether step 2 below is a config change or a coordinated migration.
+
+**Ordering follows from that:** OBSERVE → read the gauge → then REQUIRE. A direct flip would refuse
+the DA data path wholesale, which is live at work.
 
 Three things, and the first two are not optional if the notebook design proceeds:
 

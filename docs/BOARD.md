@@ -6,21 +6,15 @@ Hand-editing here is a lie the next regeneration silently reverts.
 
 _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
-## blocked-on-human
-
-- **agentic-auth-flip** — ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.
-  status: blocked-on-human · owner: human · blocked-on: transport-flip (REQUIRE_TRANSPORT_AUTH must land first — see ordering below)
-  → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
-
-- **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
-  status: blocked-on-human · owner: human · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 2 repos still unswept (doc-tools, cortex-ui)
-  → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
-
 ## open
 
 - **adr0039-deliverables** — ADR-0039's three artifacts — schema generated from the executor models, authoring scaffold, BPMN exporter.
   status: open · owner: unassigned
   → [docs/plans/adr0039-deliverables.md](plans/adr0039-deliverables.md)
+
+- **agentic-auth-flip** — ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.
+  status: open · owner: agent · blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
+  → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
 - **approval-bypass-bpmn-runner** — HIGH (declared, unresolved) — BPMNWorkflowRunner/approve resolves the approval promise with NO caller identity. In-cluster only today; that mitigation does not travel to the work cluster.
   status: open · owner: unassigned
@@ -31,11 +25,11 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/board-migration.md](plans/board-migration.md)
 
 - **dag-tools-broker-register-unauthenticated** — Unauthenticated routing-table write — /api/v1/internal/register takes broker_url from the body and repoints any URN. Integrity write, so NOT acceptable on in-cluster reachability alone. First cross-repo instance of the undeclared-routes pattern.
-  status: open · owner: human · blocked-on: gate assignment — inherits undeclared-routes' per-class ruling, integrity-write column
+  status: open · owner: agent · blocked-on: nothing — CLASSIFIED. [[gate-class-follows-the-effect]] puts an integrity write in the never-acceptable-on-in-cluster-reachability column. Remaining work is the build: authenticate /api/v1/internal/register and /resolve.
   → [docs/plans/dag-tools-broker-register-unauthenticated.md](plans/dag-tools-broker-register-unauthenticated.md)
 
 - **dag-tools-gateway-unverified-subject** — HIGH — the data-plane gateway never verifies a token signature, and prefers a request HEADER over the token's own claim as the authz subject. Per-user data scoping is advisory. Found answering the notebook-identity question.
-  status: open · owner: human · blocked-on: gate-class ruling — same column as dag-tools-broker-register-unauthenticated
+  status: open · owner: agent · blocked-on: nothing — CLASSIFIED and the APPROACH IS RULED (2026-08-11): build as verify-if-present with posture logging first, never a direct flip. Remaining work is the build.
   → [docs/plans/dag-tools-gateway-unverified-subject.md](plans/dag-tools-gateway-unverified-subject.md)
 
 - **dagster-loader-call** — build_dynamic_jobs() runs unconditionally on every Dagster load; whether its catalog is empty is unconfirmed.
@@ -65,6 +59,10 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **suite-signal** — master is not green. Measured census; recommended owner the telemetry agent.
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
+
+- **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
+  status: open · owner: agent · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 2 repos still unswept (doc-tools, cortex-ui). Returns to blocked-on-human when those land; the flip act is the human's.
+  → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
 - **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
   status: open · owner: agent · blocked-on: /workflow/start disposition needs the cross-repo consumer sweep finished — doc-tools and cortex-ui remain

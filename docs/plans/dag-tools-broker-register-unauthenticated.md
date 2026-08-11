@@ -1,8 +1,8 @@
 ---
 id:         dag-tools-broker-register-unauthenticated
 status:     open
-owner:      human
-blocked-on: gate assignment — inherits undeclared-routes' per-class ruling, integrity-write column
+owner:      agent
+blocked-on: nothing — CLASSIFIED. [[gate-class-follows-the-effect]] puts an integrity write in the never-acceptable-on-in-cluster-reachability column. Remaining work is the build: authenticate /api/v1/internal/register and /resolve.
 closed-by:  
 code-site:  dag_tools/central_gateway/main.py:75
 repo:       dag-tools
