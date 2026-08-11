@@ -58,7 +58,7 @@ _Coverage: **19 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
 
-- **unminted-caller-enumeration** — Static read of every outbound call in the fleet, classified exempt / minted / unminted. The flip's real precondition.
+- **unminted-caller-enumeration** — Static read of mesh-targeted outbound calls, classified minted/unminted with failure mode. Platform pass done; four repos outstanding.
   status: open · owner: agent
   → [docs/plans/unminted-caller-enumeration.md](plans/unminted-caller-enumeration.md)
 

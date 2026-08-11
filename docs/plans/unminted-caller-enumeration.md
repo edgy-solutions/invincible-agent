@@ -5,79 +5,91 @@ owner:      agent
 blocked-on:
 closed-by:
 repo:       invincible-agent, iagent-mesh-sdk, dag-tools, doc-tools, cortex-ui
-summary:    Static read of every outbound call in the fleet, classified exempt / minted / unminted. The flip's real precondition.
+summary:    Static read of mesh-targeted outbound calls, classified minted/unminted with failure mode. Platform pass done; four repos outstanding.
 ---
 
-# Unminted-caller enumeration — static, cross-repo
+# Unminted-caller enumeration — platform pass
 
-**This is `transport-flip`'s real precondition.** The gauge is corroboration, not proof.
+**This is `transport-flip`'s real precondition.** The gauge is corroboration, not proof: it
+measures traffic that occurred, not callers that exist.
 
-## Why a static read and not the gauge
+> **STATUS: PLATFORM ONLY.** `invincible-agent` is swept below. **`iagent-mesh-sdk`,
+> `dag-tools`, `doc-tools` and `cortex-ui` are NOT swept** and are the majority of the
+> remaining risk surface. Do not read this as the answer.
 
-The registration wiring produced a witnessed zero: `/v1/register`, clean window, 0 new
-unverified, 6 verified. That result is real and it is **narrow**.
+## METHOD LIMITATION — read this before trusting any row
 
-`review_composer.py:94` calls engine-o's `/resolve_instance` with no credential. It is a
-non-exempt path, so under REQUIRE it 401s — and line 95's `raise_for_status()` means the 401
-**raises** rather than degrading to the abstain path, so every review fails to *compose*. The
-gauge never showed it, and could not have:
+Two automated passes over the same tree **disagreed with each other**, and both were wrong:
 
-> **A gauge measures traffic that occurred, not callers that exist.**
+* Pass 1 flagged `dynamic_supervisor.py:1037` UNMINTED. It is **minted** — the credential is
+  attached inside `_telemetry_headers(config)`, so a literal search for `Authorization` in the
+  call block finds nothing. **Indirection defeats a string match.**
+* Pass 2 "fixed" that by resolving helpers and then reported only **1** minted call, dropping
+  four that a read confirms are minted (`dispatch_driver.py:221,371`,
+  `extraction_review_sensor.py:555`, `dynamic_supervisor.py:1650`) — the target-URL regex and
+  the code window were too narrow.
 
-A caller that has not fired during the observation window is invisible to it. "Zero unverified
-on non-exempt paths" is therefore scoped to *paths someone exercised*, which is materially
-weaker than the flip's precondition requires. **Absence of an observation is not observation of
-absence** — and this one was found by accident, while chasing an unrelated question, which is
-not a discovery method anyone should rely on twice.
+So: **grep-and-classify is a candidate generator here, not an oracle.** Anything below marked
+CONFIRMED was read; anything marked CANDIDATE was produced by a classifier that has demonstrably
+erred in both directions on this exact corpus. Closing this item means reading each candidate,
+not re-running a script.
 
-## SCOPE — cross-repo, stated because the default reading is wrong
+## CONFIRMED MINTED — read individually
 
-The flip gates **the whole cluster**, not one repo. `review_composer` happens to be platform
-code, but outbound calls also live in:
+| site | credential | target |
+|---|---|---|
+| `dispatch_driver.py:221` | `mint_service_token()` → Bearer | cortex-bff `/internal/human_tasks/register` |
+| `dispatch_driver.py:371` | `mint_service_token()` → Bearer | cortex-bff `/triage_tasks` |
+| `extraction_review_sensor.py:555` | `Bearer {token}` | review start |
+| `extraction_review_sensor.py:592` | `Bearer {token}` | review start |
+| `dynamic_supervisor.py:1037` | `_telemetry_headers(config)` | engine-A `/analyze` |
+| `dynamic_supervisor.py:1650` | `_telemetry_headers(config)` | engine leg |
 
-| repo | why it is in scope |
+**A question, not a finding:** `dispatch_driver` mints via `mint_service_token()`, which reads
+`REVIEW_STARTER_CLIENT_ID` behind a general name — the exact shape that made the supervisor
+dispatch as the review starter. It may be correct here (dispatch_driver runs in that process),
+but *correct-by-coincidence and correct-by-design are different*, and the decoded subject on
+those two calls should be witnessed rather than assumed.
+
+## CANDIDATE UNMINTED — 19 sites, each needing a read
+
+`RAISES` is the severity column. It is what turned the composer from a nuisance into a
+pipeline-stopper: an unresolved subject is a handled outcome; a raised 401 is not.
+
+| site | on 401 |
 |---|---|
-| `invincible-agent` | the engines, composer, supervisor, gateway, projector, broker |
-| `iagent-mesh-sdk` | `MeshClient.ask`, registration transport, anything the SDK calls on an engine's behalf |
-| `dag-tools` | `central_gateway` and `CortexDataClient` outbound paths |
-| `doc-tools` | the extraction/ingest side, which calls into the mesh |
-| `cortex-ui` | browser-originated calls that terminate on gated routes |
+| `review_composer.py:94` | **RAISES** — verified; every review fails to COMPOSE |
+| `dispatch_driver.py:247` | RAISES |
+| `restate_analyst/main.py:544` | RAISES |
+| `policy_rules_client.py:75` | RAISES |
+| `spo_interview.py:113`, `:154`, `:176` | RAISES |
+| `spo_step_executor.py:96` | RAISES |
+| `agent_routers.py:65`, `:193` | RAISES |
+| `dynamic_supervisor.py:146`, `:362` | RAISES |
+| `gateway.py:124`, `:956`, `:2641` | RAISES |
+| `restate_analyst/main.py:2157` | degrades |
+| `decision_record_writer.py:71` | degrades |
+| `dynamic_supervisor.py:280`, `:679` | unchecked — result used as-is |
 
-Per ADR-0040 the `repo:` field carries this explicitly. **Without it the item silently means
-"the repo I happened to be in"** — which is exactly how `review_composer` went unnoticed while
-the platform's own registration callers were being enumerated carefully.
+**Fifteen of nineteen raise.** If these survive their reads, REQUIRE does not degrade the fleet —
+it stops it, across the supervisor, the gateway, the SPO interview and the dispatch driver. That
+is a materially different flip than "some callers get denied", and it is the single most
+important output of this pass.
 
-## Method
+The three `unchecked` rows deserve their own attention: a 401 whose body is consumed as a result
+is worse than one that raises, because it produces *wrong data silently* rather than stopping.
 
-Read outbound call sites from **source**, not from logs. For each, classify:
+## Not swept — the majority of remaining risk
 
-- **exempt** — target path is in the callee's exempt set (kubelet paths only)
-- **minted** — attaches a credential from an explicit identity (`mint_token`, `engine_mint`,
-  `_telemetry_headers`, the registration transport)
-- **unminted** — no `Authorization`, or a static token, or a credential inherited ambiently
-
-For each **unminted** entry record: caller file:line · target service and path · whether the
-path is exempt at the callee · **and what happens on 401** — degrades, or raises. That last
-column is the severity, and it is the column this defect proved matters: `raise_for_status()`
-turned a tolerated outcome into a total failure.
-
-## Known entries (seed, not the answer)
-
-| caller | target | credential | on 401 |
-|---|---|---|---|
-| `review_composer.py:94` | engine-o `/resolve_instance` | **none** | **raises** (`raise_for_status`) |
-| six engines' registration | registrar `/v1/register` | minted, decode-witnessed | transport retries |
-| supervisor dispatch | engine `/…` | minted at `_telemetry_headers` | — |
+`iagent-mesh-sdk` (MeshClient.ask, registration transport), `dag-tools` (central_gateway,
+CortexDataClient), `doc-tools` (ingest→mesh calls), `cortex-ui` (browser calls terminating on
+gated routes). **Stated because "the repo I was in" is exactly how `review_composer` stayed
+invisible** while the platform's registration callers were being enumerated carefully.
 
 ## Acceptance
 
-- Every outbound call site in the five repos classified, none unclassified.
-- Every `unminted` entry either minted, or explicitly exempted with a reason.
-- A guard that fails when a new outbound call appears without a classification — otherwise this
-  is a one-time census and the next `review_composer` arrives unannounced.
-
-## What this does NOT prove
-
-That the classified callers *behave* correctly under REQUIRE. That still wants the throwaway-pod
-witness per service. Static enumeration answers "who could be denied"; the witness answers "what
-happens when they are".
+- Every candidate above read and confirmed or reclassified.
+- Four remaining repos swept the same way.
+- Each confirmed-unminted caller either minted, or exempted with a stated reason.
+- A guard that fails when a new mesh-targeted outbound call appears unclassified — otherwise
+  this is a one-time census and the next `review_composer` arrives unannounced.
