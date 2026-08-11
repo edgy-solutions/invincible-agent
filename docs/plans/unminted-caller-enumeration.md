@@ -112,6 +112,46 @@ engine-o, engine-A or DA — no third-party calls in this set. `transport-flip` 
 numerator for the first time.
 
 
+## THE IDENTITY RULING — settled 2026-08-10, the remediation's first line
+
+**Default: each caller mints as its PROCESS identity.** `svc:engine-a` for the eight
+`restate_analyst` sites, `svc:supervisor` for the three Dagster sites.
+
+**The test that settles it** is the one that decided `svc:review-starter` vs `svc:engine-a` in
+the identity-granularity ruling: *would the credential change the answer to any `can_invoke` /
+`can_act` question, now or in a planned grant?* For the eight engine-o calls — resolution,
+planning, predicate search — the answer is **no**. They are reads and internal orchestration,
+ungoverned, so they carry the process's credential and any per-module attribution rides in the
+payload rather than in the identity.
+
+### `dispatch_driver:247` is ruled SEPARATELY, and keeps the review-starter identity
+
+It writes **disposition state** — the review-starter's own governed downstream effect — and
+`svc:review-starter` holds the capability the ceremony granted. So this call carrying
+`svc:review-starter` is **correct by design**, not merely by the hardcoding's coincidence.
+
+**But the coincidence is retired anyway.** `mint_service_token()` is a general name over specific
+behaviour (it reads `REVIEW_STARTER_CLIENT_ID`) — the exact shape that made the supervisor
+dispatch as the review starter. It becomes a call to the parameterised
+`mint_token(client_id=..., secret_env=...)` with the `REVIEW_STARTER_*` values supplied **at the
+call site**, so the identity is *chosen there and visible in the diff* rather than inherited from
+a helper's body.
+
+Correct-by-design and correct-by-coincidence can look identical in a green system; the difference
+only shows when someone reuses the helper.
+
+### Which gives the seam its shape
+
+**The new helper takes the identity as an ARGUMENT, never resolves it from the module** — same
+rule as `engine_mint`, same reason. Eight callers pass `svc:engine-a`, dispatch passes
+review-starter, and the choice is legible at each site instead of embedded in a name.
+
+### Acceptance
+
+**Decode-witness the first token from each identity on the new seam — two decodes.** They are
+what distinguish *"the helper works"* from *"the helper mints who we think it does"*, and that
+distinction is the one this project has paid for twice.
+
 ## SEAM READ — the 11 are 2 identities across 2 processes, not 11 edits
 
 **Done 2026-08-10, before scoping remediation, because "eleven edits" and "two seams" are very
