@@ -2,7 +2,7 @@
 id:         transport-flip
 status:     open
 owner:      agent
-blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 2 repos still unswept (doc-tools, cortex-ui). Returns to blocked-on-human when those land; the flip act is the human's.
+blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 1 repo still unswept (cortex-ui; doc-tools swept 2026-08-11, 1 CONFIRMED unminted caller). Returns to blocked-on-human when those land; the flip act is the human's.
 closed-by:  
 repo:       invincible-agent
 summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
@@ -254,6 +254,41 @@ legitimate caller lacks a verifiable identity.
 The subject's VALUE is trustworthy on the legitimate path — derived from `current_user.authz_id`,
 un-nameable by a caller, guarded by break-on-purpose-verified assertions. It does NOT close
 transport auth. Both halves are needed; only one is done.
+
+## THE GAUGE CANNOT ESTABLISH THIS PRECONDITION — second independent confirmation (2026-08-11)
+
+**Two CONFIRMED unminted callers now hit the same service, from two different repositories, and
+neither was visible to the gauge.**
+
+| caller | site | target |
+|---|---|---|
+| platform | `agent_fleet/restate_analyst/review_composer.py:94` | engine-o `POST /resolve_instance` |
+| doc-tools | `doc_tools/assets/semantic_linker.py:99` | engine-o `POST /classify_legacy_table` |
+
+Both header-less. Both live. Both found by **reading**, and neither by the gauge — because **neither
+fires often enough to appear in an observation window.** `review_composer` ran once in a ~40-minute
+pod lifetime; `semantic_linker` runs on a legacy-table ingest that is not part of routine traffic.
+
+**The gauge measures traffic that OCCURRED, not callers that EXIST.** A caller idle during the
+window is invisible to it, so *"zero unverified on non-exempt paths"* is scoped to paths someone
+happened to exercise — a materially weaker claim than this flip's precondition needs. Absence of an
+observation is not observation of absence.
+
+### What this settles about the precondition's shape
+
+**The static enumeration is not optional, and it must cross repository boundaries.** One repo's
+careful sweep cannot see another repo's caller, and *"the repo I was in"* is exactly how
+`review_composer` stayed invisible while the platform's registration callers were being enumerated
+carefully. Two repos, two callers, one service — that pattern is the argument.
+
+So the precondition reads: **a cross-repo static enumeration with every candidate read individually,
+with the gauge as corroboration that what the enumeration found minting actually mints in traffic.**
+Neither alone suffices — the enumeration cannot prove a code path is live, and the gauge cannot prove
+a code path does not exist.
+
+Progress: 4 of 5 repos swept (`unminted-caller-enumeration`). `cortex-ui` remains, and it is the one
+where the method does not transfer — a JS/TS corpus whose call-site idioms differ from every Python
+pass, to be budgeted as a method problem first and a reading problem second.
 
 ## Sequence — these are ordered, not parallel
 

@@ -1,7 +1,7 @@
 # Unminted-caller enumeration — five-repo sweep
 
-> **STATUS: 3 of 5 REPOS SWEPT** — platform, `iagent-mesh-sdk`, `dag-tools`.
-> `doc-tools` and `cortex-ui` are **not swept**.
+> **STATUS: 4 of 5 REPOS SWEPT** — platform, `iagent-mesh-sdk`, `dag-tools`, `doc-tools`.
+> `cortex-ui` is **not swept**, and is the one where the method does not transfer.
 
 ## READ THIS FIRST — the classifier was wrong THREE times, in three different ways
 
@@ -199,10 +199,9 @@ times at the call sites.
 
 ## Not swept — what remains
 
-~~`iagent-mesh-sdk`~~ swept (repo 2) · ~~`dag-tools`~~ swept (repo 3).
+~~`iagent-mesh-sdk`~~ swept (repo 2) · ~~`dag-tools`~~ swept (repo 3) · ~~`doc-tools`~~ swept (repo 4).
 
-**Still unswept:** `doc-tools` (ingest→mesh calls), `cortex-ui` (browser calls terminating on
-gated routes). **Stated because "the repo I was in" is exactly how `review_composer` stayed
+**Still unswept:** `cortex-ui` (browser calls terminating on gated routes). **Stated because "the repo I was in" is exactly how `review_composer` stayed
 invisible** while the platform's registration callers were being enumerated carefully.
 
 `cortex-ui` is the one where this method does not transfer unexamined — a JS/TS corpus whose
@@ -216,10 +215,12 @@ Ruled 2026-08-10: `/workflow/start` is to be **disabled, gated on a cross-repo c
 Its `consumers: [none-found]` is a static-analysis result over the repos swept so far, and
 `dag-tools` / `cortex-ui` are plausible callers of a workflow-start endpoint.
 
-**Status: 2 of the 4 answered — both NO.** `iagent-mesh-sdk` (repo 2) and `dag-tools` (repo 3)
+**Status: 3 of the 4 answered — all NO.** `iagent-mesh-sdk` (repo 2) and `dag-tools` (repo 3)
 have **no `/workflow/start` consumer**; the dag-tools check covered all file types, not just
-`.py`, so a config- or template-driven caller would have shown. `doc-tools` and `cortex-ui`
-remain, and **`cortex-ui` is the one that mattered in the original conjecture** — a browser
+`.py`, so a config- or template-driven caller would have shown. `doc-tools` (repo 4) also has
+**no `/workflow/start` consumer** — established by endpoint enumeration, not call-site grep (see
+repo 4 below). Only `cortex-ui` remains, and **it is the one that mattered in the original
+conjecture** — a browser
 calling a workflow-start endpoint is the plausible consumer. The disable decision is not
 unblocked by these two NOs.
 
@@ -411,6 +412,70 @@ strengthens that item's case by showing the pattern is not confined to the platf
 **Ruling needed, not a read:** fold it into `undeclared-routes` as a cross-repo instance, or file
 it as its own board item alongside `approval-bypass-bpmn-runner`. Recorded here so the choice is
 made deliberately rather than by the finding quietly aging out.
+
+## REPO 4 of 5 — `doc-tools`, swept 2026-08-11
+
+**One CONFIRMED unminted caller. Zero `/workflow/start` consumers.**
+
+| # | site | target | verdict |
+|---|---|---|---|
+| 1 | `doc_tools/assets/semantic_linker.py:99` | engine-o `POST /classify_legacy_table` | **CONFIRMED unminted** |
+
+```python
+resp = requests.post(f"{ONTOLOGY_SVC_URL}/classify_legacy_table", json=dossier, timeout=30)
+```
+
+No headers. No `Authorization`.
+
+### Four qualifying facts, each read — the standard this row is held to
+
+1. **The route is real.** engine-o `agent_fleet/ontology_service/main.py:2094` serves
+   `POST /classify_legacy_table`. Not a call into nothing.
+2. **The caller is live.** `semantic_linker` is imported at `doc_tools/definitions.py:10` and
+   included in `load_assets_from_modules(...)` at `:229`. Not dead code, not an example.
+3. **Credentials were demonstrably available in the same file.** Lines 60 and 160 send
+   `Authorization: Bearer {DATAHUB_TOKEN}` to DataHub GMS. **This is the fact that makes the row
+   unambiguous: it is not a call that could not be minted, it is one that was not.**
+4. **`raise_for_status()` on line 100.** Under REQUIRE it raises — the asset fails rather than
+   degrading to an empty classification. Same shape as `review_composer`: it stops, it does not
+   quietly resolve nothing.
+
+`ONTOLOGY_SVC_URL` appears in exactly two places — its definition (`:8`) and this one call. One
+caller, not a family.
+
+### The negative was established by ENDPOINT ENUMERATION, not by grepping call sites
+
+The axis-2 test from the `dag-tools` pass, and it is what makes the "one row" claim trustworthy
+rather than a hope that enough greps were run. Enumerating **every configured endpoint** in
+`doc-tools` — `DATAHUB_GMS_URL`, `JENA_URL`, `WEAVIATE_HTTP_HOST`/`_GRPC_HOST`, `S3_ENDPOINT_URL`,
+`LLM_BASE_URL`, `OPENAI_BASE_URL`, `VISION_LLM_BASE_URL`, `SQLSERVER_HOST`, `ORACLE_HOST`,
+`RABBITMQ_GIT_REPO_URL`, `DDS_GIT_REPO_URL` — shows that **exactly one is a platform service**:
+`ONTOLOGY_SERVICE_URL`.
+
+No `CORTEX_BFF_URL`. No `RESTATE_INGRESS_URL`. No `MESH_REGISTRAR_URL`. No engine-a endpoint of
+any kind. That bounds the sweep from above: there is one platform-facing row because there is one
+platform-facing endpoint, and the question "did I grep enough call sites?" does not arise.
+
+A hardcoded-URL pass (`iagent-`, `engine-o`, `engine-a`, `cortex-bff`, `restate`, `mesh-registrar`,
+`/workflow/start`, `/v1/register`) confirmed the same boundary from the other direction.
+
+### A FALSE POSITIVE a call-site grep produces — in the alarming direction
+
+`engine-a.mesh.svc:8081/execute` appears three times in `tests/test_aitool_linker.py`. It is **not a
+call site**: it is an asserted **DataHub custom-property value** (`mesh_endpoint_url`) that doc-tools
+*writes* to the catalogue. A grep for platform hostnames flags it as a caller of engine-a; reading it
+shows doc-tools never calls that address at all.
+
+**Fifth structural failure mode this sweep has avoided by reading rather than scripting**, and worth
+recording so the classifier-was-wrong-three-times argument above stays evidence-backed: a string
+naming a service can be data the repo *publishes* rather than an endpoint it *calls*.
+
+### Filed separately — the guard that could not see this
+
+The default on line 8 is `http://ontology-agent-svc.default.svc.cluster.local:8084` — the **legacy
+DNS pattern** the platform's own guard forbids. That guard lists `"doc-tools"` in its scanned dirs
+and has never scanned it. See `legacy-dns-guard-phantom-scope`; it is a disproved guard, not a
+missing one, and it is filed at higher severity than this row.
 
 ## REMEDIATION BUILT — 2026-08-10, the 11 platform sites + the SDK rebind
 
