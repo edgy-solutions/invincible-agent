@@ -1,7 +1,7 @@
-# Unminted-caller enumeration — platform pass
+# Unminted-caller enumeration — five-repo sweep
 
-> **STATUS: PLATFORM ONLY.** `iagent-mesh-sdk`, `dag-tools`, `doc-tools` and `cortex-ui` are
-> **not swept** and are the majority of the remaining risk surface.
+> **STATUS: 3 of 5 REPOS SWEPT** — platform, `iagent-mesh-sdk`, `dag-tools`.
+> `doc-tools` and `cortex-ui` are **not swept**.
 
 ## READ THIS FIRST — the classifier was wrong THREE times, in three different ways
 
@@ -197,12 +197,17 @@ right default — but `dispatch_driver` already mints via `mint_service_token()`
 and that is a ruling, not a read. It should be settled once, at the helper, rather than eleven
 times at the call sites.
 
-## Not swept — the majority of remaining risk
+## Not swept — what remains
 
-`iagent-mesh-sdk` (MeshClient.ask, registration transport), `dag-tools` (central_gateway,
-CortexDataClient), `doc-tools` (ingest→mesh calls), `cortex-ui` (browser calls terminating on
+~~`iagent-mesh-sdk`~~ swept (repo 2) · ~~`dag-tools`~~ swept (repo 3).
+
+**Still unswept:** `doc-tools` (ingest→mesh calls), `cortex-ui` (browser calls terminating on
 gated routes). **Stated because "the repo I was in" is exactly how `review_composer` stayed
 invisible** while the platform's registration callers were being enumerated carefully.
+
+`cortex-ui` is the one where this method does not transfer unexamined — a JS/TS corpus whose
+call-site idioms differ from every Python pass above. Budget it as a method problem first and a
+reading problem second.
 
 
 ## THE FOUR-REPO SWEEP NOW ANSWERS TWO QUESTIONS
@@ -210,6 +215,13 @@ invisible** while the platform's registration callers were being enumerated care
 Ruled 2026-08-10: `/workflow/start` is to be **disabled, gated on a cross-repo consumer sweep**.
 Its `consumers: [none-found]` is a static-analysis result over the repos swept so far, and
 `dag-tools` / `cortex-ui` are plausible callers of a workflow-start endpoint.
+
+**Status: 2 of the 4 answered — both NO.** `iagent-mesh-sdk` (repo 2) and `dag-tools` (repo 3)
+have **no `/workflow/start` consumer**; the dag-tools check covered all file types, not just
+`.py`, so a config- or template-driven caller would have shown. `doc-tools` and `cortex-ui`
+remain, and **`cortex-ui` is the one that mattered in the original conjecture** — a browser
+calling a workflow-start endpoint is the plausible consumer. The disable decision is not
+unblocked by these two NOs.
 
 **That is the same read this item already owes.** While sweeping the four unswept repos for
 unminted outbound callers, also record **any caller of engine-a's `/workflow/start`**. Same
@@ -270,6 +282,135 @@ platform's eleven.
 
 `client.py:48` stops on 401 but is **minted**, so it stops only if its credential is *rejected* —
 a different failure from having none.
+
+## REPO 3 of 5 — `dag-tools`, swept 2026-08-10
+
+30 grep hits → **15 distinct call sites**, each read. `/workflow/start`: **no consumer**
+(zero hits across all file types, not just `.py`).
+
+The `/workflow/start` negative was run **twice, with different exclusion semantics** — once with
+ripgrep, which honours `.gitignore` and therefore skips `dist/`, `tmp/` and the stray
+`.tmp_dagster_home_*` trees, and once with a plain recursive `grep` that walked them. Both
+returned nothing. Stated because `verify-then-disable` puts weight on this negative, and a
+gitignore-respecting search alone would not have looked inside a built artifact.
+
+### The headline is a NEGATIVE, and it is the useful kind
+
+**`dag-tools` contributes ZERO stopping callers to `transport-flip`.** Not "none found" — the
+negative is structural and holds on two independent axes:
+
+1. **No mesh SDK anywhere.** `transport_auth`, `mint_mesh_token`, `register_with_mesh`,
+   `MeshTool`, `MeshClient`, `iagent-mesh` — zero hits in `dag_tools/` and zero in
+   `pyproject.toml`. dag-tools has no minting mechanism because it has no mesh dependency.
+2. **No platform target.** The complete list of env-configured endpoints is
+   `BROKER_URL` · `CENTRAL_GATEWAY_URL` · `CORTEX_BROKER_URL` · `RESTATE_*` (dag-tools' own),
+   `REDIS_URL` · `KEYCLOAK_TOKEN_URL` · `TOPAZ_URL` · `DATAHUB_SERVER` · `AWS_*` (infra),
+   `API_BASE_URL` · `ORACLE_*` · `SQLSERVER_DSN` (external). **Not one invincible-agent
+   service.** A name grep for engine-o / engine-a / DA / cortex-bff routes returns nothing.
+
+Axis 2 is what makes this trustworthy. Axis 1 alone would be the same weak negative that let
+`review_composer` hide — "I looked and didn't see it". Enumerating every configured endpoint and
+finding the platform absent from the *whole list* is a different claim.
+
+### The 15 sites
+
+| # | site | target | credential | on 401 |
+|---|---|---|---|---|
+| 1 | `cortex_data/client.py:83` | gateway `/assets/{urn}/authorize` | **MINTED** — Bearer, M2M or `MESH_DEV_TOKEN` | `raise_for_status` → **STOPS** |
+| 2 | `central_gateway/main.py:307` | broker `/api/v1/internal/resolve` | **UNMINTED** — bare post, no `headers=` | explicit status check → 502 → DEGRADES |
+| 3 | `domain_broker/main.py:247` | gateway `/api/v1/internal/register` | **UNMINTED** — bare post, no `headers=` | raises, caught at both callers → DEGRADES |
+| 4 | `restate_dlt_sync/component.py:154` | dag-tools Restate ingress | **UNMINTED** | `except` → `log.warning` → **DEGRADES SILENTLY** |
+| 5 | `restate_api_sync/component.py:159` | dag-tools Restate ingress | **UNMINTED** | `except` → `log.warning` → **DEGRADES SILENTLY** |
+| 6 | `restate_handlers/serve.py:92` | Restate **admin** `/deployments` | **UNMINTED** | retry loop, never raises → DEGRADES |
+| 7 | `cortex_data/client.py:53` | **Keycloak** token endpoint | n/a | — |
+| 8 | `central_gateway/main.py:177` | **Topaz** `/api/v2/authz/is` | forwards the caller's token | non-200 → hard DENY (ADR-0026) |
+| 9-12 | `resources/grist.py:71,86,100,103` | **Grist** (external) | Grist API token | — |
+| 13 | `restate_handlers/api_sync.py:38` | external REST (`API_BASE_URL`) | `API_KEY` if set | — |
+| 14 | `sap_induction/sap_client.py:46,70,72` + `service.py:77` | **SAP** OData + callback webhook (external) | own refresh | — |
+| 15 | `qual/*` (7 hits) | **Dagster GraphQL** webserver | optional Bearer | — |
+
+`io_managers/cortex_io_manager.py:153` is not a site — it delegates to `CortexDataClient` and
+inherits row 1's minted posture. `s3_sensor/arrow_component.py:51` is not HTTP.
+
+**Sites 2-6 are unminted but NOT flip blockers**, because their targets are not
+transport-auth-gated — they are dag-tools' own services and its own Restate. They are recorded
+because "unminted" and "ungated" are the same fact seen from the two ends, and the next section
+is what that fact looks like from the receiving end.
+
+### WHAT THE SWEEP ACTUALLY FOUND — a second mesh with two unauthenticated internal routes
+
+Reading the *targets* rather than only the callers turned up the finding of this pass.
+
+| route | auth dependency |
+|---|---|
+| `central_gateway` `/api/v1/assets/{urn:path}/authorize` | `Depends(security)` — HTTPBearer + Topaz |
+| `central_gateway` `/api/v1/internal/register` | **NONE** |
+| `domain_broker` `/api/v1/internal/resolve` | **NONE** |
+
+`/api/v1/internal/register` takes `broker_url` and `asset_urns` **from the request body** and does
+`SETEX mesh_route:{urn} 300 {broker_url}` for each. **Any in-cluster caller can repoint the
+routing table for any URN at any URL.** The gateway then POSTs the resolve to that URL and returns
+whatever ticket comes back — `physical_uri` and `credentials` included — to the user.
+
+Topaz still gates the URN, so this does not hand an attacker data they lack entitlement to. What
+it hands them is **integrity and availability**: serve an entitled user a poisoned ticket, or
+overwrite every route with a dead URL.
+
+**This is the `approval-bypass-bpmn-runner` shape exactly** — an unauthenticated write to a
+control plane, mitigated only by in-cluster reachability. `centralGateway.ingress.enabled`
+defaults to `false`, so the mitigation holds today; the chart ships a working Ingress template, so
+it is one values flip from public. The BOARD's phrasing for the platform instance applies verbatim
+here: *that mitigation does not travel to the work cluster.*
+
+### Two severities the "DEGRADES" column hides
+
+* **Site 3 degrades into a total data-plane outage that reports as 404.** The broker's own comment
+  at `main.py:259-263` states it: the gateway holds `mesh_route:*` on a **300-second TTL** and the
+  broker re-pushes every 120s precisely so one miss cannot empty it. A failure mode that blocks
+  *every* push — not a hiccup — empties the routing table one TTL later, and the gateway then
+  answers **404 "No active domain broker found"** for every asset. Loud in the broker's log,
+  wrong-cause in the user's face. Retry-until-TTL is a hiccup mitigation; it is not a mitigation
+  for a persistent refusal.
+* **Sites 4 and 5 drop records while the asset materializes GREEN.** Both catch `Exception`, log
+  at `warning`, and continue the loop. A blanket refusal drops every chunk / every record and the
+  Dagster asset still reports success. That is the `[[silence-closure-arc]]` class — not an error
+  presenting as silence, but a *failure presenting as success*.
+
+### One inversion worth naming
+
+`CortexDataClient.__init__` sets `self.jwt_token = jwt_token or os.getenv("MESH_DEV_TOKEN")` and
+only falls through to `_fetch_m2m_token()` **if that is empty**. So `MESH_DEV_TOKEN` takes
+**precedence over** real M2M credentials — an environment carrying both silently authenticates
+with the dev token.
+
+The SDK's `client.py:48` orders these the other way, with `MESH_DEV_TOKEN` as an *announcing* dev
+fallback. Same two credentials, opposite precedence, no announcement on this side. Not a flip
+blocker; a live footgun for work-deploy, where a leftover `MESH_DEV_TOKEN` would mask the M2M path
+being misconfigured — and it would mask it *green*.
+
+### Running total
+
+| repo | sites | unminted | stops | degrades | flip blockers |
+|---|---|---|---:|---:|---:|
+| invincible-agent | 19 | 19 | 11 | 8 | **11** |
+| iagent-mesh-sdk | 4 (3 in scope) | 1 | 2 | 1 | **1** |
+| dag-tools | 15 | 5 | 1 | 5 | **0** |
+| doc-tools | — | not swept | | | |
+| cortex-ui | — | not swept | | | |
+
+dag-tools' one STOP (site 1) is **minted**, so it stops only if its credential is *rejected* — the
+same distinction recorded for the SDK's `client.py:48`.
+
+### Disposition — this pass produced a finding that has no home yet
+
+The register-route finding is **not** a `transport-flip` blocker and does not belong in this
+packet's remediation window. It is a cross-repo instance of the exact question
+`undeclared-routes` is blocked on — *is in-cluster reachability an acceptable gate?* — and it
+strengthens that item's case by showing the pattern is not confined to the platform.
+
+**Ruling needed, not a read:** fold it into `undeclared-routes` as a cross-repo instance, or file
+it as its own board item alongside `approval-bypass-bpmn-runner`. Recorded here so the choice is
+made deliberately rather than by the finding quietly aging out.
 
 ## Acceptance
 
