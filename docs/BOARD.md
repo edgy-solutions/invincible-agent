@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **15 of 62 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
+_Coverage: **17 of 64 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -21,6 +21,14 @@ _Coverage: **15 of 62 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/work-deploy.md](plans/work-deploy.md)
 
 ## open
+
+- **adr0039-deliverables** — ADR-0039's three artifacts — schema generated from the executor models, authoring scaffold, BPMN exporter.
+  status: open · owner: unassigned
+  → [docs/plans/adr0039-deliverables.md](plans/adr0039-deliverables.md)
+
+- **board-migration** — Retrofit ADR-0040 headers onto the unheadered packets; the board's first tracked item is its own completion.
+  status: open · owner: unassigned
+  → [docs/plans/board-migration.md](plans/board-migration.md)
 
 - **dagster-loader-call** — build_dynamic_jobs() runs unconditionally on every Dagster load; whether its catalog is empty is unconfirmed.
   status: open · owner: unassigned · blocked-on: an owner for the Dagster plane
