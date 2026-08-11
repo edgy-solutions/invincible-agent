@@ -23,12 +23,36 @@ genuinely downstream. Marking both "blocked-on-human" alike hid which one was re
 2. **`scripts/env_audit.py` against the work-rendered chart.** Runnable only once deploying with
    the work values in hand — which is why it could not be a pre-flight read. It caught
    `svc:engine-a` declared-but-unwired in sandbox, and the work values file is a different file.
-3. **Work-Keycloak `USER_ENTITLEMENT_CLAIM` decode, BEFORE trusting DA fetches.** Sandbox
+3. **Work-Keycloak `USER_ENTITLEMENT_CLAIM` decode — VERIFIED GREEN 2026-08-10.**
+   A real work user's token was decoded against the claim the chart names, and the value
+   **matched that user's id in the overlay's `users.yaml`**. This was the one precondition
+   sandbox structurally could not rehearse, and it is now measured rather than assumed.
+   Original statement of the risk, kept because it is why the read was run: Sandbox
    resolves `email`; work uses employee-id. A null subject means fetches that **succeed while
    scoping to nobody** — a data-correctness failure independent of the transport flip, which is
    why this gate sits before the DA path rather than before the flip.
 
-## FOURTH PRECONDITION — capability grants must be seeded, or reviews refuse
+## RETRACTED — steps 2 and 4 as originally written
+
+**`env_audit.py` is NOT run at work.** Its per-input sentinels are hardcoded to sandbox's three
+values files, so against a work render it either refuses on a good render or passes without
+verifying the work overlay reached it — the exact defect the sentinels exist to prevent, wearing
+the tool's own name. And its purpose is finding hand-seeded state; this cluster's policy plane is
+git-managed and reconciled every 10 minutes by the topaz-seed CronJob, which is the strongest
+available answer to "is this hand-seeded?". Wrong tool for this cluster in its current form.
+
+**The manual validator run was redundant.** `topaz-seed-cronjob.yaml:249` runs
+`validate_policy.py` BEFORE any write and line 287 runs `capability_grant_sync.py`. The step was
+prescribed without reading the seeding path it was prescribed against.
+
+## FOURTH PRECONDITION — capability grants (ALREADY SATISFIED, kept as a failure mode)
+
+**Not a gap. Reviews already work at work**, and `review_starter.py:412` returns
+`NOT_ENTITLED_TO_INITIATE` when the capability check fails — so a working review IS the evidence
+that `svc:review-starter` holds `can_invoke(mesh:startReview)`. That direct observation outranks
+the inference below, which was reasoned forward from a README file-list omission.
+
+Kept because it names a real failure MODE and where to look if reviews ever start refusing:
 
 **Added 2026-08-10 after a grep found this packet mentioned grants ZERO times.** It is a
 deploy-day break, in a packet about to be executed.
