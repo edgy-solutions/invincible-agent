@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **19 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
+_Coverage: **20 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -16,7 +16,7 @@ _Coverage: **19 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: blocked-on-human · owner: human · blocked-on: unminted-caller enumeration (static) — review_composer calls /resolve_instance with no credential
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
-- **undeclared-routes** — 12 routes undeclared in the gating manifest, incl. decision-plane writes.
+- **undeclared-routes** — 12 routes undeclared in the gating manifest, incl. decision-plane writes. BLOCKING THREE OTHER ITEMS — all wait on one unratified call: is in-cluster reachability an acceptable gate?
   status: blocked-on-human · owner: human · blocked-on: gate-class judgment per route
   → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
 
@@ -29,6 +29,10 @@ _Coverage: **19 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **adr0039-deliverables** — ADR-0039's three artifacts — schema generated from the executor models, authoring scaffold, BPMN exporter.
   status: open · owner: unassigned
   → [docs/plans/adr0039-deliverables.md](plans/adr0039-deliverables.md)
+
+- **approval-bypass-bpmn-runner** — HIGH (declared, unresolved) — BPMNWorkflowRunner/approve resolves the approval promise with NO caller identity. In-cluster only today; that mitigation does not travel to the work cluster.
+  status: open · owner: unassigned
+  → [docs/plans/approval-bypass-bpmn-runner.md](plans/approval-bypass-bpmn-runner.md)
 
 - **board-migration** — Retrofit ADR-0040 headers onto the unheadered packets; the board's first tracked item is its own completion.
   status: open · owner: unassigned

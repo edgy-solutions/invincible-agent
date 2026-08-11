@@ -5,7 +5,7 @@ owner:      human
 blocked-on: gate-class judgment per route
 closed-by:  
 repo:       invincible-agent
-summary:    12 routes undeclared in the gating manifest, incl. decision-plane writes.
+summary:    12 routes undeclared in the gating manifest, incl. decision-plane writes. BLOCKING THREE OTHER ITEMS — all wait on one unratified call: is in-cluster reachability an acceptable gate?
 ---
 
 # The 12 undeclared routes — evidence and a RECOMMENDATION (not a decision)
@@ -77,6 +77,28 @@ its own service-identity check so the gate is enforced at both ends.
 Confidence: **low.** Read-only catalogue lineage, no auth dependency. I could not confirm the
 service's exposure the way I could for engine-o, so the class is proposed on the route's shape alone
 and should be checked against how the wrapper is actually reachable before it is written down.
+
+## This item has accumulated dependents — three, as of 2026-08-10
+
+It is no longer only about twelve rows. **Three separate items are waiting on the same unratified
+question: is in-cluster reachability an acceptable gate?**
+
+| dependent | what it inherits |
+|---|---|
+| engine-o's six `internal` routes (in this file) | `internal` is honest only if the cluster boundary is the trust boundary |
+| `retire-inline-task-loop` | client-supplied `definition`, reachable in-cluster only — cleanup or fix depends on this call |
+| `approval-bypass-bpmn-runner` | **HIGH** — the approval promise resolves with no caller identity; in-cluster-only is its entire mitigation |
+| `/workflow/start` (engine-a, added below) | ungated in code, `consumers: [none-found]`, in-cluster only |
+
+**The last one is why the decision has a deadline.** In-cluster-only is a real control precisely while
+you author every pod. At the work deploy that weakens — and the item riding on it is an approval plane
+that checks nobody.
+
+### Row added 2026-08-10 — `POST /workflow/start` (engine-a)
+
+| route | auth dep | manifest class | note |
+|---|---|---|---|
+| `POST /workflow/start` | **none** — `start_workflow(req: WorkflowStartRequest)`, no `Depends` | `delegates` | `consumers: [none-found]`. Justified as delegating to per-step gates (service-task 401/403, `direct_call` `can_invoke`, `spo_operation` verify) — coherent, and those gates are real. Belongs in this decision, not in separate treatment. |
 
 ## What I did not do
 
