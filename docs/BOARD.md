@@ -4,9 +4,13 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **18 of 65 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
+_Coverage: **19 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
+
+- **agentic-auth-flip** — ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.
+  status: blocked-on-human · owner: human · blocked-on: transport-flip (REQUIRE_TRANSPORT_AUTH must land first — see ordering below)
+  → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
   status: blocked-on-human · owner: human · blocked-on: unminted-caller enumeration (static) — review_composer calls /resolve_instance with no credential

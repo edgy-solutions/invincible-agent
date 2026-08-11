@@ -90,6 +90,16 @@ The supply chain now holds the property the runtime earned this month: **nothing
 without a diff someone chose to merge.** Worth stating because it is a *perishable* property —
 one bare requirement string restores the old world, which is exactly what the guards are for.
 
+## Named sub-item — the embed_contract violation
+
+`tests/routing/test_embed_contract.py` is one of the census failures above, and the violation
+has a code site: **`agent_fleet/neo4j_expert/service.py:357`**.
+
+**Referenced here rather than filed as its own board line.** It is inside this session's scope,
+and a separate line would be two homes for one item — the defect the board exists to prevent.
+If it is ever worked independently of the suite sweep, it earns its own packet then; until
+then, the board points at this packet and this packet names the site.
+
 ## Method notes this session should encode
 
 Two instrument defects were found the expensive way during the triage. Both are general.

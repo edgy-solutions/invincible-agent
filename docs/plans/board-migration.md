@@ -43,6 +43,34 @@ evidenced.
 **Do not migrate a packet whose status you cannot establish from a committed artifact.** Leave it
 unheadered and let the coverage line keep counting it. An honest gap outranks a fabricated entry.
 
+## PHASE 2 — the larger half: arcs with NO packet at all
+
+**Added 2026-08-10, and it is the finding under the finding.** The coverage line counts
+*packets*. Phase 1 indexes them. **Neither surfaces work that was never written down** — and
+roughly as many live arcs have no artifact at all as there are unheadered packets.
+
+So phase 1 completing would make the board read *N of N indexed* while missing the larger half.
+The coverage line would be honest about packets and silent about arcs, which is the
+omission-lying shape one level up from the one it was built to fix.
+
+### Method
+
+Sweep for arcs with no artifact — conversation-held work, in-flight threads, decisions with
+consequences nobody filed. **Each candidate gated by a verifying grep before it gets a line**,
+because reconstruction is exactly what this board exists to replace.
+
+**Expect attrition, and treat it as the method working.** Of five candidate items swept this
+way on 2026-08-10, two were killed by one grep each: an approver-provenance fork already closed
+(`acted_by` first-class in the payload and the projection schema), and "three payload-drop bugs
+live" already sealed by a passthrough test deriving from the producer. Three July-era candidates
+were likewise refused — a range-type defect already fixed with a comment explaining why, a
+punch-list citing a survey file that does not exist, and a probe result unverifiable from the
+repo.
+
+**Five of ten candidates died on contact with a grep.** A phase-2 sweep that files everything it
+remembers would put closed defects on the board as live, which sends readers hunting bugs that
+someone already fixed — the board lying in its most expensive direction.
+
 ## Sub-task — sweep for decided-but-never-indexed rules
 
 While reading 45+ packets and the ADR set, collect **rules and triggers that were decided and
