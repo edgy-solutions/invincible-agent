@@ -105,9 +105,23 @@ its own repo, with its own approvers and git-blame. The split is:
 - **Product-owned (this repo, ships in the image):** the `sync/`
   scripts and the Topaz manifest. These version together with the
   chart/image — never fork them into a deployment repo.
-- **Deployment-owned (private policy repo):** the five DATA files —
+- **Deployment-owned (private policy repo):** the SIX DATA files —
   `users.yaml`, `groups.yaml`, `asset_grants.yaml`, `task_grants.yaml`,
-  `ontology_compartments.yaml`.
+  `ontology_compartments.yaml`, `capability_grants.yaml`.
+
+  > **CORRECTED 2026-08-10 — this list said FIVE and omitted
+  > `capability_grants.yaml`.** The omission was load-bearing: a deployer reading
+  > it concluded capability grants ship in the image and would have skipped
+  > asserting them, so `svc:review-starter` would hold no
+  > `can_invoke(mesh:startReview)` at work and **every auto-started review would
+  > return `NOT_ENTITLED_TO_INITIATE`** — a refusal, not an outage, where the
+  > system behaves exactly as designed and the deny is correct given the
+  > directory it can see.
+  >
+  > It is deployment-owned in fact: `sync/validate_policy.py:156` reads it from
+  > the same `policy_dir` as the other five, and `sync/capability_grant_sync.py`
+  > calls a malformed one "malformed **overlay**". The code always treated it as
+  > yours; only this list disagreed.
 - **Enums (`personas.yaml` / `domains.yaml`): image-default,
   deployment-ASSERTABLE** via `topazSeed.policySource.overlayEnums`.
   The two are not symmetric — see
