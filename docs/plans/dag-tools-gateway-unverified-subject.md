@@ -233,6 +233,47 @@ declared, so `pip install "dag-tools[broker]"` produced a gateway that could not
 only where something else pulled them in transitively — the dependency equivalent of a test
 passing for the wrong reason. Both added to the `broker` extra.
 
+### THE PREDICTION — written down BEFORE the reading, on purpose
+
+**Stated as a prediction so the reading can falsify it.** A number that arrives with no prior
+expectation gets rationalised into whatever story the reader brought; one that arrives against a
+written prediction either confirms it or *surprises*, and the surprise is only legible because
+someone said what they expected first.
+
+| bucket | predicted | why |
+|---|---|---|
+| `header-only` | **dominant** | the DA path's bearer is an M2M service token with **no user email claim**, so the end user's identity can only arrive by header. A design fact, not a defect. |
+| `header-override / agreeing` | rare | requires a caller holding a user-subject token that *also* sets the header to the same value |
+| `header-override / divergent` | **near zero, and this is the load-bearing guess** | if true, removing the override is a config change |
+| `token-claim` | rare today | nothing currently sends a user token to this gateway |
+| `none` | ~0 | fail-closed denies these already, so they would show as existing 403s |
+
+**What would falsify it, and what each falsification means:**
+
+* **`divergent` is non-trivial** → the override is load-bearing for real callers and step 2 is a
+  coordinated migration, not a config change. This is the outcome that changes the plan.
+* **`token-claim` appears at all** → something already sends user tokens here, and the
+  transparent-Jupyter design may be half-built somewhere nobody has looked.
+* **`header-only` is NOT dominant** → the stated model of the DA path is wrong, and the notebook
+  identity question in `[[jupyter-user-token-data-access]]` needs re-asking before anything is
+  designed on top of it.
+
+**Do not tune the gauge to make the prediction come true.** If the reading disagrees, the reading
+wins — the prediction exists to make disagreement visible, not to be defended.
+
+### The JWKS branch witnesses itself on the work deploy
+
+Static-key and no-key paths are proven by the pins; **the JWKS path is unwitnessed against a real
+endpoint** (no work-realm JWKS was reachable from here). It needs no separate exercise: when the
+gateway runs against work's Keycloak, **the first fetch is its own witness**, and
+`verification_line()` announces at startup which of the three states it landed in — JWKS, static
+key, or `NONE CONFIGURED`. A JWKS failure latches to honest-unverified rather than wedging the
+read path, so the failure mode is a degraded gauge, never a degraded gateway.
+
+**Read that announcement line first when the pod comes up.** If it says `NONE CONFIGURED`, every
+`token_verified=False` in the run is an artifact of configuration and the verified/unverified axis
+carries no information — the subject-source axis still does.
+
 ### What this session did NOT do, by instruction
 
 No REQUIRE. No header removal. No JWKS pinned in the deployment. **The output is a running gauge,

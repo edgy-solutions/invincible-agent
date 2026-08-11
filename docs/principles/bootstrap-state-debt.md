@@ -65,6 +65,34 @@ ambition:
 Drift is this law read in the time dimension: *only state a fresh install recreates is durable*
 (forward) **+** *only a cluster that follows source is current* (ongoing).
 
+## The same law in the DEPENDENCY dimension — a passing environment over a broken declaration
+
+Third dimension, found 2026-08-11. The law reads *only state a fresh install recreates is durable*
+(forward) **+** *only a cluster that follows source is current* (ongoing) **+ only dependencies the
+declaration names are actually yours.**
+
+`dag_tools/central_gateway/main.py` imports `redis` and `jwt` at **module level**, and neither was
+declared in the `broker` extra. So `pip install "dag-tools[broker]"` — the documented, declared
+way to install the gateway — produced a service that **could not import at all.** It worked
+everywhere it had ever been run, because something else in those environments happened to pull
+both in transitively.
+
+**This is the hand-seeded cluster wearing a virtualenv.** The environment that works is not the
+environment anyone declared, the gap survives indefinitely because the working environment never
+exercises it, and the first person to install the declared way inherits a break they did not
+cause. Same shape as the `iagent-mesh` dev-group defect: *a passing environment over a broken
+declaration, invisible until someone installs it the declared way.*
+
+**Why it is worse than the cluster case, and worth its own line:** a hand-seeded cluster fails
+loudly for the next person who builds one. A transitively-satisfied import fails for a *stranger* —
+whoever first consumes the package as published — and the failure surfaces in their environment
+with your name on it. The forward-direction test ("a fresh install reaches working state with zero
+hand-run steps") is the same test; only the substrate changed from a namespace to a virtualenv.
+
+**The check:** for any module a deployment imports, the extra that ships it must name every
+module-level import. Transitive availability is not a declaration — it is a coincidence that has
+not been disturbed yet.
+
 ## Why "direct mutation is never a fix"
 
 A durable-store write from a hand-run script is invisible to the thing that rebuilds the store. It

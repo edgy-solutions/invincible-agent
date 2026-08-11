@@ -76,6 +76,40 @@ it as one.** Against a persistent refusal the table empties one TTL later and ev
 fail-soft idioms, and each hides a *persistent* failure behind machinery designed for a
 *transient* one. Ask of any retry: what does this look like when the condition never clears?
 
+### A NEW SPECIES — a flag whose absence of effect is indistinguishable from its effect
+
+Found 2026-08-11 while building the `central_gateway` subject-source gauge, and it is not a
+variant of the entries above.
+
+Every instance so far is a *mechanism* that goes quiet. This one is a **control that was never
+wired**: `dag-tools/central_gateway` had no enforcement of any kind, so an operator setting
+`REQUIRE_GATEWAY_AUTH=true` — a flag name the whole fleet uses — would see the service start
+cleanly, serve traffic, log nothing unusual, and **reasonably conclude the gateway was
+enforcing.** Requests would be served exactly as before.
+
+**The two states are observationally identical from outside:**
+
+| | what the operator sees |
+|---|---|
+| flag set, enforcement working, all callers compliant | starts clean, serves everything, no refusals |
+| flag set, enforcement **does not exist** | starts clean, serves everything, no refusals |
+
+The earlier entries produce a *missing* signal. This produces a **positive false one** — the
+operator does not merely fail to learn something, they acquire a specific wrong belief, and it is
+the belief that stops them looking. **A false belief in enforcement is worse than known-absent
+enforcement**, because the second gets scheduled and the first gets relied upon.
+
+**The repair is one line and it is loud:** an unimplemented control that is *set* must announce
+that it is being IGNORED, naming what is not happening. Silence on a set flag is consent to the
+operator's inference.
+
+> **The general rule: a flag's absence of effect must be observable. If setting it and not setting
+> it look the same from outside, the flag is a lie with a config schema.**
+
+Guarded by `test_a_REQUIRE_flag_is_loudly_IGNORED_not_silently`. Related:
+`[[naming-a-class-is-not-a-guard]]` — naming this class in a doc would not have prevented the next
+one; the announcement is the guard.
+
 ## The general shape
 
 A fail-safe path that is also **fail-silent** is only safe until something depends on it. The
