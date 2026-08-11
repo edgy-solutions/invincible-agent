@@ -291,25 +291,49 @@ panel, not an unauthenticated actor.
 
 ---
 
-## The work
+## The work — DONE 2026-08-11, cortex-ui `2c3b8a9`
 
-1. **Fix both defects on `NodeInspector.tsx` together** — `config.VITE_API_URL` for the URL, and
-   `useAuth()`'s access token in an `Authorization` header. Either alone leaves a wrong system.
-2. **Seal it in a shape that can fail**: assert the request URL derives from runtime config *and*
-   that a bearer is attached; break-on-purpose each independently and confirm each goes red on
-   its own. A single combined assertion would let the config fix mask the auth fix again.
-3. **Handle `!r.ok` before `.json()`** — the three sibling components already do
-   (`if (!r.ok) throw new Error(...)`). This is the specific line that turns an auth failure into
-   content, and it is a one-line fix with a general lesson: *`fetch` does not reject on 4xx, so
-   every raw `fetch` needs an explicit `ok` check or it renders the error body as data.* Worth
-   checking as a class, not just here.
-4. **Consider a lint rule rather than more sweeps.** There is currently **no guard** in
-   cortex-ui's `tests/` touching `fetch`, `axios`, or `Authorization`. The durable form is a rule
-   that raw `fetch`/`axios` outside `src/api/` must be explicitly annotated — the same
-   declare-your-exception shape as the endpoint-gating manifest, which turns "did someone add an
-   unminted call?" from a periodic sweep into a build failure.
-5. **Cleanup (low)**: drop `VITE_ELECTRIC_URL` from `RuntimeConfig` and the entrypoint; delete or
-   wire the orphaned `-backend-config` ConfigMap.
+1. ~~**Fix both defects on `NodeInspector.tsx` together.**~~ **DONE** — `config.VITE_API_URL`,
+   `useAuth()` bearer, and the missing `!res.ok` check, in one commit with the reasoning recorded
+   inline so a future bisect does not split them.
+2. ~~**Seal it in a shape that can fail.**~~ **DONE, in the durable form instead** — rather than
+   a per-component assertion, the guard below enforces the class. Four controls verified
+   break-on-purpose, each RED, restored byte-identical.
+3. ~~**Handle `!r.ok` before `.json()`.**~~ **DONE.** Checked as a class: the three sibling fetch
+   sites already had it; this was the only site missing it.
+4. ~~**Consider a lint rule rather than more sweeps.**~~ **DONE — `scripts/check-transport-declarations.mjs`.**
+   Every outbound call routes through `src/api/client.ts` or carries
+   `// transport-exception: <why>`. **Wired into `npm run build`**, because this repo has no test
+   framework and CI builds the image via the Dockerfile, which runs `npm run build` — the one
+   command that must succeed for an image to exist. A guard anywhere else executes nowhere.
+   `scripts/redproof-transport-guard.mjs` plants an undeclared `fetch`, asserts RED naming the
+   file, removes it, asserts GREEN returns.
+
+   **The five existing bypasses are declared, not exempted** — four of the five already carried
+   the user's bearer, so a sweep on "doesn't use the api instance" would have produced five rows
+   and four false positives. Each declaration now states what identity the call carries.
+
+   The guard **asserts its own scope is inhabited** — missing scan root, absent allowlisted
+   wrapper, an allowlisted wrapper containing no sites, or a site count below the census floor
+   all fail loudly. That is `legacy-dns-guard-phantom-scope`'s lesson applied at birth rather
+   than after a month of green. Comments are blanked before matching so it cannot trip on its
+   own prose, which is the *other* sibling-guard failure.
+
+### Two design corrections found while building it — both recorded because they nearly shipped
+
+- **A fixed line-count lookback silently invalidates the longest declarations.** The first draft
+  accepted a marker within 3 lines above the call; the two most thorough declarations (5 and 6
+  lines, explaining the proxy and the blob-vs-JSON constraint) were reported as violations. The
+  window is now *the contiguous comment block*, which is what "attached to this call" actually
+  means. A guard whose annotation format penalises thoroughness trains people to write thin
+  annotations.
+- **Fixing the config bypass alone would have made things worse**, which is the finding above
+  proving itself in the repair: `fetch` does not reject on 4xx, so the panel would have started
+  rendering `{"detail": "Not authenticated"}` as graph data.
+
+5. **Cleanup (low) — NOT done, deliberately.** `VITE_ELECTRIC_URL` and the orphaned
+   `-backend-config` ConfigMap are legibility work on code that behaves correctly. Left as
+   separate items so this commit stays a security fix plus its guard.
 
 ## Related
 

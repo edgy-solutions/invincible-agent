@@ -636,3 +636,13 @@ hostname in source *means*.
 - Each confirmed-unminted caller either minted, or exempted with a stated reason.
 - A guard that fails when a new mesh-targeted outbound call appears unclassified — otherwise
   this is a one-time census and the next `review_composer` arrives unannounced.
+  **cortex-ui: DONE 2026-08-11 (`2c3b8a9`)** — `scripts/check-transport-declarations.mjs`, wired
+  into `npm run build` so an undeclared call fails the image build. Declare-your-exception shape;
+  four scope/positive controls verified break-on-purpose; committed red-proof.
+  **The platform side is still open**, and it is the one that matters more — the two CONFIRMED
+  unminted callers live in `dag-tools` and `doc-tools`, and neither repo has an equivalent.
+
+  Worth stating why the guard was worth building even though cortex-ui returned a zero: **the
+  zero there is structural** (no server-side origin exists) and needs no guard, but the *browser*
+  population is a searched zero and decays on the next component someone writes. A searched zero
+  ships with a guard or it silently becomes false.
