@@ -1,7 +1,11 @@
 # Unminted-caller enumeration — five-repo sweep
 
-> **STATUS: 4 of 5 REPOS SWEPT** — platform, `iagent-mesh-sdk`, `dag-tools`, `doc-tools`.
-> `cortex-ui` is **not swept**, and is the one where the method does not transfer.
+> **STATUS: 5 of 5 REPOS SWEPT** — platform, `iagent-mesh-sdk`, `dag-tools`, `doc-tools`,
+> `cortex-ui`. **The enumeration is complete.**
+>
+> `cortex-ui` returned a **structural zero**, written up separately in
+> `cortex-ui-transport-idiom`. The method did not transfer there — for a stronger reason than
+> "JS is harder to grep": **the category does not exist in that repo.** See REPO 5 below.
 
 ## READ THIS FIRST — the classifier was wrong THREE times, in three different ways
 
@@ -579,10 +583,56 @@ The decode-witnesses are the acceptance. Everything above proves the helper *wor
 decoded subject proves it mints *who we think it does*, and that distinction is the one this
 project has now paid for twice.
 
+## REPO 5 of 5 — `cortex-ui`, read 2026-08-11 — **a STRUCTURAL zero**
+
+Full design read in `cortex-ui-transport-idiom`. Summarised here so the enumeration's total is
+readable in one place.
+
+**Zero unminted callers, for a reason no amount of grepping would have produced:**
+
+> **A static SPA cannot have an unminted server-side caller. There is no server.**
+
+`package.json` has no server framework; the `Dockerfile`'s runtime stage is `nginx:1.25-alpine`
+and copies only `/app/dist`, so **node is not in the runtime image**; `nginx.conf` has **no
+`proxy_pass`**; the entrypoint writes a config file and execs nginx. Every call in this repo
+originates in the **browser**, carrying the **human's** OIDC token — which is the design, not a
+defect. The unminted-caller frame does not apply, **by category rather than by absence.**
+
+**Axis-2 held, and bounded it to one endpoint:** `src/config.ts` declares five runtime keys, of
+which exactly one is a platform service (`VITE_API_URL` → cortex-bff). Keycloak is the token
+*issuer*, not a callee; `VITE_ELECTRIC_URL` is declared-but-dead. Eight transport sites total in
+the whole application.
+
+**What it DID surface is a different failure mode**, and is deliberately not counted in this
+population: `NodeInspector.tsx:19` calls a gated bff route with **no Authorization header** — a
+browser call that drops the user's token. Against a gated route that is a **broken panel**, not
+an unauthenticated actor. It carries a second defect on line 6 (`import.meta.env` instead of
+`config`, so the deployed image points at `localhost:8000`) and **the outer defect masks the
+inner one** — fixing the config bypass alone would make the panel start rendering
+`{"detail": "Not authenticated"}` as graph data.
+
+**Sixth and seventh instances of the publish-vs-dial false positive**, and this repo is where the
+mechanism is densest: `useCompileWorkflow.ts:54` emits `http://restate-agent-svc:8081/{id}` as an
+`agent_endpoint` **field in a payload**, and `mockGroundingEmitter.ts` carries ~14 in-cluster URLs
+inside **mock fixtures**. Ambiguous hostname strings outnumber real call sites roughly **two to
+one** here. This remains the one mechanism a human reader would also plausibly get wrong at a
+glance — the other four were tool artifacts; this one is a genuine ambiguity about what a
+hostname in source *means*.
+
+### The enumeration's total
+
+| repo | confirmed unminted callers |
+|---|---|
+| platform (`invincible-agent`) | see rows above |
+| `iagent-mesh-sdk` | see rows above |
+| `dag-tools` | 1 |
+| `doc-tools` | 1 |
+| `cortex-ui` | **0 — structural** |
+
 ## Acceptance
 
 - Every candidate above read and confirmed or reclassified.
-- Four remaining repos swept the same way.
+- ~~Four remaining repos swept the same way.~~ **DONE 2026-08-11 — all five swept.**
 - Each confirmed-unminted caller either minted, or exempted with a stated reason.
 - A guard that fails when a new mesh-targeted outbound call appears unclassified — otherwise
   this is a one-time census and the next `review_composer` arrives unannounced.

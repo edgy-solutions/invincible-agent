@@ -2,7 +2,7 @@
 id:         transport-flip
 status:     open
 owner:      agent
-blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 1 repo still unswept (cortex-ui; doc-tools swept 2026-08-11, 1 CONFIRMED unminted caller). Returns to blocked-on-human when those land; the flip act is the human's.
+blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter). Cross-repo enumeration COMPLETE 2026-08-11 (5/5; cortex-ui = structural zero, no server-side origin); 2 CONFIRMED unminted callers stand (dag-tools, doc-tools → engine-o). Returns to blocked-on-human when those land; the flip act is the human's.
 closed-by:  
 repo:       invincible-agent
 summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
@@ -286,9 +286,24 @@ with the gauge as corroboration that what the enumeration found minting actually
 Neither alone suffices — the enumeration cannot prove a code path is live, and the gauge cannot prove
 a code path does not exist.
 
-Progress: 4 of 5 repos swept (`unminted-caller-enumeration`). `cortex-ui` remains, and it is the one
-where the method does not transfer — a JS/TS corpus whose call-site idioms differ from every Python
-pass, to be budgeted as a method problem first and a reading problem second.
+**Progress: 5 of 5 repos swept — the enumeration half of this precondition is COMPLETE**
+(`unminted-caller-enumeration`). `cortex-ui` closed 2026-08-11 with a **structural zero**
+(`cortex-ui-transport-idiom`): it is a static SPA served by nginx with no node in the runtime
+image and no `proxy_pass`, so it has **no server-side origin** and therefore no unminted-caller
+population at all. Budgeted as a method problem; it turned out to be a *category* problem, and
+the category is absent. **That is a stronger zero than a searched zero** — nothing was missed,
+because there was nothing of the kind to miss.
+
+The remaining half of this precondition is the corroboration, not more sweeping: the gauge must
+confirm that what the enumeration found minting actually mints in traffic. **Two CONFIRMED
+unminted callers** stand against the flip (`dag-tools`, `doc-tools` — both server-side, both to
+engine-o), and neither is visible to the gauge.
+
+One thing the sweep found that this packet should carry separately: `cortex-ui` ships
+`VITE_NO_AUTH`, read at `auth/RequireAuth.tsx:13` and injected at **runtime** by
+`docker-entrypoint.sh`. It creates no unminted caller — with no session the calls simply carry no
+token and the gated bff refuses them — but it is the one switch in that repo that decides whether
+identity exists at all, and a flip packet should know a runtime auth-disable toggle is deployed.
 
 ## Sequence — these are ordered, not parallel
 
