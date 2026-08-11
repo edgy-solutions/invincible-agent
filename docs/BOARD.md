@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **20 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
+_Coverage: **19 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -13,7 +13,7 @@ _Coverage: **20 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
-  status: blocked-on-human · owner: human · blocked-on: unminted-caller enumeration (static) — review_composer calls /resolve_instance with no credential
+  status: blocked-on-human · owner: human · blocked-on: enumeration across 5 repos + every candidate READ + the 9 stopping callers remediated — not merely enumerated
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
 - **undeclared-routes** — 12 routes undeclared in the gating manifest, incl. decision-plane writes. BLOCKING THREE OTHER ITEMS — all wait on one unratified call: is in-cluster reachability an acceptable gate?
@@ -61,10 +61,6 @@ _Coverage: **20 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **suite-signal** — master is not green. Measured census; recommended owner the telemetry agent.
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
-
-- **unminted-caller-enumeration** — Static read of mesh-targeted outbound calls, classified minted/unminted with failure mode. Platform pass done; four repos outstanding.
-  status: open · owner: agent
-  → [docs/plans/unminted-caller-enumeration.md](plans/unminted-caller-enumeration.md)
 
 ## parked
 

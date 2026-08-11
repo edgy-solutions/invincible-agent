@@ -2,7 +2,7 @@
 id:         transport-flip
 status:     blocked-on-human
 owner:      human
-blocked-on: unminted-caller enumeration (static) — review_composer calls /resolve_instance with no credential
+blocked-on: enumeration across 5 repos + every candidate READ + the 9 stopping callers remediated — not merely enumerated
 closed-by:  
 repo:       invincible-agent
 summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
@@ -41,6 +41,22 @@ summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exem
 >
 > The real precondition is therefore a **static enumeration of every outbound call in the fleet**
 > — see the `unminted-caller-enumeration` packet. The gauge is corroboration, not proof.
+>
+> **BLOCKER RESTATED 2026-08-10 (second correction).** It previously read as *"the unminted-caller
+> enumeration"*, which a reader parses as **enumerate, then flip**. That was never the sequence.
+> The platform pass found **9 call sites that STOP their caller** under REQUIRE — `review_composer`
+> (every review fails to compose), `policy_rules_client`, two of three `spo_interview` legs,
+> `spo_step_executor`, both `agent_routers`, `dispatch_driver:247`, `restate_analyst/main.py:544`.
+>
+> Enumeration produces the work list; **it does not do the work.** Between here and the signature
+> there is a remediation arc: mint each stopping caller (or exempt it with a stated reason), then
+> re-witness. The board should not read as though the flip is near.
+>
+> Corrected downward as well, and worth stating because the first report overstated it: an earlier
+> pass claimed 15 raisers and 3 sites consuming a 401 body as a result. **Both were classifier
+> artifacts** — a 20-line window that ended before the `except`. The supervisor and gateway
+> **degrade**; zero sites consume unchecked. See the enumeration packet's opening section.
+
 
 
 **What this is.** Turning `ENABLE_AGENTIC_AUTH` on is **not a configuration change**. It is the

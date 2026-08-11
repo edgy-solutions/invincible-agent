@@ -1,38 +1,34 @@
----
-id:         unminted-caller-enumeration
-status:     open
-owner:      agent
-blocked-on:
-closed-by:
-repo:       invincible-agent, iagent-mesh-sdk, dag-tools, doc-tools, cortex-ui
-summary:    Static read of mesh-targeted outbound calls, classified minted/unminted with failure mode. Platform pass done; four repos outstanding.
----
-
 # Unminted-caller enumeration — platform pass
 
-**This is `transport-flip`'s real precondition.** The gauge is corroboration, not proof: it
-measures traffic that occurred, not callers that exist.
+> **STATUS: PLATFORM ONLY.** `iagent-mesh-sdk`, `dag-tools`, `doc-tools` and `cortex-ui` are
+> **not swept** and are the majority of the remaining risk surface.
 
-> **STATUS: PLATFORM ONLY.** `invincible-agent` is swept below. **`iagent-mesh-sdk`,
-> `dag-tools`, `doc-tools` and `cortex-ui` are NOT swept** and are the majority of the
-> remaining risk surface. Do not read this as the answer.
+## READ THIS FIRST — the classifier was wrong THREE times, in three different ways
 
-## METHOD LIMITATION — read this before trusting any row
+This is the section that governs how every row below should be read.
 
-Two automated passes over the same tree **disagreed with each other**, and both were wrong:
+**Three automated passes over one tree produced three different answers, and each was wrong
+differently:**
 
-* Pass 1 flagged `dynamic_supervisor.py:1037` UNMINTED. It is **minted** — the credential is
-  attached inside `_telemetry_headers(config)`, so a literal search for `Authorization` in the
-  call block finds nothing. **Indirection defeats a string match.**
-* Pass 2 "fixed" that by resolving helpers and then reported only **1** minted call, dropping
-  four that a read confirms are minted (`dispatch_driver.py:221,371`,
-  `extraction_review_sensor.py:555`, `dynamic_supervisor.py:1650`) — the target-URL regex and
-  the code window were too narrow.
+1. **Indirection defeats a string match.** Pass 1 flagged `dynamic_supervisor.py:1037` UNMINTED.
+   It is minted — the credential attaches inside `_telemetry_headers(config)`, so searching the
+   call block for `Authorization` finds nothing.
+2. **Over-resolution drops true positives.** Pass 2 resolved helpers and then reported only ONE
+   minted call, losing four that reading confirms are minted. Target regex and window too narrow.
+3. **A 20-line window cannot see past a 15-line comment.** Pass 3 reported nine callers
+   "RAISES, uncaught" and three "unchecked — body used as result". **Both were false.** These
+   call sites carry long explanatory comments between the request and its handling, so the
+   window ended before `raise_for_status()` and before the enclosing `except`. There are **zero**
+   unchecked consumers, and the raisers split roughly evenly between stopping and degrading.
 
-So: **grep-and-classify is a candidate generator here, not an oracle.** Anything below marked
-CONFIRMED was read; anything marked CANDIDATE was produced by a classifier that has demonstrably
-erred in both directions on this exact corpus. Closing this item means reading each candidate,
-not re-running a script.
+The third error is the instructive one: it produced a **severity-above-the-flip emergency** —
+"a 401 body becomes a supervisor result, live in OBSERVE today" — that does not exist. It was
+about to be filed as its own board item. **A classifier that errs in three directions on one
+corpus is a candidate generator, not an oracle.**
+
+**Closing this item means READING each candidate, not re-running the script.** A flip gated on a
+count from this classifier would be a signature over a guess — and the guess was wrong three
+times in one evening.
 
 ## CONFIRMED MINTED — read individually
 
@@ -51,33 +47,39 @@ dispatch as the review starter. It may be correct here (dispatch_driver runs in 
 but *correct-by-coincidence and correct-by-design are different*, and the decoded subject on
 those two calls should be witnessed rather than assumed.
 
-## CANDIDATE UNMINTED — 19 sites, each needing a read
+## CANDIDATE UNMINTED — 19 sites, corrected failure modes
 
-`RAISES` is the severity column. It is what turned the composer from a nuisance into a
-pipeline-stopper: an unresolved subject is a handled outcome; a raised 401 is not.
+Every site below lacks a credential. The severity column is **effective behaviour under
+REQUIRE**, re-derived with a window that reaches past the comment blocks:
 
-| site | on 401 |
-|---|---|
-| `review_composer.py:94` | **RAISES** — verified; every review fails to COMPOSE |
-| `dispatch_driver.py:247` | RAISES |
-| `restate_analyst/main.py:544` | RAISES |
-| `policy_rules_client.py:75` | RAISES |
-| `spo_interview.py:113`, `:154`, `:176` | RAISES |
-| `spo_step_executor.py:96` | RAISES |
-| `agent_routers.py:65`, `:193` | RAISES |
-| `dynamic_supervisor.py:146`, `:362` | RAISES |
-| `gateway.py:124`, `:956`, `:2641` | RAISES |
-| `restate_analyst/main.py:2157` | degrades |
-| `decision_record_writer.py:71` | degrades |
-| `dynamic_supervisor.py:280`, `:679` | unchecked — result used as-is |
+### STOPS the caller — 9
 
-**Fifteen of nineteen raise.** If these survive their reads, REQUIRE does not degrade the fleet —
-it stops it, across the supervisor, the gateway, the SPO interview and the dispatch driver. That
-is a materially different flip than "some callers get denied", and it is the single most
-important output of this pass.
+`review_composer.py:94` · `dispatch_driver.py:247` · `restate_analyst/main.py:544` ·
+`policy_rules_client.py:75` · `spo_interview.py:113` · `spo_interview.py:154` ·
+`spo_step_executor.py:96` · `agent_routers.py:65` · `agent_routers.py:193`
 
-The three `unchecked` rows deserve their own attention: a 401 whose body is consumed as a result
-is worse than one that raises, because it produces *wrong data silently* rather than stopping.
+These raise with no enclosing handler. Under REQUIRE the caller fails — for the composer,
+verified: every review fails to COMPOSE, which is worse than every subject going unresolved
+because an unresolved subject is a handled outcome.
+
+### DEGRADES — 10
+
+All `dynamic_supervisor.py` sites (`146`, `280`, `362`, `679`), all `gateway.py` sites
+(`124`, `956`, `2641`), `spo_interview.py:176`, `restate_analyst/main.py:2157`,
+`decision_record_writer.py:71`.
+
+They raise and catch, or never raise. A 401 degrades the request rather than stopping the
+service.
+
+### What this changes about the flip
+
+**The supervisor and the gateway degrade; the analyst-side callers stop.** That is a materially
+different — and more tractable — picture than "the fleet stops", which is what the uncorrected
+numbers said. The remediation arc is real but bounded: nine call sites, concentrated in
+`restate_analyst` and `agent_routers`.
+
+**Zero sites consume a 401 body as a result.** The "wrong data silently, live in OBSERVE"
+emergency was an artifact of the window, not a property of the code.
 
 ## Not swept — the majority of remaining risk
 
