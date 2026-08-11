@@ -469,11 +469,17 @@ tool" handler depends on it.
 test — *who were the consumers, and which line binds each?* — rather than re-checking that a mint
 happens. `[[consolidation-completes-at-the-last-consumer]]`.
 
-**THE PLATFORM DOES NOT HAVE THIS FIX YET, AND THAT IS DELIBERATE.** The SDK is bumped to
-`0.3.1`, but the platform pins a git **tag** — `iagent-mesh @ git+…@v0.3.0`, in
-`pyproject.toml` ×2 and `agent_fleet/restate_analyst/pyproject.toml`. Consuming `0.3.1` needs a
-`v0.3.1` tag pushed and three pin lines bumped. **Not done here: tagging and pushing are
-outward-facing acts.**
+**`v0.3.1` IS TAGGED AND PUSHED** (2026-08-11, annotated, `a934c61`) — so the release exists and
+an externally-scaffolded engine can consume the fix today.
+
+**THE PLATFORM STILL PINS `v0.3.0`, AND MOVING IT IS A DECISION, NOT A CHORE.** Three lines:
+`pyproject.toml` ×2 and `agent_fleet/restate_analyst/pyproject.toml`.
+
+Left for a human on purpose, and `tests/test_sdk_pin_is_a_version.py` is the reason in its own
+words: the pin exists because *"a single SDK commit would change every engine's security
+behaviour on the next rebuild — with nobody deciding, and no diff in this repo to review."*
+**Bumping the pin IS the deciding act that test was written to force.** An agent doing it silently
+overnight would satisfy the letter of the pin and defeat its purpose.
 
 No urgency, and the reason is worth stating rather than assuming: the platform's engines register
 through `register_engine_to_mesh` → `engine_mint`, which already binds `register_with_mesh`. The
