@@ -30,6 +30,12 @@ except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.policy_rules_loader import load_disposition_rules
     from agent_fleet.restate_analyst.policy_evaluator import validate_ruleset
 
+# Module-level, not function-local: engine-a's image flattens agent_fleet/utils -> /app/utils.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.service_identity import outbound_auth_headers
+
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 
@@ -75,6 +81,12 @@ def fetch_policy_rules(graph: str, ruleset_label: str = "", *, known_disposition
     resp = requests.post(
         f"{ENGINE_O_URL}/policy_rules",
         json={"graph": graph, "ruleset_label": ruleset_label}, timeout=_HTTP_TIMEOUT,
+        # svc:engine-a — this process's own identity, named HERE. Ungoverned read
+        # (ruleset fetch), so the credential is transport only; see the identity ruling in
+        # docs/plans/unminted-caller-enumeration.md.
+        headers=outbound_auth_headers(
+            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+        ),
     )
     resp.raise_for_status()
     body = resp.json()

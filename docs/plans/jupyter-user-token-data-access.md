@@ -39,6 +39,18 @@ per-user property would be **presentational**.
 **Sequencing is therefore not a preference.** Gateway verification lands first or alongside; the
 notebook work is what makes it *useful*, not what makes it *true*.
 
+> ### GATING CONDITION — ruled 2026-08-10
+>
+> **If the `central_gateway` verification fix is not scheduled, this item WAITS.**
+>
+> Build only the Jupyter half and alice's pod carries alice's token while anyone can still claim
+> to be bob: **per-user by appearance, per-header by mechanism.** Shipping that is worse than
+> shipping nothing, because it converts an open question into an answered-looking one and would be
+> cited later as the reason per-user access is handled.
+>
+> *(The gateway in this condition is `dag-tools/central_gateway`, not cortex-bff — see the
+> disambiguation table in `[[dag-tools-gateway-unverified-subject]]`.)*
+
 ## The shape that gets you there
 
 Four moving parts. Parts 1-2 are configuration; part 3 is the one with a real design decision;

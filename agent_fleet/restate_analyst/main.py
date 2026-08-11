@@ -165,6 +165,14 @@ except ImportError:
         from mem0_utils import get_mem0_memory
 
 
+# Module-level, not function-local: engine-a's image flattens agent_fleet/utils -> /app/utils.
+# Same dance as the `engine_mint` import lower down, hoisted here because the outbound-header
+# helper is needed by handlers, not only at registration.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.service_identity import outbound_auth_headers
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -545,6 +553,13 @@ def _resolve_ontology(task_description: str, user_email: str = "") -> dict:
         ONTOLOGY_RESOLVE_URL,
         json=payload,
         timeout=ONTOLOGY_TIMEOUT,
+        # svc:engine-a — TRANSPORT identity, named HERE. The enforcement SUBJECT stays
+        # `user_email` in the payload above: this is the call whose dropped identity
+        # [[identity-reaches-enforcement-point]] was written for, and the credential must not
+        # be mistaken for the fix to that. Two identities, one request, on purpose.
+        headers=outbound_auth_headers(
+            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+        ),
     )
     resp.raise_for_status()
     return resp.json()

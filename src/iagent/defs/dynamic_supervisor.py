@@ -143,6 +143,10 @@ def create_task_plan(config: SupervisorQueryConfig):
             raise e
     else:
         logger.info("Calling Engine O for task planning")
+        # svc:supervisor via the helper THIS MODULE ALREADY DEFINES and already applies at the two
+        # specialist legs. This site was the odd one out — and the reason it was missed is worth
+        # keeping: it sits in the `else:` branch, while the `try` a scanner finds nearby guards the
+        # `if config.task_plan_json:` branch above. Proximity is not enclosure.
         response = requests.post(
             f"{ONTOLOGY_SVC_URL}/plan",
             json={
@@ -150,6 +154,7 @@ def create_task_plan(config: SupervisorQueryConfig):
                 "domain": config.domain
             },
             timeout=300,
+            headers=_telemetry_headers(config),
         )
         response.raise_for_status()
         plan = response.json()

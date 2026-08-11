@@ -8,9 +8,24 @@ Dagster acts as the central router (Polyglot Agentic Data Mesh V3 spec).
 import base64
 from pathlib import Path
 
+import logging
 import requests
 import os
 from dagster import MetadataValue, asset
+
+# svc:supervisor's outbound credential. GUARDED IMPORT, deliberately: this module is loaded at
+# Dagster CODE-LOCATION load time, so a hard ImportError here takes the whole location down rather
+# than failing one asset. The fallback restores exactly today's behaviour (no credential) and SAYS
+# SO — a silent fallback here would be the same defect this change is fixing.
+try:  # pragma: no cover - import path differs by runtime
+    from agent_fleet.utils.service_identity import outbound_auth_headers
+except ImportError:  # pragma: no cover
+    def outbound_auth_headers(**_kw):
+        logging.getLogger(__name__).warning(
+            "agent_fleet.utils.service_identity unavailable — Dagster engine calls proceed "
+            "UNAUTHENTICATED (engines record caller:none)"
+        )
+        return {}
 
 # ---------------------------------------------------------------------------
 # Icon helper — reads SVGs from assets/icons/ and encodes as base64 markdown
@@ -62,9 +77,17 @@ DATA_ANALYST_URL = os.getenv("DATA_ANALYST_URL", "http://iagent-data-analyst:808
 )
 def trigger_restate_analyst() -> dict:
     """Trigger Engine A (Restate + Smolagents) analyst agent pod."""
+    # svc:supervisor — the Dagster plane's process identity, named HERE. Not `_telemetry_headers`:
+    # that helper lives in dynamic_supervisor and takes a `config` this asset does not have. Same
+    # identity, same mint, one shared helper — reaching across for a private function would be the
+    # worse coupling.
     response = requests.post(
         f"{RESTATE_ANALYST_URL}/analyze",
         timeout=300,
+        headers=outbound_auth_headers(
+            client_id=os.getenv("SUPERVISOR_CLIENT_ID", "iagent-supervisor"),
+            secret_env="SUPERVISOR_CLIENT_SECRET",
+        ),
     )
     response.raise_for_status()
     return response.json()
@@ -190,10 +213,17 @@ def trigger_presentation_agent() -> dict:
 )
 def trigger_data_analyst(context) -> dict:
     """Trigger Engine DA (Data Analyst Agent) pod."""
+    # svc:supervisor — the Dagster plane's process identity, named HERE. TRANSPORT only: DA's read
+    # gate keys on the END USER (`user_id` in the body, X-Originator-* at the data gateway), so this
+    # credential must never be read as the entitlement subject.
     response = requests.post(
         f"{DATA_ANALYST_URL}/analyze_data",
         json={"user_query": "Show me the top 5 tables by size", "persona": "DATA_STEWARD", "domain": "DATA_ENGINEERING", "user_id": "test_user"}, # Dummy payload
         timeout=300,
+        headers=outbound_auth_headers(
+            client_id=os.getenv("SUPERVISOR_CLIENT_ID", "iagent-supervisor"),
+            secret_env="SUPERVISOR_CLIENT_SECRET",
+        ),
     )
     response.raise_for_status()
     

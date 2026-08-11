@@ -37,6 +37,12 @@ from typing import Any, Optional
 import httpx
 import requests
 
+# Module-level, not function-local: engine-a's image flattens agent_fleet/utils -> /app/utils.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.service_identity import outbound_auth_headers
+
 __all__ = [
     "StepFailAndRelease",
     "verify_spo_step",
@@ -97,6 +103,13 @@ def verify_spo_step(
         f"{engine_o_url}/find_compatible_verbs",
         json={"subject_uri": subject, "max_hops": 5, "entitled_domains": entitled_domains},
         timeout=30,
+        # svc:engine-a — this process's own identity, named HERE. Transport only: the
+        # ELIGIBILITY subject stays `entitled_domains` in the body, and permission is enforced
+        # downstream at dispatch by the target engine's own gate. Do not let this credential be
+        # read as the authorization subject.
+        headers=outbound_auth_headers(
+            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+        ),
     )
     resp.raise_for_status()  # a 5xx is transient infra -> retry (NOT a denial)
     verbs = list(resp.json().get("verbs") or [])

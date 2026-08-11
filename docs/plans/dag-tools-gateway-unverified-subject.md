@@ -15,6 +15,29 @@ summary:    HIGH — the data-plane gateway never verifies a token signature, an
 reach the data plane?* — not while looking for a vulnerability. The answer is that it does not
 have to.
 
+## FIRST — WHICH GATEWAY. Two components are now both called "the gateway"
+
+**This finding is about `dag-tools/central_gateway`, on the DA data path. It is NOT about the
+platform's cortex-bff gateway, and it does not contradict that component's verification witness.**
+
+| | **cortex-bff gateway** | **dag-tools `central_gateway`** |
+|---|---|---|
+| repo / path | `invincible-agent` — `src/iagent/gateway.py` | `dag-tools` — `dag_tools/central_gateway/main.py` |
+| plane | control / agentic | **DA data path** |
+| verifies bearers? | **YES** — RS256 pinned, JWKS live | **NO** — `verify_signature: False` |
+| witnessed? | yes, this month — forged-token pair: attacker-signed → 401, known-key → identity resolves | n/a — nothing to witness |
+
+**Read without this table, the finding looks like a retraction of the forged-token witness. It is
+not.** That witness stands, on the component it was run against.
+
+The two are in fact the **two ends of one seam**: this is the *receiving* end of the DA
+impersonation path whose *sending* end lock 2 already closed. Closing a sending end and leaving
+the receiving end asserting-is-believing is a coherent state to arrive at and an incoherent one to
+stay in — which is the argument for this item, and it is a stronger argument than "a gateway is
+unverified" would have been.
+
+**Whenever this finding is cited, cite the path, not the word "gateway."**
+
 ## The premise this corrects
 
 The transparent-Jupyter design was being scoped on this sentence:

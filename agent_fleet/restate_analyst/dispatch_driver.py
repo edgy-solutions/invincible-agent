@@ -52,9 +52,9 @@ except ImportError:  # pragma: no cover - import path differs by runtime
 # would leave the sealed two-direction failure-injection tests unable to run the mint path at all.
 # Testability is part of the contract: a credential seam nothing can stub is a seam nothing can seal.
 try:
-    from utils.service_identity import mint_service_token  # type: ignore[no-redef]
+    from utils.service_identity import mint_service_token, outbound_auth_headers  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
-    from agent_fleet.utils.service_identity import mint_service_token
+    from agent_fleet.utils.service_identity import mint_service_token, outbound_auth_headers
 
 CORTEX_BFF_URL = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090")
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
@@ -244,8 +244,27 @@ def _write_disposition_state(gw: dict) -> dict:
         "disposition_ref": gw["disposition_ref"],
         "proposed_by_ruleset": gw.get("proposed_by_ruleset", ""),
     }
+    # svc:review-starter — RULED SEPARATELY from its eight siblings, and the reason is the point.
+    # The other engine-A outbound calls are ungoverned reads and carry `svc:engine-a`, the process
+    # identity. THIS one writes DISPOSITION STATE — the review-starter's own governed downstream
+    # effect — and `svc:review-starter` is the subject holding the capability the ceremony granted.
+    # So the identity here is correct BY DESIGN, not by the coincidence that `mint_service_token()`
+    # happened to read REVIEW_STARTER_CLIENT_ID behind a general name.
+    #
+    # NAMED AT THE CALL SITE, which is the whole repair: the choice is visible in this diff instead
+    # of inherited from a helper's body. `os.getenv(..., "")` and not `os.environ[...]` on purpose —
+    # the latter would raise HERE, outside the helper's log-and-proceed guard, turning an
+    # unconfigured environment into a hard failure of a call that works today.
+    #
+    # WORSE THAN "STOPS" IF LEFT UNMINTED: `_fail_terminal_on_4xx` classes a 401 as TERMINAL, so
+    # under REQUIRE this write would fail PERMANENTLY rather than retry — the durable-execution
+    # equivalent of a hard fail, on a state write.
     resp = requests.post(
         f"{ENGINE_O_URL}/write_item_state", json=body, timeout=_HTTP_TIMEOUT,
+        headers=outbound_auth_headers(
+            client_id=os.getenv("REVIEW_STARTER_CLIENT_ID", ""),
+            secret_env="REVIEW_STARTER_CLIENT_SECRET",
+        ),
     )
     _fail_terminal_on_4xx(resp, f"engine-o disposition-state write for {gw['subject_iri']!r}")
     resp.raise_for_status()  # 5xx / 429 / network stay RETRYABLE (transient, should retry)

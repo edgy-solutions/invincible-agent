@@ -34,6 +34,12 @@ except ImportError:  # pragma: no cover - import path differs by runtime
     )
     from agent_fleet.restate_analyst.policy_evaluator import build_part_items
 
+# Module-level, not function-local: engine-a's image flattens agent_fleet/utils -> /app/utils.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.service_identity import outbound_auth_headers
+
 ENGINE_O_URL = os.getenv("ONTOLOGY_SERVICE_URL", "http://iagent-engine-o:8084")
 _HTTP_TIMEOUT = float(os.getenv("AGENT_HTTP_TIMEOUT", "30"))
 
@@ -91,7 +97,15 @@ def resolve_subject_via_engine_o(mpn: str, *, engine_o_url: str = ENGINE_O_URL) 
     take the top candidate's ``instance_id``, or None (abstain — empty candidates). The provider already
     ran the exact/fuzzy/abstain decision table; this picks the winner. An unresolved subject is NOT an
     error — it routes to the re-link path in the driver."""
-    resp = requests.post(f"{engine_o_url}/resolve_instance", json={"identifier": mpn}, timeout=_HTTP_TIMEOUT)
+    # svc:engine-a — this process's own identity, named HERE. THE SITE THAT STAYED INVISIBLE:
+    # under REQUIRE an unminted call here 401s and every review fails to COMPOSE, and it was
+    # missed because the enumeration that found it was scoped to registration callers.
+    resp = requests.post(
+        f"{engine_o_url}/resolve_instance", json={"identifier": mpn}, timeout=_HTTP_TIMEOUT,
+        headers=outbound_auth_headers(
+            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+        ),
+    )
     resp.raise_for_status()
     candidates = resp.json().get("candidates", [])
     return candidates[0]["instance_id"] if candidates else None

@@ -29,9 +29,11 @@ it to ``/app/utils/``, and the Dagster user-code image has it at ``/app/agent_fl
 never importable there). The Dagster sensor keeps a thin wrapper that re-raises as ``dagster.Failure``
 so its proven test contract is unchanged; the mint logic itself is only here.
 """
+import logging
 import os
+from typing import Dict
 
-__all__ = ["ServiceTokenError", "mint_service_token"]
+__all__ = ["ServiceTokenError", "mint_service_token", "outbound_auth_headers"]
 
 
 # ── THE ONE IMPLEMENTATION LIVES IN THE SDK (iagent_mesh >= 0.2.0) ──────────────────────
@@ -91,3 +93,61 @@ def mint_service_token(*, timeout: float = 15.0) -> str:
         client_secret=os.environ["REVIEW_STARTER_CLIENT_SECRET"],
         timeout=timeout,
     )
+
+
+def outbound_auth_headers(*, client_id: str, secret_env: str, timeout: float = 15.0) -> Dict[str, str]:
+    """Authorization headers for ONE outbound mesh call, under a CALLER-NAMED identity.
+
+    THE SEAM THE 11-SITE ENUMERATION ASKED FOR (``docs/plans/unminted-caller-enumeration.md``).
+    Nineteen platform callers reached engine-o / engine-A / DA with no credential at all; eleven
+    of them STOP under ``REQUIRE_TRANSPORT_AUTH``. They are two identities across two processes,
+    so the fix is one helper and a literal at each site — not eleven bespoke edits.
+
+    IDENTITY IS AN ARGUMENT — the same rule as ``engine_mint``, for the same reason. Both the
+    client id and the env var holding its secret are named BY THE CALLER at the caller's own site.
+    A helper that resolved the identity itself (from the module name, a conventional env var, a
+    default) would be a general name over specific behaviour — which is exactly how
+    ``mint_service_token()`` came to read REVIEW_STARTER_CLIENT_ID and would have had the
+    supervisor dispatching as the review starter. **The literal at the call site is the feature.**
+    Repeating it is cheaper than one wrong inheritance.
+
+    OBSERVE-PHASE BEHAVIOUR — LOG AND PROCEED, NEVER RAISE. Engines currently accept
+    unauthenticated callers (the SDK's transport-auth default is OBSERVE), so attaching a
+    credential where none was sent is behaviourally inert: receivers validate-if-present and
+    refuse nothing. A mint failure must therefore NOT break a call that works today — it is
+    logged and the call proceeds token-less, which the receiving engine records as ``caller:
+    none``. That is the migration gauge filling in, not an outage. When REQUIRE flips, the same
+    failure becomes a 401 at the engine, which is the correct moment for it to become loud.
+
+    Mirrors ``dynamic_supervisor._telemetry_headers`` deliberately — same posture, same
+    diagnostic header, same reasoning. Process B already had this; process A did not.
+
+    FAILS LOCALLY BEFORE IT FAILS REMOTELY, and that is load-bearing for tests: ``os.environ[
+    secret_env]`` is evaluated BEFORE ``mint_token`` is entered, so an unconfigured environment
+    raises ``KeyError`` here and never opens a socket. Unit tests that do not set the secret get a
+    fast local warning rather than a real client-credentials POST against a nonexistent Keycloak.
+
+    MINT AT USE — never a stored token. Returns only the headers it managed to build; callers
+    merge it into their own (trace headers, content-type) rather than the reverse.
+    """
+    headers: Dict[str, str] = {}
+    try:
+        headers["Authorization"] = "Bearer " + mint_token(
+            client_id=client_id,
+            client_secret=os.environ[secret_env],
+            timeout=timeout,
+        )
+    except Exception as exc:  # noqa: BLE001 — see OBSERVE-PHASE note above
+        # THE GAUGE NEEDS THE DISCRIMINANT. A token-less call caused by a mint FAILURE and one
+        # from a caller that never minted both surface at the engine as `caller: none`; without a
+        # discriminant a Keycloak blip reads as caller-readiness REGRESSING.
+        #
+        # X-Auth-Status IS DIAGNOSTIC ONLY AND MUST NEVER REACH AN AUTHORIZATION DECISION: it is
+        # caller-asserted and therefore unverifiable. Legal to LOG, illegal to TRUST.
+        headers["X-Auth-Status"] = f"mint-failed:{type(exc).__name__}"
+        logging.getLogger(__name__).warning(
+            "outbound call minting no token for client_id=%s (%s: %s) — proceeding "
+            "UNAUTHENTICATED; the receiving engine records caller:none until %s is configured",
+            client_id, type(exc).__name__, str(exc)[:120], secret_env,
+        )
+    return headers

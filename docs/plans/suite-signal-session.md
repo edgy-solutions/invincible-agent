@@ -100,6 +100,44 @@ and a separate line would be two homes for one item — the defect the board exi
 If it is ever worked independently of the suite sweep, it earns its own packet then; until
 then, the board points at this packet and this packet names the site.
 
+## Named sub-item — `test_promise_name_seal` is ORDER-DEPENDENT (found 2026-08-10)
+
+Found while baselining the 11-site mint remediation, which is how it should be found: the
+remediation's diff was innocent and the suite still went red, so the run was repeated with the
+changes stashed.
+
+**The measurement, both arms identical:**
+
+| run | result |
+|---|---|
+| `test_promise_name_seal.py` **alone** | **3 passed** |
+| same file inside a 27-file batch, **changes applied** | 2 failed, 255 passed |
+| same file inside the same batch, **changes stashed (baseline)** | **2 failed, 255 passed** |
+
+Identical with and without the diff, so the failure is pre-existing and the remediation is
+exonerated. But the finding is not "a stale failure" — it is that **the verdict depends on what
+ran before it.**
+
+Two tests are affected: `test_grouped_awaited_name_equals_resolved_name` and
+`test_default_convention_preserved_for_undeclared_steps`.
+
+**The mechanism is `sys.path`, and there is a second symptom confirming it.**
+`tests/test_restate_analyst.py` *fails to collect* when run in a small group
+(`agent_fleet/restate_analyst/main.py` → `from orchestrator.auth import ...` →
+`ModuleNotFoundError: No module named 'orchestrator'`) and collects fine in a large one — because
+some other test file inserts `agent_fleet/restate_analyst` onto `sys.path` first. The same
+ambient-path coupling explains both.
+
+**Why this outranks its own severity.** A seal whose result depends on collection order is not
+sealing — it can go green because of a neighbour and red because of a reorder, and neither carries
+information about the promise-name property it exists to protect. That is the same failure class
+as `[[seals-must-be-proven-to-bite]]`, one level up: there the question was whether a seal bites,
+here it is whether its verdict means anything at all. **Fixing the ordering is not cosmetic
+tidying — it is what makes the other 255 results trustworthy.**
+
+Recorded here rather than as its own board line, for the same reason as the `embed_contract`
+violation above: it is inside this session's scope.
+
 ## Method notes this session should encode
 
 Two instrument defects were found the expensive way during the triage. Both are general.

@@ -412,6 +412,83 @@ strengthens that item's case by showing the pattern is not confined to the platf
 it as its own board item alongside `approval-bypass-bpmn-runner`. Recorded here so the choice is
 made deliberately rather than by the finding quietly aging out.
 
+## REMEDIATION BUILT — 2026-08-10, the 11 platform sites + the SDK rebind
+
+**Safe to build unsupervised for one specific reason:** under OBSERVE, attaching a credential
+where none was sent is behaviourally inert — receiving engines validate-if-present and refuse
+nothing. The worst case is a mint failure, and the standing rule already covers it (log and
+proceed in the expand phase, never raise).
+
+### The seam
+
+`agent_fleet/utils/service_identity.py` — `outbound_auth_headers(*, client_id, secret_env)`.
+Identity is an ARGUMENT, same rule and same reason as `engine_mint`. Mirrors
+`dynamic_supervisor._telemetry_headers` deliberately: same posture, same `X-Auth-Status`
+diagnostic, same log-and-proceed.
+
+**One property worth naming because it decided the test story:** `os.environ[secret_env]` is
+evaluated BEFORE `mint_token` is entered, so an unconfigured environment raises `KeyError`
+*locally* and never opens a socket. Unit tests that do not set the secret get a fast warning
+rather than a real client-credentials POST against a nonexistent Keycloak — the exact hazard
+`tests/test_dispatch_driver.py`'s fixture docstring warns about.
+
+### The 11 sites
+
+| process | identity | sites |
+|---|---|---|
+| engine-A image | `svc:engine-a` | `main.py` (ontology resolve) · `policy_rules_client.py` · `review_composer.py` · `spo_interview.py` ×3 · `spo_step_executor.py` — **7** |
+| engine-A image | `svc:review-starter` | `dispatch_driver.py` `_write_disposition_state` — **1**, ruled separately |
+| Dagster plane | `svc:supervisor` | `dynamic_supervisor.py` `create_task_plan` (via `_telemetry_headers`) · `agent_routers.py` ×2 — **3** |
+
+**Two deviations from the packet's scoping, both deliberate:**
+
+1. **`agent_routers.py` does NOT use `_telemetry_headers`.** That helper lives in
+   `dynamic_supervisor` and takes a `config` these assets do not have. Reaching across for another
+   module's private function is worse coupling than calling the shared helper with the identity
+   named at the site — so both sites use `outbound_auth_headers` with `svc:supervisor`. Only
+   `dynamic_supervisor.py` itself had the helper "its own module already defines".
+2. **`agent_routers.py` imports the helper under a guard.** That module loads at Dagster
+   **code-location** load time, so a hard `ImportError` takes the whole location down rather than
+   failing one asset. The fallback restores exactly today's behaviour and *announces itself* — a
+   silent one would be the defect being fixed.
+
+`dispatch_driver` uses `os.getenv("REVIEW_STARTER_CLIENT_ID", "")`, not `os.environ[...]`: the
+latter evaluates at the call site, **outside** the helper's guard, and would turn an unconfigured
+env into a hard failure of a call that works today.
+
+### The SDK rebind
+
+`MeshTool.__init__` now takes `mint` (default `None`), and `_emit_to_registrar` calls
+`register_with_mesh` instead of its own bare POST. `mint=None` reproduces today's unauthenticated
+request exactly — but now with ADR-0006 retry and a named reason — so the rebind changes nothing
+for engines that pass no identity. The `RuntimeError` on failure is **kept on purpose**:
+`register_with_mesh` never raises, and the lifespan's "registration failure must not crash the
+tool" handler depends on it.
+
+**Guarded by `tests/test_registration_consumer_is_bound.py`** (5 pins), which encodes the law's
+test — *who were the consumers, and which line binds each?* — rather than re-checking that a mint
+happens. `[[consolidation-completes-at-the-last-consumer]]`.
+
+### NOT done, and why
+
+**`mint_service_token()` is NOT retired at `dispatch_driver:220`/`:373`.** Those two sites are
+already correctly minted; retiring the misnamed helper there is a *legibility* refactor on working
+code, and four test files — including `test_expired_token_seal.py`, a security seal — monkeypatch
+that name in `dispatch_driver`'s namespace. Rewiring a seal's stub is a supervised change, not an
+overnight one. The anti-propagation marker on the helper already stops new callers.
+
+### Acceptance status
+
+| check | state |
+|---|---|
+| affected suites (dispatch driver, expired-token seal, grouped review, promise name, identity separation, trace headers) | **54 passed** |
+| SDK suite | **111 passed** + 5 new pins |
+| **two decode-witnesses** (`svc:engine-a`, `svc:supervisor` on the new seam) | **OUTSTANDING — the morning read** |
+
+The decode-witnesses are the acceptance. Everything above proves the helper *works*; only a
+decoded subject proves it mints *who we think it does*, and that distinction is the one this
+project has now paid for twice.
+
 ## Acceptance
 
 - Every candidate above read and confirmed or reclassified.

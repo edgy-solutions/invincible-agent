@@ -36,6 +36,12 @@ try:  # same lazy-import dance as spo_step_executor / _run_definition
 except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.restate_analyst.workflow_definition import WorkflowDefinition
 
+# Module-level, not function-local: engine-a's image flattens agent_fleet/utils -> /app/utils.
+try:  # pragma: no cover - import path differs by runtime
+    from utils.service_identity import outbound_auth_headers  # type: ignore[no-redef]
+except ImportError:  # pragma: no cover
+    from agent_fleet.utils.service_identity import outbound_auth_headers
+
 ENGINE_O_URL_DEFAULT = "http://iagent-engine-o:8084"
 _HTTP_TIMEOUT = 15.0
 
@@ -114,6 +120,13 @@ def authorized_subjects(
         f"{engine_o_url}/classes",
         json={"query": "", "domain": domain, "user_email": caller_email},
         timeout=_HTTP_TIMEOUT,
+        # svc:engine-a — TRANSPORT identity, named HERE. It is NOT the authorization subject:
+        # the can_view gate keys on `user_email` in the BODY, which is the author whose menu
+        # this is. Two identities on one request, deliberately, and conflating them is what
+        # `[[transport-not-entitlement]]` exists to prevent.
+        headers=outbound_auth_headers(
+            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+        ),
     )
     r.raise_for_status()
     return _parse_classes(r.json())
@@ -155,6 +168,11 @@ def authorized_operation_subjects(
         f"{engine_o_url}/operable_subjects",
         json={"domain": domain, "user_email": caller_email},
         timeout=_HTTP_TIMEOUT,
+        # svc:engine-a — TRANSPORT identity, named HERE. The can_view subject remains
+        # `user_email` in the body (Ruling A); see the note on /classes above.
+        headers=outbound_auth_headers(
+            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+        ),
     )
     r.raise_for_status()
     return _parse_operation_subjects(r.json())
@@ -173,7 +191,14 @@ def authorized_verbs(
         raise ValueError(f"cannot elicit verbs for an unresolved subject ({subject_uri!r})")
     body: dict[str, Any] = {"subject_uri": subject_uri, "max_hops": 5}
     body["entitled_domains"] = [workflow_domain] if workflow_domain else []
-    r = httpx.post(f"{engine_o_url}/find_compatible_verbs", json=body, timeout=_HTTP_TIMEOUT)
+    # svc:engine-a — this process's own identity, named HERE. Structural query; domain scope
+    # rides `entitled_domains` in the body and is the WORKFLOW's, not the author's.
+    r = httpx.post(
+        f"{engine_o_url}/find_compatible_verbs", json=body, timeout=_HTTP_TIMEOUT,
+        headers=outbound_auth_headers(
+            client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET",
+        ),
+    )
     r.raise_for_status()
     return _parse_verbs(r.json())
 
