@@ -24,10 +24,6 @@ _Coverage: **25 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: unassigned
   → [docs/plans/board-migration.md](plans/board-migration.md)
 
-- **cortex-ui-transport-idiom** — DESIGN READ (2026-08-11) for repo 5 of 5. cortex-ui is a static SPA behind nginx — there is NO server-side origin, so the "unminted caller" frame does not apply and the sweep population is browser call sites only. One confirmed defect: NodeInspector sends no token AND bypasses runtime config, two defects on one line where the outer masks the inner.
-  status: open · owner: unassigned
-  → [docs/plans/cortex-ui-transport-idiom.md](plans/cortex-ui-transport-idiom.md)
-
 - **dag-tools-broker-register-unauthenticated** — Unauthenticated routing-table write — /api/v1/internal/register takes broker_url from the body and repoints any URN. Integrity write, so NOT acceptable on in-cluster reachability alone. First cross-repo instance of the undeclared-routes pattern.
   status: open · owner: agent · blocked-on: nothing — CLASSIFIED. [[gate-class-follows-the-effect]] puts an integrity write in the never-acceptable-on-in-cluster-reachability column. Remaining work is the build: authenticate /api/v1/internal/register and /resolve.
   → [docs/plans/dag-tools-broker-register-unauthenticated.md](plans/dag-tools-broker-register-unauthenticated.md)
@@ -99,6 +95,10 @@ _Coverage: **25 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **ceremony-record** — ADR-0034 ceremony, end to end — identity-vs-pointer repair, cursor wedge, at-least-once intake, escalation, and the completion witness (dr-08a9c7e7a8c04e00, the corpus's first monitored row).
   status: closed · owner: agent · closed-by: 96f2657
   → [docs/plans/2026-08-06-artifact-uri-repair-witness.md](plans/2026-08-06-artifact-uri-repair-witness.md)
+
+- **cortex-ui-transport-idiom** — DESIGN READ (2026-08-11) for repo 5 of 5. cortex-ui is a static SPA behind nginx — there is NO server-side origin, so the "unminted caller" frame does not apply and the sweep population is browser call sites only. One confirmed defect: NodeInspector sends no token AND bypasses runtime config, two defects on one line where the outer masks the inner.
+  status: closed · owner: unassigned · closed-by: d1184b3
+  → [docs/plans/cortex-ui-transport-idiom.md](plans/cortex-ui-transport-idiom.md)
 
 - **registration-wiring** — Six engines mint on /v1/register under decode-witnessed identities. Witnessed at a clean log boundary: 0 new unverified, 6 verified (svc:engine-o 1, svc:engine-w 5 — multiplicities matching each engine's verb count).
   status: closed · owner: agent · closed-by: 9d93146

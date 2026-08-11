@@ -1,9 +1,10 @@
 ---
 id:         cortex-ui-transport-idiom
-status:     open
+status:     closed
 owner:      unassigned
 blocked-on: 
-closed-by:  
+closed-by:  d1184b3
+closed-by-note: work landed in the cortex-ui repo (2c3b8a9 — NodeInspector fix + transport-declaration guard); d1184b3 is the invincible-agent commit that records it, since closed-by resolves shas in this repo only
 code-site:  cortex-ui/src/api/client.ts
 repo:       cortex-ui
 summary:    DESIGN READ (2026-08-11) for repo 5 of 5. cortex-ui is a static SPA behind nginx — there is NO server-side origin, so the "unminted caller" frame does not apply and the sweep population is browser call sites only. One confirmed defect: NodeInspector sends no token AND bypasses runtime config, two defects on one line where the outer masks the inner.
