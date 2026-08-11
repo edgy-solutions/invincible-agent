@@ -64,6 +64,26 @@ arrived after composition, hypothesis 1 is confirmed and the design's re-link pr
 precisely this arrival. If it predates composition, all three hypotheses are dead and the question
 reopens with no surviving branch — which would itself be the finding.
 
+### A second read, from a six-week-old open finding
+
+**Hole 2's second failure mode was recorded OPEN on 2026-06-26 and has the same shape as our
+survivor: identifier-form mismatch.** The finding, verbatim from the record — *"LLM extracts
+'360 Dashboard' but DataHub stores 'Customer 360'; engine_d returns 0 hits on the LLM form even
+though it returns 1.0 on the stored label."* A token-subset fallback with a uniqueness guard was
+banked and, as far as that record goes, never landed.
+
+Identical resolve path, different answers **depending on the form of the identifier** — which is
+exactly what we observe, and our MPNs come from extraction, where the emitted form can change between
+runs.
+
+**This is a lead, not a finding, and it may be the MECHANISM of hypothesis 1 rather than a competitor
+to it.** A snapshot frozen at composition and an identifier whose form drifts are the same story told
+from two ends. It is checkable in the same pass as the timestamp read:
+
+**Compare the MPN string stored in the composed `batch_items` against the string the artifact carries
+now.** If they differ, form-drift is the mechanism and the timestamp question is downstream of it. If
+they are byte-identical, the lead is dead and frozen-at-composition stands alone.
+
 ## The follow-up either way
 
 The design anticipated resolution arriving late — that is what the task's re-link provenance is

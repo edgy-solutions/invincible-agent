@@ -45,6 +45,24 @@ branch to "fix" it). This is clause 2's write-serialization applied to git: a br
 and an unowned HEAD move is a collision, not a convenience. Per-commit verification is the floor; if
 agents run concurrently often, isolate with a `git worktree` per agent. Filed from that collision.
 
+**ONE WRITER PER TREE PER SESSION, AND `git stash` IS BANNED OUTRIGHT (2026-08-10).** Two agents in
+one working copy nearly lost work today, and it recovered by luck rather than design: a `git stash`
+taken merely to compare a test baseline could not `pop`, because a **generated** file
+(`docs/BOARD.md`) had been rewritten in the interim. The stash held four edits, the pop aborted, and
+recovery required restoring the generated file to HEAD before the pop would apply.
+
+**The rule:** one agent writes the tree in a session, the other reads only — and **never `git stash`
+in a shared tree.** Stash silently reverts files another writer may be holding, and its failure mode
+is an aborted pop whose contents survive only if someone notices. Compare baselines with
+`git show HEAD:<path>`, a scratch copy, or a second clone — never by mutating the shared tree.
+
+**Branch-per-agent was considered and REJECTED**, for a reason specific to this repo: branches split
+the working tree from the **generated** artifacts. Two agents on two branches each regenerate
+`BOARD.md` from divergent packet sets and then collide at merge on a generated file — strictly worse
+than colliding on a source file, because the correct resolution is not a merge but a regeneration
+from the union. Single-writer needs no tooling and matches how the agents are actually run: one
+working, one reviewing.
+
 **STAGE BY EXPLICIT PATH, never by pattern, in a shared tree (2026-08-05).** The same hazard one layer
 down: `git add -u` stages every tracked modification, and `git add -A` every file — including work
 someone else has in flight in the same working copy. Used `-u` while the human was mid-arc on an

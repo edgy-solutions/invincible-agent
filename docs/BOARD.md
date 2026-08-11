@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **17 of 64 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
+_Coverage: **18 of 65 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -41,6 +41,10 @@ _Coverage: **17 of 64 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **endpoint-table-generation** — Generate the README endpoint table from the live route census instead of asserting it.
   status: open · owner: agent
   → [docs/plans/endpoint-table-generation.md](plans/endpoint-table-generation.md)
+
+- **retire-inline-task-loop** — BPMNWorkflowRunner still accepts a CLIENT-SUPPLIED definition via request["definition"]. ADR-0029 made its retirement conditional on the definition path sealing — which happened this week, so the condition is now met and nobody noticed.
+  status: open · owner: unassigned
+  → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
 
 - **subject-resolution-at-composition** — A resolvable MPN composes as subject_unresolved. Two hypotheses eliminated 2026-08-10; one survives (frozen-at-composition) with a named discriminating read.
   status: open · owner: unassigned
