@@ -125,3 +125,34 @@ that checks nobody.
 Write any of these into the manifest. The test stays red until the classes are ratified, which is
 the correct state: a red that names real undeclared routes is doing its job, and silencing it with
 guessed classes would convert a security question into a green tick.
+
+## RULED 2026-08-10 — the human's dispositions
+
+### `/write_item_state` — gate class AND minted caller, together
+
+It sits in this packet (unclassified gate) and in `unminted-caller-enumeration` (unminted
+caller). **Fixed as one change, not two.** The `_fail_terminal_on_4xx` amplifier is why: a 401
+there is classified terminal, so Restate will not retry — a permanent failure of the disposition
+write. Gating without minting converts a working path into a permanently broken one.
+
+### Engine-o internals — ACCEPTABLE AS-IS, with a hardening item filed
+
+The read/orchestration routes engine-o exposes to in-cluster callers are accepted at their
+current posture. The residual risk is filed as `engine-o-internal-hardening` with a **trigger**,
+not a queue position — per the bank rule, a parked item with no firing condition rots.
+
+### `/workflow/start` — DISABLE, GATED ON A CROSS-REPO CONSUMER SWEEP
+
+`consumers: [none-found]` is a **static-analysis result over the repos swept so far**, and four
+repos are unswept — `dag-tools` and `cortex-ui` are both plausible callers of a workflow-start
+endpoint.
+
+So the sequence is **verify no consumer across all repos, THEN disable** — never
+disable-and-discover, which manufactures exactly the silent-refusal class this arc has spent a
+week eliminating.
+
+**Cheap, because the sweep is already queued**: `unminted-caller-enumeration` needs the same
+four-repo read. **Same read, two answers.** If it confirms zero consumers, disable; if it finds
+one, the route stops being unused and gets classified like any other action route.
+
+**This item unblocks on the strength of these four dispositions.**

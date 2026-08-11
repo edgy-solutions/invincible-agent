@@ -86,3 +86,27 @@ approval that the entire trust architecture treats as the enforcement point. A s
 - `undeclared-routes` — the unratified in-cluster-posture decision this finding's mitigation rests on.
 - `retire-inline-task-loop` — same runner; that item's security read (2026-08-10) established the
   reachability facts reused above.
+
+## RULED 2026-08-10 — gate it, and gate BOTH surfaces
+
+**Disposition: authority writes get a real gate.** Check caller identity, ask `can_act`, and
+**record the identity in the resolution** so the approval carries who made it. The cortex-bff
+path already does this — so this is aligning two surfaces with a third that is already right,
+not inventing a mechanism.
+
+### THE TWO-SURFACE CAVEAT — both, or neither counts
+
+There are **two** ungated entry points, and they are independently reachable:
+
+| surface | site | shape |
+|---|---|---|
+| engine-a HTTP route | `main.py:3042` | `@app.post("/workflow/{workflow_id}/task/{task_id}/approve")` → `approve_task(...)` — **no identity dependency in the signature** |
+| Restate handler | `main.py:2085` | `@bpmn_workflow.handler() async def approve(ctx, request: dict)` — called *by* the route above, and reachable **directly via the Restate ingress** |
+
+**A fix that gates the route and leaves the handler open closes the door someone is looking at
+while leaving the one behind it.** The handler is not merely the route's implementation — it is
+its own entry point.
+
+Verified 2026-08-10 by reading both sites. Acceptance for this item is that **both** are gated;
+gating one is not partial progress, it is a false green — the surface still open is the one
+nobody is now looking at.

@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **19 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **20 of 68 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -67,6 +67,10 @@ _Coverage: **19 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **engine-a-loop-idempotency** — Non-idempotent Superset write inside the agent loop. FILED NOT FIXED; the packet forbids attaching it to a durability session.
   status: parked · owner: human · blocked-on: design window (reserved)
   → [docs/plans/agent-loop-effect-idempotency-engine-a.md](plans/agent-loop-effect-idempotency-engine-a.md)
+
+- **engine-o-internal-hardening** — Engine-o's internal read/orchestration routes are accepted at current posture. Fires when in-cluster reachability stops being an acceptable gate.
+  status: parked · owner: unassigned · trigger: the cluster stops being closed — a SHARED work cluster, any workload you did not author, or a network-policy change
+  → [docs/plans/engine-o-internal-hardening.md](plans/engine-o-internal-hardening.md)
 
 - **silence-closure-arc** — Inventory of failure modes presenting as silence rather than error; instances checked against the repo.
   status: parked · owner: agent · blocked-on: inventory review

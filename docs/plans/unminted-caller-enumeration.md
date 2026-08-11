@@ -204,6 +204,24 @@ CortexDataClient), `doc-tools` (ingest→mesh calls), `cortex-ui` (browser calls
 gated routes). **Stated because "the repo I was in" is exactly how `review_composer` stayed
 invisible** while the platform's registration callers were being enumerated carefully.
 
+
+## THE FOUR-REPO SWEEP NOW ANSWERS TWO QUESTIONS
+
+Ruled 2026-08-10: `/workflow/start` is to be **disabled, gated on a cross-repo consumer sweep**.
+Its `consumers: [none-found]` is a static-analysis result over the repos swept so far, and
+`dag-tools` / `cortex-ui` are plausible callers of a workflow-start endpoint.
+
+**That is the same read this item already owes.** While sweeping the four unswept repos for
+unminted outbound callers, also record **any caller of engine-a's `/workflow/start`**. Same
+files, same pass, two answers:
+
+1. unminted callers → this packet's remaining rows;
+2. `/workflow/start` consumers → the disable decision in
+   `endpoint-gating-undeclared-routes-recommendation.md`.
+
+**Verify-then-disable, never disable-and-discover** — a disabled route with a live consumer is
+the silent-refusal class, which is what this arc has spent a week removing.
+
 ## Acceptance
 
 - Every candidate above read and confirmed or reclassified.
