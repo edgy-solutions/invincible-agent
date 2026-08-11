@@ -1,11 +1,12 @@
 ---
 id:         work-deploy
-status:     open
+status:     closed
 owner:      human
 blocked-on: 
-closed-by:
+closed-by:  ecdd944
+closed-by-note: the deploy was a HUMAN ACT with no commit of its own; ecdd944 is the commit that recorded its completion, not the commit that performed it.
 repo:       invincible-agent
-summary:    DEPLOYED in OBSERVE — the go was given and the three reads are settled (1 done, 2 retracted, 3 decode-verified green). Closing needs a closed-by sha; the residual fifth read is not a blocker and lives with jupyter-user-token-data-access.
+summary:    DEPLOYED in OBSERVE. The go was given and the three reads are settled — 1 done, 2 retracted as the wrong tool for this cluster, 3 decode-verified green. Residual fifth read (which identity a notebook session carries) is not a blocker and lives with jupyter-user-token-data-access.
 ---
 
 # Work deploy — OBSERVE, behind three reads

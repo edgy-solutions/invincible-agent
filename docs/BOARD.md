@@ -70,10 +70,6 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: /workflow/start disposition needs the cross-repo consumer sweep finished — doc-tools and cortex-ui remain
   → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
 
-- **work-deploy** — DEPLOYED in OBSERVE — the go was given and the three reads are settled (1 done, 2 retracted, 3 decode-verified green). Closing needs a closed-by sha; the residual fifth read is not a blocker and lives with jupyter-user-token-data-access.
-  status: open · owner: human
-  → [docs/plans/work-deploy.md](plans/work-deploy.md)
-
 ## parked
 
 - **engine-a-loop-idempotency** — Non-idempotent Superset write inside the agent loop. FILED NOT FIXED; the packet forbids attaching it to a durability session.
@@ -105,3 +101,7 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **transport-gauge** — Gauge reads only migratable callers: probe paths exempt, 549 -> 22 -> 0-new-unverified.
   status: closed · owner: agent · closed-by: e18b5cf
   → [docs/plans/transport-auth-gauge-day-zero.md](plans/transport-auth-gauge-day-zero.md)
+
+- **work-deploy** — DEPLOYED in OBSERVE. The go was given and the three reads are settled — 1 done, 2 retracted as the wrong tool for this cluster, 3 decode-verified green. Residual fifth read (which identity a notebook session carries) is not a blocker and lives with jupyter-user-token-data-access.
+  status: closed · owner: human · closed-by: ecdd944
+  → [docs/plans/work-deploy.md](plans/work-deploy.md)
