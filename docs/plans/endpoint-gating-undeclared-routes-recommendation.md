@@ -114,6 +114,18 @@ question: is in-cluster reachability an acceptable gate?**
 you author every pod. At the work deploy that weakens — and the item riding on it is an approval plane
 that checks nobody.
 
+### The pattern is NOT platform-confined — first cross-repo instances, 2026-08-10
+
+The `dag-tools` sweep (repo 3 of 5) found the same shape in another repo:
+`[[dag-tools-broker-register-unauthenticated]]` (an unauthenticated routing-table write) and
+`[[dag-tools-gateway-unverified-subject]]` (a data route that never verifies its bearer and takes
+its authz subject from a header). **Both are filed as their own items and inherit this item's
+per-class ruling as precedent — neither reopens it.**
+
+Their existence is the argument for reading that ruling as a **standing rule** rather than a
+one-time disposition of twelve known routes: the next instance did not come from this codebase,
+and the one after that will not either.
+
 ### Row added 2026-08-10 — `POST /workflow/start` (engine-a)
 
 | route | auth dep | manifest class | note |

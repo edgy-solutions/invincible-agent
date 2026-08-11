@@ -51,6 +51,31 @@ when keys are missing, so a genuinely credential-less deploy emits zero telemetr
 retraction is itself the entry's value — the false positive came from a positive control that
 exercised every *stage* but not every *input*.
 
+### dag-tools Restate dispatch — *read-verified 2026-08-10, and a SHARPER shape*
+
+`restate_dlt_sync/component.py:154` and `restate_api_sync/component.py:159` both `await
+client.post(...)` inside a `try`, catch `Exception`, log at **`warning`**, and **continue the
+loop**. A condition that refuses every request drops every chunk / every record — and the Dagster
+asset **materializes GREEN**.
+
+This is not the arc's usual shape. The entries above are *failure presenting as silence*; this is
+**failure presenting as success**. A green materialization is a positive assertion that the work
+happened, and here it is emitted by the path that just discarded the work. Silence invites a
+question; a green asset forecloses one.
+
+### dag-tools broker re-register — *read-verified 2026-08-10, a mitigation relied on past its class*
+
+`domain_broker/main.py:247`, caught at both call sites → logged → loop continues. The gateway
+holds `mesh_route:*` on a **300s TTL** and the broker re-pushes every **120s**, which the code's
+own comment justifies as surviving a missed push. **It is a hiccup mitigation, and nothing marks
+it as one.** Against a persistent refusal the table empties one TTL later and every asset answers
+**404 "No active domain broker found"** — a total outage wearing a not-found. See
+`[[dag-tools-broker-register-unauthenticated]]`.
+
+**The general lesson both add:** retry-with-TTL and catch-log-continue are the two most common
+fail-soft idioms, and each hides a *persistent* failure behind machinery designed for a
+*transient* one. Ask of any retry: what does this look like when the condition never clears?
+
 ## The general shape
 
 A fail-safe path that is also **fail-silent** is only safe until something depends on it. The

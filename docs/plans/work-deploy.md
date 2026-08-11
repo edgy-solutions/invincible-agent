@@ -87,6 +87,41 @@ Sandbox green proves the wiring **against sandbox Keycloak**. It says nothing ab
 realm's claim shape or the work values file's wiring. Two greens, neither implying the other,
 both run against real work state because neither can be faked earlier.
 
+## A FIFTH read, added 2026-08-10 — which identity a notebook session carries
+
+**Jupyter is at work, so this is only answerable there — and analysts open notebooks.**
+
+The claim-shape is the one already run for `USER_ENTITLEMENT_CLAIM`, pointed one seam further out:
+*not* "is the decode green" but **"whose identity reaches Topaz when a human reads data?"**
+
+What the code side already settles (`dag-tools`, read 2026-08-10) — `CortexDataClient` resolves
+its credential in this order:
+
+1. `jwt_token=` constructor arg → bearer
+2. else `MESH_DEV_TOKEN` env → bearer
+3. else `CORTEX_CLIENT_ID`/`_SECRET` → M2M service-account token → bearer
+4. else `ValueError`
+
+**There is no user-token path distinct from step 1**, and nothing in the client logs which branch
+it took. The Dagster IO manager (`cortex_io_manager.py:147`) constructs it with *only* the M2M
+credentials.
+
+Worse, the *subject* is not carried by the token at all: the gateway prefers the
+`X-Originator-Email` **header** over any token claim, and never verifies the bearer's signature —
+see `[[dag-tools-gateway-unverified-subject]]`. So "which identity a session carries" is currently
+**whatever the session asserts**.
+
+**The read to run at work:** does JupyterHub's OIDC access token reach the single-user
+environment, and does `CortexDataClient` receive it as `jwt_token`? The answer decides whether
+work data access is **per-user or per-service** — and a per-service answer gives every analyst the
+service's entitlements, which is `[[select-from-authorized-set]]`'s confused deputy on the data
+plane.
+
+Target design and its configuration: `docs/plans/jupyter-user-token-data-access.md`.
+
+**Not a blocker for OBSERVE**, which is why it is a fifth read and not a fourth precondition. It
+*is* a blocker for telling an analyst their notebook sees only their data.
+
 ## Do not
 
 Flip `REQUIRE_TRANSPORT_AUTH` — that is downstream of this item. See

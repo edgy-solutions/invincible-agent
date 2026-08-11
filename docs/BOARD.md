@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **20 of 68 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -38,6 +38,14 @@ _Coverage: **20 of 68 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: unassigned
   → [docs/plans/board-migration.md](plans/board-migration.md)
 
+- **dag-tools-broker-register-unauthenticated** — Unauthenticated routing-table write — /api/v1/internal/register takes broker_url from the body and repoints any URN. Integrity write, so NOT acceptable on in-cluster reachability alone. First cross-repo instance of the undeclared-routes pattern.
+  status: open · owner: human · blocked-on: gate assignment — inherits undeclared-routes' per-class ruling, integrity-write column
+  → [docs/plans/dag-tools-broker-register-unauthenticated.md](plans/dag-tools-broker-register-unauthenticated.md)
+
+- **dag-tools-gateway-unverified-subject** — HIGH — the data-plane gateway never verifies a token signature, and prefers a request HEADER over the token's own claim as the authz subject. Per-user data scoping is advisory. Found answering the notebook-identity question.
+  status: open · owner: human · blocked-on: gate-class ruling — same column as dag-tools-broker-register-unauthenticated
+  → [docs/plans/dag-tools-gateway-unverified-subject.md](plans/dag-tools-gateway-unverified-subject.md)
+
 - **dagster-loader-call** — build_dynamic_jobs() runs unconditionally on every Dagster load; whether its catalog is empty is unconfirmed.
   status: open · owner: unassigned · blocked-on: an owner for the Dagster plane
   → [docs/plans/dagster-loader-call.md](plans/dagster-loader-call.md)
@@ -49,6 +57,10 @@ _Coverage: **20 of 68 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **endpoint-table-generation** — Generate the README endpoint table from the live route census instead of asserting it.
   status: open · owner: agent
   → [docs/plans/endpoint-table-generation.md](plans/endpoint-table-generation.md)
+
+- **jupyter-user-token-data-access** — Design + configuration for transparent per-user data access from notebooks — JupyterHub OIDC token reaching CortexDataClient. Blocked: without bearer verification the design LOOKS per-user and is not.
+  status: open · owner: human · blocked-on: gateway must verify bearers first — dag-tools-gateway-unverified-subject
+  → [docs/plans/jupyter-user-token-data-access.md](plans/jupyter-user-token-data-access.md)
 
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
