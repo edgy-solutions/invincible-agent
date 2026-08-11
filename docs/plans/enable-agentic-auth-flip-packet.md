@@ -2,7 +2,7 @@
 id:         transport-flip
 status:     blocked-on-human
 owner:      human
-blocked-on: enumeration across 5 repos + every candidate READ + the 9 stopping callers remediated — not merely enumerated
+blocked-on: 11 stopping callers remediated (platform, all 19 read) + 4 repos still unswept
 closed-by:  
 repo:       invincible-agent
 summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.

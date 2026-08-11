@@ -47,39 +47,69 @@ dispatch as the review starter. It may be correct here (dispatch_driver runs in 
 but *correct-by-coincidence and correct-by-design are different*, and the decoded subject on
 those two calls should be witnessed rather than assumed.
 
-## CANDIDATE UNMINTED — 19 sites, corrected failure modes
+## CONFIRMED — all 19 read individually 2026-08-10
 
-Every site below lacks a credential. The severity column is **effective behaviour under
-REQUIRE**, re-derived with a window that reaches past the comment blocks:
+No tooling. Each site read for target, credential mechanism, and 401 behaviour.
+**All 19 are CONFIRMED-unminted** — not one attaches a credential by any mechanism.
 
-### STOPS the caller — 9
+### STOPS the caller — 11
 
-`review_composer.py:94` · `dispatch_driver.py:247` · `restate_analyst/main.py:544` ·
-`policy_rules_client.py:75` · `spo_interview.py:113` · `spo_interview.py:154` ·
-`spo_step_executor.py:96` · `agent_routers.py:65` · `agent_routers.py:193`
+| # | site | target | on 401 |
+|---|---|---|---|
+| 1 | `dispatch_driver.py:247` | engine-o `/write_item_state` | **TERMINAL** — `_fail_terminal_on_4xx` fires *before* `raise_for_status`, so a 401 is classed non-retryable and Restate will **not** retry it |
+| 2 | `restate_analyst/main.py:544` | `ONTOLOGY_RESOLVE_URL` | raises, no local catch |
+| 3 | `policy_rules_client.py:75` | engine-o `/policy_rules` | raises |
+| 4 | `review_composer.py:94` | engine-o `/resolve_instance` | raises — every review fails to COMPOSE |
+| 5 | `spo_interview.py:113` | engine-o `/classes` | raises |
+| 6 | `spo_interview.py:154` | engine-o `/operable_subjects` | raises |
+| 7 | `spo_interview.py:176` | engine-o `/find_compatible_verbs` | raises |
+| 8 | `spo_step_executor.py:96` | engine-o `/find_compatible_verbs` | raises |
+| 9 | `agent_routers.py:65` | engine-A `/analyze` | raises |
+| 10 | `agent_routers.py:193` | DA `/analyze_data` | raises |
+| 11 | `dynamic_supervisor.py:146` | engine-o `/plan` | raises — **in the `else:` branch, outside the `try` that guards the `if`** |
 
-These raise with no enclosing handler. Under REQUIRE the caller fails — for the composer,
-verified: every review fails to COMPOSE, which is worse than every subject going unresolved
-because an unresolved subject is a handled outcome.
+### DEGRADES — 8
 
-### DEGRADES — 10
+| site | target | on 401 |
+|---|---|---|
+| `restate_analyst/main.py:2157` | engine-o `/classes` | `try` + explicit `status_code == 200` |
+| `decision_record_writer.py:71` | engine-o `/write_decision_record` | handled — logs *"the corpus has a HOLE here"* |
+| `dynamic_supervisor.py:280` | engine-o `/resolve` | raises inside `try`/`except` |
+| `dynamic_supervisor.py:362` | engine-o `/find_compatible_verbs` | raises inside `try`/`except` |
+| `dynamic_supervisor.py:679` | engine-o `/classify_predicate` | raises inside `try`/`except` |
+| `gateway.py:124` | engine-o `/mesh/config` | `try`/`except` |
+| `gateway.py:956` | engine-o `/instances_by_property` | `try`/`except` → 502 to the client |
+| `gateway.py:2641` | engine-o `/route_intent` | `try`/`except` |
 
-All `dynamic_supervisor.py` sites (`146`, `280`, `362`, `679`), all `gateway.py` sites
-(`124`, `956`, `2641`), `spo_interview.py:176`, `restate_analyst/main.py:2157`,
-`decision_record_writer.py:71`.
+### Reading disagreed with the script AGAIN — same direction both times
 
-They raise and catch, or never raise. A 401 degrades the request rather than stopping the
-service.
+The script said **9 stop / 10 degrade**. Reading says **11 / 8**. Two corrections, both
+under-counting the stops:
 
-### What this changes about the flip
+* **`dynamic_supervisor.py:146`** — the script saw a nearby `try` and called it caught. That
+  `try` guards the **`if config.task_plan_json:`** branch; this call is in the **`else:`**. A
+  backward scan for `try:` cannot see which branch it belongs to.
+* **`spo_interview.py:176`** — same false catch, from an unrelated enclosing block.
 
-**The supervisor and the gateway degrade; the analyst-side callers stop.** That is a materially
-different — and more tractable — picture than "the fleet stops", which is what the uncorrected
-numbers said. The remediation arc is real but bounded: nine call sites, concentrated in
-`restate_analyst` and `agent_routers`.
+**A fourth distinct failure mode for the classifier: proximity is not enclosure.** Every one of
+its four errors has been *structural* — indirection, over-resolution, window length, scope — and
+none was a typo. That is what "read the candidates" was for.
 
-**Zero sites consume a 401 body as a result.** The "wrong data silently, live in OBSERVE"
-emergency was an artifact of the window, not a property of the code.
+### Two severities the counts hide
+
+* **`dispatch_driver.py:247` is worse than "stops".** `_fail_terminal_on_4xx` classifies 4xx as
+  terminal, so under REQUIRE the disposition write fails **permanently** rather than retrying —
+  the durable-execution equivalent of a hard fail. Also note `/write_item_state` is one of the
+  **12 undeclared routes**: unminted caller *and* unclassified gate.
+* **`decision_record_writer.py:71` degrades into a provenance gap.** Its own log says *"the
+  corpus has a HOLE here"*. Under REQUIRE that hole becomes routine rather than exceptional —
+  decisions execute and go unrecorded, which is quieter than a stop and worse for audit.
+
+### The numerator
+
+**19 of 19 unminted; 11 must be remediated before REQUIRE, 8 would degrade.** Every one targets
+engine-o, engine-A or DA — no third-party calls in this set. `transport-flip` has a real
+numerator for the first time.
 
 ## Not swept — the majority of remaining risk
 
