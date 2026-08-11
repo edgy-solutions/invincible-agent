@@ -50,7 +50,7 @@ _Coverage: **19 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/endpoint-table-generation.md](plans/endpoint-table-generation.md)
 
-- **retire-inline-task-loop** — BPMNWorkflowRunner still accepts a CLIENT-SUPPLIED definition via request["definition"]. ADR-0029 made its retirement conditional on the definition path sealing — which happened this week, so the condition is now met and nobody noticed.
+- **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
   → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
 

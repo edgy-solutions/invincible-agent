@@ -141,6 +141,30 @@ indistinguishable from forgotten.
 Enforced by the vocabulary test: a `parked` item with neither field fails. A sixth value is a merge failure, not a convention drifting.
 - **Marker test:** for items declaring a code site, the marker is present at that site — the `MIGRATION_MARKER` shape, where absence fails rather than merely being noticed.
 
+## KNOWN LIMITATION — the seals guarantee board-matches-HEADER, never header-matches-BODY
+
+**Found 2026-08-10, by the limitation firing.** `retire-inline-task-loop`'s body was updated with
+a completed security read (*outcome: cleanup, not a fix*, with the reachability evidence). Its
+`summary:` header was not. So the board rendered the **pre-read** state — "the condition is now
+met and nobody noticed" — and a reader summarising from the board reported an
+undetermined-severity item that had in fact been determined hours earlier.
+
+**Every seal passed.** Drift: the board matched the headers exactly. Vocabulary: `status: open`
+is legal, and still correct. Attribution: no `closed-by` to check. The staleness lived in the one
+place nothing compares — **between a packet's header and its own body.**
+
+This is the board's own machinery exhibiting the failure the board exists to fix: *a record
+updated by one hand does not propagate to another hand's working memory.* Third instance in one
+evening, with the ceremony record reading "DID NOT COMPLETE" a day after completing, and the
+gating manifest's cortex-bff clause.
+
+**No automated fix is proposed here, and that is deliberate.** A generator that inferred `summary`
+from the body would be a second decider — the thing §2's alternatives explicitly reject — and a
+test asserting "the header reflects the body" would need to understand the body. The honest
+repair is procedural and belongs at the point of edit: **whoever edits a packet's body checks
+whether its header still describes it.** Recorded here so the limitation is a known property of
+the design rather than a surprise the next reader rediscovers from a stale board line.
+
 ## Explicitly out of scope
 
 - **Retrofitting headers onto all 55 packets** is the migration, not the decision. It should be its own scheduled item — and it is the first item the board will carry.
