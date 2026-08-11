@@ -6,7 +6,7 @@ blocked-on: nothing — CLASSIFIED and the APPROACH IS RULED (2026-08-11): build
 closed-by:  
 code-site:  dag_tools/central_gateway/main.py
 repo:       dag-tools
-summary:    HIGH — the data-plane gateway never verifies a token signature, and prefers a request HEADER over the token's own claim as the authz subject. Per-user data scoping is advisory. Found answering the notebook-identity question.
+summary:    HIGH — the DA data gateway never verifies a bearer and takes its authz subject from a request HEADER, so per-user scoping is advisory. THE DELIVERABLE IS THE SUBJECT-SOURCE GAUGE — how many live requests ASSERT a subject vs PROVE one. Verification is the easy part; the gauge decides whether killing the header override is a config change or a coordinated migration.
 ---
 
 # The data-plane gateway's authz subject is caller-asserted, and its bearer is never verified
@@ -112,23 +112,41 @@ covered *whose* deny it was.
 * **Not a `transport-flip` blocker.** dag-tools binds no transport auth at all; the flip neither
   fixes nor worsens this.
 
+## THE DELIVERABLE IS THE SUBJECT-SOURCE GAUGE — read this before scoping the work
+
+**Whoever builds this should know the verification is the easy part.** Pinning JWKS is a known
+quantity. The thing this item exists to produce is a number nobody currently has:
+
+> **How many live requests ASSERT a subject (via `X-Originator-Email`) versus PROVE one (via a
+> verified token claim)?**
+
+That number decides whether stopping the header override is a **config change** or a **coordinated
+migration** — and there is no way to know which without measuring first. Build the gauge, read it,
+*then* choose the shape of step 2.
+
+### Why this gauge is not the transport-auth gauge repeated
+
+The transport migration's gauge measured **whether callers minted** — a yes/no per caller,
+answering *is a credential present*. This one measures **how identity arrives**, which is strictly
+richer: a request can carry a perfectly valid credential and still name its subject in a header
+that overrides it. **The earlier work has no analogue for that**, so nothing here can be inferred
+from the transport gauge's shape or its numbers.
+
+That is also why the gauge outranks the fix in this packet: the transport arc could scope its
+remediation from a census it already had, and this one cannot.
+
 ## Remediation shape — RULED 2026-08-11
 
 > **Build it as verify-if-present with posture logging first. Never a direct flip.**
 
 **The blast radius is why, and it is not the severity.** Every caller today arrives with a
 self-minted token and an asserted header — turning verification on refuses *all of them at once*.
-That is the same migration shape as transport auth, and it earns the same treatment: verify what
-arrives, log the posture **and the subject-source** per request, **refuse nothing**, then read who
-would break before anything starts breaking.
+Same migration shape as transport auth, same treatment: verify what arrives, log the posture **and
+the subject-source** per request, **refuse nothing**, then read who would break before anything
+starts breaking.
 
-The subject-source log is the part that has no analogue in the transport-auth migration and is the
-more valuable half here: it answers *"how many live requests are asserting a subject via header
-rather than proving one via token"* — a number nobody currently has, and the one that decides
-whether step 2 below is a config change or a coordinated migration.
-
-**Ordering follows from that:** OBSERVE → read the gauge → then REQUIRE. A direct flip would refuse
-the DA data path wholesale, which is live at work.
+**Ordering:** OBSERVE → read the subject-source gauge → decide the migration's shape → REQUIRE. A
+direct flip would refuse the DA data path wholesale, and that path is live at work.
 
 Three things, and the first two are not optional if the notebook design proceeds:
 

@@ -51,6 +51,19 @@ notebook work is what makes it *useful*, not what makes it *true*.
 > *(The gateway in this condition is `dag-tools/central_gateway`, not cortex-bff — see the
 > disambiguation table in `[[dag-tools-gateway-unverified-subject]]`.)*
 
+### Why this item stays `owner: human` while it is blocked on agent work
+
+Asked and answered 2026-08-11, because the obvious reading is wrong. Strict
+owner-follows-the-next-action says `agent` — the next thing that must happen is the gateway build.
+**But that build is `[[dag-tools-gateway-unverified-subject]]`'s work and is already owned there.**
+Flipping this item would leave two items claiming one action, and the one holding the actual
+packet would lose — the two-homes defect the board exists to prevent.
+
+This item's next **own** action is JupyterHub OIDC config on the work cluster, which is genuinely
+the human's. It is not blocked because of who owns it; it is blocked on another item, and
+`blocked-on:` is what carries that. **Cross-item dependencies belong in `blocked-on:`, never in
+`owner:`.**
+
 ## The shape that gets you there
 
 Four moving parts. Parts 1-2 are configuration; part 3 is the one with a real design decision;

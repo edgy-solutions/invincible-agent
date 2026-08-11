@@ -28,7 +28,7 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: nothing — CLASSIFIED. [[gate-class-follows-the-effect]] puts an integrity write in the never-acceptable-on-in-cluster-reachability column. Remaining work is the build: authenticate /api/v1/internal/register and /resolve.
   → [docs/plans/dag-tools-broker-register-unauthenticated.md](plans/dag-tools-broker-register-unauthenticated.md)
 
-- **dag-tools-gateway-unverified-subject** — HIGH — the data-plane gateway never verifies a token signature, and prefers a request HEADER over the token's own claim as the authz subject. Per-user data scoping is advisory. Found answering the notebook-identity question.
+- **dag-tools-gateway-unverified-subject** — HIGH — the DA data gateway never verifies a bearer and takes its authz subject from a request HEADER, so per-user scoping is advisory. THE DELIVERABLE IS THE SUBJECT-SOURCE GAUGE — how many live requests ASSERT a subject vs PROVE one. Verification is the easy part; the gauge decides whether killing the header override is a config change or a coordinated migration.
   status: open · owner: agent · blocked-on: nothing — CLASSIFIED and the APPROACH IS RULED (2026-08-11): build as verify-if-present with posture logging first, never a direct flip. Remaining work is the build.
   → [docs/plans/dag-tools-gateway-unverified-subject.md](plans/dag-tools-gateway-unverified-subject.md)
 

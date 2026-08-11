@@ -210,6 +210,33 @@ the human NOW"*, not *"will eventually require a human"* — an item whose preco
 unfinished sits in `open` with the owner who owes the precondition, and returns when it is
 genuinely reachable. Ownership follows the **next** action, never the last one.
 
+#### The column's definition, stated because the looser one is what rots it
+
+> **`blocked-on-human` means DECISIONS OWED, not work that is practically the human's.**
+
+A cluster read the human will run tomorrow is **work**, and belongs to its item as work. If it
+appeared here, the column would drift back toward *"things involving the human"* — which is the
+state that made it stop meaning anything in the first place. The distinction is not pedantry: the
+looser reading is not a different definition, it is the **absence** of one, and it re-admits
+everything the sweep just removed.
+
+**An empty column is therefore a legitimate and expected state**, and on 2026-08-11 it was the
+first honest one this board has had. Empty means *no decision is owed*, not *nothing is happening*.
+
+#### Owner follows the next action **of this item** — not of its blocker
+
+Refinement found the same day, on `jupyter-user-token-data-access`. Strict
+owner-follows-next-action argued for flipping it to `agent`, because the next thing that must
+happen is the gateway build. **That is wrong, and the reason generalises:** the gateway build is
+*another item's* work and is already owned there. Flipping this one would leave **two items
+claiming the same action** — and the one holding the actual packet would lose, which is the
+two-homes defect the board exists to prevent.
+
+Its next **own** action is JupyterHub OIDC config on the work cluster, which is genuinely the
+human's. It is not blocked because of who owns it; it is blocked on another item — and carrying
+that is exactly what `blocked-on:` is for. **Cross-item dependencies live in `blocked-on:`, never
+in `owner:`.**
+
 ### HUMAN-PERFORMED CLOSURES — cite the recording commit, and say that is what it is
 
 Deploys, seedings, flips, live-state writes and rulings are closures **with no sha of their own**.
