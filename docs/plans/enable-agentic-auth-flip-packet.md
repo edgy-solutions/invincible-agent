@@ -2,13 +2,46 @@
 id:         transport-flip
 status:     blocked-on-human
 owner:      human
-blocked-on: work-deploy validated + witnessed zero at work
+blocked-on: unminted-caller enumeration (static) — review_composer calls /resolve_instance with no credential
 closed-by:  
 repo:       invincible-agent
 summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
 ---
 
 # `ENABLE_AGENTIC_AUTH` — the flip packet (ADR-0025's terminus)
+
+> ## BLOCKER CORRECTED 2026-08-10 — a CODE DEFECT, not a deploy
+>
+> This packet's `blocked-on` previously read *"work-deploy validated + witnessed zero at work"*,
+> which told every reader the flip was waiting on a deployment. **It is not.** It is waiting on
+> an unminted caller in the fleet's own code.
+>
+> `agent_fleet/restate_analyst/review_composer.py:94` calls engine-o with **no credential**:
+>
+> ```python
+> resp = requests.post(f"{engine_o_url}/resolve_instance", json={"identifier": mpn}, ...)
+> resp.raise_for_status()          # <- line 95
+> ```
+>
+> No `Authorization`, no identity, no scope. `/resolve_instance` is **not** in the SDK's exempt
+> set (`/health`, `/healthz`, `/livez`, `/readyz` — verified), so engine-o's app-level dependency
+> applies and under REQUIRE the call gets **401**.
+>
+> **THE SEVERITY IS WORSE THAN "SUBJECTS GO UNRESOLVED".** Line 95 is `raise_for_status()`, so
+> the 401 **raises** — it does not degrade into the abstain/re-link path the design tolerates.
+> An unresolved subject is a handled outcome; a raised 401 is not. **Every review fails to
+> COMPOSE**, not merely to resolve.
+>
+> **AND THE GAUGE COULD NOT HAVE FOUND THIS.** The witnessed zero was `/v1/register` on the
+> registrar. This caller lives on a different path, in a different service, and fires only when a
+> review composes. **A gauge measures traffic that occurred, not callers that exist** — so
+> "zero unverified on non-exempt paths" is scoped to *paths someone exercised*, which is
+> materially weaker than the precondition needs. Absence of an observation is not observation of
+> absence.
+>
+> The real precondition is therefore a **static enumeration of every outbound call in the fleet**
+> — see the `unminted-caller-enumeration` packet. The gauge is corroboration, not proof.
+
 
 **What this is.** Turning `ENABLE_AGENTIC_AUTH` on is **not a configuration change**. It is the
 final step of ADR-0025's enforcement arc — `authorization.md:262`, *"flips LAST, after all

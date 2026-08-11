@@ -74,6 +74,10 @@ def render(items):
             bits = [f"status: {i['status']}", f"owner: {i.get('owner','') or 'unassigned'}"]
             if i.get("blocked-on"):
                 bits.append(f"blocked-on: {i['blocked-on']}")
+            # A trigger is rendered because a parked item whose firing condition is invisible
+            # is a parked item nobody will un-park.
+            if i.get("trigger"):
+                bits.append(f"trigger: {i['trigger']}")
             if i.get("closed-by"):
                 bits.append(f"closed-by: {i['closed-by']}")
             L.append(f"  {' · '.join(bits)}")
@@ -84,6 +88,17 @@ def render(items):
 
 def main():
     items = headers()
+    # A PARKED item must name what would un-park it. `blocked-on` is a dependency; `trigger`
+    # is a firing condition (something becomes true, possibly with nobody working on it).
+    # Neither present means "parked forever with an empty field", which is indistinguishable
+    # from forgotten — the July bank-rule, finally indexed.
+    stale = [i["id"] for i in items
+             if i.get("status") == "parked"
+             and not (i.get("blocked-on") or "").strip()
+             and not (i.get("trigger") or "").strip()]
+    if stale:
+        print("UNTRIGGERED: parked with neither blocked-on nor trigger: " + ", ".join(stale))
+        return 1
     bad = [i for i in items if i.get("status") not in VOCAB]
     if bad:
         print("VOCABULARY: not one of " + "|".join(VOCAB) + ": " +

@@ -60,6 +60,7 @@ repo:       <repo name>
 summary:    <one line — what the board displays for this item>
 code-site:  <path[,path] the item lives at, or empty>
 closed-by-note: <why closed-by touches neither packet nor code-site, or empty>
+trigger:    <the condition that should un-park this item, or empty>
 ---
 ```
 
@@ -123,7 +124,21 @@ Do not unify boards across projects. What is actually lost across projects is no
   a permanent convention, and a board carrying one is unfinished by definition. Same design as
   `_KNOWN_UNPINNED` being empty by construction.
 
-- **Vocabulary test:** every `status:` value is one of the five. A sixth value is a merge failure, not a convention drifting.
+- **Vocabulary test:** every `status:` value is one of the five.
+
+**AMENDED 2026-08-10 — a `parked` item requires `blocked-on:` OR `trigger:`.**
+The July bank-rule — *every banked item gets a named trigger or deadline at bank-time* — was
+decided six weeks ago, never indexed, and neither agent reached for it while writing this ADR.
+It applies directly and its absence is why parked items rot.
+
+`blocked-on:` and `trigger:` are **different things**: a blocked-on is a DEPENDENCY (something
+else must finish), a trigger is a FIRING CONDITION (something must become true, possibly
+nothing anyone is working on). `watch-dashboard` has a dependency. The range-type sloppiness
+under ADR-0011 has a trigger — *fires when composition work begins* — and no dependency at all;
+under a blocked-on-only schema it would be parked forever with an empty field, which is
+indistinguishable from forgotten.
+
+Enforced by the vocabulary test: a `parked` item with neither field fails. A sixth value is a merge failure, not a convention drifting.
 - **Marker test:** for items declaring a code site, the marker is present at that site — the `MIGRATION_MARKER` shape, where absence fails rather than merely being noticed.
 
 ## Explicitly out of scope

@@ -4,12 +4,12 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **14 of 61 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
+_Coverage: **15 of 62 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 45 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
-  status: blocked-on-human · owner: human · blocked-on: work-deploy validated + witnessed zero at work
+  status: blocked-on-human · owner: human · blocked-on: unminted-caller enumeration (static) — review_composer calls /resolve_instance with no credential
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
 - **undeclared-routes** — 12 routes undeclared in the gating manifest, incl. decision-plane writes.
@@ -41,6 +41,10 @@ _Coverage: **14 of 61 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **suite-signal** — master is not green. Measured census; recommended owner the telemetry agent.
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
+
+- **unminted-caller-enumeration** — Static read of every outbound call in the fleet, classified exempt / minted / unminted. The flip's real precondition.
+  status: open · owner: agent
+  → [docs/plans/unminted-caller-enumeration.md](plans/unminted-caller-enumeration.md)
 
 ## parked
 
