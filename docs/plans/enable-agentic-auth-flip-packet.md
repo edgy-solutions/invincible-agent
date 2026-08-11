@@ -2,7 +2,7 @@
 id:         transport-flip
 status:     blocked-on-human
 owner:      human
-blocked-on: 11 stopping callers remediated (platform, all 19 read) + 4 repos still unswept
+blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 2 repos still unswept (doc-tools, cortex-ui)
 closed-by:  
 repo:       invincible-agent
 summary:    REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.

@@ -1,11 +1,11 @@
 ---
 id:         undeclared-routes
-status:     blocked-on-human
-owner:      human
-blocked-on: gate-class judgment per route
+status:     open
+owner:      agent
+blocked-on: /workflow/start disposition needs the cross-repo consumer sweep finished — doc-tools and cortex-ui remain
 closed-by:  
 repo:       invincible-agent
-summary:    12 routes undeclared in the gating manifest, incl. decision-plane writes. BLOCKING THREE OTHER ITEMS — all wait on one unratified call: is in-cluster reachability an acceptable gate?
+summary:    RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
 ---
 
 # The 12 undeclared routes — evidence and a RECOMMENDATION (not a decision)
@@ -100,8 +100,18 @@ and should be checked against how the wrapper is actually reachable before it is
 
 ## This item has accumulated dependents — three, as of 2026-08-10
 
-It is no longer only about twelve rows. **Three separate items are waiting on the same unratified
-question: is in-cluster reachability an acceptable gate?**
+> **RESOLVED 2026-08-11 — the question below is NO LONGER UNRATIFIED.** It was answered on
+> 2026-08-10 (see *RULED* further down) and promoted to `[[gate-class-follows-the-effect]]`. The
+> three dependents named here are unblocked and inherit their columns from the law.
+>
+> **This banner exists because the header said otherwise for a day.** `status: blocked-on-human ·
+> blocked-on: gate-class judgment per route` survived below a body that already contained the
+> ruling — and survived an agent *executing against* that ruling. See ADR-0040's 2026-08-11
+> amendment; the section is left standing rather than rewritten because the dependents' reasoning
+> is still the record of why the ruling mattered.
+
+It is no longer only about twelve rows. **Three separate items were waiting on the same question:
+is in-cluster reachability an acceptable gate?**
 
 | dependent | what it inherits |
 |---|---|

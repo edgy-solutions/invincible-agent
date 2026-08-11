@@ -13,16 +13,8 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
-  status: blocked-on-human · owner: human · blocked-on: 11 stopping callers remediated (platform, all 19 read) + 4 repos still unswept
+  status: blocked-on-human · owner: human · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter) + 2 repos still unswept (doc-tools, cortex-ui)
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
-
-- **undeclared-routes** — 12 routes undeclared in the gating manifest, incl. decision-plane writes. BLOCKING THREE OTHER ITEMS — all wait on one unratified call: is in-cluster reachability an acceptable gate?
-  status: blocked-on-human · owner: human · blocked-on: gate-class judgment per route
-  → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
-
-- **work-deploy** — Deploy to the work cluster in OBSERVE, behind three reads. Not gated on further build work.
-  status: blocked-on-human · owner: human · blocked-on: your go — nothing technical
-  → [docs/plans/work-deploy.md](plans/work-deploy.md)
 
 ## open
 
@@ -73,6 +65,14 @@ _Coverage: **23 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **suite-signal** — master is not green. Measured census; recommended owner the telemetry agent.
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
+
+- **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
+  status: open · owner: agent · blocked-on: /workflow/start disposition needs the cross-repo consumer sweep finished — doc-tools and cortex-ui remain
+  → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
+
+- **work-deploy** — DEPLOYED in OBSERVE — the go was given and the three reads are settled (1 done, 2 retracted, 3 decode-verified green). Closing needs a closed-by sha; the residual fifth read is not a blocker and lives with jupyter-user-token-data-access.
+  status: open · owner: human
+  → [docs/plans/work-deploy.md](plans/work-deploy.md)
 
 ## parked
 

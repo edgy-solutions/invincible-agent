@@ -165,6 +165,39 @@ repair is procedural and belongs at the point of edit: **whoever edits a packet'
 whether its header still describes it.** Recorded here so the limitation is a known property of
 the design rather than a surprise the next reader rediscovers from a stale board line.
 
+### AMENDMENT 2026-08-11 — the limitation's WORST case is a human ruling, and it has its own rule
+
+> **A human ruling recorded in conversation is not recorded. The packet header is where it lands,
+> and whichever agent ACTS on the ruling updates the header in the SAME COMMIT as the action.**
+
+The limitation above was found on an agent-authored body. The sweep that followed found the
+severe form: **four `blocked-on-human` lines describing decisions the human had already made.**
+
+| item | header said | actually true |
+|---|---|---|
+| `work-deploy` | *blocked-on: your go — nothing technical* | the go was given; deployed in OBSERVE |
+| `undeclared-routes` | *blocked-on: gate-class judgment per route* | ruled 2026-08-10 — the packet's OWN BODY contains the four dispositions |
+| `transport-flip` | *11 stopping callers remediated + 4 repos unswept* | 11 remediated overnight; 3 of 5 repos swept |
+
+**The asymmetry is the finding.** The board tracks agent work well, because an agent updates a
+header in the commit that does the work. Human decisions arrive in **conversation**, get acted on
+immediately, and nothing writes them back — so the column labelled "waiting on the human" silently
+becomes *a list of things the human already did*. That is worse than a stale summary: it inverts
+the board's most load-bearing signal, and it does so specifically for the reader who is trying to
+find out what is owed to them.
+
+`undeclared-routes` is the proof it is not a memory problem. Its body carries a section titled
+**"RULED 2026-08-10 — the human's dispositions"** ending *"this item unblocks on the strength of
+these four dispositions"*, and an agent had already **executed against that ruling** — filing
+`dag-tools-broker-register-unauthenticated` into its integrity-write column and citing it as
+inherited precedent. The ruling was received, believed, and acted on, and the header still said it
+was awaited. **Acting on a ruling without landing it is the defect**, which is why the rule binds
+the actor rather than the ruler: the human said it once, and that was their part.
+
+**Operational consequence:** an agent that consumes a human ruling owes two writes, not one — the
+work, and the header. And `blocked-on-human` items are swept periodically with a single question:
+*has this actually been given?*
+
 ## Explicitly out of scope
 
 - **Retrofitting headers onto all 55 packets** is the migration, not the decision. It should be its own scheduled item — and it is the first item the board will carry.

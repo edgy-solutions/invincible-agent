@@ -1,17 +1,29 @@
 ---
 id:         work-deploy
-status:     blocked-on-human
+status:     open
 owner:      human
-blocked-on: your go — nothing technical
+blocked-on: 
 closed-by:
 repo:       invincible-agent
-summary:    Deploy to the work cluster in OBSERVE, behind three reads. Not gated on further build work.
+summary:    DEPLOYED in OBSERVE — the go was given and the three reads are settled (1 done, 2 retracted, 3 decode-verified green). Closing needs a closed-by sha; the residual fifth read is not a blocker and lives with jupyter-user-token-data-access.
 ---
 
 # Work deploy — OBSERVE, behind three reads
 
+> ## THE GO WAS GIVEN AND THE DEPLOY LANDED — recorded 2026-08-11
+>
+> Work is deployed in OBSERVE and being exercised (DA fetches, Jupyter). The three reads are
+> settled: **read 1** is the deploy itself, **read 2** was RETRACTED as the wrong tool for this
+> cluster, **read 3** (`USER_ENTITLEMENT_CLAIM` decode) was VERIFIED GREEN 2026-08-10, and the
+> fourth precondition was already satisfied.
+>
+> **This header said `blocked-on: your go — nothing technical` for a day after the go.** The
+> deploy is a human ACT with no commit of its own, so nothing wrote it back — the exact asymmetry
+> in ADR-0040's 2026-08-11 amendment. The residual item is the FIFTH read below, which is **not**
+> a blocker for OBSERVE and now lives with `[[jupyter-user-token-data-access]]`.
+
 Sandbox rehearsal is complete: six identities minting, gauge witnessed clean at a fresh log
-boundary, transport auth applied fleet-wide in OBSERVE. **This item is blocked on a decision,
+boundary, transport auth applied fleet-wide in OBSERVE. **This item was blocked on a decision,
 not on engineering** — which is why it is separated from `transport-flip`, whose blocker is
 genuinely downstream. Marking both "blocked-on-human" alike hid which one was ready.
 
