@@ -222,6 +222,55 @@ files, same pass, two answers:
 **Verify-then-disable, never disable-and-discover** — a disabled route with a live consumer is
 the silent-refusal class, which is what this arc has spent a week removing.
 
+
+## REPO 2 of 5 — `iagent-mesh-sdk`, all 4 sites READ 2026-08-10
+
+Grep to locate, reading to classify. **`/workflow/start`: no consumer in this repo** (grep over
+all `.py`, zero hits).
+
+| site | credential | mechanism | on 401 |
+|---|---|---|---|
+| `client.py:48` | **CONFIRMED-MINTED** | `_authorization()` → `mint_mesh_token()`; `MESH_DEV_TOKEN` only as an announcing dev fallback | `raise_for_status()` → **STOPS** |
+| `core.py:342` | **CONFIRMED-UNMINTED** | none — bare `client.post(...)`, no `headers=` at all | `raise RuntimeError` on non-200 → **STOPS** |
+| `registration_transport.py:114` | **MINTED IF the caller passes `mint`** | `headers` built from the `mint()` argument | caught → `RegistrationResult` → **DEGRADES** |
+| `service_identity.py:62` | **N/A** | targets **Keycloak's token endpoint**, not a mesh service — `transport_auth` never sees it | — |
+
+### THE FINDING — the SDK ships TWO registration paths and `MeshTool` uses the unminted one
+
+`registration_transport.py` was added in v0.3.0 precisely to be the **one authenticated
+registration transport**, with the mint, the ADR-0006 retry semantics and a named failure. The
+platform now binds it.
+
+**The SDK's own consumer was never converted.** `core.py:244` — inside `MeshTool`'s lifespan —
+still calls `core.py:298 _emit_to_registrar`, which is a bare POST with no credential, no retry,
+and `raise RuntimeError` on any non-200.
+
+So **any externally-scaffolded engine using `MeshTool` registers unminted and STOPS under
+REQUIRE** — the same defect as `review_composer`, in the package that exists to prevent it.
+
+**This is my own two-transcription hazard, unfixed at the source.** The v0.3.0 commit message
+argued that a second registration implementation is exactly what the one-implementation rule
+forbids, moved the richer semantics into the SDK — and left the SDK's own path pointing at the
+poorer one. Building the seam is not the same as wiring the consumers to it, and I reported the
+former as though it were both.
+
+**Not fixed here** (enumeration only). It is a one-line rebind — `_emit_to_registrar` calls
+`register_with_mesh(...)` with a `mint` — and it belongs in the remediation window with the
+platform's eleven.
+
+### Running total
+
+| repo | sites | unminted | stops | degrades |
+|---|---|---|---:|---:|
+| invincible-agent | 19 | 19 | 11 | 8 |
+| iagent-mesh-sdk | 4 (3 in scope) | **1** | **2** | 1 |
+| dag-tools | — | not swept | | |
+| doc-tools | — | not swept | | |
+| cortex-ui | — | not swept | | |
+
+`client.py:48` stops on 401 but is **minted**, so it stops only if its credential is *rejected* —
+a different failure from having none.
+
 ## Acceptance
 
 - Every candidate above read and confirmed or reclassified.
