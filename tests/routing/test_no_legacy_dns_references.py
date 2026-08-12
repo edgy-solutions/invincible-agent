@@ -28,10 +28,16 @@ landing on the allowlist (which is intentionally hard to add to).
 ## Scope
 
 The guard scans every text source file in the repository's primary work
-trees (``agent_fleet/``, ``src/``, ``scripts/``, ``helm/``, ``doc-tools/``,
-``tests/``, ``setup/``) for occurrences of the literal substring
+trees (``agent_fleet/``, ``src/``, ``scripts/``, ``helm/``, ``tests/``,
+``setup/``) for occurrences of the literal substring
 ``.default.svc.cluster.local``. It fails the test if any non-allowlisted
 reference is found.
+
+**A declared scan root that does not exist now FAILS the guard** rather than
+being skipped. ``doc-tools`` was declared here for months and never scanned —
+it is a sibling repo, not a subdirectory — so this guard passed green while
+asserting coverage it did not have. That skip is repaired and pinned; the
+scope above is what is actually read, not what was hoped for.
 
 The allowlist is reserved for **descriptive references** (this docstring,
 the help text in ``helm/.../values.yaml`` that names the pattern as an
@@ -50,12 +56,21 @@ import pytest
 LEGACY_DNS_PATTERN = ".default.svc.cluster.local"
 
 # Directories scanned. Relative to repo root.
+#
+# `doc-tools` WAS LISTED HERE AND NEVER EXISTED — it is a SIBLING REPO (`../doc-tools`), not a
+# subdirectory. The walker's `if not base.exists(): continue` skipped it in silence, so this guard
+# spent its whole life asserting coverage of a tree it had never opened, and passing green while
+# the forbidden pattern was free to live there. Removed 2026-08-11.
+#
+# A DISPROVED GUARD IS WORSE THAN A MISSING ONE: a missing guard is a known gap, while this was a
+# false CLAIM of coverage that made the gap invisible. Cross-repo scanning is a different
+# mechanism (it needs the sibling checked out, at a known path, at a known revision) and is not
+# smuggled in by naming a string here — see `[[check-from-the-consumers-side]]`.
 SCANNED_DIRS = (
     "agent_fleet",
     "src",
     "scripts",
     "helm",
-    "doc-tools",
     "tests",
     "setup",
 )
@@ -138,6 +153,33 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _missing_scan_roots(root: Path) -> list[str]:
+    """Declared scan roots that are not directories on disk.
+
+    THE SKIP THAT MADE THIS GUARD A LIE. The walker previously did
+    ``if not base.exists(): continue`` — a phantom root cost nothing and said nothing, so
+    ``doc-tools`` sat in the declared scope for months while never being opened. **A declared
+    target that cannot be scanned is a failure of the guard, not a condition to route around.**
+    """
+    return [d for d in SCANNED_DIRS if not (root / d).is_dir()]
+
+
+def test_every_declared_scan_root_EXISTS() -> None:
+    """A scan root that isn't there means this guard's stated scope is fiction.
+
+    Split out from the scan itself so the failure NAMES the right defect: "the guard cannot see
+    what it claims to cover" is a different problem from "the forbidden pattern is present", and
+    a reader who gets them confused fixes the wrong one.
+    """
+    missing = _missing_scan_roots(_repo_root())
+    assert not missing, (
+        f"SCANNED_DIRS declares {missing} but no such director{'y' if len(missing) == 1 else 'ies'} "
+        f"exist(s) in this repo. The guard would silently skip them and still pass — a false claim "
+        f"of coverage. Either the path is wrong, or it names a SIBLING REPO (the `doc-tools` case), "
+        f"which needs a cross-repo mechanism rather than a string in this tuple."
+    )
+
+
 def _is_allowlisted(rel_path: str, line_text: str) -> bool:
     for path_match, substring_match in ALLOWLIST:
         if rel_path.replace("\\", "/") == path_match and substring_match in line_text:
@@ -158,10 +200,16 @@ def test_no_live_legacy_dns_references() -> None:
     offenders: list[tuple[str, int, str]] = []
     assert SCANNED_DIRS, "nothing to scan — this guard would pass over an empty set"
 
+    # FAIL on a phantom root, never skip it. This is the repair for the defect that made this
+    # guard green-while-blind; the old `continue` is what let `doc-tools` be declared and unread.
+    missing = _missing_scan_roots(root)
+    assert not missing, (
+        f"declared scan root(s) {missing} do not exist — this guard cannot cover what it claims. "
+        f"Fix the path, or drop it if it names a sibling repo."
+    )
+
     for d in SCANNED_DIRS:
         base = root / d
-        if not base.exists():
-            continue
         for path in _scan_files(base):
             if path.suffix not in SCANNED_EXTS:
                 continue
@@ -188,4 +236,44 @@ def test_no_live_legacy_dns_references() -> None:
         f"explaining the pattern by name) — add a narrow allowlist entry "
         f"in this test file with a short rationale.\n\nOffenders:\n"
         + "\n".join(f"    - {p}:{ln}  {text}" for p, ln, text in offenders)
+    )
+
+
+def test_a_phantom_scan_root_FAILS_the_guard(monkeypatch) -> None:
+    """THE BREAK-ON-PURPOSE LEG — the repair is only real if it can be shown to fire.
+
+    A guard that has never gone red is not yet a check (`[[seals-must-be-proven-to-bite]]`), and
+    this is the exact leg that was missing: the old `continue` would have made this test pass by
+    doing nothing, which is how `doc-tools` stayed declared-and-unread for months.
+
+    Injects a root that cannot exist and asserts BOTH the standalone existence check and the scan
+    itself refuse — because the repair is worthless if only the advisory test notices.
+    """
+    import sys
+    mod = sys.modules[__name__]
+    monkeypatch.setattr(mod, "SCANNED_DIRS", tuple(SCANNED_DIRS) + ("no-such-tree-xyzzy",))
+
+    with pytest.raises(AssertionError, match="no-such-tree-xyzzy"):
+        test_every_declared_scan_root_EXISTS()
+
+    with pytest.raises(AssertionError, match="no-such-tree-xyzzy"):
+        test_no_live_legacy_dns_references()
+
+
+def test_no_scan_root_names_a_sibling_repo() -> None:
+    """The specific mistake, pinned by shape rather than by name.
+
+    `doc-tools` was not a typo — it was a real tree at `../doc-tools`, which is precisely why it
+    looked right to everyone who read the list. Any future entry that resolves as a SIBLING but
+    not as a subdirectory is the same defect wearing a different name, so the check is on the
+    relationship, not on the string.
+    """
+    root = _repo_root()
+    siblings = [d for d in SCANNED_DIRS
+                if not (root / d).is_dir() and (root.parent / d).is_dir()]
+    assert not siblings, (
+        f"scan root(s) {siblings} name a SIBLING REPO, not a subdirectory of this repo. "
+        f"A sibling cannot be scanned by walking this tree — it needs the repo checked out at a "
+        f"known path and revision, which is a different mechanism and a different item. Naming it "
+        f"here buys a false claim of coverage, which is what this guard already shipped once."
     )

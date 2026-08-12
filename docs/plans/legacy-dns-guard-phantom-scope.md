@@ -11,6 +11,33 @@ summary:    DISPROVED guard — `SCANNED_DIRS` lists "doc-tools", which is a SIB
 
 # A guard that has never scanned one of its declared targets — and passes green
 
+> ## FIXED 2026-08-11
+>
+> **The status read was "described or committed?" — the answer was described.** `SCANNED_DIRS`
+> still listed `doc-tools` and the walker still did `if not base.exists(): continue`.
+>
+> Three changes, and the third is the one that makes it a repair rather than an edit:
+>
+> 1. **`doc-tools` removed** from `SCANNED_DIRS` — it is `../doc-tools`, a sibling repo. Scanning
+>    a sibling needs it checked out at a known path and revision; that is a different mechanism
+>    and is not bought by naming a string in a tuple.
+> 2. **A missing scan root now FAILS** instead of being skipped, in the guard itself and in a
+>    standalone `test_every_declared_scan_root_EXISTS` — split out so the failure names the right
+>    defect. *"The guard cannot see what it claims to cover"* and *"the forbidden pattern is
+>    present"* are different problems, and a reader who confuses them fixes the wrong one.
+> 3. **Break-on-purpose**: `test_a_phantom_scan_root_FAILS_the_guard` injects an impossible root
+>    and asserts **both** the existence check and the scan refuse. Without this leg the repair
+>    would be unproven — and the old `continue` would have made such a test pass by doing nothing,
+>    which is exactly how `doc-tools` stayed declared-and-unread.
+>
+> Plus `test_no_scan_root_names_a_sibling_repo`, which pins the mistake **by shape**: `doc-tools`
+> was not a typo, it was a real tree one level up, which is why it looked right to everyone who
+> read the list. The check is on the relationship, not on the string.
+>
+> **What this does NOT do:** it does not scan doc-tools. The coverage that was falsely claimed is
+> now honestly absent, which is the correct intermediate state — `[[check-from-the-consumers-side]]`
+> is where the cross-repo mechanism belongs.
+
 **This is a disproved guard, not a missing one**, which is why it is filed above the sweep row that
 found it. A missing guard is a known gap. A disproved guard is a *claim of coverage* that is false,
 and it has been reported green on every run.
