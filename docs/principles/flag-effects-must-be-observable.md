@@ -42,10 +42,23 @@ which this is the third verified instance and the purest, because **there was no
 all to be wrong: the entire control was the name.** The damage scales with how well-established
 the borrowed name is; a novel flag name would have been checked.
 
-So this law has two halves, and they need different repairs. *An unimplemented control must
-announce itself* (below). *A borrowed name must deliver what it promises or be renamed* (there).
-A gateway that announced its ignored flag but kept calling it `REQUIRE_GATEWAY_AUTH` would have
-fixed the observability and left the claim standing.
+### THE ANNOUNCEMENT CLOSES ONLY ONE OF THE TWO DEFECTS
+
+Stated here as well as in the other law, because **announce-and-consider-it-handled is the likely
+failure** and a reader arriving at either law alone would make it.
+
+| defect | repair |
+|---|---|
+| the control's absence of effect is unobservable | **announce** it is IGNORED — *this law* |
+| the **name claims** a control it does not implement | **rename or mark** — `[[a-borrowed-name-is-a-claim]]` |
+
+> **A gateway that announces its ignored `REQUIRE_GATEWAY_AUTH` has fixed the observability and
+> left the claim standing.** The startup line is read once, by whoever watches that boot. The name
+> is read by everyone who greps config, writes a values file, or reasons about fleet posture from
+> a distance.
+
+The announcement is the visible, satisfying repair — it produces a log line you can point at — and
+it is exactly the one that makes the remaining half easy to forget. **Necessary, not sufficient.**
 
 ## The check
 

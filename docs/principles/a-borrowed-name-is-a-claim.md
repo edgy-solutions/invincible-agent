@@ -42,18 +42,35 @@ The discriminator, asked of any reused name:
    specific behaviour is never the defect; a general or borrowed name over weaker behaviour always
    is.
 
-## The two repairs, and when each applies
+## TWO DEFECTS, TWO REPAIRS — and announcing closes only ONE of them
 
-* **Rename** when the weaker thing is legitimate and permanent — `mint_service_token` should have
-  been `mint_review_starter_token`, which would have made the supervisor's misuse impossible to
-  write.
-* **Announce** when the name must stay for compatibility or when the gap is temporary — the
-  gateway keeps reading `REQUIRE_*` and **says loudly that it is IGNORED**, per
-  `[[flag-effects-must-be-observable]]`.
+The gateway instance carries two distinct defects on one line, and the obvious fix addresses the
+other one:
 
-Marking the name is not optional in either case: `mint_service_token` survives only because it
-carries an explicit `NEW CALLERS: DO NOT USE THIS` marker naming the general function as the
-destination.
+| defect | repair | law |
+|---|---|---|
+| the control's absence of effect is unobservable | **announce** that the flag is IGNORED | `[[flag-effects-must-be-observable]]` |
+| the **name claims** a fleet-wide control it does not implement | **rename**, or mark the name | this law |
+
+> **A gateway that announces its ignored `REQUIRE_GATEWAY_AUTH` has fixed the observability and
+> LEFT THE CLAIM STANDING.** The startup line is read once by whoever is watching that boot; the
+> name is read by everyone who greps config, writes a values file, or reasons about the fleet's
+> posture from a distance. Announcing is necessary and is not sufficient.
+
+**This is written down because announce-and-consider-it-handled is the likely failure.** The
+announcement is the visible, satisfying repair — it produces a log line you can point at — and it
+leaves the more durable half of the defect in place.
+
+### Which repair, when
+
+* **Rename** when the weaker thing is legitimate and permanent. `mint_service_token` should have
+  been `mint_review_starter_token`, which would have made the supervisor's misuse **impossible to
+  write** rather than merely discouraged — the guard-fires-on-the-author corollary of
+  `[[naming-a-class-is-not-a-guard]]`, landing on a naming decision.
+* **Mark** when the name must stay for compatibility. Not "leave it" — *mark it*.
+  `mint_service_token` survives only because it carries an explicit `NEW CALLERS: DO NOT USE THIS`
+  marker naming the general function as the destination. An unmarked borrowed name is the
+  unrepaired state, whatever else was announced.
 
 ## Why it recurs
 
