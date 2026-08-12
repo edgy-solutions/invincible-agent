@@ -31,12 +31,21 @@ cleanly, serve traffic, log nothing unusual, and reasonably conclude the gateway
 
 Observationally identical, and the benign reading is the one a reasonable person picks.
 
-## Where it bites hardest
+## Where it bites hardest — and this half is the sharper one
 
 **A flag that is real on other components.** `REQUIRE_TRANSPORT_AUTH` means something across the
 mesh, so an operator's prior is that a require-shaped flag requires. Borrowing a fleet-wide name
-for a control you have not implemented inherits its credibility without its behaviour — the
-general-name-over-specific-behaviour defect, pointed at configuration instead of at a function.
+for a control you have not implemented **inherits its credibility without its behaviour.**
+
+That is not a second observation about this defect — it is `[[a-borrowed-name-is-a-claim]]`, of
+which this is the third verified instance and the purest, because **there was no implementation at
+all to be wrong: the entire control was the name.** The damage scales with how well-established
+the borrowed name is; a novel flag name would have been checked.
+
+So this law has two halves, and they need different repairs. *An unimplemented control must
+announce itself* (below). *A borrowed name must deliver what it promises or be renamed* (there).
+A gateway that announced its ignored flag but kept calling it `REQUIRE_GATEWAY_AUTH` would have
+fixed the observability and left the claim standing.
 
 ## The check
 

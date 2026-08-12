@@ -56,10 +56,22 @@ Before running a measurement that will inform a decision, answer in writing:
 
 1. What do I expect?
 2. **What would each other outcome mean** — specifically, which one would change the plan?
-3. What would I have to un-decide if the surprising branch lands?
+3. **What would I have to UN-DECIDE if the surprising branch lands?**
+
+**Question 3 is the one that bites; 1 and 2 are inventory.** The branches you are relaxed about
+cost nothing to write down — you will state them accurately because nothing rides on them. The
+branch that would force you to *un-decide* something already settled is the one you are motivated
+to find absent, and it is therefore the only branch where the prediction is genuinely
+load-bearing.
+
+**Which is why the anti-tuning rule is not a general caution but the specific defense for the
+specific branch question 3 identifies.** The pull to adjust an instrument is never uniform; it
+concentrates exactly where a reading would reopen settled work. Name that branch first, and the
+temptation has an address.
 
 If (2) cannot be answered, the measurement is not yet load-bearing — it is a number being
-collected in the hope that it will suggest something.
+collected in the hope that it will suggest something. If (3) cannot be answered, nothing is
+actually at stake and the prediction is ceremony.
 
 Related: `[[seals-must-be-proven-to-bite]]` — that asks whether an instrument *can* report bad
 news; this asks whether anyone decided in advance what bad news would mean.
