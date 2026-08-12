@@ -37,6 +37,16 @@ summary:    DISPROVED guard — `SCANNED_DIRS` lists "doc-tools", which is a SIB
 > **What this does NOT do:** it does not scan doc-tools. The coverage that was falsely claimed is
 > now honestly absent, which is the correct intermediate state — `[[check-from-the-consumers-side]]`
 > is where the cross-repo mechanism belongs.
+>
+> **ONE GUARD, not one file I happened to open.** An unfiltered whole-tree search (not the
+> gitignore-respecting one) finds `SCANNED_DIRS` in exactly one file — no second copy, no vendored
+> duplicate carrying the same phantom root. Run because "I fixed the instance I was looking at" is
+> the weak form of a repair.
+>
+> **The limit of that claim, stated so it is not over-read:** it bounds *this* guard, keyed on the
+> name `SCANNED_DIRS`. It says nothing about whether OTHER guards declare scopes they never read
+> under different variable names. That is the general question — *which guards assert coverage
+> they cannot deliver?* — and it is unasked, not answered.
 
 **This is a disproved guard, not a missing one**, which is why it is filed above the sweep row that
 found it. A missing guard is a known gap. A disproved guard is a *claim of coverage* that is false,
