@@ -270,9 +270,25 @@ gateway runs against work's Keycloak, **the first fetch is its own witness**, an
 key, or `NONE CONFIGURED`. A JWKS failure latches to honest-unverified rather than wedging the
 read path, so the failure mode is a degraded gauge, never a degraded gateway.
 
-**Read that announcement line first when the pod comes up.** If it says `NONE CONFIGURED`, every
-`token_verified=False` in the run is an artifact of configuration and the verified/unverified axis
-carries no information — the subject-source axis still does.
+### THE GAUGE'S USAGE RULE — two axes, and one can be dark while the other is honest
+
+**Read `verification_line()` from the startup log BEFORE interpreting any reading.** This is a
+usage rule, not a caveat.
+
+| axis | readable when | carries |
+|---|---|---|
+| **subject-source** — token-claim / header-only / header-override(+agree\|diverge) | **always** — needs no key, no verification, no config | the migration decision |
+| **token-verified** | only when a key or JWKS is configured | whether a bearer was actually proven |
+
+If startup announced `NONE CONFIGURED`, **axis 2 carries no information for that run** — every
+request reads `token_verified=False token_reason=no-verification-key`, which is a fact about the
+*deployment*, not about the callers. Axis 1 remains fully honest, and axis 1 is the one the
+decision rests on.
+
+**They are reported separately precisely so they cannot be collapsed.** "Unverified everywhere
+because no key is set" and "unverified everywhere because every caller is forging tokens" are the
+same observation for opposite reasons; no single health number can distinguish them, and the
+startup line is what does.
 
 ### What this session did NOT do, by instruction
 
