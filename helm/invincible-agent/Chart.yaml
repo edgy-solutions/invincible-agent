@@ -5,5 +5,11 @@ description: >-
   Includes Restate durable execution, LangGraph support, Swarms.ai scraper,
   DataHub wrapper, Ontology reasoner, and a dynamic BPMN workflow interpreter.
 type: application
-version: 0.3.36
+# BUMP THIS WHENEVER helm/** CHANGES. Eight chart-changing commits landed on top of
+# 0.3.36 without a bump — including the engine registration secrets — and the release
+# workflow's `skip_existing: true` published NONE of them while reporting green. A
+# deployment installing "the latest chart" got 0.3.36's contents frozen at the bump
+# commit, with no ENGINE_*_CLIENT_SECRET, so every engine died on `KeyError` at mint
+# and registered zero verbs. See release-helm-charts.yml, which now fails loudly.
+version: 0.3.37
 appVersion: "2026.07.02"

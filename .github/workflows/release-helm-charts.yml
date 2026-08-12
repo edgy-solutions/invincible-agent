@@ -31,14 +31,43 @@ jobs:
         with:
           version: v3.17.2
 
+      # THE PUSH CHANGED helm/** — SO THE VERSION MUST HAVE MOVED.
+      #
+      # This job only runs on a helm/** change, so "the version already has a release"
+      # means the chart's CONTENTS changed while its VERSION did not, and whatever is
+      # published under that version is now a lie. `skip_existing: true` used to absorb
+      # exactly this case: it was added so the workflow would stop failing with
+      # "tag_name already_exists", which turned a loud failure into a green run that
+      # published nothing.
+      #
+      # It cost a work cluster. Eight chart-changing commits stacked on 0.3.36 unpublished
+      # — among them the ENGINE_*_CLIENT_SECRET wiring — so an install of "the latest
+      # chart" resolved to 0.3.36's contents from eight commits earlier. Every engine hit
+      # `KeyError: 'ENGINE_A_CLIENT_SECRET'` at mint, registered zero verbs, and routing
+      # degraded to the generalist with no error anywhere: a green pipeline, a green
+      # release, a cluster that could not answer a catalog question.
+      #
+      # A version number that does not move while its contents do is unfalsifiable from
+      # the outside — the same class as a `:latest` image tag. So the drift FAILS here,
+      # at the only point that can still see both halves.
+      - name: Refuse to publish a chart whose version did not move
+        run: |
+          version="$(helm show chart helm/invincible-agent | awk '/^version:/ {print $2}')"
+          tag="invincible-agent-${version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::error::helm/** changed but Chart.yaml is still at ${version}, which is already published as ${tag}."
+            echo "::error::Bump helm/invincible-agent/Chart.yaml. Publishing nothing here means a deployment installing"
+            echo "::error::'the latest chart' silently gets the OLD contents — the failure mode that left engines unregistered."
+            exit 1
+          fi
+          echo "Chart version ${version} is unpublished — proceeding to release."
+
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.6.0
         with:
           charts_dir: helm
-          # Skip if the chart version already has a published release
-          # (i.e. someone touched helm/** without bumping Chart.yaml).
-          # Without this, every helm/** commit that doesn't bump the
-          # version fails the workflow with "tag_name already_exists".
+          # Belt-and-braces only. The guard step above is what enforces the invariant;
+          # this must never again be the thing that silently swallows a drift.
           skip_existing: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
