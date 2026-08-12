@@ -82,10 +82,61 @@ reached for it until prompted. It is now `trigger:` in the schema.
 re-argued from scratch, often to a different conclusion, by people who would have agreed with the
 original. That sweep is the migration's highest-value by-product and should not be left implicit.
 
+## RULED 2026-08-11 — `closed-by` must become repo-aware, and the tripwire on that field just fired
+
+**Filed by ruling, not by discovery.** ADR-0040 gave packets a `repo:` field, so a packet can
+describe work in another repository — but `closed-by` is validated with `git cat-file -t` in
+**this** repo (`scripts/generate_board.py:113`). **A packet with `repo: cortex-ui` structurally
+cannot cite the commit that closed it.**
+
+First live instance: `cortex-ui-transport-idiom`. The work landed as `cortex-ui@2c3b8a9`; the
+board can only resolve `d1184b3`, the invincible-agent commit that *records* it. The escape hatch
+(`closed-by-note:`) was used, and was the correct use — but that is precisely the problem.
+
+### Why this is urgent rather than cosmetic
+
+**Every cross-repo closure will burn the escape hatch, and an escape hatch used routinely stops
+signalling anything.** `closed-by-note` exists to mark the *unusual* closure whose commit touches
+neither the packet nor its code-site. If it also becomes the standard way to close any packet
+with a foreign `repo:`, a reader can no longer tell *"this closure is odd, read the note"* from
+*"this closure is ordinary, the schema just cannot express it."*
+
+This is the **explaining-or-excusing tripwire** set on that field when it was designed, arriving
+on schedule and from the direction the design anticipated: a field that permits a stated reason
+degrades into a field that *collects* stated reasons, at which point the reasons are noise.
+
+### The fix
+
+1. **Accept a repo-qualified sha: `closed-by: cortex-ui@2c3b8a9`.** Bare shas keep meaning
+   "this repo", so every existing row is untouched — the change is additive.
+2. **Resolve against the named repo when it is available, and apply the SAME attribution check
+   there**: the commit must touch the packet's declared `code-site`. Attribution is the whole
+   value of the field — *a resolving sha is not a correct sha*, which is the lesson the seed
+   board already paid for. A cross-repo sha that resolves but touches nothing is that same defect
+   wearing a different repo name.
+3. **When the sibling repo is not on disk, fall back to `closed-by-note` — but record the reason
+   as STRUCTURAL, not exceptional.** Distinct vocabulary, so the two cases stay separable:
+   *"the checkout is unavailable here"* is a fact about the environment; *"this closure
+   legitimately touched neither target"* is a fact about the work. Collapsing them is exactly
+   what makes the hatch stop signalling.
+4. **Seal it break-on-purpose in both directions:** a repo-qualified sha that does not resolve
+   must go RED, **and** one that resolves but touches nothing must go RED. A seal that only
+   proves the happy path would let the second through silently — and the second is the one the
+   seed board actually shipped.
+
+### Scope note
+
+**The in-repo path is unaffected and its coverage is real.** This is one expressiveness gap in
+one field, not a defect in the board's validation — which kept biting throughout: it caught an
+invalid `status: done` and then an unresolvable sha within a minute of each other, while this
+very item was being closed. Stated so the fix is not over-scoped into "the board checks are wrong."
+
 ## Acceptance
 
 - Coverage line reads *N of N indexed*, or every exception is a packet with a stated reason.
 - No fabricated `id`, `status`, `owner` or `closed-by` anywhere in the sweep.
+- `closed-by` accepts `repo@sha`, resolves and attributes against that repo when present, and
+  distinguishes a *structural* fallback from an *exceptional* one — sealed both directions.
 - The decided-but-unindexed rules are filed where they belong (ADR amendments, `AGENTS.md`, or
   their own packets) rather than listed in a migration report nobody re-reads.
 
