@@ -114,6 +114,17 @@ ALLOWLIST: list[tuple[str, str]] = [
     # substring to look for in Neo4j edges. Self-reference, not a live
     # default.
     ("tests/routing/test_substrate_invariants.py", "default.svc.cluster.local"),
+    # The guard-scope meta-guard's docstring QUOTES the offender this guard finally
+    # found — doc-tools' `ontology-agent-svc.default.svc.cluster.local` default — as the
+    # worked example of why a declared-but-unread scope matters. Documentary, and it is
+    # in a SIBLING REPO's file besides, so it can never be a live default of this one.
+    #
+    # THIS ENTRY IS THE THIRD TIME IN ONE SESSION that prose naming the forbidden pattern
+    # tripped a check written to forbid it. That recurrence is the argument FOR the
+    # narrow (path, substring) allowlist rather than against it: a guard that cannot
+    # distinguish a live default from a description of one either fails on its own
+    # documentation or gets relaxed until it means nothing.
+    ("tests/routing/test_guard_scopes_are_real.py", "ontology-agent-svc.default.svc.cluster.local"),
 ]
 
 
