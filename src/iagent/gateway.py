@@ -1180,6 +1180,14 @@ async def act_on_human_task(
         # credential is minted at use under the pipeline's own identity — keeping those two facts
         # in separate fields is the notice-A ruling, and putting the actor here is what lets them
         # travel separately instead of being conflated back into one value.
+        #
+        # DO NOT COLLAPSE THIS WITH THE ENVELOPE `acted_by` SENT BELOW. They carry the same value
+        # today and answer DIFFERENT QUESTIONS: this one is PROVENANCE (who decided — archived with
+        # the decision record), the envelope one is the AUTHORIZATION SUBJECT the handler's own
+        # can_act gate checks. Merging them would mean a future change to how decisions are
+        # ATTRIBUTED silently re-aims the GATE — the two would move together with nothing to say
+        # they should not. Same-value-different-question is the reason for the duplication, not an
+        # oversight. See docs/plans/approval-bypass-bpmn-runner.md.
         decision = {"overrides": req.overrides or {}, "acted_by": current_user.authz_id}
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

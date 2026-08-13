@@ -430,12 +430,43 @@ services:
           simply no longer the only thing standing in front of an unused action route.
       - method: POST
         path: /workflow/{workflow_id}/task/{task_id}/approve
-        identity: none
-        gate: none
+        identity: transport_auth (CallerIdentity, verified REQUIRED regardless of posture)
+        gate: can_act (Topaz, at the handler, against the JOURNALLED audience)
         exposes: action
-        consumers: [none-found gateway approves via Restate ingress]
-        class: ungated_by_accident
-        justification: "FINDING (high): approval bypass — request is status/comments only, NO caller identity, NO gate; resolves the approval promise unconditionally. Comment claims cortex-bff can_act gates it, but this HTTP route (and the Restate BPMNWorkflowRunner/approve handler at gateway.py:432) bypasses that. Approval authority enforced nowhere on this path."
+        consumers: ["cortex-bff /human_tasks/{id}/act"]
+        class: gated
+        justification: |
+          RESOLVED 2026-08-11 (d3ef8bf). The route requires a VERIFIED caller and threads
+          `caller.authz_id` to the handler as `acted_by`; the handler itself checks Topaz
+          `can_act` against the audience journalled in workflow state, and records the
+          identity in the resolution. Identity is required here regardless of transport
+          posture: the app-wide dependency runs in OBSERVE until the ENABLE_AGENTIC_AUTH
+          flip and refuses nothing, which is right for ordinary routes and wrong for an
+          authority write — deferring this gate to that flip would have left the approval
+          plane open until the most-deferred change in the programme landed.
+
+          CORRECTION TO THE ORIGINAL FINDING (amended, not rewritten — the finding was
+          real and its remediation is what closed it):
+
+          The original text read: "Comment claims cortex-bff can_act gates it, but this
+          HTTP route (and the Restate BPMNWorkflowRunner/approve handler at gateway.py:432)
+          bypasses that."
+
+          Two errors in that sentence, both worth keeping visible:
+            1. THE cortex-bff PATH WAS NEVER THE HOLE. `act_on_human_task` resolves through
+               `human_tasks.check_can_act` and threads `current_user.authz_id` — it is the
+               WORKING PRECEDENT this fix was modelled on, not an example of the bypass.
+               The bypass was this route and direct calls to the Restate ingress.
+            2. `gateway.py:432` no longer points at anything approval-related; that line now
+               lands inside `ReviewStartRequest`. SECOND CITATION TO ROT THIS MONTH, so per
+               the ruled convention this row cites SYMBOLS, not line numbers:
+               `iagent.gateway:act_on_human_task` and
+               `agent_fleet.restate_analyst.main:approve`.
+
+          THIRD SURFACE, found while fixing these two: `GroupedReview.submit_decision`
+          resolves the grouped review's decision promise — the same authority write on a
+          different runner. It is now gated identically. See
+          docs/plans/approval-bypass-bpmn-runner.md.
 
   data_analyst:
     file: agent_fleet/data_analyst/main.py

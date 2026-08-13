@@ -248,6 +248,58 @@ not repo breakage — and reporting them as "pre-existing failures" is how a gen
 test hides in the noise. If a suite is red, first re-run it with the extra before
 attributing the failure to anything.
 
+### Verify the STAGED BLOB, not the working tree — a test result is a claim about the file it ran against
+
+**A green suite is evidence about the bytes on disk when it ran, not about the commit you are
+about to make.** Those are the same thing only when the working tree and the index agree, and in a
+contended tree they routinely do not: your tests may have run against a file that also held
+another agent's uncommitted diff — a composition that exists in no commit and that nobody will
+ever deploy.
+
+Demonstrated twice on 2026-08-11 in one evening, both times in `restate_analyst/main.py` with two
+agents holding hunks. Cheap enough that there is no reason to skip it before any commit that
+splits a shared file:
+
+```bash
+git add <explicit paths>                 # never `git add -A` with unrelated WIP in the tree
+git diff --cached --name-only            # assert the set is EXACTLY what you intend
+git diff --cached | grep -c "<other agent's marker>"   # assert 0
+
+TREE=$(git write-tree)                   # the index, as a real tree object
+rm -rf /tmp/staged && mkdir -p /tmp/staged
+git archive "$TREE" | tar -x -C /tmp/staged
+cd /tmp/staged && <compile> && <run the seals here>    # a dir the working tree cannot influence
+```
+
+**Why extract rather than reason about it:** "the index equals the working tree, so my tests
+apply" is a sound argument and an easy one to get subtly wrong (a partially-staged hunk, an
+untracked file the tests import, a `.pyc` shadowing a change). Materialising the tree costs
+seconds and converts the argument into an observation.
+
+**LIMIT — an extracted tree has no `.git`, so git-dependent checks FALSE-RED there.** Found the
+first time this was used: `test_board_drift` shells out to `generate_board.py --check`, which
+resolves every `closed-by` sha with `git cat-file`; in `/tmp/staged` that fails for *all* of
+them and the drift check reports the board out of sync when it is not. Split the run:
+
+- **Git-independent checks** (unit tests, seals, compile, YAML/schema parse) → the extracted tree.
+- **Git-dependent checks** (board drift, sha attribution, anything shelling to git) → the real
+  repo, *after* asserting `git status --short` shows every changed path as `M ` (staged) and none
+  as ` M` (worktree-modified). That equality is what makes a repo-run a statement about the index.
+
+Report both, and say which ran where. A false red treated as a real one is how a good technique
+gets abandoned after its first use.
+
+**The general form is the artifact-complete rule applied to commits:** a check that does not run
+against the artifact you are shipping is a check about something else. Same family as *a guard
+that does not gate the artifact is source-complete only*.
+
+**Single-writer applies to the FILE, not just the session.** Two agents holding hunks in one file
+means neither can commit honestly, and the resolution is always **sequencing, never surgery** —
+hand-extracting your hunks out of a file someone else is editing is how the fence gets broken.
+Name the owner per contended file, have the other confirm an empty index (`git diff --cached
+--name-only`), and let whoever goes second get a clean file. Discovering the contention by
+staging and finding someone else's work is detection by collision, not by protocol.
+
 ### Seals need a REACHABILITY class — "does anything arrive here?" is a separate property
 A seal proves the code under it behaves correctly **on the inputs it is given**. It says nothing
 about whether those inputs can ever arrive. Every seal built against a constructed fixture

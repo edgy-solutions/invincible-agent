@@ -1,12 +1,12 @@
 ---
 id:         approval-bypass-bpmn-runner
-status:     open
+status:     closed
 owner:      unassigned
 blocked-on: 
-closed-by:  
+closed-by:  d3ef8bf
 code-site:  agent_fleet/restate_analyst/main.py
 repo:       invincible-agent
-summary:    HIGH (declared, unresolved) — BPMNWorkflowRunner/approve resolves the approval promise with NO caller identity. In-cluster only today; that mitigation does not travel to the work cluster.
+summary:    HIGH — RESOLVED d3ef8bf. The approval plane resolved promises with no caller identity. Gated on THREE surfaces, not the two declared: engine-a's route, the Restate approve handler, and GroupedReview.submit_decision (found while fixing the other two). Audience read from the workflow journal, never the request.
 ---
 
 # Approval bypass on `BPMNWorkflowRunner` — declared HIGH, unresolved, and until now unindexed
@@ -110,3 +110,79 @@ its own entry point.
 Verified 2026-08-10 by reading both sites. Acceptance for this item is that **both** are gated;
 gating one is not partial progress, it is a false green — the surface still open is the one
 nobody is now looking at.
+
+---
+
+# CLOSED 2026-08-11 — `d3ef8bf`. And the caveat above was itself one surface short.
+
+## THE THIRD SURFACE — `GroupedReview.submit_decision`
+
+**Acceptance corrected: it is THREE, not both.** `agent_fleet/restate_analyst/grouped_review_workflow.py:submit_decision`
+resolves the grouped review's `decision` promise — **the same authority write**, on a different
+runner, equally reachable from the Restate ingress. It was found while building the fix for the
+two named above.
+
+Gating two of three would have been **this packet's own two-surface caveat failing one rung up**:
+the argument was right, the enumeration behind it was incomplete, and the sentence "gating one is
+not partial progress, it is a false green" would have been quoted in a commit that shipped exactly
+that. A caveat about missed surfaces is not itself evidence that the surfaces were all found.
+
+### Why it was missed — the transferable part
+
+**`submit_decision` had the most careful content validation of any handler in this service, and
+none of the actor question.** It re-derives the batch server-side, validates every submitted row
+against it, refuses unverified rows without an explicit override, refuses blank override reasons,
+and handles the multiplayer already-settled race with a distinct terminal outcome. All of that is
+about *what* is being decided. None of it is about *who* is deciding.
+
+**Thoroughness on one axis is what hides the absence of the other.** A reviewer reading that
+handler comes away reassured — correctly, about content authority — and the reassurance carries
+over to a question the code never asks. This is not a lapse of attention; it is attention landing
+where the evidence of care is. Content authority and actor authority are different questions, and
+answering one visibly well is a reason to check the other *harder*, not a reason to relax.
+
+Practical form: **when a handler is conspicuously careful, enumerate what it is careful ABOUT.**
+The list is usually one axis long.
+
+## The shape of the fix
+
+| decision | why |
+|---|---|
+| **audience from the JOURNAL, never the request** | `can_act` needs an audience the handler cannot see (this service reaches human_tasks over HTTP, not a DB). Taking it from the request would let the caller choose the question the gate asks — the `on_behalf_of` laundering shape arriving at the approval plane. Written at all three registration sites by the code that already derived it from the definition. |
+| **keyed on the PROMISE NAME** | Reuses the identity `test_promise_name_seal` already pins instead of minting a second one that could drift (grouped reviews suspend on `decision`, not `approval_{task_id}`). |
+| **one home for the key**, in the leaf module both resolvers import | A reader computing a wrong key sees `None` and fails closed — **indistinguishable from "no audience journalled"**. A copy would not diverge loudly; it would fail silently in the direction nobody checks. |
+| **`acted_by` on the ENVELOPE, separate from `decision.acted_by`** | Same value, two questions: authorization subject vs archived provenance. One field would mean a future change to how decisions are *attributed* silently re-aims the *gate*. |
+| **identity required regardless of transport posture** | OBSERVE refuses nothing until the `ENABLE_AGENTIC_AUTH` flip. Deferring this gate to that flip would leave the approval plane open until the most-deferred change in the programme landed. |
+| **denials surface as 403-with-reason, not 502** | A denial reported as an outage sends the operator hunting a broken service instead of a missing grant. 401 and 403 stay distinct: "who are you" is not "you may not". |
+| **fail closed on a missing journalled audience** | Resolving anyway would be the broken-closed inversion — waving through exactly the cases the gate cannot evaluate. |
+
+**The `cortex-bff` coupling is what kept this from being a regression.** `/act` calls the handler
+directly with no identity, so gating the handler without threading `current_user.authz_id` there
+would have made **the one correctly-gated path the only refused one.**
+
+## Acceptance as met
+
+Discriminating pairs on every surface, and **four independent break-on-purpose controls**:
+
+| mutation | surface 1 | surface 2 | surface 3 |
+|---|---|---|---|
+| remove `approve` can_act | **2 FAIL** | 3 pass | 3 pass |
+| remove route identity check | 5 pass | **1 FAIL** | 3 pass |
+| remove `submit_decision` can_act | 5 pass | 3 pass | **2 FAIL** |
+| audience from request (spoof) | **1 FAIL** | — | — |
+
+Each reddens **only its own surface**, so no seal cross-covers another and "fixed one, believe all
+three" is not available. All restored byte-identical.
+
+Plus a **positive control** asserting the decider was actually consulted on the accept path —
+without it every green half is compatible with there being no gate at all, since an ungated handler
+accepts everyone.
+
+Seal: `tests/security/test_approval_authority_gate.py` (12). Suites the gate touched: 41. Full
+suite 1296 passed, with four pre-existing failures confirmed not caused by this change.
+
+## The manifest row is corrected in the same commit
+
+Its `justification` claimed cortex-bff was bypassed; that path was always the working precedent.
+And the `gateway.py:432` citation had rotted into `ReviewStartRequest`. The row now cites
+**symbols, not line numbers**, per the ruled convention — second citation to rot this month.

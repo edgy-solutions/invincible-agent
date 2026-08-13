@@ -16,10 +16,6 @@ _Coverage: **25 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
-- **approval-bypass-bpmn-runner** — HIGH (declared, unresolved) — BPMNWorkflowRunner/approve resolves the approval promise with NO caller identity. In-cluster only today; that mitigation does not travel to the work cluster.
-  status: open · owner: unassigned
-  → [docs/plans/approval-bypass-bpmn-runner.md](plans/approval-bypass-bpmn-runner.md)
-
 - **board-migration** — Retrofit ADR-0040 headers onto the unheadered packets; the board's first tracked item is its own completion.
   status: open · owner: unassigned
   → [docs/plans/board-migration.md](plans/board-migration.md)
@@ -91,6 +87,10 @@ _Coverage: **25 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/watch-dashboard.md](plans/watch-dashboard.md)
 
 ## closed
+
+- **approval-bypass-bpmn-runner** — HIGH — RESOLVED d3ef8bf. The approval plane resolved promises with no caller identity. Gated on THREE surfaces, not the two declared: engine-a's route, the Restate approve handler, and GroupedReview.submit_decision (found while fixing the other two). Audience read from the workflow journal, never the request.
+  status: closed · owner: unassigned · closed-by: d3ef8bf
+  → [docs/plans/approval-bypass-bpmn-runner.md](plans/approval-bypass-bpmn-runner.md)
 
 - **ceremony-record** — ADR-0034 ceremony, end to end — identity-vs-pointer repair, cursor wedge, at-least-once intake, escalation, and the completion witness (dr-08a9c7e7a8c04e00, the corpus's first monitored row).
   status: closed · owner: agent · closed-by: 96f2657
