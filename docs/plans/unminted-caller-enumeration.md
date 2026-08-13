@@ -434,6 +434,36 @@ made deliberately rather than by the finding quietly aging out.
 
 **One CONFIRMED unminted caller. Zero `/workflow/start` consumers.**
 
+> ### THE COUNT WAS 2 AND IS 1 — corrected 2026-08-12
+>
+> `transport-flip`'s `blocked-on` read *"2 CONFIRMED unminted callers (dag-tools, doc-tools →
+> engine-o)"*. **dag-tools contributes ZERO.** The flip's numerator is **1**: this row.
+>
+> Three independent reads agree, and the first two were already written down:
+>
+> | evidence | says |
+> |---|---|
+> | this packet's own running total (repo 3) | `dag-tools: 15 sites, 5 unminted, **0 flip blockers**` |
+> | this section's own heading | **One** confirmed unminted caller |
+> | fresh read of `dag_tools/**.py`, 2026-08-12 | **zero** references to engine-o, ontology-svc, or any platform route |
+>
+> The only grep hits in dag-tools are `qual/registry/client.py` using `classes/` as an **S3 path
+> segment** — the word, not the route. dag-tools' five unminted calls target *its own* services
+> and *its own* Restate ingress, none of which transport auth gates; that is why the table says 0.
+>
+> **How the duplicate formed:** the line was written while doc-tools was still unswept, and
+> "dag-tools" attached to findings that ARE dag-tools work — the unverified-subject gateway and
+> the unauthenticated broker register — but are **not unminted callers to engine-o**. One item,
+> two names, counted twice.
+>
+> **Why this was worth one read rather than an assumption:** an inflated precondition is the
+> census-membership defect in the most expensive possible place. It makes the flip look further
+> away than it is, and it would have sent someone hunting a dag-tools caller that does not exist —
+> the mirror of `review_composer`, where the count was too *low*. The correction rests on the
+> strong-form negative from the repo-3 sweep: **every configured endpoint in dag-tools was
+> enumerated and no platform service appeared in the list**, which is a different claim from
+> "I grepped and found none."
+
 | # | site | target | verdict |
 |---|---|---|---|
 | 1 | `doc_tools/assets/semantic_linker.py:99` | engine-o `POST /classify_legacy_table` | **CONFIRMED unminted** |

@@ -138,6 +138,18 @@ tidying — it is what makes the other 255 results trustworthy.**
 Recorded here rather than as its own board line, for the same reason as the `embed_contract`
 violation above: it is inside this session's scope.
 
+**THE FIX IS KNOWN AND IS BLOCKED ON FILE OWNERSHIP, NOT ON ANALYSIS (2026-08-12).** The repair is
+a `sys.path` insert of `agent_fleet/restate_analyst` — scoped to the importing helper rather than
+done at module import, so it cannot mutate `sys.path` for the rest of the session and spread the
+same ambient coupling it removes. The working form is already in
+`tests/test_workflow_start_disabled.py::_main_module`, which needed exactly this to stop its
+behavioural pins skipping.
+
+It is unapplied because `test_promise_name_seal.py` is in another agent's working set. **Written
+down so the next reader does not re-derive it** — "diagnosed, fix known, waiting on the file" and
+"still being investigated" look identical from a red test, and only one of them should cost
+another evening.
+
 ## Method notes this session should encode
 
 Two instrument defects were found the expensive way during the triage. Both are general.
