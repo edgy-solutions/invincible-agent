@@ -635,6 +635,24 @@ def _restate_key(k: str) -> str:
     return quote(k or "", safe="")
 
 
+def _restate_refusal_message(resp) -> str:
+    """Best-effort reason out of a Restate handler's TerminalError body.
+
+    Every fallback returns something a reader can act on rather than an empty string:
+    a denial that arrives with no reason is only marginally better than a denial
+    mislabelled as an outage, and the reporter must fail louder than what it reports."""
+    try:
+        body = resp.json()
+    except Exception:
+        return (getattr(resp, "text", "") or "").strip()[:500] or f"refused with {resp.status_code}"
+    if isinstance(body, dict):
+        for k in ("message", "detail", "error"):
+            v = body.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return str(body)[:500]
+
+
 @app.get("/reviews/{workflow_id}/batch")
 async def get_review_batch(
     workflow_id: str,
@@ -1167,10 +1185,27 @@ async def act_on_human_task(
             async with httpx.AsyncClient(timeout=30.0) as client:
                 rr = await client.post(
                     f"{_RESTATE_INGRESS_URL}/GroupedReview/{_restate_key(wf)}/submit_decision",
-                    json={"decision": decision},
+                    # `acted_by` ALSO on the envelope, not only inside `decision`. The two
+                    # are the same verified identity but they answer different questions:
+                    # inside `decision` it is PROVENANCE (who decided, archived with the
+                    # record), on the envelope it is the AUTHORIZATION SUBJECT the handler's
+                    # own can_act gate checks. Keeping them as one field would mean a change
+                    # to how decisions are attributed silently re-aimed the gate.
+                    json={"decision": decision, "acted_by": current_user.authz_id},
                 )
         except Exception as exc:
             raise HTTPException(status_code=502, detail={"error": "review_submit_unreachable", "message": str(exc)})
+        if rr.status_code in (401, 403):
+            # THE HANDLER'S OWN GATE REFUSED. Report it as a refusal, not as a 502:
+            # `review_submit_failed` would tell the reviewer the review service is broken
+            # and send them to look for an outage instead of a missing grant. An error
+            # surface that mislabels a denial as an outage is a failure this repo has
+            # already paid for on the review surface once.
+            raise HTTPException(status_code=403, detail={
+                "error": "not_authorized_to_act",
+                "code": rr.status_code,
+                "message": _restate_refusal_message(rr),
+            })
         if rr.status_code != 200:
             raise HTTPException(status_code=502, detail={"error": "review_submit_failed", "code": rr.status_code})
         sub = rr.json()
@@ -1231,7 +1266,14 @@ async def act_on_human_task(
             async with httpx.AsyncClient(timeout=15.0) as client:
                 rr = await client.post(
                     f"{_RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{_restate_key(match['workflow_id'])}/approve",
-                    json={"task_id": task_id, "status": status, "comments": req.comment},
+                    # `acted_by` is REQUIRED by the handler as of approval-bypass-bpmn-runner:
+                    # it re-checks can_act itself rather than trusting that this gate ran.
+                    # Threaded from `current_user.authz_id` — the identity can_act was just
+                    # checked against above — so the handler re-asks the same question about
+                    # the same subject and must reach the same answer. Omitting it here would
+                    # turn the ONE correctly-gated path into the only refused one.
+                    json={"task_id": task_id, "status": status, "comments": req.comment,
+                          "acted_by": current_user.authz_id},
                 )
                 resumed = rr.status_code == 200
                 if not resumed:

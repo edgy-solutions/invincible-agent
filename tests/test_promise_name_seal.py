@@ -48,6 +48,34 @@ from agent_fleet.restate_analyst.workflow_definition import (  # noqa: E402
 )
 
 _SUBMIT = grouped_review_workflow.submit_decision.__wrapped__
+
+
+# ---------------------------------------------------------------------------
+# AUTHORITY GATE scaffolding (approval-bypass-bpmn-runner, 2026-08-11)
+# ---------------------------------------------------------------------------
+# `submit_decision` now gates on Topaz `can_act(caller, audience)` before resolving the
+# decision promise. These suites are about VALIDATION and CONCURRENCY, not authorization,
+# so they drive the AUTHORIZED path: a stubbed allow-decider plus an audience in workflow
+# state. Stubbing the decider does not weaken them — none of their claims involve who the
+# caller is. The gate's own discriminating pairs live in
+# tests/security/test_approval_authority_gate.py, where a stub would be the whole bug.
+#
+# PATCHES BOTH MODULE IDENTITIES (the flatten dance): sys.path carries the repo root AND
+# agent_fleet/restate_analyst, so `spo_step_executor` and
+# `agent_fleet.restate_analyst.spo_step_executor` are two distinct module objects.
+_ACTOR = "approver@example.com"
+_AUDIENCE = "promotion:SUSTAINMENT"
+
+
+@pytest.fixture(autouse=True)
+def _allow_can_act(monkeypatch):
+    import importlib
+    for _name in ("spo_step_executor", "agent_fleet.restate_analyst.spo_step_executor"):
+        try:
+            _mod = importlib.import_module(_name)
+        except ImportError:
+            continue
+        monkeypatch.setattr(_mod, "check_can_act", lambda aud, who: True, raising=False)
 _WORKFLOWS = _REPO / "policy" / "workflows"
 
 
@@ -196,8 +224,9 @@ async def test_grouped_awaited_name_equals_resolved_name(monkeypatch):
         "batch_items": _TRIGGER["batch_items"],
         "approver": "qa",
         "notice_fingerprint": "IPCN25300X",
+        "audience:decision": _AUDIENCE,
     })
-    out = await _SUBMIT(ctx, {"decision": {"overrides": {}}})
+    out = await _SUBMIT(ctx, {"decision": {"overrides": {}}, "acted_by": _ACTOR})
     assert out["accepted"] is True, "fixture must reach the RESOLVE path to measure the name"
     assert len(ctx.resolved) == 1
     resolved = ctx.resolved[0]

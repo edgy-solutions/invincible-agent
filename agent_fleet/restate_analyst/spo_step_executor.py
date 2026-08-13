@@ -193,6 +193,62 @@ def check_can_invoke(
         return False  # fail-closed
 
 
+def audience_key(promise_name: str) -> str:
+    """Workflow-state key holding the AUDIENCE that owns a given durable promise.
+
+    Lives here — in the leaf module that also holds the decider calls — because BOTH
+    approval resolvers need it (`main.approve` and `grouped_review_workflow.submit_decision`)
+    and neither may import the other. One home for the key means the writer and the two
+    readers cannot drift; two homes would be a silent-miss waiting to happen, since a
+    reader that computes the wrong key sees `None` and (correctly) fails closed, which
+    looks exactly like "no audience journalled".
+
+    THE AUDIENCE MUST COME FROM THE WORKFLOW'S OWN JOURNAL, NEVER FROM THE REQUEST.
+    The resolvers gate on ``can_act(caller, audience)``; a caller who could name the
+    audience would be choosing the question the gate asks. Writing it at the site that
+    derived it from the definition is what makes the later check unspoofable.
+
+    Keyed on the PROMISE NAME rather than the task id, so the gate reuses the identity
+    ``test_promise_name_seal`` already pins instead of introducing a second identity
+    surface that could drift from it (grouped reviews suspend on ``decision``, not on
+    ``approval_{task_id}``).
+    """
+    return f"audience:{promise_name}"
+
+
+def check_can_act(
+    audience: str, caller_authz_id: str, *, topaz_url: str = TOPAZ_DIRECTORY_URL
+) -> bool:
+    """Topaz ``can_act(caller, task_audience)`` — the gate for RESOLVING a human
+    approval, as opposed to :func:`check_can_invoke` which gates INVOKING an effect.
+
+    Same single decider, same fail-closed posture, different namespace: acting on a
+    task is not invoking a capability. This mirrors ``src/iagent/human_tasks.check_can_act``
+    deliberately rather than importing it — ``agent_fleet.restate_analyst`` does not
+    depend on the ``iagent`` package (which is why ``check_can_invoke`` above is also a
+    local twin). If that ever changes, both should collapse into one import.
+
+    Deny-by-default: empty identity/audience/URL or any error → False. A False is a
+    REFUSAL THE CALLER REPORTS, never a reason to proceed quietly — a gate that
+    swallows what it guards is broken-closed, not safe.
+    """
+    if not caller_authz_id or not audience or not topaz_url:
+        return False
+    payload = {
+        "object_type": "task_audience",
+        "object_id": audience,
+        "relation": "can_act",
+        "subject_type": "user",
+        "subject_id": caller_authz_id,
+    }
+    try:
+        r = httpx.post(f"{topaz_url}/api/v3/directory/check", json=payload, timeout=5.0)
+        r.raise_for_status()
+        return bool(r.json().get("check"))
+    except Exception:
+        return False  # fail-closed
+
+
 def execute_direct_call(
     step: dict,
     identity: dict,

@@ -49,6 +49,34 @@ from agent_fleet.restate_analyst.workflow_bulk_resolve import PartItem, ReviewBa
 
 _SUBMIT = grouped_review_workflow.submit_decision.__wrapped__
 
+
+# ---------------------------------------------------------------------------
+# AUTHORITY GATE scaffolding (approval-bypass-bpmn-runner, 2026-08-11)
+# ---------------------------------------------------------------------------
+# `submit_decision` now gates on Topaz `can_act(caller, audience)` before resolving the
+# decision promise. These suites are about VALIDATION and CONCURRENCY, not authorization,
+# so they drive the AUTHORIZED path: a stubbed allow-decider plus an audience in workflow
+# state. Stubbing the decider does not weaken them — none of their claims involve who the
+# caller is. The gate's own discriminating pairs live in
+# tests/security/test_approval_authority_gate.py, where a stub would be the whole bug.
+#
+# PATCHES BOTH MODULE IDENTITIES (the flatten dance): sys.path carries the repo root AND
+# agent_fleet/restate_analyst, so `spo_step_executor` and
+# `agent_fleet.restate_analyst.spo_step_executor` are two distinct module objects.
+_ACTOR = "approver@example.com"
+_AUDIENCE = "promotion:SUSTAINMENT"
+
+
+@pytest.fixture(autouse=True)
+def _allow_can_act(monkeypatch):
+    import importlib
+    for _name in ("spo_step_executor", "agent_fleet.restate_analyst.spo_step_executor"):
+        try:
+            _mod = importlib.import_module(_name)
+        except ImportError:
+            continue
+        monkeypatch.setattr(_mod, "check_can_act", lambda aud, who: True, raising=False)
+
 _FINGERPRINT = "IPCN25300X"
 _MPN = "NSR01L30NXT5G"
 
@@ -92,6 +120,7 @@ def _state():
         "notice_fingerprint": _FINGERPRINT,
         "notice_id": _FINGERPRINT,
         "doc_type": "PCN",
+        "audience:decision": _AUDIENCE,
     }
 
 
@@ -107,7 +136,7 @@ async def test_two_concurrent_submits_resolve_the_promise_exactly_once():
     ctx_a = FakeSharedContext(state, resolves)
     ctx_b = FakeSharedContext(state, resolves)
 
-    out_a = await _SUBMIT(ctx_a, {"decision": {"overrides": {}}})
+    out_a = await _SUBMIT(ctx_a, {"decision": {"overrides": {}}, "acted_by": _ACTOR})
     assert out_a["accepted"] is True, out_a
     assert len(resolves) == 1, f"A's submit must resolve the decision promise once: {resolves}"
 
@@ -115,7 +144,7 @@ async def test_two_concurrent_submits_resolve_the_promise_exactly_once():
     # `await ctx.promise('decision').value()`), landing in the SAME shared state.
     state["decision_consumed"] = True
 
-    out_b = await _SUBMIT(ctx_b, {"decision": {"overrides": {}}})
+    out_b = await _SUBMIT(ctx_b, {"decision": {"overrides": {}}, "acted_by": _ACTOR})
     assert out_b["accepted"] is False, f"B's submit must NOT be accepted: {out_b}"
     assert out_b["status"] == "already_resolved", out_b
     # THE load-bearing assertion: no SECOND resolve. A second resolve is the only way
@@ -134,7 +163,7 @@ async def test_second_submit_is_not_a_hollow_acceptance():
     tell the reviewer to try again on a review that is over)."""
     state = _state()
     state["decision_consumed"] = True
-    out = await _SUBMIT(FakeSharedContext(state, []), {"decision": {"overrides": {}}})
+    out = await _SUBMIT(FakeSharedContext(state, []), {"decision": {"overrides": {}}, "acted_by": _ACTOR})
     assert out.get("accepted") is False
     assert out.get("status") == "already_resolved", out
     assert out.get("status") != "still_pending", "settled != pending — the reviewer must not be told to retry"
@@ -149,7 +178,7 @@ async def test_positive_control_unsettled_batch_still_accepts():
     unsubmittable for some unrelated reason."""
     state = _state()                       # no decision_consumed
     resolves: list = []
-    out = await _SUBMIT(FakeSharedContext(state, resolves), {"decision": {"overrides": {}}})
+    out = await _SUBMIT(FakeSharedContext(state, resolves), {"decision": {"overrides": {}}, "acted_by": _ACTOR})
     assert out["accepted"] is True, out
     assert len(resolves) == 1
 
@@ -163,7 +192,7 @@ async def test_guard_precedes_validation_so_a_settled_batch_never_re_evaluates()
     state = _state()
     state["decision_consumed"] = True
     with mock.patch.object(grouped_review_workflow, "evaluate_submission") as ev:
-        out = await _SUBMIT(FakeSharedContext(state, []), {"decision": {"overrides": {}}})
+        out = await _SUBMIT(FakeSharedContext(state, []), {"decision": {"overrides": {}}, "acted_by": _ACTOR})
     assert out["status"] == "already_resolved"
     ev.assert_not_called()
 

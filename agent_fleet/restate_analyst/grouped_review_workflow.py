@@ -33,6 +33,31 @@ from dataclasses import dataclass, field
 import restate
 from restate import Workflow, WorkflowContext, WorkflowSharedContext
 
+
+def _gate_helpers():
+    """The authority gate's two collaborators, from the leaf module that owns them.
+    Dual-path because the import root differs between the Restate service and the test
+    harness — the idiom this package already uses. Fail-closed on ImportError: an
+    unreachable decider is a refusal, never an allow."""
+    try:
+        from spo_step_executor import audience_key, check_can_act  # type: ignore[no-redef]  # noqa: PLC0415
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.restate_analyst.spo_step_executor import (  # noqa: PLC0415
+            audience_key, check_can_act,
+        )
+    return audience_key, check_can_act
+
+
+def _audience_key(promise_name: str) -> str:
+    return _gate_helpers()[0](promise_name)
+
+
+def _check_can_act(audience: str, caller_authz_id: str) -> bool:
+    try:
+        return _gate_helpers()[1](audience, caller_authz_id)
+    except ImportError:  # pragma: no cover
+        return False  # fail-closed: no decider, no approval
+
 try:  # lazy-import dance (container flattens the dir)
     from workflow_bulk_resolve import BulkDecision, Override, PartItem, ReviewBatch, resolve_batch  # type: ignore[no-redef]
 except ImportError:  # pragma: no cover - import path differs by runtime
@@ -206,6 +231,39 @@ async def submit_decision(ctx: WorkflowSharedContext, request: dict) -> dict:
     batch_items = await ctx.get("batch_items")
     if batch_items is None:
         raise restate.TerminalError("no active grouped review for this workflow", status_code=404)
+
+    # ── AUTHORITY GATE (approval-bypass-bpmn-runner, THIRD surface) ────────────────
+    # Found while gating `approve`: this handler resolves the grouped review's decision
+    # promise, so it is an APPROVAL RESOLVER too — the same authority write, on a
+    # different runner, reachable directly via the Restate ingress. The packet named two
+    # surfaces; this is the third, and gating the other two while leaving this open
+    # would have been exactly the false green the two-surface caveat warns about, one
+    # rung up.
+    #
+    # Note what this handler already did and did NOT do: it validates the CONTENT of the
+    # submission against the server-authored batch (so a client cannot invent rows), but
+    # it never asked WHO was submitting. Content authority and actor authority are
+    # different questions, and having one thoroughly is what made the other easy to miss.
+    acted_by = (request.get("acted_by") or "").strip()
+    if not acted_by:
+        raise restate.TerminalError(
+            "submit_decision requires `acted_by` (the caller's authz_id) — a settled review "
+            "with no actor is unauditable and cannot be authorized",
+            status_code=401,
+        )
+    audience = await ctx.get(_audience_key("decision"))
+    if not audience:
+        raise restate.TerminalError(
+            "no audience journalled for this grouped review — refusing to settle a review "
+            "whose authority cannot be checked",
+            status_code=403,
+        )
+    if not _check_can_act(audience, acted_by):
+        raise restate.TerminalError(
+            f"caller {acted_by!r} is not authorized (can_act) for audience {audience!r}",
+            status_code=403,
+        )
+
     # ALREADY SETTLED (the multiplayer race): the batch's decision was consumed by a
     # teammate. Refuse EXPLICITLY rather than re-validate into a hollow acceptance —
     # the promise is write-once, so a second resolve wakes nothing, and returning

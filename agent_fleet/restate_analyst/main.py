@@ -1545,6 +1545,39 @@ def _execute_service_task(task: dict) -> dict:
 CORTEX_BFF_URL = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090")
 
 
+def _check_can_act(audience: str, caller_authz_id: str) -> bool:
+    """Topaz ``can_act`` for a caller on a task audience — the SINGLE DECIDER, reached
+    through the same lazy dual-path import the rest of this module uses (the runtime
+    import root differs between the Restate service and the test harness).
+
+    Deny-by-default at every layer: an ImportError here means the decider is
+    unreachable, which is a refusal — never an allow. A gate that opens when its
+    authority is missing is the broken-closed inversion this repo has paid for before.
+    """
+    try:
+        from spo_step_executor import check_can_act  # type: ignore[no-redef]  # noqa: PLC0415
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        try:
+            from agent_fleet.restate_analyst.spo_step_executor import check_can_act  # noqa: PLC0415
+        except ImportError:
+            logger.error("can_act decider unimportable — refusing (fail-closed)")
+            return False
+    return check_can_act(audience, caller_authz_id)
+
+
+def _audience_key(promise_name: str) -> str:
+    """ONE HOME: `spo_step_executor.audience_key`. Delegated, not re-implemented — the
+    writer here and the two readers (this module's `approve`, grouped review's
+    `submit_decision`) must compute the identical key, and a reader computing a wrong
+    key would see `None` and fail closed, which is indistinguishable from "no audience
+    journalled". A copy would fail silently in exactly the direction nobody checks."""
+    try:
+        from spo_step_executor import audience_key  # type: ignore[no-redef]  # noqa: PLC0415
+    except ImportError:  # pragma: no cover — import path differs by runtime
+        from agent_fleet.restate_analyst.spo_step_executor import audience_key  # noqa: PLC0415
+    return audience_key(promise_name)
+
+
 def _register_human_task(workflow_id: str, task: dict, user_jwt: str) -> dict:
     """Register a visible HumanTask for a UserTask's approval audience — the
     Situation-B designed-await made observable. cortex-bff resolves the audience's
@@ -1699,6 +1732,10 @@ async def _run_grouped_human_await(
     ctx.set("notice_id", notice_id)
     ctx.set("doc_type", doc_type)
     ctx.set("extraction_warnings", list(request.get("extraction_warnings") or []))
+    # AUTHORITY GATE INPUT — the audience that may settle this review, journalled at the
+    # site that derived it from the definition. `submit_decision` reads it back to ask
+    # Topaz `can_act`; see `_audience_key` for why it cannot come from the submission.
+    ctx.set(_audience_key(promise_name), audience)
 
     # 2. ONE grouped HumanTask for the whole batch — identity DERIVED from the
     #    workflow key (one identity, one derivation, N consumers).
@@ -1868,6 +1905,10 @@ async def _run_definition(
                 # the name this step AWAITS, and it cannot see the definition.
                 "promise_name": promise_name,
             }
+            # AUTHORITY GATE INPUT — journal the audience under the promise this step
+            # awaits, so `approve` can check `can_act` against the DEFINITION's audience
+            # rather than one the approver's request supplied. See `_audience_key`.
+            ctx.set(_audience_key(promise_name), task["audience"])
             # SEALED mechanics: durable register BEFORE suspend, then the promise.
             await ctx.run(
                 f"register_{step.id}",
@@ -2098,10 +2139,22 @@ async def run(ctx: WorkflowContext, request: dict) -> dict:
             # The workflow suspends here indefinitely. No polling, no CPU, no
             # memory. Restate holds a few bytes of journal state until an
             # AUTHORIZED human resolves the promise (via /human_tasks/{id}/act ->
-            # the approve handler). An UNAUTHORIZED /act is denied at cortex-bff's
-            # can_act gate and never reaches here — the workflow stays suspended,
+            # the approve handler). An unauthorized caller is refused by the
+            # `approve` handler's OWN can_act gate — the workflow stays suspended,
             # correctly waiting for the right approver (not torn down).
+            #
+            # That gate used to live only at cortex-bff, and this comment used to say
+            # so. It was true of the /act path and false of the other two ways to reach
+            # `approve` (engine-a's HTTP route, and the Restate ingress directly), which
+            # is precisely how `approval-bypass-bpmn-runner` stayed open: the mitigation
+            # was real for the path everyone read, and absent for the ones they didn't.
             promise_name = f"approval_{task_id}"
+            # AUTHORITY GATE INPUT — see `_audience_key`. `.get` rather than `[...]`
+            # because this task dict is CLIENT-SUPPLIED: a missing audience must fail
+            # the gate closed, not raise a KeyError on journal replay. (It cannot
+            # actually be missing — `_register_human_task` above refuses without one —
+            # but the gate's safety should not rest on another function's precondition.)
+            ctx.set(_audience_key(promise_name), task.get("audience"))
             approval = await ctx.promise(promise_name, type_hint=dict).value()
             results.append({
                 "task_id": task_id,
@@ -2155,10 +2208,43 @@ async def approve(ctx: WorkflowSharedContext, request: dict) -> dict:
     # as the default. Resolving a name nothing awaits wakes nothing, silently.
     promise_name = request.get("promise_name") or f"approval_{task_id}"
 
+    # ── AUTHORITY GATE (approval-bypass-bpmn-runner) ───────────────────────────
+    # This handler resolves an APPROVAL — the promise the whole trust architecture
+    # treats as the enforcement point. It is its own entry point, not merely the
+    # implementation of engine-a's route: the Restate ingress reaches it directly.
+    # So it defends itself rather than trusting that something upstream did.
+    acted_by = (request.get("acted_by") or "").strip()
+    if not acted_by:
+        raise restate.TerminalError(
+            "approve requires `acted_by` (the caller's authz_id) — an approval with no "
+            "actor is unauditable and cannot be authorized",
+            status_code=401,
+        )
+    audience = await ctx.get(_audience_key(promise_name))
+    if not audience:
+        # FAIL CLOSED, and say which fact is missing. No journalled audience means
+        # either nothing is awaiting this promise or the workflow predates the gate;
+        # in both cases we cannot ask the authorization question, so we do not act.
+        # (Resolving anyway would be the broken-closed inversion: a gate that waves
+        # through precisely the cases it cannot evaluate.)
+        raise restate.TerminalError(
+            f"no audience journalled for promise {promise_name!r} — refusing to resolve "
+            "an approval whose authority cannot be checked",
+            status_code=403,
+        )
+    if not _check_can_act(audience, acted_by):
+        raise restate.TerminalError(
+            f"caller {acted_by!r} is not authorized (can_act) for audience {audience!r}",
+            status_code=403,
+        )
+
     approval_payload = {
         "status": request.get("status", "APPROVED"),
         "comments": request.get("comments", ""),
         "task_id": task_id,
+        # PROVENANCE OF THE DECISION. An approval with no actor is unauditable; this is
+        # the identity the gate above just verified, not one the payload asserted.
+        "acted_by": acted_by,
     }
 
     await ctx.promise(promise_name, type_hint=dict).resolve(approval_payload)
@@ -2891,10 +2977,31 @@ from fastapi import Depends
 # REQUIRE_TRANSPORT_AUTH flips. The announcement is the pre-positioned string the contract
 # phase's fresh-deploy test asserts against — an engine that takes the dependency but loses
 # the announcement has a real posture the gauge cannot read.
+from iagent_mesh.transport_auth import CallerIdentity  # noqa: F401 — route annotation
 from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 _announce_transport_auth(component="engine-a")
+
+
+def _restate_error_message(resp) -> str:
+    """Best-effort human-readable reason out of a Restate handler refusal.
+
+    A TerminalError surfaces as JSON with a `message`, but the shape is not a contract
+    we own, so every failure mode falls back to something a reader can act on rather
+    than to an empty string. An error surface that degrades to silence is the reporter
+    failing louder than what it reports — the one place a fallback must not be tidy.
+    """
+    try:
+        body = resp.json()
+    except Exception:
+        return (resp.text or "").strip()[:500] or f"refused with {resp.status_code}"
+    if isinstance(body, dict):
+        for k in ("message", "detail", "error"):
+            v = body.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return str(body)[:500]
 # Announced beside the transport posture, deliberately: both are "what will this pod refuse, and
 # did anyone decide it?" A disabled route whose disabling is only visible by calling it is the
 # unobservable-flag defect.
@@ -3126,6 +3233,7 @@ async def approve_task(
     workflow_id: str,
     task_id: str,
     req: ApprovalRequest,
+    caller: "CallerIdentity" = Depends(_transport_auth("engine-a")),
 ) -> JSONResponse:
     """Approve (or reject) a paused BPMN UserTask.
 
@@ -3136,7 +3244,34 @@ async def approve_task(
 
     Zero-cost waiting: the workflow consumes no compute while paused.
     Crash-proof: Restate replays from its journal on restart.
+
+    IDENTITY IS REQUIRED HERE REGARDLESS OF TRANSPORT POSTURE (approval-bypass-bpmn-runner).
+    The app-wide transport dependency runs in OBSERVE until the ENABLE_AGENTIC_AUTH flip,
+    and OBSERVE refuses nothing — which is right for ordinary routes and wrong for this
+    one. **An approval is not an ordinary route:** it resolves the promise the trust
+    architecture treats as the enforcement point. Deferring this gate to the flip would
+    leave the approval plane open until the highest-stakes, most-deferred change in the
+    programme landed. So this route re-reads the caller and refuses an unverified one on
+    its own authority.
+
+    The authorization decision itself is NOT made here — it is made once, by the handler,
+    against the audience in the workflow's journal. This route establishes WHO is calling;
+    the single decider decides what they may do.
     """
+    if not caller.verified or not caller.authz_id:
+        # 401, not 403: the caller has not established WHO they are, which is a
+        # different failure from being known and unauthorized. The handler returns
+        # the 403 once an identity exists to deny.
+        logger.warning(
+            "approve_task refused: unverified caller (reason=%s) wf=%s task=%s",
+            caller.reason, workflow_id, task_id,
+        )
+        return JSONResponse(
+            status_code=401,
+            content={"error": "identity_required",
+                     "detail": f"transport auth: {caller.reason}",
+                     "message": "approving a task requires a verified caller identity"},
+        )
     try:
         resp = requests.post(
             f"{RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{workflow_id}/approve",
@@ -3144,17 +3279,37 @@ async def approve_task(
                 "task_id": task_id,
                 "status": req.status,
                 "comments": req.comments,
+                # THE VERIFIED identity, threaded from the token — never from the body.
+                # `ApprovalRequest` deliberately has no `acted_by` field, so a client
+                # cannot supply one and Pydantic drops it if they try.
+                "acted_by": caller.authz_id,
             },
             headers={"Content-Type": "application/json"},
             timeout=30,
         )
+        if resp.status_code in (401, 403):
+            # The handler's can_act gate refused. Surface it AS a refusal with its
+            # reason — a 502 here would report the approval plane's denial as an
+            # upstream outage, sending the caller to look for a broken service
+            # instead of a missing grant.
+            logger.warning("approve_task denied by handler: caller=%s wf=%s task=%s code=%s",
+                           caller.authz_id, workflow_id, task_id, resp.status_code)
+            return JSONResponse(
+                status_code=403,
+                content={"error": "not_authorized_to_act",
+                         "message": _restate_error_message(resp),
+                         "workflow_id": workflow_id, "task_id": task_id},
+            )
         resp.raise_for_status()
+        logger.info("approve_task accepted: caller=%s wf=%s task=%s status=%s",
+                    caller.authz_id, workflow_id, task_id, req.status)
         return JSONResponse(
             content={
                 "message": f"Task '{task_id}' in workflow '{workflow_id}' approved",
                 "workflow_id": workflow_id,
                 "task_id": task_id,
                 "status": req.status,
+                "acted_by": caller.authz_id,
             },
             status_code=200,
         )
