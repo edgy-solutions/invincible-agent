@@ -2,7 +2,7 @@
 id:         undeclared-routes
 status:     open
 owner:      agent
-blocked-on: nothing — all four dispositions given, and /workflow/start is EXECUTED (retired 410, 2026-08-11). Residual is build work: write the 12 manifest rows per [[gate-class-follows-the-effect]], which is what the 3 red test_every_source_route_is_declared cases are.
+blocked-on: nothing — dispositions given, /workflow/start retired (410, 2026-08-11), and ALL 12 ROWS DECLARED (2026-08-12; test_endpoint_gating_manifest 15/15 green). Residual is the two engine-o WRITE findings, which the declaration surfaced rather than closed: /write_item_state and /write_decision_record are ungated_by_accident and need endpoint-side gates.
 closed-by:  
 repo:       invincible-agent
 summary:    RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
@@ -207,6 +207,44 @@ one, the route stops being unused and gets classified like any other action rout
 **This item unblocks on the strength of these four dispositions.**
 
 </details>
+
+## ALL 12 ROWS DECLARED — 2026-08-12, and the declaration CHANGED TWO OF THEM
+
+`test_endpoint_gating_manifest` is 15/15. The three red `test_every_source_route_is_declared`
+cases are green, and master drops from four known failures to one.
+
+**The classes were NOT copied from this packet's proposals.** Two diverged, both because
+`[[gate-class-follows-the-effect]]` landed *after* the proposals were written:
+
+* **`/write_item_state` and `/write_decision_record` are `ungated_by_accident`, not `internal`.**
+  This packet proposed all six engine-o routes as `internal`. The human's disposition accepted
+  *"the READ/ORCHESTRATION routes"* — which is four of the six, not all of them. The law is
+  explicit that effect and integrity writes are **never** acceptable on in-cluster reachability
+  alone, so the two writes are FINDINGS. A proposal written before a rule does not get to
+  outrank it.
+* **`/lineage_by_platform` is `internal`, and it is only written down because the exposure check
+  was finally run.** This packet proposed it at LOW confidence and said so: *"should be checked
+  against how the wrapper is actually reachable before it is written down."* Checked — the
+  chart's Ingress covers cortex-ui, cortex-bff, dagster and electric only, so datahub-wrapper is
+  ClusterIP with no ingress. **Declaring it on the route's shape alone would have been the
+  presence-check defect** this manifest's own amendment describes.
+
+The five cortex-bff rows landed as proposed at `gated`, verified per route — the only class in
+this file earned by verification rather than by reachability.
+
+**A guard caught a real mistake during this work**, worth recording because it is why the file is
+trustworthy: `/lineage_by_platform` was first written into the `neo4j_expert` block, and
+`test_no_stale_manifest_routes` failed with *"stale manifest routes (not found in source)"*. The
+manifest does not merely require rows to exist — it requires them to exist **where the route
+does**.
+
+### What the declaration did NOT do
+
+It classified the two writes; it did not gate them. `/write_item_state`'s caller side was minted
+2026-08-11 (`svc:review-starter`, correct by design), and the endpoint still authenticates nobody
+— the two halves were always meant to land together. `/write_decision_record` is the quieter of
+the pair and the worse for audit: its caller DEGRADES, so under REQUIRE the corpus grows holes
+routinely and nothing announces it.
 
 ## PROMOTED TO A STANDING RULE — 2026-08-11
 

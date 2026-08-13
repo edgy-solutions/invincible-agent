@@ -434,6 +434,38 @@ made deliberately rather than by the finding quietly aging out.
 
 **One CONFIRMED unminted caller. Zero `/workflow/start` consumers.**
 
+> ### REMEDIATED 2026-08-12 — and it needed a NINTH identity first
+>
+> `semantic_linker.py` now mints as **`svc:doc-tools`**. That identity did not exist: the eight
+> were supervisor, data-analyst, review-starter and engines a/d/e/o/w, and doc-tools is none of
+> them. Reusing one would have been the `mint_service_token()` defect **committed on purpose**.
+>
+> **The identity stanza was ITEM ZERO, not a follow-up** — a call cannot mint as a subject that
+> does not exist. `policy/users.yaml` (instance nine, `groups: []`) plus the `iagent-doc-tools`
+> client in the platform's `serviceClients`. The governance test decided the grants: its one call
+> is a READ that changes no routing and no governed state, so per-process identity with **zero**
+> capability grants is the correct default.
+>
+> **First identity for a workload this chart does not deploy.** doc-tools is a separate helm
+> release, so the client is created by the platform's realm import and the secret is consumed by
+> doc-tools' own chart. **Two charts, one credential, and nothing fails loudly if they drift** —
+> under OBSERVE a failed mint just logs and the call proceeds. The decode-witness is what closes
+> that gap; until then, matching `docToolsClientSecret` to `DOC_TOOLS_CLIENT_SECRET` is a manual
+> invariant.
+>
+> **A SECOND DEFECT AT THE SAME LINE, and it is the one the guard predicted.**
+> `ONTOLOGY_SVC_URL` defaulted to `http://ontology-agent-svc.default.svc.cluster.local:8084` — the
+> forbidden legacy-DNS pattern, as a **live default**, and the env var was never set in
+> doc-tools' chart. So this call had been pointing at a host that does not resolve in the current
+> cluster. `[[legacy-dns-guard-phantom-scope]]` said the guard "passes green while the forbidden
+> pattern is live in the unscanned tree." **It was, it was exactly one line, and it was this one.**
+> A disproved guard is worse than a missing one; here is the proof, with a name and a line number.
+>
+> The seam lives in `doc_tools/utils/mesh_identity.py` rather than in the asset, because
+> `doc_tools/__init__.py` eagerly imports the whole definitions graph — so a helper defined in the
+> asset could only be exercised where dagster + dagster_aws + datahub all install, and its pins
+> would have SKIPPED everywhere else. 8 pins, and the behavioural ones RUN.
+
 > ### THE COUNT WAS 2 AND IS 1 — corrected 2026-08-12
 >
 > `transport-flip`'s `blocked-on` read *"2 CONFIRMED unminted callers (dag-tools, doc-tools →

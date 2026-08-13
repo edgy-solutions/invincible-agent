@@ -218,6 +218,91 @@ services:
         class: releasable_by_design
         justification: "legacy LLM classifier -> intent/domain/task_plan; no class IRIs returned"
 
+      # ── The six undeclared engine-o routes, DECLARED 2026-08-12 ────────────────────────
+      # Classes assigned per [[gate-class-follows-the-effect]]. None of the six has any auth
+      # dependency (verified: zero Depends/current_user/token lines inside each definition), and
+      # the service is ClusterIP with no ingress.
+      #
+      # THE READS AND THE WRITES SPLIT, and the packet's original proposal did NOT. It proposed
+      # all six as `internal`; the human's disposition accepted "the READ/ORCHESTRATION routes
+      # engine-o exposes to in-cluster callers", which is not all six. The law that landed after
+      # that proposal is explicit: internal reads are acceptable WHILE THE CLOSURE HOLDS, and
+      # effect/integrity writes are never acceptable on in-cluster reachability alone. So the two
+      # writes below are FINDINGS, not `internal`.
+      - method: POST
+        path: /resolve_instance
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [review_composer.py, datahub_wrapper]
+        class: internal
+        justification: >-
+          Identifier -> instance resolution. READ; changes no state. ClusterIP, no ingress.
+          `internal` is honest ONLY while the cluster boundary is the trust boundary — the
+          condition is restated rather than assumed, and it EXPIRES at a shared cluster. Its
+          expiry is the trigger on [[engine-o-internal-hardening]].
+      - method: POST
+        path: /policy_rules
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [policy_rules_client.py]
+        class: internal
+        justification: "Serves ruleset Turtle. READ. Same closure condition as /resolve_instance."
+      - method: POST
+        path: /operable_subjects
+        identity: "user_email in body — domain/can_view scope, not a transport gate"
+        gate: domain-scope
+        exposes: gated-content
+        consumers: [spo_interview.py]
+        class: internal
+        justification: >-
+          The OPERATION-subject menu. READ. `user_email` in the BODY scopes can_view; that is a
+          CONTENT gate on the answer, not authentication of the caller — the two must not be
+          read as one, which is the transport-vs-entitlement distinction this file exists to keep.
+      - method: POST
+        path: /instances_by_property
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [gateway.py]
+        class: internal
+        justification: "Property -> instance lookup. READ. Same closure condition."
+      - method: POST
+        path: /write_item_state
+        identity: none
+        gate: none
+        exposes: action
+        consumers: [dispatch_driver.py]
+        class: ungated_by_accident
+        justification: >-
+          FINDING. INTEGRITY WRITE — stamps disposition state onto an item's node. Per
+          [[gate-class-follows-the-effect]] an effect/integrity write is NEVER acceptable on
+          in-cluster reachability alone, so this does not take `internal` despite the ClusterIP
+          posture that covers its read siblings.
+          The authority model today is caller-side only: `can_invoke(mesh:dispatchDispositions)`
+          is checked by the executor BEFORE dispatch, and the endpoint authenticates nobody. So
+          the mesh decides who may cause the effect and the effect endpoint trusts the mesh —
+          coherent, and a single point of failure with no defence in depth. An in-cluster caller
+          that bypasses the executor writes item state with no capability check anywhere.
+          CALLER SIDE REMEDIATED 2026-08-11: dispatch_driver now mints svc:review-starter here
+          (correct BY DESIGN — it is that role's own governed effect). The ENDPOINT side is still
+          open, and the two were always meant to be fixed together.
+      - method: POST
+        path: /write_decision_record
+        identity: none
+        gate: none
+        exposes: action
+        consumers: [decision_record_writer.py]
+        class: ungated_by_accident
+        justification: >-
+          FINDING. PROVENANCE/INTEGRITY WRITE — appends to the decision-record corpus, which is
+          the artifact the trust-lifecycle arc exists to make truthful. Same law, same column as
+          /write_item_state: not `internal`.
+          Its caller DEGRADES rather than stops (its own log reads "the corpus has a HOLE here"),
+          which makes this the quieter of the two failures and the worse one for audit — under
+          REQUIRE the hole becomes routine rather than exceptional, and nothing announces it.
+
   datahub_wrapper:
     file: agent_fleet/datahub_wrapper/main.py
     # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
@@ -289,6 +374,23 @@ services:
         consumers: [engine-o /resolve fan-out, dynamic_supervisor.py]
         class: ungated_by_accident
         justification: "FINDING: existence-oracle — identifier -> catalog URN/label/IRI (dataset/dashboard/chart names) for any token; NO identity field in the model, NO gate. Same-file query_metadata gates on caller_email; this resolution sibling threads neither. Identity dies here: provider model has no field to receive user_email."
+      # DECLARED 2026-08-12. The packet proposed `internal` at LOW confidence, explicitly because
+      # the wrapper's exposure could not be confirmed — "checked against how the wrapper is
+      # actually reachable before it is written down."
+      # NOW CHECKED, and that is the only reason this row is written: the chart's Ingress covers
+      # cortex-ui, cortex-bff, dagster and electric ONLY. datahub-wrapper has no ingress and is
+      # ClusterIP, so the closure condition on row 1 of the law genuinely applies here.
+      - method: POST
+        path: /lineage_by_platform
+        identity: none
+        gate: none
+        exposes: gated-content
+        consumers: [doc-tools lineage assets]
+        class: internal
+        justification: >-
+          Read-only catalogue lineage by platform. READ; changes no state. ClusterIP, no ingress
+          (verified against the chart's Ingress template, not assumed from the route's shape).
+          Same expiring closure condition as engine-o's reads.
 
   neo4j_expert:
     file: agent_fleet/neo4j_expert/main.py
@@ -337,7 +439,6 @@ services:
         consumers: [engine-o /resolve fan-out]
         class: ungated_by_accident
         justification: "FINDING: graph existence-oracle — identifier -> node IRI/URN/label (equipment serials, tail numbers, WI titles, part/procedure numbers via Cypher); no identity field, no gate"
-
   weaviate_expert:
     file: agent_fleet/weaviate_expert/main.py
     # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
@@ -799,6 +900,55 @@ services:
         consumers: [none — Dagster reads the bpmn_catalog TABLE directly, not this HTTP route]
         class: retired
         justification: "RETIRED (ADR-0029 Slice 2, gateway.py returns 410). WAS an unauthenticated enumerate of ALL workflow definitions (audit HIGH, browser-facing) — CLOSED now. DELETED later with the Slice-2 cleanup."
+
+      # ── The five undeclared cortex-bff routes, DECLARED 2026-08-12 ────────────────────
+      # All five carry `current_user: User = Depends(get_current_user)`, verified per route at
+      # the line numbers below. This is the USER plane, so the gate is Keycloak JWT verification
+      # at get_current_user — signature checked against live JWKS with algorithms=["RS256"]
+      # PINNED, and every failure path 401s including the JWKS-fetch catch-all.
+      # `gated` here is the STRONGEST class in this file and the only place it is earned by
+      # verification rather than by reachability — which is exactly why these five were the
+      # highest-confidence rows in the recommendation and the lowest-risk to write down.
+      - method: POST
+        path: /reviews
+        identity: "current_user (verified JWT)"
+        gate: auth-only
+        exposes: action
+        consumers: [cortex-ui]
+        class: gated
+        justification: "gateway.py:510. Stamps the approver FROM THE TOKEN rather than the body — the caller cannot name who approved."
+      - method: POST
+        path: /triage_tasks
+        identity: "current_user (verified JWT)"
+        gate: auth-only
+        exposes: action
+        consumers: [cortex-ui, dispatch_driver.py]
+        class: gated
+        justification: "gateway.py:332."
+      - method: GET
+        path: /instances_by_property
+        identity: "current_user (verified JWT)"
+        gate: auth-only
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "gateway.py:944. Front-door twin of engine-o's internal route of the same name — same name, DIFFERENT plane and different gate; do not read one as covering the other."
+      - method: GET
+        path: /notices/{notice_id}/provenance
+        identity: "current_user (verified JWT)"
+        gate: auth-only
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "gateway.py:904."
+      - method: GET
+        path: /reviews/{workflow_id}/batch
+        identity: "current_user (verified JWT)"
+        gate: auth-only
+        exposes: gated-content
+        consumers: [cortex-ui]
+        class: gated
+        justification: "gateway.py:639. Additionally filters on the CALLER'S OWN pending queue, so it is existence-oracle safe: a caller cannot learn that a review exists for someone else."
 
   domain_broker:
     file: helm/invincible-agent/files/domain-broker.py

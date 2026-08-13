@@ -162,3 +162,25 @@ users:
   - id: svc:engine-a
     display_name: engine-a (service - process credential for ungoverned internal callers)
     groups: []
+
+  # Instance NINE (2026-08-12) — doc-tools, and it is the FIRST identity for a subject that is
+  # not deployed by this chart. doc-tools is a separate helm release; the Keycloak client is
+  # created here (the realm lives here), and the credential is consumed there.
+  #
+  # WHY IT NEEDS ITS OWN, rather than reusing one of the eight: doc-tools is not engine-a, not
+  # the supervisor, and not the review starter. Reusing any of them would make a doc-tools call
+  # authenticate as a service it is not — the `mint_service_token()` defect committed on purpose
+  # instead of by accident. IDENTITY GRANULARITY FOLLOWS GOVERNANCE: this is a distinct process
+  # with a distinct owner, so it is a distinct subject.
+  #
+  # NO GRANTS, and the governance test says why. Its one platform-facing call is engine-o
+  # `POST /classify_legacy_table` — a READ that changes no routing and no governed state — so
+  # per-process identity with zero capability grants is the correct default. If doc-tools ever
+  # writes governed state, that is a grant decision made HERE, visible in git blame, not a
+  # capability quietly inherited by sharing someone else's credential.
+  #
+  # ITEM ZERO, NOT A FOLLOW-UP: the call cannot mint as an identity that does not exist, so this
+  # stanza precedes the code change rather than trailing it.
+  - id: svc:doc-tools
+    display_name: doc-tools (service - semantic-linker transport identity)
+    groups: []

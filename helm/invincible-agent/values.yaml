@@ -1441,6 +1441,16 @@ keycloak:
     - clientId: "iagent-engine-a"
       authzId: "svc:engine-a"
       secretRef: "engineAClientSecret"
+    # doc-tools' transport identity (2026-08-12). THE FIRST CLIENT HERE FOR A WORKLOAD THIS
+    # CHART DOES NOT DEPLOY — doc-tools is a separate helm release. The client is created here
+    # because the REALM lives here; the credential is consumed by doc-tools' own chart, which
+    # must be given DOC_TOOLS_CLIENT_ID/SECRET matching these values.
+    # THAT SPLIT IS THE FAILURE MODE TO WATCH: two charts, one credential, and nothing fails
+    # loudly if they drift — doc-tools would simply mint nothing and go on working under
+    # OBSERVE, right up until REQUIRE. The decode-witness is what closes that gap.
+    - clientId: "iagent-doc-tools"
+      authzId: "svc:doc-tools"
+      secretRef: "docToolsClientSecret"
 
   # Registration identity for engine-d (see serviceClients above).
   engineDClientSecret: "sandbox-engine-d-secret"
@@ -1460,6 +1470,10 @@ keycloak:
   supervisorClientSecret: "sandbox-supervisor-secret"
   # Engine A process credential — reaches engine-a as ENGINE_A_CLIENT_SECRET.
   engineAClientSecret: "sandbox-engine-a-secret"
+  # doc-tools transport identity. Consumed by the SEPARATE doc-tools release as
+  # DOC_TOOLS_CLIENT_SECRET — set the same value in doc-tools' chart, or its semantic_linker
+  # mints nothing (silently, under OBSERVE) and 401s the moment REQUIRE lands.
+  docToolsClientSecret: "sandbox-doc-tools-secret"
   service:
     type: ClusterIP
     port: 8080

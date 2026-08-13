@@ -143,6 +143,31 @@ Enforced by the vocabulary test: a `parked` item with neither field fails. A six
 
 ## KNOWN LIMITATION — the seals guarantee board-matches-HEADER, never header-matches-BODY
 
+> **AMENDED 2026-08-12 — this is not a `summary:` problem. It is EVERY DERIVED FIELD.**
+>
+> The limitation was first written from a stale `summary:`, and the wording below still reads as
+> though `summary:` were the vulnerable field. Three instances now, three different fields, one
+> mechanism:
+>
+> | field | instance |
+> |---|---|
+> | `summary:` | `retire-inline-task-loop` — body updated with a completed security read, summary rendered the pre-read state |
+> | `status:` / `blocked-on:` | four `blocked-on-human` items describing decisions the human had already made (2026-08-11 amendment) |
+> | `blocked-on:` | `transport-flip` claimed **2** unminted callers while the packet body stated **1** in two separate places (corrected 2026-08-12) |
+>
+> **The third is the sharpest, because the body was not merely newer — it was RIGHT, twice, in a
+> table and a heading, and the header still shipped the wrong number into a flip precondition.**
+> No amount of care with `summary:` would have caught it.
+>
+> **The rule generalises:** every header field is a DERIVED claim about the body, and each one can
+> go stale independently. `blocked-on:` is the most dangerous of them, because a wrong `summary:`
+> misleads a browser while a wrong `blocked-on:` misdirects *work* — it sends someone hunting a
+> thing that does not exist, or tells them to wait for something already given.
+>
+> Still no automated fix, for the reason below: a generator that inferred any of these from the
+> body would be a second decider. The procedural repair widens to match — **whoever edits a
+> packet's body checks every header field it could have invalidated, not just the summary.**
+
 **Found 2026-08-10, by the limitation firing.** `retire-inline-task-loop`'s body was updated with
 a completed security read (*outcome: cleanup, not a fix*, with the reachability evidence). Its
 `summary:` header was not. So the board rendered the **pre-read** state — "the condition is now
