@@ -165,6 +165,41 @@ repair is procedural and belongs at the point of edit: **whoever edits a packet'
 whether its header still describes it.** Recorded here so the limitation is a known property of
 the design rather than a surprise the next reader rediscovers from a stale board line.
 
+### AMENDMENT 2026-08-11 (b) — the DETECTION method, since there is no automated fix
+
+The paragraph above says no automated fix is proposed and that the repair is procedural. It stops
+one step short of saying *what the procedure is*, and a procedure nobody can perform is not a
+repair. Stated now, because the limitation fired again the same evening — in the mildest possible
+form, on a closure, which is where it is easiest to miss:
+
+`approval-bypass-bpmn-runner` was closed at `d3ef8bf`. The header was updated
+(`status: closed`, `closed-by`), every seal passed, and the board regenerated cleanly — while the
+rendered line read:
+
+> **approval-bypass-bpmn-runner** — HIGH (declared, unresolved) — …
+> status: closed · closed-by: d3ef8bf
+
+**Header and body disagreeing, in the artifact built to stop exactly that**, with six green drift
+tests over it. The `summary` field is part of the header, so nothing was out of sync by the
+generator's definition; the sentence was simply false.
+
+> **THE PROCEDURE: after regenerating, READ THE RENDERED LINE — do not trust the exit code.**
+
+The drift seals answer *"does the board match the headers?"*. Whether the header still means
+anything is not a question they can be asked. **A green regeneration is evidence the pipeline
+ran, never evidence the sentence is true**, and the closure case is the dangerous one because
+every mechanical signal is maximally reassuring precisely when the summary is most likely stale —
+it was written to describe an open defect and is untouched by closing it.
+
+Cheap form: closing or re-scoping an item means **re-reading its `summary:` as a sentence** and
+asking whether a reader who saw only that line would be misled. In practice the tell is tense —
+a summary that describes a live defect ("resolves the promise with NO caller identity") beside
+`status: closed`.
+
+Generalises past this board: **any generated index inherits the truth of its inputs and reports
+only its own consistency.** The seal's scope and the reader's question are different questions,
+and a green seal is routinely mistaken for an answer to the second.
+
 ### AMENDMENT 2026-08-11 — the limitation's WORST case is a human ruling, and it has its own rule
 
 > **A human ruling recorded in conversation is not recorded. The packet header is where it lands,
