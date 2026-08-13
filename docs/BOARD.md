@@ -69,7 +69,7 @@ _Coverage: **25 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
 - **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
-  status: open · owner: agent · blocked-on: /workflow/start disposition needs the cross-repo consumer sweep finished — doc-tools and cortex-ui remain
+  status: open · owner: agent · blocked-on: nothing — all four dispositions given, and /workflow/start is EXECUTED (retired 410, 2026-08-11). Residual is build work: write the 12 manifest rows per [[gate-class-follows-the-effect]], which is what the 3 red test_every_source_route_is_declared cases are.
   → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
 
 ## parked

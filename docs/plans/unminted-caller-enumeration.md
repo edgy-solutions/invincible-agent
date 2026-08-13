@@ -219,7 +219,20 @@ Ruled 2026-08-10: `/workflow/start` is to be **disabled, gated on a cross-repo c
 Its `consumers: [none-found]` is a static-analysis result over the repos swept so far, and
 `dag-tools` / `cortex-ui` are plausible callers of a workflow-start endpoint.
 
-**Status: 3 of the 4 answered — all NO.** `iagent-mesh-sdk` (repo 2) and `dag-tools` (repo 3)
+> ### ANSWERED AND ACTED ON — 2026-08-11
+>
+> **5 of 5 repos, zero consumers.** `cortex-ui` — the one that mattered in the original
+> conjecture — turned out to be a **structural** zero rather than an empirical one: a static SPA
+> behind nginx with no server-side origin, so it cannot be a consumer of anything server-side.
+> That is a stronger negative than "we looked and found none."
+>
+> `/workflow/start` is now **retired behind a 410**, `ENABLE_WORKFLOW_START` reverses it. See the
+> EXECUTED section in `endpoint-gating-undeclared-routes-recommendation.md`.
+>
+> **This packet's second question is CLOSED.** The unminted-caller question continues below. The
+> status paragraph that follows is kept as the record of how the sweep read mid-flight.
+
+**Status (as of repo 4): 3 of the 4 answered — all NO.** `iagent-mesh-sdk` (repo 2) and `dag-tools` (repo 3)
 have **no `/workflow/start` consumer**; the dag-tools check covered all file types, not just
 `.py`, so a config- or template-driven caller would have shown. `doc-tools` (repo 4) also has
 **no `/workflow/start` consumer** — established by endpoint enumeration, not call-site grep (see

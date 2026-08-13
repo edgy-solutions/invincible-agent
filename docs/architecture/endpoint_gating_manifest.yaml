@@ -404,11 +404,30 @@ services:
       - method: POST
         path: /workflow/start
         identity: "user_jwt (optional, default empty)"
-        gate: "delegates (per-step gates in the runner)"
+        gate: "410-retired (default); ENABLE_WORKFLOW_START=true reverses it"
         exposes: action
-        consumers: [none-found]
-        class: delegates
-        justification: "starts a BPMN workflow; the runner relies on per-step gates (service-task 401/403, direct_call can_invoke, spo_operation verify)"
+        consumers: [none-found across all 5 repos, verified 2026-08-11]
+        class: retired
+        justification: >-
+          RETIRED 2026-08-11 per the verify-then-disable ruling: an ungated action route with no
+          consumer is withdrawn rather than classified. Same class and same 410 shape as
+          /bpmn/save and /bpmn/catalog — live -> retired -> deleted.
+          ONE DIFFERENCE FROM ITS SIBLINGS, STATED RATHER THAN STRETCHED: those were retired
+          because a replacement landed; this one is retired because nothing calls it. So the
+          ENABLE_WORKFLOW_START flag is a FALSIFICATION LEVER for the sweep, not a supported
+          configuration — if a real consumer surfaces, the disposition reopens on the packet
+          rather than the flag being set and forgotten in one environment.
+          The condition was met at 5 of 5 repos —
+          platform, iagent-mesh-sdk, dag-tools, doc-tools all zero, and cortex-ui is a static SPA
+          behind nginx with no server-side origin, so structurally incapable of being one. The
+          dag-tools and doc-tools negatives came from ENDPOINT ENUMERATION rather than call-site
+          grep, which is what makes "zero" a bound rather than a hope.
+          Default-off, NOT deleted: if the sweep missed a consumer the failure must name itself
+          rather than 404 into a routing mystery, so the route answers 410 GONE with the ruling,
+          this manifest's packet, and the re-enable switch in the body. The posture is announced
+          at startup so it is legible without calling the route.
+          The per-step gates named in the previous justification are real and unchanged; they are
+          simply no longer the only thing standing in front of an unused action route.
       - method: POST
         path: /workflow/{workflow_id}/task/{task_id}/approve
         identity: none

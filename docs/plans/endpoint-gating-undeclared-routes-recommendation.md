@@ -2,7 +2,7 @@
 id:         undeclared-routes
 status:     open
 owner:      agent
-blocked-on: /workflow/start disposition needs the cross-repo consumer sweep finished — doc-tools and cortex-ui remain
+blocked-on: nothing — all four dispositions given, and /workflow/start is EXECUTED (retired 410, 2026-08-11). Residual is build work: write the 12 manifest rows per [[gate-class-follows-the-effect]], which is what the 3 red test_every_source_route_is_declared cases are.
 closed-by:  
 repo:       invincible-agent
 summary:    RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
@@ -163,6 +163,33 @@ The read/orchestration routes engine-o exposes to in-cluster callers are accepte
 current posture. The residual risk is filed as `engine-o-internal-hardening` with a **trigger**,
 not a queue position — per the bank rule, a parked item with no firing condition rots.
 
+### `/workflow/start` — EXECUTED 2026-08-11, the condition was met and nobody noticed
+
+> **The gate cleared and the item did not move.** 5 of 5 repos swept, zero consumers. The
+> disposition below had been waiting on a condition that was already satisfied — the same
+> header-outlives-the-fact shape ADR-0040's amendment is about, one field over.
+
+**Done:** `main.py` `start_workflow` returns **410 GONE** unless `ENABLE_WORKFLOW_START=true`.
+Manifest row moved to `class: retired` alongside `/bpmn/save` and `/bpmn/catalog`. Pinned by
+`tests/test_workflow_start_disabled.py` (10 pins, including the re-enable path).
+
+**Why 410 and not deletion.** Verification bounds the risk of disabling; a **self-explaining
+refusal bounds the cost of having been wrong**. A 404 is indistinguishable from a bad ingress or a
+typo and sends a caller after the wrong problem — which would be the silent-refusal class arriving
+by the very door this decision closed. The 410 body names the ruling, this packet, and the
+re-enable switch, and a call while disabled is logged as the sweep's falsification signal.
+
+**The flag is a falsification lever, not a supported configuration.** Its siblings were retired
+because a replacement landed; this one is retired because nothing calls it. If a real consumer
+surfaces, the disposition reopens *here* — it does not get switched on in one environment and
+forgotten, which would recreate the undeclared-route state the item exists to remove.
+
+**The posture is announced at startup** (`workflow/start: DISABLED (default) [engine-a]`), so an
+operator can learn which state a pod is in without calling a route they have been told not to use
+— `[[flag-effects-must-be-observable]]`.
+
+<details><summary>The original ruling, kept for the reasoning</summary>
+
 ### `/workflow/start` — DISABLE, GATED ON A CROSS-REPO CONSUMER SWEEP
 
 `consumers: [none-found]` is a **static-analysis result over the repos swept so far**, and four
@@ -178,6 +205,8 @@ four-repo read. **Same read, two answers.** If it confirms zero consumers, disab
 one, the route stops being unused and gets classified like any other action route.
 
 **This item unblocks on the strength of these four dispositions.**
+
+</details>
 
 ## PROMOTED TO A STANDING RULE — 2026-08-11
 

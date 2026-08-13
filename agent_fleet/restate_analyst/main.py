@@ -181,6 +181,38 @@ ONTOLOGY_RESOLVE_URL = os.getenv(
     "http://iagent-engine-o:8084/resolve",
 )
 ONTOLOGY_TIMEOUT = 30  # seconds — ontology resolution is fast
+
+# ---------------------------------------------------------------------------
+# /workflow/start — DISABLED BY DEFAULT (verify-then-disable, 2026-08-11)
+# ---------------------------------------------------------------------------
+# RULED in docs/plans/endpoint-gating-undeclared-routes-recommendation.md: an ungated action
+# route with no consumer is disabled rather than classified. The condition was "verify no
+# consumer across ALL repos, THEN disable" — never disable-and-discover, which manufactures the
+# silent-refusal class this arc spent a week removing.
+#
+# THE CONDITION IS MET, 5 of 5 repos: platform, iagent-mesh-sdk, dag-tools, doc-tools (all zero)
+# and cortex-ui (a static SPA behind nginx — no server-side origin, so structurally incapable of
+# being a consumer). The doc-tools and dag-tools negatives were established by ENDPOINT
+# ENUMERATION rather than call-site grep, which is what makes "zero" a bound rather than a hope.
+#
+# DEFAULT-OFF, NOT DELETED, and the flag is the point: if the sweep missed a consumer, the
+# failure must NAME ITSELF rather than 404 into a routing mystery. The route answers 410 with the
+# ruling, the packet and the re-enable switch in the body — a disabled route that explains itself
+# is the opposite of the silent refusal this decision exists to avoid.
+ENABLE_WORKFLOW_START = os.getenv("ENABLE_WORKFLOW_START", "false").lower() in ("1", "true", "yes")
+
+
+def _workflow_start_posture_line() -> str:
+    """`workflow/start: DISABLED (default)` — posture AND its source.
+
+    Announced because `[[flag-effects-must-be-observable]]`: a flag whose set and unset states
+    look the same from outside is a lie with a config schema. Here the states differ loudly at
+    the route, but an operator must be able to learn which one this pod is in WITHOUT sending a
+    request to a route they have been told not to use.
+    """
+    state = "ENABLED" if ENABLE_WORKFLOW_START else "DISABLED"
+    src = "explicit config" if os.getenv("ENABLE_WORKFLOW_START") is not None else "default"
+    return f"workflow/start: {state} ({src}) [engine-a]"
 AGENT_HTTP_TIMEOUT = int(os.getenv("AGENT_HTTP_TIMEOUT", "120"))
 RESTATE_INGRESS_URL = os.getenv(
     "RESTATE_INGRESS_URL",
@@ -2863,6 +2895,10 @@ from iagent_mesh.transport_auth import announce as _announce_transport_auth
 from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
 from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
 _announce_transport_auth(component="engine-a")
+# Announced beside the transport posture, deliberately: both are "what will this pod refuse, and
+# did anyone decide it?" A disabled route whose disabling is only visible by calling it is the
+# unobservable-flag defect.
+logger.info(_workflow_start_posture_line())
 app = FastAPI(
     **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
     dependencies=[Depends(_transport_auth("engine-a"))],
@@ -3028,9 +3064,40 @@ class ApprovalRequest(BaseModel):
 async def start_workflow(req: WorkflowStartRequest) -> JSONResponse:
     """Start a new BPMN workflow execution via Restate.
 
-    Sends the task list to the BPMNWorkflowRunner's ``run`` handler.
-    The workflow_id is used as the Restate workflow key.
+    DISABLED BY DEFAULT since 2026-08-11 — see `ENABLE_WORKFLOW_START` above and
+    `docs/plans/endpoint-gating-undeclared-routes-recommendation.md`. Sends the task list to the
+    BPMNWorkflowRunner's ``run`` handler; the workflow_id is the Restate workflow key.
     """
+    if not ENABLE_WORKFLOW_START:
+        # 410 GONE, NOT 404. A 404 is indistinguishable from a routing mistake, a bad ingress or
+        # a typo — it would send a caller hunting the wrong problem. 410 says "this existed, it
+        # was withdrawn on purpose", and the body names WHO decided, WHY, and HOW TO UNDO IT.
+        #
+        # This is the verify-then-disable pair's second half: verification bounds the risk of
+        # disabling, and a self-explaining refusal bounds the cost of having been WRONG about it.
+        logger.warning(
+            "/workflow/start called while DISABLED (workflow_id=%r) — the cross-repo sweep found "
+            "zero consumers, so this call is either a new consumer or the sweep missed one; "
+            "set ENABLE_WORKFLOW_START=true to restore and re-open the disposition",
+            req.workflow_id,
+        )
+        return JSONResponse(
+            status_code=410,
+            content={
+                "error": "workflow/start is disabled",
+                "reason": (
+                    "Ruled DISABLE after a 5-of-5-repo consumer sweep found zero consumers "
+                    "(cortex-ui is a static SPA with no server-side origin). An ungated action "
+                    "route with no consumer is withdrawn rather than classified."
+                ),
+                "decision": "docs/plans/endpoint-gating-undeclared-routes-recommendation.md",
+                "re_enable": "set ENABLE_WORKFLOW_START=true",
+                "if_you_are_a_real_consumer": (
+                    "the sweep was wrong — say so on the packet above; do not silently re-enable "
+                    "in one environment, because that recreates the undeclared-route state"
+                ),
+            },
+        )
     try:
         resp = requests.post(
             f"{RESTATE_INGRESS_URL}/BPMNWorkflowRunner/{req.workflow_id}/run",
