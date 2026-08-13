@@ -46,7 +46,50 @@ summary:    DISPROVED guard — `SCANNED_DIRS` lists "doc-tools", which is a SIB
 > **The limit of that claim, stated so it is not over-read:** it bounds *this* guard, keyed on the
 > name `SCANNED_DIRS`. It says nothing about whether OTHER guards declare scopes they never read
 > under different variable names. That is the general question — *which guards assert coverage
-> they cannot deliver?* — and it is unasked, not answered.
+> they cannot deliver?*
+>
+> ## THE OFFENDER WAS REAL — confirmed 2026-08-12
+>
+> This packet said the guard "passes green while the forbidden pattern is live in the unscanned
+> tree." **It was, and here it is:**
+>
+> ```
+> doc_tools/assets/semantic_linker.py:8
+> ONTOLOGY_SVC_URL = os.getenv("ONTOLOGY_SERVICE_URL",
+>                              "http://ontology-agent-svc.default.svc.cluster.local:8084")
+> ```
+>
+> A **live default**, not a docstring — and `ONTOLOGY_SERVICE_URL` was never set in doc-tools'
+> chart, so every classify call had been aimed at a host that does not resolve in the current
+> cluster. Exactly one offender in the whole tree, which is the outcome that makes the case
+> cleanly: the guard's scope was wrong by one directory, and that one directory held one real
+> defect. Fixed in doc-tools (`b28f0ed`) together with the mint, since both were on the same line.
+>
+> **This is what upgrades the packet from "a guard that could have missed something" to "a guard
+> that did."** The claim of coverage was false AND load-bearing.
+>
+> ## THE GENERAL QUESTION IS NOW GUARDED — `tests/routing/test_guard_scopes_are_real.py`
+>
+> A meta-guard, because per `[[naming-a-class-is-not-a-guard]]` naming the class in this packet
+> prevents nothing. It walks every module-level scope constant in `tests/` (`*_DIRS`, `*_ROOTS`,
+> `*_TREES`, `*_PATHS`) and asserts every directory named actually exists — keyed on the naming
+> convention rather than on a list, so a new guard following the convention is covered the day it
+> lands rather than when someone remembers to add it.
+>
+> Three properties beyond the obvious one:
+>
+> * **The sibling shape is pinned separately.** `doc-tools` was not a typo, it was a real tree one
+>   level up, which is why it read as correct. A scope naming something that resolves as `../x`
+>   but not `./x` is reported as its own failure with its own message.
+> * **It refuses to pass vacuously.** `test_the_sweep_finds_something_to_check` fails if the sweep
+>   finds no scope constants at all — the meta-guard turned on itself, since "checks nothing,
+>   reports success" is the precise defect it exists to catch.
+> * **Break-on-purpose.** A phantom scope is injected and the detector must report it, so the
+>   check is proven to fire rather than proven to be currently clean.
+>
+> **What it deliberately does NOT assert:** that a scope is wide *enough*. Declared-and-unread is
+> a lie; declared-too-narrow is a judgement. A guard that argued about scope decisions it cannot
+> evaluate would get relaxed, and a relaxed guard is the state this packet exists to escape.
 
 **This is a disproved guard, not a missing one**, which is why it is filed above the sweep row that
 found it. A missing guard is a known gap. A disproved guard is a *claim of coverage* that is false,
