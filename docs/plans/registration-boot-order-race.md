@@ -102,6 +102,39 @@ We have a live instance of EACH, which is what makes the pair legible rather tha
    No new retry logic anywhere. No guessing on the engine side. The ruling stays intact for
    the case it was written for, and the boot race stops being a race.
 
+   **BUILT 2026-08-14** — `_contract_d_check` now returns `substrate_ready` + `sentinel`, and
+   `/v1/register` returns **503 `deferred`** when the substrate is not ready, **422 `rejected`**
+   (unchanged) when it is. The sentinel probe runs ONLY when something is missing, so the happy
+   path keeps its single query.
+
+### "Populated" has three definitions and two of them are wrong
+
+This is the part to defend, because the wrong answer looks simpler:
+
+| definition | verdict |
+|---|---|
+| `count(:OntologyClass) > 0` | **WRONG.** True the instant the FIRST class lands, so it reports READY for the rest of the ingest. The race window narrows instead of closing, and anything registering mid-load gets a permanent 422 for a class that was seconds from existing. |
+| "all expected classes present" | **Unknowable.** The registrar cannot enumerate what the manifest was supposed to produce — that set lives in `prime_databases.py` plus whatever domain TTLs a deployment adds. |
+| a **sentinel** class | **RIGHT.** Presence means the ingest reached its TERMINAL state, not that it started. It is also the pattern already in use: the re-register hook waits on exactly this node for exactly this reason. |
+
+Terminality is not provable from source, so what is PINNED instead is that the registrar's
+default sentinel equals helm's `primeSubstrate.reregisterEngines.sentinelUri`. Those two answer
+the same question, and a drift between them reopens the race in the window where the hook has
+released the engines but the registrar does not yet call the substrate ready.
+
+That pin was earned, not assumed. Mutation testing found the first version of it worthless: it
+read the imported module's constant, which binds from an env var an earlier test had set, so
+repointing the default at `mesh#Request` (an early-landing class — the `count>0` defect wearing
+a different hat) left every test green. Reading the default from SOURCE catches it. Both
+mutations are now caught: pre-fix-never-discriminates (3 pins fail) and non-terminal-sentinel
+(1 pin fails).
+
+**Failure mode if the sentinel never arrives** (a deployment with no idp layer): registrations
+get 503, the SDK retries its bounded 5 attempts, and it ends at the same loud named
+`UNREGISTERED` alarm — with a 5xx reason instead of a 422 one. Degraded to loud, never to
+silent, and never an infinite loop. An empty `MESH_REGISTRAR_SUBSTRATE_SENTINEL` disables the
+discrimination entirely and restores always-permanent behaviour, as an announced escape hatch.
+
 This is the same move the codebase already makes twice: the realm-reconcile job's admin-token
 failure DISCRIMINATES "no password reached this job" from "the password is wrong" because they
 route to different repairs (`realm-reconcile-job.yaml:87-93`); the router separates

@@ -235,10 +235,53 @@ def _derive_provider(name: str, verb_iri: str) -> str:
     return name
 
 
+# The class whose presence means THE ONTOLOGY INGEST REACHED ITS TERMINAL STATE.
+#
+# "Is the class graph populated?" has three plausible definitions and only one is safe:
+#
+#   count(:OntologyClass) > 0   — WRONG. True the instant the FIRST class lands, so the
+#                                 window just gets narrower: registrations arriving mid-ingest
+#                                 are told the substrate is ready and get a permanent 422 for
+#                                 a class that was three seconds from existing.
+#   "all classes present"       — unknowable. The registrar cannot enumerate what the manifest
+#                                 was supposed to produce; that set lives in prime_databases.py
+#                                 and in whatever domain TTLs a given deployment adds.
+#   a SENTINEL class            — RIGHT, and the pattern this codebase already uses. The
+#                                 re-register hook waits on exactly this node for exactly this
+#                                 reason (helm values: primeSubstrate.reregisterEngines.
+#                                 sentinelUri). Presence means the ingest RAN TO COMPLETION,
+#                                 not that it started.
+#
+# Keep this in step with the helm sentinel; they are answering the same question and a drift
+# between them means the hook and the registrar disagree about when the substrate is ready.
+_SUBSTRATE_SENTINEL_URI = os.getenv(
+    "MESH_REGISTRAR_SUBSTRATE_SENTINEL",
+    "http://invincible-agent/idp#Dataset",
+)
+
+
 def _contract_d_check(input_uri: str, output_uri: str) -> dict:
     """Verify both URIs exist as :OntologyClass nodes in Neo4j.
 
-    Returns ``{"ok": bool, "missing": [..], "checked": [..]}``.
+    Returns ``{"ok": bool, "missing": [..], "checked": [..], "substrate_ready": bool,
+    "sentinel": str}``.
+
+    ``substrate_ready`` is the DISCRIMINANT, and it exists because a bare "missing"
+    answers two questions at once whose repairs are opposites:
+
+      * the class graph is not populated YET (an engine booted ahead of the ontology
+        ingest) — becomes true on its own, so the caller should RETRY;
+      * these classes will NEVER exist (no TTL declares them) — a human must fix the
+        ontology, so retrying is an infinite loop against a real defect.
+
+    The ENGINE cannot tell these apart: from inside one rejection they are the same
+    ``missing: [...]``. ADR-0006's addendum had to choose, and chose permanent — correct
+    for the second case, and the reason a work cluster sat unrouted until someone
+    restarted a pod by hand. The registrar CAN tell them apart, because it is the only
+    party that sees both the requested URIs and the state of the graph. So it decides
+    here and says which one it means in the status code (see the caller).
+
+    Only probed when something is actually missing: the happy path keeps its single query.
     """
     driver = _get_neo4j_driver()
     with driver.session() as session:
@@ -250,11 +293,25 @@ def _contract_d_check(input_uri: str, output_uri: str) -> dict:
             """,
             uris=[input_uri, output_uri],
         ).single()
-    missing = rec["missing"] if rec else [input_uri, output_uri]
+        missing = rec["missing"] if rec else [input_uri, output_uri]
+
+        substrate_ready = True
+        if missing and _SUBSTRATE_SENTINEL_URI:
+            srec = session.run(
+                "RETURN EXISTS { MATCH (:OntologyClass {uri: $uri}) } AS present",
+                uri=_SUBSTRATE_SENTINEL_URI,
+            ).single()
+            substrate_ready = bool(srec["present"]) if srec else False
+
     return {
         "ok": not missing,
         "missing": missing,
         "checked": [input_uri, output_uri],
+        # An EMPTY sentinel setting disables the discrimination and restores the
+        # always-permanent behaviour — an announced escape hatch for a deployment whose
+        # ontology legitimately has no idp layer, so it is never silently in force.
+        "substrate_ready": substrate_ready,
+        "sentinel": _SUBSTRATE_SENTINEL_URI,
     }
 
 
@@ -374,8 +431,43 @@ def register(manifest: RegistrationManifest) -> RegistrationResult:
     # Step 1: Contract D (unchanged — read-only check, runs before any write).
     cd = _contract_d_check(manifest.input_uri, manifest.output_uri)
     if not cd["ok"]:
+        # THE SUBSTRATE IS NOT READY — this is a TIMING fact, not a contract violation.
+        # The sentinel is absent, so the ontology ingest has not reached its terminal
+        # state and these classes may be seconds from existing. 503 rather than 422 puts
+        # it on the SDK's existing retry ladder (>=500 -> bounded exponential backoff),
+        # so an engine that booted ahead of the ingest heals itself instead of serving
+        # unregistered until a human notices. Bounded, so a sentinel that never arrives
+        # still ends at the same loud named alarm rather than looping forever.
+        if not cd["substrate_ready"]:
+            logger.warning(
+                "Contract D DEFERRED for %s: missing %s, but sentinel %s is absent — "
+                "the ontology ingest has not completed. Returning 503 (retryable): this "
+                "is an ordering race, not a contract violation.",
+                tool_urn, cd["missing"], cd["sentinel"],
+            )
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "status": "deferred",
+                    "tool_urn": tool_urn,
+                    "contract_d_check": cd,
+                    "reason": (
+                        f"Ontology substrate not ready: sentinel {cd['sentinel']} is "
+                        "absent, so the class graph is not yet populated to its terminal "
+                        "state. The requested URIs may exist once the ingest completes — "
+                        "this is RETRYABLE and is NOT a Contract D violation."
+                    ),
+                },
+            )
+
+        # The substrate IS ready and these URIs still do not resolve. That is a real,
+        # permanent contract violation: no source declares these classes, and no amount
+        # of retrying or restarting will conjure them. Unchanged 422, unchanged alarm —
+        # this is the case ADR-0006's ruling was written for.
         logger.warning(
-            "Contract D rejection for %s: missing %s", tool_urn, cd["missing"]
+            "Contract D rejection for %s: missing %s (substrate IS ready — sentinel %s "
+            "present, so this is a genuine declaration gap, not a boot race)",
+            tool_urn, cd["missing"], cd["sentinel"],
         )
         raise HTTPException(
             status_code=422,
@@ -385,8 +477,12 @@ def register(manifest: RegistrationManifest) -> RegistrationResult:
                 "contract_d_check": cd,
                 "reason": (
                     "input_uri and/or output_uri don't resolve to any "
-                    ":OntologyClass node in Neo4j. Run the canonical "
-                    "ontology ingest before registering."
+                    ":OntologyClass node in Neo4j, and the ontology ingest HAS "
+                    "completed (sentinel present) — so no TTL declares them. "
+                    "Declare the class in its ontology and re-ingest; retrying "
+                    "cannot help. NB a seeder that MERGEs endpoint classes can mask "
+                    "this locally while every fresh cluster fails (mesh#DispositionReview, "
+                    "2026-08-14)."
                 ),
             },
         )
