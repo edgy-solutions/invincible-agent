@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **25 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **26 of 74 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## open
 
@@ -47,6 +47,10 @@ _Coverage: **25 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **legacy-dns-guard-phantom-scope** — DISPROVED guard — `SCANNED_DIRS` lists "doc-tools", which is a SIBLING REPO not a subdirectory, so the walker skips it silently and passes green while the forbidden pattern is live in the unscanned tree.
   status: open · owner: unassigned
   → [docs/plans/legacy-dns-guard-phantom-scope.md](plans/legacy-dns-guard-phantom-scope.md)
+
+- **registration-boot-order-race** — An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries — the ruling says 422 is permanent, and it is right for a real contract violation and wrong for "the graph is not populated yet". Witnessed at work 2026-08-14; recovery was a hand restart. The registrar is the only party that can tell the two apart.
+  status: open · owner: agent · blocked-on: nothing — the discriminating read is named below (which of the three hook failure modes fired). The repair choice is a design call the read informs, not blocks.
+  → [docs/plans/registration-boot-order-race.md](plans/registration-boot-order-race.md)
 
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned

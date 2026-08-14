@@ -135,3 +135,18 @@ mesh:ImpactSet a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Impact Set" ;
   rdfs:comment "Downstream blast radius of a schema change, returned by assessImpact." .
+
+# DECLARED HERE 2026-08-14 BECAUSE IT WAS DECLARED NOWHERE. mesh:proposeDisposition has
+# named this as its output_uri since it woke, but no TTL ever declared the class — it
+# existed only because scripts/seed_sandbox_predicates.py MERGEs (not MATCHes) its
+# endpoint classes into being as a side effect of seeding the predicate. So sandbox had
+# the node, every fresh cluster did not, and the registrar (which MATCHes, correctly, and
+# must never invent ontology) refused the edge with a Contract D 422 that was telling the
+# exact truth. Witnessed at work 2026-08-14: nine of Engine A's ten verbs registered and
+# this one could not, permanently — a restart cannot conjure a class no source declares.
+# The input side was never the problem: pcn:SustainmentNotice is properly declared in
+# pcn_extension.ttl. See docs/plans/registration-boot-order-race.md.
+mesh:DispositionReview a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Disposition Review" ;
+  rdfs:comment "Output of proposeDisposition: a server-authored batch of per-part disposition proposals (dispatch-to-qualification / last-time-buy / alternate-sourcing / archive) for a sustainment notice, opened as ONE human review that fans out per-part dispatch tasks on approval." .

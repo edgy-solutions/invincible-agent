@@ -1,0 +1,150 @@
+---
+id:         registration-boot-order-race
+status:     open
+owner:      agent
+blocked-on: nothing — the discriminating read is named below (which of the three hook failure modes fired). The repair choice is a design call the read informs, not blocks.
+closed-by:
+code-site:  agent_fleet/mesh_registrar/main.py:238
+repo:       invincible-agent
+summary:    An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries — the ruling says 422 is permanent, and it is right for a real contract violation and wrong for "the graph is not populated yet". Witnessed at work 2026-08-14; recovery was a hand restart. The registrar is the only party that can tell the two apart.
+---
+
+# A 422 at boot is two different facts wearing one status code
+
+**Witnessed on the work cluster 2026-08-14.** Engine A started, attempted its ten
+registrations against an empty class graph, took ten Contract D rejections, and then served
+traffic unregistered until a human restarted the pod ~24 minutes later. Nine of ten verbs
+landed on the restart, `mesh:lookupOwnership` among them. Reported log stamps put the failed
+registrations at 02:21:37 and the `ingest_ontology_job` completion at 02:21:56 — nineteen
+seconds apart, in the wrong order.
+
+Nothing here is a mystery, and that is the point: the chart PREDICTED this state in prose
+(`helm/invincible-agent/values.yaml:900-919` — *"a perfect class graph with ZERO verbs →
+routing silently degrades to the generalist"*), shipped a hook to sequence around it, and the
+hook did not save the deploy.
+
+## The ordering constraint, and who the actors actually are
+
+    ingest_ontology_job (Dagster)  ──populates──>  :OntologyClass nodes in Neo4j
+                                                          │
+                                                          │ MUST complete first
+                                                          ▼
+    engine boot ──POST manifest──> mesh-registrar ──Contract D check──> verb edge
+
+`doc-tools` is not the registrant, and the sequencing is not about it. The ingest populates
+the TTL-owned half (classes); engine self-registration writes the runtime-owned half (verb
+edges); `agent_fleet/mesh_registrar/v2_substrate.py:82-84` `MATCH`es both endpoint classes
+rather than `MERGE`ing them, so an edge write against an unpopulated graph cannot succeed.
+That MATCH-not-MERGE is CORRECT — the registrar must not invent ontology classes — and it is
+what makes the ordering load-bearing rather than incidental.
+
+## Why the engine cannot heal itself, by design
+
+`iagent-mesh-sdk/iagent_mesh/registration_transport.py:83-85` states the ruling
+(ADR-0006 addendum):
+
+> * `422` -> PERMANENT Contract D rejection. Return immediately; the ontology must be fixed
+>   and retrying cannot help, so retrying would only delay the alarm.
+> * `5xx` -> retry-safe (the saga compensated, so the substrate is clean). Bounded
+>   exponential backoff.
+
+The engine did exactly what it was told. It announced `UNREGISTERED` — the named alarm fired,
+loudly, per verb — and stopped. **The alarm worked; the recovery did not exist.**
+
+## The finding: 422 conflates two facts with opposite repairs
+
+| what is true | is retrying useful? | today's status |
+|---|---|---|
+| the class graph is not populated **yet** (boot race) | **YES** — it becomes true on its own | 422 permanent ❌ |
+| these classes will **never** exist (missing TTL in the manifest) | no — a human must fix the ontology | 422 permanent ✅ |
+
+Both arrive as `missing: [...]`. The engine cannot distinguish them: from inside a single
+rejection, "the graph is empty" and "my classes are absent from a populated graph" look
+identical. So the ruling had to choose one, and it chose the safe-sounding one — which
+converts a self-healing transient into a permanent outage that only a human notices.
+
+We have a live instance of EACH, which is what makes the pair legible rather than theoretical:
+
+- **Transient:** the nine catalog verbs, fixed by a restart against a populated graph — and
+  engine-W's `mfg#WorkInstruction` too. That one LOOKED like a missing TTL and is not:
+  `setup/ontologies/mfg_extension.ttl:30` declares it under the matching
+  `http://edgy-solutions.com/ontology/mfg#` namespace, and the file is in the prime manifest.
+  It was simply not ingested yet when engine-W registered. Same race, same repair.
+- **Permanent:** `engine_a_propose_disposition` needs `mesh#DispositionReview`, and no TTL in
+  the repo declared that class — not a manifest gap, a DECLARATION gap. It existed only
+  because `scripts/seed_sandbox_predicates.py:243-244` MERGEs (not MATCHes) its endpoint
+  classes into being as a side effect of seeding the predicate, so sandbox had the node and
+  every fresh cluster did not. A restart cannot conjure a class no source declares. The input
+  side was never implicated: `pcn:SustainmentNotice` is properly declared in
+  `pcn_extension.ttl:16`. **Fixed 2026-08-14** by declaring `mesh:DispositionReview` in
+  `setup/ontologies/mesh_system.ttl` (22 classes → 23), which is where its eleven sibling
+  output classes already live.
+
+## Repairs — three, and the third is the one to build
+
+1. **Make the hook reliable.** Verify `primeSubstrate.reregisterEngines` actually runs; deploy
+   with `--timeout 20m`. Necessary regardless, but it only SEQUENCES around the race — the
+   ordering dependency survives, and any path that boots an engine outside the hook (a pod
+   eviction, an HPA scale-up, a node drain) reopens it.
+2. **Make the engine retry 422 with backoff.** Removes the ordering dependency, but the engine
+   must then guess which of the two facts it is holding — and `DispositionReview` is the case
+   that proves it cannot. It would retry forever against an ontology gap, converting a correct
+   permanent alarm into a silent infinite loop. This is the option to REJECT.
+3. **Discriminate at the registrar** — where both halves are visible. `_contract_d_check`
+   (`agent_fleet/mesh_registrar/main.py:238-258`) asks only *"do these two URIs exist?"*. One
+   more question — *"is the class graph populated at all?"* — separates the cases at the only
+   point that can see both:
+
+   - graph empty / the domain's classes absent → **the substrate is not ready** → return
+     **5xx**, which the SDK's existing ladder ALREADY retries with bounded backoff.
+   - graph populated, these URIs absent → **422**, unchanged, correct, still a named alarm.
+
+   No new retry logic anywhere. No guessing on the engine side. The ruling stays intact for
+   the case it was written for, and the boot race stops being a race.
+
+This is the same move the codebase already makes twice: the realm-reconcile job's admin-token
+failure DISCRIMINATES "no password reached this job" from "the password is wrong" because they
+route to different repairs (`realm-reconcile-job.yaml:87-93`); the router separates
+`domain_scope_excluded` from `no_compatible_verbs` for the same reason
+(`dynamic_supervisor.py:648-661`). A status code that collapses two repairs into one is the
+defect; naming the difference at the site that can see it is the fix.
+
+## The read that closes the ordering half
+
+Which of the three ways the hook fails to fire actually happened:
+
+    kubectl get jobs -n <ns> | grep -i reregister      # did it render / run at all?
+    kubectl logs job/<release>-engine-reregister -n <ns>
+
+- absent → `primeSubstrate.enabled` or `reregisterEngines.enabled` is false in the work values
+- present but truncated → helm's default 5m `--timeout` aborted it mid-wait (it waits up to
+  900s for the sentinel)
+- present and timed out on the sentinel → check `idp#Dataset` specifically exists in Neo4j;
+  the sentinel is an idp class and the visible ingest in the work logs was the MESH TTL
+
+## The counter-example is now closed, and it was worth chasing
+
+`mesh#DispositionReview` is fixed at the source (declared in `mesh_system.ttl`), so the
+permanent case no longer has a live instance. Keep it named here anyway: it is the ONLY reason
+repair 2 is wrong. Without a case where the classes genuinely never arrive, "just retry the
+422" looks obviously correct, and the next person will propose it.
+
+It also lands a third instance of `[[bootstrap-state-debt]]` in a single week, and the sharpest
+one yet — the others were state a script CREATED that the pipeline should have; this was a
+class that existed in the running sandbox and in NO source at all, kept alive purely as a side
+effect of a hand-run seeder's `MERGE`. The registrar's MATCH-not-MERGE is what made it
+visible: an inventing registrar would have papered over a declaration gap forever.
+
+**The sweep is done, and it is clean.** Because the seeder MERGEs endpoint classes for EVERY
+predicate it seeds, any other verb whose class is declared only there carried the same latent
+defect. Checked mechanically — all 10 distinct `input_uri`/`output_uri` values in
+`scripts/seed_sandbox_predicates.py`, resolved through the script's own `_MESH`/`_IDP` prefix
+constants, against the 56 `owl:Class` declarations across the 10 TTLs in `prime_databases.py`'s
+manifest. With `DispositionReview` added: **0 undeclared**. `mesh:DispositionReview` was the
+last one, so no further permanent-422 is queued for the next fresh cluster from this source.
+
+(Method note, because a sweep is only as good as its resolver: a first pass reported
+`mesh#Dataset` missing via `engine_da_data_analyst.input_uri`. That was the checking script
+folding `_IDP + "Dataset"` with a hardcoded `mesh#` prefix — the seeder is correct and matches
+`data_analyst/main.py:109`. Reading the prefix constants instead of assuming them is what
+turned a false positive into the clean result above.)
