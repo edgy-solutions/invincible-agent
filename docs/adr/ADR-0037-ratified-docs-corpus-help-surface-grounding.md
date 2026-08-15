@@ -1,6 +1,6 @@
 # ADR-0037 — Ratified-docs corpus + help-surface grounding (the graph is the index, docs are the leaves, `explains` is the edge)
 
-**Status:** Proposed — design settled here; build is packet-sized and near-term (presentation + a docs-ingestion path, both on proven rails).
+**Status:** Proposed — design settled, **zero open questions as of 2026-08-15** (the `internal/DOCS` graph class is resolved below, and the OKF v0.2 cut is ruled in §1). **NOT started, and deliberately not next:** the first-viewer critical path ([`../plans/first-viewer-critical-path.md`](../plans/first-viewer-critical-path.md)) owns the next session, and this help surface is off it. The build's real first task is a cross-repo one in doc-tools (markdown→triples), not anything in this repo.
 **Date:** 2026-08-03
 **Deciders:** Platform team
 **Related:**
@@ -57,11 +57,67 @@ Each doc's frontmatter declares its own IRI + its `explains` targets; ingest con
 - Every `explains` target must exist in the graph — **the invented-IRI rule**.
 - **Every registered verb must have ≥1 explaining doc of `doc_kind concept`** — coverage enforced *bidirectionally*. This is the load-bearing gate: it converts "docs drift from reality" from a discipline problem into **a build failure** (register a verb with no concept doc → CI red, the way an unregistered archetype falls back honestly).
 
+#### AMENDMENT 2026-08-15 — the OKF v0.2 cut, recorded BEFORE the vocabulary is authored
+
+`mesh_docs` does not exist yet (verified: zero occurrences of `mesh:explains` or `DocPage` in the
+repo; `docs/corpus/` holds only the priming one-pager). **That is the cheapest moment these fields
+will ever be available** — retrofitting them onto an authored TTL later is a schema migration for
+what could have been there from line one. So the cut is ruled now, not deferred to build time.
+
+**TAKE — four additions, all absent from this ADR as drafted:**
+
+| from OKF | why |
+|---|---|
+| **`sources` with credibility signals** (`author`, `usage_count`, `last_modified`, `usage_window`) | `mesh:derivedFrom` cites a source and says *nothing about it*. Purely additive, and OKF's discipline matches ours: **record the signals, never store a score** — credibility is inferred, the same move as our trust tiers |
+| **Keyed footnote attribution** — `[^id]` joined to `sources[].id` | taken for OKF's stated reason: a positional index *"misattributes silently the moment the list is reordered"*, and agents rewrite these documents constantly. A silent-failure argument in our own idiom. Also a cheaper middle ground than the per-paragraph anchoring §5 defers — claim-level attribution without minting per-paragraph IRIs |
+| **`generated` vs `verified` kept distinct** | who *wrote* a doc need not be who *confirmed* it. We have `doc_ref` and layer attribution but **no verification event**. Use OKF's actor spelling — `human:<id>` is what its trust tiering keys on, and we already have `svc:<name>`; align rather than invent a third convention |
+| **`stale_after` as an ABSOLUTE date, not a TTL** | *"keeps the staleness decision a plain date comparison with no reference to when the concept was read"* — determinism over context-dependence, the same family as [[deterministic-decisions-made-by-llm]] |
+
+**REFUSE — two, and the first is the sharpest conflict in the spec:**
+
+**1. OKF §2, Concept ID = the file's path.** This is path conventions doing semantic work — the
+non-goal this ADR already names — and the repo has just paid for the lesson directly. Commit
+`db4eed4` moved 40 files between `docs/plans/`, `docs/plans/archive/` and `docs/reference/`.
+**Under identity-by-path that is not a move; it is 40 concepts destroyed and 40 created**, with
+every inbound citation pointing at something that no longer exists. `BOARD.md`'s `id:`-in-header
+decision is the opposite choice, now load-bearing across 48 packets and validated by that split.
+
+> **Identity is the IRI the doc declares. Path is where it happens to sit.** OKF's `resource`
+> field is the right home for the IRI; its Concept ID rule is refused.
+
+**2. OKF §6.1, untyped links** (*"the specific kind is conveyed by the surrounding prose"*). That
+cannot express `mesh:explains`, and the typed edge is this ADR's keying decision — lose it and you
+lose both the one-hop *"what explains this verb"* query and the dangling-`explains` sweep, which
+are the two mechanisms that make the corpus non-drifting. **Carry `explains:` as an OKF extension
+key**: §4.1 permits arbitrary keys and requires consumers to preserve them, so the bundle stays
+conformant while carrying an edge OKF itself cannot model.
+
+**THE BOUNDARY — state it explicitly, because someone will later cite §11 against the gates.**
+OKF §11 is deliberately permissive (*consumers MUST NOT reject for broken cross-links, unknown
+types, missing fields*); this ADR is deliberately refusing (invented IRI fails ingest, uncovered
+verb goes red). **That is not a contradiction — they govern different boundaries:**
+
+- **OKF is the wire format.** Be liberal in what you accept from a foreign bundle you did not author.
+- **This ADR is the admission policy.** Be strict about what enters `internal/DOCS`.
+
+**A bundle can be fully OKF-conformant and correctly fail our ingest.** §11 constrains *consumers*,
+not a producer's admission rules. Recorded here so the invented-IRI gate cannot later be softened
+by citing conformance — that gate is the whole design.
+
+**POINTED ELSEWHERE — OKF §10, Attested Computation.** The most valuable section of the spec *for
+this project* and **out of scope for this ADR**. *"The agent MAY only supply values for the declared
+`parameters`; it MUST NOT author or edit the computation"* is [[select-from-authorized-set]] applied
+to computation rather than routing — identical construction, and §10.6's split (a stale definition
+can still attest cleanly; a fresh one still attests per run) restates our `closed-by` discipline
+that *a resolving sha is not a correct sha*. It belongs to the **data-plane authoring program** the
+scope note below carves out. Filed here as a pointer so it is found when that ADR is written;
+admitting it would double this one and delay a design that is now zero open questions from buildable.
+
 **Gate granularity — verbs only in v1** (resolved in review). The gate's cost is a human writing *meaning* per gated thing — that is its point — and **verbs are where the cost pays**: they are what users invoke and what the capability answers enumerate. **Classes** are too numerous to gate without becoming a stub-mill (the decorative-seal problem §5 names — hundreds of classes in a domain standard would be a stub-mill or a months-long writing project). **Workflow definitions** are self-describing: post-M3 they *are* the process documentation, and the WORKFLOW lens renders them — a concept doc per definition is real but wakes on the first definition a process owner authors, not on the seed corpus. The gate **expands per-kind on evidence the un-gated kind's absence actually misled someone** — the same evidence-gated expansion grammar as everywhere else.
 
 ### 2. Storage & lifecycle — docs are ratifiable config, full stop
 
-- Markdown files in `docs/corpus/`, ingested via the same manifest path the ontology TTLs use, into a dedicated graph **`internal/DOCS`**. (The builder verifies which side of the reproducibility line this graph sits — seed content is **manifest-class, never prime-wiped** — and follows the existing `internal/{domain}` convention.)
+- Markdown files in `docs/corpus/`, ingested via the same manifest path the ontology TTLs use, into a dedicated graph **`internal/DOCS`**. **RESOLVED 2026-08-15 — and the original phrasing here ("manifest-class, never prime-wiped") named a state this system does not have. See "Open questions" below; `internal/DOCS` is manifest-class and IS prime-wiped, which is the correct and desirable answer.**
 - Content-hashed — a **`doc_ref`** per the `ruleset_ref` pattern (ADR-0034).
 - **Seed/overlay per ADR-0036**: the open repo ships generic concept docs; work's overlay adds org-specific pages and may **shadow** seed pages (overlay-wins), with **layer-attributed provenance** so "who wrote this explanation" is answerable. The priming one-pager is the **first seed citizen** of this corpus (dogfood: the doc that primes people is also the first thing the help surface serves).
 
@@ -118,7 +174,23 @@ This is the **help/explanation** surface (docs that describe the system). It is 
 
 ## Open questions
 
-1. **`internal/DOCS` graph class** — confirm manifest-class (seed, never prime-wiped) against the reproducibility convention before wiring the partition. *(A builder verification against the graph-convention doc — not a design question.)*
+1. ~~**`internal/DOCS` graph class**~~ — **RESOLVED 2026-08-15 by a read of `setup/prime_databases.py:605-661`. The question contained a false premise and the answer is the opposite of what it assumed.**
+
+   **"Manifest-class, never prime-wiped" is not a state this system has** — the CRITICAL INVARIANT at `prime_databases.py:617` makes the two mutually exclusive:
+
+   > *drop ONLY graphs the manifest can REPRODUCE — the per-domain vocabulary graphs `http://internal/{DOMAIN}` for each distinct domain in `CANONICAL_TTL_MANIFEST`. Do NOT glob `http://internal/*`.*
+
+   So **manifest-class ⇒ dropped on every prime**, and that is precisely what makes it *safe* — the manifest can re-land it. The never-dropped population is the sibling graph `http://internal/{DOMAIN}_INSTANCES`, which is deliberately absent from the drop set because runtime producers write non-reproducible instance data there. The governing rule is stated in the code, not merely conventional: **"Producers with different reproducibility must not share a graph, and the clearer enforces the split."**
+
+   **THE ANSWER: `internal/DOCS` is manifest-class and IS prime-wiped, and that is correct.** The corpus is markdown-in-git, fully reproducible from seed + overlay, and doc ingest will POST-append exactly as the TTLs do — so it has the same doubling problem `clear_ontology_graphs()` exists to solve. A docs graph exempted from the wipe would accumulate duplicate triples on every re-prime.
+
+   **Three build notes the read produced, none of them design questions:**
+
+   1. **The manifest entry must declare `"domain": "DOCS"`.** The drop set is derived as `{f"http://internal/{e['domain']}"}`, so a docs entry filed under an existing domain would land in that domain's vocabulary graph and be swept with it. The five distinct domains today are `MAINTENANCE`, `SUSTAINMENT`, `DATA_ENGINEERING`, `MANUFACTURING`, `MESH` — **`DOCS` is not among them.**
+   2. **No change to `clear_ontology_graphs()` is needed.** It derives its drop set from the manifest, so `DOCS` becomes the sixth domain and is picked up automatically. The partition key follows the existing `s3_key.replace("/", "__")` convention.
+   3. **"Ingested via the same manifest path" is true of the MANIFEST and the PARTITION MECHANISM, and false of the PARSE.** Every current manifest entry is RDF/TTL and the ingest asset parses RDF; markdown→triples (frontmatter → `mesh:explains` assertions, §1) is a converter that does not exist, and it lives in **doc-tools** (`ontology_assets.py`), a sibling repo. **That is a cross-repo build dependency this ADR did not name**, and it is the real first task of the build rather than anything in this repo.
+
+   **A trigger, not a build item:** if anything non-reproducible ever attaches to docs — agent-authored drafts, runtime annotations, per-user notes — it goes in `internal/DOCS_INSTANCES`, never in `internal/DOCS`. Today there is no such producer. The read-union pattern for querying both is already established (`state_sparql.py`, engine-o's `execute_sparql(domain=…)` spans `SUSTAINMENT` + `SUSTAINMENT_INSTANCES`).
 
 *(Two questions from the initial draft were resolved in review and folded into the Decision: **`doc_kind` routing** → default to `concept`, never ask on kind; the `how-to` surfaces as a linked affordance (§3, "Kind routing"). **Coverage-gate granularity** → verbs only in v1, gate expands per-kind on evidence (§1, "Gate granularity").)*
 
