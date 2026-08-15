@@ -251,9 +251,22 @@ def report(rows: list, corpus_rows: list) -> None:
 
     # Per-phrasing stability: the nondeterminism question, answered directly.
     print("\n=== per-phrasing stability (repeat runs) ===")
+    # AN ERRORED PROBE IS NOT AN UNGROUNDED ONE. Counting a ReadTimeout as "did not
+    # ground" manufactures instability out of infrastructure noise. The first sandbox
+    # run reported SIX unstable phrasings that were six consecutive timeouts in a single
+    # pass — the headline would have read "nondeterminism confirmed" off a transient
+    # stall, which is exactly the confidently-wrong number this corpus exists to prevent,
+    # produced by the corpus itself. Errors are excluded here and reported separately: a
+    # run with errors is a DEGRADED MEASUREMENT, not a measurement of degradation.
     per = defaultdict(list)
+    errs = 0
+    total = 0
     for r in rows:
         if r.get("_kind") == "stamp":
+            continue
+        total += 1
+        if r.get("error"):
+            errs += 1
             continue
         per[r["id"]].append(bool(r.get("instance_fired")))
     unstable = {k: v for k, v in per.items() if len(set(v)) > 1}
@@ -264,6 +277,9 @@ def report(rows: list, corpus_rows: list) -> None:
         print(f"  {k:22s} grounded {sum(v)}/{len(v)}{mark}")
     print(f"\n  phrasings with mixed outcomes: {len(unstable)}"
           "   <- >0 means genuine nondeterminism; 0 means every failure is deterministic")
+    print(f"  errored probes EXCLUDED from the above: {errs}/{total}"
+          + ("   <- DEGRADED RUN: re-run before trusting these numbers"
+             if total and errs / total > 0.05 else ""))
 
     print("\n=== argmax counterfactual ===")
     rows = [r for r in rows if r.get("_kind") != "stamp"]

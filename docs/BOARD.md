@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **38 of 86 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **39 of 87 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -37,6 +37,10 @@ _Coverage: **38 of 86 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **broker-endpoint-env-divergence** — A domain broker re-loads the code location's Definitions in its OWN pod, so every env var that shapes an asset key must match between the two — and three did not, each producing an identical-looking 404. The asset key is assembled from env nobody owns, and identity silently follows any of it.
   status: open · owner: human · blocked-on: the source of the stuck PUBLOG_S3_BUCKET_URL is unfound — absent from `helm template`, absent from the image, present in the live Deployment. Removed by hand to unblock; will recur if a values layer still supplies it.
   → [docs/plans/broker-endpoint-env-divergence.md](plans/broker-endpoint-env-divergence.md)
+
+- **column-intercepts-without-verb-coverage** — MEASURED 48% — idp:Column intercepts nearly half of catalog queries and has ZERO compatible verbs, because it hangs off prov:Entity rather than idp:Dataset so no subClassOf walk reaches the nine catalog verbs. The class was restored to the Weaviate pool without the verb migration that was supposed to accompany it.
+  status: open · owner: agent · blocked-on: nothing — measured, quantified, and the two repair options are both concrete. The choice between them is a design call the numbers already inform.
+  → [docs/plans/column-intercepts-without-verb-coverage.md](plans/column-intercepts-without-verb-coverage.md)
 
 - **da-collects-before-filtering** — `SELECT ... LIMIT 2` reads the ENTIRE table into RAM. `get_dataframe` returns a LazyFrame so scans can push down projections and limits, and `.collect()` discards that one line later — so memory is a function of the DATASET, never of the query. OOM-killed Engine DA at work 2026-08-14 on a two-row read.
   status: open · owner: agent · blocked-on: nothing — the defect is two lines and the repair is a design choice about WHERE the query executes.
