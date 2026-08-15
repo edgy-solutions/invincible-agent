@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **36 of 84 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **38 of 86 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -25,6 +25,10 @@ _Coverage: **36 of 84 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **agentic-auth-flip** — ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.
   status: open · owner: agent · blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
+
+- **archetype-chosen-before-data** — The UI archetype is selected from the verb's output_uri before anything looks at the rows, so every analyzeDataset result becomes a CHART_WIDGET — including a list of CAGE codes, which are identifiers and can never be plotted. The payload's shape should decide; output_uri is a hint, not a verdict.
+  status: open · owner: agent · blocked-on: nothing — small and mechanical. The honest-degradation half shipped 2026-08-15; this is the half that stops forcing the wrong shape in the first place.
+  → [docs/plans/archetype-chosen-before-data.md](plans/archetype-chosen-before-data.md)
 
 - **board-migration** — Retrofit ADR-0040 headers onto the unheadered packets; the board's first tracked item is its own completion.
   status: open · owner: unassigned
@@ -53,6 +57,10 @@ _Coverage: **36 of 84 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **dagster-loader-call** — build_dynamic_jobs() runs unconditionally on every Dagster load; whether its catalog is empty is unconfirmed.
   status: open · owner: unassigned · blocked-on: an owner for the Dagster plane
   → [docs/plans/dagster-loader-call.md](plans/dagster-loader-call.md)
+
+- **deterministic-decisions-made-by-llm** — ARCHITECTURAL — the parts of routing that should be mechanical are model judgments. Subject selection is an LLM picking from scored candidates (it chose a 0.477 candidate over a 1.0 one); archetype selection is made from output_uri before anyone looks at the rows. Not three bugs — one gap with three symptoms, and the reason the system feels non-deterministic.
+  status: open · owner: human · blocked-on: a design session. The READ is done and the answer is known — subject selection IS a BAML call over scored candidates. What is owed is the ruling on which decisions become rules, and that is the ADR's SPO determinism work.
+  → [docs/plans/deterministic-decisions-made-by-llm.md](plans/deterministic-decisions-made-by-llm.md)
 
 - **doctools-ci-silent-on-push** — Pushes to doc-tools main produce ZERO CI runs — commits land unbuilt while reading as shipped. Use `gh workflow run`; verify the IMAGE, never the commit.
   status: open · owner: unassigned · repo: doc-tools

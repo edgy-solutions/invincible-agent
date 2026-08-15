@@ -243,3 +243,66 @@ def test_booleans_excluded_in_list_of_records_inference():
     assert out is not None
     parsed = json.loads(out)
     assert parsed[0]["value"] == 5
+
+
+# ---------------------------------------------------------------------------
+# IDENTIFIERS ARE NOT MEASURES — the 2026-08-15 CAGE-code defect
+# ---------------------------------------------------------------------------
+def test_string_values_are_NOT_already_normalized():
+    """THE PIN. "Already normalized" was keyed on the PRESENCE of `name` and `value`,
+    so a payload of identifiers passed straight through with its strings intact:
+
+        [{"name": "cage", "value": "00000"}, {"name": "cage", "value": "00001"}]
+
+    Recharts plots `value` on a numeric axis, so the widget could not draw it and the
+    FRONTEND reported "CHART DATA NOT RENDERABLE" — one layer too late for any fallback
+    to catch. The contract in this module's own docstring says ``{"name": str, "value":
+    number}``; checking it is the entire job.
+
+    CAGE codes are categories. A list of them was never a bar chart, and the honest
+    answer is to decline so the caller can render the values as text.
+    """
+    cage = '[{"name":"cage","value":"00000"},{"name":"cage","value":"00001"}]'
+    assert _normalize_chart_data_to_recharts(cage) is None, (
+        "string values were accepted as a chart — the widget cannot draw them, so this "
+        "returns an undrawable payload instead of declining"
+    )
+
+
+def test_unrenderable_is_not_the_same_as_empty():
+    """The two conditions the honest fallback must BOTH cover. `chart_data_is_empty`
+    catches the query-returned-nothing case and says False here — which is correct and
+    is exactly why a second signal was needed. Non-empty + unnormalizable is the gap
+    that discarded a correct answer."""
+    cage = '[{"name":"cage","value":"00000"}]'
+    assert _chart_data_is_empty(cage) is False
+    assert _normalize_chart_data_to_recharts(cage) is None
+
+
+def test_a_list_of_values_is_an_answer_worth_rendering():
+    """DA returns `data` as a LIST when rows came back. The fallback previously looked
+    only for a string, found none, and rendered nothing — so the values reached the
+    presentation layer and died there. Joining scalars is formatting, not synthesis:
+    verbatim, in order, nothing dropped."""
+    assert _honest_text_from_response(
+        {"status": "success", "data": ["00000", "00001"]}
+    ) == "00000, 00001"
+
+
+def test_a_list_of_DICTS_is_not_flattened_to_text():
+    """Chart-shaped rows belong to the normalizer. If it declined them, that is a real
+    normalization gap and must stay visible — papering it over as text would hide the
+    very class of defect this fix exists to surface."""
+    assert _honest_text_from_response(
+        {"status": "success", "data": [{"region": "East", "count": 3}]}
+    ) == ""
+
+
+def test_numeric_charts_are_untouched():
+    """The regression guard on the fix: real measures must still normalize."""
+    assert _normalize_chart_data_to_recharts('[{"name":"East","value":3}]') == (
+        '[{"name": "East", "value": 3}]'
+    )
+    assert _normalize_chart_data_to_recharts('{"East": 3, "West": 2}') == (
+        '[{"name": "East", "value": 3}, {"name": "West", "value": 2}]'
+    )

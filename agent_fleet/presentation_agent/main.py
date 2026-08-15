@@ -444,10 +444,29 @@ async def _render_archetype_hardened(
     # The LLM does the extraction; we conform the keys.
     if archetype == "CHART_WIDGET":
         baml_chart_data = component.get("chart_data")
+        # UNRENDERABLE IS NOT THE SAME AS EMPTY, and only one of them had a branch.
+        # `chart_data_is_empty` catches `[]` — the query returned nothing. It does NOT
+        # catch a payload with rows the widget cannot draw: CAGE codes are identifiers,
+        # so `[{"name":"cage","value":"00000"}]` is non-empty AND has no measure. The
+        # normalizer declines it (returns None), the empty-check says "not empty", no
+        # fallback fires, and a CORRECT ANSWER sitting in the payload is discarded while
+        # the UI shows "CHART DATA NOT RENDERABLE". Witnessed at work 2026-08-15: the
+        # data path worked end to end and the presentation layer threw the values away.
+        #
+        # So both conditions route to the same honest degradation below — the rule this
+        # system runs on everywhere else, which was simply missing a branch.
+        chart_unrenderable = False
         if isinstance(baml_chart_data, str):
             normalized = _normalize_chart_data_to_recharts(baml_chart_data)
             if normalized is not None:
                 component["chart_data"] = normalized
+            elif not _chart_data_is_empty(baml_chart_data):
+                chart_unrenderable = True
+                logger.info(
+                    "render_ui: CHART_WIDGET rows present but NOT normalizable "
+                    "(no numeric measure) -> honest fallback rather than an "
+                    "undrawable widget",
+                )
 
         # HONEST FALLBACK (structural, not inference). When the chart came back
         # with NO renderable rows (the query produced nothing, or the SQL errored
@@ -460,7 +479,7 @@ async def _render_archetype_hardened(
         # deterministic carries the agent's `summary` VERBATIM and drops the
         # failed sql_query — so the failure-path payload is coherent (it doesn't
         # ship a failed query as if it had executed).
-        if _chart_data_is_empty(component.get("chart_data")):
+        if _chart_data_is_empty(component.get("chart_data")) or chart_unrenderable:
             honest_text = _honest_text_from_response(_extract_agent_response(raw_data))
             if honest_text:
                 logger.info(

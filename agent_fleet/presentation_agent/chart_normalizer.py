@@ -74,6 +74,21 @@ def honest_text_from_response(agent_response: Any) -> str:
     data = agent_response.get("data")
     if isinstance(data, str) and data.strip():
         return data
+    # A LIST OF VALUES IS AN ANSWER TOO. DA returns `data` as a list when the query
+    # produced rows — e.g. ["00000", "00001"] for a couple of CAGE codes. Those are
+    # IDENTIFIERS, not measures, so no chart can be drawn from them; before this the
+    # fallback found no string, returned "", and a correct answer was discarded by the
+    # presentation layer while the UI showed "CHART DATA NOT RENDERABLE" (witnessed at
+    # work 2026-08-15).
+    #
+    # Joining scalars is FORMATTING, not synthesis: every value is carried verbatim and
+    # in order, nothing is summarised, computed, or dropped. Lists of dicts are left
+    # alone — those are chart-shaped and belong to the normalizer above, so a failure
+    # there is a real normalization gap and must not be papered over as text.
+    if isinstance(data, list) and data:
+        scalars = [d for d in data if isinstance(d, (str, int, float, bool))]
+        if len(scalars) == len(data):
+            return ", ".join(str(d) for d in scalars)
     return ""
 
 
@@ -129,9 +144,23 @@ def normalize_chart_data_to_recharts(raw_data: Any) -> Optional[str]:
     if not isinstance(payload, list) or not payload:
         return None
 
-    # Shape 3 first: already-normalized.
+    # Shape 3 first: already-normalized. THE VALUE MUST BE A NUMBER, and checking that
+    # is the whole point — the contract at the top of this docstring says
+    # ``{"name": str, "value": number}`` because Recharts plots `value` on a numeric
+    # axis. Keying "already normalized" on the PRESENCE of the two keys alone accepted
+    # ``[{"name":"cage","value":"00000"}]`` and passed the strings through untouched, so
+    # the widget received a payload it could not draw and the frontend reported
+    # "CHART DATA NOT RENDERABLE" — a failure this module exists to prevent, one layer
+    # too late to fall back from. Witnessed at work 2026-08-15 on a CAGE-code query:
+    # identifiers are categories, never measures, so that answer was never a bar chart.
+    #
+    # Non-numeric values now fall through to Shape 2, which looks for a numeric field
+    # and returns None when there isn't one — the honest "this is not chart data".
     if all(
-        isinstance(r, dict) and "name" in r and "value" in r
+        isinstance(r, dict)
+        and "name" in r
+        and isinstance(r.get("value"), numbers.Number)
+        and not isinstance(r.get("value"), bool)
         for r in payload
     ):
         return json.dumps([{"name": str(r["name"]), "value": r["value"]} for r in payload])
