@@ -308,18 +308,18 @@ of those at once, by a mechanism the absolute check structurally cannot see:
 The absolute-path seal was green throughout. So a second check now resolves relative link
 targets, and between them they cover both shapes.
 
-**That is three instances of one defect, two of them on the same day:**
+**That is four instances of one defect, two of them on the same day and both of them this
+migration's own.** PROMOTED out of this packet — the rule applies to every guard this project
+has built, not to the migration that happened to surface it:
 
-| where | the scope that hid the failure |
-|---|---|
-| `legacy-dns-guard-phantom-scope` | `SCANNED_DIRS` listed a sibling repo, so the walker skipped it and passed green |
-| the move-day "baseline is clean" claim | verified over `docs/plans/` paths; the phantoms live elsewhere under `docs/` |
-| the first citation seal | matched absolute paths; the breakage was in relative ones |
+> [[a-green-check-proves-only-its-scope]] — *the question to ask of a new guard is not "does it
+> pass?" but "what is outside its scope, and how would I know?"*
 
-**A check whose scope excludes the failure reports green over it** — and reports it in the voice
-of a passing test, which is worse than no check because it is evidence-shaped. Worth promoting
-out of this packet: the question to ask of any new seal is not *"does it pass?"* but *"what is
-outside its scope, and how would I know?"*
+The instance table and the two sub-species (excluded population vs. included non-population) live
+there. Kept here only because this migration supplied the sharpest evidence: **the absolute-path
+seal had been proven to bite** — renaming `standards-posture.md` went red naming `ADR-0029:157` —
+**while being blind to four broken relative links in the same commit.** Proven-to-bite is
+necessary and not sufficient.
 
 **What the relative-link check found on ITS first run:** two more phantoms
 (`ADR-0006-datahub-proposal-inbox`, `ADR-0016-memory-boundary-revised` — both linked as ADRs by

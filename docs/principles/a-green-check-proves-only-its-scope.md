@@ -1,0 +1,96 @@
+# The a-green-check-proves-only-its-scope law
+
+> **The question to ask of a new guard is not "does it pass?" but "what is outside its scope,
+> and how would I know?"**
+
+A check reports green over everything it does not look at, and it reports it *in the voice of a
+passing test* — which is worse than no check, because the output is evidence-shaped. The first
+question has an answer everyone collects; the second is the one that decides whether the answer
+means anything.
+
+## Two sub-species, and the remedies diverge
+
+Distinguishing them matters, because the fix for one makes the other worse.
+
+**EXCLUDED POPULATION** — the check never looks at where the failure lives. Widening the scope is
+the repair.
+
+**INCLUDED NON-POPULATION** — the check looks at something that is not the thing: it cannot tell
+a *use* from a *mention*. Widening makes this worse; the repair is a way to mark the mention.
+
+## The instances
+
+Four, from one project, two of them on a single day and authored by the agent that had just
+written the rule about the other two.
+
+| the guard | what its scope excluded — or wrongly included | how it surfaced |
+|---|---|---|
+| `legacy-dns-guard-phantom-scope` | `SCANNED_DIRS` named a **sibling repo, not a subdirectory**, so the walker skipped it silently | the forbidden pattern was live in the unscanned tree the whole time the guard was green |
+| *"the citation baseline is clean"* (`0d1dae7`) | verified over `docs/plans/` paths; the phantoms lived elsewhere under `docs/` | the claim was published in a commit message, then falsified minutes later by a broader check |
+| the first citation seal (`db4eed4`) | matched **absolute** `docs/…` strings; the breakage was in **relative** link targets | four links broke in the same commit and the seal stayed green through all of them |
+| the second citation seal, immediately | included prose **quoting** a link shape as though it were a link — *mention read as use* | it flagged its own documentation |
+
+## The sharpest fact, because it retires the obvious objection
+
+**The third instance had been proven to bite.** Break-on-purpose was performed exactly as
+[[seals-must-be-proven-to-bite]] requires: a cited file was renamed, the seal went red, and it
+named `ADR-0029:157` as the citing site. That is a correct, diagnostic, non-ceremonial failure.
+
+**And at that same moment the seal was blind to four other broken citations in the same commit** —
+because `docs/plans/archive/` sits one level deeper than `docs/plans/`, so every `](../adr/…)`
+target out of a moved file needed re-basing, and a check matching absolute paths structurally
+cannot see a relative one.
+
+So *proven-to-bite* is necessary and **not** sufficient. Mutation testing verifies the guard fires
+when the property is false **inside its scope**; it says nothing whatever about the property being
+false outside it. A seal can be simultaneously well-built, correctly diagnostic, demonstrably
+non-ceremonial, and blind.
+
+**And the near-miss is the part to keep.** `docs/reference/` sits at the *same* depth as
+`docs/plans/`, so its 16 moves broke nothing. Spot-checking that tranche would have found nothing
+wrong and read as confirmation — a sample drawn entirely from outside the failing population,
+returning a clean result that means nothing. The reassurance would have been real and worthless.
+
+## Where this sits among its siblings
+
+- [[naming-a-class-is-not-a-guard]] — *a written **rule** does not protect you; only a guard does.*
+- [[seals-must-be-proven-to-bite]] — *a guard that has only ever passed is a claim; make the
+  property false and watch it go red.*
+- **This law** — *a guard that has been proven to bite still only covers its scope.*
+
+Three steps of the same staircase, and the third is the one with no natural stopping signal: a
+missing guard is visible, an unproven guard is a to-do, but a **passing** guard actively
+discourages the question. Nobody interrogates a green check.
+
+## What follows
+
+When adding or reviewing a guard, answer both halves in writing:
+
+1. **What population does this walk?** Name it as a set — directories, file extensions, path
+   shapes, call sites — not as an intention. `legacy-dns-guard-phantom-scope` failed because
+   `SCANNED_DIRS` *read* like it covered doc-tools.
+2. **What is adjacent to that set and excluded?** The near-neighbours are where the failure goes.
+   For a path check: the other path shape. For a directory walk: the sibling tree. For a code
+   scan: the generated mirror — `baml_client/inlinedbaml.py` nearly carried a dead citation
+   through because "it's generated" felt like a reason to skip it.
+3. **How would I learn the excluded part broke?** If the answer is *"someone would notice"*, the
+   scope is the guard's real specification and it is undocumented.
+4. **Can it tell a use from a mention?** Only for guards that scan prose, code comments, or
+   anything quoting its own subject matter. If not, define the escape mark *before* the first
+   false positive, or the guard will be weakened under pressure rather than fixed.
+
+**Corollary — a passing sample from outside the failing population is not evidence.** Before
+citing a spot-check as confirmation, state which population it was drawn from and whether that
+population could have exhibited the defect.
+
+## What this does not license
+
+**Not "every guard must be total."** Total scope is usually unavailable and often not worth
+buying; the four instances above are not arguments for one enormous check. Two of these guards are
+correct as scoped, and the honest form of the second citation seal is *two* checks with stated,
+complementary scopes rather than one that claims everything.
+
+**The rule is: state the scope where the guard lives, and state what is outside it.** An exclusion
+that is written down is a known property of the design. An exclusion that is merely true is the
+next instance, already scheduled — which is exactly what
+[[naming-a-class-is-not-a-guard]] says about unguarded classes, one level up.
