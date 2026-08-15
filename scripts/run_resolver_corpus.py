@@ -88,16 +88,33 @@ def probe(base: str, row: dict, meta: dict, timeout: float) -> dict:
     out["candidates"] = [
         {"uri": c.get("uri"), "score": c.get("score")} for c in cands
     ]
-    # Column 5: what a pure argmax would have picked.
+    # Column 5: what a pure argmax would have picked — AND WHAT THAT WOULD HAVE COST.
+    #
+    # Recording the disagreement alone invites the wrong conclusion. Measured on sandbox
+    # 2026-08-15, the LLM overrode recall on 21% of rows and was BETTER on 5 of 6: argmax
+    # would have picked Pipeline (0 verbs) over Dataset (9) on "list the datasets in
+    # publog", Column (4) over Table (9) on a literal table path, and would have grounded
+    # `p_caeg` — an asset that does not exist — where the LLM correctly abstained to
+    # UNKNOWN. Recall systematically over-ranks idp:Column because its definition is full
+    # of concrete column-name examples, so identifier-shaped tokens lexically resemble it.
+    #
+    # So the interesting quantity is not "did they differ" but "would the difference have
+    # cost coverage". `argmax_verbs` makes that computable offline: compare it to
+    # `compatible_verbs` for the class actually chosen.
     if cands:
         top = max(cands, key=lambda c: c.get("score") or 0.0)
         out["argmax_uri"] = top.get("uri")
         out["argmax_disagrees"] = bool(
             out["argmax_uri"] and out["argmax_uri"] != out["resolved_uri"]
         )
+        out["argmax_verbs"] = (
+            _verbs(base, out["argmax_uri"], [meta.get("domain", "DATA_ENGINEERING")], timeout)
+            if out["argmax_disagrees"] and out["argmax_uri"] else None
+        )
     else:
         out["argmax_uri"] = None
         out["argmax_disagrees"] = False
+        out["argmax_verbs"] = None
 
     # Column 6: the fallback discriminant, reproduced deterministically. The supervisor
     # computes this by re-asking UNSCOPED when the scoped walk is empty — no verbs at all
@@ -285,7 +302,23 @@ def report(rows: list, corpus_rows: list) -> None:
     rows = [r for r in rows if r.get("_kind") != "stamp"]
     dis = [r for r in rows if r.get("argmax_disagrees")]
     both = [r for r in dis if not r.get("instance_fired")]
+    # WOULD THE DIFFERENCE HAVE COST ANYTHING? A bare disagreement count reads as "the LLM
+    # is unreliable"; the coverage delta is what says whether that is true. On sandbox
+    # 2026-08-15 it was not: argmax would have lost coverage on 3 of 6 (Pipeline 0 verbs
+    # over Dataset 9; Column 4 over Table 9 on a literal table path) and GROUNDED two rows
+    # the resolver correctly abstained on, including an asset that does not exist.
+    priced = [r for r in dis if r.get("argmax_verbs") is not None]
+    worse = sum(1 for r in priced
+                if (r.get("compatible_verbs") or 0) > (r.get("argmax_verbs") or 0))
+    tie = sum(1 for r in priced
+              if (r.get("compatible_verbs") or 0) == (r.get("argmax_verbs") or 0))
+    abstained = sum(1 for r in dis if str(r.get("resolved_uri")) == "UNKNOWN")
     print(f"  argmax would differ on {len(dis)}/{len(rows)} runs")
+    if priced:
+        print(f"  of the priced ones, argmax LOSES coverage on {worse}, ties on {tie}")
+    if abstained:
+        print(f"  and would have GROUNDED {abstained} row(s) the resolver abstained on "
+              "— a false positive, not a gain")
     print(f"  of those, {len(both)} ALSO failed to ground — argmax alone would not have "
           "fixed them")
 
