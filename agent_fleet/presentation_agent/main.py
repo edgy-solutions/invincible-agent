@@ -15,6 +15,28 @@ PRESENTATION_PATH_DETERMINISTIC = "deterministic-document"
 PRESENTATION_PATH_ARCHETYPE_HARDENED = "archetype-hardened"
 PRESENTATION_PATH_FALLBACK_DESIGNUI = "fallback-designui"
 PRESENTATION_PATH_FALLBACK_NO_OUTPUT_URI = "fallback-no-output-uri"
+# A DECLARED non-answer, rendered on purpose (2026-08-15). Deliberately a DIFFERENT path from
+# the CHART_WIDGET honest fallback, which INFERS a non-answer from an empty payload. Both end
+# in a document, so collapsing them would be tempting and would destroy the one measurement
+# that matters here: this path firing means the engine DECLARED it could not ground, while the
+# fallback firing means nobody declared anything and the shape had to be guessed at. If the
+# inference path keeps firing after the engines declare, something upstream is still silent.
+PRESENTATION_PATH_DECLARED_UNGROUNDED = "declared-ungrounded"
+
+# Statuses that mean "no answer was produced, and the producer SAYS SO". Rendered deliberately
+# rather than inferred from an empty payload.
+#
+# `ungrounded` and `engine_unreachable` are kept DISTINCT upstream even though both land here,
+# because they are different facts about the world: one is a working system honestly declining,
+# the other is an outage. The renderer treats them alike TODAY — both produce a document
+# explaining what happened — and the vocabulary is preserved so a consumer that should treat
+# them differently (an alert, a retry, a status page) can, without re-deriving the difference
+# from prose. Flattening at the boundary would be the one-field-for-two-outcomes defect that
+# caused this work, committed a second time.
+#
+# NOT included: `access_denied`, which has its own richer path (request-access affordance), and
+# `error`, which is an agent-loop fault rather than a declared non-answer.
+DECLARED_NON_ANSWER_STATUSES = frozenset({"ungrounded", "engine_unreachable"})
 
 from baml_client import b
 
@@ -340,6 +362,61 @@ except ImportError:
         normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 
+
+def _render_declared_ungrounded(
+    agent_response: Dict[str, Any],
+    persona: str,
+    subject_concept: Optional[str],
+) -> Dict[str, Any]:
+    """Render a run whose producer DECLARED it could not answer — a state, not a failure.
+
+    Three things this deliberately does NOT do:
+
+    * **It does not re-derive the explanation.** The engine's own prose is usually the better
+      sentence ("I couldn't locate a URN for the publog p_cage dataset"), so it renders
+      verbatim and the typed `message` is a prefix, not a replacement. Same
+      synthesis-is-theater rule the honest fallback already follows.
+    * **It does not call BAML.** There is nothing to shape. An LLM asked to present a
+      non-answer will improvise one, which is the failure this whole item is about.
+    * **It does not pretend to be an error.** An ungrounded run is a correct, honest outcome
+      of a working system; the user needs to know the answer is not backed by data, not that
+      something broke. (`engine_unreachable` IS a fault, and says so in its own message.)
+
+    The `reason` is surfaced because the cases have different user actions: an unresolved URN
+    may mean the asset is absent or the phrasing was ambiguous (rephrasing helps); a resolved
+    URN whose query never completed is an infrastructure problem (rephrasing does not).
+    """
+    engine_text = _honest_text_from_response(agent_response) or ""
+    typed_message = agent_response.get("message") or "This question could not be grounded to data."
+    reason = agent_response.get("reason") or ""
+
+    parts: List[str] = [f"**{typed_message}**"]
+    # Only append the engine's own words when they add something beyond the typed line.
+    if engine_text and engine_text.strip() != str(typed_message).strip():
+        parts.append(str(engine_text))
+    if reason == "query_never_succeeded":
+        parts.append(
+            "_The dataset was identified but no query completed against it, so this is a "
+            "data-access problem rather than a phrasing one._"
+        )
+    elif reason == "no_urn_resolved":
+        parts.append(
+            "_No dataset was matched for this question — it may not be in the catalog, or "
+            "the question may need to name the asset more specifically._"
+        )
+
+    return {
+        "components": [
+            {
+                "archetype": "KNOWLEDGE_DOCUMENT",
+                "source_persona": persona,
+                "subject_concept": subject_concept,
+                "markdown_content": "\n\n".join(parts),
+            }
+        ]
+    }
+
+
 # ADR-0030 rule 2: the edgeless-LineageTopology → document decision, kept in a
 # dep-free sibling so it unit-tests without the FastAPI/BAML chain (same split
 # as chart_normalizer above). Flatten-aware import.
@@ -540,6 +617,27 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
 
     # 2. Resolve persona — user_persona drives UI archetype selection.
     effective_persona = (request.user_persona or request.persona or "MECHANIC").upper()
+
+    # 2b. A DECLARED NON-ANSWER IS RENDERED ON PURPOSE, BEFORE ANY ARCHETYPE QUESTION.
+    #
+    # Upstream of the capability lookup deliberately: "which shape should this answer take" is
+    # the wrong question about a run that produced no answer. Previously an ungrounded run
+    # arrived wearing `status: "success"`, matched CHART_WIDGET on its `output_uri`, produced no
+    # rows (correctly), and reached a document only by FALLBACK — so the honest outcome was
+    # reconstructed from an empty payload three layers after the engine already knew it.
+    #
+    # Now the producer says so and this reads it. The inference path below is retained as a
+    # safety net for producers that have not adopted the vocabulary, but it is no longer the
+    # mechanism.
+    _declared = _extract_agent_response(request.raw_data)
+    if isinstance(_declared, dict) and _declared.get("status") in DECLARED_NON_ANSWER_STATUSES:
+        response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DECLARED_UNGROUNDED
+        logger.info(
+            "render_ui: producer DECLARED a non-answer (status=%s reason=%s) -> rendered "
+            "deliberately, no archetype selected",
+            _declared.get("status"), _declared.get("reason") or "unspecified",
+        )
+        return _render_declared_ungrounded(_declared, effective_persona, request.output_uri)
 
     # 3. ADR-0017: predicate-graph lookup. When the upstream agent
     # declared an output_uri (Engine A post-ADR-0017, Engine DA,

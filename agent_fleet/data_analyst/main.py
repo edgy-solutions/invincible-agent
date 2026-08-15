@@ -171,6 +171,24 @@ data_analyst_service = Service("DataAnalystService")
 _SEAL_FAIL_AFTER_WORK = int(os.getenv("DA_SEAL_FAIL_AFTER_WORK", "0") or 0)
 _seal_failures_used = 0
 
+# THE ENGINE-DA OUTCOME VOCABULARY (2026-08-15) lives in a dep-free sibling so the rule can be
+# unit-pinned without the FastAPI / Restate / smolagents import chain — same split, and the
+# same reason, as the presentation agent's `chart_normalizer`. Flatten-aware import: the engine
+# image runs with this directory on sys.path, the test suite imports from the repo root.
+try:
+    from outcome import (  # type: ignore[no-redef]
+        OUTCOME_ANSWERED, OUTCOME_ERROR, OUTCOME_UNGROUNDED,
+        classify_outcome as _classify_outcome_pure,
+        build_envelope as _build_envelope,
+    )
+except ImportError:
+    from agent_fleet.data_analyst.outcome import (
+        OUTCOME_ANSWERED, OUTCOME_ERROR, OUTCOME_UNGROUNDED,
+        classify_outcome as _classify_outcome_pure,
+        build_envelope as _build_envelope,
+    )
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -320,6 +338,13 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     # query, dedup by URN.
     sources_collected: list[dict] = []
     sources_seen_uris: set[str] = set()
+    # ANSWERED-vs-COULD-NOT-GROUND, tracked SEPARATELY from `sources_collected` because that
+    # list records ATTEMPTS, not successes — `_record_query_attempt` fires BEFORE the fetch on
+    # purpose, so the SourcesTrail can show "we tried this" when the data plane is unreachable.
+    # A non-empty `sources` therefore does NOT mean data came back, and using it as the
+    # corroboration signal would call a failed read an answer. Appended only where a query
+    # provably returned.
+    query_successes: list[dict] = []
 
     def _label_from_dataset_urn(urn: str) -> str:
         """Pull the friendly dataset name out of a DataHub dataset URN.
@@ -368,6 +393,11 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         """
         if not urn or row_count is None:
             return
+        # The one place a query is KNOWN to have executed and returned. row_count==0 counts:
+        # "the query ran and the table had no matching rows" is an ANSWER, and a different
+        # thing from "we never got to run a query" — collapsing them is the distinction this
+        # whole repair exists to make.
+        query_successes.append({"uri": urn, "row_count": row_count})
         for s in sources_collected:
             if s.get("uri") == urn:
                 snippet = s.get("snippet") or ""
@@ -472,6 +502,10 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     print(f"DA_AGENT_CONFIG use_structured_outputs_internally={_use_structured}",
           flush=True)
     
+    def _classify_outcome() -> tuple[str, str]:
+        """Bind the pure classifier to this invocation's facts. Rule lives in `outcome.py`."""
+        return _classify_outcome_pure(resolved_instance_id, query_successes)
+
     def _emit_fumble_metric(outcome: str) -> None:
         # A/B FUMBLE METRIC: count smolagents step ERRORS (parse/exec failures
         # — the <code>-envelope fumble) from the agent's memory. The fumble
@@ -520,9 +554,21 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             # invocations. Offload to a worker thread so the event loop stays
             # responsive.
             result = await asyncio.to_thread(agent.run, augmented_prompt)
-            _emit_fumble_metric("ok")
+            # STEP 4 — the metric follows the SAME distinction as the envelope. It previously
+            # logged `outcome=ok` for a run that grounded nothing, identically to one that
+            # returned rows, so the metric inherited the envelope's blindness and could not be
+            # used to measure the defect. Classified HERE, inside the step, because
+            # `query_successes` only exists in-loop and the closure would be stale on replay.
+            _outcome, _reason = _classify_outcome()
+            _emit_fumble_metric(_outcome if not _reason else f"{_outcome}:{_reason}")
             return {"ok": True, "result": result,
-                    "sources": list(sources_collected), "denials": list(access_denials)}
+                    "sources": list(sources_collected), "denials": list(access_denials),
+                    # RETURNED, not read through the closure — the trap documented above. On a
+                    # replay `ctx.run` returns the memoized dict without re-executing the body,
+                    # so a closure read here would classify from an empty list and call every
+                    # replayed answer ungrounded.
+                    "query_successes": list(query_successes),
+                    "outcome": _outcome, "reason": _reason}
         except Exception as e:  # noqa: BLE001
             # Count the fumble even on a TOTAL failure (agent.run raised) — the
             # memory still holds the errored steps; a run that never recovered is
@@ -533,7 +579,9 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             # re-raising would make Restate retry the whole LLM loop for a deterministic failure —
             # burning the run again to reach the same answer.
             return {"ok": False, "error": str(e),
-                    "sources": list(sources_collected), "denials": list(access_denials)}
+                    "sources": list(sources_collected), "denials": list(access_denials),
+                    "query_successes": list(query_successes),
+                    "outcome": OUTCOME_ERROR, "reason": "agent_raised"}
 
     # BOUNDARY, not leaf — per the PLACEMENT MARKER in baml_shared/telemetry.py. This span PARENTS
     # the agent's generations, so it uses the three primitives: ids journaled inside ctx.run (stable
@@ -603,11 +651,26 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
     if access_denials:
         return _access_denied_response(access_denials, originator_email, sources_collected)
 
-    return {
-        "status": "success",
-        "data": agent_result,
-        "sources": sources_collected,
-    }
+    # STEP 1 — ANSWERED and COULD-NOT-GROUND are now different envelopes.
+    #
+    # Witnessed 2026-08-15 01:16: this returned `status: "success"` with an apology as its
+    # `data`. The presentation agent matched CHART_WIDGET on `output_uri`, got no rows
+    # (correctly — there are none in an apology), and fell back. Every component behaved
+    # correctly; the envelope had one field for two outcomes.
+    #
+    # Re-hydrated from the STEP'S RETURN VALUE for the same reason `sources` and `denials` are.
+    # No branch here ON PURPOSE — the shape is decided by `build_envelope` in the dep-free
+    # sibling, where a unit test can execute it. A branch at this point is only reachable with
+    # the whole Restate/FastAPI/smolagents stack running, so it ends up "sealed" by a
+    # source-string assertion, and one of those was measured NOT to go red when the branch was
+    # replaced with `if False:`. The handler supplies facts; the rule lives where it is testable.
+    return _build_envelope(
+        _work.get("outcome") or OUTCOME_ANSWERED,
+        _work.get("reason") or "",
+        agent_result,
+        sources_collected,
+        _work.get("query_successes") or [],
+    )
 
 # Mount Restate service to FastAPI
 app.mount("/restate", restate.app(services=[data_analyst_service]))

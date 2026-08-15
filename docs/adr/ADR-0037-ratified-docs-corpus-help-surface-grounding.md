@@ -1,6 +1,8 @@
 # ADR-0037 — Ratified-docs corpus + help-surface grounding (the graph is the index, docs are the leaves, `explains` is the edge)
 
-**Status:** Proposed — design settled, **zero open questions as of 2026-08-15** (the `internal/DOCS` graph class is resolved below, and the OKF v0.2 cut is ruled in §1). **NOT started, and deliberately not next:** the first-viewer critical path ([`../plans/first-viewer-critical-path.md`](../plans/first-viewer-critical-path.md)) owns the next session, and this help surface is off it. The build's real first task is a cross-repo one in doc-tools (markdown→triples), not anything in this repo.
+**Status:** Proposed — design settled, **zero open questions as of 2026-08-15** (the `internal/DOCS` graph class is resolved below, and the OKF v0.2 cut is ruled in §1). **NOT started, and deliberately not next:** the first-viewer critical path ([`../plans/first-viewer-critical-path.md`](../plans/first-viewer-critical-path.md)) owns the next session, and this help surface is off it.
+
+**SCOPE CORRECTION 2026-08-15 — "packet-sized and near-term" was written on an assumption the graph-class read disproved.** The build's first task is **cross-repo**: markdown→triples does not exist anywhere in this repo (verified — zero hits for `docs/corpus`, `DocPage`, `doc_kind` across `setup/`, `src/`, `agent_fleet/`, `scripts/`), and it belongs in **doc-tools**. That sibling is the repo where [[doctools-ci-silent-on-push]] is live — pushes to main produce ZERO CI runs, so commits land unbuilt while reading as shipped. **A first task that lands in a repo whose CI is silent is not packet-sized**; it needs that board item closed, or `gh workflow run` discipline and image-verification, before any of this is safely buildable. This strengthens rather than weakens the sequencing decision below.
 **Date:** 2026-08-03
 **Deciders:** Platform team
 **Related:**

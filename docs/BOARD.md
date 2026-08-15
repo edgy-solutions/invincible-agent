@@ -115,7 +115,7 @@ _Coverage: **40 of 48 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
 - **ui-renders-honest-failure-as-answer** — HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
-  status: open · owner: agent · blocked-on: nothing — HIGH PRIORITY. Definition of done is a VALUE on the UI for a query the data path can serve, not a green log.
+  status: open · owner: agent · blocked-on: THE LIVE WITNESS, which is NOT blocked — steps 1/2/4 and the job-graph repair landed 2026-08-15, but the definition of done is a VALUE ON THE UI and only a live run proves that. Separately, the one remaining CODE step (3 — do not let an ungrounded run win a race against a grounded one) IS blocked on instance-resolution-nondeterminism, per that step's own precondition.
   → [docs/plans/ui-renders-honest-failure-as-answer.md](plans/ui-renders-honest-failure-as-answer.md)
 
 - **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.

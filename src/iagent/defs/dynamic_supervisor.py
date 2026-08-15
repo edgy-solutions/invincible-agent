@@ -1649,15 +1649,78 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # reads the X-Trace-Id HEADER — and this POST sent none, so the id was on the wire
     # in a form none of them reads and all three orphaned on the direct leg. One seam,
     # three consumers: the same headers the Engine A leg already sends.
-    response = requests.post(
-        endpoint,
-        json=payload,
-        headers=_telemetry_headers(config) or None,
-        timeout=1800,
-    )
-    response.raise_for_status()
-
-    data = response.json()
+    # A DEAD ENGINE MUST STILL PRODUCE A UI PAYLOAD (2026-08-15).
+    #
+    # Witnessed, Dagster run a62ab191 (2026-08-14 20:12): routing was perfect, then the DA pod
+    # died mid-request and this POST raised `RemoteDisconnected`. The op failed, so
+    # `.collect()` never produced, so `generate_ui_payload` and `synthesize_stateful` were both
+    # skipped as failed dependencies — and the user got a CARD WITH THEIR QUESTION AND NOTHING
+    # ELSE. The failure was loud in Dagster, fully diagnosed in a stack trace, and communicated
+    # nothing to the person who asked.
+    #
+    # So the transport failure becomes a RESULT rather than an exception, exactly as
+    # `synthesize_stateful` below already does for Engine B ("a failure here must not poison an
+    # otherwise-successful pipeline"). The same argument applies with more force here: this op
+    # is fanned out, so one dead engine currently takes down the payload for every OTHER
+    # subtask that succeeded.
+    #
+    # THE TRADE, STATED RATHER THAN HIDDEN: the Dagster run now goes GREEN where it used to go
+    # red. That is a real loss of signal and it is the shape this repo distrusts most. It is
+    # accepted because the redness was being paid for by rendering NOTHING, and a red run
+    # nobody is watching is worth less than an honest card the user is already looking at. The
+    # compensating controls are deliberate and all three are load-bearing: an ERROR log, output
+    # metadata on the op, and a TYPED `status` in the result that flows to the UI and can be
+    # counted. If a run-level red is wanted back, it belongs in a final op that reads the
+    # collected results and fails when all of them are `engine_unreachable` — after the payload
+    # has been produced, never instead of it.
+    try:
+        response = requests.post(
+            endpoint,
+            json=payload,
+            headers=_telemetry_headers(config) or None,
+            timeout=1800,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        # ValueError covers a 200 with an unparseable body — the engine answered with
+        # something that is not JSON, which is a failure to answer, not a successful answer.
+        _detail = f"{type(exc).__name__}: {exc}"
+        context.log.error(
+            "execute_subtask: engine at %s did not answer (%s). Returning a TYPED failure so "
+            "generate_ui_payload still runs — the user gets a card that says what broke "
+            "instead of a blank one.",
+            endpoint, _detail,
+        )
+        try:
+            context.add_output_metadata({
+                "engine_unreachable": True,
+                "endpoint": str(endpoint),
+                "error": _detail,
+            })
+        except Exception:  # pragma: no cover — metadata must never mask the real failure
+            pass
+        return {
+            "persona": answerer_persona,
+            "user_persona": config.user_persona,
+            "answerer_persona": answerer_persona,
+            "predicate_verb_iri": predicate.get("verb_iri"),
+            "sub_query": sub_query,
+            "expert_response": {
+                # Same vocabulary discipline as Engine DA's envelope: a distinct status, never
+                # `success` carrying an explanation. `ungrounded` would be WRONG here — nothing
+                # was attempted, so this is not an honest non-answer, it is an outage.
+                "status": "engine_unreachable",
+                "reason": "transport_failure",
+                "message": (
+                    "The engine that answers this kind of question could not be reached, so "
+                    "no answer was produced. This is a system fault, not a result."
+                ),
+                "data": "",
+                "sources": [],
+                "error": _detail,
+            },
+        }
 
     trace = data.get("execution_trace")
     if trace:

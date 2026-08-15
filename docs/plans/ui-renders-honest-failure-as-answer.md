@@ -2,9 +2,9 @@
 id:         ui-renders-honest-failure-as-answer
 status:     open
 owner:      agent
-blocked-on: nothing — HIGH PRIORITY. Definition of done is a VALUE on the UI for a query the data path can serve, not a green log.
+blocked-on: THE LIVE WITNESS, which is NOT blocked — steps 1/2/4 and the job-graph repair landed 2026-08-15, but the definition of done is a VALUE ON THE UI and only a live run proves that. Separately, the one remaining CODE step (3 — do not let an ungrounded run win a race against a grounded one) IS blocked on instance-resolution-nondeterminism, per that step's own precondition.
 closed-by:
-code-site:  agent_fleet/data_analyst/main.py
+code-site:  agent_fleet/data_analyst/main.py, agent_fleet/data_analyst/outcome.py, agent_fleet/presentation_agent/main.py, src/iagent/defs/dynamic_supervisor.py
 repo:       invincible-agent
 summary:    HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
 ---
@@ -111,6 +111,60 @@ on that pod. But even once it stops crashing, this rendering gap stays.)
    may not arise; without it, a preference rule is the mitigation.
 4. **`DA_FUMBLE_METRIC outcome`** should follow the same distinction, or it keeps reporting
    `ok` for runs that answered nothing.
+
+## LANDED 2026-08-15 — three of the four steps, plus the job-graph repair
+
+**Not closed.** The definition of done is stated above as *a VALUE on the UI*, and nothing below
+is a live run. What changed is that the distinction now exists to be rendered.
+
+| step | what landed |
+|---|---|
+| 1 | Engine DA emits `ungrounded` with a `reason`, distinct from `success`. Two symbolic discriminators, neither of which asks the model whether it answered: `resolved_instance_id` (known BEFORE the loop — empty means the run was structurally incapable of grounding) and a query that provably returned. |
+| 2 | The presentation agent renders a DECLARED non-answer deliberately, upstream of archetype selection, on its own `X-Presentation-Path: declared-ungrounded`. |
+| 4 | `DA_FUMBLE_METRIC` carries the same classification, so it can no longer log `outcome=ok` for a run that answered nothing. |
+| job graph | A dead engine returns a typed `engine_unreachable` result instead of raising, so `generate_ui_payload` still runs and the user gets a card that says what broke rather than a blank one. |
+| 3 | **NOT DONE** — blocked, see the header. |
+
+### The corroboration signal is NOT `sources`, and that nearly went wrong
+
+The obvious discriminator is "did we collect any sources". It is wrong: `_record_query_attempt`
+fires **before** the fetch, deliberately, so the SourcesTrail can show *"we tried this"* when the
+data plane is unreachable. A classifier keyed on `sources` being non-empty would therefore call a
+failed read an answer — the original defect wearing a different signal. Successes are tracked
+separately, and the seal asserts the classifier cannot even *see* attempts.
+
+### Two design decisions worth arguing with
+
+**`rows_returned: 0` on a `success` is an ANSWER, not an abstention.** "The query ran and the
+table had no matching rows" is a result; "I never ran a query" is not. Collapsing them would
+re-commit the one-field-for-two-outcomes defect one level down, in the direction that hides
+working infrastructure behind an apology.
+
+**The job-graph repair trades a red Dagster run for an honest card, and that is a real loss.**
+The op now returns where it used to raise, so the run goes GREEN where it went red. Accepted
+because the redness was being paid for by rendering *nothing* — but it is the shape this repo
+distrusts, so the compensating controls are all three load-bearing: an ERROR log, output
+metadata on the op, and a typed status that reaches the UI and can be counted. **If a run-level
+red is wanted back, it belongs in a final op that reads the collected results and fails when all
+of them are `engine_unreachable` — after the payload has been produced, never instead of it.**
+
+### What the seals cover, and what they do not
+
+`tests/test_da_outcome_distinguishable.py`, 12 tests, five mutations verified to go red
+(zero-rows collapsed into ungrounded; the renderer forgetting `engine_unreachable`; the outcome
+dropped from the durable step's success return; ungrounded collapsed back into success; the
+success envelope losing its corroboration).
+
+**Two of the first four seals did not bite and had to be rewritten** — they asserted a string
+appeared *somewhere* in a function, which stayed true when the branch was replaced with
+`if False:` and when the keys were deleted from the success-path return. Both were the scope
+defect from [[a-green-check-proves-only-its-scope]], committed hours after that principle was
+written. The repair was structural rather than a better grep: the envelope rule moved into the
+dep-free `outcome.py` where a test can **execute** it, and the replay-trap check now selects the
+`ok=True` return by AST instead of scanning the whole function.
+
+**NOT SEALED, and stated rather than implied:** that a live run produces any of this. The unit
+layer proves the rule; the UI is what proves the repair.
 
 ## Related
 
