@@ -1,0 +1,324 @@
+#!/usr/bin/env python3
+"""Run the resolver corpus against a live Engine O and record what it decided.
+
+    python scripts/run_resolver_corpus.py --base-url http://localhost:8000 --repeat 10 \
+        --out sandbox.jsonl
+    python scripts/run_resolver_corpus.py --base-url http://work-engine-o:8000 --repeat 10 \
+        --out work.jsonl
+    python scripts/run_resolver_corpus.py --diff sandbox.jsonl work.jsonl
+
+WHY SIX COLUMNS AND NOT ONE. A corpus that records only the chosen class would have
+missed the defect it was built for. `ClassifyDomainIntent` emits the class AND the
+instance identifier in ONE call, and instance resolution is gated on the latter
+(ontology_service/main.py:1638) — so a query can select a perfectly defensible class and
+still fail to ground, which is exactly what work saw. Both outputs are recorded, plus
+whether the deterministic instance path was reached at all.
+
+THE PRIMARY MEASURE IS `instance_fired`, NOT THE CLASS. `_DATAHUB_TO_IDP` maps a DataHub
+DATASET to idp:Table, so for a real table `idp:Table` is the CATALOG's answer and picking
+it is not a defect. The defect is the class coming from a model's guess about a kind of
+thing rather than the phone book's answer about this thing.
+
+THE ARGMAX COUNTERFACTUAL is recorded free from the `candidates` the response already
+returns: what a pure top-score rule WOULD have chosen. It documents rather than asserts
+that the one-line interim is unavailable — expect rows where argmax and the LLM disagree
+AND `instance_fired` is false, i.e. fixing selection alone would not have grounded them.
+
+Read-only. Every call is a GET-shaped POST to /resolve plus two /find_compatible_verbs
+probes; nothing is written to any store.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import sys
+from collections import Counter, defaultdict
+
+try:
+    import requests
+    import yaml
+except ImportError:  # pragma: no cover
+    print("needs `requests` and `pyyaml`", file=sys.stderr)
+    raise
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+DEFAULT_CORPUS = ROOT / "tests" / "routing" / "resolver_corpus.yaml"
+AMBIGUOUS = "AMBIGUOUS"
+
+
+# ---------------------------------------------------------------------------
+# One probe
+# ---------------------------------------------------------------------------
+def probe(base: str, row: dict, meta: dict, timeout: float) -> dict:
+    """Resolve one phrasing and record every signal the response already carries."""
+    out: dict = {"id": row["id"], "axis": row.get("axis", ""), "query": row["query"]}
+    try:
+        r = requests.post(
+            f"{base}/resolve",
+            json={
+                "query": row["query"],
+                "domain": meta.get("domain", "DATA_ENGINEERING"),
+                "domains": [meta.get("domain", "DATA_ENGINEERING")],
+            },
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        d = r.json()
+    except Exception as exc:  # noqa: BLE001 — a dead probe is data, not a crash
+        out["error"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+        return out
+
+    prov = d.get("provenance") or {}
+    cands = d.get("candidates") or []
+
+    out["resolved_uri"] = d.get("resolved_uri")
+    out["confidence"] = d.get("confidence_score")
+    # Column 2: the identifier the SAME call emitted. Absent = gate 1639 closed.
+    out["instance_identifier"] = prov.get("instance_identifier") or ""
+    # Column 4: was the deterministic phone-book path reached at all?
+    out["instance_fired"] = bool(prov.get("instance_identifier"))
+    out["instance_match"] = prov.get("instance_match") or ""
+    out["instance_id"] = prov.get("instance_id") or ""
+    out["instance_provider"] = prov.get("instance_provider") or ""
+    # The system's own record of the override, when it happened.
+    out["llm_guess"] = prov.get("llm_guess") or ""
+    out["preemption_path"] = prov.get("preemption_path") or ""
+    # Column 3: the full pool, winner and losers.
+    out["candidates"] = [
+        {"uri": c.get("uri"), "score": c.get("score")} for c in cands
+    ]
+    # Column 5: what a pure argmax would have picked.
+    if cands:
+        top = max(cands, key=lambda c: c.get("score") or 0.0)
+        out["argmax_uri"] = top.get("uri")
+        out["argmax_disagrees"] = bool(
+            out["argmax_uri"] and out["argmax_uri"] != out["resolved_uri"]
+        )
+    else:
+        out["argmax_uri"] = None
+        out["argmax_disagrees"] = False
+
+    # Column 6: the fallback discriminant, reproduced deterministically. The supervisor
+    # computes this by re-asking UNSCOPED when the scoped walk is empty — no verbs at all
+    # is a relevance miss; verbs that entitlements excluded is a scope exclusion, and the
+    # two route to different repairs (dynamic_supervisor.py:648-661).
+    out["fallback_reason"] = ""
+    uri = out.get("resolved_uri")
+    if uri and uri != "UNKNOWN":
+        scoped = _verbs(base, uri, [meta.get("domain", "DATA_ENGINEERING")], timeout)
+        if scoped == 0:
+            unscoped = _verbs(base, uri, [], timeout)
+            out["fallback_reason"] = (
+                "domain_scope_excluded" if unscoped > 0 else "no_compatible_verbs"
+            )
+        out["compatible_verbs"] = scoped
+    elif uri == "UNKNOWN":
+        out["fallback_reason"] = "subject_unknown"
+    return out
+
+
+def _verbs(base: str, subject_uri: str, domains: list, timeout: float) -> int:
+    try:
+        r = requests.post(
+            f"{base}/find_compatible_verbs",
+            json={"subject_uri": subject_uri, "max_hops": 5, "entitled_domains": domains},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        return len(r.json().get("verbs") or [])
+    except Exception:  # noqa: BLE001
+        return -1
+
+
+# ---------------------------------------------------------------------------
+# The pool precondition
+# ---------------------------------------------------------------------------
+def check_pool(base: str, meta: dict, timeout: float) -> tuple[bool, list]:
+    """REFUSE TO SCORE A RUN AGAINST THE WRONG CANDIDATE POOL.
+
+    The corpus reasons about classes that were HAND-DELETED from sandbox's Weaviate on
+    2026-06-11 and are present at work. Against a pool missing them, every row resolves
+    to the surviving class unopposed, the trailing-noun effect cannot appear because the
+    noun's target is not a candidate, and the run reports a healthy picker while
+    measuring a different system. That number would be confidently wrong, which is worse
+    than no number — so this is a hard gate, not a warning.
+    """
+    required = list(meta.get("requires_pool") or [])
+    if not required:
+        return True, []
+    seen: set = set()
+    # A broad query surfaces the pool without assuming any single phrasing reaches it.
+    for q in ("table dataset column pipeline job", "catalog asset", "data"):
+        try:
+            r = requests.post(
+                f"{base}/resolve",
+                json={"query": q, "domain": meta.get("domain"), "domains": [meta.get("domain")]},
+                timeout=timeout,
+            )
+            r.raise_for_status()
+            seen |= {c.get("uri") for c in (r.json().get("candidates") or [])}
+        except Exception:  # noqa: BLE001
+            continue
+    missing = [u for u in required if u not in seen]
+    return (not missing), missing
+
+
+# ---------------------------------------------------------------------------
+# Scoring
+# ---------------------------------------------------------------------------
+def score(rows: list, corpus_rows: list) -> dict:
+    """Rates per axis. AMBIGUOUS never counts as failure — see the corpus header."""
+    spec = {r["id"]: r for r in corpus_rows}
+    by_axis = defaultdict(lambda: {"n": 0, "fired": 0, "expected_fire": 0,
+                                   "fired_when_expected": 0, "ambiguous": 0, "errors": 0})
+    for rec in rows:
+        s = spec.get(rec["id"], {})
+        a = by_axis[rec.get("axis") or "?"]
+        a["n"] += 1
+        if rec.get("error"):
+            a["errors"] += 1
+            continue
+        if rec.get("instance_fired"):
+            a["fired"] += 1
+        exp = s.get("expect_instance")
+        if exp is True:
+            a["expected_fire"] += 1
+            if rec.get("instance_fired"):
+                a["fired_when_expected"] += 1
+        elif exp == AMBIGUOUS:
+            a["ambiguous"] += 1
+    return dict(by_axis)
+
+
+def report(rows: list, corpus_rows: list) -> None:
+    axes = score(rows, corpus_rows)
+    print("\n=== grounding rate by axis (primary measure) ===")
+    for axis, a in sorted(axes.items()):
+        rate = (f"{a['fired_when_expected']}/{a['expected_fire']}"
+                if a["expected_fire"] else "n/a")
+        print(f"  {axis:26s} n={a['n']:4d}  grounded-when-expected={rate:>9s}"
+              f"  ambiguous={a['ambiguous']:3d}  errors={a['errors']:3d}")
+
+    # Per-phrasing stability: the nondeterminism question, answered directly.
+    print("\n=== per-phrasing stability (repeat runs) ===")
+    per = defaultdict(list)
+    for r in rows:
+        per[r["id"]].append(bool(r.get("instance_fired")))
+    unstable = {k: v for k, v in per.items() if len(set(v)) > 1}
+    for k, v in sorted(per.items()):
+        if len(v) < 2:
+            continue
+        mark = "  UNSTABLE" if k in unstable else ""
+        print(f"  {k:22s} grounded {sum(v)}/{len(v)}{mark}")
+    print(f"\n  phrasings with mixed outcomes: {len(unstable)}"
+          "   <- >0 means genuine nondeterminism; 0 means every failure is deterministic")
+
+    print("\n=== argmax counterfactual ===")
+    dis = [r for r in rows if r.get("argmax_disagrees")]
+    both = [r for r in dis if not r.get("instance_fired")]
+    print(f"  argmax would differ on {len(dis)}/{len(rows)} runs")
+    print(f"  of those, {len(both)} ALSO failed to ground — argmax alone would not have "
+          "fixed them")
+
+    fb = Counter(r.get("fallback_reason") for r in rows if r.get("fallback_reason"))
+    if fb:
+        print("\n=== fallback_reason ===")
+        for k, v in fb.most_common():
+            print(f"  {k:24s} {v}")
+
+
+def diff(a_path: str, b_path: str) -> int:
+    """Two clusters, same corpus — does sandbox still resemble work?
+
+    A standing capability rather than a one-off: the runner takes a base URL, so two runs
+    and a diff is its natural shape. Divergence here is the fidelity number this project
+    has only ever estimated by hand.
+    """
+    def load(p):
+        out = defaultdict(list)
+        for line in pathlib.Path(p).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                out[r["id"]].append(r)
+        return out
+
+    A, B = load(a_path), load(b_path)
+    ids = sorted(set(A) | set(B))
+    print(f"\n=== {a_path}  vs  {b_path} ===")
+    diverged = 0
+    for i in ids:
+        ar, br = A.get(i), B.get(i)
+        if not ar or not br:
+            print(f"  {i:22s} MISSING from {'A' if not ar else 'B'}")
+            diverged += 1
+            continue
+        a_fire = sum(bool(r.get("instance_fired")) for r in ar) / len(ar)
+        b_fire = sum(bool(r.get("instance_fired")) for r in br) / len(br)
+        a_cls = Counter(r.get("resolved_uri") for r in ar).most_common(1)[0][0]
+        b_cls = Counter(r.get("resolved_uri") for r in br).most_common(1)[0][0]
+        if a_cls != b_cls or abs(a_fire - b_fire) > 0.3:
+            diverged += 1
+            print(f"  {i:22s} class {str(a_cls).split('#')[-1]:12s} -> "
+                  f"{str(b_cls).split('#')[-1]:12s}   ground {a_fire:.0%} -> {b_fire:.0%}")
+    print(f"\n  {diverged}/{len(ids)} phrasings diverge between the two deployments")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base-url", help="Engine O base url, e.g. http://localhost:8000")
+    ap.add_argument("--corpus", default=str(DEFAULT_CORPUS))
+    ap.add_argument("--repeat", type=int, default=1, help="runs per phrasing")
+    ap.add_argument("--out", help="write jsonl here")
+    ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--require-pool", action="store_true", default=True)
+    ap.add_argument("--no-require-pool", dest="require_pool", action="store_false",
+                    help="score anyway against a mismatched pool (you are measuring a "
+                         "DIFFERENT system; the number will not mean what it says)")
+    ap.add_argument("--diff", nargs=2, metavar=("A.jsonl", "B.jsonl"))
+    args = ap.parse_args()
+
+    if args.diff:
+        return diff(*args.diff)
+    if not args.base_url:
+        ap.error("--base-url is required unless --diff")
+
+    doc = yaml.safe_load(pathlib.Path(args.corpus).read_text(encoding="utf-8"))
+    meta, corpus_rows = doc.get("meta", {}), doc["rows"]
+
+    if args.require_pool:
+        ok, missing = check_pool(args.base_url, meta, args.timeout)
+        if not ok:
+            print("REFUSING TO RUN — the candidate pool is missing classes this corpus "
+                  "reasons about:", file=sys.stderr)
+            for m in missing:
+                print(f"  {m}", file=sys.stderr)
+            print("\nAgainst this pool every row resolves unopposed and the run would "
+                  "certify a picker it never exercised. See the corpus header and "
+                  "tests/routing/STEP0_IDP_BUILD_SPEC.md:172. Restore the pool through "
+                  "the reproducible path, or pass --no-require-pool knowing the number "
+                  "describes a different system.", file=sys.stderr)
+            return 2
+
+    results = []
+    for i in range(args.repeat):
+        for row in corpus_rows:
+            rec = probe(args.base_url, row, meta, args.timeout)
+            rec["run"] = i
+            results.append(rec)
+            flag = "." if rec.get("instance_fired") else ("!" if rec.get("error") else "o")
+            print(flag, end="", flush=True)
+    print()
+
+    if args.out:
+        pathlib.Path(args.out).write_text(
+            "\n".join(json.dumps(r) for r in results) + "\n", encoding="utf-8"
+        )
+        print(f"wrote {args.out} ({len(results)} rows)")
+    report(results, corpus_rows)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

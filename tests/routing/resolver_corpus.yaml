@@ -1,0 +1,232 @@
+# Resolver corpus — phrasings whose grounding we measure, not assert.
+#
+# WHY THIS EXISTS. "The same question gives a different answer every time" was reported
+# from work and could not be sized: every diagnosis was a single observation, and a single
+# observation cannot separate a coin flip from a deterministic misparse. This corpus turns
+# that into a rate, per axis, at whatever n you ask for.
+#
+# WHAT IS ACTUALLY MEASURED — read this before adding rows.
+#
+# The primary column is NOT "which class was chosen". `_DATAHUB_TO_IDP` maps a DataHub
+# DATASET to idp:Table (datahub_wrapper/main.py:537), so for a real warehouse table
+# `idp:Table` IS the catalog's answer — picking it is not a defect. The defect observed at
+# work is that the class came from an LLM's guess about a KIND OF THING instead of the
+# catalog's answer about THIS thing, because instance resolution never fired.
+#
+# So the load-bearing expectation on an instance-bearing row is `expect_instance: true`.
+# `expect_class` is secondary and is often deliberately null: when the phone book answers,
+# the class follows from the catalog and the class contest is irrelevant.
+#
+# TRUTH COMES FROM THE SUBSTRATE, NOT FROM THIS FILE. Phrasings are authored here; labels
+# are what the ontology and catalog already say. Where a phrasing is genuinely ambiguous —
+# "cage codes" could legitimately mean the column, the dataset, or a value lookup, and no
+# substrate read settles intent — the row is marked AMBIGUOUS and scored as
+# not-a-failure. A corpus that pretends every phrasing has one right answer counts
+# legitimate ambiguity as picker failure and inflates the rate; that measures the author's
+# optimism, not the resolver.
+#
+# !! POOL PRECONDITION — A RUN AGAINST THE WRONG POOL IS WORSE THAN NO RUN !!
+# The trailing-noun rows only mean something where idp:Table, Column, Pipeline and Job are
+# IN the Weaviate candidate pool. Those four were hand-deleted from sandbox on 2026-06-11
+# (tests/routing/STEP0_IDP_BUILD_SPEC.md:172) and work has them. Run this against a
+# two-class pool and every row resolves to Dataset unopposed, the trailing-noun effect
+# vanishes because the noun's target is not a candidate, and the corpus certifies the
+# picker as healthy while measuring a different system. The runner refuses to score a run
+# whose pool does not carry the classes the corpus references — see --require-pool.
+#
+# Seeded from real work observations 2026-08-14/15; those rows carry `observed:`.
+
+meta:
+  domain: DATA_ENGINEERING
+  persona: DATA_ENGINEER
+  # Classes the corpus reasons about. The runner asserts these are present in the live
+  # candidate pool before scoring anything.
+  requires_pool:
+    - http://invincible-agent/idp#Dataset
+    - http://invincible-agent/idp#Table
+    - http://invincible-agent/idp#Column
+
+rows:
+
+  # ── AXIS: trailing class noun ────────────────────────────────────────────────────
+  # THE HYPOTHESIS UNDER TEST. Every failing work query ended in a class noun; the one
+  # that grounded was bare. If bare grounds ~10/10 and "dataset" ~0/10, this is a
+  # deterministic misparse with a nameable trigger, not nondeterminism.
+  - id: trailing-none-01
+    axis: trailing-class-noun
+    query: "give me a couple cage values from publog's p_cage"
+    expect_instance: true
+    observed: "worked at work 2026-08-15 — resolved the URN, returned ['00000','00001']"
+
+  - id: trailing-dataset-01
+    axis: trailing-class-noun
+    query: "give me a couple cage values from publog's p_cage dataset"
+    expect_instance: true
+    observed: "failed at work 2026-08-15 — 'No DataHub URN resolved', apology rendered"
+
+  - id: trailing-table-01
+    axis: trailing-class-noun
+    query: "show me a few example cage values for publog's p_cage table?"
+    expect_instance: true
+    observed: "failed at work 2026-08-14 — resolved idp:Table conf 0.97, no instance"
+
+  - id: trailing-none-02
+    axis: trailing-class-noun
+    query: "a couple cage codes from publog p_cage"
+    expect_instance: true
+
+  - id: trailing-table-02
+    axis: trailing-class-noun
+    query: "a couple cage codes from the publog p_cage table"
+    expect_instance: true
+
+  - id: trailing-dataset-02
+    axis: trailing-class-noun
+    query: "sample rows from the p_cage dataset"
+    expect_instance: true
+
+  # ── AXIS: possessive vs article ──────────────────────────────────────────────────
+  - id: possessive-01
+    axis: possessive
+    query: "publog's p_cage — show me two cage codes"
+    expect_instance: true
+
+  - id: article-01
+    axis: possessive
+    query: "the p_cage in publog — show me two cage codes"
+    expect_instance: true
+
+  - id: bare-join-01
+    axis: possessive
+    query: "publog p_cage two cage codes"
+    expect_instance: true
+
+  # ── AXIS: bare identifier ────────────────────────────────────────────────────────
+  # No surrounding prose at all. If these ground and the prose forms do not, the
+  # extraction step is the suspect rather than the selection step.
+  - id: bare-id-01
+    axis: bare-identifier
+    query: "p_cage"
+    expect_instance: true
+
+  - id: bare-id-02
+    axis: bare-identifier
+    query: "minio-svc.publog-lake/publog/p_cage"
+    expect_instance: true
+
+  - id: bare-id-03
+    axis: bare-identifier
+    query: "publog.p_cage"
+    expect_instance: true
+
+  # ── AXIS: column vs table vs value ───────────────────────────────────────────────
+  # AMBIGUOUS by construction: "the cage column" may legitimately resolve to idp:Column,
+  # or to the table that holds it. Marked so the score does not punish a defensible read.
+  - id: column-01
+    axis: column-vs-table-vs-value
+    query: "what is in the cage_code column of p_cage"
+    expect_instance: true
+    expect_class: AMBIGUOUS
+    note: "Column or Table are both defensible; the INSTANCE must still resolve."
+
+  - id: column-02
+    axis: column-vs-table-vs-value
+    query: "describe the cage_code column"
+    expect_instance: false
+    expect_class: AMBIGUOUS
+    note: "No table named — a class-level question is the honest read."
+
+  - id: value-01
+    axis: column-vs-table-vs-value
+    query: "what cage codes exist in p_cage"
+    expect_instance: true
+
+  - id: value-02
+    axis: column-vs-table-vs-value
+    query: "list two distinct cage_code values from p_cage"
+    expect_instance: true
+
+  # ── AXIS: column named as though it were the table ───────────────────────────────
+  # The failure mode the agent hit live: it wrote SELECT cage, the column is cage_code.
+  - id: colastable-01
+    axis: column-named-as-table
+    query: "give me a couple values from cage"
+    expect_instance: false
+    expect_class: AMBIGUOUS
+    note: "'cage' is a column, not an asset. Honest abstention is a PASS here."
+
+  # ── AXIS: misspelling and spacing ────────────────────────────────────────────────
+  # Instance resolution is supposed to abstain rather than return least-bad matches
+  # (RESOLVE_INSTANCE_MIN_SCORE). These rows measure whether that holds.
+  - id: spacing-01
+    axis: misspelling-spacing
+    query: "give me a couple cage values from publog's p cage"
+    expect_instance: true
+    note: "Space for underscore — fuzzy match expected, or an honest abstention."
+
+  - id: spacing-02
+    axis: misspelling-spacing
+    query: "give me a couple cage values from publog's pcage"
+    expect_instance: AMBIGUOUS
+
+  - id: case-01
+    axis: misspelling-spacing
+    query: "give me a couple cage values from publog's P_CAGE"
+    expect_instance: true
+
+  - id: misspell-01
+    axis: misspelling-spacing
+    query: "give me a couple cage values from publog's p_caeg"
+    expect_instance: false
+    note: "Genuinely not an asset. Abstention is the PASS; a confident match is a defect."
+
+  # ── AXIS: plural / set-shaped ────────────────────────────────────────────────────
+  # Set queries SHOULD be class-level — no instance, and that is correct behaviour.
+  - id: plural-01
+    axis: plural-set
+    query: "what tables do you have"
+    expect_instance: false
+    expect_class: http://invincible-agent/idp#Dataset
+
+  - id: plural-02
+    axis: plural-set
+    query: "list the datasets in publog"
+    expect_instance: false
+
+  - id: plural-03
+    axis: plural-set
+    query: "which tables have cage codes"
+    expect_instance: false
+    expect_class: AMBIGUOUS
+
+  # ── AXIS: ownership (the other verb, same subject machinery) ─────────────────────
+  - id: owner-01
+    axis: ownership
+    query: "who owns the publog c_cage table"
+    expect_instance: true
+    observed: "work 2026-08-12 — resolved idp:Table conf 0.98, no compatible verbs at the time"
+
+  - id: owner-02
+    axis: ownership
+    query: "who owns p_cage"
+    expect_instance: true
+
+  - id: owner-03
+    axis: ownership
+    query: "who owns the customer_silver table"
+    expect_instance: AMBIGUOUS
+    note: "STEP0 spec row. Instance exists only if the catalog has it — substrate decides."
+
+  # ── AXIS: control rows ───────────────────────────────────────────────────────────
+  # Must NOT ground. If these produce an instance, the resolver is inventing.
+  - id: control-01
+    axis: control
+    query: "what is the weather in Chicago"
+    expect_instance: false
+    expect_class: UNKNOWN
+
+  - id: control-02
+    axis: control
+    query: "give me a couple cage values from zzz_not_a_table"
+    expect_instance: false
+    note: "Named individual the phone book does not know -> instance_not_found."

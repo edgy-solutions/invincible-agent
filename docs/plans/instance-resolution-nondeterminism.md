@@ -86,6 +86,42 @@ rates. If the bare form grounds ~10/10 and the "dataset" form ~0/10, it is deter
 the word is the trigger. If both are ~50%, it is genuinely sampling noise and this title
 stands. Either way the cheapest hypothesis is settled first.
 
+## The rig — built 2026-08-15, and its precondition is a hand-deletion
+
+`tests/routing/resolver_corpus.yaml` (29 phrasings, 9 axes, seeded with the real work
+queries) and `scripts/run_resolver_corpus.py --base-url … --repeat N`. Six columns per run,
+because a corpus recording only the chosen class would have missed the defect it exists for:
+resolved class · the instance identifier the SAME call emitted · candidate scores · whether
+`_resolve_instance` was reached · the argmax counterfactual · `fallback_reason`. `--diff a
+b` compares two deployments.
+
+**IT REFUSES TO RUN AGAINST THE WRONG POOL, and that gate is the point.** `idp:Table`,
+`Column`, `Pipeline` and `Job` were hand-deleted from sandbox's Weaviate on 2026-06-11
+(`STEP0_IDP_BUILD_SPEC.md:172`) and work has them. Against a two-class pool every row
+resolves to Dataset unopposed, the trailing-noun effect CANNOT appear because the noun's
+target is not a candidate, and the run reports a healthy picker while measuring a different
+system. A simulated diff of the two pools shows the trailing-noun rows grounding 100% in the
+small pool and 0% in the full one — the corpus certifying the opposite of the truth. That
+number would be worse than no number, so the check is a hard gate.
+
+**The session's first finding is the blocker on its last one.** Four classes removed by hand,
+never folded into a reproducible path — which is why work got them back and sandbox did not —
+and the un-reproduced deletion is now the ceiling on the only measurement that settles this.
+[[bootstrap-state-debt]] arriving not as inconvenience but as the measurement's validity.
+
+Two rules for the restoration, both easy to violate:
+
+1. **It goes through the reproducible path**, not a hand-POST mirroring the hand-DELETE.
+   Putting them back by hand fixes the pool and preserves the debt. Whatever seeds the
+   Weaviate class collection is where it lands, so the next fresh sandbox gets all six
+   without anyone remembering.
+2. **The pool matches work until the SPO ruling lands.** With the classes restored, sandbox
+   will start resolving to `idp:Table` and refusing Dataset-typed verbs — the intercept that
+   motivated the original deletion. **That is the defect becoming reproducible, which is the
+   entire point.** The pressure to re-delete will be real the first time a demo query fails
+   on it. Anyone who wants sandbox green again gets it by fixing SELECTION, not by shrinking
+   the candidate set.
+
 ## The read that sizes it, before any fix
 
 Run ONE query N times (20 is enough) and count grounded vs ungrounded. That converts "it is
