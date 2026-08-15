@@ -295,11 +295,23 @@ async def lifespan(app: FastAPI):
     register_engine_to_mesh(
         mint=engine_mint(client_id="iagent-engine-w", secret_env="ENGINE_W_CLIENT_SECRET"),
         name="engine_w_weaviate_expert_work_instruction",
+        # HARMONISED 2026-08-15 — was manufacturing-specific, and that is the exact shape
+        # that broke Engine E. BAML's TypeBuilder dedupes enum values by NAME, so five
+        # registrations of mesh:retrieveKnowledge collapse to ONE enum entry whose
+        # description is whichever was added last. A subject-specific description there
+        # means the classifier reads "this verb is for manufacturing WorkInstructions" and
+        # REFUSES TechnicalManual / FaultIsolation / IllustratedParts / Descriptive
+        # subjects — four working subjects broken by the fifth. See the ProcedureStep
+        # ruling at neo4j_expert/main.py:126-140, which fixed the same defect the same way.
+        #
+        # The subject signal is NOT lost: it lives in verb_synonyms below ("assembly
+        # steps", "production steps", "build instructions"), which are per-registration
+        # and are not deduped. The description says WHAT THE VERB DOES; the synonyms say
+        # which questions reach it.
         description=(
             "Knowledge retrieval engine. Weaviate v4 hybrid search "
-            "over manufacturing WorkInstructions (assembly procedures, "
-            "production steps, kitting instructions); returns Markdown "
-            "summaries and citations."
+            "(near_text + BM25) with strict domain segregation; returns "
+            "Markdown summaries and citations from technical manuals."
         ),
         verb="mesh:retrieveKnowledge",
         input_uri="http://edgy-solutions.com/ontology/mfg#WorkInstruction",

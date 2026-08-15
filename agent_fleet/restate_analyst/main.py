@@ -2829,6 +2829,189 @@ async def lifespan(fastapi_app: FastAPI):
         cost_class="slow",
     )
 
+
+    # ── idp:Column COVERAGE — the half of STEP0's coordinated change that never shipped ──
+    #
+    # STEP0_IDP_BUILD_SPEC.md deleted Table/Column/Pipeline/Job from Weaviate in June
+    # because they "intercept queries they can't serve", and said the retirement "gets
+    # undone in the same coordinated change as the verb migration extension to these
+    # subjects." The undo happened — all six classes are in the pool today — and the
+    # migration did not. Measured on sandbox 2026-08-15: idp:Column took 48% of catalog
+    # probes and returned no_compatible_verbs on every one. The subject GROUNDED and the
+    # instance path FIRED; the query died after everything upstream worked.
+    #
+    # "Verbs follow questions" (the ProcedureStep ruling in neo4j_expert/main.py:112-140):
+    # when a resolver picks a DEFENSIBLE class that no verb serves, and the engine CAN
+    # answer it, the engine declares a second registration. NOT a TTL change — subclassing
+    # Column under Dataset would be semantically wrong AND would hand it enumerateCatalog
+    # and checkFreshness, which are meaningless on a column.
+    #
+    # Engine A can serve these: `search_datahub` returns `columns:` on every asset and
+    # accepts DataHub's SCHEMA_FIELD entity type, so column questions have a real answer
+    # path rather than an advertised-but-unreachable one.
+    #
+    # NOT registered here, deliberately: enumerateCatalog and checkFreshness (set-level /
+    # table-level, meaningless per column), filterByTag (a set operation), analyzeDataset
+    # (Engine DA's query_datahub_asset takes a DATASET urn; a column urn would advertise a
+    # read that cannot execute). A value query that resolves to Column is a SELECTION
+    # defect, not a coverage one — see deterministic-decisions-made-by-llm.
+
+    register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
+        name="engine_a_find_schema_column",
+        # DESCRIPTION IS BYTE-IDENTICAL TO THE PRIMARY, AND MUST STAY THAT WAY.
+        # BAML's TypeBuilder dedupes enum values by NAME: when two candidate rows
+        # share a verb_iri and disagree on description, the last one added wins and
+        # the others are silently lost — and the LLM then REFUSES the subject whose
+        # description got dropped ("operates on X, but subject is Y"). Engine E hit
+        # exactly this with its ProcedureStep registration. The description is about
+        # WHAT THE VERB DOES, never which subject path reached it.
+        description=(
+            "Returns the column schema of a named dataset in DataHub: "
+            "field names, data types, and field descriptions. Use this "
+            "for 'what columns does X have' or 'what is the schema of X' "
+            "questions. Does NOT return row data — that's Engine DA's job."
+        ),
+        verb="mesh:findSchema",
+        # SECOND SUBJECT: a specific column's TYPE.
+        # Authorised by idp_extension.ttl's own Column definition — "Queries about a
+        # specific column's type, lineage, quality, or downstream consumers target
+        # this class" — not by taste. idp:Column hangs off prov:Entity, NOT
+        # idp:Dataset, and the compat-walk only CLIMBS, so nothing reaches it
+        # sideways. Measured 2026-08-15: Column intercepted 48% of catalog probes
+        # with ZERO compatible verbs.
+        input_uri="http://invincible-agent/idp#Column",
+        output_uri="http://invincible-agent/mesh#SchemaDescription",
+        verb_synonyms=[
+            "what columns", "schema of", "data types",
+            "fields of", "column descriptions",
+            "what fields does", "describe schema",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
+        name="engine_a_trace_lineage_column",
+        # DESCRIPTION IS BYTE-IDENTICAL TO THE PRIMARY, AND MUST STAY THAT WAY.
+        # BAML's TypeBuilder dedupes enum values by NAME: when two candidate rows
+        # share a verb_iri and disagree on description, the last one added wins and
+        # the others are silently lost — and the LLM then REFUSES the subject whose
+        # description got dropped ("operates on X, but subject is Y"). Engine E hit
+        # exactly this with its ProcedureStep registration. The description is about
+        # WHAT THE VERB DOES, never which subject path reached it.
+        description=(
+            "Walks the upstream/downstream lineage graph from a named "
+            "asset in DataHub. Returns the full lineage chain or topology, "
+            "recursively traversing until the upstream-empty source-of-"
+            "truth node is reached. Use this for 'what feeds X' or 'what "
+            "is the source of truth for X' questions."
+        ),
+        verb="mesh:traceLineage",
+        # SECOND SUBJECT: a specific column's LINEAGE ('what feeds the revenue column').
+        # Authorised by idp_extension.ttl's own Column definition — "Queries about a
+        # specific column's type, lineage, quality, or downstream consumers target
+        # this class" — not by taste. idp:Column hangs off prov:Entity, NOT
+        # idp:Dataset, and the compat-walk only CLIMBS, so nothing reaches it
+        # sideways. Measured 2026-08-15: Column intercepted 48% of catalog probes
+        # with ZERO compatible verbs.
+        input_uri="http://invincible-agent/idp#Column",
+        output_uri="http://invincible-agent/mesh#LineageTopology",
+        verb_synonyms=[
+            "what is the lineage", "lineage of",
+            "source of truth", "raw source of",
+            "what feeds", "upstream of", "trace lineage",
+            "underlying source systems", "raw tables behind",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
+        name="engine_a_assess_impact_column",
+        # DESCRIPTION IS BYTE-IDENTICAL TO THE PRIMARY, AND MUST STAY THAT WAY.
+        # BAML's TypeBuilder dedupes enum values by NAME: when two candidate rows
+        # share a verb_iri and disagree on description, the last one added wins and
+        # the others are silently lost — and the LLM then REFUSES the subject whose
+        # description got dropped ("operates on X, but subject is Y"). Engine E hit
+        # exactly this with its ProcedureStep registration. The description is about
+        # WHAT THE VERB DOES, never which subject path reached it.
+        description=(
+            "Identifies the set of downstream assets impacted by a change "
+            "to a named asset. Walks the downstream lineage graph and "
+            "returns the blast-radius set: which dashboards, datasets, "
+            "and charts depend on this asset and would be affected if it "
+            "changed schema or broke."
+        ),
+        verb="mesh:assessImpact",
+        # SECOND SUBJECT: a column's DOWNSTREAM CONSUMERS ('which dashboards use the orders.amount column').
+        # Authorised by idp_extension.ttl's own Column definition — "Queries about a
+        # specific column's type, lineage, quality, or downstream consumers target
+        # this class" — not by taste. idp:Column hangs off prov:Entity, NOT
+        # idp:Dataset, and the compat-walk only CLIMBS, so nothing reaches it
+        # sideways. Measured 2026-08-15: Column intercepted 48% of catalog probes
+        # with ZERO compatible verbs.
+        input_uri="http://invincible-agent/idp#Column",
+        output_uri="http://invincible-agent/mesh#ImpactSet",
+        verb_synonyms=[
+            "downstream impact", "what breaks if",
+            "what is impacted by", "blast radius",
+            "consumers of", "what depends on",
+            "downstream of", "if X changes what breaks",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
+    register_engine_to_mesh(
+        mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
+        name="engine_a_describe_asset_column",
+        # DESCRIPTION IS BYTE-IDENTICAL TO THE PRIMARY, AND MUST STAY THAT WAY.
+        # BAML's TypeBuilder dedupes enum values by NAME: when two candidate rows
+        # share a verb_iri and disagree on description, the last one added wins and
+        # the others are silently lost — and the LLM then REFUSES the subject whose
+        # description got dropped ("operates on X, but subject is Y"). Engine E hit
+        # exactly this with its ProcedureStep registration. The description is about
+        # WHAT THE VERB DOES, never which subject path reached it.
+        description=(
+            "Returns a structured profile of a named asset in the DataHub "
+            "catalog: owner, tags, domain, description, last-updated "
+            "timestamp, and a high-level summary. Use this for general "
+            "'tell me about X' or 'describe X' questions where the user "
+            "wants an overview rather than a specific attribute. For "
+            "single-attribute lookups (owner only, schema only, freshness "
+            "only), the more specific verbs rank higher."
+        ),
+        verb="mesh:describeAsset",
+        # SECOND SUBJECT: the generic 'tell me about this column'.
+        # Authorised by idp_extension.ttl's own Column definition — "Queries about a
+        # specific column's type, lineage, quality, or downstream consumers target
+        # this class" — not by taste. idp:Column hangs off prov:Entity, NOT
+        # idp:Dataset, and the compat-walk only CLIMBS, so nothing reaches it
+        # sideways. Measured 2026-08-15: Column intercepted 48% of catalog probes
+        # with ZERO compatible verbs.
+        input_uri="http://invincible-agent/idp#Column",
+        output_uri="http://invincible-agent/mesh#AssetProfile",
+        verb_synonyms=[
+            "describe", "describe dataset", "describe dashboard",
+            "tell me about", "profile of", "summarize",
+            "what is", "overview of", "asset profile",
+            "give me the rundown on", "summary of",
+        ],
+        endpoint_url=_engine_a_endpoint,
+        owner_persona="DATA_STEWARD",
+        domains=_engine_a_domains,
+        cost_class="slow",
+    )
+
     register_engine_to_mesh(
         mint=engine_mint(client_id="iagent-engine-a", secret_env="ENGINE_A_CLIENT_SECRET"),
         name="engine_a_enumerate_catalog",
