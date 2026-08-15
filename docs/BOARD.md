@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **40 of 88 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **40 of 48 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 

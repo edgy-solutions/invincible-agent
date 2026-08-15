@@ -2,7 +2,7 @@
 
 **Read this fully before starting. The sequencing and the refusals are part of the spec.**
 Governing decisions live in
-[ADR-0034](../adr/ADR-0034-trust-lifecycle-admission-policy-decision-records-autonomous-path.md); this file
+[ADR-0034](../../adr/ADR-0034-trust-lifecycle-admission-policy-decision-records-autonomous-path.md); this file
 is the *work order*, not the decision record. Where they disagree, the ADR wins — and the disagreement is
 itself a finding worth surfacing.
 
@@ -81,7 +81,7 @@ auto-dispatch.**
 - **Capability-grant coupling mechanics** (ADR-0034 §6).
 - **The ingress goes ASYNC, and refusal routing relocates into the Restate handler.** Filed here because
   several places already point at "ADR-0034 Phase 2" as this work's trigger
-  (`docs/plans/refusal-routing-design.md` §NAMED WAKE and `_ingress_idempotency_key`'s docstring), and a
+  (`docs/reference/refusal-routing-design.md` §NAMED WAKE and `_ingress_idempotency_key`'s docstring), and a
   wake that names a destination the destination does not acknowledge is how a deferral becomes a
   disappearance. Today the BFF calls `start_review` **synchronously** and the sensor classifies the
   response — which is what makes today's refusal routing possible at all. The autonomous path cannot work

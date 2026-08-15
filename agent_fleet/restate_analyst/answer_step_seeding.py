@@ -3,7 +3,7 @@
 Turn a Q&A answer (an SPO op that ran) into a workflow step (an SPO tuple). Native: the
 seed extracts the (subject, verb) provenance the answer already carries (the gateway's
 ``routing`` — src/iagent/gateway.py) and produces an ``spo_operation`` step. Pure, no network
-— the analogue of the Slice-2 enforcement funnel. Design: docs/plans/slice-4-answer-step-seeding.md.
+— the analogue of the Slice-2 enforcement funnel. Design: docs/reference/slice-4-answer-step-seeding.md.
 
 Three guarantees:
   * NOT SEEDABLE from a fallback / ungrounded answer — refuse honestly, never fabricate a

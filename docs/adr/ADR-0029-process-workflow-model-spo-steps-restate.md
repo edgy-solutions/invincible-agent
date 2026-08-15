@@ -154,7 +154,7 @@ lands there. The directional rows are **stated so a future builder knows where e
 lands**, but are unbuilt; converting them from directional to decided is a separate
 trigger (per ADR-0024's per-standard-integration discipline).
 
-**Posture for the directional rows (see `docs/plans/standards-posture.md`, Rule 3).**
+**Posture for the directional rows (see `docs/reference/standards-posture.md`, Rule 3).**
 ODCS/ODPS/CALM are INTERCHANGE / architecture-description standards with NO runtime to
 import — so the BPMN "decline the interpreter" move does NOT apply. Declining them would
 mean inventing proprietary YAML for what an LF standard specifies (a generic-at-birth

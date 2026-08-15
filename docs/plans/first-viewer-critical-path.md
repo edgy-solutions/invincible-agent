@@ -273,4 +273,4 @@ That is items 1 and 2 and nothing else, which is the claim this packet is making
 ## Related
 
 - [[board-migration]] — the census that shrinks the other half of the count.
-- [docs/demo-script.md](demo-script.md) — the tier definitions the Tier-3 scope question refers to.
+- [docs/demo-script.md](../demo-script.md) — the tier definitions the Tier-3 scope question refers to.

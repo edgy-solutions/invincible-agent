@@ -33,7 +33,7 @@ import difflib
 # the pcn/pdn domain: "notice"/"part" are descriptors, but "PCN"/"PDN" look like
 # entity-type nouns yet are usually part of the real identifier ("PCN 23_0120").
 # Each resolveInstance provider owns its OWN descriptor set with this same
-# admission test applied to its OWN vocabulary — see docs/plans/pcn-pdn-bulk-resolve.md.
+# admission test applied to its OWN vocabulary — see docs/reference/pcn-pdn-bulk-resolve.md.
 _DESCRIPTOR_TOKENS = frozenset({
     "the", "a", "an",
     "dashboard", "dashboards", "table", "tables", "dataset", "datasets",

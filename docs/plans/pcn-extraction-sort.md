@@ -100,7 +100,7 @@ Writing it down as "this is the hand-assembled version of the future triple decl
 and the renderer's payload contract becomes an accident `rendersAs` later has to contort to match — the
 rushed-schema trap through the side door the generic-renderer/hand-fed-feeder split left open.
 
-**WRITTEN (the dashboard window's precondition, done up front):** `docs/plans/pcn-dashboard-payload-schema.md`
+**WRITTEN (the dashboard window's precondition, done up front):** `docs/reference/pcn-dashboard-payload-schema.md`
 — the `INSTANCES_BY_PROPERTY` archetype payload, each field mapped to the `rendersAs` triple it
 projects, the generic-renderer / hand-fed-feeder split spelled out, and an acceptance (feed the renderer
 a NON-pcn payload → it must still draw a correct table). The dashboard session builds against it.

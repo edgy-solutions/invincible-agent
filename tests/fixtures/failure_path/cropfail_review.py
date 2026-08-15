@@ -13,7 +13,7 @@ The mutation, stated so it can be re-derived if doc-tools changes shape:
 Everything else is left exactly as the real extraction wrote it, so the fixture keeps the
 producer's real shape (fields, ordering, page records) rather than a remembered one.
 
-Together those three make the flagship case of docs/plans/refusal-routing-design.md:
+Together those three make the flagship case of docs/reference/refusal-routing-design.md:
 
     Notice PCN-2683 could not be prepared for review.
     The extraction did not produce any affected parts (2/5 table crops failed).

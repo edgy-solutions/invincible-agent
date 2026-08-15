@@ -2451,7 +2451,7 @@ async def list_domains() -> dict:
 
 # ---------------------------------------------------------------------------
 # POST /operable_subjects — the CAPABILITY-GRAPH subject menu (ADR-0029 Slice 2,
-# Decision D — docs/plans/slice-2-spo-interview.md §8). The INVERSE of
+# Decision D — docs/reference/slice-2-spo-interview.md §8). The INVERSE of
 # /find_compatible_verbs: "which subjects have ANY verb?" instead of "which verbs
 # for this subject?". This is the source for the SPO interview's OPERATION-subject
 # question — the subjects the mesh can ACT on (OntologyClass nodes carrying >=1

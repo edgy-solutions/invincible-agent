@@ -508,7 +508,7 @@ def mint_service_token(*, timeout: float = 15.0) -> str:
     THIN WRAPPER since 2026-08-04. The mint LOGIC moved to ``agent_fleet/utils/service_identity.py`` so
     engine-a can mint at the point of use too (the notice-A defect: a token captured at review START and
     reused for the dispatch mint at APPROVAL time is stale by design across human latency — see
-    ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``). engine-a's image does NOT ship ``src/iagent``,
+    ``docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md``). engine-a's image does NOT ship ``src/iagent``,
     so this function was never importable there; ``agent_fleet/utils`` is the one tree BOTH runtimes carry.
     ONE implementation, two callers — never two escapers of the same meaning.
 
@@ -980,7 +980,7 @@ def start_review_op(context, config: StartReviewConfig) -> None:
     that token's authz_id (=svc:review-starter). The reviewer is resolved separately from the review
     audience grant, not from this token. DEPLOY REQ: svc:review-starter must hold can_invoke(mesh:startReview)
     (capability_grants.yaml) — an ungranted initiator is refused NOT_ENTITLED_TO_INITIATE (403 -> failed run).
-    See docs/plans/identity-mint-contract.md + capability_grants.yaml."""
+    See docs/reference/identity-mint-contract.md + capability_grants.yaml."""
     bucket = _ARTIFACT_BUCKET
     src = config.review_json_url
     key = src[len(f"s3://{bucket}/"):] if src.startswith(f"s3://{bucket}/") else src

@@ -414,7 +414,7 @@ The deploy is now genuinely closer to trustworthy: the durability hole at fresh-
 
 B4 verb arc complete + ADR-0020 shelved → mode shifted to consolidation-and-demo-prep per architect 2026-06-16. Three deliverables landed:
 
-### 1. Demo script template committed — [docs/demo-script.md](docs/demo-script.md)
+### 1. Demo script template committed — [docs/demo-script.md](../../docs/demo-script.md)
 
 Placeholder-only artifact (zero proprietary data). 14 rows across Tier 1
 (catalog/lineage), Tier 1b (failure-demo trust-builder), Tier 2 (needle-in-

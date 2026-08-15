@@ -3,7 +3,7 @@
 [[dispatch_plan]] produces a PURE ``DispatchPlan`` (the persona-queue task + the graph-state write as
 DATA); this module EXECUTES it durably. The dispatcher is a Restate ``VirtualObject`` keyed by the
 ``idempotency_key`` (notice_fingerprint x mpn) — the settled idempotency substrate
-(docs/plans/pcn-pdn-bulk-resolve.md §1): keyed addressing IS the per-item lock (no check-then-act
+(docs/reference/pcn-pdn-bulk-resolve.md §1): keyed addressing IS the per-item lock (no check-then-act
 TOCTOU), Restate journals each effect, so a redelivered dispatch is a no-op and a crash mid-dispatch
 RESUMES rather than halves.
 
@@ -75,7 +75,7 @@ def plan_to_payload(plan, *, requested_by: str = "", acted_by: str = "",
     retention, and — because this object retries — one that can be replayed long after it expired.
     The register now mints at use under the pipeline's own identity, so the field had become dead
     weight AND a standing exposure. Provenance still travels: ``requested_by`` names the human who
-    approved. See ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``.
+    approved. See ``docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md``.
 
     ``compartment`` is DATA, not a credential, and it rides for one reason: if this dispatch dies
     terminally after a human approved it, the effect-failure has to be ROUTED, and
@@ -154,7 +154,7 @@ def _mint_dispatch_task(task: dict) -> dict:
     that token is ROUTINELY expired by approval time — notice ``M32-A-WITNESS`` sat ~90 minutes and
     both dispatches died on ``401 -> fail-and-release`` 160ms after the approval, leaving the
     projection reading ``approved`` with no effects
-    (``docs/plans/2026-08-04-notice-a-dispatch-failure.md``).
+    (``docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md``).
 
     The token is now minted HERE, per call, under the pipeline's own identity. Why per-call and not
     threaded from the fan-out: an ``object_send`` payload is JOURNALED, so a threaded token would be a
@@ -457,7 +457,7 @@ async def dispatch(ctx: ObjectContext, request: dict) -> dict:
         # KILL-SEAL WINDOW A (env-gated, default 0 -> no-op): a DURABLE pause between the two writes, so a
         # process kill during it lands PROVABLY after mint and before state — the Restate journal then shows
         # mint_task completed + this sleep pending at kill. Test scaffolding for the live two-direction
-        # failure-injection seal; never fires in normal operation. See docs/plans/pcn-kill-seal-run-card.md.
+        # failure-injection seal; never fires in normal operation. See docs/plans/archive/pcn-kill-seal-run-card.md.
         if _SEAL_PAUSE_AFTER_MINT:
             await ctx.sleep(timedelta(seconds=_SEAL_PAUSE_AFTER_MINT))
 

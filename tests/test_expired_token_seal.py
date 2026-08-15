@@ -266,7 +266,7 @@ async def test_ninety_minute_suspend_does_not_stale_the_dispatch(aging):
     presented = aging["register"][0]["token"]
     assert presented != review_start_token, (
         "the dispatch presented the credential captured at REVIEW START — a token carried across a "
-        "suspend is stale by design (docs/plans/2026-08-04-notice-a-dispatch-failure.md)"
+        "suspend is stale by design (docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md)"
     )
     assert _minted_at_of(presented) == _NINETY_MINUTES, (
         f"credential was minted at t={_minted_at_of(presented)}, not at use (t={_NINETY_MINUTES}) — "

@@ -3,7 +3,7 @@
 > **Key renamed since this run (M3.1 tail, 2026-08-03): the audience is now
 > `disposition_review:<compartment>`.** This exhibit records what was OBSERVED on 2026-07-24 and is
 > left verbatim — the legs below really did run against `pcn_disposition:SUSTAINMENT`. Do not copy the
-> old key out of here into a grant file; see `docs/plans/pcn-can-act-topaz-binding.md`.
+> old key out of here into a grant file; see `docs/reference/pcn-can-act-topaz-binding.md`.
 
 Ran 2026-07-24 on sandbox `edge`. Proves the reconciled `can_act` (`task_audience`, NOT the retired
 bespoke `disposition_item`) discriminates correctly — AND that config **arrived by the deployment

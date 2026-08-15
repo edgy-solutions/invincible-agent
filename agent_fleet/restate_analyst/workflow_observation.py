@@ -2,7 +2,7 @@
 
 Given a ``WorkflowDefinition``, a workflow instance's runtime state, and an observer,
 compute the GATED observation projection the observer may see, per the 3-audience tiers
-(design: docs/plans/slice-3-observation.md). Pure — no Restate, no Topaz. The authz
+(design: docs/reference/slice-3-observation.md). Pure — no Restate, no Topaz. The authz
 decisions are INJECTED (the Topaz calls live in the thin driver), so the *gating logic*
 is unit-testable without a cluster — the analogue of ``spo_step_executor.py`` /
 ``spo_interview.py``.

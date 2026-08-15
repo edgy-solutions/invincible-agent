@@ -1,4 +1,4 @@
-"""SPO interview — the PURE core (ADR-0029 Slice 2, design: docs/plans/slice-2-spo-interview.md).
+"""SPO interview — the PURE core (ADR-0029 Slice 2, design: docs/reference/slice-2-spo-interview.md).
 
 Re-aims the interrogator PATTERN (mesh-informed select-from-authorized-set) at the
 SPO ``WorkflowDefinition`` model, superseding the BPMN-fused machinery. This module is

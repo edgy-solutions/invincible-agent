@@ -384,7 +384,7 @@ def get_task_resolution(task_id: str, *, caller_id: str) -> Optional[dict[str, A
 # claiming — part of what the step MEANS — so they belong on `HumanAwaitStep`, inside the
 # milestone's own north star ("quorum and claiming change by editing the YAML — zero code").
 # They are here rather than there because the provenance bug could not wait for M3; see
-# docs/plans/m3-grouped-review-definition-design.md §"TWO interim per-kind tables".
+# docs/reference/m3-grouped-review-definition-design.md §"TWO interim per-kind tables".
 _VERBS_BY_KIND: dict[str, frozenset[str]] = {
     "extraction_refusal": frozenset({"acknowledged", "redriven"}),
 }

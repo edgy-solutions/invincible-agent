@@ -493,7 +493,7 @@ def _ingress_idempotency_key(request_key: Optional[str], approver: str) -> Optio
     and returns 202, and the sensor's refusal routing moves INTO the Restate handler,
     because there will be no synchronous response left to classify. Until then the 300s
     hold is a bounded wait on a DEDUPLICATED invocation — ugly, honest, safe. See
-    docs/plans/refusal-routing-design.md ("NAMED WAKE") for why converting early would mean
+    docs/reference/refusal-routing-design.md ("NAMED WAKE") for why converting early would mean
     designing the ingress contract twice.
     """
     rk = (request_key or "").strip()
@@ -945,7 +945,7 @@ async def notice_provenance(
 
 # ── PCN parts-by-state dashboard FEEDER ───────────────────────────────────────
 # The ONE pcn-aware presentation surface (grep-able; the M2 deletion test covers it). It hand-assembles
-# an INSTANCES_BY_PROPERTY archetype payload (docs/plans/pcn-dashboard-payload-schema.md) from engine-o's
+# an INSTANCES_BY_PROPERTY archetype payload (docs/reference/pcn-dashboard-payload-schema.md) from engine-o's
 # /instances_by_property. Everything pcn lives in these VALUES; the cortex-ui renderer is generic and knows
 # none of it. Each field is the hand-assembled projection of a `rendersAs` triple M3 will declare, so the
 # M2 swap to a generic /instances endpoint touches ONLY this feeder — the renderer does not move.

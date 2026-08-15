@@ -611,7 +611,7 @@ the field choice must be pinned at the **call site**, because a file-level subst
 the prose *about* the field (`test_the_derive_reads_the_POINTER_field_not_the_IDENTITY_field`).
 Naming the job in the field name — `artifact_uri` for LOCATION beside `request_key` for IDENTITY —
 is what makes the call site legible enough to pin at all. Species entry: §6 of
-`docs/plans/cross-repo-string-contracts.md`. Found by a reviewing agent tracing a live 422 back past
+`docs/reference/cross-repo-string-contracts.md`. Found by a reviewing agent tracing a live 422 back past
 the artifact to the field choice.
 
 ### The substrate's DEDUP can substitute a prior result for the experiment you meant to run

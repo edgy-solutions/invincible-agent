@@ -1,6 +1,6 @@
 """pcn resolveInstance matcher sealed deterministically (PCN/PDN, ADR-0031 ladder).
 
-Pins the banked admission decision (docs/plans/pcn-pdn-bulk-resolve.md §6a): notice/part are
+Pins the banked admission decision (docs/reference/pcn-pdn-bulk-resolve.md §6a): notice/part are
 descriptors (strippable prose), pcn/pdn/ptn are identifier fragments (never stripped), and the
 deterministic IRIs land on the REAL live instances (verified against the ingested IPCN25300X notice
 and its ON-Semi parts).

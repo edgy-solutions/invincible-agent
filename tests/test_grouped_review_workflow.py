@@ -69,7 +69,7 @@ _GET_BATCH = grouped_review_workflow.get_batch.__wrapped__
 @pytest.fixture(autouse=True)
 def _stub_service_mint(monkeypatch):
     """Task registration MINTS AT USE (2026-08-04) — see
-    ``docs/plans/2026-08-04-notice-a-dispatch-failure.md``. Stub the mint rather than set fake env:
+    ``docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md``. Stub the mint rather than set fake env:
     fake env would drive a REAL client-credentials POST at a nonexistent Keycloak and turn these unit
     tests into network tests. Same fixture as tests/test_dispatch_driver.py, deliberately duplicated
     per-suite because it is TEST SCAFFOLDING, not shared meaning.

@@ -1379,7 +1379,7 @@ keycloak:
   # as the Restate registrations and DA's credentials. The chart declared it; nothing
   # reconciled it. Now something does.
   #
-  # `authzId` is the `svc:<name>` entitlement subject (docs/plans/identity-mint-contract.md);
+  # `authzId` is the `svc:<name>` entitlement subject (docs/reference/identity-mint-contract.md);
   # `clientId` is `iagent-<name>`; `secretRef` names the key under .Values.keycloak holding
   # the secret, so this list and secrets.yaml cannot drift.
   serviceClients:

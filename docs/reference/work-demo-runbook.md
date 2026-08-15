@@ -118,7 +118,7 @@ turn the gate on (to prove enforcement), an ungranted initiator gets `NOT_ENTITL
 > Fired live on notice `M32-A-WITNESS`: approved at 21:40 after ~90 minutes suspended, both
 > dispatches failed 160ms later with `401 → fail-and-release`, no tasks minted, projection still
 > reading `approved`. Full root cause, rulings and repair:
-> `docs/plans/2026-08-04-notice-a-dispatch-failure.md`.
+> `docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md`.
 
 ---
 

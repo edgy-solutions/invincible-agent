@@ -15,7 +15,7 @@ buildable now; the autonomous workflow definition is M3-coupled and explicitly d
     autonomous identity's dispatch capability grant.
   - [ADR-0026](ADR-0026-persona-entitlement-topaz-authorization.md) — the single decider. `can_invoke` on the
     capability namespace is the enforcement point for "this pipeline may act unsupervised."
-  - [M3 design](../plans/m3-grouped-review-definition-design.md) — this ADR **sharpens M3's boundary**
+  - [M3 design](../reference/m3-grouped-review-definition-design.md) — this ADR **sharpens M3's boundary**
     (admission lives outside the definition) and **supplies M3.2's acceptance customer** (the autonomous
     workflow is the "second definition on the same executor," no longer a synthetic test case).
 

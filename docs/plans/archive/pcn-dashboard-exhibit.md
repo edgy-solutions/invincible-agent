@@ -49,7 +49,7 @@ and the latest ref wins. Correct: a part has ONE current disposition state, and 
 current one. (So the pre-seed is 3 parts, latest-notice ref — not additive across notices.)
 
 ## Payload contract
-`docs/plans/pcn-dashboard-payload-schema.md` — each field is the hand-assembled projection of a `rendersAs`
+`docs/reference/pcn-dashboard-payload-schema.md` — each field is the hand-assembled projection of a `rendersAs`
 triple M3 will declare, so the payload IS that declaration hand-assembled. Renderer consumes the archetype
 shape; feeder assembles it; M3 makes the assembly declarative from the graph.
 

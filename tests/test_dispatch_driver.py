@@ -375,5 +375,5 @@ def test_fan_out_sends_one_keyed_invocation_per_item():
         assert not offenders, (
             f"a credential is riding the journaled dispatch payload at {offenders} — mint at use, "
             f"never carry a token across a suspend "
-            f"(docs/plans/2026-08-04-notice-a-dispatch-failure.md)"
+            f"(docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md)"
         )

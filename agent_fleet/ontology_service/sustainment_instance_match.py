@@ -3,7 +3,7 @@
 The pcn analogue of ``datahub_wrapper/instance_match.py`` (BI/catalog). It resolves a user's
 identifier ("the PDN for NSR01L30NXT5G", "PCN 23_0120") to a pcn instance in Jena's
 ``SUSTAINMENT_INSTANCES`` graph, whose IRIs are DETERMINISTIC and keyed by MPN / notice-id (written by
-doc-tools ``SustainmentPlugin.to_graph_queries``). Design: docs/plans/pcn-pdn-bulk-resolve.md §6a.
+doc-tools ``SustainmentPlugin.to_graph_queries``). Design: docs/reference/pcn-pdn-bulk-resolve.md §6a.
 
 Two paths, in order:
   1. EXACT (the happy case, trivial): the instance IRI is a pure function of the MPN / notice-id, so

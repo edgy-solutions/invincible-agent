@@ -1,6 +1,6 @@
 """Integration positive-control for the CROSS-SERVICE STRING CONTRACTS.
 
-The class that nearly bit the M2 rename (see docs/plans/cross-repo-string-contracts.md): Restate service
+The class that nearly bit the M2 rename (see docs/reference/cross-repo-string-contracts.md): Restate service
 names, HTTP routes, and task-kind values are stringly-typed, consumed in N places, verified jointly in ZERO
 per-engine tests — so a rename that updates the producer but not a consumer passes every unit test while the
 loop is broken. This asserts producer + consumer agree, IN-REPO (engine-a + engine-o + cortex-bff). The

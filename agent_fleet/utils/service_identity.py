@@ -1,7 +1,7 @@
 """Service-identity token mint — MINT AT USE, never a stored credential.
 
 THE RULE THIS MODULE EXISTS TO ENFORCE (filed 2026-08-04, from the notice-A defect —
-``docs/plans/2026-08-04-notice-a-dispatch-failure.md``):
+``docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md``):
 
     A credential captured at one moment and used at another is stale by design wherever the gap
     is a HUMAN's. Mint at the point of use, under the ACTING identity.

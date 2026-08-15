@@ -9,7 +9,7 @@ per-approval decisions (from Topaz) + the join threshold (from the git-asserted 
 
 Pure — no Topaz. The AUTHZ decision (who counts, is the join satisfied) is decided ON Topaz rego
 against the ADR-0027 policy; this owns only the suspend-vs-fail LIFECYCLE (the runner's job), and
-it takes the per-approval decisions as INPUT. Design: docs/plans/slice-5-multi-approval-join.md.
+it takes the per-approval decisions as INPUT. Design: docs/reference/slice-5-multi-approval-join.md.
 
 Central discipline ([[feedback_hitl_suspend_vs_fail_ruling]], applied to joins): a join that can
 STILL complete suspends; a join that can NEVER complete terminates. Parking on an unsatisfiable

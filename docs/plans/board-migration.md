@@ -206,8 +206,8 @@ rot. So the census was run first rather than promised.
 | `AGENTS.md` | 2 | authority-bearing |
 | `docs/principles/` | 1 | authority-bearing |
 
-**Every authority-bearing citation is path-shaped** — `docs/plans/X.md` in backticks, or
-`[...](../plans/X.md)`. None are name-shaped `[[wikilinks]]`. So none of them survive a move and
+**Every authority-bearing citation is path-shaped** — `docs/plans/<name>.md` in backticks, or
+`[...](../plans/<name>.md)`. None are name-shaped `[[wikilinks]]`. So none survive a move and
 all six must be updated in the same commit.
 
 **`docs/BOARD.md` needs nothing.** `generate_board.py` emits `docs/plans/{name}` from the file it
@@ -219,10 +219,10 @@ construction. A point in the ruling's favour: no generator change, no schema cha
 All 7 code sites are **docstrings and assertion messages**, not file loads:
 
 ```
-tests/test_dispatch_driver.py:378   f"(docs/plans/2026-08-04-notice-a-dispatch-failure.md)"
-tests/test_cross_repo_contracts.py:3    """... see docs/plans/cross-repo-string-contracts.md ..."""
-tests/test_sustainment_instance_match.py:3  """... (docs/plans/pcn-pdn-bulk-resolve.md §6a) ..."""
-tests/fixtures/failure_path/cropfail_review.py:16   """... docs/plans/refusal-routing-design.md ..."""
+tests/test_dispatch_driver.py:378   f"(docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md)"
+tests/test_cross_repo_contracts.py:3    """... see docs/reference/cross-repo-string-contracts.md ..."""
+tests/test_sustainment_instance_match.py:3  """... (docs/reference/pcn-pdn-bulk-resolve.md §6a) ..."""
+tests/fixtures/failure_path/cropfail_review.py:16   """... docs/reference/refusal-routing-design.md ..."""
 ```
 
 **A move breaks all four and no test fails.** That is this repo's most-tracked failure class
@@ -241,20 +241,137 @@ currently resolves to an existing file. **That is what makes the check assertabl
 in green, which means the first thing it ever catches is a real regression rather than a backlog.
 Seal it break-on-purpose — rename a cited packet, watch it go red.
 
-### And the coverage line should count what it can act on
+## EXECUTED 2026-08-15 — the move is done, and the seal caught two phantoms on its first run
 
-Whatever the ruling, `coverage_line()` currently counts every file in `docs/plans/` as a packet
-owing a header. **A denominator that includes the archive can never reach *N of N*** — the
-migration would be permanently incomplete by construction, which is the opposite of what a
-self-disclosing coverage line is for.
+**40 files moved, 37 files rewritten, one sealed check added.** Final classification, which
+refines the census's estimate (~21/~17/~8) after reading each file against the ruling's test —
+*does anything consult this to decide something today?*
+
+| destination | n | notes on the judgement calls |
+|---|---|---|
+| `docs/plans/` (stayed) | 6 unheadered + 42 headered = **48** | the sweep's real scope is these 6 |
+| `docs/plans/archive/` | **24** | includes the two executed build plans (`adr0034-trust-lifecycle-build-directive`, `telemetry-standard-buildplan`) and the one-time `m2-cutover-*` pair — a directive that has been executed is history, not authority |
+| `docs/reference/` | **16** | includes `analyst-loop-red-baseline` (ADR-0032 measures its design against it — a live yardstick, not a record) and `pcn-pdn-bulk-resolve` (a test pins a decision recorded in its §6a) |
+
+**Coverage line now reads `40 of 48` instead of `40 of 88`.** The denominator is reachable for
+the first time; the migration's remaining scope is 6 files plus the 2 legacy-frontmatter packets.
+
+### THE CENSUS WAS UNDERSTATED, and the correction matters more than the number
+
+The census reported **39 inbound sites** over `docs/`, `scripts/`, `tests/`, `AGENTS.md`,
+`README.md`. **That scope was wrong.** The real citing surface also includes `agent_fleet/`
+(10 sites in `restate_analyst` alone), `src/iagent/`, `policy/`, `helm/…/values.yaml`, `sql/`,
+`setup/`, and a `.baml` contract — roughly double what was reported, and the rewrite touched 37
+files rather than the ~20 implied.
+
+**And a generated mirror nearly took a dangling link to production.** `baml_client/inlinedbaml.py`
+inlines the `.baml` source; rewriting the source alone left the generated copy pointing at a
+moved file. Caught by the seal, not by review. **A generated artifact is a citing surface** —
+skipping it because "it's generated" is exactly how the two drift apart.
+
+### THE SEAL'S FIRST CATCH — a species the ruling had not named
+
+Anchoring the check at `docs/` rather than `docs/plans/` surfaced two dead citations **that
+predate this move by months**:
+
+| cited path | citing site | verdict |
+|---|---|---|
+| `docs/adr/namespace-prefixes.md` | `ADR-0005:169` | **never created** (citation added `191cb63`) |
+| `docs/routing/recipe_v2_instance_resolution.md` | `tests/routing/test_classify_route.py:232` | **never created**, `docs/routing/` has never existed (citation added `d454a64`) |
+
+So there are **two species, and only one is rot**:
+
+- **ROT** — the file existed and a move broke the link. Repairable, and what the seal fails on.
+- **PHANTOM** — the file *never existed*. The citation was aspirational when written and has
+  read as a statement of fact ever since. Nothing to restore.
+
+The second is the worse shape and the harder one to see. The test one is **load-bearing**: a
+deliberately-RED suite tells the reader *"See `docs/routing/recipe_v2_instance_resolution.md`"*
+to understand why the rows are red — and that spec has never existed. Anyone asking the obvious
+question is sent nowhere, by a comment that reads like an answer.
+
+**Both are now phase-2 candidates, found mechanically.** That is the phase-2 method working
+exactly as specified — an arc with no artifact, surfaced by a grep rather than by memory — and
+it suggests the citation seal is a *phase-2 discovery instrument*, not only a regression guard.
+
+### THE SEAL THEN MADE THE SAME MISTAKE IT WAS WRITTEN TO CATCH
+
+The first seal matched **absolute** `docs/…` strings. A markdown link whose *target* is
+relative — `](../adr/<name>.md)`, `](<sibling>.md)` — was invisible to it. And the move broke four
+of those at once, by a mechanism the absolute check structurally cannot see:
+
+> **`docs/plans/archive/` is one level DEEPER than `docs/plans/`.** Every relative link out of a
+> moved file (`](../adr/…)`) needed re-basing to `](../../adr/…)`. `docs/reference/` sits at the
+> same depth as `docs/plans/`, which is why only the archive tranche broke — and why a spot-check
+> of the reference moves would have found nothing and read as proof.
+
+The absolute-path seal was green throughout. So a second check now resolves relative link
+targets, and between them they cover both shapes.
+
+**That is three instances of one defect, two of them on the same day:**
+
+| where | the scope that hid the failure |
+|---|---|
+| `legacy-dns-guard-phantom-scope` | `SCANNED_DIRS` listed a sibling repo, so the walker skipped it and passed green |
+| the move-day "baseline is clean" claim | verified over `docs/plans/` paths; the phantoms live elsewhere under `docs/` |
+| the first citation seal | matched absolute paths; the breakage was in relative ones |
+
+**A check whose scope excludes the failure reports green over it** — and reports it in the voice
+of a passing test, which is worse than no check because it is evidence-shaped. Worth promoting
+out of this packet: the question to ask of any new seal is not *"does it pass?"* but *"what is
+outside its scope, and how would I know?"*
+
+**What the relative-link check found on ITS first run:** two more phantoms
+(`ADR-0006-datahub-proposal-inbox`, `ADR-0016-memory-boundary-revised` — both linked as ADRs by
+ADR-0019/0021, **neither ever created**), and one pre-existing broken link in
+`tests/routing/STATE_GATEWAY_V02.md:417`, whose link target was written as the repo-root-relative
+`docs/demo-script.md` and therefore resolved against its own directory. **It has been broken
+since `3e92493` and was never valid.**
+
+*(Note the three failures this section itself caused: prose quoting a link SHAPE is
+indistinguishable from a link. The `<name>` placeholder convention above is the fix, and it is
+why the scanner skips any target containing angle brackets — a seal that cannot be written about
+is a seal nobody documents.)*
+
+### And a correction to the move-day claim
+
+*"The baseline is clean today"* was asserted in `0d1dae7`. **It was true for `docs/plans/` paths
+and had never been checked for `docs/` generally**, which is where both phantoms live. The
+narrower claim was accurate; the broader one was never tested. Recorded because the shape of the
+error is the interesting part — **the check's own scope was the thing that made the gap
+invisible**, which is the same defect as `legacy-dns-guard-phantom-scope` wearing different
+clothes.
+
+The allowlist is therefore narrow and **proves its own precondition**: an entry is legal only if
+`git log --diff-filter=A` shows the path was never added, asserted per-entry, so the hatch cannot
+be used to hide a real deletion. A second test deletes entries that stop being cited. Both exist
+because this repo has already watched `closed-by-note` degrade from *unusual* to *routine*.
+
+### And the coverage line should count what it can act on — RESOLVED, and it needed no code
+
+`coverage_line()` counted every file in `docs/plans/` as a packet owing a header, so a
+denominator including the archive could never reach *N of N*.
+
+**The three-way move fixed it with no generator change.** `PLANS.glob("*.md")` is
+non-recursive, so `docs/plans/archive/` is invisible to it and `docs/reference/` is outside the
+tree entirely. The denominator became the live population by construction rather than by a
+special case — which is why the move was ruled to precede the sweep, and is the strongest
+evidence the taxonomy was the real fix and the header gap was the symptom.
 
 ## Acceptance
 
-- **The three-way move is done and every one of the 39 inbound citation sites is updated in the
-  SAME commit** — a moved file with dangling ADR references is worse than a mis-shelved one.
-- **A dangling-`docs/plans/` citation check is in the suite, scanning code as well as docs, and
-  sealed break-on-purpose.** It goes in green against today's clean baseline; the code sites are
-  the reason it cannot be a one-time grep.
+- ~~The three-way move is done and every inbound citation site is updated in the SAME commit~~
+  **DONE 2026-08-15.** 40 moved, 37 rewritten, one commit. Note the site count in the original
+  census was understated — see the correction above.
+- ~~A dangling-citation check is in the suite, scanning code as well as docs, sealed
+  break-on-purpose~~ **DONE** — `tests/test_citation_paths.py`, anchored at `docs/` rather than
+  `docs/plans/` (which is what caught the two phantoms). Break-on-purpose verified: renaming
+  `standards-posture.md` fails the seal naming `ADR-0029:157` as the citing site.
+- **REMAINING — retrofit headers onto the 6 packets still in `docs/plans/`** plus the 2
+  legacy-frontmatter ones. This is now the whole of phase 1.
+- **REMAINING — dispose of the two phantoms** (`namespace-prefixes`, `recipe_v2_instance_resolution`):
+  write the artifact, or repair the citing site to stop asserting one exists. They are
+  allowlisted, not fixed, and the allowlist is debt with a stated reason.
 - Coverage line reads *N of N indexed*, or every exception is a packet with a stated reason.
 - No fabricated `id`, `status`, `owner` or `closed-by` anywhere in the sweep.
 - `closed-by` accepts `repo@sha`, resolves and attributes against that repo when present, and

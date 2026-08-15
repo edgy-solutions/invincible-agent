@@ -4,7 +4,7 @@ A workflow definition is a **git-asserted** YAML (``policy/workflows/*.yaml``),
 reviewed like ``asset_grants.yaml`` / ``task_grants.yaml`` so classification +
 grants compose, and executed on the Restate ``BPMNWorkflowRunner``.
 
-Design (see ``docs/plans/slice-1-spo-workflow-promotion.md`` + ADR-0029):
+Design (see ``docs/reference/slice-1-spo-workflow-promotion.md`` + ADR-0029):
 
 * **A step is PRE-RESOLVED.** An ``spo_operation`` step *declares* its
   ``(subject, verb)`` — it does NOT go through the router's NL-resolution

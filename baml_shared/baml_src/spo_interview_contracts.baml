@@ -1,4 +1,4 @@
-// SPO-native workflow interview (ADR-0029 Slice 2 — docs/plans/slice-2-spo-interview.md).
+// SPO-native workflow interview (ADR-0029 Slice 2 — docs/reference/slice-2-spo-interview.md).
 // Supersedes IterateBPMNGraph (the BPMN-fused interview). The KEEPER pattern —
 // mesh-informed select-from-authorized-set — re-aimed at the WorkflowDefinition model,
 // and now with the VERB question the old interview never asked.

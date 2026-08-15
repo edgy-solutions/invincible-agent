@@ -82,7 +82,7 @@ _WORKFLOWS = _REPO / "policy" / "workflows"
 @pytest.fixture(autouse=True)
 def _stub_service_mint(monkeypatch):
     """The AWAIT arm drives the real ``_run_definition``, which registers the grouped task — and that
-    register MINTS AT USE since 2026-08-04 (``docs/plans/2026-08-04-notice-a-dispatch-failure.md``).
+    register MINTS AT USE since 2026-08-04 (``docs/plans/archive/2026-08-04-notice-a-dispatch-failure.md``).
     Without a stub this seal would reach Keycloak and die on a bare ``KeyError``, which says nothing
     about promise names.
 

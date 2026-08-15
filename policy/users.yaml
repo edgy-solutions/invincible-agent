@@ -107,7 +107,7 @@ users:
   # it carries no `groups` and no `default`. Its entitlements are CAPABILITY
   # invocations (capability_grants.yaml), not persona/domain cells. This is
   # instance-one of the pattern (the dispatcher / analyst loop will follow
-  # the same shape). See docs/plans/identity-mint-contract.md.
+  # the same shape). See docs/reference/identity-mint-contract.md.
   - id: svc:review-starter
     display_name: review-starter (service - extraction-to-review sensor)
     groups: []

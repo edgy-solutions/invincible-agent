@@ -1,6 +1,6 @@
 # Telemetry standard — build plan (ADR-0038)
 
-Implements [ADR-0038](../adr/ADR-0038-telemetry-as-provenance-projection-langfuse-standard.md) (extends [ADR-0010](../adr/ADR-0010-distributed-tracing-strategy.md)). The standard is a **projection of the provenance doctrine into Langfuse** — the code is a generic leaf engine + ratifiable mapping config, not per-project telemetry calls. Phases 2 seals gate everything else.
+Implements [ADR-0038](../../adr/ADR-0038-telemetry-as-provenance-projection-langfuse-standard.md) (extends [ADR-0010](../../adr/ADR-0010-distributed-tracing-strategy.md)). The standard is a **projection of the provenance doctrine into Langfuse** — the code is a generic leaf engine + ratifiable mapping config, not per-project telemetry calls. Phases 2 seals gate everything else.
 
 ## Phase 0 — prerequisites (CONFIRMED 2026-08-03)
 

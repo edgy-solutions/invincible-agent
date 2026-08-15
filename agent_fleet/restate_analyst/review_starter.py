@@ -407,7 +407,7 @@ async def start_review(ctx: Context, request: dict) -> dict:
     #      filter checked a FIXED audience (ignoring the item) against the INITIATOR, so it was a coarse
     #      initiator check wearing a per-item costume, and it conflated "may initiate" with "is a reviewer"
     #      — invisible until the first non-human initiator (svc:review-starter). WHO may REVIEW is a
-    #      separate gate at the task layer. See docs/plans/pcn-can-act-topaz-binding.md (Audience Rule).
+    #      separate gate at the task layer. See docs/reference/pcn-can-act-topaz-binding.md (Audience Rule).
     if not can_invoke_start_review(approver):
         return {"status": "NOT_ENTITLED_TO_INITIATE", "notice_id": notice_id, "initiator": approver}
 

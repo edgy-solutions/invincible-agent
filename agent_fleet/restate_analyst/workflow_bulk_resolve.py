@@ -4,7 +4,7 @@ The DUAL of the Slice-5 join ([[workflow_join]]): the join is N-approvals-gate-1
 this is 1-approval-resolves-N-items (fan-OUT). A part-obsolescence notice fans out to N part-items;
 a funnel reduces them (filter -> auto-dispose -> residue); an approver reviews their per-approver
 batch and resolves it in ONE action that produces N per-item resolutions. Design:
-docs/plans/pcn-pdn-bulk-resolve.md.
+docs/reference/pcn-pdn-bulk-resolve.md.
 
 Pure — no Restate, no Topaz. The authz (`can_act`), relevance scores, `needs_review`, and the
 system-proposed disposition are all INPUTS; the enforceable innovations are the four seals:
