@@ -292,23 +292,26 @@ other's premise anyway:
 Nothing in git flags that. A's number would have answered a question that had stopped being the
 question, and it would have looked clean.
 
-**So bound by ARC:**
+**Bound by LAYER, not by arc.** An arc split was tried first (critical-path vs resolver) and was
+**wrong**: item 2 *is* resolver work, so that seam ran through the middle of a single
+investigation and both agents kept legitimately needing the other's side. Layers cut where the
+code actually separates:
 
-| arc | owns |
+| agent | owns the layer |
 |---|---|
-| **the critical path** | `ui-renders-honest-failure-as-answer`, `instance-resolution-nondeterminism`, `da-collects-before-filtering`, `docs/demo-day-runbook.md`, `first-viewer-critical-path` — everything between here and one other person using it |
-| **the resolver** | `deterministic-decisions-made-by-llm`, the corpus, `idp_extension.ttl` definitions, `run_resolver_corpus.py` — everything about *why the picker picks* |
+| **A — extraction / matching** | `ClassifyDomainIntent`'s **identifier** output, the fuzzy matcher, `_resolve_instance`, and the packet formerly called `instance-resolution-nondeterminism` |
+| **B — class selection** | `idp_extension.ttl` definitions, recall bias, the class contest, argmax-vs-LLM |
 
-**The overlap is real and named:** the critical path's item 2 *measures the thing the resolver
-arc changes.* So:
+**They meet at exactly one call.** `ClassifyDomainIntent` emits the class **and** the instance
+identifier in a single LLM call, so it is the one shared surface:
 
-* **The resolver arc does not change definitions or corpus scoring while an item-2 read is in
-  flight.**
-* **The critical path does not re-scope item 2 without reading the resolver arc's latest commit
-  first.**
+> **Whoever changes that BAML call or its prompt announces it first, and the other holds any
+> in-flight read.** Everything downstream of it splits cleanly.
 
-Whoever needs the other's territory asks; the handshake is the one above — name the file,
-confirm the other's index is empty, proceed.
+**The corpus is shared infrastructure, not either agent's.** Both read it; neither changes its
+scoring without saying so; and **every run reports all three stamp axes** so one agent's number
+is interpretable by the other. That last clause is what would have caught the 2026-08-15
+collision automatically instead of by A happening to notice a commit.
 
 **And the standing protocol, which is the general form:**
 

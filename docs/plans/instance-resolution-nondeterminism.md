@@ -127,7 +127,28 @@ in `5f3b4e1` (committed 00:28Z) — and with `pullPolicy: Always`, so the restar
 so *"a corpus result against it is unattributable"*. `imageID` supplies a falsifiable code
 identity — and it is **half** of attribution.
 
-### RULE — AN IMAGE DIGEST PINS THE CODE, NOT THE SUBSTRATE. BOTH AXES OR NEITHER.
+### RULE — THREE AXES, OR THE NUMBER IS NOT ATTRIBUTABLE
+
+**Amended 2026-08-15 (second time, same day): there is a THIRD axis, and it is the one that
+silently voided every grounding number this packet had.**
+
+    CODE       image digest (imageID)       -> which build is answering
+    SUBSTRATE  pool fingerprint (stamp())   -> what classes it can choose from
+    INSTANCES  catalog contents             -> whether ANYTHING could have grounded
+
+`iagent-minio/publog-lake/publog/p_cage` and its upstream `_raw/cage` had **never been
+materialized on sandbox** — defined by pub-tools, never built here — so DataHub had no such
+dataset and *every* probe returned `instance_match: empty` regardless of phrasing. A grounding
+rate measured against that catalog is not a low rate; it is **no measurement at all**, and it
+reads as a clean run because the pool gate passes and the health check is green.
+
+**This retroactively voids every sandbox grounding number taken before 2026-08-15T17:45Z**,
+including this packet's own earlier runs and that morning's smoke run. They describe a system
+that could not have grounded whatever the resolver did.
+
+The original two-axis form of this rule follows; it stands, it was simply one axis short.
+
+### AN IMAGE DIGEST PINS THE CODE, NOT THE SUBSTRATE. BOTH AXES OR NEITHER.
 
 Stated as a rule rather than a note because the next person will reach for the digest alone,
 and there is now a concrete demonstration that it is insufficient. Within hours of the digest
@@ -333,6 +354,51 @@ these, because both mechanisms moved together.
 4. **Do not let the resolver arc change definitions while this is in flight** — the ownership
    rule now recorded in `AGENTS.md`. This measurement is the one thing that arc can invalidate
    without touching a file this packet owns.
+
+## PROBED 2026-08-15 AFTER MATERIALIZATION — THE LEAD IS REFUTED, AND ITS DIRECTION IS BACKWARDS
+
+**n=1 per phrasing. This is an anecdote, not a rate** — the repeat=10 run is what turns it into
+one, and nothing should be fixed until it lands. Recorded now because the mechanism is legible
+and it changes what the fix would even be.
+
+Two probes, same asset, same deployment, minutes apart, against a catalog that now contains
+`p_cage`:
+
+| query | extracted `instance_identifier` | `instance_match` | resolved |
+|---|---|---|---|
+| `…from publog p_cage` | **`'publog p_cage'`** | `empty` | **NO** |
+| `…from publog's p_cage dataset` | **`'p_cage'`** | `fuzzy` | **YES** → correct URN |
+
+**Both resolved to class `Table`. The class contest is not involved.**
+
+### The cause is IDENTIFIER EXTRACTION, and it is deterministic
+
+`ClassifyDomainIntent` extracts `"publog p_cage"` — **schema qualifier included** — from the
+bare space-separated form, and that string does not fuzzy-match a URN whose name segment is
+`publog/p_cage`. The possessive form yields a clean `"p_cage"`, which matches. Same call, same
+asset; the difference is the *content* of the emitted identifier, not whether one was emitted.
+
+### This inverts the STRONG LEAD twice
+
+The lead predicted: *a trailing class noun suppresses identifier emission, so the bare form
+grounds and the trailing-noun form does not.* Observed:
+
+1. **An identifier is emitted in both cases** — `instance_fired` was true throughout. Emission
+   is not the failure.
+2. **The trailing-noun form is the one that RESOLVED.** The bare form failed.
+
+So the hypothesis is not merely unconfirmed; **its direction is backwards.**
+
+### Which means this packet is MIS-TITLED, as it suspected
+
+It is not nondeterminism. It is a **deterministic extraction defect with a nameable trigger** —
+*the extracted identifier retains a qualifier the matcher cannot handle.* That is a far smaller
+and more fixable target than "instance resolution is nondeterministic", and it sits squarely in
+the extraction/matching layer.
+
+**Rename deferred until the rate lands**, because the honest title depends on what the repeat=10
+shows: if some phrasings are also *unstable* across repeats, both defects are real and the title
+needs to say so rather than trade one wrong name for another.
 
 ## The read that sizes it, before any fix
 
