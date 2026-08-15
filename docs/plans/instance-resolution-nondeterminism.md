@@ -122,12 +122,31 @@ stale.** Engine O restarted at 04:18Z on 2026-08-15 — *after* the chart 0.3.37
 in `5f3b4e1` (committed 00:28Z) — and with `pullPolicy: Always`, so the restart pulled fresh.
 **The corpus read is runnable today.**
 
-**And the digest is the thing the packet said was missing.** The objection was not really the
+**And the digest is part of what the packet said was missing.** The objection was not really the
 `:latest` tag; it was that `/health` returns `{status, jena_reachable}` with no build identity,
-so *"a corpus result against it is unattributable"*. `imageID` supplies exactly that identity,
-and it is falsifiable. **Any corpus run against sandbox should carry
-`sha256:fe90b047…` in its `--stamp`** — that converts the run from unattributable to pinned
-without needing `/health` to change.
+so *"a corpus result against it is unattributable"*. `imageID` supplies a falsifiable code
+identity — and it is **half** of attribution.
+
+### RULE — AN IMAGE DIGEST PINS THE CODE, NOT THE SUBSTRATE. BOTH AXES OR NEITHER.
+
+Stated as a rule rather than a note because the next person will reach for the digest alone,
+and there is now a concrete demonstration that it is insufficient. Within hours of the digest
+read above, `2f617fd` rewrote the `idp:Column` and `idp:Pipeline` definitions in
+`setup/ontologies/idp_extension.ttl`, re-ingested them, and **measurably moved which class wins
+a contest — with the image digest unchanged.**
+
+    CODE axis        image digest (imageID)          -> which build is answering
+    SUBSTRATE axis   pool fingerprint (stamp())      -> what it is answering FROM
+
+**A corpus result is attributable only when BOTH are recorded.** They move independently: a
+redeploy changes the digest and not the definitions; a re-ingest changes the definitions and not
+the digest. A run stamped with only one of them is pinned against a system that could have
+changed along the other axis without leaving a trace in the stamp — which is the same
+*"measuring a different system"* failure the pool gate was built to prevent, arriving through
+the axis the gate does not watch.
+
+This is why `stamp()` records the pool fingerprint AND `/health` rather than either alone. The
+digest is the missing third field, not a replacement for the first.
 
 **What this does NOT establish, stated so the gate is not declared closed twice:** the digest
 proves *what sandbox is running*, not that it *equals work's build*. Cross-cluster equality
@@ -255,6 +274,65 @@ Two rules for the restoration, both easy to violate:
    entire point.** The pressure to re-delete will be real the first time a demo query fails
    on it. Anyone who wants sandbox green again gets it by fixing SELECTION, not by shrinking
    the candidate set.
+
+## RE-SCOPED 2026-08-15 after `2f617fd` — the read survives, its baseline does not, and one half of the STRONG LEAD is now answered
+
+**Read the resolver arc's latest commit before running this.** `2f617fd` rewrote the `idp:Column`
+and `idp:Pipeline` definitions and re-ingested them, which moves the measurement's substrate.
+Running the read as originally written would produce a number answering a question that had
+stopped being the question.
+
+### What changed, and why it does NOT close this packet
+
+`2f617fd` fixed a **recall** defect: Weaviate embeds `"<label> — <definition>"`, and `idp:Column`'s
+definition contained quoted user *questions* plus a dotted identifier (`orders.amount`), so any
+question — and any dotted asset name like `publog.p_cage` — scored similar to it. `idp:Pipeline`
+named `Datasets` twice and stole its sibling's traffic.
+
+**That is the CANDIDATE-RANKING mechanism. This packet's defect is the IDENTIFIER-EMISSION
+mechanism**, and they are different code paths:
+
+    recall               Weaviate similarity over definitions   -> which candidates are offered
+    identifier emission  ClassifyDomainIntent (main.py:1638)    -> whether _resolve_instance runs
+
+A run that reports *"No DataHub URN resolved"* failed at the second, whatever the first ranked.
+`2f617fd` measured **class agreement** (argmax vs LLM), never **grounding rate**, so nothing it
+reports bears directly on *"the same question returns rows once and an apology the next time."*
+
+### The half of the STRONG LEAD that IS now answered — and it sharpens the read
+
+The lead proposed ONE cause for TWO symptoms: a trailing class noun tips `ClassifyDomainIntent`
+toward *"a KIND of thing"*, which **both** selects the specific-sounding class **and** emits no
+identifier.
+
+The class-selection symptom now has a demonstrated cause of its own — definition wording, in a
+different layer, fixed independently. **So the two symptoms have come apart**, and that is
+informative rather than disappointing:
+
+> **If the trailing-noun grounding effect survives `2f617fd`, its cause is NOT the class
+> contest** — the class contest has been repaired at the recall layer — **and the hypothesis
+> narrows to identifier emission alone.** If it disappears, the two symptoms shared the recall
+> cause after all and this packet is largely closed by someone else's commit.
+
+Either outcome is worth the run, which it was not before: the old read could not distinguish
+these, because both mechanisms moved together.
+
+### The re-scoped read
+
+1. **Grounding rate, not class agreement.** Ten runs each of the bare form (`publog's p_cage`)
+   and the trailing-noun form (`p_cage dataset`), counting `instance_resolved` true/false. This
+   is unchanged from the original specification and remains the discriminating measurement.
+2. **Stamp BOTH axes.** Image digest AND pool fingerprint — see the rule above. Any number from
+   before `2f617fd` is not comparable to one after it, and only the stamp records which side of
+   that line a run sits on.
+3. **Add the abstention row.** `misspell-01` (`p_caeg`, an asset that does not exist) regressed
+   from UNKNOWN to a stable `Column` resolution. It belongs in this read because it is the same
+   question — *does the resolver know when to decline* — and because it is
+   [demo-script](../demo-script.md) §2 row 5, the failure demo. Filed as a first-viewer risk in
+   [[first-viewer-critical-path]] and [docs/demo-day-runbook.md](../demo-day-runbook.md) §A5.
+4. **Do not let the resolver arc change definitions while this is in flight** — the ownership
+   rule now recorded in `AGENTS.md`. This measurement is the one thing that arc can invalidate
+   without touching a file this packet owns.
 
 ## The read that sizes it, before any fix
 

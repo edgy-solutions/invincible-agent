@@ -276,6 +276,51 @@ apply" is a sound argument and an easy one to get subtly wrong (a partially-stag
 untracked file the tests import, a `.pyc` shadowing a change). Materialising the tree costs
 seconds and converts the argument into an observation.
 
+### OWN AN ARC, NOT A FILE — and check what moved before assuming your premise holds
+
+**The staged-blob rule above bounds two agents by TREE. It does not bound them by MEANING, and
+that is the collision that actually happened (2026-08-15).** Two agents worked the same arc from
+different sides, touched no common file, produced no merge conflict, and one invalidated the
+other's premise anyway:
+
+* Agent A read Engine O's image digest, established that sandbox was current, and concluded a
+  corpus read was runnable.
+* Agent B rewrote the `idp:Column` / `idp:Pipeline` definitions in `idp_extension.ttl`,
+  re-ingested them, and **measurably moved which class wins a contest** — with the image digest
+  unchanged and A's finding still technically true.
+
+Nothing in git flags that. A's number would have answered a question that had stopped being the
+question, and it would have looked clean.
+
+**So bound by ARC:**
+
+| arc | owns |
+|---|---|
+| **the critical path** | `ui-renders-honest-failure-as-answer`, `instance-resolution-nondeterminism`, `da-collects-before-filtering`, `docs/demo-day-runbook.md`, `first-viewer-critical-path` — everything between here and one other person using it |
+| **the resolver** | `deterministic-decisions-made-by-llm`, the corpus, `idp_extension.ttl` definitions, `run_resolver_corpus.py` — everything about *why the picker picks* |
+
+**The overlap is real and named:** the critical path's item 2 *measures the thing the resolver
+arc changes.* So:
+
+* **The resolver arc does not change definitions or corpus scoring while an item-2 read is in
+  flight.**
+* **The critical path does not re-scope item 2 without reading the resolver arc's latest commit
+  first.**
+
+Whoever needs the other's territory asks; the handshake is the one above — name the file,
+confirm the other's index is empty, proceed.
+
+**And the standing protocol, which is the general form:**
+
+```bash
+git log --oneline -5        # before starting ANY session
+```
+
+**Read what landed since your last commit.** Today's collision was not a merge conflict, it was
+a *semantic* one — and semantic collisions are invisible to every tool that watches bytes. The
+guard is procedural and it is one command: **check what moved before assuming your premise
+holds.**
+
 **LIMIT — an extracted tree has no `.git`, so git-dependent checks FALSE-RED there.** Found the
 first time this was used: `test_board_drift` shells out to `generate_board.py --check`, which
 resolves every `closed-by` sha with `git cat-file`; in `/tmp/staged` that fails for *all* of

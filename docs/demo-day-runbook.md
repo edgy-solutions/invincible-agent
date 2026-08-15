@@ -60,6 +60,25 @@ will use. It costs a minute and it collapses three checks into an observation.
 **Do not skip this because A1–A3 passed.** They are checks on the configuration; this is a check
 on the system.
 
+### A5. ⚠ RE-VERIFY THE FAILURE DEMO (§2 row 5) — it regressed on 2026-08-15
+
+**Do not run the abstention beat live until this is checked.** `2f617fd` improved class recall
+and recorded its own cost: an asset that does not exist (`p_caeg`, a misspelling) **previously
+abstained to UNKNOWN and now resolves to `idp:Column`, stably.**
+
+That is exactly demo-script §2 row 5 — *"Tell me about `<DELIBERATELY_UNGROUNDABLE_THING>`"* —
+whose expected behaviour is `instance_resolved=false` and no fabricated answer. The beat's whole
+value is watching the system refuse to confabulate, so a beat that now confabulates is worse
+than not running it.
+
+**The check:** ask row 5's question with your chosen ungroundable token and confirm it does not
+resolve. If it resolves, the beat is a **slide, not a live query** — the cardinal demo rule
+(§C) applied to a row that used to be safe.
+
+**Delete this section when abstention is recovered.** Per §E, a step that routes around a known
+defect cites what retires it: the recovery is owed by the resolver arc that caused it, and the
+regression is recorded in `2f617fd`'s own message.
+
 ---
 
 ## §B. THE INFRASTRUCTURE SEQUENCE — deploy the day BEFORE, then stop touching it
@@ -143,6 +162,16 @@ is blocked, so it earns its place twice.
 
 ---
 
+## §D. What this runbook does NOT cover, on purpose
+
+The authz/transport arc — transport-flip, agentic-auth-flip, undeclared-routes, the two dag-tools
+findings, supervisor-mint, jupyter tokens. Seven live board items, all real, and all of them the
+price of a **shared** cluster with users who are not you. Showing one person over your shoulder
+touches none of it, and pulling any of it into a demo-day checklist would be the fastest way to
+make this checklist unusable.
+
+---
+
 ## §E. THE RULE THIS RUNBOOK FOLLOWS — every workaround cites what retires it
 
 **Any step that exists to route around a known defect must cite the packet that retires it, and
@@ -169,11 +198,3 @@ The test for a new step: *if I cannot name what would delete this, it belongs in
 category — and if I am wrong about that, I have just written down folklore.*
 
 ---
-
-## §D. What this runbook does NOT cover, on purpose
-
-The authz/transport arc — transport-flip, agentic-auth-flip, undeclared-routes, the two dag-tools
-findings, supervisor-mint, jupyter tokens. Seven live board items, all real, and all of them the
-price of a **shared** cluster with users who are not you. Showing one person over your shoulder
-touches none of it, and pulling any of it into a demo-day checklist would be the fastest way to
-make this checklist unusable.

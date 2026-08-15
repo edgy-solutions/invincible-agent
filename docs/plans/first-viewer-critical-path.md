@@ -165,7 +165,36 @@ either way, and this triage is about what the viewer sees. **Demoted to hygiene 
 of the shipped fallback, not on the strength of the defect being small.** If the fallback turns
 out to render poorly enough to embarrass the room, this comes straight back to bucket 1.
 
-### Bucket 2 — DEMO-DAY OPERATIONAL RISK (3): now [docs/demo-day-runbook.md](../demo-day-runbook.md)
+### ⚠ A ROW THIS PACKET CERTIFIED ✅ READY REGRESSED FOUR HOURS LATER
+
+**Demo-script §2 row 5 — the Tier-1b trust-builder — is now ⚠, and the triage above should be
+read with that correction.**
+
+`2f617fd` (2026-08-15 11:16) rewrote the `idp:Column` / `idp:Pipeline` definitions to remove a
+recall bias, correctly and with measurements. It also records its own cost:
+
+> `misspell-01` (*"...publog's p_caeg"*, an asset that does not exist) previously abstained to
+> UNKNOWN and now resolves to Column, stably 3/3.
+
+**Honest abstention on a non-existent asset IS row 5.** The demo script's expected behaviour for
+that row is `instance_resolved=false` → generalist, *no fabricated answer*, and the whole point
+of the beat is stated there: *"a system that refuses to confabulate lands harder than any
+success — everyone has been burned by a tool that confidently made something up."*
+
+So the beat whose entire value is watching the system decline is the beat that just stopped
+declining, on the exact input shape it is demonstrated with (a name that looks right and is not).
+
+**This is not an argument against `2f617fd`** — it fixed two genuine class-contest defects, it
+measured them, and it recorded the regression rather than burying it. The gap is that the cost
+was recorded as a *resolver* fact and never connected to the *demo* row that depends on it.
+That connection is the thing this packet exists to make.
+
+**Consequence for the ordering:** none. Items 1–3 stand. But row 5 must be re-verified before a
+viewing, and until it is, the failure demo is a slide rather than a live query — the cardinal
+demo rule applied to a row that used to be safe. Filed in
+[docs/demo-day-runbook.md](../demo-day-runbook.md) §A5.
+
+## Bucket 2 — DEMO-DAY OPERATIONAL RISK (3): now [docs/demo-day-runbook.md](../demo-day-runbook.md)
 
 **These are not fixed before a viewing; they are SEQUENCED AROUND** — deploy the day before,
 verify the verbs registered, confirm the URN resolves, then do not touch it. That makes them a
