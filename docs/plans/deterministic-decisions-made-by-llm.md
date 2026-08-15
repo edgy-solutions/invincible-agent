@@ -43,6 +43,56 @@ more specific-sounding noun, which also explains the observed trailing-noun effe
 ending "p_cage **dataset**" or "p_cage **table**" fail to ground; the bare "publog's p_cage"
 grounds and returns rows.
 
+**Say it plainly, because it is the whole finding:** the constrained enum was built to limit
+the LLM's VOCABULARY, and it does that correctly. Nobody ever ruled that the LLM should still
+be the one CHOOSING. The scores sit in the same function, unused as a decision rule.
+
+## THE INTERIM IS NOT AVAILABLE — checked before scoping, and the check paid
+
+The obvious cheap fix is "take `resolved_uri` from the top-scored candidate; let BAML
+tie-break below a threshold." **It does not work**, and the reason is the load-bearing part:
+
+`ClassifyDomainIntent` returns the class AND the named individual, and instance resolution is
+gated on the latter (`main.py:1638-1639`):
+
+```python
+identifier = getattr(result, "instance_identifier", None)
+if identifier:
+    instance_subject, ... = await _resolve_instance(identifier=identifier, ...)
+```
+
+ONE call, TWO outputs, and they fail together. A query ending "p_cage **dataset**" reads as a
+class question, so the model picks the specific-sounding class AND emits no
+`instance_identifier` → no URN → apology. Bare "publog's **p_cage**" reads as an instance
+question → identifier emitted → grounded → rows returned.
+
+So argmax on the class would correct the subject and STILL produce no URN. The user-visible
+symptom does not move.
+
+**And instance resolution has TWO gates that both close in exactly this case:**
+
+| gate | condition | closes when |
+|---|---|---|
+| `main.py:1584` | `if not candidates and request.entity_refs` | class recall SUCCEEDED |
+| `main.py:1639` | `if identifier` | the LLM named nothing |
+
+A query that produces class candidates and no identifier cannot reach instance resolution by
+either path. The deterministic machinery exists — `_resolve_instance` fans out to registered
+`mesh:resolveInstance` providers and a unanimous class answer OVERRIDES the LLM's guess
+(`main.py:1636-1637`) — and it is unreachable behind an LLM's willingness to invoke it.
+
+That is the sharper statement of this packet: **it is not only that a model makes the
+decision; it is that the model also decides whether the deterministic path runs at all.**
+
+### The smaller repair this read DOES reveal
+
+Relax gate 1584 — try `entity_refs` even when class recall succeeds. The comment there calls
+it a "tight over-fire guard" and it was written for the case where Weaviate MISSES the class;
+what it also does is make a named instance unreachable whenever the class contest happens to
+succeed. `entity_refs` already carries the extracted named entities, and `_resolve_instance`
+already abstains honestly when a provider does not recognise the token, so trying it is cheap
+and cannot invent an instance. That is testable independently of the SPO design session.
+
 ## Same gap, second symptom: the archetype
 
 ```

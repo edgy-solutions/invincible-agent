@@ -65,6 +65,27 @@ The failure is invisible: run B produced no error, and — see
 experience of a working system is a coin flip, and the losing side is articulate about why it
 cannot help. A user who sees B first concludes the asset is not in the catalog.
 
+## STRONG LEAD (2026-08-15): it may be a deterministic misparse, not noise
+
+Every failing query ended with a trailing class noun — "p_cage **dataset**", "p_cage
+**table**". The one that grounded and returned rows was bare: "publog's **p_cage**".
+
+And there is a mechanism that would explain it exactly. `ClassifyDomainIntent` emits the class
+AND the `instance_identifier` in ONE call, and instance resolution only runs when the
+identifier is present (`main.py:1638-1639`). A trailing class noun tips that single decision
+toward "this is a question about a KIND of thing", which simultaneously selects the
+specific-sounding class (Table over Dataset, 0.477 over 1.0) and emits no identifier. Both
+observed symptoms, one cause.
+
+If that holds, this packet is MIS-TITLED — it is not nondeterminism, it is a deterministic
+misparse with a nameable trigger, and the repair is upstream of selection entirely. See
+[[deterministic-decisions-made-by-llm]] for the gates involved.
+
+**Do not design the fix before this read.** Ten runs of each phrasing, compare grounding
+rates. If the bare form grounds ~10/10 and the "dataset" form ~0/10, it is deterministic and
+the word is the trigger. If both are ~50%, it is genuinely sampling noise and this title
+stands. Either way the cheapest hypothesis is settled first.
+
 ## The read that sizes it, before any fix
 
 Run ONE query N times (20 is enough) and count grounded vs ungrounded. That converts "it is
