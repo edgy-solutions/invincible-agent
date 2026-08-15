@@ -1,12 +1,12 @@
 ---
 id:         column-intercepts-without-verb-coverage
-status:     open
+status:     closed
 owner:      agent
-blocked-on: nothing — measured, quantified, and the two repair options are both concrete. The choice between them is a design call the numbers already inform.
-closed-by:
+blocked-on:
+closed-by:  482ed6f
 code-site:  tests/routing/STEP0_IDP_BUILD_SPEC.md
 repo:       invincible-agent
-summary:    MEASURED 48% — idp:Column intercepts nearly half of catalog queries and has ZERO compatible verbs, because it hangs off prov:Entity rather than idp:Dataset so no subClassOf walk reaches the nine catalog verbs. The class was restored to the Weaviate pool without the verb migration that was supposed to accompany it.
+summary:    CLOSED — 48% -> 0%, measured before and after on the same rig. idp:Column intercepted nearly half of catalog queries with ZERO compatible verbs because it hangs off prov:Entity and the compat-walk only climbs. Four verbs declared from the ontology's own Column definition; re-measured clean. ORIGINALLY: idp:Column intercepts nearly half of catalog queries and has ZERO compatible verbs, because it hangs off prov:Entity rather than idp:Dataset so no subClassOf walk reaches the nine catalog verbs. The class was restored to the Weaviate pool without the verb migration that was supposed to accompany it.
 ---
 
 # Half the queries resolve to a class no verb can serve
@@ -72,7 +72,7 @@ So the override's safety is not a property of the override — it is a property 
 HIERARCHY HAPPENS TO REACH. That is luck, not design, and it is worth saying because the
 "two axes" defence is right about recall and silent about coverage.
 
-## REPAIR SHIPPED 2026-08-15 (source) — awaiting an engine-a image build
+## REPAIR SHIPPED AND RE-MEASURED 2026-08-15 — 48% -> 0%
 
 Option 1 taken. Engine A now declares four second-registrations against `idp:Column`:
 `findSchema`, `traceLineage`, `assessImpact`, `describeAsset` — chosen not by taste but by
@@ -94,10 +94,27 @@ a column urn would advertise a read that cannot execute. **A value query that re
 Column is a SELECTION defect, not a coverage one** ([[deterministic-decisions-made-by-llm]]),
 and papering over it here would hide it.
 
-Still source-only: sandbox runs `restate-analyst:latest` and needs the image rebuilt before
-the registrations exist in any cluster. Verified post-upgrade on chart 0.3.37 that the gap is
-NOT a staleness artifact — `Dataset 9 / Table 9 / Column 0 / Pipeline 0 / Job 0` on a fully
-current deployment with freshly re-registered engines.
+**THE CLOSING NUMBER.** Sandbox upgraded to chart 0.3.37 (rev 71), engine-a restarted onto
+the image carrying the registrations, same corpus, same rig:
+
+    live coverage   idp#Column -> 4 verbs [assessImpact, describeAsset, findSchema, traceLineage]
+                    idp#Dataset -> 9   idp#Table -> 9   (unchanged, no regression)
+
+    BEFORE   no_compatible_verbs  39      (48% of non-errored probes)
+    AFTER    no_compatible_verbs   0
+             subject_unknown       2      <- the control rows, which SHOULD be unknown
+
+Every catalog query routes. 29/29 probes clean, zero unstable, and the four deliberate
+omissions are correctly absent from Column on the live cluster. The before/after diff also
+shows `misspell-01` moving `Column -> UNKNOWN`: honest abstention on a non-existent asset,
+which is an improvement the fix was not aiming for.
+
+Verified BEFORE the fix, on the already-upgraded cluster, that the gap was not a staleness
+artifact — `Dataset 9 / Table 9 / Column 0 / Pipeline 0 / Job 0` with freshly re-registered
+engines. So the 48% was real on current code, and the 0% is attributable to this change
+rather than to the redeploy.
+
+Work still needs the `restate-analyst` image; that is deployment, not packet work.
 
 **Pipeline and Job remain at zero** and are deliberately out of scope: zero probes resolved to
 either in the corpus run, so there is no measured demand. Job in particular needs a run-history

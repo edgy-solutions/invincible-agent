@@ -38,10 +38,6 @@ _Coverage: **39 of 87 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: human · blocked-on: the source of the stuck PUBLOG_S3_BUCKET_URL is unfound — absent from `helm template`, absent from the image, present in the live Deployment. Removed by hand to unblock; will recur if a values layer still supplies it.
   → [docs/plans/broker-endpoint-env-divergence.md](plans/broker-endpoint-env-divergence.md)
 
-- **column-intercepts-without-verb-coverage** — MEASURED 48% — idp:Column intercepts nearly half of catalog queries and has ZERO compatible verbs, because it hangs off prov:Entity rather than idp:Dataset so no subClassOf walk reaches the nine catalog verbs. The class was restored to the Weaviate pool without the verb migration that was supposed to accompany it.
-  status: open · owner: agent · blocked-on: nothing — measured, quantified, and the two repair options are both concrete. The choice between them is a design call the numbers already inform.
-  → [docs/plans/column-intercepts-without-verb-coverage.md](plans/column-intercepts-without-verb-coverage.md)
-
 - **da-collects-before-filtering** — `SELECT ... LIMIT 2` reads the ENTIRE table into RAM. `get_dataframe` returns a LazyFrame so scans can push down projections and limits, and `.collect()` discards that one line later — so memory is a function of the DATASET, never of the query. OOM-killed Engine DA at work 2026-08-14 on a two-row read.
   status: open · owner: agent · blocked-on: nothing — the defect is two lines and the repair is a design choice about WHERE the query executes.
   → [docs/plans/da-collects-before-filtering.md](plans/da-collects-before-filtering.md)
@@ -153,6 +149,10 @@ _Coverage: **39 of 87 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **ceremony-record** — ADR-0034 ceremony, end to end — identity-vs-pointer repair, cursor wedge, at-least-once intake, escalation, and the completion witness (dr-08a9c7e7a8c04e00, the corpus's first monitored row).
   status: closed · owner: agent · closed-by: 96f2657
   → [docs/plans/2026-08-06-artifact-uri-repair-witness.md](plans/2026-08-06-artifact-uri-repair-witness.md)
+
+- **column-intercepts-without-verb-coverage** — CLOSED — 48% -> 0%, measured before and after on the same rig. idp:Column intercepted nearly half of catalog queries with ZERO compatible verbs because it hangs off prov:Entity and the compat-walk only climbs. Four verbs declared from the ontology's own Column definition; re-measured clean. ORIGINALLY: idp:Column intercepts nearly half of catalog queries and has ZERO compatible verbs, because it hangs off prov:Entity rather than idp:Dataset so no subClassOf walk reaches the nine catalog verbs. The class was restored to the Weaviate pool without the verb migration that was supposed to accompany it.
+  status: closed · owner: agent · closed-by: 482ed6f
+  → [docs/plans/column-intercepts-without-verb-coverage.md](plans/column-intercepts-without-verb-coverage.md)
 
 - **cortex-ui-transport-idiom** — DESIGN READ (2026-08-11) for repo 5 of 5. cortex-ui is a static SPA behind nginx — there is NO server-side origin, so the "unminted caller" frame does not apply and the sweep population is browser call sites only. One confirmed defect: NodeInspector sends no token AND bypasses runtime config, two defects on one line where the outer masks the inner.
   status: closed · owner: unassigned · repo: cortex-ui · closed-by: d1184b3
