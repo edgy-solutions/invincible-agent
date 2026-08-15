@@ -143,6 +143,33 @@ is blocked, so it earns its place twice.
 
 ---
 
+## §E. THE RULE THIS RUNBOOK FOLLOWS — every workaround cites what retires it
+
+**Any step that exists to route around a known defect must cite the packet that retires it, and
+say that it is to be deleted when that packet closes.** §C's *"ask each question once"* is the
+pattern instance: it makes the checklist honest today and self-correcting later, because the step
+carries its own removal condition instead of hardening into folklore.
+
+This is the same move as `UNMEASURED` in the trust table — **a field that names its own absence
+rather than staying blank.** A blank is indistinguishable from "fine"; a named absence is a
+standing question with an owner.
+
+Applied here, it sorts this runbook into two kinds of step, and the distinction is worth keeping
+visible:
+
+- **Permanent operational discipline** — §A4 (ask a question as the viewer before anyone
+  watches), §B1 (deploy the day before), §C's roadmap-rows-are-slides. These stay forever. They
+  are not routing around anything; they are how you run a demo.
+- **Workarounds with an expiry** — §B2, §B3, §B4, §B5, and §C's ask-once. Each one exists because
+  a named packet is open, each cites it, and **each should shrink this document when that packet
+  closes.** A runbook that only ever grows is a runbook accumulating defects it has stopped
+  calling defects.
+
+The test for a new step: *if I cannot name what would delete this, it belongs in the first
+category — and if I am wrong about that, I have just written down folklore.*
+
+---
+
 ## §D. What this runbook does NOT cover, on purpose
 
 The authz/transport arc — transport-flip, agentic-auth-flip, undeclared-routes, the two dag-tools

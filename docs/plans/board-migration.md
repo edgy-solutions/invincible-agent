@@ -165,9 +165,81 @@ up:
 3. **Index everything as `closed`.** Rejected — it flattens *"this design is still the standing
    position"* into *"this is finished"*, and `standards-posture` is cited live by three ADRs.
 
-Option 2 is the recommendation: it needs no schema change, it makes the number honest
-immediately, and it is reversible. Option 1 is better if references later want their own
-lifecycle.
+Option 2 was the recommendation. **RULED 2026-08-15, and the ruling is a refinement of it —
+see the next section.** Option 2's single `archive/` was one cut too few: it would have shelved
+live-cited reference material as history.
+
+## RULED 2026-08-15 — the cut is BY NATURE and it is THREE-WAY, and moves come BEFORE the sweep
+
+**The split is not headered/unheadered.** That is a symptom. The split is *what kind of document
+this is*, and the census above found four species where the directory name claims one.
+
+> **A directory is a claim about what its contents are.** `docs/plans/` currently claims four
+> things at once, which is precisely why its index cannot be honest. This is the same one-home
+> discipline the board itself enforces — status lives in exactly one place — applied to the
+> filesystem instead of to a field.
+
+That principle is the ruling's actual content; the three destinations below are its application.
+
+| destination | n | species | why here |
+|---|---|---|---|
+| **`docs/plans/`** (stays) | ~8 unheadered + 33 already headered | live work items | the ONLY species ADR-0040's `status:` axis fits. Once the rest leave, *N of N indexed* is reachable |
+| **`docs/plans/archive/`** | ~21 | witness records, exhibits, run cards, handoff logs | not work items in any status — they are *what happened*. Forcing them into open/closed is a category error, and headering them would pass attribution for the wrong reason. Archive keeps them greppable without pretending they are tracked |
+| **`docs/reference/`** | ~17 | design + posture docs | **the sharper problem.** `standards-posture` is cited live by ADR-0029 and two packets. Not open, not closed, not archived — **reference material with current authority.** A live-cited standard sitting in a directory called "plans" is mis-shelved regardless of headers |
+
+**Execution order is part of the ruling: rule the taxonomy → move → sweep the ~8 that remain.**
+Retrofitting headers onto 46 files and then discovering 38 should not have them is the wrong
+order, and it is the same mistake this packet already warns about one level down.
+
+### The inbound-citation census — RUN 2026-08-15, before any `git mv`
+
+Caution: moving files breaks citations, and this repo has already had line-anchored citations
+rot. So the census was run first rather than promised.
+
+**39 inbound reference sites across 20 of the 46 files.** The breakdown is what matters:
+
+| citing surface | sites | on move |
+|---|---|---|
+| intra-`plans/` cross-references | 26 | mostly *within the same destination* (handoffs cite handoffs, pcn exhibits cite each other) — but still path-shaped, so still break |
+| `tests/` + a test fixture | 7 | **break SILENTLY — see below** |
+| ADRs (0029, 0032, 0034) | 3 | authority-bearing |
+| `AGENTS.md` | 2 | authority-bearing |
+| `docs/principles/` | 1 | authority-bearing |
+
+**Every authority-bearing citation is path-shaped** — `docs/plans/X.md` in backticks, or
+`[...](../plans/X.md)`. None are name-shaped `[[wikilinks]]`. So none of them survive a move and
+all six must be updated in the same commit.
+
+**`docs/BOARD.md` needs nothing.** `generate_board.py` emits `docs/plans/{name}` from the file it
+parsed, and live items are the species that STAYS — so the generated links are correct by
+construction. A point in the ruling's favour: no generator change, no schema change.
+
+### THE ONE THAT MATTERS — the code citations rot SILENTLY
+
+All 7 code sites are **docstrings and assertion messages**, not file loads:
+
+```
+tests/test_dispatch_driver.py:378   f"(docs/plans/2026-08-04-notice-a-dispatch-failure.md)"
+tests/test_cross_repo_contracts.py:3    """... see docs/plans/cross-repo-string-contracts.md ..."""
+tests/test_sustainment_instance_match.py:3  """... (docs/plans/pcn-pdn-bulk-resolve.md §6a) ..."""
+tests/fixtures/failure_path/cropfail_review.py:16   """... docs/plans/refusal-routing-design.md ..."""
+```
+
+**A move breaks all four and no test fails.** That is this repo's most-tracked failure class
+arriving through the migration meant to clean it up.
+
+The first one is the worst: the path is inside an **assertion failure message**, so the dead link
+surfaces only when the test fails — to someone already debugging, who then follows it nowhere.
+
+**So the acceptance is a sealed check, not a careful commit.** A one-time grep protects this move
+and nothing after it; a dangling-`docs/plans/` check in the suite protects every future one, and
+it must scan **code as well as docs**, since code is where the rot is silent.
+
+**The baseline is clean TODAY** — every path-shaped `docs/plans/…` citation in `docs/adr/`,
+`docs/architecture/`, `docs/principles/`, `AGENTS.md`, `README.md` and `docs/plans/` itself
+currently resolves to an existing file. **That is what makes the check assertable now**: it goes
+in green, which means the first thing it ever catches is a real regression rather than a backlog.
+Seal it break-on-purpose — rename a cited packet, watch it go red.
 
 ### And the coverage line should count what it can act on
 
@@ -178,6 +250,11 @@ self-disclosing coverage line is for.
 
 ## Acceptance
 
+- **The three-way move is done and every one of the 39 inbound citation sites is updated in the
+  SAME commit** — a moved file with dangling ADR references is worse than a mis-shelved one.
+- **A dangling-`docs/plans/` citation check is in the suite, scanning code as well as docs, and
+  sealed break-on-purpose.** It goes in green against today's clean baseline; the code sites are
+  the reason it cannot be a one-time grep.
 - Coverage line reads *N of N indexed*, or every exception is a packet with a stated reason.
 - No fabricated `id`, `status`, `owner` or `closed-by` anywhere in the sweep.
 - `closed-by` accepts `repo@sha`, resolves and attributes against that repo when present, and
