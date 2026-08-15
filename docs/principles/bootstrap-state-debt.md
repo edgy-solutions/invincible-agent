@@ -35,6 +35,39 @@ catalog routing fell to the generalist. The resolution was source-authority: fol
 into `sync_jena_ontologies_to_neo4j` (doc-tools, commit `3dbc83a0`), so `helm install` + the ingest
 asset reproduces them. That is what *every* such gap must become.
 
+## The asymmetry — drift has a direction, and it is predictable
+
+State whose **remover is hand-runnable** and whose **writer is pipeline-shaped** shrinks
+silently and is restored only by ceremony. That is not a moral claim about whoever ran the
+delete; it is mechanical, and it tells you where the next one of these lives.
+
+Weaviate's `OntologyClass` collection is the specimen. Its writer is the doc-tools ontology
+ingest (`ontology_assets.py:64`, an idempotent upsert inside a partitioned Dagster asset).
+Its removers are hand-run scripts — `migrate_compact_to_full_iri.py` deletes entries as a
+migration phase, and four classes were deleted outright on 2026-06-11. Removal costs one
+command; restoration costs a pipeline run somebody has to decide to trigger. So the pool only
+ever got smaller, for two months, and nothing noticed — because **the pipeline never knew.**
+
+That is the sharpest form of the whole doctrine: the deletion edited a pipeline's OUTPUT
+instead of its INPUT. A pipeline that owns a store can repair drift in the store; it cannot
+repair drift someone applied downstream of it, because from the pipeline's side nothing
+happened. The TTL still declared six classes the entire time.
+
+Two things follow, and they are cheap:
+
+1. **When you find state that shrank, ask what wrote it before asking who deleted it.** If
+   the writer is a pipeline, the un-fold is usually a TRIGGER, not a build — the mechanism
+   already exists and simply has not been re-run. (It was, here: the restoration needed no
+   code at all.)
+2. **An easy remover with no easy writer is a place to expect this.** Enumerate them the way
+   moral 3 enumerates creators on a shared key. Anywhere the pair is asymmetric, silent
+   shrinkage is the default trajectory rather than a possibility.
+
+The corollary for verification: a check that state EXISTS will not catch this, because the
+container usually survives the shrinkage. Engine O recreates an empty `OntologyClass`
+collection if it is missing — so "the collection is there" reads healthy over an empty pool.
+**Check contents, not existence**, wherever this asymmetry holds.
+
 ## The sibling invariant — a running cluster can't silently drift from source
 
 The definition of done is the **forward** direction: a fresh cluster reaches working state from

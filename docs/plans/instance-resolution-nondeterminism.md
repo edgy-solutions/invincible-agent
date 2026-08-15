@@ -134,6 +134,26 @@ because the reproducible path is absent.
 
     Restoration = trigger the ontology ingest for the idp_extension partition.
 
+**THE TRIGGER PATH, read before running** (because a green job that primed the wrong slice
+is the failure mode this session has hit repeatedly):
+
+    python setup/prime_databases.py --upload-only --trigger-ingest
+
+`trigger_ingest_jobs()` iterates the FULL `CANONICAL_TTL_MANIFEST`, which contains the
+`idp_extension` entry, so the idp partition IS covered — partition key
+`s3_key.replace("/", "__")` = **`idp__idp_extension.ttl`**. `--upload-only` skips the Neo4j /
+Jena priming and the wipe, so this is the least invasive form that still runs the canonical
+path. Expect ~13 partitions serially at 30-60s each (roughly 7-13 minutes).
+
+`clear_ontology_graphs()` runs first and drops **Jena domain graphs only** — never Weaviate.
+It is an append-idempotency guard (doc-tools POSTs rather than PUTs, so a re-prime would
+otherwise double blank-node structures), and it drops only graphs the manifest can reproduce.
+Weaviate is untouched by it; the class rows arrive via the idempotent upsert.
+
+A single-partition launch from the Dagster UI works too and is faster, but skips
+`clear_ontology_graphs()`, so the idp TTL re-appends into the DATA_ENGINEERING Jena graph.
+Harmless for the Weaviate pool this restoration targets; noted so the choice is informed.
+
 Work's fresh bootstrap is the existence proof; sandbox uses the same mechanism rather than a
 special case. That satisfies both riders below by construction: it IS the reproducible path,
 and there is no hand-POST anywhere in it.
@@ -141,6 +161,13 @@ and there is no hand-POST anywhere in it.
 **Acceptance is the corpus's own gate going green** — six classes in the pool,
 `--require-pool` passing, no hand-POST in the path. The gate built to protect the measurement
 becomes the restoration's definition of done.
+
+**And why that gate checks CONTENTS rather than existence:** Engine O creates the
+`OntologyClass` collection if it is absent (`ontology_service/main.py:894`), so
+empty-but-existing is a reachable state that reads healthy to anything testing existence.
+`--require-pool` asks what candidates actually come back, which is the only check that
+distinguishes a populated pool from a collection that merely exists. That was designed before
+this detail was known and is justified by it after the fact.
 
 Two rules for the restoration, both easy to violate:
 
