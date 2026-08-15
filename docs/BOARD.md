@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **35 of 83 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **36 of 84 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -34,6 +34,10 @@ _Coverage: **35 of 83 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: human · blocked-on: the source of the stuck PUBLOG_S3_BUCKET_URL is unfound — absent from `helm template`, absent from the image, present in the live Deployment. Removed by hand to unblock; will recur if a values layer still supplies it.
   → [docs/plans/broker-endpoint-env-divergence.md](plans/broker-endpoint-env-divergence.md)
 
+- **da-collects-before-filtering** — `SELECT ... LIMIT 2` reads the ENTIRE table into RAM. `get_dataframe` returns a LazyFrame so scans can push down projections and limits, and `.collect()` discards that one line later — so memory is a function of the DATASET, never of the query. OOM-killed Engine DA at work 2026-08-14 on a two-row read.
+  status: open · owner: agent · blocked-on: nothing — the defect is two lines and the repair is a design choice about WHERE the query executes.
+  → [docs/plans/da-collects-before-filtering.md](plans/da-collects-before-filtering.md)
+
 - **da-schema-affordance** — Engine DA is handed a URN and no schema, so it guesses column names and learns them from BinderException text; and `query_datahub_asset` returns a JSON STRING, so the agent then discovers it cannot index it. 3 of 6 steps on a successful two-row read were spent on both.
   status: open · owner: unassigned · blocked-on: nothing — both halves are small and independently shippable.
   → [docs/plans/da-schema-affordance.md](plans/da-schema-affordance.md)
@@ -58,7 +62,7 @@ _Coverage: **35 of 83 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/endpoint-table-generation.md](plans/endpoint-table-generation.md)
 
-- **instance-resolution-nondeterminism** — The SAME query grounds two different ways. Witnessed 2026-08-15: two runs of "give me a couple cage values from publog's p_cage dataset", one resolved the URN and returned rows, the other returned "No DataHub URN resolved". The data path is FLAKY, not fixed — and the ungrounded run is what reached the UI.
+- **instance-resolution-nondeterminism** — THE USER-FACING DEFECT — asking the same question repeatedly returns different answers. Same text, same deployment: one run grounds and returns rows, the next reports "No DataHub URN resolved". A system that is not reproducible for identical input cannot be debugged by the person using it, and cannot be trusted by anyone.
   status: open · owner: agent · blocked-on: nothing — the discriminating read is a repeat-N run of one query, counting grounded vs ungrounded.
   → [docs/plans/instance-resolution-nondeterminism.md](plans/instance-resolution-nondeterminism.md)
 

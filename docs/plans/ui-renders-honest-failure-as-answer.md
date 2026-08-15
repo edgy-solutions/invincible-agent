@@ -55,6 +55,42 @@ It is also the shape that makes every other fix unverifiable: with this in place
 data path work?" cannot be answered by looking at the UI, which is the only place most people
 will look.
 
+## A THIRD mode: a crashed pipeline renders as a BLANK CARD
+
+Dagster run `a62ab191`, 2026-08-14 20:12. Routing was perfect — `route_status=matched`,
+`subject_instance_id` resolved to the correct s3 URN, `mesh:analyzeDataset` at 0.86. Then:
+
+```
+20:12:45.767  POST -> data-analyst:8089/analyze_data
+20:13:13.747  RemoteDisconnected('Remote end closed connection without response')
+20:13:13.769  generate_ui_payload   ERROR  Dependencies failed. Not executing.
+20:13:13.787  synthesize_stateful   ERROR  Dependencies failed. Not executing.
+```
+
+`execute_subtask` raised, so the two steps that BUILD the UI payload never ran, and the card
+showed the question and nothing else. Neither timeout is implicated — the supervisor allows
+1800s (`dynamic_supervisor.py:1652`) and DA's proxy allows 1800s to the Restate ingress
+(`data_analyst/main.py:627-648`) — so the DA process dropped the connection at 28s.
+
+So the UI now has THREE ways to not answer, and a user cannot distinguish them:
+
+| what happened | what the user sees |
+|---|---|
+| grounded, queried, rows returned | the answer |
+| did not ground; `status: "success"` | a confident apology |
+| pipeline CRASHED | **a blank card** |
+
+The third is arguably worst: the failure is loud in Dagster, fully diagnosed in a stack trace,
+and communicates nothing. The UI has no representation for "this failed" — only for "here is
+an answer", which is why a failure has to borrow one of the other two shapes.
+
+**A failed subtask must still produce a UI payload** saying what broke. That is a different
+repair from the `status` fix — it lives in the job graph, where `generate_ui_payload` should
+run on failure rather than being skipped as a failed dependency.
+
+(The DA crash itself is a separate question — restart count, `--previous` logs, and OOM status
+on that pod. But even once it stops crashing, this rendering gap stays.)
+
 ## Definition of done — stated because a green log is not it
 
 **A VALUE on the UI**, for a query the data path can serve. Not `outcome=ok`, not a 200 from

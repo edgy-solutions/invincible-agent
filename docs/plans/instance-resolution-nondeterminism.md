@@ -6,13 +6,35 @@ blocked-on: nothing — the discriminating read is a repeat-N run of one query, 
 closed-by:
 code-site:  agent_fleet/ontology_service/main.py:1584
 repo:       invincible-agent
-summary:    The SAME query grounds two different ways. Witnessed 2026-08-15: two runs of "give me a couple cage values from publog's p_cage dataset", one resolved the URN and returned rows, the other returned "No DataHub URN resolved". The data path is FLAKY, not fixed — and the ungrounded run is what reached the UI.
+summary:    THE USER-FACING DEFECT — asking the same question repeatedly returns different answers. Same text, same deployment: one run grounds and returns rows, the next reports "No DataHub URN resolved". A system that is not reproducible for identical input cannot be debugged by the person using it, and cannot be trusted by anyone.
 ---
 
 # One query, two groundings
 
-**Witnessed at work 2026-08-15.** Two runs, identical query text — *"give me a couple cage
-values from publog's p_cage dataset"* — same deployment, minutes apart:
+**This is the complaint that matters, stated first.** Asking the same question over and over
+and getting a different answer each time is not a rough edge — it is the property that makes
+every other issue unfalsifiable. A user cannot tell a fixed system from a broken one, cannot
+tell their own phrasing from the system's variance, and cannot report a bug reproducibly. Any
+"is it working now?" is answered by a coin flip.
+
+## Three runs, three outcomes, THREE DIFFERENT CAUSES
+
+The variance is not one flaky thing, which is exactly why it read as chaos:
+
+| run | what happened | cause |
+|---|---|---|
+| 2026-08-14 20:12 | blank card, no answer at all | DA OOM-killed → [[da-collects-before-filtering]]; a crashed subtask skips the UI payload |
+| 2026-08-15 01:16 | a confident apology | did not ground — **this packet** |
+| 2026-08-15 01:16 | `['00000','00001']` | worked |
+
+Each cause is separately filed. This packet owns the middle row only. Recording the split
+because a user experiencing all three sees one symptom — "it gives me a different answer every
+time" — and would otherwise chase one fix for three defects.
+
+**Witnessed at work 2026-08-15**, and the evidence is specifically the two 01:16 runs — NOT
+the 20:12 one, which was the OOM and is accounted for elsewhere. Two runs, identical query
+text — *"give me a couple cage values from publog's p_cage dataset"* — same deployment,
+minutes apart:
 
 | run | prompt block DA received | outcome |
 |---|---|---|
