@@ -65,6 +65,50 @@ The failure is invisible: run B produced no error, and — see
 experience of a working system is a coin flip, and the losing side is articulate about why it
 cannot help. A user who sees B first concludes the asset is not in the catalog.
 
+## MEASURED 2026-08-15 ON SANDBOX — IT DID NOT REPRODUCE, AND TWO CLAIMS HERE WERE WRONG
+
+First live run. 6 phrasings × 5 repeats, concurrent, against sandbox Engine O:
+
+```
+phrasing     grounded  class    argmax   recall(win/top)
+bare           5/5     Column   Column   0.26/0.26
+bare2          5/5     Table    Table    0.23/0.23
+dataset        2/2     Table    Table    0.65/0.65
+dataset2       5/5     Table    Table    0.91/0.91
+table          5/5     Table    Table    0.74/0.74
+table2         5/5     Table    Table    0.97/0.97
+
+BARE grounded 10/10   ·   SUFFIXED grounded 17/17   ·   unstable phrasings: NONE
+```
+
+**27/27 grounded. Zero instability. Zero precision override** — winner recall equals top
+recall in every case, so the LLM picked argmax every time. The trailing-noun effect and the
+nondeterminism are both ABSENT on sandbox.
+
+**Correction 1 — the pool precondition was based on a stale document.** This packet said
+sandbox could not reproduce the defect because four classes were hand-deleted. A live read
+says the pool has all six (`Column, Dashboard, Dataset, Job, Pipeline, Table`). The STEP0
+status line ("only idp:Dataset and idp:Dashboard", 2026-06-11) is two months old and no
+longer true — the pool was restored at some point. **The restoration described above is
+already done.** I asserted a precondition from a document instead of a read, and built a hard
+gate around it.
+
+**Correction 2 — the gate guarded the wrong axis.** `--require-pool` passed, correctly, and
+caught nothing, because the divergence is in the CODE. Sandbox Engine O runs
+`ontology-service:latest`, last restarted **2026-08-10** — five days and several redeploys
+behind work. A `:latest` tag makes the version unfalsifiable from outside, and `/health`
+returns `{status, jena_reachable}` with no build identity, so **a corpus result against it is
+unattributable**. That is the very "measuring a different system" failure the pool gate exists
+to prevent, arriving through the door the gate does not watch.
+
+So the read is NOT done — it is *pending a rig that resembles work*. Sandbox needs the
+redeploy the operator has already identified: new charts, containers, doc-tools, dag-tools,
+pub-tools. Until then a green corpus run on sandbox says nothing about work.
+
+**What shipped in response:** `stamp()` in the runner records the pool fingerprint, `/health`,
+and a mandatory-by-convention `--stamp` free-text note naming what was measured. A result
+that cannot say what it ran against is not evidence, and this run proved that the hard way.
+
 ## STRONG LEAD (2026-08-15): it may be a deterministic misparse, not noise
 
 Every failing query ended with a trailing class noun — "p_cage **dataset**", "p_cage

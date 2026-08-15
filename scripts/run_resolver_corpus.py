@@ -134,6 +134,53 @@ def _verbs(base: str, subject_uri: str, domains: list, timeout: float) -> int:
 # ---------------------------------------------------------------------------
 # The pool precondition
 # ---------------------------------------------------------------------------
+def stamp(base: str, meta: dict, timeout: float, note: str = "") -> dict:
+    """WHAT DID THIS RUN ACTUALLY MEASURE? A result without that is unattributable.
+
+    Learned the hard way 2026-08-15: a clean 27/27 was produced against a sandbox whose
+    Engine O had not been restarted since 2026-08-10 and whose image tag is `:latest`.
+    The pool gate passed — all six classes present — so the guard I built caught nothing,
+    because the divergence was in the CODE, not the pool. Same failure the gate exists to
+    prevent, arriving through the door the gate does not watch.
+
+    `/health` reports `{status, jena_reachable}` and no version, so the service cannot be
+    asked what it is. What CAN be captured without new plumbing is a FINGERPRINT of the
+    substrate the resolver actually sees: the candidate pool it returns. Two deployments
+    with the same fingerprint should behave alike; different fingerprints are the first
+    explanation to reach for when their numbers disagree.
+
+    `--stamp` lets the caller record what the fingerprint cannot know (chart version,
+    image digest, "work cluster after the 08-15 redeploy"). Free text, recorded verbatim,
+    never parsed — its only job is to make a result nameable six weeks from now.
+    """
+    fp: set = set()
+    for q in ("table dataset column pipeline job", "catalog asset", "data"):
+        try:
+            r = requests.post(
+                f"{base}/resolve",
+                json={"query": q, "domain": meta.get("domain"),
+                      "domains": [meta.get("domain")]},
+                timeout=timeout,
+            )
+            r.raise_for_status()
+            fp |= {c.get("uri") for c in (r.json().get("candidates") or [])}
+        except Exception:  # noqa: BLE001
+            continue
+    health = {}
+    try:
+        health = requests.get(f"{base}/health", timeout=10).json()
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "_kind": "stamp",
+        "base_url": base,
+        "note": note,
+        "health": health,
+        "pool_fingerprint": sorted(u for u in fp if u),
+        "pool_size": len(fp),
+    }
+
+
 def check_pool(base: str, meta: dict, timeout: float) -> tuple[bool, list]:
     """REFUSE TO SCORE A RUN AGAINST THE WRONG CANDIDATE POOL.
 
@@ -173,6 +220,8 @@ def score(rows: list, corpus_rows: list) -> dict:
     by_axis = defaultdict(lambda: {"n": 0, "fired": 0, "expected_fire": 0,
                                    "fired_when_expected": 0, "ambiguous": 0, "errors": 0})
     for rec in rows:
+        if rec.get("_kind") == "stamp":
+            continue
         s = spec.get(rec["id"], {})
         a = by_axis[rec.get("axis") or "?"]
         a["n"] += 1
@@ -204,6 +253,8 @@ def report(rows: list, corpus_rows: list) -> None:
     print("\n=== per-phrasing stability (repeat runs) ===")
     per = defaultdict(list)
     for r in rows:
+        if r.get("_kind") == "stamp":
+            continue
         per[r["id"]].append(bool(r.get("instance_fired")))
     unstable = {k: v for k, v in per.items() if len(set(v)) > 1}
     for k, v in sorted(per.items()):
@@ -215,6 +266,7 @@ def report(rows: list, corpus_rows: list) -> None:
           "   <- >0 means genuine nondeterminism; 0 means every failure is deterministic")
 
     print("\n=== argmax counterfactual ===")
+    rows = [r for r in rows if r.get("_kind") != "stamp"]
     dis = [r for r in rows if r.get("argmax_disagrees")]
     both = [r for r in dis if not r.get("instance_fired")]
     print(f"  argmax would differ on {len(dis)}/{len(rows)} runs")
@@ -240,6 +292,9 @@ def diff(a_path: str, b_path: str) -> int:
         for line in pathlib.Path(p).read_text(encoding="utf-8").splitlines():
             if line.strip():
                 r = json.loads(line)
+                if r.get("_kind") == "stamp":
+                    out.setdefault("_stamp", []).append(r)
+                    continue
                 out[r["id"]].append(r)
         return out
 
@@ -272,6 +327,7 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=1, help="runs per phrasing")
     ap.add_argument("--out", help="write jsonl here")
     ap.add_argument("--timeout", type=float, default=60.0)
+    ap.add_argument("--stamp", help="free text naming WHAT this run measured — chart version, image digest, 'work after the 08-15 redeploy'. Recorded verbatim so a result is attributable later.")
     ap.add_argument("--require-pool", action="store_true", default=True)
     ap.add_argument("--no-require-pool", dest="require_pool", action="store_false",
                     help="score anyway against a mismatched pool (you are measuring a "
@@ -301,7 +357,14 @@ def main() -> int:
                   "describes a different system.", file=sys.stderr)
             return 2
 
-    results = []
+    run_stamp = stamp(args.base_url, meta, args.timeout, args.stamp or "")
+    print(f"stamp: pool_size={run_stamp['pool_size']} health={run_stamp['health']}"
+          + (f" note={run_stamp['note']!r}" if run_stamp["note"] else ""))
+    if not run_stamp["note"]:
+        print("  (no --stamp given: this result will not be attributable to a "
+              "deployment later — pass one)", file=sys.stderr)
+
+    results = [run_stamp]
     for i in range(args.repeat):
         for row in corpus_rows:
             rec = probe(args.base_url, row, meta, args.timeout)

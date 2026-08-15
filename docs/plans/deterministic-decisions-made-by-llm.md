@@ -47,6 +47,39 @@ grounds and returns rows.
 the LLM's VOCABULARY, and it does that correctly. Nobody ever ruled that the LLM should still
 be the one CHOOSING. The scores sit in the same function, unused as a decision rule.
 
+## CORRECTION 2026-08-15 — "picked the low-recall candidate" is NOT self-evidently a defect
+
+This packet was written asserting that taking a 0.477 candidate over a 1.0 one is a fault on
+its face. **The UI's authors considered that reading and rejected it, in writing**
+(`cortex-ui/src/components/HUD/DecisionPathDiagram.tsx:63-70`):
+
+> TWO AXES, kept distinct (the "Dataset 0.00" finding). The candidate pool scores are Weaviate
+> RECALL (vector/BM25 similarity). The winner is the LLM's PRECISION pick — its selecting
+> signal is the classifier confidence, NOT its recall score. Showing the winner's recall
+> (which can be the LOWEST in the pool) as if it were "the winning score" reads as a broken
+> selection; **it isn't**.
+
+They are right that recall is not correctness. Weaviate scores similarity to a class
+DEFINITION; a query containing the word "dataset" lexically boosts the class NAMED Dataset
+regardless of what the question is about. So recall-argmax is not obviously a better rule —
+it is a different one, with its own failure mode.
+
+**And the live evidence supports them.** Work, 2026-08-14 22:16: Table won at recall 0.52
+over Dataset at 0.70, walked `subClassOf → Dataset → analyzeDataset`, and RENDERED THE CHART.
+The override was harmless because `subClassOf` makes both classes route identically. There is
+already a detector for this in the HUD — an amber note, deliberately not an alarm.
+
+So the honest form of this packet's claim narrows, and is stronger for it:
+
+- **NOT** "the LLM picks the wrong class" — often it does not, and when it picks a subclass
+  the compat-walk absorbs the difference.
+- **YES** "an LLM decides, and the same call also decides whether the deterministic instance
+  path runs at all" — the gate-1639 finding below. That one has no such defence: no
+  subClassOf walk rescues a query that never reached the phone book.
+
+The 0.477-over-1.0 observation stays in the packet as the thing that PROMPTED the read, not
+as the indictment. The indictment is the gate.
+
 ## THE INTERIM IS NOT AVAILABLE — checked before scoping, and the check paid
 
 The obvious cheap fix is "take `resolved_uri` from the top-scored candidate; let BAML
