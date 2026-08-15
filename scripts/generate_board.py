@@ -72,6 +72,13 @@ def render(items):
         for i in sorted(rows, key=lambda r: r["id"]):
             L.append(f"- **{i['id']}** — {i.get('summary','')}")
             bits = [f"status: {i['status']}", f"owner: {i.get('owner','') or 'unassigned'}"]
+            # WHICH REPO. The field has always been parsed and never rendered, so a reader
+            # scanning the board could not tell that a third of the open work lives in
+            # dag-tools and doc-tools rather than here. That mattered little while findings
+            # were mostly platform-side; the work deploy inverted the ratio. Rendered only
+            # when it is NOT this repo — the common case stays quiet, the exception is loud.
+            if (i.get("repo") or "").strip() not in ("", "invincible-agent"):
+                bits.append(f"repo: {i['repo'].strip()}")
             if i.get("blocked-on"):
                 bits.append(f"blocked-on: {i['blocked-on']}")
             # A trigger is rendered because a parked item whose firing condition is invisible
@@ -109,6 +116,15 @@ def main():
         if not sha:
             if i["status"] == "closed":
                 print(f"UNBACKED: {i['id']} is closed with no closed-by sha"); return 1
+            continue
+        # A FOREIGN-REPO SHA IS NOT RESOLVABLE HERE, AND THAT IS NOT A DEFECT. The board now
+        # indexes work in dag-tools and doc-tools (the work deploy inverted the ratio), and
+        # `git cat-file` in THIS repo cannot see those commits. Failing on them would force
+        # the honest choice — record the sha that actually closed it — to be spelled as a
+        # lie or omitted. So the sha checks (resolution AND attribution) apply only to
+        # packets whose work landed here; a foreign sha is recorded, rendered, and trusted,
+        # because this repo has no standing to verify it.
+        if (i.get("repo") or "").strip() not in ("", "invincible-agent"):
             continue
         r = subprocess.run(["git", "cat-file", "-t", sha], cwd=ROOT, capture_output=True)
         if r.returncode != 0:

@@ -2,7 +2,7 @@
 id:         registration-boot-order-race
 status:     open
 owner:      agent
-blocked-on: nothing — the discriminating read is named below (which of the three hook failure modes fired). The repair choice is a design call the read informs, not blocks.
+blocked-on: repair 3 (the registrar discrimination) LANDED in fbf7307. Repair 1 is still owed and unanswered — WHICH of the three ways the re-register hook failed to fire at work. Until that read is done, a deploy still depends on a hook nobody has verified runs.
 closed-by:
 code-site:  agent_fleet/mesh_registrar/main.py:238
 repo:       invincible-agent
