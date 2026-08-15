@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **39 of 87 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
+_Coverage: **40 of 88 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 46 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -69,6 +69,10 @@ _Coverage: **39 of 87 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **endpoint-table-generation** — Generate the README endpoint table from the live route census instead of asserting it.
   status: open · owner: agent
   → [docs/plans/endpoint-table-generation.md](plans/endpoint-table-generation.md)
+
+- **first-viewer-critical-path** — TRIAGE — of 27 live board items, THREE are load-bearing for "one other person can use this", in a stated order. The other 24 sort into demo-day operational risk (3, now a runbook not board work) and hygiene/posture/architecture (21). The goal is three items away, not thirty-nine, and this packet names which and why the other 24 are not.
+  status: open · owner: human · blocked-on: nothing — the scope sentence is ANSWERED (2026-08-15): Tier-3 row 8 IS in scope, so the path is three items in the order stated below. What remains is building them.
+  → [docs/plans/first-viewer-critical-path.md](plans/first-viewer-critical-path.md)
 
 - **instance-resolution-nondeterminism** — THE USER-FACING DEFECT — asking the same question repeatedly returns different answers. Same text, same deployment: one run grounds and returns rows, the next reports "No DataHub URN resolved". A system that is not reproducible for identical input cannot be debugged by the person using it, and cannot be trusted by anyone.
   status: open · owner: agent · blocked-on: nothing — the discriminating read is a repeat-N run of one query, counting grounded vs ungrounded.

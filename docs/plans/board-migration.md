@@ -131,6 +131,51 @@ one field, not a defect in the board's validation — which kept biting througho
 invalid `status: done` and then an unresolvable sha within a minute of each other, while this
 very item was being closed. Stated so the fix is not over-scoped into "the board checks are wrong."
 
+## CENSUS 2026-08-15 — the 46 are not 46 items, and the coverage line is overstating the gap ~5×
+
+**Read before starting phase 1, because it changes what phase 1 IS.** All 46 unheadered files
+were enumerated with their title, any self-declared status line, and their add/last-touch commits.
+They are not one population. They are four, and only one of them is board work:
+
+| species | n | what it is | migration disposition |
+|---|---|---|---|
+| **witness / exhibit / run-card** | ~16 | a record of work already done and proven — `pcn-*-exhibit` (8), `engine-d-durability-*` (2), `phase-1-3-*-witness` (2), `b2-probe-run-card`, `analyst-loop-red-baseline`, `m2-m3-overnight-progress`, `m31-citation-ratification` (self-marked *DISPOSED*) | `closed`, and the sha that ADDED the witness is the honest `closed-by` — it touches the packet, so attribution passes for the right reason rather than by luck |
+| **handoff log** | 5 | a point-in-time state dump, superseded by the next one — the four August handoffs plus `notice-a-dispatch-failure` | **not a work item in any status.** Dated, immutable, and already correctly named by their filenames |
+| **design / posture / reference** | ~17 | `slice-1..5`, `standards-posture`, `identity-mint-contract`, `refusal-routing-design`, `m2-cutover-plan`/`-runbook`, `work-demo-runbook`, `cross-repo-string-contracts`, `telemetry-standard-buildplan`, `m3-grouped-review-definition-design`, `pcn-dashboard-payload-schema`, `git-rails-topaz-structural-summary`, `adr0034-trust-lifecycle-build-directive` | **the five-value vocabulary does not apply.** These are not open or closed; they are *true* or *superseded* |
+| **live board work** | ~8 | `fingerprint-input-normalization` (its own title reads *BOARD ITEM*), `triage-card-archetype` (RULED, not built), `pcn-extraction-sort` (decided, waiting for its window — needs a `trigger:`), `unminted-caller-enumeration` (self-declares 5 of 5 swept → closed), `sdk-transport-auth-handoff` (*complete and green*), `phase-1-3-consumer-derive-packet` (superseded by its own witness), `pcn-can-act-topaz-binding`, `pcn-pdn-bulk-resolve` | **this is phase 1's actual scope** |
+
+**So the coverage line is honest about the number and misleading about the meaning.** *"46 are
+unheadered"* reads as *"46 items are missing from the board"*; roughly **8** are. The rest is
+the archive, and an archive being unindexed is not a gap.
+
+### The judgement call this surfaces, which is bigger than the two legacy-frontmatter packets
+
+`docs/plans/` holds at least three species and ADR-0040's `status:` axis fits exactly one of
+them. Forcing a status onto `standards-posture.md` is the schema-satisfaction refusal this repo
+makes everywhere else, in the one place the migration would make it feel mandatory.
+
+Three ways out, and this needs a ruling before the sweep rather than a decision discovered
+mid-sweep — the same failure mode the legacy-frontmatter section already warns about, one level
+up:
+
+1. **A `kind:` field** (`work` | `record` | `reference`), with `status:` required only for
+   `kind: work`. Most expressive; an ADR-0040 amendment.
+2. **Move the archive** to `docs/plans/archive/` and scope the generator to `docs/plans/*.md`.
+   Cheapest, and the coverage line becomes true by construction rather than by exception.
+3. **Index everything as `closed`.** Rejected — it flattens *"this design is still the standing
+   position"* into *"this is finished"*, and `standards-posture` is cited live by three ADRs.
+
+Option 2 is the recommendation: it needs no schema change, it makes the number honest
+immediately, and it is reversible. Option 1 is better if references later want their own
+lifecycle.
+
+### And the coverage line should count what it can act on
+
+Whatever the ruling, `coverage_line()` currently counts every file in `docs/plans/` as a packet
+owing a header. **A denominator that includes the archive can never reach *N of N*** — the
+migration would be permanently incomplete by construction, which is the opposite of what a
+self-disclosing coverage line is for.
+
 ## Acceptance
 
 - Coverage line reads *N of N indexed*, or every exception is a packet with a stated reason.
