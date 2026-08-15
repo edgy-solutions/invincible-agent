@@ -35,10 +35,29 @@ idp:Dashboard a owl:Class ;
     rdfs:label "Dashboard" ;
     rdfs:comment "A dashboard in the analytics catalog. Subtype of Dataset for catalog-routing purposes." .
 
+# DEFINITIONS ARE THE RECALL SIGNAL — write them for the class, never for the query.
+#
+# Measured 2026-08-15: recall ranked idp:Column top on identifier-shaped queries it had no
+# business winning ("publog.p_cage", "minio-svc.publog-lake/publog/p_cage"), and the LLM had
+# to override it — correctly — on 5 of 6 disagreements. The cause was in this file, not in
+# the classifier. Weaviate embeds "<label> — <definition>", so two habits poisoned the score:
+#
+#   1. QUERY-SHAPED EXAMPLES. This comment used to carry two quoted user questions ("what
+#      feeds the revenue column", "which dashboards use the orders.amount column"). A user's
+#      question was being scored against a definition MADE OF QUESTIONS, which inflates
+#      similarity for any question at all. `orders.amount` was worse still: a dotted
+#      identifier, so every dotted asset name in a query resembled it.
+#   2. SIBLING-NAME BLEED. It also named Table, Dataset and dashboards, so it competed for
+#      its siblings' traffic.
+#
+# Definitions now describe WHAT THE CLASS IS and, where the boundary is genuinely confusable,
+# what it is NOT. No quoted queries, no example identifiers, no sibling class names used as
+# filler. Concrete product names (Airflow, dbt, Dagster) are FINE — they name the thing, they
+# do not imitate the question.
 idp:Column a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Column" ;
-    rdfs:comment "A column or field within a Table or Dataset. Queries about a specific column's type, lineage, quality, or downstream consumers target this class. Examples: 'what feeds the revenue column', 'which dashboards use the orders.amount column'." .
+    rdfs:comment "A single named field within a tabular asset, carrying its own data type, nullability and description. Queries about one field's type, lineage, quality, or downstream consumers target this class — as opposed to questions about the containing asset as a whole, which do not." .
 
 # ---------------------------------------------------------------------------
 # Data activities — processes and jobs
@@ -47,7 +66,11 @@ idp:Column a owl:Class ;
 idp:Pipeline a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Pipeline" ;
-    rdfs:comment "A DAG of data-engineering tasks (Airflow DAG, dbt project, Dagster job-set) that produces or transforms Datasets. Queries about pipeline structure, schedule, owner, source datasets, or downstream consumers target this class." .
+    # "Datasets" and "source datasets" removed — sibling-name bleed. This definition ranked
+    # top for "list the datasets in publog", a question squarely about idp:Dataset, purely
+    # because it named that class twice. "data assets" and "inputs" carry the same meaning
+    # without competing for another class's traffic.
+    rdfs:comment "A DAG of data-engineering tasks (Airflow DAG, dbt project, Dagster job-set) that produces or transforms data assets. Queries about pipeline structure, schedule, owner, inputs, or downstream consumers target this class." .
 
 idp:Job a owl:Class ;
     rdfs:subClassOf prov:Entity ;
