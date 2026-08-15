@@ -250,6 +250,64 @@ def test_da_handler_delegates_to_the_pure_rule():
     )
 
 
+def test_the_run_goes_red_AFTER_the_card_is_produced_not_instead_of_it():
+    """Both properties, and the ORDER between them is the whole design.
+
+    `execute_subtask` returns a typed failure instead of raising so the payload still gets
+    built — which on its own buys the honest card by making the run GREEN, and a green run over
+    a crashed subtask is the first-failure-direction lie at the orchestration layer. So a final
+    op fails the run, and it takes `generate_ui_payload`'s output as an input SOLELY to force
+    Dagster to schedule it afterwards.
+
+    This asserts the dependency EDGE, not the source text. If someone reorders these ops the
+    run still goes red and every unit test about the failure still passes — the only thing lost
+    is the user's card, silently. That is precisely the class of regression a text-scanning
+    check would sail past.
+    """
+    from dagster import DependencyDefinition
+
+    from iagent.defs.dynamic_supervisor import supervisor_query_job
+
+    deps = supervisor_query_job.graph.dependencies
+    key = next(
+        (k for k in deps if "assert_every_engine_answered" in str(k)), None
+    )
+    assert key is not None, (
+        "the run-level failure op is gone from supervisor_query_job — a crashed subtask now "
+        "reports a clean run"
+    )
+    ui_dep = deps[key].get("ui_payload")
+    assert isinstance(ui_dep, DependencyDefinition), (
+        "the failure op no longer depends on ui_payload; without that edge Dagster may fail "
+        "the run BEFORE generate_ui_payload records its output, and the user loses the card"
+    )
+    assert ui_dep.node == "generate_ui_payload", (
+        f"the failure op is ordered after {ui_dep.node!r}, not generate_ui_payload"
+    )
+
+
+def test_the_red_op_fires_only_when_an_engine_did_not_answer():
+    from dagster import build_op_context
+    from dagster import Failure as DagsterFailure
+
+    from iagent.defs.dynamic_supervisor import assert_every_engine_answered
+
+    answered = [{"predicate_verb_iri": "mesh:analyzeDataset",
+                 "expert_response": {"status": "success", "data": "['00000']"}}]
+    # An UNGROUNDED run is an honest answer from a working system — it must NOT redden the run.
+    ungrounded = [{"predicate_verb_iri": "mesh:analyzeDataset",
+                   "expert_response": {"status": "ungrounded", "reason": REASON_NO_URN}}]
+    unreachable = [{"predicate_verb_iri": "mesh:analyzeDataset",
+                    "expert_response": {"status": "engine_unreachable", "error": "RemoteDisconnected"}}]
+
+    for ok_case in (answered, ungrounded):
+        assert_every_engine_answered(build_op_context(), ok_case, ui_payload="{}")
+
+    with pytest.raises(DagsterFailure) as exc:
+        assert_every_engine_answered(build_op_context(), unreachable, ui_payload="{}")
+    assert "RemoteDisconnected" in str(exc.value.description)
+
+
 def test_query_successes_is_returned_from_the_durable_step_not_read_from_a_closure():
     """The replay trap this file's own module documents at length.
 

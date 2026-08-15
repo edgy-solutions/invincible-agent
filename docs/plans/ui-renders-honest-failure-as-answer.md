@@ -122,7 +122,7 @@ is a live run. What changed is that the distinction now exists to be rendered.
 | 1 | Engine DA emits `ungrounded` with a `reason`, distinct from `success`. Two symbolic discriminators, neither of which asks the model whether it answered: `resolved_instance_id` (known BEFORE the loop — empty means the run was structurally incapable of grounding) and a query that provably returned. |
 | 2 | The presentation agent renders a DECLARED non-answer deliberately, upstream of archetype selection, on its own `X-Presentation-Path: declared-ungrounded`. |
 | 4 | `DA_FUMBLE_METRIC` carries the same classification, so it can no longer log `outcome=ok` for a run that answered nothing. |
-| job graph | A dead engine returns a typed `engine_unreachable` result instead of raising, so `generate_ui_payload` still runs and the user gets a card that says what broke rather than a blank one. |
+| job graph | A dead engine returns a typed `engine_unreachable` result instead of raising, so `generate_ui_payload` still runs and the user gets a card that says what broke rather than a blank one — **and then `assert_every_engine_answered` fails the run, after the card exists.** Red run, honest card. |
 | 3 | **NOT DONE** — blocked, see the header. |
 
 ### The corroboration signal is NOT `sources`, and that nearly went wrong
@@ -140,20 +140,40 @@ table had no matching rows" is a result; "I never ran a query" is not. Collapsin
 re-commit the one-field-for-two-outcomes defect one level down, in the direction that hides
 working infrastructure behind an apology.
 
-**The job-graph repair trades a red Dagster run for an honest card, and that is a real loss.**
-The op now returns where it used to raise, so the run goes GREEN where it went red. Accepted
-because the redness was being paid for by rendering *nothing* — but it is the shape this repo
-distrusts, so the compensating controls are all three load-bearing: an ERROR log, output
-metadata on the op, and a typed status that reaches the UI and can be counted. **If a run-level
-red is wanted back, it belongs in a final op that reads the collected results and fails when all
-of them are `engine_unreachable` — after the payload has been produced, never instead of it.**
+**The job-graph repair first traded a red Dagster run for an honest card. RULED 2026-08-15:
+take both — and the red was the more important half.**
+
+The first cut made `execute_subtask` return instead of raise, which bought the card by making
+the run GREEN. That was wrong, and the argument against it is one this repo already owns: **a
+green run over a crashed subtask is the first-failure-direction lie — effects claimed, not
+landed — relocated to the orchestration layer.** Green-with-blank-card was the defect;
+green-with-honest-card is a quieter version of the same lie.
+
+So both, in the only order that yields both:
+
+    execute_subtask returns a typed failure   -> the payload is produced
+    generate_ui_payload records its output    -> the user has a card
+    assert_every_engine_answered fails        -> the run is RED
+
+**The ordering IS the design.** The final op takes `generate_ui_payload`'s output as an input it
+never reads, purely to force Dagster to schedule it afterwards — so the gateway, which fetches
+that step's output value from run metadata, still finds the card on a failed run. Fail earlier
+or in parallel and you are back to red-with-a-blank-card, which is where this started.
+
+**An `ungrounded` run does NOT redden the run**, and that distinction is sealed. It is a working
+system honestly declining; only `engine_unreachable` — an outage — is a run-level failure.
 
 ### What the seals cover, and what they do not
 
-`tests/test_da_outcome_distinguishable.py`, 12 tests, five mutations verified to go red
-(zero-rows collapsed into ungrounded; the renderer forgetting `engine_unreachable`; the outcome
+`tests/test_da_outcome_distinguishable.py`, 14 tests, **eight** mutations verified to go red:
+zero-rows collapsed into ungrounded; the renderer forgetting `engine_unreachable`; the outcome
 dropped from the durable step's success return; ungrounded collapsed back into success; the
-success envelope losing its corroboration).
+success envelope losing its corroboration; the run-level failure op deleted; that op no longer
+ordered after the payload; and an `ungrounded` run wrongly reddening the run.
+
+**The ordering seal asserts the dependency EDGE, not the source text**, because that regression
+is invisible to everything else: reorder the two ops and the run still goes red, every unit test
+about the failure still passes, and the only thing lost is the user's card — silently.
 
 **Two of the first four seals did not bite and had to be rewritten** — they asserted a string
 appeared *somewhere* in a function, which stayed true when the branch was replaced with

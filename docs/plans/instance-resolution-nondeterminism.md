@@ -105,6 +105,36 @@ So the read is NOT done — it is *pending a rig that resembles work*. Sandbox n
 redeploy the operator has already identified: new charts, containers, doc-tools, dag-tools,
 pub-tools. Until then a green corpus run on sandbox says nothing about work.
 
+### THAT BLOCKER IS CLEARED — read 2026-08-15, and the stale fact was the restart date
+
+The check named above (Engine O's image identity and restart time) was run:
+
+```
+POD         sandbox/iagent-engine-o-5d688646fb-5dwqm
+START       2026-08-15T04:18:07Z          <- ~12h ago, NOT 2026-08-10
+IMAGE       …/ontology-service:latest
+IMAGE_ID    …/ontology-service@sha256:fe90b0472e0a4c2360e7a983940e1df070a8b77548876b9dd3d04b292afa27dd
+PULLPOLICY  Always
+```
+
+**The "last restarted 2026-08-10, five days and several redeploys behind work" claim above is
+stale.** Engine O restarted at 04:18Z on 2026-08-15 — *after* the chart 0.3.37 upgrade recorded
+in `5f3b4e1` (committed 00:28Z) — and with `pullPolicy: Always`, so the restart pulled fresh.
+**The corpus read is runnable today.**
+
+**And the digest is the thing the packet said was missing.** The objection was not really the
+`:latest` tag; it was that `/health` returns `{status, jena_reachable}` with no build identity,
+so *"a corpus result against it is unattributable"*. `imageID` supplies exactly that identity,
+and it is falsifiable. **Any corpus run against sandbox should carry
+`sha256:fe90b047…` in its `--stamp`** — that converts the run from unattributable to pinned
+without needing `/health` to change.
+
+**What this does NOT establish, stated so the gate is not declared closed twice:** the digest
+proves *what sandbox is running*, not that it *equals work's build*. Cross-cluster equality
+needs work's digest read on the work cluster, which is a human action there. So "a rig that
+resembles work" is answered in the direction that was actually blocking — sandbox is current
+rather than five days stale — and the equality claim remains unmade.
+
 **What shipped in response:** `stamp()` in the runner records the pool fingerprint, `/health`,
 and a mandatory-by-convention `--stamp` free-text note naming what was measured. A result
 that cannot say what it ran against is not evidence, and this run proved that the hard way.

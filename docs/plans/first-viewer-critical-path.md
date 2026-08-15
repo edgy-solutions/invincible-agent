@@ -104,7 +104,12 @@ Stated as a lead rather than a fact, deliberately: `5f3b4e1` is a docs-only comm
 upgrade is attested by an operational record, and it names `engine-a` restarting — not Engine O,
 which is the pod this packet's gate is about. **The check is one command** (Engine O's image
 digest and restart time on sandbox) and it decides whether item 2 is blocked or runnable today.
-Do that before scheduling anything else against it.
+
+**RUN 2026-08-15 — the lead held. Engine O started `2026-08-15T04:18:07Z`** (after the 00:28Z
+upgrade commit), `pullPolicy: Always`, digest `sha256:fe90b047…`. The packet's "last restarted
+2026-08-10, five days behind" was stale and **item 2 is runnable today**. Full read in
+[[instance-resolution-nondeterminism]], including the part it does *not* establish: the digest
+pins what sandbox runs, not that it equals work's build.
 
 The read itself is already specified in the packet and is cheap: ten runs each of the bare and
 the trailing-noun phrasing, compare grounding rates. ~10/10 vs ~0/10 means deterministic and the

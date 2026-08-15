@@ -44,7 +44,9 @@ if str(_BAML_CLIENT_PATH) not in sys.path:
 from dagster import (
     DynamicOut,
     DynamicOutput,
+    Failure,
     In,
+    Nothing,
     Out,
     job,
     op,
@@ -1920,6 +1922,66 @@ IS_DEV = os.getenv("DAGSTER_IS_DEV_CLI") == "1"
 # We limit max_concurrent to 5 to protect cloud resources from fork-bombing.
 mesh_executor = in_process_executor if IS_DEV else multiprocess_executor.configured({"max_concurrent": 5})
 
+@op(
+    ins={"results": In(List[Dict[str, Any]]), "ui_payload": In(Any)},
+    out=Out(Nothing),
+)
+def assert_every_engine_answered(context, results: List[Dict[str, Any]], ui_payload) -> None:
+    """TAKE THE RED — fail the run when an engine did not answer, AFTER the card exists.
+
+    `execute_subtask` now returns a typed `engine_unreachable` result instead of raising, so
+    `generate_ui_payload` still runs and the user gets a card saying what broke rather than a
+    blank one. That repair, on its own, bought the honest card by making the RUN GREEN — and a
+    green run over a crashed subtask is the first-failure-direction lie (effects claimed, not
+    landed) relocated to the orchestration layer. Exactly the thing the rest of this work
+    exists to remove.
+
+    So both, in the only order that yields both:
+
+        execute_subtask returns a typed failure   -> the payload is produced
+        generate_ui_payload records its output    -> the user has a card
+        THIS op reads the results and fails       -> the run is RED
+
+    THE ORDERING IS THE WHOLE DESIGN, and `ui_payload` is an input for that reason alone — it
+    is never read. Taking it as an input is what makes Dagster schedule this op strictly after
+    `generate_ui_payload` has emitted and recorded its output, so the gateway (which fetches
+    that step's output value from run metadata) still finds the card on a failed run. Fail
+    earlier, or in parallel, and you are back to red-with-a-blank-card, which is where this
+    started.
+
+    Red-with-honest-card is loud and correct. Green-with-blank-card was the defect.
+    """
+    unreachable = [
+        r for r in results
+        if isinstance(r, dict)
+        and (r.get("expert_response") or {}).get("status") == "engine_unreachable"
+    ]
+    if not unreachable:
+        return
+    detail = "; ".join(
+        f"{(r.get('predicate_verb_iri') or 'unknown-verb')}: "
+        f"{(r.get('expert_response') or {}).get('error', 'no detail')}"
+        for r in unreachable
+    )
+    context.log.error(
+        "%d of %d subtask(s) did not reach their engine. The UI payload WAS produced and the "
+        "user has an honest card; this failure exists so the run is not reported as clean.",
+        len(unreachable), len(results),
+    )
+    raise Failure(
+        description=(
+            f"{len(unreachable)} of {len(results)} subtask(s) could not reach their engine. "
+            f"The UI payload was still produced (see generate_ui_payload) — this op fails "
+            f"AFTER it so the run is honest without costing the user their card. {detail}"
+        ),
+        metadata={
+            "unreachable_subtasks": MetadataValue.int(len(unreachable)),
+            "total_subtasks": MetadataValue.int(len(results)),
+            "detail": MetadataValue.text(detail),
+        },
+    )
+
+
 @job(executor_def=mesh_executor)
 def supervisor_query_job():
     """
@@ -1942,4 +2004,8 @@ def supervisor_query_job():
     synthesize_stateful(results=collected_results)
     
     # 2. Map the domain results to the React UI Component using Engine F
-    generate_ui_payload(results=collected_results)
+    ui_payload = generate_ui_payload(results=collected_results)
+
+    # 3. THEN, and only then, fail the run if an engine never answered. The dependency on
+    #    `ui_payload` is the ordering guarantee, not a data flow — see the op's docstring.
+    assert_every_engine_answered(results=collected_results, ui_payload=ui_payload)
