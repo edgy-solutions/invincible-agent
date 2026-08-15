@@ -6,7 +6,7 @@ blocked-on: nothing — the discriminating read is a repeat-N run of one query, 
 closed-by:
 code-site:  agent_fleet/ontology_service/main.py:1584
 repo:       invincible-agent
-summary:    THE USER-FACING DEFECT — asking the same question repeatedly returns different answers. Same text, same deployment: one run grounds and returns rows, the next reports "No DataHub URN resolved". A system that is not reproducible for identical input cannot be debugged by the person using it, and cannot be trusted by anyone.
+summary:    MEASURED 2026-08-15, 290 probes, 0 errors — THERE IS NO NONDETERMINISM (0 of 29 phrasings mixed; every one grounds 10/10 or 0/10) and the trailing-class-noun lead is refuted (bare 67% = trailing 67%). The real defect is the SHAPE of the extracted identifier: the matcher rejects qualified names it owns (`publog.p_cage`, `publog p_cage`) and accepts content words it does not (`cage` -> `p_cage`, so a nonexistent asset returns a confident answer about a real one). Too strict and too loose, same missing idea. Title retained as an id only; see the body.
 ---
 
 # One query, two groundings
@@ -399,6 +399,87 @@ the extraction/matching layer.
 **Rename deferred until the rate lands**, because the honest title depends on what the repeat=10
 shows: if some phrasings are also *unstable* across repeats, both defects are real and the title
 needs to say so rather than trade one wrong name for another.
+
+## THE READ, RUN 2026-08-15 — 290 probes, 0 errors, **0 nondeterminism**
+
+**In-cluster** (no port-forward), repeat=10 over 29 phrasings, scored on `instance_id != ""`.
+All three stamp axes recorded: code `sha256:fe90b047`, pool fingerprint 6/6, instances
+materialized 17:45Z.
+
+    phrasings with MIXED grounding outcomes:  0 / 29
+    errored probes:                           0 / 290
+
+**Every phrasing is 10/10 or 0/10.** There is no coin flip. The user-visible complaint that
+opened this packet — *"asking the same question repeatedly returns different answers"* — does not
+reproduce at n=10 per phrasing on a rig with the asset present.
+
+### The STRONG LEAD is refuted on the numbers
+
+    bare-identifier       resolved 20/30   (67%)
+    trailing-class-noun   resolved 40/60   (67%)
+
+**Identical.** The lead predicted bare-high / trailing-zero. The trailing class noun has no
+effect on grounding whatsoever.
+
+### What the defect actually is: THE SHAPE OF THE EXTRACTED IDENTIFIER
+
+`instance_fired` was true on 260/290 probes and only 150 resolved — **110 probes emitted an
+identifier that could not be matched.** Sorting by the identifier's shape makes the rule crisp:
+
+| extracted identifier | resolves? |
+|---|---|
+| `p_cage`, `P_CAGE` | ✅ bare name, any case |
+| `minio-svc.publog-lake/publog/p_cage` | ✅ full path |
+| `publog.p_cage` | ❌ **dotted qualifier** |
+| `publog p_cage` | ❌ **space-separated qualifier** (2 rows) |
+| `publog's p cage` | ❌ possessive + split name |
+| `publog` | ❌ schema alone — extractor took the wrong token |
+| `cage_code` | ❌ a COLUMN name when the question was about its table |
+
+**Two distinct sub-defects, and they belong to different owners:**
+
+1. **MATCHING — a qualified name is not stripped.** `publog.p_cage` and `publog p_cage` name the
+   asset correctly and unambiguously; the matcher simply cannot see past the qualifier. Seven of
+   the nine failures are this.
+2. **EXTRACTION — the wrong token is chosen.** `bare-join-01` yields `publog` (the schema) and
+   `column-01` yields `cage_code` (a column) when the target is the table. That is
+   `ClassifyDomainIntent` picking the wrong noun, not the matcher failing.
+
+### AND THE MATCHER IS SIMULTANEOUSLY TOO LOOSE — two confirmed false positives, 10/10 stable
+
+| row | query | extracted | resolved to |
+|---|---|---|---|
+| `misspell-01` | *"…cage values from publog's **p_caeg**"* (asset does not exist) | `cage` | **`publog/p_cage`** |
+| `colastable-01` | *"give me a couple values from **cage**"* | `cage` | **`publog/p_cage`** |
+
+The extractor takes `cage` from the phrase *"cage values"* — a content word, not the asset name —
+and the fuzzy matcher accepts it as `p_cage`. So a question about a **nonexistent** asset returns
+a confident answer about a **real, different** one. (`owner-03` is the same shape:
+`customer_silver` → `customers_raw`.)
+
+> **The matcher is too strict on qualified names and too loose on content words.** It rejects
+> `publog.p_cage`, which is the asset's correct qualified name, and accepts `cage`, which is a
+> word from the sentence. Both halves are the same missing idea: nothing distinguishes *"this
+> token IS an asset identifier"* from *"this token appears near one."*
+
+**Caveat, stated because it is mine:** both false positives resolve to `p_cage`, which this
+session materialized at 17:45Z. **Materializing did not create the defect — it made it
+observable.** Against the previously-empty catalog every probe returned `empty`, so no false
+positive was reachable and this would have read as clean.
+
+### Consequences
+
+**This packet is MIS-TITLED and the finding is smaller and more fixable than the title claims.**
+Not nondeterminism — a deterministic identifier-shape defect with two named halves.
+
+**The `id:` stays `instance-resolution-nondeterminism`.** It is cited from other packets and from
+code comments, and the citation seal exists precisely so identifiers survive renames; an id is a
+handle, not a claim. The summary and title carry the corrected finding instead.
+
+**Demo row 5 is confirmed broken at n=10.** `misspell-01` — the failure demo's exact shape, a
+name that looks right and is not — resolves stably to the wrong real asset. Already flagged in
+[[first-viewer-critical-path]] and runbook §A5; this run upgrades it from *reported by another
+commit* to *measured here, 10/10*.
 
 ## The read that sizes it, before any fix
 

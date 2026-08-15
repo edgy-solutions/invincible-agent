@@ -74,7 +74,7 @@ _Coverage: **40 of 48 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: human · blocked-on: nothing — the scope sentence is ANSWERED (2026-08-15): Tier-3 row 8 IS in scope, so the path is three items in the order stated below. What remains is building them.
   → [docs/plans/first-viewer-critical-path.md](plans/first-viewer-critical-path.md)
 
-- **instance-resolution-nondeterminism** — THE USER-FACING DEFECT — asking the same question repeatedly returns different answers. Same text, same deployment: one run grounds and returns rows, the next reports "No DataHub URN resolved". A system that is not reproducible for identical input cannot be debugged by the person using it, and cannot be trusted by anyone.
+- **instance-resolution-nondeterminism** — MEASURED 2026-08-15, 290 probes, 0 errors — THERE IS NO NONDETERMINISM (0 of 29 phrasings mixed; every one grounds 10/10 or 0/10) and the trailing-class-noun lead is refuted (bare 67% = trailing 67%). The real defect is the SHAPE of the extracted identifier: the matcher rejects qualified names it owns (`publog.p_cage`, `publog p_cage`) and accepts content words it does not (`cage` -> `p_cage`, so a nonexistent asset returns a confident answer about a real one). Too strict and too loose, same missing idea. Title retained as an id only; see the body.
   status: open · owner: agent · blocked-on: nothing — the discriminating read is a repeat-N run of one query, counting grounded vs ungrounded.
   → [docs/plans/instance-resolution-nondeterminism.md](plans/instance-resolution-nondeterminism.md)
 
