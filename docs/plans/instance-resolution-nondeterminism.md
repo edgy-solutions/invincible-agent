@@ -109,6 +109,39 @@ never folded into a reproducible path — which is why work got them back and sa
 and the un-reproduced deletion is now the ceiling on the only measurement that settles this.
 [[bootstrap-state-debt]] arriving not as inconvenience but as the measurement's validity.
 
+### WHO OWNS WEAVIATE'S CLASS COLLECTION — read 2026-08-15, by evidence
+
+Nothing had ever written this down, which is exactly why a hand-deletion survived two months
+undetected: an unowned collection has nobody to notice it drifted.
+
+| collection | owner | evidence |
+|---|---|---|
+| `Predicate` | **mesh-registrar** | work's registrar log — 404 then `POST /v1/schema` as first writer; `v2_substrate._ensure_predicate_collection` |
+| `OntologyClass` | **doc-tools ontology ingest** | `doc_tools/assets/ontology_assets.py:64` `sync_ontology_to_weaviate`, called at :411 from the ingest asset; creates the collection at :94-97 |
+
+Not the registrar. **Not the seeder** — which matters, because the seeder is the component
+that manufactured `DispositionReview` as a side effect ([[seeder-manufactures-declarations]]),
+and teaching it four more special cases would have been the wrong repair on a component with
+a record for exactly this.
+
+### AND THE RESTORATION NEEDS NO CODE
+
+The write is an **"Idempotent Upsert"** (`ontology_assets.py:113`) and `idp_extension.ttl`
+declares all six classes. So the canonical pipeline ALREADY produces the correct pool — which
+is precisely why work's fresh bootstrap has all six and nobody had to intervene. Sandbox is
+missing them because **nobody re-ingested the idp partition since the hand-delete**, not
+because the reproducible path is absent.
+
+    Restoration = trigger the ontology ingest for the idp_extension partition.
+
+Work's fresh bootstrap is the existence proof; sandbox uses the same mechanism rather than a
+special case. That satisfies both riders below by construction: it IS the reproducible path,
+and there is no hand-POST anywhere in it.
+
+**Acceptance is the corpus's own gate going green** — six classes in the pool,
+`--require-pool` passing, no hand-POST in the path. The gate built to protect the measurement
+becomes the restoration's definition of done.
+
 Two rules for the restoration, both easy to violate:
 
 1. **It goes through the reproducible path**, not a hand-POST mirroring the hand-DELETE.

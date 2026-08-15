@@ -17,6 +17,21 @@
 # `expect_class` is secondary and is often deliberately null: when the phone book answers,
 # the class follows from the catalog and the class contest is irrelevant.
 #
+# TRUTH IS DERIVED THROUGH THE SAME MAPPING THE SYSTEM USES — not through the ontology name
+# that sounds right. This corpus was commissioned with rows labelled "should resolve to
+# idp:Dataset, the catalog says so." The catalog says the opposite: `_DATAHUB_TO_IDP` maps a
+# DataHub DATASET to idp:Table (datahub_wrapper/main.py:537), so for p_cage the catalog's own
+# answer IS Table. Those labels would have scored the system's CORRECT answers as failures
+# and inflated the very rate the corpus exists to measure. The rule that caught it: derive
+# the truth column through the system's mapping, never from the name a human finds intuitive.
+#
+# PASS/FAIL IS `instance_fired`, NOT CLASS AGREEMENT.
+#   PASS — `_resolve_instance` fired and the catalog answered, EVEN IF the LLM's class guess
+#          was wrong. Provenance records "llm_guess=X, DataHub said Y, Y won"; the override
+#          machinery working is the design working.
+#   FAIL — the gates kept the deterministic path dark, WHATEVER class got picked. The class
+#          contest deciding a question the catalog could have answered outright is the fault.
+#
 # TRUTH COMES FROM THE SUBSTRATE, NOT FROM THIS FILE. Phrasings are authored here; labels
 # are what the ontology and catalog already say. Where a phrasing is genuinely ambiguous —
 # "cage codes" could legitimately mean the column, the dataset, or a value lookup, and no
