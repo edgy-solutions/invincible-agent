@@ -2,7 +2,7 @@
 id:         instance-resolution-nondeterminism
 status:     open
 owner:      agent
-blocked-on: nothing — the discriminating read is a repeat-N run of one query, counting grounded vs ungrounded.
+blocked-on: nothing — the read is DONE (290 probes, 0 errors, 0 nondeterminism). ANNOUNCEMENT TO AGENT B, per the shared-surface rule in AGENTS.md: the fix's extraction half will change `ClassifyDomainIntent`'s prompt — the one call that emits BOTH class and identifier — so hold any in-flight class-selection read before it lands. The two halves (qualifier-stripping in matching, identifier-vs-content-word discrimination in extraction) MUST land together: the strict half alone widens the aperture that already admits a content word and makes the two stable false positives MORE reachable.
 closed-by:
 code-site:  agent_fleet/ontology_service/main.py:1584
 repo:       invincible-agent
@@ -10,6 +10,50 @@ summary:    MEASURED 2026-08-15, 290 probes, 0 errors — THERE IS NO NONDETERMI
 ---
 
 # One query, two groundings
+
+> ## THE SPINE — read this before anything below
+>
+> **The matcher is too strict on qualified names and too loose on content words, and both halves
+> are one missing idea: nothing distinguishes *"this token IS an identifier"* from *"this token
+> appears near one."***
+>
+> Measured 2026-08-15, 290 probes, 0 errors. Everything else in this packet is either evidence
+> for that sentence or a hypothesis it replaced.
+
+## ⛔ THE TWO HALVES LAND TOGETHER — fixing the qualifier alone makes this WORSE
+
+**Stated before either half is built, because the qualifier fix is the tempting one.** Seven of
+the nine failures name the asset correctly and are rejected, so qualifier-stripping reads as pure
+upside: more queries resolve, nothing appears to be given up.
+
+It is not upside on its own. **The false positives are caused by excess matcher tolerance, and
+qualifier-stripping adds tolerance.** Strip `publog` from `publog p_cage` and you get a match —
+and the identical loosening makes `cage` reach `p_cage` more readily, not less. You would be
+widening the aperture that already admits a content word while doing nothing about the missing
+discriminator.
+
+**So: no qualifier fix ships without the identifier/content-word discrimination.** Shipping the
+strict half alone converts a visible miss rate into more of the one output class this
+architecture exists to prevent.
+
+## THE FALSE POSITIVES ARE THE FINDING — worse than the 42% miss rate
+
+Two rows, 10/10 stable, both resolving to a real asset **nobody named**:
+
+    "…give me a couple cage values from publog's p_caeg"   <- p_caeg DOES NOT EXIST
+        extracted `cage` (from the words "cage values")  ->  urn:…publog/p_cage
+
+    "give me a couple values from cage"
+        extracted `cage`                                 ->  urn:…publog/p_cage
+
+**That is not a grounding failure. It is a confident, stable, wrong answer about a different real
+asset** — the output class the abstention gate, the provenance tiers, and the honest-degradation
+rule all exist to make impossible. A miss is visible and recoverable; this is neither.
+
+And it is the *demo's* shape exactly: `misspell-01` is a name that looks right and is not, which
+is what [docs/demo-script.md](../demo-script.md) §2 row 5 exists to demonstrate the system
+refusing. See the hard block in [docs/demo-day-runbook.md](../demo-day-runbook.md) §A5.
+
 
 **This is the complaint that matters, stated first.** Asking the same question over and over
 and getting a different answer each time is not a rough edge — it is the property that makes
@@ -179,6 +223,16 @@ rather than five days stale — and the equality claim remains unmade.
 and a mandatory-by-convention `--stamp` free-text note naming what was measured. A result
 that cannot say what it ran against is not evidence, and this run proved that the hard way.
 
+## ~~STRONG LEAD~~ — **DEAD, refuted on numbers 2026-08-15. Do not re-chase.**
+
+**bare-identifier 20/30 (67%) · trailing-class-noun 40/60 (67%). Identical.** The trailing class
+noun has no effect on grounding. Kept below only so the reasoning is legible and nobody
+re-derives it from the same observation — it was a good hypothesis from a small sample, and the
+sample was drawn from a catalog that contained no `p_cage` at all.
+
+<details>
+<summary>the original lead, retained for the record</summary>
+
 ## STRONG LEAD (2026-08-15): it may be a deterministic misparse, not noise
 
 Every failing query ended with a trailing class noun — "p_cage **dataset**", "p_cage
@@ -199,6 +253,8 @@ misparse with a nameable trigger, and the repair is upstream of selection entire
 rates. If the bare form grounds ~10/10 and the "dataset" form ~0/10, it is deterministic and
 the word is the trigger. If both are ~50%, it is genuinely sampling noise and this title
 stands. Either way the cheapest hypothesis is settled first.
+
+</details>
 
 ## The rig — built 2026-08-15, and its precondition is a hand-deletion
 

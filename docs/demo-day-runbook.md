@@ -60,24 +60,33 @@ will use. It costs a minute and it collapses three checks into an observation.
 **Do not skip this because A1–A3 passed.** They are checks on the configuration; this is a check
 on the system.
 
-### A5. ⚠ RE-VERIFY THE FAILURE DEMO (§2 row 5) — it regressed on 2026-08-15
+### A5. ⛔ DO NOT RUN THE FAILURE DEMO LIVE (§2 row 5) — MEASURED broken, 10/10
 
-**Do not run the abstention beat live until this is checked.** `2f617fd` improved class recall
-and recorded its own cost: an asset that does not exist (`p_caeg`, a misspelling) **previously
-abstained to UNKNOWN and now resolves to `idp:Column`, stably.**
+**This is a hard block, not a check.** It was filed as a ⚠ *"re-verify"* when the regression was
+reported by another commit. A 290-probe run on 2026-08-15 **measured** it:
 
-That is exactly demo-script §2 row 5 — *"Tell me about `<DELIBERATELY_UNGROUNDABLE_THING>`"* —
-whose expected behaviour is `instance_resolved=false` and no fabricated answer. The beat's whole
-value is watching the system refuse to confabulate, so a beat that now confabulates is worse
-than not running it.
+```
+"…give me a couple cage values from publog's p_caeg"   <- p_caeg DOES NOT EXIST
+    extracted `cage` (from the words "cage values")  ->  resolved urn:…publog/p_cage
+    10 of 10 runs. Stable.
+```
 
-**The check:** ask row 5's question with your chosen ungroundable token and confirm it does not
-resolve. If it resolves, the beat is a **slide, not a live query** — the cardinal demo rule
-(§C) applied to a row that used to be safe.
+The system does not merely fail to abstain — **it answers confidently about a different, real
+asset.** A second row does it from a bare content word (*"give me a couple values from cage"* →
+the same URN).
 
-**Delete this section when abstention is recovered.** Per §E, a step that routes around a known
-defect cites what retires it: the recovery is owed by the resolver arc that caused it, and the
-regression is recorded in `2f617fd`'s own message.
+**Demo-script §2 row 5 is the beat whose entire value is watching the system refuse to
+confabulate.** It currently demonstrates the exact opposite, on the exact input shape it is
+demonstrated with: a name that looks right and is not. Running it live would not show a rough
+edge; it would show the failure the whole pitch claims to have solved.
+
+**Run it as a SLIDE.** Narrate the thesis, show the intended behaviour, do not issue the query.
+That is the cardinal demo rule (§C) applied to a row that used to be safe.
+
+**Delete this section when the identifier/content-word discrimination lands** — per §E, a step
+that routes around a known defect cites what retires it. Retired by
+[plans/instance-resolution-nondeterminism.md](plans/instance-resolution-nondeterminism.md), and
+**not by the qualifier-stripping half alone**, which that packet records would make this worse.
 
 ---
 

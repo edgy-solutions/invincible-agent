@@ -189,10 +189,21 @@ measured them, and it recorded the regression rather than burying it. The gap is
 was recorded as a *resolver* fact and never connected to the *demo* row that depends on it.
 That connection is the thing this packet exists to make.
 
-**Consequence for the ordering:** none. Items 1–3 stand. But row 5 must be re-verified before a
-viewing, and until it is, the failure demo is a slide rather than a live query — the cardinal
-demo rule applied to a row that used to be safe. Filed in
-[docs/demo-day-runbook.md](../demo-day-runbook.md) §A5.
+**UPGRADED FROM ⚠ TO ⛔ 2026-08-15 — measured, not reported.** A 290-probe run settled it:
+`p_caeg` (an asset that does not exist) resolves **10/10 stable** to the real `publog/p_cage`,
+because the extractor takes `cage` from the words *"cage values"* and the matcher accepts a
+content word as a name. A second row does it from a bare *"values from cage"*.
+
+So row 5 does not merely fail to abstain — **it answers confidently about a different real
+asset**, which is the one output class this architecture exists to prevent, on the exact input
+shape the beat is demonstrated with. **Run it as a slide, not a live query**
+([docs/demo-day-runbook.md](../demo-day-runbook.md) §A5).
+
+**Consequence for the ordering:** none. Items 1–3 stand. But this is now a *content* problem with
+the demo rather than a readiness check — the Tier-1b trust-builder currently demonstrates the
+opposite of its thesis, and no amount of pre-flight verification fixes that. It is retired by
+[[instance-resolution-nondeterminism]]'s identifier/content-word discrimination, and explicitly
+**not** by the qualifier-stripping half alone, which would make it more reachable.
 
 ## Bucket 2 — DEMO-DAY OPERATIONAL RISK (3): now [docs/demo-day-runbook.md](../demo-day-runbook.md)
 
