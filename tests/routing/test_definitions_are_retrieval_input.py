@@ -76,25 +76,25 @@ _STRUCTURAL = re.compile(
 
 # GRANDFATHERED — each entry is DEBT, not permission. Shrink to empty.
 # Format: (file, class label). See the module docstring for why this is a ratchet.
-KNOWN_QUERY_SHAPED = {
-    ("maintenance_extension.ttl", "Work Instruction"),   # quotes 3 MATRIX QUERIES verbatim
-    ("maintenance_extension.ttl", "Equipment"),
-    ("mfg_extension.ttl", "Manufacturing Work Instruction"),
-    ("mil_extension.ttl", "Fault Isolation Data Module"),
-    ("mil_extension.ttl", "Illustrated Parts Data Module"),
-    ("mro_extension.ttl", "Diagram"),
-}
+KNOWN_QUERY_SHAPED: set = set()
+# CLEARED 2026-08-15. All six entries were BUILD NOTES sitting in rdfs:comment, which the
+# ingest's { skos:definition } UNION { rdfs:comment } lets overwrite the authored
+# definition. Moving them to `#` comments removed the query-shaped text AND restored the
+# real definitions in one change — the two defects were the same authoring mistake seen
+# from different angles. Empty is the target state; an entry here is debt.
 
 # CIRCULARITY debt, kept SEPARATE from the habit list above — they are different defects and
 # one baseline for two checks makes the freshness guard incoherent (it said Technical Manual
 # was "cleaned" because it quotes a matrix query without quoting a QUESTION). Found by this
 # guard's own first run, not by the hand audit before it: the audit found one circular
 # definition, the guard found three.
-KNOWN_CIRCULAR = {
-    ("maintenance_extension.ttl", "Work Instruction"),   # 3 matrix queries
-    ("mro_extension.ttl", "Technical Manual"),           # 1
-    ("mro_extension.ttl", "Diagram"),                    # 1
-}
+KNOWN_CIRCULAR: set = set()
+# CLEARED 2026-08-15, and this one was the severest of the three. All three circular
+# definitions were build notes ABOUT the matrix row, sitting in the slot the matrix row
+# retrieves. Nobody wrote a query into a definition on purpose; the note about the test
+# became the text the test finds. Verified after re-ingest that the affected rows still
+# resolve — TechnicalManual conf 0.97 recall 1.54, WorkInstruction conf 0.99 recall 3.60 —
+# so the circularity was never load-bearing.
 KNOWN_SIBLING_BLEED = {
     ("product_structure_extension.ttl", "Approved source relationship"),
     # "a concrete tabular Dataset with rows and columns" — a descriptive use of the parent
