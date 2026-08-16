@@ -276,6 +276,26 @@ apply" is a sound argument and an easy one to get subtly wrong (a partially-stag
 untracked file the tests import, a `.pyc` shadowing a change). Materialising the tree costs
 seconds and converts the argument into an observation.
 
+### In a contended tree, EDIT THROUGH THE EDITOR — a script write is invisible to the tracking
+
+**Editing a file with a script (`sed -i`, a python rewrite) bypasses the editor's change
+tracking, so the tooling can no longer tell your own out-of-band write from another agent's.**
+Observed 2026-08-15: a reordering script rewrote `docs/demo-day-runbook.md`, and the next edit
+surfaced a *"file modified on disk since you last read it"* warning that read exactly like a
+concurrent agent touching the file. It was self-inflicted.
+
+The cost is not the warning; it is the **record**. An unexplained modified-on-disk warning
+becomes an implied near-miss in the transcript and gets cited later as evidence of a collision
+that never happened — a false positive in the one signal a contended session most needs to
+trust. Two consequences:
+
+* **Prefer the editor for edits during a contended session.** Scripts are fine for generation
+  and for bulk mechanical moves; they are a poor choice for touching a file another agent might
+  hold.
+* **When a script write is the right tool anyway, say so at the time.** A false alarm reported
+  as a false alarm costs one sentence. Left standing, it is indistinguishable from the real
+  thing.
+
 ### OWN AN ARC, NOT A FILE — and check what moved before assuming your premise holds
 
 **The staged-blob rule above bounds two agents by TREE. It does not bound them by MEANING, and
