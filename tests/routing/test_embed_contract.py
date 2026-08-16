@@ -31,6 +31,7 @@ Resolution is almost always "stop hardcoding the model name; call
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -206,6 +207,20 @@ def test_prefix_strings_only_in_embed_module():
     """search_document: / search_query: literal strings may only appear in
     agent_fleet/utils/embed.py. Anywhere else is a hand-rolled prefix that
     bypasses the contract — fix by calling embed_document / embed_query."""
+    # INSPECT STRING LITERALS, NOT RAW LINES.
+    #
+    # The line-based version flagged four TYPE ANNOTATIONS and had been failing for two
+    # months. `PREFIX_STRINGS` contains "search_query: " WITH A TRAILING SPACE, and a Python
+    # annotation `def f(search_query: str)` contains exactly that byte sequence — so
+    # `def _collect_weaviate_source(obj, search_query: str)` read as a hand-rolled task
+    # prefix. Four false positives, none of them prefixes, and the real assertion (a prefix
+    # literal outside embed.py) was buried under them.
+    #
+    # An AST walk over string constants is both stricter and quieter: annotations, parameter
+    # names and comments disappear entirely, while a prefix hidden in a multi-line or
+    # concatenated literal — which the line scan could miss — is caught. The docstring
+    # exemption is now structural rather than a startswith("#") heuristic: a module/class/
+    # function docstring is a Constant too, so it is collected and excluded by identity.
     violations: list[tuple[str, int, str]] = []
     embed_module_abs = AGENT_FLEET.parent / EMBED_MODULE_RELATIVE
 
@@ -216,17 +231,31 @@ def test_prefix_strings_only_in_embed_module():
             continue
         try:
             text = py_file.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+            tree = ast.parse(text)
+        except (UnicodeDecodeError, OSError, SyntaxError):
             continue
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if any(p in line for p in PREFIX_STRINGS):
-                # Tolerate comments / docstrings referencing the prefix by
-                # name; only flag string-literal occurrences. Conservative
-                # heuristic: skip lines that are pure comments. Docstring
-                # mentions of the prefix name in prose pass through too.
-                if line.lstrip().startswith("#"):
-                    continue
-                violations.append((str(py_file), lineno, line.strip()))
+
+        # Docstrings mention the prefix by name in prose all over the fleet; that is
+        # documentation, not a hand-rolled prefix.
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+                body = getattr(node, "body", None)
+                if (body and isinstance(body[0], ast.Expr)
+                        and isinstance(body[0].value, ast.Constant)
+                        and isinstance(body[0].value.value, str)):
+                    docstrings.add(id(body[0].value))
+
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            if id(node) in docstrings:
+                continue
+            if any(p in node.value for p in PREFIX_STRINGS):
+                violations.append(
+                    (str(py_file), getattr(node, "lineno", 0), node.value.strip()[:80])
+                )
 
     assert not violations, (
         "Task-prefix literal strings found outside "
