@@ -131,6 +131,28 @@ def _install_stubs() -> None:
         d.op = lambda *a, **k: (lambda f: f)
         d.job = lambda *a, **k: (lambda f: f)
         d.in_process_executor = object()
+        # THE STUB MUST COVER EVERY NAME THE MODULE IMPORTS, not just the ones that
+        # happened to be needed when it was written. `Failure` and `Nothing` were absent
+        # while dynamic_supervisor.py has imported both since 9d57a23 (2026-03-17) — the
+        # gap stayed invisible because `_install_stubs` is a no-op when "dagster" is
+        # ALREADY in sys.modules, and real dagster (1.12.20) is installed here. So the
+        # stub was skipped whenever any earlier test imported dagster first, and the
+        # ImportError only appeared when collection order changed. A stub that works by
+        # depending on another test having run is not a stub.
+        #
+        # Failure is an EXCEPTION in dagster (raised to fail a step deliberately), so it
+        # must subclass Exception — a lambda or object() here would import cleanly and
+        # then explode at `raise`/`except`, which is a worse failure than this one.
+        class _Failure(Exception):
+            """Stand-in for ``dagster.Failure``."""
+
+            def __init__(self, description=None, metadata=None, **kwargs):
+                super().__init__(description or "")
+                self.description = description
+                self.metadata = metadata
+
+        d.Failure = _Failure
+        d.Nothing = type("Nothing", (), {})
 
         class _Cfg2:
             @staticmethod
