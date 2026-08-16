@@ -61,6 +61,23 @@ meta:
     - http://invincible-agent/idp#Table
     - http://invincible-agent/idp#Column
 
+  # THE THIRD STAMP AXIS — catalog contents.
+  #
+  # Every grounding number taken before 2026-08-15 was measured against a catalog that did
+  # not contain p_cage, so those runs described a system that could not have grounded
+  # regardless of phrasing. The pool gate did not catch it (the pool was fine) and the image
+  # digest did not catch it (the code was fine). A run is attributable only with all three:
+  #
+  #     CODE       image digest        which build is answering
+  #     SUBSTRATE  pool fingerprint    what classes it can choose between
+  #     CATALOG    these instances     whether the things being asked about EXIST
+  #
+  # These are identifiers the corpus's grounding rows depend on. `stamp()` probes each and
+  # records whether a provider actually RESOLVED it (provenance.instance_id present), which
+  # is a stronger signal than an identifier merely being extracted.
+  requires_instances:
+    - p_cage
+
 rows:
 
   # ── AXIS: trailing class noun ────────────────────────────────────────────────────

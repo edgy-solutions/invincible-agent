@@ -188,6 +188,35 @@ def stamp(base: str, meta: dict, timeout: float, note: str = "") -> dict:
         health = requests.get(f"{base}/health", timeout=10).json()
     except Exception:  # noqa: BLE001
         pass
+
+    # THIRD AXIS — CATALOG CONTENTS. The pool gate checks which CLASSES exist; this checks
+    # whether the THINGS the corpus asks about exist. Every grounding number taken before
+    # 2026-08-15 was measured against a catalog with no p_cage in it, so those runs
+    # described a system that could not have grounded regardless of phrasing — and neither
+    # the pool fingerprint nor the image digest could have revealed it.
+    #
+    # `instance_id` in provenance is the strong signal: it means a registered
+    # mesh:resolveInstance provider actually RESOLVED the token, not merely that the LLM
+    # extracted it. Those are different facts and only the first says the catalog has it.
+    instances = {}
+    for ident in (meta.get("requires_instances") or []):
+        try:
+            r = requests.post(
+                f"{base}/resolve",
+                json={"query": ident, "domain": meta.get("domain"),
+                      "domains": [meta.get("domain")]},
+                timeout=timeout,
+            )
+            r.raise_for_status()
+            prov = r.json().get("provenance") or {}
+            instances[ident] = {
+                "resolved": bool(prov.get("instance_id")),
+                "instance_id": (prov.get("instance_id") or "")[:90],
+                "match": prov.get("instance_match") or "",
+            }
+        except Exception as exc:  # noqa: BLE001
+            instances[ident] = {"resolved": False, "error": type(exc).__name__}
+
     return {
         "_kind": "stamp",
         "base_url": base,
@@ -195,6 +224,9 @@ def stamp(base: str, meta: dict, timeout: float, note: str = "") -> dict:
         "health": health,
         "pool_fingerprint": sorted(u for u in fp if u),
         "pool_size": len(fp),
+        "catalog_instances": instances,
+        "catalog_resolved": sum(1 for v in instances.values() if v.get("resolved")),
+        "catalog_total": len(instances),
     }
 
 
@@ -407,8 +439,14 @@ def main() -> int:
             return 2
 
     run_stamp = stamp(args.base_url, meta, args.timeout, args.stamp or "")
-    print(f"stamp: pool_size={run_stamp['pool_size']} health={run_stamp['health']}"
-          + (f" note={run_stamp['note']!r}" if run_stamp["note"] else ""))
+    print(f"stamp: pool={run_stamp['pool_size']} classes  "
+          f"catalog={run_stamp.get('catalog_resolved')}/{run_stamp.get('catalog_total')} "
+          f"instances resolved  health={run_stamp['health']}"
+          + (f"\n       note={run_stamp['note']!r}" if run_stamp["note"] else ""))
+    if run_stamp.get("catalog_total") and not run_stamp.get("catalog_resolved"):
+        print("  CATALOG EMPTY for every probed instance — grounding numbers from this run "
+              "describe a system that CANNOT ground, whatever the phrasing. Treat any "
+              "grounding rate below as void.", file=sys.stderr)
     if not run_stamp["note"]:
         print("  (no --stamp given: this result will not be attributable to a "
               "deployment later — pass one)", file=sys.stderr)
