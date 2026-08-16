@@ -9,6 +9,17 @@
 mfg:MFG_Ontology a owl:Ontology ;
     rdfs:label "Manufacturing Extension Ontology" ;
     rdfs:comment "General manufacturing content-kind ontology. Parallel to the mil: extension's CONTENT KIND axis: subjects user questions about manufactured items resolve to. Kept GENERAL — a manufacturing work instruction can describe sensors, electronics, mechanical assemblies, munitions, etc. Per ADR-0021 the *what is described* (munitions / sensors / ...) is an instance-level concern, NOT a separate kind. Sub-kinds become warranted only when a routing question demands disambiguating them (Wave-3 discipline)." .
+#
+# !! rdfs:comment IS THE EMBEDDING. BUILD NOTES BELONG IN `#` COMMENTS, NOT IN A TRIPLE. !!
+#
+# doc-tools' extractor runs { ?uri skos:definition ?d } UNION { ?uri rdfs:comment ?d }, so a
+# class declaring BOTH yields two rows and the Weaviate upsert (deterministic UUID per URI)
+# keeps whichever lands last. Verified live 2026-08-15: mro:TechnicalManual's stored
+# definition was a BUILD NOTE and its authored skos:definition had been discarded.
+#
+# `#` comments are not triples and cannot be embedded. Notes below are preserved verbatim;
+# they just stop competing to BE the definition.
+#
 
 # ===========================================================================
 # CONTENT KIND — the ROUTING-VISIBLE class.
@@ -27,8 +38,10 @@ mfg:MFG_Ontology a owl:Ontology ;
 # ADR-0021 Consequences).
 # ===========================================================================
 
+# NOTE FOR WorkInstruction — was: Routing subject for 'how is X manufactured', 'what are the
+#   assembly steps for X', and similar manufacturing-procedure queries. INSTANCE_OF target
+#   for the ManufacturingPlugin's extracted steps (ADR-0021).
 mfg:WorkInstruction a owl:Class ;
     rdfs:subClassOf iof:InformationContentEntity ;
     rdfs:label "Manufacturing Work Instruction" ;
-    skos:definition "A unit of authored procedural manufacturing information — the steps, tools, consumables, hazards, and standards required to produce, assemble, or finish a manufactured artifact. The general kind: sensors, electronics, mechanical assemblies, and munitions are all DESCRIBED BY a manufacturing work instruction, not separate kinds of it." ;
-    rdfs:comment "Routing subject for 'how is X manufactured', 'what are the assembly steps for X', and similar manufacturing-procedure queries. INSTANCE_OF target for the ManufacturingPlugin's extracted steps (ADR-0021)." .
+    skos:definition "A unit of authored procedural manufacturing information — the steps, tools, consumables, hazards, and standards required to produce, assemble, or finish a manufactured artifact. The general kind: sensors, electronics, mechanical assemblies, and munitions are all DESCRIBED BY a manufacturing work instruction, not separate kinds of it." .

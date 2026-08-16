@@ -9,31 +9,48 @@
 <http://internal/maintenance> a owl:Ontology ;
     rdfs:label "Maintenance domain extension (hand-curated user-facing nouns)" ;
     rdfs:comment "Thin extension declaring the user-facing nouns the routing matrix needs that are not declared in any other backbone ontology: mro:WorkInstruction, mro:Procedure, mro:Symptom, mro:Equipment. Definitions preserve the original hand-written text from the pre-canonical Weaviate seed so the resolver's hybrid search continues to match the same way after the canonical pipeline replaces the band-aid. Authored as the 'real fix' for ADR-0019 substrate-completeness in the maintenance domain." .
+#
+# !! rdfs:comment IS THE EMBEDDING. BUILD NOTES BELONG IN `#` COMMENTS, NOT IN A TRIPLE. !!
+#
+# doc-tools' extractor runs { ?uri skos:definition ?d } UNION { ?uri rdfs:comment ?d }, so a
+# class declaring BOTH yields two rows and the Weaviate upsert (deterministic UUID per URI)
+# keeps whichever lands last. Verified live 2026-08-15: mro:TechnicalManual's stored
+# definition was a BUILD NOTE and its authored skos:definition had been discarded.
+#
+# `#` comments are not triples and cannot be embedded. Notes below are preserved verbatim;
+# they just stop competing to BE the definition.
+#
 
 # ---------------------------------------------------------------------------
 # Concrete user-facing maintenance nouns
 # ---------------------------------------------------------------------------
 
+# NOTE FOR WorkInstruction — was: Subject of mesh:queryKnowledgeGraph (Engine E). Matrix
+#   queries: 'Show me the maintenance steps for the rotor assembly', 'What is the work
+#   instruction for procedure 1234?', 'Describe procedure TEST-1234 and show me its
+#   diagram'.
 mro:WorkInstruction a owl:Class ;
     rdfs:subClassOf iof-construct:DescriptiveInformationContentEntity ;
     rdfs:label "Work Instruction" ;
-    skos:definition "A formal documented procedure for performing maintenance or assembly work, including steps, tools, hazards, and personnel roles. Lives in the knowledge graph as a structured node with image_path properties for diagrams. Queries about a specific procedure, work instruction, or its steps/diagram target this class." ;
-    rdfs:comment "Subject of mesh:queryKnowledgeGraph (Engine E). Matrix queries: 'Show me the maintenance steps for the rotor assembly', 'What is the work instruction for procedure 1234?', 'Describe procedure TEST-1234 and show me its diagram'." .
+    skos:definition "A formal documented procedure for performing maintenance or assembly work, including steps, tools, hazards, and personnel roles. Lives in the knowledge graph as a structured node with image_path properties for diagrams. Queries about a specific procedure, work instruction, or its steps/diagram target this class." .
 
+# NOTE FOR Procedure — was: Subject for future procedural-intent matrix queries; not yet
+#   matrix-covered as of ADR-0019 baseline.
 mro:Procedure a owl:Class ;
     rdfs:subClassOf iof:Process ;
     rdfs:label "Procedure" ;
-    skos:definition "A maintenance procedure such as a work instruction, inspection routine, or repair sequence. Higher-level than mro:WorkInstruction (which is the documented form of a procedure)." ;
-    rdfs:comment "Subject for future procedural-intent matrix queries; not yet matrix-covered as of ADR-0019 baseline." .
+    skos:definition "A maintenance procedure such as a work instruction, inspection routine, or repair sequence. Higher-level than mro:WorkInstruction (which is the documented form of a procedure)." .
 
+# NOTE FOR Symptom — was: Subject for future symptom-intent matrix queries (e.g.,
+#   'troubleshoot whining noise on rotor'); not yet matrix-covered.
 mro:Symptom a owl:Class ;
     rdfs:subClassOf iof-construct:DescriptiveInformationContentEntity ;
     rdfs:label "Symptom" ;
-    skos:definition "An observed sign of malfunction or degradation reported by a mechanic or telemetry. Used as the entry point for diagnostic queries that flow into work-instruction lookup." ;
-    rdfs:comment "Subject for future symptom-intent matrix queries (e.g., 'troubleshoot whining noise on rotor'); not yet matrix-covered." .
+    skos:definition "An observed sign of malfunction or degradation reported by a mechanic or telemetry. Used as the entry point for diagnostic queries that flow into work-instruction lookup." .
 
+# NOTE FOR Equipment — was: Subject for future equipment-intent matrix queries (e.g., 'what
+#   work instructions exist for the rotor assembly'); not yet matrix-covered.
 mro:Equipment a owl:Class ;
     rdfs:subClassOf iof:MaterialEntity ;
     rdfs:label "Equipment" ;
-    skos:definition "A physical asset or component that maintenance procedures operate on. Includes equipment classes (e.g., RotorAssembly, HydraulicPump) and individual physical units." ;
-    rdfs:comment "Subject for future equipment-intent matrix queries (e.g., 'what work instructions exist for the rotor assembly'); not yet matrix-covered." .
+    skos:definition "A physical asset or component that maintenance procedures operate on. Includes equipment classes (e.g., RotorAssembly, HydraulicPump) and individual physical units." .

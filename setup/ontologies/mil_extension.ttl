@@ -9,6 +9,17 @@
 mil:MIL_Ontology a owl:Ontology ;
     rdfs:label "Unified Military Technical Manual Ontology" ;
     rdfs:comment "Bridges S1000D, IADS, and DITA into a single equipment graph. Two orthogonal axes: SOURCE FORMAT (how the document was authored — ingest/provenance concern) and CONTENT KIND (what the document IS — routing concern, derived from the S1000D information code). Routing resolves against the content-kind hierarchy under mil:DataModule; ingest records the source-format class for lineage. An instance carries both: INSTANCE_OF its content kind, plus mil:hasInfoCode / a source-format marker." .
+#
+# !! rdfs:comment IS THE EMBEDDING. BUILD NOTES BELONG IN `#` COMMENTS, NOT IN A TRIPLE. !!
+#
+# doc-tools' extractor runs { ?uri skos:definition ?d } UNION { ?uri rdfs:comment ?d }, so a
+# class declaring BOTH yields two rows and the Weaviate upsert (deterministic UUID per URI)
+# keeps whichever lands last. Verified live 2026-08-15: mro:TechnicalManual's stored
+# definition was a BUILD NOTE and its authored skos:definition had been discarded.
+#
+# `#` comments are not triples and cannot be embedded. Notes below are preserved verbatim;
+# they just stop competing to BE the definition.
+#
 
 # ===========================================================================
 # AXIS 1 — SOURCE FORMAT (ingest provenance; NOT the routing-visible layer)
@@ -41,35 +52,40 @@ mil:DitaNode a owl:Class ;
 # pool until verb coverage exists.
 # ===========================================================================
 
+# NOTE FOR DescriptiveDataModule — was: Routing subject for descriptive/'what is' queries
+#   about equipment.
 mil:DescriptiveDataModule a owl:Class ;
     rdfs:subClassOf mil:DataModule ;
     rdfs:label "Descriptive Data Module" ;
-    skos:definition "Describes what a system, subsystem, or item IS — function, construction, operation. S1000D information code family 0xx." ;
-    rdfs:comment "Routing subject for descriptive/'what is' queries about equipment." .
+    skos:definition "Describes what a system, subsystem, or item IS — function, construction, operation. S1000D information code family 0xx." .
 
+# NOTE FOR ProcedureDataModule — was: Routing subject for 'how do I', step, and procedure
+#   queries. Maps to the :Procedure / :ManufacturingStep instance labels (see ingest
+#   mapping).
 mil:ProcedureDataModule a owl:Class ;
     rdfs:subClassOf mil:DataModule ;
     rdfs:label "Procedure Data Module" ;
-    skos:definition "Describes HOW to perform a task — maintenance, operation, servicing, assembly. S1000D information code families 2xx (operation) and 5xx/7xx (maintenance/repair)." ;
-    rdfs:comment "Routing subject for 'how do I', step, and procedure queries. Maps to the :Procedure / :ManufacturingStep instance labels (see ingest mapping)." .
+    skos:definition "Describes HOW to perform a task — maintenance, operation, servicing, assembly. S1000D information code families 2xx (operation) and 5xx/7xx (maintenance/repair)." .
 
+# NOTE FOR FaultIsolationDataModule — was: Routing subject for diagnostic / 'why is it
+#   broken' / 'how do I find the fault' queries. The diagnostic lane.
 mil:FaultIsolationDataModule a owl:Class ;
     rdfs:subClassOf mil:DataModule ;
     rdfs:label "Fault Isolation Data Module" ;
-    skos:definition "Describes how to detect, isolate, and correct a fault — symptoms, fault trees, troubleshooting. S1000D information code family 4xx." ;
-    rdfs:comment "Routing subject for diagnostic / 'why is it broken' / 'how do I find the fault' queries. The diagnostic lane." .
+    skos:definition "Describes how to detect, isolate, and correct a fault — symptoms, fault trees, troubleshooting. S1000D information code family 4xx." .
 
+# NOTE FOR IllustratedPartsDataModule — was: Routing subject for parts-breakdown, IPD, and
+#   'what parts make up X' queries.
 mil:IllustratedPartsDataModule a owl:Class ;
     rdfs:subClassOf mil:DataModule ;
     rdfs:label "Illustrated Parts Data Module" ;
-    skos:definition "Catalogs the parts of an assembly with illustrations and part numbers — the IPD/IPC. S1000D information code family 9xx." ;
-    rdfs:comment "Routing subject for parts-breakdown, IPD, and 'what parts make up X' queries." .
+    skos:definition "Catalogs the parts of an assembly with illustrations and part numbers — the IPD/IPC. S1000D information code family 9xx." .
 
+# NOTE FOR Diagram — was: Routing subject (or output) for diagram/figure queries.
 mil:Diagram a owl:Class ;
     rdfs:subClassOf mil:DataModule ;
     rdfs:label "Diagram" ;
-    skos:definition "A visual technical illustration — schematic, wiring diagram, exploded view, callout — attached to a data module." ;
-    rdfs:comment "Routing subject (or output) for diagram/figure queries." .
+    skos:definition "A visual technical illustration — schematic, wiring diagram, exploded view, callout — attached to a data module." .
 
 # ===========================================================================
 # MATERIAL ARTIFACTS (instances cross-linked to data modules)
