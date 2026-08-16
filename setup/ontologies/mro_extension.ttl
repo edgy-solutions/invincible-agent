@@ -13,21 +13,43 @@
 # ---------------------------------------------------------------------------
 # Concrete domain nouns
 # ---------------------------------------------------------------------------
-
+#
+# !! rdfs:comment IS THE EMBEDDING. BUILD NOTES BELONG IN `#` COMMENTS, NOT IN A TRIPLE. !!
+#
+# doc-tools' extractor runs { ?uri skos:definition ?d } UNION { ?uri rdfs:comment ?d }, so a
+# class declaring BOTH yields two rows and the Weaviate upsert (deterministic UUID per URI)
+# keeps whichever lands last. Verified live on sandbox 2026-08-15 — mro:TechnicalManual's
+# stored `definition` was:
+#
+#     "Required by the matrix query 'Search the technical manuals for fuel system
+#      diagnostics' which currently mis-resolves to mesh:GraphQuery."
+#
+# The authored skos:definition was DISCARDED and a build note became the class's entire
+# semantic representation. Which also made the matrix row circular: the query the test
+# asserts on was inside the text the test retrieves.
+#
+# `#` comments are not triples, so they cannot be embedded. Every note below was previously
+# an rdfs:comment; nothing is lost, it just stops competing to BE the definition.
+#
+# NOTE FOR mro:TechnicalManual — was: "Required by the matrix query 'Search the technical
+# manuals for fuel system diagnostics' which currently mis-resolves to mesh:GraphQuery."
 mro:TechnicalManual a owl:Class ;
     rdfs:subClassOf iof-construct:DescriptiveInformationContentEntity ;
     rdfs:label "Technical Manual" ;
-    skos:definition "A document conveying descriptive technical information about a system, asset, or procedure — operations manuals, maintenance manuals, troubleshooting guides, and reference documentation. Routable subject for manual-text search verbs (mesh:retrieveKnowledge against Engine W)." ;
-    rdfs:comment "Required by the matrix query 'Search the technical manuals for fuel system diagnostics' which currently mis-resolves to mesh:GraphQuery." .
+    skos:definition "A document conveying descriptive technical information about a system, asset, or procedure — operations manuals, maintenance manuals, troubleshooting guides, and reference documentation. Routable subject for manual-text search verbs (mesh:retrieveKnowledge against Engine W)." .
 
+# NOTE FOR mro:Diagram — was: "Optional output type for mesh:queryKnowledgeGraph verb
+# covering 'Describe procedure TEST-1234 and show me its diagram'. Generic
+# mesh:GraphExpertResponse output works without this; declaring it enables stricter output
+# typing if desired."
 mro:Diagram a owl:Class ;
     rdfs:subClassOf iof-construct:DescriptiveInformationContentEntity ;
     rdfs:label "Diagram" ;
-    skos:definition "A visual representation attached to a work instruction or technical manual — schematics, exploded views, callouts, and procedural illustrations." ;
-    rdfs:comment "Optional output type for mesh:queryKnowledgeGraph verb covering 'Describe procedure TEST-1234 and show me its diagram'. Generic mesh:GraphExpertResponse output works without this; declaring it enables stricter output typing if desired." .
+    skos:definition "A visual representation attached to a work instruction or technical manual — schematics, exploded views, callouts, and procedural illustrations." .
 
+# NOTE FOR mro:ProcedureStep — was: "Optional output type for mesh:queryKnowledgeGraph
+# against mro:WorkInstruction. Generic mesh:GraphExpertResponse output works without this."
 mro:ProcedureStep a owl:Class ;
     rdfs:subClassOf iof-construct:DescriptiveInformationContentEntity ;
     rdfs:label "Procedure Step" ;
-    skos:definition "A single ordered action within a maintenance procedure or work instruction — pre-conditions, action, verification." ;
-    rdfs:comment "Optional output type for mesh:queryKnowledgeGraph against mro:WorkInstruction. Generic mesh:GraphExpertResponse output works without this." .
+    skos:definition "A single ordered action within a maintenance procedure or work instruction — pre-conditions, action, verification." .
