@@ -73,6 +73,62 @@ system's behaviour.
   arriving in the measurement layer: distance from truth is what varies, and here the distance
   is time.
 
+## RESOLVED 2026-08-17 — THE PROMPT'S SAFETY NET IS THE COMPONENT THAT DOESN'T CATCH IT
+
+**B's `fec6739` acknowledged the shared-call announcement and handed over the upstream half; this
+section is the other half of the same contradiction, and together they settle the fix's shape.**
+
+`contracts.baml`'s `instance_identifier` contract says two things that the matcher makes
+incompatible:
+
+    "a catalog asset path like gold.sales.revenue_summary … copy that exact token here verbatim"
+
+    "Be RECALL-BIASED on Job B: when in doubt about whether something is a name vs. a
+     description, extract it. A miss costs more than a spurious extraction — THE ROUTER CAN
+     VERIFY WITH THE PHONE BOOK, but it cannot recover from an extraction the model never made."
+
+**Both instructions are reasonable. Both are falsified by the matcher.**
+
+| the prompt says | the matcher does |
+|---|---|
+| emit qualified dotted paths **verbatim** (`gold.sales.revenue_summary`) | **rejects** `publog.p_cage` |
+| over-extract freely, **the phone book will verify** | fuzzy-matches `cage` → `p_cage`, so it **launders instead of verifying** |
+
+> **The prompt's premise — *a spurious extraction is cheap because the phone book verifies* — is
+> FALSE given what the phone book actually does.** That single sentence explains both the 42%
+> miss rate and the false positives. They are not two defects with a shared cause; they are one
+> broken contract read from its two ends.
+
+### Which end gives — and it is not the one this packet assumed
+
+This packet planned "qualifier-stripping in the matcher" plus "discrimination in the prompt".
+**The prompt's reasoning is sound *if* the phone book verifies**, so the honest repair is to make
+that true rather than to retract the recall bias:
+
+1. **Normalize qualified identifiers** — `publog.p_cage`, `publog p_cage`, `publog's p_cage` all
+   carry the name plus a qualifier. Match on the name segment; use the qualifier as
+   **corroboration**, not as an obstacle. *Looser exactly where it was wrongly strict.*
+2. **Require specificity, so a content word cannot win** — `cage` matching `p_cage` is a
+   substring accident. The phone book must be able to say *"this token does not identify an
+   asset"* and return nothing. *Stricter exactly where it was wrongly loose.*
+
+**Together those make the prompt's promise true**, at which point recall bias is safe as
+designed and the prompt may need no change at all beyond removing the dotted example if (1)
+lands differently than expected. That inverts this packet's earlier plan: **most of the fix is
+the matcher, and the prompt half shrinks to almost nothing.**
+
+### The landing, unchanged in shape
+
+Still three parts, still coordinated — A's matcher normalization + specificity gate, whatever
+residue the prompt needs, and B's cleaned `mesh#InstanceIdentifier` definition. B records that
+its `rdfs:comment` is a **near-verbatim duplicate of the BAML field description**, and that the
+BAML copy is the one driving extraction: cleaning the TTL alone would leave two masters
+divergent with the ineffective one cleaned.
+
+**And B's own qualification is the reason the coordination is real:** B touches no prompt
+template, but the candidate classes are injected via TypeBuilder and *their descriptions are the
+definitions B rewrites*. Nothing in flight on the file; the content moves anyway.
+
 ## ⛔ THE TWO HALVES LAND TOGETHER — fixing the qualifier alone makes this WORSE
 
 **Stated before either half is built, because the qualifier fix is the tempting one.** Seven of
