@@ -247,6 +247,86 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# EFFECT-WRITE GATE — can_invoke on the SINGLE DECIDER (undeclared-routes residual)
+# ---------------------------------------------------------------------------
+# The manifest classed `/write_item_state` and `/write_decision_record` as
+# `ungated_by_accident`: transport auth is app-wide, so an UNAUTHENTICATED caller is
+# refused once REQUIRE flips — but nothing checked WHICH authenticated caller may
+# perform the effect. Any minted service could stamp disposition state or append to the
+# decision corpus. Gate-class-follows-the-effect: an effect write earns an authorization
+# decision, not merely an identity.
+#
+# SAME DECIDER, SAME CONTRACT as `spo_step_executor.check_can_invoke` — capability object
+# namespace, `can_invoke` relation, subject is the mint-contract `authz_id`. Deliberately
+# NOT engine-o's `authz/is` rego path (used by `_can_view_class`): that one answers a
+# visibility question about ontology classes. Two questions, two policies.
+TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "")
+
+# NAMED UNMET PRECONDITION, as the autonomous-review ceremony names its own: engine-o's
+# deployment carries TOPAZ_AUTHORIZER_URL but NOT TOPAZ_DIRECTORY_URL. Until that env is
+# wired this gate fails CLOSED on every call — safe ONLY because ENABLE_AGENTIC_AUTH is
+# false and the gate no-ops. **Wiring the env belongs to the same flip, not a follow-up:**
+# flipping ENABLE_AGENTIC_AUTH without it would refuse every disposition write, and the
+# caller's `_fail_terminal_on_4xx` classes 403 as TERMINAL — so those refusals would be
+# PERMANENT rather than retried. That is the coordinated half of this fix.
+CAP_WRITE_ITEM_STATE = "mesh:writeItemState"
+CAP_WRITE_DECISION_RECORD = "mesh:writeDecisionRecord"
+
+
+def _can_invoke_capability(caller_authz_id: str, capability: str) -> bool:
+    """Ask the single decider whether ``caller_authz_id`` may invoke ``capability``.
+
+    NO-OP (True) while ``ENABLE_AGENTIC_AUTH`` is off — the same phase discipline
+    ``_can_view_class`` uses, and the reason this gate lands before the flip without
+    breaking a write that works today. Fail-CLOSED (deny) on empty identity, empty
+    capability, unset directory URL, or any error: a security gate must not fail open.
+    """
+    if not ENABLE_AGENTIC_AUTH:
+        return True
+    if not caller_authz_id or not capability or not TOPAZ_DIRECTORY_URL:
+        return False
+    try:
+        r = httpx.post(
+            f"{TOPAZ_DIRECTORY_URL}/api/v3/directory/check",
+            json={
+                "object_type": "capability",
+                "object_id": capability,
+                "relation": "can_invoke",
+                "subject_type": "user",
+                "subject_id": caller_authz_id,
+            },
+            timeout=5.0,
+        )
+        r.raise_for_status()
+        return bool(r.json().get("check"))
+    except Exception as e:  # noqa: BLE001 — fail-closed on any error
+        logging.warning("can_invoke check failed capability=%s caller=%s (fail-closed deny): %s",
+                        capability, caller_authz_id, e)
+        return False
+
+
+def _require_capability(caller, capability: str, what: str) -> str:
+    """Refuse an effect write the caller may not perform, and RECORD the caller either way.
+
+    The log line is the audit half of the approval-bypass precedent: identity threaded to
+    the gate AND written down, so a future reader can tell which service produced an effect.
+    Recording the caller INSIDE the graph write is a schema change — the decision record's
+    ``admitted_by`` is the trust authority, not the caller — and is left as its own decision
+    rather than smuggled in here.
+    """
+    who = getattr(caller, "authz_id", None) or ""
+    if not _can_invoke_capability(who, capability):
+        logging.warning("effect write REFUSED: %s caller=%s capability=%s",
+                        what, who or "none", capability)
+        raise HTTPException(
+            status_code=403,
+            detail=f"caller {who or 'none'!r} is not authorized (can_invoke) for {capability!r}",
+        )
+    logging.info("effect write allowed: %s caller=%s capability=%s", what, who or "none", capability)
+    return who or "none"
+
+
 _JENA_ENDPOINT = os.getenv("JENA_SPARQL_ENDPOINT", "")
 _JENA_USERNAME = os.getenv("JENA_USERNAME", "admin")
 _JENA_PASSWORD = os.getenv("FUSEKI_PASSWORD", "Admin123!")
@@ -2587,11 +2667,15 @@ class WriteItemStateRequest(BaseModel):
 
 
 @app.post("/write_item_state")
-async def write_item_state(request: WriteItemStateRequest) -> dict:
+async def write_item_state(
+    request: WriteItemStateRequest,
+    caller=Depends(_transport_auth("engine-o")),
+) -> dict:
     """Stamp disposition state onto a component node in SUSTAINMENT_INSTANCES — the dispatch effect's
     graph write. IDEMPOTENT: deletes any prior state for the subject then inserts, so the two-write
     convergence can re-stamp on resume without duplicating. subject_iri must be a controlled component
     IRI; values are escaped."""
+    _require_capability(caller, CAP_WRITE_ITEM_STATE, "write_item_state")
     s = request.subject_iri
     if not s.startswith("http://internal/"):
         raise HTTPException(status_code=400, detail="subject_iri must be an internal component/notice IRI")
@@ -2647,7 +2731,10 @@ def _decisions_graph(domain: str) -> str:
 
 
 @app.post("/write_decision_record")
-async def write_decision_record(request: WriteDecisionRecordRequest) -> dict:
+async def write_decision_record(
+    request: WriteDecisionRecordRequest,
+    caller=Depends(_transport_auth("engine-o")),
+) -> dict:
     """APPEND a decision record. Append-only, with IMMUTABILITY ENFORCED HERE at the writer.
 
     A record already present is REFUSED (409), never overwritten. Corrections JOIN to a record;
@@ -2659,6 +2746,7 @@ async def write_decision_record(request: WriteDecisionRecordRequest) -> dict:
     Idempotent-safe for the caller: a re-emitted IDENTICAL record returns ok with
     `already_present`, so a retry after a transport failure is not an error — only a DIFFERENT
     record under an existing id is a conflict."""
+    _require_capability(caller, CAP_WRITE_DECISION_RECORD, "write_decision_record")
     rid = (request.record_id or "").strip()
     if not rid or not rid.replace("-", "").isalnum():
         raise HTTPException(status_code=400, detail="record_id must be a simple slug")

@@ -1329,6 +1329,30 @@ on or after the rename cancelled cleanly.
 and those orphans are INVISIBLE until a join or a cancellation attempt touches them.** Drain before
 cutover, and try `cancel` FIRST — its documented failure is the evidence that licenses `kill`.
 
+### A BRIEFING is an unreliable source — the board and the suite outrank it
+2026-08-13, and the instance is the useful part: an agent was briefed that two items were open —
+twelve undeclared manifest routes with three red tests, and an unheadered handoff needing
+disposition. **Both had been done days earlier.** The rows landed on the 12th and the suite read
+15/15 green; the handoff had been filed to `docs/plans/archive/` by a commit the briefer had
+themselves ratified in detail. The briefing came from conversational memory, which is precisely the
+source ADR-0040 replaced — and it was stated as fact, in the voice of the person who ruled it.
+
+**So: a briefing describing repo state is INPUT, not a premise. Check it against the suite and the
+packet header BEFORE working from it** — a red test is a checkable claim and a header is a written
+one; a recollection is neither. Cheap to verify: two greps and a `pytest` run against the named
+suite. The failure this prevents is not doing the wrong work, it is doing ALREADY-DONE work and
+reporting it as new, which corrupts the record in the one direction nothing downstream can detect.
+
+**Check in BOTH directions.** The verification that made this correction complete was not only "the
+rows are green" but also "the archive is out of the board's scope BY CONSTRUCTION" (`_blocks()`
+globs `docs/plans/*.md` non-recursively) and "the carried items were dispositioned BEFORE archival"
+(`02209da` closed PCN-2683 as test-campaign residue). A half-check would have found the stale half
+and inherited the rest.
+
+Sibling of *a ruling made in CONVERSATION is UNSHIPPED until committed* — same root, opposite
+direction: there the conversation held something the repo lacked; here the conversation lacked
+something the repo held.
+
 ### A ruling made in CONVERSATION is UNSHIPPED until it is committed
 Second instance, and the mirror image of the first. In the §391 case the DOC carried a ruling the
 conversation had already invalidated. In the M3.2 shipping case the CONVERSATION carried a ruling the

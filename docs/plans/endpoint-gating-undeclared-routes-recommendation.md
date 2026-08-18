@@ -2,7 +2,7 @@
 id:         undeclared-routes
 status:     open
 owner:      agent
-blocked-on: nothing — dispositions given, /workflow/start retired (410, 2026-08-11), and ALL 12 ROWS DECLARED (2026-08-12; test_endpoint_gating_manifest 15/15 green). Residual is the two engine-o WRITE findings, which the declaration surfaced rather than closed: /write_item_state and /write_decision_record are ungated_by_accident and need endpoint-side gates.
+blocked-on: TOPAZ_DIRECTORY_URL is not wired into engine-o's deployment — the gate below fails CLOSED without it, so the env must land with the ENABLE_AGENTIC_AUTH flip, not after. Everything else is done: dispositions given, /workflow/start retired (410, 2026-08-11), ALL 12 ROWS DECLARED (2026-08-12), and the two engine-o WRITE residuals CLOSED endpoint-side 2026-08-13 (can_invoke on the single decider, discriminating pair sealed, break-on-purpose verified; both rows now class: gated).
 closed-by:  
 repo:       invincible-agent
 summary:    RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.

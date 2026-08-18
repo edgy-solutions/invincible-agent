@@ -270,11 +270,11 @@ services:
         justification: "Property -> instance lookup. READ. Same closure condition."
       - method: POST
         path: /write_item_state
-        identity: none
-        gate: none
+        identity: "transport auth (CallerIdentity.authz_id)"
+        gate: can_invoke(mesh:writeItemState)
         exposes: action
         consumers: [dispatch_driver.py]
-        class: ungated_by_accident
+        class: gated
         justification: >-
           FINDING. INTEGRITY WRITE — stamps disposition state onto an item's node. Per
           [[gate-class-follows-the-effect]] an effect/integrity write is NEVER acceptable on
@@ -286,15 +286,25 @@ services:
           coherent, and a single point of failure with no defence in depth. An in-cluster caller
           that bypasses the executor writes item state with no capability check anywhere.
           CALLER SIDE REMEDIATED 2026-08-11: dispatch_driver now mints svc:review-starter here
-          (correct BY DESIGN — it is that role's own governed effect). The ENDPOINT side is still
-          open, and the two were always meant to be fixed together.
+          (correct BY DESIGN — it is that role's own governed effect).
+          ENDPOINT SIDE CLOSED 2026-08-13: the route takes CallerIdentity from the app-wide
+          transport dependency and calls the SINGLE DECIDER — can_invoke(mesh:writeItemState) —
+          refusing 403 and logging the caller either way. Sealed with a discriminating pair
+          (tests/security/test_effect_write_gate.py), break-on-purpose verified.
+          NO-OP UNTIL ENABLE_AGENTIC_AUTH FLIPS, deliberately: the caller's
+          `_fail_terminal_on_4xx` classes 403 as TERMINAL, so a gate live before the flip would
+          make every disposition write fail PERMANENTLY rather than retry.
+          NAMED UNMET PRECONDITION: engine-o carries TOPAZ_AUTHORIZER_URL but NOT
+          TOPAZ_DIRECTORY_URL. Wiring it belongs to the SAME flip — without it the gate denies
+          every caller (fail-closed, asserted by the seal), which under REQUIRE is the outage
+          this note exists to prevent.
       - method: POST
         path: /write_decision_record
-        identity: none
-        gate: none
+        identity: "transport auth (CallerIdentity.authz_id)"
+        gate: can_invoke(mesh:writeDecisionRecord)
         exposes: action
         consumers: [decision_record_writer.py]
-        class: ungated_by_accident
+        class: gated
         justification: >-
           FINDING. PROVENANCE/INTEGRITY WRITE — appends to the decision-record corpus, which is
           the artifact the trust-lifecycle arc exists to make truthful. Same law, same column as
@@ -302,6 +312,11 @@ services:
           Its caller DEGRADES rather than stops (its own log reads "the corpus has a HOLE here"),
           which makes this the quieter of the two failures and the worse one for audit — under
           REQUIRE the hole becomes routine rather than exceptional, and nothing announces it.
+          ENDPOINT SIDE CLOSED 2026-08-13 alongside /write_item_state, same mechanism and same
+          seal: can_invoke(mesh:writeDecisionRecord), 403 on refusal, caller logged either way.
+          Recording the caller INSIDE the record is NOT done here — `admitted_by` is the trust
+          authority, not the writer — and is left as its own decision rather than smuggled into
+          a gating change.
 
   datahub_wrapper:
     file: agent_fleet/datahub_wrapper/main.py
