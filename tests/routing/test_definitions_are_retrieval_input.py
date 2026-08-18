@@ -54,7 +54,7 @@ import pytest
 
 try:
     from rdflib import Graph
-    from rdflib.namespace import OWL, RDF, RDFS
+    from rdflib.namespace import OWL, RDF, RDFS, SKOS
 except ImportError:  # pragma: no cover
     pytest.skip("rdflib not installed", allow_module_level=True)
 
@@ -118,10 +118,26 @@ def _definitions():
             lab = next(g.objects(c, RDFS.label), None)
             labels[str(c)] = str(lab) if lab else str(c).split("#")[-1]
         names = set(labels.values())
+        # READ WHATEVER WILL ACTUALLY BE EMBEDDED — BOTH PREDICATES, NOT rdfs:comment ALONE.
+        #
+        # This guard was blinded by its own subject's fix and briefly reported a false
+        # green. doc-tools embeds { skos:definition } UNION { rdfs:comment }; the original
+        # version here collected only rdfs:comment, which was fine while every class
+        # carried one. De-clobbering four TTLs moved their build notes to `#` comments and
+        # left skos:definition as the only definitional predicate — so those files went to
+        # ZERO definitions visible to this guard, the grandfather entries read as "cleaned",
+        # and the debt list cleared partly because nothing was being inspected.
+        #
+        # The underlying fix was real (the authored definitions were verified landing in
+        # Weaviate). The measurement of it was not. A check that reports green because it
+        # stopped measuring is the exact family this guard exists to catch, committed by
+        # the guard itself — which is the argument for reading the SAME union the embedder
+        # reads rather than the predicate that happened to be popular when it was written.
         for c in g.subjects(RDF.type, OWL.Class):
-            com = next(g.objects(c, RDFS.comment), None)
-            if com:
-                out.append((f.name, labels[str(c)], str(com), names))
+            for pred in (SKOS.definition, RDFS.comment):
+                val = next(g.objects(c, pred), None)
+                if val:
+                    out.append((f.name, labels[str(c)], str(val), names))
     return out
 
 
