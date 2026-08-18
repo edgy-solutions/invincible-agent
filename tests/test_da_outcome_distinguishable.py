@@ -38,6 +38,18 @@ _REPO = pathlib.Path(__file__).resolve().parent.parent
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
+# BIND REAL DAGSTER AT COLLECTION TIME, not inside the tests. tests/routing/ installs a
+# `dagster` STUB into sys.modules from a fixture (test time), and these tests assert on the
+# real job graph's dependency EDGES — against the stub, `job`/`op` are `lambda f: f`, so
+# there is no graph at all and the assertion would have nothing to fail on. Importing here
+# means the real package is already in sys.modules before any fixture runs, whatever the
+# collection order.
+#
+# This is the same defect the stub's own comment names: "a stub that works by depending on
+# another test having run is not a stub." Binding at import removes the dependence rather
+# than adding another name to the fake.
+from dagster import DependencyDefinition, Failure as DagsterFailure, build_op_context  # noqa: E402
+
 from agent_fleet.data_analyst.outcome import (  # noqa: E402
     OUTCOME_ANSWERED,
     OUTCOME_UNGROUNDED,
@@ -264,8 +276,6 @@ def test_the_run_goes_red_AFTER_the_card_is_produced_not_instead_of_it():
     is the user's card, silently. That is precisely the class of regression a text-scanning
     check would sail past.
     """
-    from dagster import DependencyDefinition
-
     from iagent.defs.dynamic_supervisor import supervisor_query_job
 
     deps = supervisor_query_job.graph.dependencies
@@ -287,9 +297,6 @@ def test_the_run_goes_red_AFTER_the_card_is_produced_not_instead_of_it():
 
 
 def test_the_red_op_fires_only_when_an_engine_did_not_answer():
-    from dagster import build_op_context
-    from dagster import Failure as DagsterFailure
-
     from iagent.defs.dynamic_supervisor import assert_every_engine_answered
 
     answered = [{"predicate_verb_iri": "mesh:analyzeDataset",

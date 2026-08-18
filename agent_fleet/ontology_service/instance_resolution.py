@@ -75,14 +75,127 @@ DEFAULT_EXACT_THRESHOLD = 0.95
 DEFAULT_MIN_SCORE = 0.7
 
 
+# ---------------------------------------------------------------------------
+# SEGMENT SPECIFICITY — the discriminator the phone book never had (2026-08-17)
+# ---------------------------------------------------------------------------
+# THE CONTRACT THIS REPAIRS. `contracts.baml` tells the extractor to be
+# RECALL-BIASED — "a miss costs more than a spurious extraction, THE ROUTER CAN
+# VERIFY WITH THE PHONE BOOK." That is sound engineering and the phone book never
+# held up its end: a fuzzy match let `cage`, lifted from the words "cage values",
+# resolve to `publog/p_cage`. Completing the model's guess is not verifying it.
+#
+# Measured 2026-08-15/17: the same nonexistent asset (`p_caeg`) alternated between
+# honest abstention and a confident answer about a REAL, DIFFERENT dataset as one
+# candidate's similarity score moved by 0.006 with no redeploy.
+#
+# SO THIS GATE IS STRUCTURAL, NOT A THRESHOLD, AND THAT IS THE WHOLE POINT.
+# Raising a score cutoff would only move a row from 0.006-away-from-wrong to
+# 0.012-away-from-wrong — a wider margin on the same knife edge. A substring is a
+# substring at every score, so substrate drift cannot flip this decision.
+_SEGMENT_SPLIT = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _segments(text: str) -> list[str]:
+    """Lowercased name segments of an identifier or a catalog id.
+
+    Splits on `.`/`/`/`,`/`:`/whitespace and KEEPS `_` and `-`, because those are
+    inside real asset names (`p_cage`, `iagent-minio`) rather than between them.
+    """
+    return [seg for seg in _SEGMENT_SPLIT.split((text or "").lower()) if seg]
+
+
+def identifier_name_and_qualifiers(identifier: str) -> tuple[str, list[str]]:
+    """Split an extracted identifier into its NAME and its QUALIFIERS.
+
+    `publog.p_cage`, `publog p_cage` and `publog's p_cage` all mean the same asset
+    and all failed before: the matcher could not see past the qualifier. The name
+    is the LAST segment; everything before it corroborates.
+    """
+    segs = _segments(identifier)
+    if not segs:
+        return "", []
+    return segs[-1], segs[:-1]
+
+
+def passes_segment_specificity(identifier: str, candidate_text: str) -> bool:
+    """True iff `identifier` names a WHOLE segment of `candidate_text`.
+
+    This is the missing half of the extractor's contract. `cage` is a substring of
+    the segment `p_cage`, never a segment itself, so it is refused however high the
+    similarity score climbs — which is exactly what makes a recall-biased extractor
+    safe: the phone book can finally say "that token does not identify an asset."
+
+    Qualifiers are corroboration, not obstruction: `publog.p_cage` passes on its
+    name segment, and its `publog` qualifier appearing in the candidate is a bonus,
+    never a requirement (a catalog id need not spell the qualifier the same way).
+    """
+    name, _quals = identifier_name_and_qualifiers(identifier)
+    if not name:
+        return False
+    asset = candidate_asset_name(candidate_text)
+    if asset:
+        return name == asset
+    # No derivable terminal name (a URN shape this rule was not written for —
+    # procedure codes, DMCs, tail numbers). Fall back to segment membership and
+    # SAY SO, rather than silently applying a rule to a shape it does not fit.
+    return name in set(_segments(candidate_text))
+
+
+# Env qualifiers trail a catalog id and are not part of the asset's name. A short,
+# explicit list beats a clever heuristic: anything not listed stays part of the name,
+# so an unknown suffix makes the gate STRICTER (reject), never looser.
+_ENV_SUFFIXES = frozenset({"prod", "dev", "test", "stage", "staging", "qa", "uat"})
+
+
+def candidate_asset_name(candidate_text: str) -> str:
+    """The candidate's OWN name — its terminal segment, ignoring env suffixes.
+
+    Why terminal rather than any-segment: `publog` is a real segment of
+    `publog-lake/publog/p_cage`, so plain membership let a SCHEMA name resolve to a
+    TABLE inside it (measured: `bare-join-01`, where the extractor emitted `publog`
+    for a question about `p_cage`). A container is not the thing it contains.
+    """
+    segs = _segments(candidate_text)
+    while segs and segs[-1] in _ENV_SUFFIXES:
+        segs.pop()
+    return segs[-1] if segs else ""
+
+
 def decide(
     candidates: list[InstanceCandidate],
     *,
     exact_threshold: float = DEFAULT_EXACT_THRESHOLD,
     min_score: float = DEFAULT_MIN_SCORE,
+    identifier: str = "",
 ) -> InstanceResolutionDecision:
     """Apply the decision table to a candidate list."""
     above_floor = [c for c in candidates if c.score >= min_score]
+
+    # SPECIFICITY GATE. A candidate only survives if the extracted identifier names
+    # a whole segment of it. Applied BEFORE ranking on purpose: this is not a
+    # tie-break between plausible candidates, it is a statement that a token which
+    # merely appears inside a name does not identify anything. Skipped when no
+    # identifier reached us, so existing callers that do not pass one are unchanged.
+    if identifier:
+        specific = [c for c in above_floor
+                    if passes_segment_specificity(identifier, c.instance_id)
+                    or passes_segment_specificity(identifier, c.label)]
+        if not specific:
+            return InstanceResolutionDecision(
+                subject_uri=None,
+                confidence=0.0,
+                provenance={
+                    "instance_resolved": False,
+                    # A DISTINCT reason, not folded into `empty`: the phone book DID
+                    # know things, and refused them because the token is not a name.
+                    # Folding it into "empty" would hide the gate's every action.
+                    "instance_match": "not_specific",
+                    "instance_n": len(candidates),
+                    "instance_rejected_n": len(above_floor),
+                    "instance_identifier": identifier,
+                },
+            )
+        above_floor = specific
 
     if not above_floor:
         return InstanceResolutionDecision(

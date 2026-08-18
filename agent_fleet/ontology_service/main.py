@@ -1441,6 +1441,11 @@ async def _resolve_instance(
         candidates,
         exact_threshold=_INSTANCE_RESOLVE_EXACT,
         min_score=_INSTANCE_RESOLVE_MIN_SCORE,
+        # The identifier reaches the decision table for the first time (2026-08-17).
+        # Without it the table could only rank candidates; it could not ask whether the
+        # token NAMES any of them, which is what let `cage` win. See the segment
+        # specificity gate in instance_resolution.py.
+        identifier=identifier,
     )
     provenance = dict(decision.provenance)
 
