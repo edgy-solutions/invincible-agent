@@ -6,7 +6,7 @@ blocked-on: nothing — the scope sentence is ANSWERED (2026-08-15): Tier-3 row 
 closed-by:
 code-site:  docs/BOARD.md, docs/demo-script.md, docs/demo-day-runbook.md
 repo:       invincible-agent
-summary:    TRIAGE — of 27 live board items, THREE are load-bearing for "one other person can use this", in a stated order. The other 24 sort into demo-day operational risk (3, now a runbook not board work) and hygiene/posture/architecture (21). The goal is three items away, not thirty-nine, and this packet names which and why the other 24 are not.
+summary:    TRIAGE — FOUR load-bearing now (a prerequisite the triage missed was found by item 1's live witness: no asset is both granted and fetchable, so the data path serves nothing — inserted ahead of da-collects). Of 27 live board items, originally THREE were load-bearing for "one other person can use this", in a stated order. The other 24 sort into demo-day operational risk (3, now a runbook not board work) and hygiene/posture/architecture (21). The goal is three items away, not thirty-nine, and this packet names which and why the other 24 are not.
 ---
 
 # Which of the board is actually between here and one other person using this
@@ -146,8 +146,14 @@ crash while leaving every other crash equally mute.
 2. **[[instance-resolution-nondeterminism]]** — *but run the Engine O image-digest check first*,
    because its stated blocker may already be gone (below) and that check is a minute against a
    packet that otherwise reads as blocked.
-3. **[[da-collects-before-filtering]]** — the highest-severity failure, deliberately last,
-   because item 1 is what makes its failure mode visible.
+3. **[[no-granted-and-fetchable-asset]]** — **INSERTED 2026-08-18, ahead of what was item 3.**
+   Found by item 1's live witness: **no asset on sandbox is both granted and fetchable**, so the
+   data path cannot serve any query at all. That makes item 1's success arm unwitnessable and
+   Tier-3 row 8 impossible, and it appeared on no board line. Cheap — a grant is minutes.
+4. **[[da-collects-before-filtering]]** — the highest-severity failure, deliberately last,
+   because item 1 is what makes its failure mode visible. **And it is now fourth for a second
+   reason:** it repairs *how* a table is read, and there is no point fixing that while no table
+   can be read at all.
 
 ---
 
