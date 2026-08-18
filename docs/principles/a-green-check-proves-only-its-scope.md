@@ -20,8 +20,8 @@ a *use* from a *mention*. Widening makes this worse; the repair is a way to mark
 
 ## The instances
 
-Four, from one project, two of them on a single day and authored by the agent that had just
-written the rule about the other two.
+Five, from one project, three of them on a single day and authored by the agent that had just
+written the rule about the others.
 
 | the guard | what its scope excluded — or wrongly included | how it surfaced |
 |---|---|---|
@@ -29,6 +29,28 @@ written the rule about the other two.
 | *"the citation baseline is clean"* (`0d1dae7`) | verified over `docs/plans/` paths; the phantoms lived elsewhere under `docs/` | the claim was published in a commit message, then falsified minutes later by a broader check |
 | the first citation seal (`db4eed4`) | matched **absolute** `docs/…` strings; the breakage was in **relative** link targets | four links broke in the same commit and the seal stayed green through all of them |
 | the second citation seal, immediately | included prose **quoting** a link shape as though it were a link — *mention read as use* | it flagged its own documentation |
+| the definition guard (`a0fb983`, fixed in `434bf08`) | `_definitions()` collected only `rdfs:comment`; the embedder reads `{skos:definition}` **UNION** `{rdfs:comment}`, so half the population was never in scope | **the fix it was measuring removed the predicate it read** — de-clobbering moved build notes to `#` comments, the four files it had just certified went to *zero definitions visible*, and every debt entry read "CLEANED" |
+
+**The fifth is the cleanest specimen of the excluded-population species, because the exclusion
+was CREATED BY THE REPAIR THE GUARD WAS WATCHING.** The guard was written when every class
+carried an `rdfs:comment`, so reading that one predicate covered the whole population and the
+scope gap was invisible. Then the subject changed shape — the correct fix moved build notes out
+of `rdfs:comment` — and the guard's population silently emptied. It did not report zero; it
+reported *clean*.
+
+That is the failure this law exists for, with an extra turn: **the scope was correct when written
+and became wrong without the guard being touched.** A guard's scope is not a property of the
+guard alone; it is a relationship between the guard and a subject that moves. Which means
+"proven to bite" and "scope stated" are both insufficient on their own — this guard had a stated
+scope and was later given a break-on-purpose, and neither would have caught a population that
+drained away underneath it. The only thing that did was counting what it inspected:
+
+    before   44 texts across 5 files   (4 extension files invisible)
+    after    56 texts across 9 files
+
+**Corollary worth its own line: a guard should report its population size, not just its verdict.**
+A green with `n` visible is falsifiable at a glance; a bare green is not. Every instance in this
+table would have been caught in seconds by a number next to the checkmark.
 
 ## The sharpest fact, because it retires the obvious objection
 

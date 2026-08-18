@@ -229,3 +229,55 @@ def test_the_grandfathered_baseline_is_still_accurate():
         elif not [q for q in _QUOTED.findall(text) if _INTERROGATIVE.search(q)]:
             stale.append(f"{key[0]} :: {key[1]} — CLEANED, remove it from KNOWN_QUERY_SHAPED")
     assert not stale, "grandfather list is out of date:\n  " + "\n  ".join(stale)
+
+
+def test_the_guard_reports_its_population_and_no_file_is_invisible():
+    """THE COROLLARY, MADE MECHANICAL — a guard should report what it inspected, not just
+    its verdict.
+
+    This guard went green over an EMPTY population once: `_definitions()` read only
+    `rdfs:comment`, the de-clobbering fix moved build notes to `#` comments, and the four
+    files it had just certified dropped to zero visible definitions. It did not report
+    zero — it reported CLEAN, and the debt list cleared on nothing.
+
+    Neither of the usual protections would have caught that. The scope was STATED, and a
+    break-on-purpose was later added; but the scope was correct when written and became
+    wrong without the guard being edited, because the SUBJECT changed shape underneath it.
+    A guard's scope is a relationship between the guard and a moving subject, not a
+    property of the guard alone.
+
+    What would have caught it in seconds is a number next to the checkmark. So: any TTL
+    that declares owl:Class MUST contribute at least one definition text. A file going
+    silent is then a failure, not a quiet pass.
+    """
+    seen = {}
+    for fname, _label, _text, _names in _definitions():
+        seen[fname] = seen.get(fname, 0) + 1
+
+    declaring = {}
+    for f in sorted(ONTOLOGIES.glob("*.ttl")):
+        g = Graph()
+        try:
+            g.parse(f, format="turtle")
+        except Exception:
+            continue
+        n = sum(1 for _ in g.subjects(RDF.type, OWL.Class))
+        if n:
+            declaring[f.name] = n
+
+    blind = sorted(f for f in declaring if not seen.get(f))
+    assert not blind, (
+        "These TTLs declare owl:Class and contributed ZERO definition texts to this guard. "
+        "That is the guard going blind, not the files being clean — check which predicate "
+        "_definitions() reads against what the embedder reads:\n  "
+        + "\n  ".join(f"{f}: {declaring[f]} classes declared, 0 inspected" for f in blind)
+    )
+    # A floor, so a wholesale collapse of the population is loud even if every file keeps
+    # one straggler. Deliberately well under the current count (56) — this is a tripwire
+    # for "the population drained", not a pin on the exact number, which would fail on
+    # every ordinary class addition and get deleted.
+    total = sum(seen.values())
+    assert total >= 40, (
+        f"only {total} definition texts inspected across {len(seen)} files — the "
+        "population has collapsed; a green here would be meaningless"
+    )
