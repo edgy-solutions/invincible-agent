@@ -358,6 +358,47 @@ tree entirely. The denominator became the live population by construction rather
 special case — which is why the move was ruled to precede the sweep, and is the strongest
 evidence the taxonomy was the real fix and the header gap was the symptom.
 
+## OWED 2026-08-17 — the ADR index is the third hand-maintained index found drifted, and it has headers
+
+**Named as owed, not scheduled.** Not urgent and not part of phase 1 — filed so it is not
+*discovered again in October* as if it were new.
+
+`docs/adr/README.md` was found holding an index that stopped at 0011, resumed at 0023, and ended
+at 0036: **fifteen of forty-one ADRs unrouted**, 37% of the corpus. Backfilled by hand on
+2026-08-17 (`00a0ba1`), which closes the instance and leaves the defect.
+
+That is the **third hand-maintained index found drifted this month**, and the three fail
+identically — the artifact grows, the index is a separate write, and nothing goes red when the
+two disagree:
+
+| index | how it drifted | disposal |
+|---|---|---|
+| `BOARD.md` | reconstructed from conversation context because no index existed | **generated** from packet headers + drift test (ADR-0040) |
+| the endpoint table | routes added without a row | manifest-driven |
+| `docs/adr/README.md` | fifteen ADRs added without a row, tail kept growing so nobody looked | **hand-backfilled 2026-08-17 — repair still owed** |
+
+**The repair is known and already built once.** Every ADR carries its own `# ADR-NNNN — title`
+and `**Status:**` in its header — the same property that made `generate_board.py` possible. So
+the ADR index is the identical shape one corpus over: generate from the artifacts' own headers,
+seal with a drift test, and the index stops being a write anyone can forget.
+
+Two things a future implementer should know before starting, both learned from the board:
+
+- **Summaries are NOT derivable from headers.** The index rows carry each decision's load-bearing
+  clause, which is editorial and worth keeping. So this is `BOARD.md`'s shape, not its scope — the
+  generator owns number, link, title and status; the summary stays authored, in the ADR or beside
+  it. A generator that also invents summaries would flatten the most valuable column.
+- **The status field is prose here, deliberately** (*"Phase 1 Accepted; Phase 2 deferred"*,
+  *"Accepted (r2); r1 withdrawn"*, *"Proposed — decision deferred"*). ADR-0040's five-value
+  vocabulary would flatten it, and this corpus is where that nuance is load-bearing. Copy the
+  prose through verbatim; do not vocabularise it. Same conscious trade the legacy-frontmatter
+  packets forced, ruled the other way for a different reason.
+
+**And the disposal that comes with it:** `AGENTS.md` carried a *second* index of the same corpus,
+stopped at 0013 — two-homes, with the abandoned home actively lying (a reader trusting it concludes
+28 ADRs do not exist). Retired to a pointer in the same arc. **One corpus, one index**; when this
+item is built, that pointer is what keeps it true.
+
 ## Acceptance
 
 - ~~The three-way move is done and every inbound citation site is updated in the SAME commit~~

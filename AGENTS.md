@@ -1948,21 +1948,15 @@ catalog Q&A. ADR-0012 proposes a dynamic-columns generalization.
 
 ## ADR Index
 
-| ADR | Subject | Status |
-|-----|---------|--------|
-| 0001 | mem0 LLM decouple | Accepted |
-| 0002 | mem0 monkeypatches | Accepted |
-| 0003 | LLM rightsizing | Accepted |
-| **0004** | **Predicate graph routing** | **Accepted (current router)** |
-| 0005 | Verb + concept namespaces | Accepted |
-| 0006 | Verb registry location | Accepted |
-| 0007 | Survey before mint | Accepted |
-| 0008 | Routing fallback policy | Accepted |
-| **0009** | **Sunset classification axes** | **Accepted** |
-| 0010 | Distributed tracing strategy | Accepted |
-| 0011 | Multi-SPO routing | Proposed (deferred) |
-| 0012 | UI archetype rigidity | Proposed (workaround in place) |
-| 0013 | Engine D capability surface | Proposed (workaround in place) |
+**RETIRED 2026-08-17 — the index lives in [`docs/adr/README.md`](docs/adr/README.md), and only there.**
 
-When adding a load-bearing architectural change, draft an ADR in
-`docs/adr/` following the template of the most recent ones.
+This table was a SECOND index of the same corpus and it stopped at 0013, so a reader
+trusting it concluded twenty-eight ADRs did not exist — an abandoned index does not go
+quiet, it lies. Two homes for one corpus is the two-homes defect this file names
+everywhere else; the disposal is a pointer, not a backfill.
+
+When adding a load-bearing architectural change, draft an ADR in `docs/adr/` following the
+template of the most recent ones, and add its row to the `docs/adr/README.md` index in the
+same commit — **a decision record the index does not route to is findable only by people
+who already know it exists.** (Generating that index from the ADRs' own headers is owed:
+see the OWED 2026-08-17 section of [`docs/plans/board-migration.md`](docs/plans/board-migration.md).)
