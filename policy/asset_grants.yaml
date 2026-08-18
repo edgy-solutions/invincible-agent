@@ -44,4 +44,6 @@ grants:
       Fixture grant — remove when the demo no longer needs a granted reader.
   - subject: alice@example.com
     asset: "urn:li:dataset:(urn:li:dataPlatform:s3,iagent-minio.publog-lake/publog/p_cage,PROD)"
-    permission: can_read
+    granted_by: cnogradi
+    reason: >-
+      Demo: alice reads the p_cage dataset for testing.
