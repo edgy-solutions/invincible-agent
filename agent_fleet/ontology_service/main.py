@@ -263,13 +263,18 @@ def _can_view_class(caller_email: str, iri: str) -> bool:
 # visibility question about ontology classes. Two questions, two policies.
 TOPAZ_DIRECTORY_URL = os.getenv("TOPAZ_DIRECTORY_URL", "")
 
-# NAMED UNMET PRECONDITION, as the autonomous-review ceremony names its own: engine-o's
-# deployment carries TOPAZ_AUTHORIZER_URL but NOT TOPAZ_DIRECTORY_URL. Until that env is
-# wired this gate fails CLOSED on every call — safe ONLY because ENABLE_AGENTIC_AUTH is
-# false and the gate no-ops. **Wiring the env belongs to the same flip, not a follow-up:**
-# flipping ENABLE_AGENTIC_AUTH without it would refuse every disposition write, and the
-# caller's `_fail_terminal_on_4xx` classes 403 as TERMINAL — so those refusals would be
-# PERMANENT rather than retried. That is the coordinated half of this fix.
+# ENV IS WIRED — verified in the running pod 2026-08-13: engine-o resolves
+# TOPAZ_DIRECTORY_URL=http://topaz-svc:9393 via the shared `iagent-config` configMap, and
+# ENABLE_AGENTIC_AUTH=false. An earlier note here claimed the env was MISSING and called it
+# an unmet precondition of the flip. That was WRONG, and the error is worth keeping visible:
+# it came from reading `.spec.template.spec.containers[0].env[*]` only, which does not show
+# `envFrom` configMap/secret refs. **Read the running pod, not the deployment's env array.**
+#
+# The fail-closed-on-unset behaviour below is therefore a DEFENSIVE property with a test, not
+# an outstanding task. What remains genuinely coordinated is the FLIP itself: the caller's
+# `outbound_auth_headers` is log-and-proceed, so a mint failure sends the call token-less, and
+# `_fail_terminal_on_4xx` classes 403 as TERMINAL — a gate live before the caller is reliably
+# minting would make disposition writes fail PERMANENTLY rather than retry.
 CAP_WRITE_ITEM_STATE = "mesh:writeItemState"
 CAP_WRITE_DECISION_RECORD = "mesh:writeDecisionRecord"
 

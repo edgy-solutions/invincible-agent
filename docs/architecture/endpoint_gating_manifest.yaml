@@ -294,10 +294,11 @@ services:
           NO-OP UNTIL ENABLE_AGENTIC_AUTH FLIPS, deliberately: the caller's
           `_fail_terminal_on_4xx` classes 403 as TERMINAL, so a gate live before the flip would
           make every disposition write fail PERMANENTLY rather than retry.
-          NAMED UNMET PRECONDITION: engine-o carries TOPAZ_AUTHORIZER_URL but NOT
-          TOPAZ_DIRECTORY_URL. Wiring it belongs to the SAME flip — without it the gate denies
-          every caller (fail-closed, asserted by the seal), which under REQUIRE is the outage
-          this note exists to prevent.
+          ENV VERIFIED WIRED 2026-08-13 in the running pod: TOPAZ_DIRECTORY_URL=
+          http://topaz-svc:9393 via the shared iagent-config configMap. A first version of this
+          row called the env MISSING and named it a flip precondition — WRONG, from reading the
+          deployment's env[] array without envFrom. Corrected in place; the fail-closed-on-unset
+          assertion in the seal is a defensive property, not an open task.
       - method: POST
         path: /write_decision_record
         identity: "transport auth (CallerIdentity.authz_id)"

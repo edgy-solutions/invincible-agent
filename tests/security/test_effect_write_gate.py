@@ -131,10 +131,11 @@ def test_gate_is_a_NOOP_before_the_flip(monkeypatch):
 def test_fails_CLOSED_when_the_directory_url_is_unwired(monkeypatch):
     """The NAMED UNMET PRECONDITION, asserted rather than trusted.
 
-    engine-o's deployment carries TOPAZ_AUTHORIZER_URL but not TOPAZ_DIRECTORY_URL. Under the
-    flag with the env unset the decider is unreachable, and an unreachable decider must DENY.
-    This is the test that would go red if someone flipped the flag without wiring the env —
-    which is exactly the failure mode the site comment names.
+    A DEFENSIVE property, not an outstanding precondition. The env IS wired
+    (TOPAZ_DIRECTORY_URL=http://topaz-svc:9393 on both engines via iagent-config, verified in
+    the running pods 2026-08-13) — an earlier version of this docstring said otherwise, from
+    reading the deployment's env[] array without envFrom. The assertion still earns its place:
+    it is what goes red if the env is ever dropped from the configMap.
     """
     eo = _mod()
     monkeypatch.setattr(eo, "ENABLE_AGENTIC_AUTH", True, raising=False)

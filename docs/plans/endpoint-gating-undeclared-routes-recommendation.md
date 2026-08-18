@@ -2,7 +2,7 @@
 id:         undeclared-routes
 status:     open
 owner:      agent
-blocked-on: TOPAZ_DIRECTORY_URL is not wired into engine-o's deployment — the gate below fails CLOSED without it, so the env must land with the ENABLE_AGENTIC_AUTH flip, not after. Everything else is done: dispositions given, /workflow/start retired (410, 2026-08-11), ALL 12 ROWS DECLARED (2026-08-12), and the two engine-o WRITE residuals CLOSED endpoint-side 2026-08-13 (can_invoke on the single decider, discriminating pair sealed, break-on-purpose verified; both rows now class: gated).
+blocked-on: nothing in this packet — the gate is wired and inert until ENABLE_AGENTIC_AUTH flips, which is [[transport-flip]]'s item, not this one. (A 2026-08-13 note claiming TOPAZ_DIRECTORY_URL was unwired was WRONG and is corrected: it is set to http://topaz-svc:9393 on both engines via iagent-config, verified in the running pods.) Everything else is done: dispositions given, /workflow/start retired (410, 2026-08-11), ALL 12 ROWS DECLARED (2026-08-12), and the two engine-o WRITE residuals CLOSED endpoint-side 2026-08-13 (can_invoke on the single decider, discriminating pair sealed, break-on-purpose verified; both rows now class: gated).
 closed-by:  
 repo:       invincible-agent
 summary:    RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.

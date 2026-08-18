@@ -1329,6 +1329,24 @@ on or after the rename cancelled cleanly.
 and those orphans are INVISIBLE until a join or a cancellation attempt touches them.** Drain before
 cutover, and try `cancel` FIRST — its documented failure is the evidence that licenses `kill`.
 
+### Read the RUNNING POD, not the deployment's `env[]` — `envFrom` is invisible there
+2026-08-13, and it produced a confident false finding that was one commit from becoming a board
+item. `kubectl get deploy -o jsonpath='{...containers[0].env[*]}'` shows ONLY inline env vars; a
+cluster that supplies config via `envFrom: [configMapRef, secretRef]` shows NOTHING there. Reading
+that empty result as "the env is unset" produced two wrong claims — that engine-o's gate had an
+unmet precondition, and that engine-a's `check_can_invoke` was denying on a missing URL rather than
+on Topaz's answer. The second was the dangerous one: it would have discredited a ceremony baseline
+that is in fact sound.
+
+**So: for "is this configured?", exec the RUNNING POD and read the process environment.** The
+deployment spec is a partial view by construction — the same class as a windowed probe output,
+one layer down, and the fourth instance of partial-read-as-complete in a single session.
+
+Note the shape of the near-miss: the false finding was *plausible*, *specific*, and *consequential*,
+which is exactly the profile of a claim that gets acted on. It was caught only because the next step
+— filing the board item — required re-verifying the fact, and the re-verification used a different
+method. **A finding worth filing is worth re-reading by a second method before it is filed.**
+
 ### A BRIEFING is an unreliable source — the board and the suite outrank it
 2026-08-13, and the instance is the useful part: an agent was briefed that two items were open —
 twelve undeclared manifest routes with three red tests, and an unheadered handoff needing
