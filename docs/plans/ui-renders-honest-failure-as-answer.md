@@ -2,7 +2,7 @@
 id:         ui-renders-honest-failure-as-answer
 status:     open
 owner:      agent
-blocked-on: THE LIVE WITNESS, which is NOT blocked — steps 1/2/4 and the job-graph repair landed 2026-08-15, but the definition of done is a VALUE ON THE UI and only a live run proves that. Separately, the one remaining CODE step (3 — do not let an ungrounded run win a race against a grounded one) IS blocked on instance-resolution-nondeterminism, per that step's own precondition.
+blocked-on: A READABLE ASSET — the live witness RAN 2026-08-18 and the distinction works on the cluster (ungrounded/no_urn_resolved, ungrounded/query_never_succeeded and access_denied all render distinctly), but the SUCCESS arm is unwitnessable: no asset on sandbox is both granted and fetchable (p_cage has no read grant; the one granted asset 404s). Definition of done is a VALUE ON THE UI, so this stays open until the data path can serve something. Separately, the one remaining CODE step (3 — do not let an ungrounded run win a race against a grounded one) IS blocked on instance-resolution-nondeterminism, per that step's own precondition.
 closed-by:
 code-site:  agent_fleet/data_analyst/main.py, agent_fleet/data_analyst/outcome.py, agent_fleet/presentation_agent/main.py, src/iagent/defs/dynamic_supervisor.py
 repo:       invincible-agent
@@ -185,6 +185,58 @@ dep-free `outcome.py` where a test can **execute** it, and the replay-trap check
 
 **NOT SEALED, and stated rather than implied:** that a live run produces any of this. The unit
 layer proves the rule; the UI is what proves the repair.
+
+## LIVE WITNESS 2026-08-18 — the distinction WORKS on the cluster; the packet still does not close
+
+Components restarted onto images carrying the change (`01:52Z`): `iagent-data-analyst`,
+`iagent-engine-f`, `iagent-dagster-user-code`. Engine O deliberately **not** restarted and
+pinned to its pre-gate digest, so item 2's baseline is untouched.
+
+**Three outcomes observed, each distinguishable and each rendering deliberately:**
+
+| probe | `status` | `reason` | `X-Presentation-Path` |
+|---|---|---|---|
+| no URN resolvable (`p_caeg`) | `ungrounded` | `no_urn_resolved` | **`declared-ungrounded`** |
+| granted asset, read 404s | `ungrounded` | `query_never_succeeded` | **`declared-ungrounded`** |
+| ungranted asset | `access_denied` | — | `archetype-hardened` |
+
+The envelope carries `rows_returned: 0` and `queries_succeeded: 0` on both ungrounded arms, the
+typed message leads the card, and the agent's own prose is preserved beneath it. **The two
+ungrounded REASONS are distinct in the payload**, which is the whole point of not flattening them:
+one is a phrasing/catalog problem, the other is infrastructure. And `access_denied` correctly did
+**not** take the declared-ungrounded path — it has its own richer affordance and is deliberately
+absent from `DECLARED_NON_ANSWER_STATUSES`.
+
+### But the definition of done is NOT met, for a reason outside this packet
+
+> *A VALUE on the UI, for a query the data path can serve.*
+
+**There is currently no query the data path can serve on this cluster.** Every asset probed is
+either ungranted or granted-and-unfetchable:
+
+* `publog/p_cage` — materialized 2026-08-15T17:45Z, **no read grant exists**. `policy/asset_grants.yaml`
+  grants exactly two assets, both to `alice@example.com`, neither of them this one. A freshly
+  materialized asset is unreadable until somebody grants it, and that is a human act.
+* `mesh_demo_customers` — granted to alice, and the read returns **HTTP 404**. The URN resolves
+  in the catalog and the data plane cannot fetch it: the [[broker-endpoint-env-divergence]] /
+  [[urn-reconciliation-guard]] shape, not an envelope problem.
+
+**So the `success` arm is unwitnessed, and that is the honest status.** What this run proves is
+that when the data path fails, the failure is now *legible and typed* rather than wearing a
+success envelope — which was the defect. What it cannot prove is the positive case, because the
+positive case has no substrate.
+
+**Correction recorded against my own first read of this:** the initial denial looked like the
+runbook's §A3 git↔Topaz drift. It was not — I probed as `agent@example.com` while the grants name
+`alice@example.com`. Wrong subject, my error, and the entitlement plane behaved correctly
+throughout.
+
+### What this hands to the critical path
+
+**Tier-3 row 8 cannot work today**, and not for any reason on this board's item list: no asset is
+both granted and fetchable. That is a prerequisite the first-viewer triage did not name, and it
+sits ahead of [[da-collects-before-filtering]] — there is no point fixing how a table is read
+while no table can be read at all.
 
 ## Related
 
