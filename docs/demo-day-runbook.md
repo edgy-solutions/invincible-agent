@@ -60,25 +60,21 @@ will use. It costs a minute and it collapses three checks into an observation.
 **Do not skip this because A1–A3 passed.** They are checks on the configuration; this is a check
 on the system.
 
-### A5. ⛔ DO NOT RUN THE FAILURE DEMO LIVE (§2 row 5) — MEASURED broken, 10/10
+### A5. ⛔ DO NOT RUN THE FAILURE DEMO LIVE (§2 row 5) — measured UNSTABLE across runs
 
-**This is a hard block, not a check.** It was filed as a ⚠ *"re-verify"* when the regression was
-reported by another commit. A 290-probe run on 2026-08-15 **measured** it:
+**This is a hard block, and the 2026-08-17 re-read makes it MORE binding, not less.**
 
-```
-"…give me a couple cage values from publog's p_caeg"   <- p_caeg DOES NOT EXIST
-    extracted `cage` (from the words "cage values")  ->  resolved urn:…publog/p_cage
-    10 of 10 runs. Stable.
-```
+Measured 2026-08-15 (290 probes): `p_caeg` — an asset that does not exist — resolved **10/10** to
+the real `publog/p_cage`, because the extractor took `cage` from the words *"cage values"*.
 
-The system does not merely fail to abstain — **it answers confidently about a different, real
-asset.** A second row does it from a bare content word (*"give me a couple values from cage"* →
-the same URN).
+Re-probed 2026-08-17 on the **same pod, no redeploy**: the identical query **abstains correctly
+6/6**. Nothing was fixed. One candidate's similarity score moved by **0.006** and that flipped
+both the class and the extracted identifier.
 
-**Demo-script §2 row 5 is the beat whose entire value is watching the system refuse to
-confabulate.** It currently demonstrates the exact opposite, on the exact input shape it is
-demonstrated with: a name that looks right and is not. Running it live would not show a rough
-edge; it would show the failure the whole pitch claims to have solved.
+**So the beat is not reliably broken — it is reliably UNSTABLE, which is worse for a demo.** A
+row that fails every time can be dropped from the script with confidence. A row that abstains
+correctly all morning and confabulates in the afternoon, on an unchanged deployment, is the one
+you put in front of an audience precisely because you tested it and it passed.
 
 **Run it as a SLIDE.** Narrate the thesis, show the intended behaviour, do not issue the query.
 That is the cardinal demo rule (§C) applied to a row that used to be safe.

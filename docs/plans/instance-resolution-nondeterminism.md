@@ -2,11 +2,11 @@
 id:         instance-resolution-nondeterminism
 status:     open
 owner:      agent
-blocked-on: nothing — the read is DONE (290 probes, 0 errors, 0 nondeterminism). ANNOUNCEMENT TO AGENT B, per the shared-surface rule in AGENTS.md: the fix's extraction half will change `ClassifyDomainIntent`'s prompt — the one call that emits BOTH class and identifier — so hold any in-flight class-selection read before it lands. The two halves (qualifier-stripping in matching, identifier-vs-content-word discrimination in extraction) MUST land together: the strict half alone widens the aperture that already admits a content word and makes the two stable false positives MORE reachable.
+blocked-on: nothing — the read is DONE but its HEADLINE IS RETRACTED (within-run only; see the 2026-08-17 correction). ANNOUNCEMENT TO AGENT B, per the shared-surface rule in AGENTS.md: the fix's extraction half will change `ClassifyDomainIntent`'s prompt — the one call that emits BOTH class and identifier — so hold any in-flight class-selection read before it lands. The two halves (qualifier-stripping in matching, identifier-vs-content-word discrimination in extraction) MUST land together: the strict half alone widens the aperture that already admits a content word and makes the two stable false positives MORE reachable.
 closed-by:
 code-site:  agent_fleet/ontology_service/main.py:1584
 repo:       invincible-agent
-summary:    MEASURED 2026-08-15, 290 probes, 0 errors — THERE IS NO NONDETERMINISM (0 of 29 phrasings mixed; every one grounds 10/10 or 0/10) and the trailing-class-noun lead is refuted (bare 67% = trailing 67%). The real defect is the SHAPE of the extracted identifier: the matcher rejects qualified names it owns (`publog.p_cage`, `publog p_cage`) and accepts content words it does not (`cage` -> `p_cage`, so a nonexistent asset returns a confident answer about a real one). Too strict and too loose, same missing idea. Title retained as an id only; see the body.
+summary:    RETRACTED 2026-08-17 — the 'no nondeterminism' headline was WITHIN-RUN only. The same query gives opposite answers BETWEEN runs on an unchanged pod, because a 0.006 shift in one candidate score flips both the class and the extracted identifier (temperature-0 is deterministic per PROMPT, and the prompt carries the candidates). MEASURED 2026-08-15, 290 probes, 0 errors, 0 of 29 phrasings mixed WITHIN that run and the trailing-class-noun lead is refuted (bare 67% = trailing 67%). The real defect is the SHAPE of the extracted identifier: the matcher rejects qualified names it owns (`publog.p_cage`, `publog p_cage`) and accepts content words it does not (`cage` -> `p_cage`, so a nonexistent asset returns a confident answer about a real one). Too strict and too loose, same missing idea. Title retained as an id only; see the body.
 ---
 
 # One query, two groundings
@@ -19,6 +19,59 @@ summary:    MEASURED 2026-08-15, 290 probes, 0 errors — THERE IS NO NONDETERMI
 >
 > Measured 2026-08-15, 290 probes, 0 errors. Everything else in this packet is either evidence
 > for that sentence or a hypothesis it replaced.
+
+## ⛔ CORRECTION 2026-08-17 — THE HEADLINE WAS SCOPED TO WITHIN-RUN. BETWEEN RUNS IT MOVES.
+
+**Retracting this packet's own headline before anyone builds against it.** *"290 probes, 0 mixed
+outcomes, no nondeterminism"* is true **within a single run** and false across runs.
+
+Six serial probes of `misspell-01`'s exact query, run later against the same deployment:
+
+    ident='p_caeg'  match=empty  ->  6/6 CORRECT ABSTENTION
+
+The 290-probe corpus run recorded that identical row as `ident='cage'`, **resolved 10/10** to
+`publog/p_cage`. Same query text, same endpoint, same payload, **same pod — `restarts=0`, no
+redeploy between them.**
+
+### The mechanism: a 0.006 score change flips both the class AND the identifier
+
+    corpus run   candidates: Table 0.232  Column 0.208  ->  ident 'cage'    class Table
+    now          candidates: Table 0.232  Column 0.214  ->  ident 'p_caeg'  class Column
+
+`Table`'s score is byte-identical. **`Column`'s moved by 0.006, and that was enough to change
+which class won and what the extractor emitted.** `ClassifyDomainIntent` is pinned at
+`temperature 0`, so the LLM is greedy and deterministic *for a given prompt* — the prompt carries
+the candidate list, so **when recall shifts, the prompt shifts, and a temperature-0 call
+faithfully produces a different answer.** Determinism in the model is not determinism in the
+system.
+
+### What this does to the measurement
+
+**A within-run stability measure cannot see between-run drift**, and this packet reported the
+former as the latter. The corpus interleaves repeats (`for run: for row:`), so 10 repeats of one
+phrasing span the whole run — good design, and still blind to a substrate that moves *between*
+runs. The scope was "one run against one substrate snapshot"; the claim was "the system is
+deterministic". That gap is [[a-green-check-proves-only-its-scope]] again, in this packet's own
+headline.
+
+**The corrected finding is worse than the original**, not better: the resolver is not stably
+right and not stably wrong. It sits on a **knife-edge decision boundary** where a hundredth of a
+similarity point flips a nonexistent asset between *honest abstention* and *confident wrong
+answer about a real one*. Both of this packet's stable-looking results were real; neither was the
+system's behaviour.
+
+### Consequences
+
+* **The false-positive pair is not "10/10 stable".** It is *10/10 under one embedding snapshot*.
+  As of this read `misspell-01` abstains correctly — and nothing was fixed to make that true.
+* **A THIRD stamp axis reading is required per run, not per session.** The substrate moved
+  between two runs on the same day with no deploy and no definition commit between them
+  (`a0fb983` added a test file only). The pool *fingerprint* is not enough; the candidate
+  *scores* are the thing that moves.
+* **Any before/after comparison of a fix must re-baseline immediately before**, because a
+  baseline taken hours earlier describes a different substrate. This is the ADR-0035 lesson
+  arriving in the measurement layer: distance from truth is what varies, and here the distance
+  is time.
 
 ## ⛔ THE TWO HALVES LAND TOGETHER — fixing the qualifier alone makes this WORSE
 
@@ -38,7 +91,12 @@ architecture exists to prevent.
 
 ## THE FALSE POSITIVES ARE THE FINDING — worse than the 42% miss rate
 
-Two rows, 10/10 stable, both resolving to a real asset **nobody named**:
+**Read with the 2026-08-17 correction above: "10/10 stable" means stable UNDER ONE EMBEDDING
+SNAPSHOT.** As of that later read `misspell-01` abstains correctly 6/6, with nothing fixed. The
+defect is not that it always does this — it is that a hundredth of a similarity point decides
+which of these two behaviours you get.
+
+Two rows, 10/10 under the 2026-08-15 snapshot, both resolving to a real asset **nobody named**:
 
     "…give me a couple cage values from publog's p_caeg"   <- p_caeg DOES NOT EXIST
         extracted `cage` (from the words "cage values")  ->  urn:…publog/p_cage

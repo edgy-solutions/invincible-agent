@@ -189,14 +189,18 @@ measured them, and it recorded the regression rather than burying it. The gap is
 was recorded as a *resolver* fact and never connected to the *demo* row that depends on it.
 That connection is the thing this packet exists to make.
 
-**UPGRADED FROM ⚠ TO ⛔ 2026-08-15 — measured, not reported.** A 290-probe run settled it:
-`p_caeg` (an asset that does not exist) resolves **10/10 stable** to the real `publog/p_cage`,
+**UPGRADED FROM ⚠ TO ⛔ 2026-08-15, and the 2026-08-17 re-read makes it MORE binding.** A
+290-probe run measured `p_caeg` (an asset that does not exist) resolving **10/10** to the real
+`publog/p_cage`,
 because the extractor takes `cage` from the words *"cage values"* and the matcher accepts a
 content word as a name. A second row does it from a bare *"values from cage"*.
 
-So row 5 does not merely fail to abstain — **it answers confidently about a different real
-asset**, which is the one output class this architecture exists to prevent, on the exact input
-shape the beat is demonstrated with. **Run it as a slide, not a live query**
+Re-probed 2026-08-17 on the **same pod, no redeploy**: it abstains correctly **6/6**, with
+nothing fixed — one candidate score moved 0.006 and flipped both the class and the extracted
+identifier. **So the beat is not reliably broken, it is reliably UNSTABLE, which is worse for a
+demo:** a row that always fails gets dropped from the script; a row that passes your morning
+check and confabulates in the afternoon is the one you put in front of an audience *because* you
+tested it. **Run it as a slide, not a live query**
 ([docs/demo-day-runbook.md](../demo-day-runbook.md) §A5).
 
 **Consequence for the ordering:** none. Items 1–3 stand. But this is now a *content* problem with
