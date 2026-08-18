@@ -42,3 +42,6 @@ grants:
       Demo: alice reads the mesh_demo_customers dataset (region breakdown) to
       exercise the end-to-end DA-read allow path through the now-working gate.
       Fixture grant — remove when the demo no longer needs a granted reader.
+  - subject: alice@example.com
+    asset: "urn:li:dataset:(urn:li:dataPlatform:s3,iagent-minio.publog-lake/publog/p_cage,PROD)"
+    permission: can_read
