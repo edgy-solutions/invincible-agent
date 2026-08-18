@@ -150,6 +150,59 @@ down so the next reader does not re-derive it** — "diagnosed, fix known, waiti
 "still being investigated" look identical from a red test, and only one of them should cost
 another evening.
 
+## THE CLASS HAS THREE MEMBERS NOW — tests coupled to their neighbours (2026-08-17)
+
+**Filed by Agent A. The consolidation this packet owes is no longer a single stale failure; it
+is a named class with three measured instances**, and the third shows the class is more
+dangerous than "flaky".
+
+| # | instance | coupling |
+|---|---|---|
+| 1 | the `dagster` stub (`5a2d5c9`) | `_install_stubs` is a **no-op when `dagster` is already in `sys.modules`**, so the stub applied or not depending on which test imported first. Its own comment: *"a stub that works by depending on another test having run is not a stub."* |
+| 2 | `test_promise_name_seal` (2026-08-10, above) | passes alone, fails in a 27-file batch, **identically with and without the diff** |
+| 3 | `test_da_outcome_distinguishable`'s two dagster tests (2026-08-17) | imported `DependencyDefinition` / `build_op_context` **inside the test bodies**, so they resolved against the stub `tests/routing/` installs from a fixture |
+
+### Why the third one is the argument for consolidating rather than patching
+
+**The `ImportError` was the LUCKY outcome.** Under that stub `job` and `op` are `lambda f: f`,
+so no graph object exists at all. Had the fake carried the name, an assertion about the job
+graph's *dependency edges* would have run against nothing and **passed** — a test proving the
+run-level failure op is ordered after `generate_ui_payload`, green while measuring a stub.
+
+**And the tempting fix was the poison.** The stub's stated rule is *"the stub must cover every
+name the module imports"*, which reads as: add `DependencyDefinition` to the fake. That would
+have satisfied the import and destroyed the test. The repair was the opposite — **bind the real
+package at collection time**, removing the dependence instead of extending the fake.
+
+### The correction this forces on how greenness is reported here
+
+Agent A's earlier full-suite runs (`1344 passed`, `1342 passed`) **included both files and were
+green** — only because something in that ordering imported real `dagster` first. So:
+
+> **A green full suite was never evidence that its tests are isolated.** It is evidence that
+> they pass *in one arrangement*, and the arrangement is not recorded anywhere.
+
+That is [[a-green-check-proves-only-its-scope]] with a mechanism this packet should name: **the
+scope was defined by whatever ran first.** Not by a directory list, not by a path shape — by
+collection order, which no one states and nothing pins.
+
+### What the consolidation is for
+
+Not "fix three tests". The three share one cause — **module-level state (`sys.modules`, env,
+`sys.path`) mutated by one test and read by another** — and the useful output is a rule plus a
+guard, not three patches:
+
+* a **stated policy** on stubbing shared heavy imports (fixture-installed stubs are visible to
+  every later test in the process);
+* a **run of the suite in a shuffled order** as the seal — the only check whose scope is
+  *isolation* rather than *passing*. `pytest -p no:randomly` was needed to reproduce #3
+  deterministically, which is itself the tell that ordering is load-bearing and unpinned.
+
+**Owner note:** this packet is `owner: agent` and unclaimed at the consolidation level. Agent B
+has now personally documented instances #1 and (with A) the class shape; A documented #2's
+re-measurement and #3. Whoever claims it inherits three measured members and does not need to
+find a fourth first.
+
 ## Method notes this session should encode
 
 Two instrument defects were found the expensive way during the triage. Both are general.
