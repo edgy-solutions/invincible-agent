@@ -1,12 +1,12 @@
 ---
 id:         ui-renders-honest-failure-as-answer
-status:     open
+status:     closed
 owner:      agent
 blocked-on: 
-closed-by:
+closed-by:  210ecdd
 code-site:  agent_fleet/data_analyst/main.py, agent_fleet/data_analyst/outcome.py, agent_fleet/presentation_agent/main.py, src/iagent/defs/dynamic_supervisor.py
 repo:       invincible-agent
-summary:    WITNESSED 2026-08-18 — the success arm is captured live (see the closing section); closes on the stamping commit that can carry a closed-by sha. Was: HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
+summary:    CLOSED 2026-08-18 — the SUCCESS arm is witnessed live: alice asked a Tier-1 question and got a real absence stated as an answer in a proper card, verified against ground truth measured BEFORE the query ran. NB the grant is applied but INERT (ENABLE_AGENTIC_AUTH=false fleet-wide), so this witnesses the pipeline and the honest-failure render, NOT authz. Was: HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
 ---
 
 # An apology that reports itself as a success

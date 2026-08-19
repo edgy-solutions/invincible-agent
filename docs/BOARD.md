@@ -122,10 +122,6 @@ _Coverage: **42 of 50 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter). Cross-repo enumeration COMPLETE 2026-08-11 (5/5; cortex-ui = structural zero, no server-side origin); ONE CONFIRMED unminted caller stands — doc-tools semantic_linker.py:99 -> engine-o (corrected 2026-08-12 from 2; dag-tools contributes ZERO, see the count correction in the packet). Returns to blocked-on-human when those land; the flip act is the human's.
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
-- **ui-renders-honest-failure-as-answer** — WITNESSED 2026-08-18 — the success arm is captured live (see the closing section); closes on the stamping commit that can carry a closed-by sha. Was: HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
-  status: open · owner: agent
-  → [docs/plans/ui-renders-honest-failure-as-answer.md](plans/ui-renders-honest-failure-as-answer.md)
-
 - **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
   status: open · owner: agent · blocked-on: nothing in this packet — the gate is wired and inert until ENABLE_AGENTIC_AUTH flips, which is [[transport-flip]]'s item, not this one. (A 2026-08-13 note claiming TOPAZ_DIRECTORY_URL was unwired was WRONG and is corrected: it is set to http://topaz-svc:9393 on both engines via iagent-config, verified in the running pods.) Everything else is done: dispositions given, /workflow/start retired (410, 2026-08-11), ALL 12 ROWS DECLARED (2026-08-12), and the two engine-o WRITE residuals CLOSED endpoint-side 2026-08-13 (can_invoke on the single decider, discriminating pair sealed, break-on-purpose verified; both rows now class: gated).
   → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
@@ -177,6 +173,10 @@ _Coverage: **42 of 50 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **transport-gauge** — Gauge reads only migratable callers: probe paths exempt, 549 -> 22 -> 0-new-unverified.
   status: closed · owner: agent · closed-by: e18b5cf
   → [docs/plans/transport-auth-gauge-day-zero.md](plans/transport-auth-gauge-day-zero.md)
+
+- **ui-renders-honest-failure-as-answer** — CLOSED 2026-08-18 — the SUCCESS arm is witnessed live: alice asked a Tier-1 question and got a real absence stated as an answer in a proper card, verified against ground truth measured BEFORE the query ran. NB the grant is applied but INERT (ENABLE_AGENTIC_AUTH=false fleet-wide), so this witnesses the pipeline and the honest-failure render, NOT authz. Was: HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
+  status: closed · owner: agent · closed-by: 210ecdd
+  → [docs/plans/ui-renders-honest-failure-as-answer.md](plans/ui-renders-honest-failure-as-answer.md)
 
 - **work-deploy** — DEPLOYED in OBSERVE. The go was given and the three reads are settled — 1 done, 2 retracted as the wrong tool for this cluster, 3 decode-verified green. Residual fifth read (which identity a notebook session carries) is not a blocker and lives with jupyter-user-token-data-access.
   status: closed · owner: human · closed-by: ecdd944
