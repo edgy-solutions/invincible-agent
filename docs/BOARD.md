@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **43 of 51 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
+_Coverage: **44 of 52 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -97,6 +97,10 @@ _Coverage: **43 of 51 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **no-granted-and-fetchable-asset** — NO ASSET ON SANDBOX IS BOTH GRANTED AND FETCHABLE — p_cage was materialized 2026-08-15 and has no read grant; the one granted asset returns HTTP 404 on read. So the data path cannot serve ANY query, which makes item 1's success arm unwitnessable and Tier-3 row 8 impossible. Discovered by the live witness, named on no board line, and it sits AHEAD of da-collects-before-filtering.
   status: open · owner: human · blocked-on: A CHOICE BETWEEN TWO CHEAP PATHS, either of which closes it — (a) grant alice a read on `publog/p_cage` (a `policy/asset_grants.yaml` write plus sync; the live Topaz write is a human act), or (b) fix the HTTP 404 on the already-granted `mesh_demo_customers` (the queued `minio-svc` values change). (a) is minutes; (b) also retires a demo-day risk.
   → [docs/plans/no-granted-and-fetchable-asset.md](plans/no-granted-and-fetchable-asset.md)
+
+- **presentation-contract-enumeration** — ADR-0017's capability publication carries expected_fields (NAMES) but no types or cardinality, so every consuming contract lives in a React component and the backend mirrors it by hand. Enumerated 2026-08-19 from the components' actual prop types and key handling. THREE FINDINGS OUTRANK THE ENUMERATION - presentation_agent/capabilities.py hand-duplicates the ENTIRE UI capability registry with no seal; chart_normalizer.py (194 lines) mirrors a shape ChartWidget NO LONGER REQUIRES; and the dispatch boundary is typed `any`.
+  status: open · owner: agent
+  → [docs/plans/presentation-contract-enumeration.md](plans/presentation-contract-enumeration.md)
 
 - **registration-boot-order-race** — An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries — the ruling says 422 is permanent, and it is right for a real contract violation and wrong for "the graph is not populated yet". Witnessed at work 2026-08-14; recovery was a hand restart. The registrar is the only party that can tell the two apart.
   status: open · owner: agent · blocked-on: repair 3 (the registrar discrimination) LANDED in fbf7307. Repair 1 is still owed and unanswered — WHICH of the three ways the re-register hook failed to fire at work. Until that read is done, a deploy still depends on a hook nobody has verified runs.
