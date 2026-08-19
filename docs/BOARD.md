@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **41 of 49 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
+_Coverage: **42 of 50 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -25,6 +25,10 @@ _Coverage: **41 of 49 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **agentic-auth-flip** — ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.
   status: open · owner: agent · blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
+
+- **answer-latency-tier1** — A Tier-1 question whose answer is ONE metadata field took 324.9s end-to-end on sandbox (77s locating, 148s retrieving). Measured, not estimated — phase breakdown from the 2026-08-18 witness run. Demo-room liability and a standing user-experience fact.
+  status: open · owner: unassigned
+  → [docs/plans/answer-latency-tier1.md](plans/answer-latency-tier1.md)
 
 - **archetype-chosen-before-data** — The UI archetype is selected from the verb's output_uri before anything looks at the rows, so every analyzeDataset result becomes a CHART_WIDGET — including a list of CAGE codes, which are identifiers and can never be plotted. The payload's shape should decide; output_uri is a hint, not a verdict.
   status: open · owner: agent · blocked-on: nothing — small and mechanical. The honest-degradation half shipped 2026-08-15; this is the half that stops forcing the wrong shape in the first place.
@@ -106,7 +110,7 @@ _Coverage: **41 of 49 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: unassigned
   → [docs/plans/open-subject-resolution-at-composition.md](plans/open-subject-resolution-at-composition.md)
 
-- **suite-signal** — master is not green. Measured census; recommended owner the telemetry agent.
+- **suite-signal** — CLAIMED by Agent B 2026-08-17. master green in-order (9 failed -> 0) AND under shuffle; class grew 3 -> 9 members; all 166 test files now pass standalone. Policy + guards landed. Open: no full-suite CI job exists to wire the shuffle into.
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
 
@@ -118,8 +122,8 @@ _Coverage: **41 of 49 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter). Cross-repo enumeration COMPLETE 2026-08-11 (5/5; cortex-ui = structural zero, no server-side origin); ONE CONFIRMED unminted caller stands — doc-tools semantic_linker.py:99 -> engine-o (corrected 2026-08-12 from 2; dag-tools contributes ZERO, see the count correction in the packet). Returns to blocked-on-human when those land; the flip act is the human's.
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
 
-- **ui-renders-honest-failure-as-answer** — HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
-  status: open · owner: agent · blocked-on: A READABLE ASSET — the live witness RAN 2026-08-18 and the distinction works on the cluster (ungrounded/no_urn_resolved, ungrounded/query_never_succeeded and access_denied all render distinctly), but the SUCCESS arm is unwitnessable: no asset on sandbox is both granted and fetchable (p_cage has no read grant; the one granted asset 404s). Definition of done is a VALUE ON THE UI, so this stays open until the data path can serve something. Separately, the one remaining CODE step (3 — do not let an ungrounded run win a race against a grounded one) IS blocked on instance-resolution-nondeterminism, per that step's own precondition.
+- **ui-renders-honest-failure-as-answer** — WITNESSED 2026-08-18 — the success arm is captured live (see the closing section); closes on the stamping commit that can carry a closed-by sha. Was: HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
+  status: open · owner: agent
   → [docs/plans/ui-renders-honest-failure-as-answer.md](plans/ui-renders-honest-failure-as-answer.md)
 
 - **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.

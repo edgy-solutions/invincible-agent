@@ -93,11 +93,27 @@ def _stub_service_mint(monkeypatch):
     Patches SOURCE modules as well as consumers: ``main`` imports ``dispatch_driver`` lazily inside
     ``_run_definition``, so that module object may not exist yet when this fixture runs."""
     stub = lambda **_: "svc-token-stub"  # noqa: E731
+    # ACTIVELY IMPORT, don't poll sys.modules. The passive form
+    # (`sys.modules.get(_name)` + `if _mod is not None`) patched NOTHING whenever the
+    # module wasn't loaded yet — and this fixture's own docstring says that happens, since
+    # the consumer imports lazily. A seal that silently declines to seal is worse than no
+    # seal. Mirrors the `check_can_act` fixture in this same file, which already does it
+    # this way. See docs/principles/a-stub-that-needs-another-test-is-not-a-stub.md
+    import importlib  # noqa: PLC0415
+
+    _bound = 0
     for _name in ("agent_fleet.utils.service_identity", "utils.service_identity",
                   "dispatch_driver", "agent_fleet.restate_analyst.dispatch_driver"):
-        _mod = sys.modules.get(_name)
-        if _mod is not None:
-            monkeypatch.setattr(_mod, "mint_service_token", stub, raising=False)
+        try:
+            _mod = importlib.import_module(_name)
+        except ImportError:
+            continue
+        monkeypatch.setattr(_mod, "mint_service_token", stub, raising=False)
+        _bound += 1
+    assert _bound, (
+        "mint_service_token was patched in ZERO modules -- the seal would run against the "
+        "real mint and prove nothing. Import paths changed; update this fixture's name list."
+    )
 
 
 # ---------------------------------------------------------------------------

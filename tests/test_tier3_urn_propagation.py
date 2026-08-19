@@ -80,6 +80,25 @@ def _install_stubs():
             def configured(_cfg): return object()
 
         d.multiprocess_executor = _Cfg2()
+        # `Failure` and `Nothing` were MISSING here while dynamic_supervisor.py has imported
+        # both since 9d57a23 (2026-03-17). The gap stayed invisible because this stub only
+        # installs when "dagster" is absent from sys.modules, so in a full-suite run some
+        # earlier test's dagster satisfied the import and this file never exercised its own
+        # stub. STANDALONE it failed: ImportError: cannot import name 'Failure' from 'dagster'.
+        # Fixed in test_adr0019_contracts.py's copy (5a2d5c9); the ORIGINAL kept the defect.
+        # Failure is an EXCEPTION in dagster, so it must subclass Exception -- an object()
+        # would import cleanly and then explode at `raise`/`except`.
+        # See docs/principles/a-stub-that-needs-another-test-is-not-a-stub.md
+        class _Failure(Exception):
+            """Stand-in for ``dagster.Failure``."""
+
+            def __init__(self, description=None, metadata=None, **kwargs):
+                super().__init__(description or "")
+                self.description = description
+                self.metadata = metadata
+
+        d.Failure = _Failure
+        d.Nothing = type("Nothing", (), {})
         sys.modules["dagster"] = d
 
 

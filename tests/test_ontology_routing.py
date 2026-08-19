@@ -15,6 +15,7 @@ binding side has to satisfy.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,11 +33,16 @@ from fastapi.testclient import TestClient
 # downstream modules so the import succeeds in a clean test environment.
 @pytest.fixture(scope="module")
 def engine_o_module():
-    # Add agent_fleet/ontology_service to path so ``main`` is importable.
+    # Add agent_fleet/ontology_service AND THE REPO ROOT to path. The repo root is not
+    # optional: engine-o imports ``agent_fleet.utils.embed``, which only resolves as a real
+    # package when the root is importable. Without it this file errored 11/11 STANDALONE and
+    # went green only when some earlier test happened to put the real ``agent_fleet`` into
+    # sys.modules first — a borrowed green, paid for by another file's import side effects.
     repo = Path(__file__).resolve().parent.parent
     svc_dir = repo / "agent_fleet" / "ontology_service"
-    if str(svc_dir) not in sys.path:
-        sys.path.insert(0, str(svc_dir))
+    for _p in (str(svc_dir), str(repo)):
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
 
     # Stub heavy deps Engine O imports at module-load time. The endpoints
     # under test never touch these so the stubs just need to exist.
@@ -44,14 +50,32 @@ def engine_o_module():
         "rdflib", "weaviate", "weaviate.classes", "weaviate.classes.query",
         "neo4j", "baml_client", "baml_client.types", "baml_client.type_builder",
         "llm_utils", "utils", "utils.weaviate_utils",
-        "agent_fleet", "agent_fleet.llm_utils",
-        "agent_fleet.utils", "agent_fleet.utils.weaviate_utils",
     ]:
         sys.modules.setdefault(name, MagicMock())
 
-    if "main" in sys.modules:
-        del sys.modules["main"]
-    return importlib.import_module("main")
+    # ``agent_fleet*`` IS DELIBERATELY NOT STUBBED. It used to be, and that was the bug:
+    # a MagicMock for ``agent_fleet``/``agent_fleet.utils`` shadows the real package, so
+    # ``agent_fleet.utils.embed`` (which engine-o imports and the stub list never covered)
+    # could not resolve. The stubs only ever "worked" when setdefault found the real package
+    # already loaded and did nothing. Using the real package is what actually passes.
+    #
+    # Loaded under a UNIQUE name rather than the bare ``main``: 155 files in this repo are
+    # named main.py, and the previous `del sys.modules["main"]` + import_module("main") both
+    # EVICTED whatever another test had cached and left its own behind — that eviction is what
+    # made tests/security/test_effect_write_gate.py fail its nine in-suite while passing alone.
+    mod_name = "engine_o_main__ontology_routing_test"
+    cached = sys.modules.get(mod_name)
+    if cached is not None:
+        return cached
+    spec = importlib.util.spec_from_file_location(mod_name, svc_dir / "main.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:
+        sys.modules.pop(mod_name, None)
+        raise
+    return mod
 
 
 @pytest.fixture

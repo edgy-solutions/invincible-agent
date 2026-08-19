@@ -32,13 +32,36 @@ for _p in (str(_EO), str(_REPO)):
         sys.path.insert(0, _p)
 
 
+# The module is loaded under a UNIQUE name, never the bare ``main``. 155 files in this
+# repo are named main.py, and ``import main`` returns whatever sys.modules cached FIRST —
+# so the bare name makes this gate's identity depend on collection order. Run alone these
+# nine passed; run after any other test that claims "main" they all failed with
+# `module 'main' has no attribute '_require_capability'`, because ``eo`` was a different
+# service's module. The skip-guard below could not catch it: it guards against the module
+# being UNIMPORTABLE, and a polluted cache yields a module that imports fine and is simply
+# the WRONG ONE. Same precedent as test_adr0019_contracts.py's
+# spec_from_file_location("dynamic_supervisor_adr0019_test", ...).
+_EO_MOD_NAME = "engine_o_main__effect_write_gate_test"
+
+
 def _mod():
     """Import engine-o's module. Skipped rather than failed when its heavy deps are absent —
     a missing optional dependency is not a security finding, and pretending otherwise would
     make this suite a flaky red that people learn to ignore."""
+    import importlib.util  # noqa: PLC0415
+
+    cached = sys.modules.get(_EO_MOD_NAME)
+    if cached is not None:
+        return cached
     try:
-        import main as eo  # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location(_EO_MOD_NAME, _EO / "main.py")
+        eo = importlib.util.module_from_spec(spec)
+        # Registered BEFORE exec so the module can import itself recursively; popped on
+        # failure so a half-initialised module never becomes a later test's cache hit.
+        sys.modules[_EO_MOD_NAME] = eo
+        spec.loader.exec_module(eo)
     except Exception as exc:  # noqa: BLE001
+        sys.modules.pop(_EO_MOD_NAME, None)
         pytest.skip(f"engine-o module not importable in this env: {type(exc).__name__}: {exc}")
     return eo
 

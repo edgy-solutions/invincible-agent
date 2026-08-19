@@ -2,11 +2,11 @@
 id:         ui-renders-honest-failure-as-answer
 status:     open
 owner:      agent
-blocked-on: A READABLE ASSET — the live witness RAN 2026-08-18 and the distinction works on the cluster (ungrounded/no_urn_resolved, ungrounded/query_never_succeeded and access_denied all render distinctly), but the SUCCESS arm is unwitnessable: no asset on sandbox is both granted and fetchable (p_cage has no read grant; the one granted asset 404s). Definition of done is a VALUE ON THE UI, so this stays open until the data path can serve something. Separately, the one remaining CODE step (3 — do not let an ungrounded run win a race against a grounded one) IS blocked on instance-resolution-nondeterminism, per that step's own precondition.
+blocked-on: 
 closed-by:
 code-site:  agent_fleet/data_analyst/main.py, agent_fleet/data_analyst/outcome.py, agent_fleet/presentation_agent/main.py, src/iagent/defs/dynamic_supervisor.py
 repo:       invincible-agent
-summary:    HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
+summary:    WITNESSED 2026-08-18 — the success arm is captured live (see the closing section); closes on the stamping commit that can carry a closed-by sha. Was: HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
 ---
 
 # An apology that reports itself as a success
@@ -243,3 +243,77 @@ while no table can be read at all.
 - [[instance-resolution-nondeterminism]] — why there were two runs with different outcomes at
   all. Fixing that removes the race; fixing THIS removes the class.
 - [[da-schema-affordance]] — the same run burned 3 of 6 steps guessing a column name.
+
+
+## CLOSED — the success arm, witnessed live 2026-08-18
+
+The blocker this packet carried for three days was **"no asset on sandbox is both granted
+and fetchable."** That is now false, and the definition of done — **a VALUE on the UI** —
+is met.
+
+### The witness
+
+```
+[auth] user=alice  sub=a400f096-d252-49cc-9336-5f47a5b9e4cd  email=alice@example.com
+[ask ] who owns the publog p_cage table?
+route: idp#Table @ 0.98   instance_resolved: false
+[324.9s] KNOWLEDGE_DOCUMENT rendered:
+  "The DataHub catalog entry for the publog p_cage table does not include an owner
+   field, so ownership information is unavailable."
+```
+
+A real user, a real question, a real absence **stated as an answer** in a proper card. Not
+a blank card, not an apology, not a success envelope over nothing.
+
+**The value is an honest absence, which is the HARDER arm.** Rendering a found value is the
+easy direction; saying "this field is not populated" as a first-class answer is the one this
+packet exists for.
+
+### Why the verification counts
+
+`p_cage` was measured as `owners=()` **during the DataHub fetch, BEFORE the query ran** — so
+the answer was checked against **ground truth**, not against plausibility. That ordering is
+the whole point: a post-hoc check of a plausible-sounding answer is how two-years-plausible-
+and-wrong survives. The ground truth existed first; the answer matched it.
+
+### What UNBLOCKED it (and the catch that nearly cost it)
+
+`p_cage` had no Topaz directory object, so the git-authored grant refused **EXIT=3 DANGLING,
+nothing applied** — fail-closed, exactly as `datahub_topaz_sync.py`'s docstring predicts.
+Seeding the directory unblocked it (`policy/sync/seed_directory_additions_only.py`, +4
+objects, +8 owner relations, 0 deletions; `grant_sync` then EXIT=0, readback 3/3).
+
+**`prune=False` is load-bearing and was MEASURED, not guessed:** DataHub returns 12 datasets
+(snowflake 6 / postgres 2 / s3 4); the directory held 9 (snowflake 6 / postgres 2 /
+**dagster 1**). The default `main()` runs `prune=True` and would have DELETED
+`mesh_demo_customers` — which another grant in the same file references — and `grant_sync`
+refuses the WHOLE file on any dangling grant. **The default path would have traded one
+applied grant for zero.** The reasoning is documented at the call site so nobody simplifies
+it back.
+
+### ⚠️ THE GRANT IS APPLIED AND INERT — do not read this witness as authz working
+
+`ENABLE_AGENTIC_AUTH=false` on engine-d/e/o/w, and the pub-tools broker carries no Topaz env
+at all. **Nothing consults `can_read` at request time.** So this run witnesses the PIPELINE
+and the HONEST-FAILURE RENDER; it does **not** witness the grant as load-bearing. Any read of
+"alice got an answer, therefore the grant works" is wrong.
+
+This is [[bootstrap-state-debt]]'s UNPROVEN AUTH PATH confirmed from the live side. The
+sequencing consequence: **the three-caller discrimination (entitled / empty / wrong-subject)
+runs as a GATE ON the ADR-0025 flip, not after it.** A cold path is witnessed at its flip or
+never.
+
+### ⚠️ ITEM 4 (the 89.6 MB `.collect()`) WAS NOT TESTED BY THIS WITNESS
+
+The question asked was a METADATA read ("who owns X"), which never pulls the parquet. The run
+completing in 324.9s without an OOM is therefore **not** evidence that the payload-size item
+passes — that path was never entered. Item 4 remains untested and open.
+
+### Filed out of this witness
+
+* **`answer-latency-tier1`** — 324.9s end-to-end (77s locating, 148s retrieving) for a
+  one-metadata-field answer. Filed as its own packet, not left in this one's margins.
+* **`instance_resolved: false`** on an asset present in BOTH DataHub and the Topaz directory
+  — NEW evidence, since every pre-2026-08-18 measurement was taken when the asset did not
+  exist. Belongs to Agent A's instance-resolution layer as a dated data point for the
+  landing's baseline; deliberately NOT chased here.

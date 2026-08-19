@@ -5,7 +5,7 @@ owner:      agent
 blocked-on: 
 closed-by:  
 repo:       invincible-agent
-summary:    master is not green. Measured census; recommended owner the telemetry agent.
+summary:    CLAIMED by Agent B 2026-08-17. master green in-order (9 failed -> 0) AND under shuffle; class grew 3 -> 9 members; all 166 test files now pass standalone. Policy + guards landed. Open: no full-suite CI job exists to wire the shuffle into.
 ---
 
 # Suite-signal session — restoring `master` to a readable green
@@ -234,3 +234,103 @@ pytest … > /tmp/out.txt 2>&1; echo "EXIT=$?"; tail -6 /tmp/out.txt
 
 A bad process that happens to produce a good outcome is still a bad process — crediting the
 outcome to it is how the process survives to fail when it matters.
+
+
+## CLAIMED AND WORKED — the class has EIGHT members, and `master` is green in-order (Agent B, 2026-08-17)
+
+Claimed by Agent B. The prior section closed with *"whoever claims it inherits three measured
+members and does not need to find a fourth first."* Correct — but a fourth was not the ceiling.
+**Running each suspect file STANDALONE (not shuffled — just alone) found five more.**
+
+### Measured, before and after
+
+| run | before | after |
+|---|---|---|
+| full suite, in-order | **9 failed**, 1368 passed, 167 skipped | **0 failed, 1377 passed**, 167 skipped |
+| `tests/test_ontology_routing.py` alone | **11 errors** | 11 passed |
+| `tests/test_routing_fallback.py` alone | **1 failed, 8 errors** | 9 passed |
+| `tests/test_tier3_urn_propagation.py` alone | **4 errors** | 8 passed |
+| `tests/security/test_effect_write_gate.py` in-suite | **9 failed** | 9 passed |
+
+### The five new members
+
+| # | member | mechanism |
+|---|---|---|
+| 4 | `tests/test_ontology_routing.py` | **The polluter, and silent.** `sys.modules.setdefault("agent_fleet", MagicMock())` shadowed the REAL package while never covering `agent_fleet.utils.embed`, which engine-o imports — so it could not pass alone, and went green ONLY when `setdefault` found the real package already loaded and did nothing. **It passed exactly when its own stubs were no-ops.** It also `del`s `sys.modules["main"]` and installs its own. |
+| 5 | `tests/security/test_effect_write_gate.py` | **The victim — nine SECURITY-gate tests.** `import main as eo`, and 155 files in this repo are named `main.py`. Its skip-guard could not catch it: the guard fires when the module is *unimportable*: a polluted cache yields a module that imports fine and is the WRONG ONE. |
+| 6 | the `mint_service_token` family — `test_promise_name_seal`, `test_dispatch_driver`, `test_expired_token_seal`, `test_grouped_review_workflow` | **Silent.** `sys.modules.get(name)` + `if is not None` patches NOTHING when the module isn't loaded, and the test passes having sealed nothing. `test_promise_name_seal`'s own docstring names the hazard, twenty lines below a sibling fixture (`_allow_can_act`) that does it correctly with `importlib.import_module`. **The right form was already in the file.** |
+| 7 | `tests/test_routing_fallback.py` | dagster stub missing `Failure`/`Nothing` — **the ORIGINAL that `5a2d5c9` was copied FROM.** `test_adr0019_contracts.py` says outright *"same as `test_routing_fallback.py`'s `_install_stubs`"*; the fix landed on the copy and never came home. |
+| 8 | `tests/test_tier3_urn_propagation.py` | same dagster gap, third copy. |
+| 9 | `tests/test_restate_analyst.py` | **Found by sweeping ALL 166 test files standalone.** Bare module-level `from agent_fleet.restate_analyst.main import ...`; engine-a's `main.py:600` does `from orchestrator.auth import ...` and `orchestrator` is a CHILD of `agent_fleet/restate_analyst`, so the import resolves only when another file has put that directory on `sys.path`. Alone: `ModuleNotFoundError: No module named 'orchestrator'`. **Already filed and never fixed** — `test_workflow_start_disabled.py`'s `engine_a_main` fixture names this exact file in its docstring and points at this packet. |
+
+Members 7, 8 and 9 are [[naming-a-class-is-not-a-guard]] in its purest form. 7 and 8: the class
+was *named in a commit message* and left un-swept in two siblings for five months. **9 is worse
+— it was named in a docstring that points AT THIS PACKET, describing the precise failure, and
+still nobody ran the file alone to confirm it.** Documenting a coupling is not fixing it, and
+the document was accurate the whole time.
+
+### The sweep — the instrument, run to exhaustion
+
+All **166** test files were then run individually. That is the complete population, not a
+suspect list, and it is the only way to state the result as a property rather than a sample:
+
+> **Every test file in this repo now passes when run by itself.**
+
+One file was found this way that no other instrument had surfaced (member 9).
+
+### The correction this forces on the earlier framing
+
+The prior section says a shuffled run is the seal. It is — but **five of these eight needed no
+shuffle at all.** Running each file ALONE found them, and that is a cheaper, more deterministic
+instrument than shuffling. The stronger statement:
+
+> **A test file that has never been run by itself has no evidence that it tests anything.**
+> `test_ontology_routing.py` had eleven tests and could not pass alone; its green was borrowed
+> from a neighbour's `sys.path` mutation, in every run, for as long as the file has existed.
+
+Shuffle finds *coupling*. Running alone finds *parasitism*. They are different instruments and
+the cheap one was never run.
+
+### Output — policy, guard, dependency
+
+* **Policy:** `docs/principles/a-stub-that-needs-another-test-is-not-a-stub.md` — six rules
+  (bind unconditionally or fail loudly; import don't poll; never key a module on a generic
+  name; never `del` a slot you didn't create; cover every imported name; clean up).
+* **Guard, in the code:** the four `mint_service_token` fixtures now **assert** they bound at
+  least one module, so a silent no-op becomes a loud failure naming the fix.
+* **Guard, in the run:** `pytest-random-order` added to the dev group. Deliberately NOT in
+  `addopts` — a shuffle on by default makes every unrelated failure unreproducible:
+  ```sh
+  pytest tests/ --random-order --random-order-bucket=module --random-order-seed=<N>
+  ```
+### Measured order-independence (the seal, run)
+
+| order | result |
+|---|---|
+| in-order (alphabetical) | **1377 passed, 0 failed**, 167 skipped |
+| `--random-order-seed=20260817` | **1377 passed, 0 failed**, 167 skipped |
+| `--random-order-seed=8817` (final tree) | **1377 passed, 0 failed**, 167 skipped |
+| every file alone, all 166 (final tree) | **0 failures** |
+| `--random-order-seed=1337` | 1376 passed, **1 failed** — `test_lock_coherence`, caused by editing `pyproject.toml` MID-RUN while adding the shuffle dependency, not by ordering. `uv lock` regenerated (14 insertions, no incidental churn); the file passes. Recorded rather than quietly re-run, because a failure attributed to the wrong cause is how a real one gets dismissed later. |
+
+* **Bite proof:** the nine gate tests were mutation-tested (`_require_capability` neutered
+  IN MEMORY, no repo file touched — `agent_fleet/ontology_service/main.py` is fenced) and
+  three went red, including `test_the_pair_discriminates_by_caller` and
+  `test_anonymous_caller_is_refused`, while the "granted is allowed" arm correctly stayed
+  green. Their green is earned, per [[seals-must-be-proven-to-bite]].
+
+### ⚠️ OPEN — there is no full-suite CI job to add the shuffle to
+
+Expected to wire the shuffled run into CI and found that **CI runs exactly one test file**
+(`tests/test_telemetry.py`, in `build-containers.yml`). The 1543-test suite has **no CI gate
+at all** — which is the real reason this debt accumulated silently. Adding a full-suite job is
+a larger decision than this packet's scope (runner deps, network-skips, minutes), so it is
+recorded here rather than committed unattended. **Whoever takes it: the shuffle is worthless
+as a guard until something runs it.**
+
+A **drop-in draft exists** (session scratchpad, `suite-order-independence.yml`): three jobs —
+ordered, shuffled, and every-file-alone. It is `workflow_dispatch` ONLY on purpose. It has
+never executed on a GitHub runner, and a never-executed job wired to `push` either burns
+minutes on every commit or goes red for environment reasons and teaches people to ignore it —
+the flaky-red trap `test_effect_write_gate.py`'s own skip-guard docstring warns about. Run it
+by hand, twice, before promoting it to a gate.

@@ -85,6 +85,16 @@ dev = [
     "dagster-dg-cli",
     "pytest",
     "pytest-asyncio",
+    # Order-independence guard. The suite had never been collected in any order but
+    # alphabetical, and that hid a mutual-pollution pair: tests/test_ontology_routing.py
+    # could not pass ALONE (11/11 errors) and only went green by borrowing another file's
+    # sys.path setup, while its own `del sys.modules["main"]` broke nine security-gate
+    # tests in tests/security/test_effect_write_gate.py. Neither is visible to a run that
+    # only ever uses one order. Invoked explicitly, never in addopts -- a shuffle that is
+    # on by default makes every unrelated failure unreproducible:
+    #   pytest tests/ --random-order --random-order-bucket=module --random-order-seed=<N>
+    # See docs/principles/a-stub-that-needs-another-test-is-not-a-stub.md
+    "pytest-random-order",
     "weaviate-client>=4.4,<5.0",
     "lxml>=6.1.1",
     # ADR-0038 telemetry leaf — lets the mesh-mapping truth-check (tests/test_telemetry.py)
