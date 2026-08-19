@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **42 of 50 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
+_Coverage: **43 of 51 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -26,7 +26,7 @@ _Coverage: **42 of 50 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
-- **answer-latency-tier1** — A Tier-1 question whose answer is ONE metadata field took 324.9s end-to-end on sandbox (77s locating, 148s retrieving). Measured, not estimated — phase breakdown from the 2026-08-18 witness run. Demo-room liability and a standing user-experience fact.
+- **answer-latency-tier1** — DECOMPOSED 2026-08-19 (n=5 + isolated hop probes). Tier-1 answer is 262.0s +/- 10.6 (the filed 324.9s was a ~6-sigma outlier, likely a cold 64.7GB model load). >99% is sequential LLM generation; ALL data/graph work totals 2.3s. Root cause: a 116.8B REASONING model at ~33 tok/s where 95-97% of generated tokens are hidden reasoning, called ~sequentially. Largest phase is composing (102.5s), which the original filing never named.
   status: open · owner: unassigned
   → [docs/plans/answer-latency-tier1.md](plans/answer-latency-tier1.md)
 
@@ -89,6 +89,10 @@ _Coverage: **42 of 50 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **legacy-dns-guard-phantom-scope** — DISPROVED guard — `SCANNED_DIRS` lists "doc-tools", which is a SIBLING REPO not a subdirectory, so the walker skips it silently and passes green while the forbidden pattern is live in the unscanned tree.
   status: open · owner: unassigned
   → [docs/plans/legacy-dns-guard-phantom-scope.md](plans/legacy-dns-guard-phantom-scope.md)
+
+- **no-ci-gate-on-the-suite** — CI runs exactly ONE test file (tests/test_telemetry.py). The 1543-test suite has no CI gate at all — which is why nine members of the borrowed-green class accumulated undetected for months. A workflow_dispatch-only draft exists at docs/proposals/suite-order-independence.yml.draft; it has never run on a GitHub runner.
+  status: open · owner: unassigned
+  → [docs/plans/no-ci-gate-on-the-suite.md](plans/no-ci-gate-on-the-suite.md)
 
 - **no-granted-and-fetchable-asset** — NO ASSET ON SANDBOX IS BOTH GRANTED AND FETCHABLE — p_cage was materialized 2026-08-15 and has no read grant; the one granted asset returns HTTP 404 on read. So the data path cannot serve ANY query, which makes item 1's success arm unwitnessable and Tier-3 row 8 impossible. Discovered by the live witness, named on no board line, and it sits AHEAD of da-collects-before-filtering.
   status: open · owner: human · blocked-on: A CHOICE BETWEEN TWO CHEAP PATHS, either of which closes it — (a) grant alice a read on `publog/p_cage` (a `policy/asset_grants.yaml` write plus sync; the live Topaz write is a human act), or (b) fix the HTTP 404 on the already-granted `mesh_demo_customers` (the queued `minio-svc` values change). (a) is minutes; (b) also retires a demo-day risk.

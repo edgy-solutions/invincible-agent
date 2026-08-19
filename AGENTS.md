@@ -1371,6 +1371,43 @@ Sibling of *a ruling made in CONVERSATION is UNSHIPPED until committed* — same
 direction: there the conversation held something the repo lacked; here the conversation lacked
 something the repo held.
 
+**SECOND INSTANCE, 2026-08-19 — and it generalises the rule from FINDINGS to WORK.** An overnight
+job was commissioned: *"read `PcnGroupedReview` against the three step kinds, produce the PCN
+process as a draft definition YAML, enumerate what doesn't fit."* Genuinely hours of work, scoped
+carefully, fenced properly. **All three deliverables already existed.** `PcnGroupedReview` is in
+a FORBIDDEN list in `tests/test_cross_repo_contracts.py` — a green 9-test deletion seal barring it
+and six sibling names from the mechanism. The draft YAML is `policy/workflows/grouped_review.yaml`
+(`2d268b7`, **2026-07-26**), and it answers the commissioned question in its own header: the
+three-kind model expresses PCN with **ZERO new step kinds**, the fan-out dissolving into the
+substrate exactly as the ruling said. The commission was formed from conversational memory of the
+arc as of 2026-08-04; the answer had been in the repo since **July 26**.
+
+**So: PREMISE-CHECK BEFORE COMMISSIONING WORK, as the sibling of second-method-before-filing.**
+Both are one move — *verify the ground before building on it* — aimed at opposite ends of the
+pipeline:
+
+> **Second-method before filing a finding. Premise-check before commissioning work.**
+
+**The argument is arithmetic, not discipline.** Checking the M3 premise cost FOUR TOOL CALLS.
+Producing the document `2d268b7` already is would have cost the night. At that ratio the check is
+not a virtue to be summoned, it is the cheaper branch — and it is cheapest precisely when the
+commission is well-scoped, because a careful brief is the kind most likely to be believed without
+checking.
+
+**The check has two outcomes and BOTH are wins.** The same session ran it against a second
+commission (the presentation-SPO enumeration, ADR-0017 "Hole 4") and that premise **survived with
+a correction**: the capability publication DOES carry a shape contract (`expected_fields`, field
+NAMES) and does NOT carry types or cardinality. That correction shrank the job from *build a
+publication mechanism* to *extend an existing seam* — a materially smaller and better-anchored
+piece of work than the one commissioned. A premise check does not only cancel work; it re-scopes
+it, and the re-scoping is usually the more valuable half.
+
+**Corollary — conversational shorthand does not exist in the repo.** "Hole 4" appears NOWHERE in
+`ADR-0017-presentation-as-predicate.md`; it is a chat-side label. A future agent grepping for it
+would conclude the finding did not exist. **A commissioned packet must use the ADR's own
+vocabulary and cite the code by file and line**, or it inherits a name only the transcript can
+resolve — which is the same defect one layer up.
+
 ### A ruling made in CONVERSATION is UNSHIPPED until it is committed
 Second instance, and the mirror image of the first. In the §391 case the DOC carried a ruling the
 conversation had already invalidated. In the M3.2 shipping case the CONVERSATION carried a ruling the
