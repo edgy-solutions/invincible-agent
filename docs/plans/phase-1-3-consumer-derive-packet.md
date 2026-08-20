@@ -1,3 +1,14 @@
+---
+id:         phase-1-3-consumer-derive-packet
+status:     closed
+owner:      agent
+blocked-on:
+closed-by:  f8837bf
+code-site:  agent_fleet/utils/artifact_provenance.py, agent_fleet/restate_analyst/review_starter.py, src/iagent/defs/extraction_review_sensor.py, src/iagent/gateway.py
+repo:       invincible-agent
+summary:    The consumer half of the 1.3 trust key - the starter DERIVES (format_fingerprint, pipeline_version) from the fetched artifact and the caller supplies only a pointer. Held together rather than staged because a half-derived conjunction inherits the weaker component's trust. Verified 2026-08-19: 29 tests green; test_artifact_provenance_derive.py pins BOTH halves server-derived plus the refuse-loudly and supervised-floor arms.
+---
+
 # PACKET — phase 1.3 consumer half: derive the trust key from the artifact
 
 **Status: READY TO RUN, fresh window.** The producer half landed in doc-tools (`300b8e8`, `399b691`).

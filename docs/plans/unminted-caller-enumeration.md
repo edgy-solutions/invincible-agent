@@ -1,3 +1,14 @@
+---
+id:         unminted-caller-enumeration
+status:     closed
+owner:      agent
+blocked-on:
+closed-by:  9b52b75
+code-site:  pyproject.toml, helm/invincible-agent/values.yaml, agent_fleet/*/pyproject.toml
+repo:       invincible-agent
+summary:    Five-repo sweep for callers reaching mesh routes without a minted identity. CLOSES ON CONSUMPTION, NOT PUBLICATION - the remedy (iagent-mesh-sdk a934c61, "bind the SDK's OWN consumer") shipped as v0.3.1 on 2026-08-10 and this repo pinned v0.3.0 for nine days. Closed 2026-08-20 by 9b52b75, which bumps the fleet to v0.3.1 across 23 files (2 root pins, 10 engine pins, the domainBroker chart value, 11 lockfiles). Evidence: the SDK seal test_registration_consumer_is_bound.py is 5/5 green at a934c61, uv.lock resolves a934c617 by sha, every pyproject reports exactly ['v0.3.1'], and 37 consuming-repo seals pass incl. the broker-vs-fleet coherence check.
+---
+
 # Unminted-caller enumeration — five-repo sweep
 
 > **STATUS: 5 of 5 REPOS SWEPT** — platform, `iagent-mesh-sdk`, `dag-tools`, `doc-tools`,

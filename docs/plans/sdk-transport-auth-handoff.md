@@ -1,3 +1,14 @@
+---
+id:         sdk-transport-auth-handoff
+status:     closed
+owner:      agent
+blocked-on:
+closed-by:  68e28c0
+closed-by-note: 68e28c0 lives in iagent-mesh-sdk, not this repo, so it cannot touch a path here. Consumption is the evidence: it is an ancestor of tag v0.3.0, which this repo pinned until 9b52b75 moved the fleet to v0.3.1.
+repo:       iagent-mesh-sdk
+summary:    One authenticated registration transport in the SDK app factory. Verified CONSUMED, not merely shipped - 68e28c0 is an ancestor of tag v0.3.0, and invincible-agent pinned v0.3.0 at the time of verification (now v0.3.1, which supersedes it).
+---
+
 # SDK transport auth — handoff (prototype built, tested, ready to roll)
 
 **Status: complete and green, not a description.** `iagent-mesh-sdk@68e28c0` (pushed) carries the

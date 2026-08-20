@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **44 of 52 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 6 are unheadered. Closing that gap is the migration._
+_Coverage: **50 of 52 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -98,6 +98,10 @@ _Coverage: **44 of 52 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: human · blocked-on: A CHOICE BETWEEN TWO CHEAP PATHS, either of which closes it — (a) grant alice a read on `publog/p_cage` (a `policy/asset_grants.yaml` write plus sync; the live Topaz write is a human act), or (b) fix the HTTP 404 on the already-granted `mesh_demo_customers` (the queued `minio-svc` values change). (a) is minutes; (b) also retires a demo-day risk.
   → [docs/plans/no-granted-and-fetchable-asset.md](plans/no-granted-and-fetchable-asset.md)
 
+- **pcn-extraction-sort** — The decided three-pile sort (rename-and-promote / keep-domain-specific / delete) so the M2 extraction milestone is a mechanical execution rather than a fresh analysis. Pairs with the generic-at-birth rule. DECIDED, NOT EXECUTED - verified 2026-08-19: no three-pile implementation exists, and the cited 0cc406e is the review-state tripwire, a different artifact.
+  status: open · owner: unassigned
+  → [docs/plans/pcn-extraction-sort.md](plans/pcn-extraction-sort.md)
+
 - **presentation-contract-enumeration** — ADR-0017's capability publication carries expected_fields (NAMES) but no types or cardinality, so every consuming contract lives in a React component and the backend mirrors it by hand. Enumerated 2026-08-19 from the components' actual prop types and key handling. THREE FINDINGS OUTRANK THE ENUMERATION - presentation_agent/capabilities.py hand-duplicates the ENTIRE UI capability registry with no seal; chart_normalizer.py (194 lines) mirrors a shape ChartWidget NO LONGER REQUIRES; and the dispatch boundary is typed `any`.
   status: open · owner: agent
   → [docs/plans/presentation-contract-enumeration.md](plans/presentation-contract-enumeration.md)
@@ -174,17 +178,37 @@ _Coverage: **44 of 52 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: closed · owner: unassigned · repo: cortex-ui · closed-by: d1184b3
   → [docs/plans/cortex-ui-transport-idiom.md](plans/cortex-ui-transport-idiom.md)
 
+- **fingerprint-input-normalization** — format_fingerprint stopped being a recording device and became half the trust key that routes supervised vs autonomous, so untidy inputs became trust-key material. Normalization (canonical vendors, attested doc_type, both segments guarded) landed BEFORE any real promotion, which was the whole ordering requirement - a pre-normalization key would have been orphaned by normalization later.
+  status: closed · owner: agent · closed-by: 025c8ba
+  → [docs/plans/fingerprint-input-normalization.md](plans/fingerprint-input-normalization.md)
+
+- **phase-1-3-consumer-derive-packet** — The consumer half of the 1.3 trust key - the starter DERIVES (format_fingerprint, pipeline_version) from the fetched artifact and the caller supplies only a pointer. Held together rather than staged because a half-derived conjunction inherits the weaker component's trust. Verified 2026-08-19: 29 tests green; test_artifact_provenance_derive.py pins BOTH halves server-derived plus the refuse-loudly and supervised-floor arms.
+  status: closed · owner: agent · closed-by: f8837bf
+  → [docs/plans/phase-1-3-consumer-derive-packet.md](plans/phase-1-3-consumer-derive-packet.md)
+
 - **registration-wiring** — Six engines mint on /v1/register under decode-witnessed identities. Witnessed at a clean log boundary: 0 new unverified, 6 verified (svc:engine-o 1, svc:engine-w 5 — multiplicities matching each engine's verb count).
   status: closed · owner: agent · closed-by: 9d93146
   → [docs/plans/register-caller-enumeration.md](plans/register-caller-enumeration.md)
+
+- **sdk-transport-auth-handoff** — One authenticated registration transport in the SDK app factory. Verified CONSUMED, not merely shipped - 68e28c0 is an ancestor of tag v0.3.0, and invincible-agent pinned v0.3.0 at the time of verification (now v0.3.1, which supersedes it).
+  status: closed · owner: agent · repo: iagent-mesh-sdk · closed-by: 68e28c0
+  → [docs/plans/sdk-transport-auth-handoff.md](plans/sdk-transport-auth-handoff.md)
 
 - **transport-gauge** — Gauge reads only migratable callers: probe paths exempt, 549 -> 22 -> 0-new-unverified.
   status: closed · owner: agent · closed-by: e18b5cf
   → [docs/plans/transport-auth-gauge-day-zero.md](plans/transport-auth-gauge-day-zero.md)
 
+- **triage-card-archetype** — A triage task is a THIRD species, not an approval. Offering Approve/Reject on "this notice could not be prepared for review" records a decision the schema cannot represent, and ADR-0034 would archive it as evidence. Verbs are now per-species and a wrong verb is REFUSED, not stored; cortex-ui ships TRIAGE_TASK (e55d308). Verified 2026-08-19: 11 tests green incl. refuses-approve-and-reject and acknowledge-without-a-reason-is-refused.
+  status: closed · owner: agent · trigger: WAKE when the first real unprocessable notice arrives that Re-drive CANNOT fix - i.e. when a human actually needs an escalation lane, not before. Until then Acknowledge-with-reason covers the case honestly. Lifted out of prose into this field 2026-08-20 so a generated board can see the condition. · closed-by: 906cf64
+  → [docs/plans/triage-card-archetype.md](plans/triage-card-archetype.md)
+
 - **ui-renders-honest-failure-as-answer** — CLOSED 2026-08-18 — the SUCCESS arm is witnessed live: alice asked a Tier-1 question and got a real absence stated as an answer in a proper card, verified against ground truth measured BEFORE the query ran. NB the grant is applied but INERT (ENABLE_AGENTIC_AUTH=false fleet-wide), so this witnesses the pipeline and the honest-failure render, NOT authz. Was: HIGH — an ungrounded DA run returns `status: "success"` with an apology as its `data`, so nothing downstream can distinguish "here is your answer" from "I could not find the asset". Witnessed 2026-08-15: the data path SUCCEEDED and returned real rows, and the UI showed the apology from a concurrent run that did not ground.
   status: closed · owner: agent · closed-by: 210ecdd
   → [docs/plans/ui-renders-honest-failure-as-answer.md](plans/ui-renders-honest-failure-as-answer.md)
+
+- **unminted-caller-enumeration** — Five-repo sweep for callers reaching mesh routes without a minted identity. CLOSES ON CONSUMPTION, NOT PUBLICATION - the remedy (iagent-mesh-sdk a934c61, "bind the SDK's OWN consumer") shipped as v0.3.1 on 2026-08-10 and this repo pinned v0.3.0 for nine days. Closed 2026-08-20 by 9b52b75, which bumps the fleet to v0.3.1 across 23 files (2 root pins, 10 engine pins, the domainBroker chart value, 11 lockfiles). Evidence: the SDK seal test_registration_consumer_is_bound.py is 5/5 green at a934c61, uv.lock resolves a934c617 by sha, every pyproject reports exactly ['v0.3.1'], and 37 consuming-repo seals pass incl. the broker-vs-fleet coherence check.
+  status: closed · owner: agent · closed-by: 9b52b75
+  → [docs/plans/unminted-caller-enumeration.md](plans/unminted-caller-enumeration.md)
 
 - **work-deploy** — DEPLOYED in OBSERVE. The go was given and the three reads are settled — 1 done, 2 retracted as the wrong tool for this cluster, 3 decode-verified green. Residual fifth read (which identity a notebook session carries) is not a blocker and lives with jupyter-user-token-data-access.
   status: closed · owner: human · closed-by: ecdd944

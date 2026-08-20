@@ -1,3 +1,15 @@
+---
+id:         triage-card-archetype
+status:     closed
+owner:      agent
+blocked-on:
+closed-by:  906cf64
+trigger:    WAKE when the first real unprocessable notice arrives that Re-drive CANNOT fix - i.e. when a human actually needs an escalation lane, not before. Until then Acknowledge-with-reason covers the case honestly. Lifted out of prose into this field 2026-08-20 so a generated board can see the condition.
+code-site:  src/iagent/human_tasks.py, src/iagent/gateway.py, tests/test_task_verbs_by_kind.py
+repo:       invincible-agent
+summary:    A triage task is a THIRD species, not an approval. Offering Approve/Reject on "this notice could not be prepared for review" records a decision the schema cannot represent, and ADR-0034 would archive it as evidence. Verbs are now per-species and a wrong verb is REFUSED, not stored; cortex-ui ships TRIAGE_TASK (e55d308). Verified 2026-08-19: 11 tests green incl. refuses-approve-and-reject and acknowledge-without-a-reason-is-refused.
+---
+
 # The triage card — a THIRD task species, not an approval
 
 **Status:** RULED, not built (2026-07-31). Punch list below; mostly reuse.

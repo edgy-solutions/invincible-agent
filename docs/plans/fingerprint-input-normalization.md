@@ -1,3 +1,14 @@
+---
+id:         fingerprint-input-normalization
+status:     closed
+owner:      agent
+blocked-on:
+closed-by:  025c8ba
+code-site:  agent_fleet/utils/format_fingerprint.py, agent_fleet/utils/trust_table.py, policy/vendor_aliases.yaml, policy/sync/validate_policy.py
+repo:       invincible-agent
+summary:    format_fingerprint stopped being a recording device and became half the trust key that routes supervised vs autonomous, so untidy inputs became trust-key material. Normalization (canonical vendors, attested doc_type, both segments guarded) landed BEFORE any real promotion, which was the whole ordering requirement - a pre-normalization key would have been orphaned by normalization later.
+---
+
 # BOARD ITEM — fingerprint input normalization
 
 **Must land BEFORE the first real promotion.** Not because the fingerprint is broken today, but

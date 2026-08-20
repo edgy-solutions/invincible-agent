@@ -1,3 +1,13 @@
+---
+id:         pcn-extraction-sort
+status:     open
+owner:      unassigned
+blocked-on:
+closed-by:
+repo:       invincible-agent
+summary:    The decided three-pile sort (rename-and-promote / keep-domain-specific / delete) so the M2 extraction milestone is a mechanical execution rather than a fresh analysis. Pairs with the generic-at-birth rule. DECIDED, NOT EXECUTED - verified 2026-08-19: no three-pile implementation exists, and the cited 0cc406e is the review-state tripwire, a different artifact.
+---
+
 # PCN extraction sort — the three-pile annotation (decided, waiting for its window)
 
 The PCN/PDN M1 exemplar moved fast and let *mechanism* pick up domain names while *content* stayed
