@@ -29,7 +29,14 @@ jobs:
   ordered:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 is REQUIRED. tests/test_board_drift.py regenerates the board, and
+      # generate_board.py RESOLVES every closed-by sha against git history. A shallow clone
+      # (checkout's default depth 1) has none of them, so the generator reports UNRESOLVABLE
+      # and the board reads as drifted. Passes locally on full history, fails in CI -- found
+      # by run 32327820668, which is the second workflow bug this job found in ITSELF.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -46,7 +53,14 @@ jobs:
   shuffled:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 is REQUIRED. tests/test_board_drift.py regenerates the board, and
+      # generate_board.py RESOLVES every closed-by sha against git history. A shallow clone
+      # (checkout's default depth 1) has none of them, so the generator reports UNRESOLVABLE
+      # and the board reads as drifted. Passes locally on full history, fails in CI -- found
+      # by run 32327820668, which is the second workflow bug this job found in ITSELF.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -67,7 +81,14 @@ jobs:
   standalone:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 is REQUIRED. tests/test_board_drift.py regenerates the board, and
+      # generate_board.py RESOLVES every closed-by sha against git history. A shallow clone
+      # (checkout's default depth 1) has none of them, so the generator reports UNRESOLVABLE
+      # and the board reads as drifted. Passes locally on full history, fails in CI -- found
+      # by run 32327820668, which is the second workflow bug this job found in ITSELF.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
