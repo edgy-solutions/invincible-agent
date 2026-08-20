@@ -1274,6 +1274,7 @@ try:
     from agent_fleet.ontology_service.instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
@@ -1283,6 +1284,7 @@ except ImportError:
     from instance_resolution import (  # noqa: E402
         InstanceCandidate as _IRCandidate,
         decide as _ir_decide,
+        identifier_name_and_qualifiers as _ir_split_identifier,
         decide_instance_abstention as _ir_abstention,
         instance_not_found_message as _ir_not_found_msg,
         DEFAULT_EXACT_THRESHOLD as _IR_DEFAULT_EXACT,
@@ -1513,7 +1515,23 @@ async def _resolve_instance(
             "instance_match": "no_providers",
             "instance_n": 0,
         }
-    tasks = [_call_resolver(r, identifier, query) for r in resolvers]
+    # NORMALIZE AT THE FAN-OUT, NOT AT SCORING (2026-08-20). The specificity gate scores
+    # candidates and was correct; it was STARVED. A qualified identifier (`publog.p_cage`)
+    # was sent to the providers verbatim, they matched nothing on the literal string, and
+    # the gate then rejected an empty set — reported as `not_specific`, which read as "the
+    # token is not a name" when the truth was "nobody was asked a question they could
+    # answer". Measured: n=0, rejected_n=0.
+    #
+    # So the qualifier is stripped BEFORE the phone book is asked. The ORIGINAL identifier
+    # still goes to `decide`, because specificity must be judged on what the user said —
+    # stripping for the lookup must not also loosen the check.
+    _name, _quals = _ir_split_identifier(identifier)
+    _lookup_terms = [identifier]
+    if _name and _name != identifier.strip().lower():
+        _lookup_terms.append(_name)
+
+    tasks = [_call_resolver(r, term, query)
+             for r in resolvers for term in _lookup_terms]
     outcomes: list[_ResolverOutcome] = await asyncio.gather(
         *tasks, return_exceptions=False
     )

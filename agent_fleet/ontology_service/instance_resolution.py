@@ -176,6 +176,22 @@ def decide(
     # tie-break between plausible candidates, it is a statement that a token which
     # merely appears inside a name does not identify anything. Skipped when no
     # identifier reached us, so existing callers that do not pass one are unchanged.
+    # ORDER MATTERS: the empty check runs FIRST. Placing the gate above it made an
+    # EMPTY PROVIDER RESULT report `not_specific` — a rejection's name on a result where
+    # nothing was rejected (n=0, rejected_n=0), which is precisely what hid the fan-out
+    # starvation bug: the vocabulary said "the token is not a name" when the truth was
+    # "the phone book was never asked a question it could answer."
+    if not above_floor:
+        return InstanceResolutionDecision(
+            subject_uri=None,
+            confidence=0.0,
+            provenance={
+                "instance_resolved": False,
+                "instance_match": "empty",
+                "instance_n": len(candidates),
+            },
+        )
+
     if identifier:
         specific = [c for c in above_floor
                     if passes_segment_specificity(identifier, c.instance_id)
