@@ -263,11 +263,64 @@ def check_pool(base: str, meta: dict, timeout: float) -> tuple[bool, list]:
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
+# The outcome vocabulary the resolver actually emits (instance_resolution.py, main.py).
+# RESOLVED is the only family meaning a provider matched the identifier.
+_RESOLVED_MATCHES = {"exact", "fuzzy"}                      # instance_resolution.py:236, :252
+_EMPTY_MATCHES = {"empty"}                                  # :190, :222 — asked, got nothing
+_NOT_SPECIFIC_MATCHES = {"not_specific"}                    # :208 — segment gate refused
+_DEGRADED_MATCHES = {"timeout", "error", "no_providers"}    # main.py:1515, :1576, :1578
+_MIXED_MATCHES = {"mixed"}                                  # :266 — providers disagreed
+
+
+def _outcome_bucket(rec: dict) -> str:
+    """Collapse one record to one visible state.
+
+    `instance_id` is authoritative for RESOLVED — it is present only when a provider
+    returned a named individual. `instance_match` supplies the REASON when it did not.
+    Records written before `instance_match` was captured bucket as `unrecorded*`, which
+    is an honest gap rather than a silent zero.
+    """
+    if rec.get("instance_id"):
+        return "resolved"
+    m = (rec.get("instance_match") or "").strip()
+    if not m:
+        return "unrecorded_fired" if rec.get("instance_fired") else "unrecorded"
+    if m in _RESOLVED_MATCHES:
+        # match claims resolved but no instance_id — record the disagreement, never fold it
+        return "resolved_no_id"
+    if m in _EMPTY_MATCHES:
+        return "provider_empty"
+    if m in _NOT_SPECIFIC_MATCHES:
+        return "not_specific"
+    if m in _DEGRADED_MATCHES:
+        return "degraded"
+    if m in _MIXED_MATCHES:
+        return "mixed"
+    return "other"
+
+
 def score(rows: list, corpus_rows: list) -> dict:
-    """Rates per axis. AMBIGUOUS never counts as failure — see the corpus header."""
+    """Rates per axis. AMBIGUOUS never counts as failure — see the corpus header.
+
+    PRIMARY MEASURE IS `instance_id` — a provider RESOLVED the identifier — NOT
+    `instance_fired`, which only means the LLM EXTRACTED one. Corrected 2026-08-19.
+
+    The two had never been distinguished in a headline, and the corpus's own
+    `requires_instances` note already called `instance_id` "a stronger signal than an
+    identifier merely being extracted": `stamp()` used the strong signal while this
+    function used the weak one. The consequence was not a rounding error — provider-empty
+    and success SCORED IDENTICALLY, so a change that made providers start resolving would
+    have read as a no-op, and every prior grounding number measured EXTRACTION.
+
+    `fired_when_expected` is retained as a SECONDARY column: extraction rate is a real
+    signal, it is simply not grounding.
+    """
     spec = {r["id"]: r for r in corpus_rows}
-    by_axis = defaultdict(lambda: {"n": 0, "fired": 0, "expected_fire": 0,
-                                   "fired_when_expected": 0, "ambiguous": 0, "errors": 0})
+    by_axis = defaultdict(lambda: {"n": 0, "fired": 0, "resolved": 0,
+                                   "expected_fire": 0, "fired_when_expected": 0,
+                                   "resolved_when_expected": 0,
+                                   "ambiguous": 0, "errors": 0,
+                                   "outcomes": Counter()})
     for rec in rows:
         if rec.get("_kind") == "stamp":
             continue
@@ -277,13 +330,18 @@ def score(rows: list, corpus_rows: list) -> dict:
         if rec.get("error"):
             a["errors"] += 1
             continue
+        a["outcomes"][_outcome_bucket(rec)] += 1
         if rec.get("instance_fired"):
             a["fired"] += 1
+        if rec.get("instance_id"):
+            a["resolved"] += 1
         exp = s.get("expect_instance")
         if exp is True:
             a["expected_fire"] += 1
             if rec.get("instance_fired"):
                 a["fired_when_expected"] += 1
+            if rec.get("instance_id"):
+                a["resolved_when_expected"] += 1
         elif exp == AMBIGUOUS:
             a["ambiguous"] += 1
     return dict(by_axis)
@@ -291,12 +349,28 @@ def score(rows: list, corpus_rows: list) -> dict:
 
 def report(rows: list, corpus_rows: list) -> None:
     axes = score(rows, corpus_rows)
-    print("\n=== grounding rate by axis (primary measure) ===")
+    print()
+    print("=== RESOLUTION rate by axis (primary measure: a provider matched) ===")
     for axis, a in sorted(axes.items()):
-        rate = (f"{a['fired_when_expected']}/{a['expected_fire']}"
-                if a["expected_fire"] else "n/a")
-        print(f"  {axis:26s} n={a['n']:4d}  grounded-when-expected={rate:>9s}"
+        res = (f"{a['resolved_when_expected']}/{a['expected_fire']}"
+               if a["expected_fire"] else "n/a")
+        ext = (f"{a['fired_when_expected']}/{a['expected_fire']}"
+               if a["expected_fire"] else "n/a")
+        print(f"  {axis:26s} n={a['n']:4d}  RESOLVED-when-expected={res:>9s}"
+              f"  (extracted-only={ext:>9s})"
               f"  ambiguous={a['ambiguous']:3d}  errors={a['errors']:3d}")
+
+    # The three states that used to be one. EXTRACTED IS NOT GROUNDING: a row can
+    # extract an identifier while every provider returns nothing, which scored as a
+    # success until 2026-08-19.
+    print()
+    print("=== outcome breakdown by axis (why it did not resolve) ===")
+    for axis, a in sorted(axes.items()):
+        oc = a["outcomes"]
+        if not oc:
+            continue
+        parts = "  ".join(f"{k}={v}" for k, v in sorted(oc.items(), key=lambda kv: -kv[1]))
+        print(f"  {axis:26s} {parts}")
 
     # Per-phrasing stability: the nondeterminism question, answered directly.
     print("\n=== per-phrasing stability (repeat runs) ===")
