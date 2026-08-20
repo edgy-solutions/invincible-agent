@@ -1,6 +1,7 @@
 ---
 id:         presentation-contract-enumeration
 status:     open
+blocked-by-ruling: RESOLVED 2026-08-20 - see the AMENDMENT in docs/adr/ADR-0017-presentation-as-predicate.md. Transport is per-UI capability REGISTRATION (not a shared schema file); the contract's single home is the COMPONENT LAYER and the registration payload is derived from component exports.
 owner:      agent
 blocked-on:
 closed-by:
@@ -173,3 +174,34 @@ This packet uses ADR-0017's own terms - `expected_fields`, capability publicatio
 archetype. The label "Hole 4" appears in NO artifact in any repo; it is chat-side shorthand. A
 future reader grepping for it would conclude the finding does not exist, so it is deliberately
 not propagated here.
+
+
+---
+
+## RULED 2026-08-20 - registration, not a shared schema file
+
+The publication question this enumeration fed is decided in the AMENDMENT to
+`docs/adr/ADR-0017-presentation-as-predicate.md`. Recorded here because this packet's own
+section 3 was written before the ruling and reads as if a shared schema were the direction.
+
+**What changed:** the drift finding (ten hand-copied `expected_fields` lists, D1) is a
+**transport-independent** defect. Treating "shared schema file" as its remedy conflated two
+questions. Transport is **per-UI capability registration into the graph** - this ADR's own full
+form, the same machinery as engine verb registration - because a static file is either N files
+or a **union that LIES**, letting the backend pick an archetype the calling UI cannot render.
+
+**What survives unchanged:** everything in sections 1 and 2. The typed contract table IS the
+material for step 1 of the build order (component exports), and the drift inventory is the list
+of things that dissolve. D1's `capabilities.py` and D2's `chart_normalizer.py` are not ported to
+the new transport - they stop existing, replaced by a validator against registered contracts.
+
+**What section 3's decision table becomes:** still the selection rule, but scoped. Payload shape
+-> satisfied contract -> archetype, now selected *within the calling client's registered menu*
+rather than across a global table, with `output_uri` still demoted from verdict to candidate
+filter. The table is unchanged; its domain shrank to the caller's menu.
+
+**One clause added by the ruling that this enumeration did not anticipate:** the presentation
+decision now binds to the requesting client's registration, resolved at decision time, with the
+registration version stamped into the answer envelope. Unregistered callers get a labelled
+default menu; persisted answers carry the decision's provenance so a different-capability
+consumer can RE-RESOLVE presentation from the data. The archetype is a projection, not truth.

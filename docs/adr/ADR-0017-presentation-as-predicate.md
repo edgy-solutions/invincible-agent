@@ -547,3 +547,137 @@ provides the namespacing without the split.
   observability and canary machinery stays as-is.
 - Frontend chrome (React component library, theming, layout).
   Archetype selection is upstream of those concerns.
+
+---
+
+# AMENDMENT - 2026-08-20: capability registration is the transport; the component is the home
+
+**Status of this amendment:** RULED. Supersedes the "extended `expected_fields`" direction
+floated during the 2026-08-19 contract enumeration, and closes the publication question that
+had held the presentation build.
+
+## What was decided, and what was NOT
+
+The enumeration (`docs/plans/presentation-contract-enumeration.md`) found ten hand-copied
+`expected_fields` lists duplicated between `cortex-ui/src/registry/frontendCapabilities.ts`
+and `agent_fleet/presentation_agent/capabilities.py`, with no test pinning them equal. The
+first reaction - "make it a shared schema file" - answered the **drift** question and was
+mistaken for an answer to the **transport** question. They are separate, and only the drift
+one was ever in evidence.
+
+**RULED: capability registration into the graph, per-UI, is the transport.** This is this
+ADR's own full form - presentation capabilities as predicates the backend queries, the same
+machinery as engine verb registration. Two reasons, both decisive:
+
+1. **Consistency of shape.** A UI advertising what it can render is the same act as an engine
+   advertising what it can do. One registration story, not two.
+2. **It is the only form that survives more than one UI.** Cortex and OpenDDIL render
+   different menus. A shared static file is either per-UI (N files, and the backend must still
+   know which client it is serving) or a union - and **a union LIES**: it lets the backend
+   choose an archetype the calling UI cannot render, which is the confident-wrong-answer class
+   this arc keeps burying.
+
+## THE DRIFT DEFECT SURVIVES THE TRANSPORT CHANGE - this clause is the load-bearing one
+
+Registration does **not** fix two-masters by itself. If a human hand-writes the contract
+entries in the registration call, `capabilities.py`'s ten copied lists have simply MOVED into
+the registration payload - the same defect, now travelling over the wire with a registrar's
+blessing and looking authoritative.
+
+**So: the contract's single home is the COMPONENT LAYER.** Each widget exports its own contract
+(or imports the schema it is validated against), and the registration payload is ASSEMBLED FROM
+THOSE EXPORTS at build or startup. The component that renders and the contract that is
+registered share one source, mechanically - never by discipline.
+
+Same rule as `outcome.py`: **the artifact EXECUTES the rule rather than describing it.** A
+registration payload that merely agrees with the components is a copy that happens to be
+correct today.
+
+## What registration INHERITS from the engine story
+
+Adopting the shape means adopting its biography, and this project has already paid for that
+biography in full. Each of these is a known family member, not a hypothetical:
+
+* **Admission validation.** The registrar Contract-D-checks engine registrations against the
+  ontology. UI capability registration needs its analog: a UI registering an archetype with a
+  malformed or unknown-vocabulary contract is REFUSED LOUDLY AT REGISTRATION, not discovered at
+  render time.
+* **Runtime-state semantics.** Verb edges are runtime-owned: wiped by a substrate wipe,
+  re-formed on engine restart - which produced the boot-order race, the perfect-graph-zero-verbs
+  state, and the re-register hook (see [[bootstrap-state-debt]]). Presentation capabilities are
+  the SAME SPECIES. A substrate wipe leaves a backend with zero registered archetypes and every
+  answer falling to honest degradation. That is survivable ONLY BECAUSE the degradation work
+  shipped, and it must be a NAMED STATE in the runbook, not a surprise discovered in a demo.
+* **Staleness / re-registration on boot.** What happens when OpenDDIL redeploys with a changed
+  contract, or disappears? The engines answer with re-registration on boot; UIs get the same,
+  plus the backend selecting against the caller's CURRENT registration rather than a cached one.
+
+## What registration does NOT inherit: identity-grade trust
+
+Engines register with minted service identities because a verb is a **governed capability** -
+registering one is a claim about what the fleet may do. **A UI's render menu is a client
+describing itself.** It needs VALIDATION (well-formed, known vocabulary) but NOT ENTITLEMENT.
+
+**Stated explicitly so nobody builds a Topaz gate on archetype registration.** Gating a client's
+description of its own screen would be authorization theatre over a non-privileged fact, and it
+would make onboarding a new UI an authz change.
+
+## The coupling this introduces: the decision binds to the CALLER'S menu
+
+Registration adds exactly one field of coupling that did not exist before. **The archetype
+decision is valid only against the render menu of the client that will render it.** Choose
+CHART_WIDGET because Cortex registered it, deliver to an OpenDDIL session that never did, and
+the result is a CORRECT ANSWER WITH AN UNRENDERABLE PRESENTATION. The failure is not
+misdelivery - the session already knows the way home - it is **a decision made against the wrong
+capability set.**
+
+**Requirement, stated precisely:** the presentation decision resolves the requesting client's
+registered contract set AT DECISION TIME and selects within it. That is a LOOKUP KEY, not an
+affinity system. No stickiness, no routing state, no origin-tracking machinery: the request
+already carries a client identity (the UI authenticates; the session knows its origin), and the
+only thing that changes is WHICH MENU the archetype picker consults.
+
+Three edges, named now because each is a known family member:
+
+1. **The stale-menu race.** The client registers at startup; the answer composes twenty minutes
+   later; the client redeployed in between. Same species as every registration-freshness problem
+   the engines have, and the same fix: re-register on boot, VERSION the registration, and STAMP
+   THE REGISTRATION VERSION INTO THE ANSWER ENVELOPE. A mismatch then reads as "decided against
+   menu v3, rendered by v4" - diagnosable - instead of a silent wrong shape.
+2. **The unregistered caller.** A curl, a script, a UI mid-onboarding. This is a NAMED
+   DEGRADATION, never an error: fall back to the universal archetypes (KNOWLEDGE_DOCUMENT is
+   renderable by anything that can show text) and label the envelope `presentation: default-menu`.
+   Honest-degradation applied to the new seam, and it keeps the API usable by non-UI consumers
+   without special-casing them.
+3. **Multi-consumer answers.** Answers are pinned, shared, and re-opened later - possibly by a
+   different UI - so the artifact OUTLIVES the requesting client's menu. Resolution: persist the
+   answer's DATA together with the decision's PROVENANCE (which archetype, against which
+   registration version), and let a different-capability consumer RE-RESOLVE presentation from
+   the data rather than replay the original decision. **The archetype choice is a projection, not
+   part of the truth** - which is this ADR's own backend-masters-artifact /
+   UI-masters-arrangement line finally doing load-bearing work.
+
+## Build order that follows
+
+1. **The contract table becomes the component exports.** The types and cardinality already
+   enumerated in `presentation-contract-enumeration.md`, moved INTO the components as exported
+   contracts. This is the single-home step and it comes FIRST; everything else is plumbing.
+2. **The registration path.** Assemble the payload from those exports, register per-UI, with
+   admission validation and re-registration on boot.
+3. **`capabilities.py` and `chart_normalizer.py` DISSOLVE into a validator** against registered
+   contracts. They are not ported; they stop existing. `chart_normalizer` is 194 lines
+   reproducing a contract the component no longer even has - deleting it is the point, not a
+   side effect.
+
+**Deliberately NOT ruled here:** whether the registered contract is expressed as JSON Schema,
+pydantic, or TypeScript-derived types. That is an implementation choice for step 1, to be made by
+whoever writes the first component export, against the real shapes in the enumeration table.
+
+## What this amendment retires from the body above
+
+The `## Open items` entry on schema validation and the `Alternatives considered` entry
+"Schema validation of the echoed structured_data" were written when the contract lived only in
+the backend. With contracts registered per-UI and derived from components, validation is against
+the CALLER'S REGISTERED CONTRACT rather than a backend-held schema. The alternatives entries stay
+as written - they record why the 2026-06-03 decision went the way it did - but they are no longer
+the live design.
