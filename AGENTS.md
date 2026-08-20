@@ -1072,6 +1072,33 @@ form: **a conclusion that travels by repetition rather than by evidence gets re-
 inherited** — chat-borne claims have no verification gate, so any claim important enough to cross
 a session or a handoff crosses as a checkable statement WITH its evidence, or not at all.
 
+### An instrument that CAPTURES the discriminating signal and SCORES on the non-discriminating one is green over the exact thing it exists to measure
+2026-08-19, the resolver corpus. Every record carried BOTH signals: `instance_id` (a provider
+actually RESOLVED the identifier) and `instance_fired` (the LLM merely EXTRACTED one). The
+preflight `stamp()` probed the strong one. The scoring function `score()` keyed on the weak one.
+**The corpus's own `requires_instances` note states the distinction and calls `instance_id` "a
+stronger signal than an identifier merely being extracted"** — the artifact testified against its
+own scoring function, in the same file, and nobody read the two together.
+
+**The cost is not a rounding error, it is a blind spot shaped exactly like the fix.**
+provider-empty and success both extract an identifier, so they scored IDENTICALLY. A change that
+made providers start resolving — the change the corpus existed to evaluate — would have moved the
+primary measure by ZERO and read as a no-op. Measured on the one surviving record set: **27/30
+extracted, 0/30 resolved.** Every grounding number published before that day measured extraction.
+
+And it was not localised: a second, ad-hoc probe script had a field *named* `resolved` populated
+from the weak signal too. **Two instruments, independently written, both called extraction
+"resolution."** When a distinction is subtle enough to lose once, assume it is lost everywhere the
+same word appears.
+
+**So: for any instrument, ask which recorded field the HEADLINE consumes, and whether a fix to the
+thing being measured would move it.** If the answer is "no", the instrument is decorative over its
+own subject. This is the sibling of *a probe must demonstrate it can SEE the category of thing it
+is checking for*: there the probe could not observe the category; here it observed it, wrote it
+down, and then scored something else. **Capture is not measurement. The signal must reach the
+number.**
+
+
 ### Automated passes over a readable corpus fail STRUCTURALLY and DIVERSELY — more passes add error modes, they do not triangulate
 2026-08-10, enumerating unminted outbound callers. **Four classifier passes over one tree produced
 four different answers, and every error was structural rather than a typo:**
