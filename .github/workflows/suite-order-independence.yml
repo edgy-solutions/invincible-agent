@@ -1,0 +1,81 @@
+# LANDED 2026-08-20 as workflow_dispatch ONLY. Not a gate yet.
+# Promotion to pull_request requires TWO clean runs on a real runner first - see
+# docs/plans/no-ci-gate-on-the-suite.md. Until then this is a tool you invoke, not a check
+# that blocks you, and that distinction is deliberate: a never-executed job wired to push
+# either burns minutes on every commit or goes red for environment reasons and trains
+# people to ignore it.
+#
+# WHY: the 1543-test suite has NO CI gate today; CI runs exactly one file
+# (tests/test_telemetry.py, in build-containers.yml). That absence is why the
+# order-dependence debt in docs/plans/suite-signal-session.md accumulated silently for
+# the length of the enforcement arc.
+#
+# workflow_dispatch ONLY, deliberately. This has never run on a GitHub runner, and a
+# never-executed job wired to `push` would either burn minutes on every commit or go red
+# for environment reasons and teach people to ignore it -- the flaky-red trap the
+# effect-write-gate fixture's own docstring warns about. Run it by hand first; promote to
+# `push`/`pull_request` only once it has been green on a runner more than once.
+name: suite order-independence
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "random-order seed (blank = random each run)"
+        required: false
+        default: ""
+
+jobs:
+  ordered:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      # Exit code read from the COMMAND, never from a pipe's tail -- `pytest | tail` lets
+      # tail's exit 0 mask a failing suite. House rule, docs/plans/suite-signal-session.md.
+      - name: suite (collection order)
+        run: uv run pytest tests/ -q
+
+  shuffled:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      # The isolation check. Bucket=module keeps module-scoped fixtures coherent while
+      # randomising FILE order, which is where the coupling lives.
+      - name: suite (shuffled order)
+        run: |
+          SEED="${{ inputs.seed }}"
+          if [ -z "$SEED" ]; then SEED=$RANDOM; fi
+          echo "random-order-seed=$SEED  (re-run with this seed to reproduce)"
+          uv run pytest tests/ -q --random-order --random-order-bucket=module --random-order-seed=$SEED
+
+  standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      # Finds PARASITISM (a file green only via a neighbour's import side effects) rather
+      # than COUPLING. Different instrument from the shuffle: 6 of the 9 members found in
+      # 2026-08-17 needed no shuffle at all, just running the file by itself.
+      - name: every test file, alone
+        run: |
+          rc=0
+          for f in $(find tests -name 'test_*.py' | sort); do
+            if ! uv run pytest "$f" -q > /tmp/one.txt 2>&1; then
+              echo "::error file=$f::fails when run ALONE"; tail -5 /tmp/one.txt; rc=1
+            fi
+          done
+          exit $rc
