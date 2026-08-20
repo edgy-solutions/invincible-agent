@@ -62,10 +62,20 @@ mesh:DatasetAnalysisRequest a owl:Class ;
   rdfs:label "Dataset Analysis Request" ;
   rdfs:comment "Input shape for analyzeDataset — names a dataset and the analytical question." .
 
+# DEFINITIONS ARE RETRIEVAL INPUT — no example catalogue here (2026-08-19).
+# The previous comment listed `gold.sales.revenue_summary`, `TEST-1234`, `'Customer 360'` — the
+# SAME list, same order, as contracts.baml's `instance_identifier` field description. Two masters
+# for one vocabulary, neither referencing the other, and the BAML copy is the one that drives
+# extraction. Examples of identifiers are also what make every identifier-shaped token resemble
+# this class, which is the recall bias `2f617fd` removed elsewhere.
+#
+# The last sentence is the load-bearing one: it states the identifier-vs-content-word
+# distinction on the class the extraction path types against, which is the half the matcher
+# gate enforces structurally (segment specificity, instance_resolution.py).
 mesh:InstanceIdentifier a owl:Class ;
   rdfs:subClassOf mesh:Request ;
   rdfs:label "Instance Identifier" ;
-  rdfs:comment "A token that names a specific individual rather than describing a kind — a catalog asset path (e.g. gold.sales.revenue_summary), a procedure code (TEST-1234), a data module code (DMC), a tail number, an equipment serial, or a quoted titled name (e.g. 'Customer 360'). Input shape for the mesh:resolveInstance routing pre-step: any engine that owns an instance registry registers itself as a provider, and the router fans the identifier out to discover the named individual's class authoritatively. The lexical SHAPE of the token never decides the class — only providers do. See ADR Recipe v2 (instance resolution as registry-discovered capability)." .
+  rdfs:comment "A token that names one specific individual rather than a kind of thing. Input shape for the mesh:resolveInstance routing pre-step: providers match it against their own catalogues and the authoritative answer overrides the class guess. Distinguished from a content word that merely appears in an asset's name. The lexical SHAPE of the token never decides the class — only providers do." .
 
 mesh:InstanceResolution a owl:Class ;
   rdfs:subClassOf mesh:Response ;

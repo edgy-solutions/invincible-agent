@@ -43,7 +43,7 @@ class SemanticResolution {
   reasoning string?
     @description("1-2 sentence explanation of why this class was chosen.")
   instance_identifier string?
-    @description("If the query refers to a SPECIFIC NAMED INDIVIDUAL — a catalog asset path like gold.sales.revenue_summary, a procedure or work-order code like TEST-1234 or AFP-2024-001, a data module code (DMC), a tail number, an equipment serial, or a quoted or titled name like 'Customer 360' — copy that exact token here verbatim. Otherwise leave null. This field gates the router's instance-resolution pre-step (Recipe v2): when set, the router fans the token out to registered providers and lets the authoritative phone-book class override resolved_uri. Still always resolve resolved_uri as your best guess either way — the phone book may miss.")
+    @description("If the query refers to a SPECIFIC NAMED INDIVIDUAL — a catalog asset, a procedure or work-order code, a data module code (DMC), a tail number, an equipment serial, or a quoted or titled name — copy that exact token here verbatim, INCLUDING any qualifier the user gave it (schema, dataset or path prefix). The phone book normalizes qualifiers and matches on the asset's own name, so a qualified token is safer than a guessed bare one. Do NOT extract a word that merely APPEARS NEAR the asset name — a token lifted from the surrounding sentence rather than naming the thing will be refused as non-specific, and that refusal costs the whole answer. Otherwise leave null. This field gates the router's instance-resolution pre-step (Recipe v2): when set, the router fans the token out to registered providers and lets the authoritative phone-book class override resolved_uri. Still always resolve resolved_uri as your best guess either way — the phone book may miss.")
 }
 
 // -----------------------------------------------------------------------------
@@ -103,12 +103,11 @@ function ClassifyDomainIntent(query: string, domain: string) -> SemanticResoluti
     URI and assign a confidence score between 0.0 and 1.0.
 
     JOB B — Extract any NAMED INDIVIDUAL.
-    If the query refers to a specific named individual — a catalog asset
-    path like gold.sales.revenue_summary, a code like TEST-1234 or
-    AFP-2024-001, a data module code (DMC), a tail number, an equipment
-    serial, or a quoted or titled name like 'Customer 360' — copy that
-    EXACT token into the instance_identifier field. Otherwise leave it
-    null.
+    If the query refers to a specific named individual — a catalog asset,
+    a code, a data module code (DMC), a tail number, an equipment serial,
+    or a quoted or titled name — copy that EXACT token into the
+    instance_identifier field, KEEPING any qualifier the user attached to
+    it (a schema, dataset or path prefix). Otherwise leave it null.
 
     Be RECALL-BIASED on Job B: when in doubt about whether something is
     a name vs. a description, extract it. A miss costs more than a
