@@ -34,7 +34,10 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --locked
+      # --extra agent-fleet is REQUIRED: without it 20+ files fail at COLLECTION with
+      # ModuleNotFoundError (restate, agent_fleet). The first CI run (32326870277) failed
+      # exactly this way in ordered+shuffled, which is what a never-executed workflow hides.
+      - run: uv sync --locked --extra agent-fleet
       # Exit code read from the COMMAND, never from a pipe's tail -- `pytest | tail` lets
       # tail's exit 0 mask a failing suite. House rule, docs/plans/suite-signal-session.md.
       - name: suite (collection order)
@@ -48,7 +51,10 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --locked
+      # --extra agent-fleet is REQUIRED: without it 20+ files fail at COLLECTION with
+      # ModuleNotFoundError (restate, agent_fleet). The first CI run (32326870277) failed
+      # exactly this way in ordered+shuffled, which is what a never-executed workflow hides.
+      - run: uv sync --locked --extra agent-fleet
       # The isolation check. Bucket=module keeps module-scoped fixtures coherent while
       # randomising FILE order, which is where the coupling lives.
       - name: suite (shuffled order)
@@ -66,7 +72,10 @@ jobs:
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --locked
+      # --extra agent-fleet is REQUIRED: without it 20+ files fail at COLLECTION with
+      # ModuleNotFoundError (restate, agent_fleet). The first CI run (32326870277) failed
+      # exactly this way in ordered+shuffled, which is what a never-executed workflow hides.
+      - run: uv sync --locked --extra agent-fleet
       # Finds PARASITISM (a file green only via a neighbour's import side effects) rather
       # than COUPLING. Different instrument from the shuffle: 6 of the 9 members found in
       # 2026-08-17 needed no shuffle at all, just running the file by itself.
