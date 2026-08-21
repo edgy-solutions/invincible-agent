@@ -224,3 +224,86 @@ mesh:HazardDeclaration a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Hazard Declaration" ;
   rdfs:comment "A safety or risk statement with an optional enumerated hazard list and a severity of CRITICAL, WARNING or INFO." .
+
+# =============================================================================
+# ENGINE P — PLANNING RESPONSE TYPES (added 2026-08-21)
+# =============================================================================
+#
+# The SUBJECT end of Engine P's registrations. Ten verbs, ten fixed output types
+# (ADR-0030), each declared here so Contract D can find it.
+#
+# WITHOUT THESE, every planning verb's registration fails on its subject end exactly as the
+# archetypes below failed on their object end — and per the 2026-08-21 measurement, the
+# failure reads as "incomplete" rather than "undeclared", which is the shape that costs an
+# afternoon. Declared at the same time as the verbs rather than after them, because a verb
+# that registers and cannot route is a promise with nothing behind it.
+#
+# NAMES ARE STRUCTURAL, not domain (GENERIC-AT-BIRTH). "PeriodCostSeries" is the closest any
+# of these comes to a domain word and it is a shape — a series of amounts per period — not a
+# portfolio-planning term. What the amounts MEAN rides in the payload.
+
+mesh:PeriodCostSeries a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Period Cost Series" ;
+  rdfs:comment "Amounts per fiscal period, split by kind, against an optional governed cap per period. The cap is NULLABLE and null means uncapped — never zero, which would read as a breached line." .
+
+mesh:FundingGapSet a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Funding Gap Set" ;
+  rdfs:comment "Required minus committed per group per period. Demand and supply are separate facts; a single combined figure cannot express a multi-funder shortfall." .
+
+mesh:LoadThresholdGrid a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Load Threshold Grid" ;
+  rdfs:comment "Measured value per subject per period against a threshold THAT SUBJECT OWNS. The threshold is per cell because it is a governance judgement attached to the subject; one line across the grid would mis-colour every subject whose line differs." .
+
+mesh:ConstraintViolationSet a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Constraint Violation Set" ;
+  rdfs:comment "Ordering constraints whose successor violates its type and lag, carrying the shortfall in days. A violation with no magnitude sends someone to open a schedule; one with a magnitude is actionable." .
+
+mesh:MaturityMatrix a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Maturity Matrix" ;
+  rdfs:comment "Subject-by-subject level against target from the latest append-only assessment at or before an as-of date. A cell never assessed is ABSENT, not zero — never-assessed and assessed-at-zero are different facts." .
+
+mesh:ContributionSequence a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Contribution Sequence" ;
+  rdfs:comment "Weighted contributors to an outcome ordered by completion, compared against dated milestones. Reports contributions OUTSTANDING past a date, never that the date was missed — the model carries no per-milestone requirement to support the stronger claim." .
+
+mesh:PlateauTimeline a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Plateau Timeline" ;
+  rdfs:comment "Dated states a process passes through, with the capabilities enabling it and their assessed trajectory." .
+
+mesh:FootprintSet a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Footprint Set" ;
+  rdfs:comment "Where a thing is used — the capabilities it enables and the work it participates in, with intervals." .
+
+mesh:IntervalSchedule a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Interval Schedule" ;
+  rdfs:comment "Flat rows carrying their parentage and planned versus actual intervals. Flat rather than nested because a flat set diffs cleanly against another state and a tree does not." .
+
+mesh:ChangeLog a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Change Log" ;
+  rdfs:comment "The ordered operations accumulated in a scenario. The record a decision is reconstructed from long after the session that produced it." .
+
+# --- the two matching ARCHETYPES (object end) --------------------------------
+# Live views (ADR-0042): their content is recomputed against mutable state rather than being
+# born complete, and their contracts declare `recomputes: true` so the selector can identify
+# them. Structural names — PERIOD_SERIES not COST_CURVE — because the archetype string is
+# what registers, what the backend validates against, and what appears in every caller's menu.
+
+mesh:PeriodSeries a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Period Series" ;
+  rdfs:comment "A time-phased series drawn against an optional threshold line. Refuses a payload with no periods, an unlabelled row, or no numeric amount anywhere. A LIVE VIEW: content is replaced wholesale on re-evaluation and its freshness stamp is per evaluation, never inherited from mint time." .
+
+mesh:ThresholdGrid a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Threshold Grid" ;
+  rdfs:comment "Subjects by periods, each cell against a threshold the subject owns. Axes are DERIVED from the cells, so a pair with no activity renders as a gap rather than a zero — a zero in a heat grid reads as measured-and-fine, which is a different claim from nothing-was-happening. A LIVE VIEW." .
