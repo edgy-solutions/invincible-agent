@@ -39,7 +39,6 @@ import pytest
 
 from agent_fleet.presentation_agent.capabilities import (
     canonical_iri_for_lookup as _canonical_iri_for_lookup,
-    lookup_capability as _lookup_capability,
 )
 
 
@@ -101,43 +100,16 @@ _DATASET_ANALYSIS_REPORT_FULL = "http://invincible-agent/mesh#DatasetAnalysisRep
 _DATASET_ANALYSIS_REPORT_COMPACT = "mesh:DatasetAnalysisReport"
 
 
-def test_lookup_resolves_compact_form():
-    """Lookup against compact form returns the CHART_WIDGET capability."""
-    cap = _lookup_capability(_DATASET_ANALYSIS_REPORT_COMPACT)
-    assert cap is not None, "compact-form lookup returned None"
-    assert cap.get("archetype") == "CHART_WIDGET"
-
-
-def test_lookup_resolves_full_iri_form():
-    """Lookup against full-IRI form (what the supervisor actually
-    sends) returns the SAME capability. This is the specific bug
-    cd55111 fixed: the supervisor injects ``http://.../mesh#Foo`` from
-    the seed, but the capability table stores ``mesh:Foo`` — exact
-    ``==`` missed the match, render_ui fell through to legacy
-    DesignUI, and the architecturally-correct path never fired."""
-    cap = _lookup_capability(_DATASET_ANALYSIS_REPORT_FULL)
-    assert cap is not None, "full-IRI lookup returned None — the bug from cd55111"
-    assert cap.get("archetype") == "CHART_WIDGET"
-
-
-def test_compact_and_full_resolve_to_identical_capability():
-    """Both forms must return the SAME row, not just both non-None.
-    A capability table with two entries for the same logical
-    archetype (one compact, one full) would let this pass with two
-    distinct rows — that's a different bug we should also catch.
-    Comparing the resolved dicts pins the identity."""
-    cap_compact = _lookup_capability(_DATASET_ANALYSIS_REPORT_COMPACT)
-    cap_full = _lookup_capability(_DATASET_ANALYSIS_REPORT_FULL)
-    assert cap_compact is cap_full or cap_compact == cap_full, (
-        "compact and full forms resolve to different capability rows — "
-        "either there are duplicate rows in the table, or the "
-        "canonicalization is asymmetric. Both are bugs."
-    )
-
-
-def test_lookup_returns_none_for_unknown_output_uri():
-    """An archetype that isn't registered MUST return None so
-    /render_ui knows to fall through to legacy DesignUI rather than
-    pretending to dispatch to an empty match."""
-    assert _lookup_capability("http://invincible-agent/mesh#NonExistentArchetype") is None
-    assert _lookup_capability("mesh:NonExistentArchetype") is None
+# ── `lookup_capability` TESTS REMOVED 2026-08-20, with the function ────────────────────
+# test_lookup_resolves_full_iri_form, test_lookup_resolves_compact_form,
+# test_compact_and_full_resolve_to_identical_capability and
+# test_lookup_returns_none_for_unknown_output_uri exercised
+# `capabilities.lookup_capability`, which the ADR-0017 seam replaced with
+# `capability_registry.select_presentation`. They pinned a hand-maintained table's
+# behaviour; keeping them would have required keeping the table.
+#
+# THE PROPERTY THEY GUARDED SURVIVES, in two places: the compact-vs-full IRI folding is
+# still pinned above (it is the helper, still used), and the registry pins the same match
+# behaviour in tests/test_capability_registry.py::
+# test_full_iri_and_compact_forms_both_match. A property with two owners is not lost when
+# one owner retires.

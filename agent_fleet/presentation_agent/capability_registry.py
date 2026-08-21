@@ -63,6 +63,42 @@ def register(frontend_id: str, frontend_version: str, capabilities: List[Dict[st
         return len(_REGISTRY[fid]["capabilities"])
 
 
+def union_menu() -> Dict[str, Any]:
+    """The union of every currently-registered menu — the ANONYMOUS caller's menu.
+
+    WHY A UNION IS HONEST HERE, when it was fatal as a design. The amendment rejected a
+    union SCHEMA because it lets the backend pick an archetype a SPECIFIC caller cannot
+    render — the union lies about that caller. An anonymous caller has no menu to
+    contradict, so the union is simply the best available statement of "what any registered
+    surface could render", which is the most that can be said about a caller who did not
+    say who it is.
+
+    WHY NOT `capabilities.py`. That backend copy was the fallback's source until 2026-08-20
+    and it resurrected the two-masters defect the migration killed: every row it held is now
+    DERIVED on the UI side, so keeping it meant the fallback drifted the day a contract
+    changed, with nothing pinning them equal. Computed from the registry, the fallback reads
+    the same source everything else reads.
+
+    Deduped by (subject_uri, archetype): two surfaces registering the same capability is
+    agreement, not two options.
+    """
+    with _LOCK:
+        entries = list(_REGISTRY.values())
+    seen, caps = set(), []
+    for e in entries:
+        for c in e.get("capabilities") or []:
+            key = (str(c.get("subject_uri") or ""), str(c.get("archetype") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            caps.append(c)
+    return {
+        "frontend_id": None,
+        "frontend_version": "union",
+        "capabilities": caps,
+    }
+
+
 def menu_for(frontend_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """The caller's registered menu, or None when the caller never registered."""
     if not frontend_id:
@@ -203,13 +239,25 @@ def select_presentation(
     discriminant that was missing when the choice was made from a type annotation alone.
     """
     menu = menu_for(frontend_id)
-    if menu is None:
-        return None, {
-            "presentation_source": "default-menu",
-            "presentation_menu": list(UNIVERSAL_ARCHETYPES),
-            "frontend_id": frontend_id or None,
-            "reason": "caller has no registered capability menu",
-        }
+    anonymous = menu is None
+    if anonymous:
+        # ANONYMOUS CALLER -- curl, a script, a UI mid-onboarding. It gets the DERIVED UNION
+        # of registered menus, not a collapse to text: these are consumers of the ANSWER,
+        # and the answer's presentation metadata is part of its truth. A script receiving
+        # CHART_WIDGET plus shaped data can render or forward it; collapsing every non-UI
+        # caller to prose would make the API strictly less useful to exactly the consumers
+        # who cannot register. Still LABELLED `default-menu`, so the state stays named.
+        menu = union_menu()
+        if not menu["capabilities"]:
+            # EMPTY REGISTRY -> empty union -> the universal floor. This is the
+            # post-restart state: presentation capabilities are runtime state, so a
+            # restart empties the registry until frontends re-register.
+            return None, {
+                "presentation_source": "default-menu",
+                "presentation_menu": list(UNIVERSAL_ARCHETYPES),
+                "frontend_id": frontend_id or None,
+                "reason": "no frontend has registered — union is empty",
+            }
 
     target = _canonical(output_uri)
     caps: List[Dict[str, Any]] = menu["capabilities"]
@@ -237,7 +285,7 @@ def select_presentation(
         # Nothing on this menu can draw this payload. Honest, and now EXPLAINED: the
         # refusals name which requirement each candidate missed.
         return None, {
-            "presentation_source": "unrenderable",
+            "presentation_source": "default-menu" if anonymous else "unrenderable",
             "frontend_id": menu["frontend_id"],
             "registration_version": menu["frontend_version"],
             "selection_basis": basis,
@@ -257,7 +305,7 @@ def select_presentation(
 
     winner = max(satisfied, key=_affinity)
     return winner, {
-        "presentation_source": "registered",
+        "presentation_source": "default-menu" if anonymous else "registered",
         "frontend_id": menu["frontend_id"],
         "registration_version": menu["frontend_version"],
         "archetype": winner.get("archetype"),

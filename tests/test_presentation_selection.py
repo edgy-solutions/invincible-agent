@@ -153,3 +153,52 @@ def test_selection_basis_is_always_reported():
     _, prov = reg.select_presentation(
         "cortex-ui-desktop", "mesh:DatasetAnalysisReport", _payload([{"r": "n", "c": 1}]))
     assert prov["selection_basis"]
+
+
+# ── the three anonymous-caller cases the seam's ruling specified ─────────────────────
+def test_ANONYMOUS_caller_gets_the_DERIVED_UNION_not_a_collapse_to_text():
+    """RULED 2026-08-20. curl and scripts are not UIs that forgot to register -- they are
+    consumers of the ANSWER, and the answer's presentation metadata is part of its truth. A
+    script receiving CHART_WIDGET plus shaped data can render or forward it; collapsing
+    every non-UI caller to prose would make the API strictly less useful to exactly the
+    consumers who cannot register.
+
+    The union-that-lies objection does not apply: it was fatal for a SPECIFIC caller
+    (backend picks what THIS UI cannot render), and an anonymous caller has no menu to
+    contradict."""
+    reg.register("cortex-ui-desktop", "1.0", [_CHART, _DOC])
+    cap, prov = reg.select_presentation(
+        None, "mesh:DatasetAnalysisReport", _payload([{"region": "n", "count": 3}]))
+    assert cap is not None
+    assert cap["archetype"] == "CHART_WIDGET"
+    # ...and it is still LABELLED, so the state stays named.
+    assert prov["presentation_source"] == "default-menu"
+
+
+def test_the_union_is_DERIVED_from_registrations_never_a_hand_kept_table():
+    """capabilities.py's lookup used to serve this path. Deriving the union means the
+    fallback reads the same source everything else reads, so it cannot drift the day a
+    contract changes."""
+    reg.register("a", "1.0", [_CHART])
+    reg.register("b", "1.0", [_DOC])
+    archetypes = {c["archetype"] for c in reg.union_menu()["capabilities"]}
+    assert archetypes == {"CHART_WIDGET", "KNOWLEDGE_DOCUMENT"}
+
+
+def test_EMPTY_REGISTRY_means_the_union_is_empty_and_we_fall_to_the_labelled_floor():
+    """The post-restart state. Presentation capabilities are RUNTIME state, so a restart
+    empties the registry until frontends re-register -- and an anonymous caller then gets
+    the universal floor, labelled. Survivable only because the honest-degradation work
+    shipped, which is why the runbook names it."""
+    cap, prov = reg.select_presentation(
+        None, "mesh:DatasetAnalysisReport", _payload([{"region": "n", "count": 3}]))
+    assert cap is None
+    assert prov["presentation_source"] == "default-menu"
+    assert "KNOWLEDGE_DOCUMENT" in prov["presentation_menu"]
+
+
+def test_the_union_dedupes_identical_capabilities_from_two_surfaces():
+    """Two surfaces registering the same capability is AGREEMENT, not two options."""
+    reg.register("a", "1.0", [_CHART])
+    reg.register("b", "1.0", [_CHART])
+    assert len(reg.union_menu()["capabilities"]) == 1

@@ -150,23 +150,20 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
 ]
 
 
-def lookup_capability(output_uri: str) -> Optional[Dict[str, Any]]:
-    """Resolve ``output_uri`` to a capability row, canonicalizing
-    both sides first.
-
-    Both sides MUST be canonicalized: the capability table stores
-    compact form (``mesh:Foo``) and the supervisor injects full-IRI
-    form (``http://.../mesh#Foo``) from the seed's predicate
-    registration. Exact ``==`` compare misses every match without
-    this — same compact-vs-full hazard the Step 1 substrate sweep
-    canonicalized against, at the presentation boundary.
-
-    Returns the matched dict on success, ``None`` if no archetype
-    is registered for this output_uri (caller should fall through
-    to legacy DesignUI).
-    """
-    target = canonical_iri_for_lookup(output_uri)
-    for cap in PRESENTATION_CAPABILITIES:
-        if canonical_iri_for_lookup(cap["subject_uri"]) == target:
-            return cap
-    return None
+# ── `lookup_capability` REMOVED 2026-08-20 (ADR-0017 amendment, the seam) ──────────────
+# The render-time lookup lived here and answered "what archetype for this output_uri?" from
+# a hand-maintained table. It is replaced by `capability_registry.select_presentation`,
+# which answers a better question -- "what archetype can THIS CALLER render that THIS
+# PAYLOAD satisfies?" -- against menus the frontends register from their own component
+# contracts. Anonymous callers get the DERIVED UNION of those menus, so no path reads a
+# hand-maintained table any more.
+#
+# THE FILE SURVIVES because it has two OTHER jobs, and the acceptance that said "delete
+# capabilities.py" had not separated them:
+#   * PRESENTATION_CAPABILITIES drives Engine F's OWN startup registration of
+#     (output_shape)-[mesh:rendersAs]->(archetype) triples into the mesh graph. That is the
+#     presentation-as-predicate registration this ADR is named for -- the BACKEND
+#     advertising to the GRAPH -- and it is a different concern from a UI's render menu.
+#     Deleting the file would have silently stopped it.
+#   * canonical_iri_for_lookup is the compact-vs-full IRI folding, still consumed by
+#     main.py.

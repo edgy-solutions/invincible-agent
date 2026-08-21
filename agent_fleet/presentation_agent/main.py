@@ -209,12 +209,10 @@ class RenderRequest(BaseModel):
 try:
     from capabilities import (  # type: ignore[no-redef]
         canonical_iri_for_lookup as _canonical_iri_for_lookup,
-        lookup_capability as _lookup_capability,
     )
 except ImportError:
     from agent_fleet.presentation_agent.capabilities import (
         canonical_iri_for_lookup as _canonical_iri_for_lookup,
-        lookup_capability as _lookup_capability,
     )
 
 
@@ -667,8 +665,14 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
         # regresses while callers migrate. Wiring this with frontend_id=None instead would
         # resolve EVERY caller to the labelled default menu and turn every answer into a
         # KNOWLEDGE_DOCUMENT: a regression that looks like completion.
+        # THE REGISTRY IS THE SINGLE SOURCE FOR EVERY PATH. An identified caller selects
+        # from its own menu; an anonymous one selects from the DERIVED UNION of registered
+        # menus (labelled `default-menu`). capabilities.py -- the hand-maintained backend
+        # copy that used to serve this fallback -- is deleted: every row it held is now
+        # derived from a component contract on the UI side, so keeping it meant the
+        # fallback drifted the day a contract changed with nothing pinning them equal.
         cap = None
-        if request.frontend_id:
+        if True:
             _agent_resp = _extract_agent_response(request.raw_data) or {}
             _sel_payload = {
                 "chart_data": _agent_resp.get("data"),
@@ -685,9 +689,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 _sel_prov.get("selection_basis"),
                 (cap or {}).get("archetype") or _sel_prov.get("reason"),
             )
-            if cap is None and _sel_prov.get("presentation_source") in (
-                "default-menu", "unrenderable"
-            ):
+            if cap is None:
                 # The caller's menu cannot draw this. Honest text beats a widget it never
                 # advertised -- and the provenance above says WHICH refusal produced it.
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
@@ -695,8 +697,6 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                     request.raw_data, effective_persona,
                     subject_concept=request.output_uri,
                 )
-        if cap is None:
-            cap = _lookup_capability(request.output_uri)
         if cap:
             archetype = cap["archetype"]
             # ── SLICE 4: THE DATA GETS A VOTE ─────────────────────────────────────────
