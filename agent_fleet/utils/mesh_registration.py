@@ -416,6 +416,105 @@ def _expand_mesh_iri(iri: str) -> str:
     return s
 
 
+
+# Field names an OLD registrar (one that predates the Presentation species) will
+# report as missing: it ignores the unknown presentation fields, then refuses
+# because the verb-shaped fields it still requires are absent. This is the
+# SIGNATURE that separates "ship the image" from "fix the registration" — the
+# two 422 futures whose repairs are opposite.
+_STALE_REGISTRAR_FIELDS = ("verb_iri", "input_uri", "output_uri", "endpoint_url")
+
+
+def _classify_gateway_refusal(status_code, reason: str):
+    """Name the reason CLASS for a failed gateway registration.
+
+    Returns ``(reason_class, detail)``. One symptom — rendersAs stays 0 — with
+    three different repairs, so the class is the only thing that tells an
+    operator which one they are in.
+    """
+    text = (reason or "").lower()
+    if status_code == 422:
+        # THE SIGNATURE IS "REQUIRED", NOT "MENTIONED". A Contract D refusal
+        # naming output_uri ("output_uri not found as :OntologyClass") contains a
+        # stale-image field name while being the OPPOSITE diagnosis -- matching on
+        # the name alone sends an operator to ship an image when the registration
+        # is malformed. Caught by this classifier's own test before it shipped.
+        _missing_marker = ("required" in text or "missing" in text)
+        if _missing_marker and any(f in text for f in _STALE_REGISTRAR_FIELDS):
+            return ("gateway-rejected-STALE-IMAGE",
+                    f"the deployed registrar asked for verb-shaped fields "
+                    f"({', '.join(_STALE_REGISTRAR_FIELDS)}), so it predates the "
+                    f"Presentation species. REPAIR: ship the registrar image — "
+                    f"direct emit will not produce a rendersAs row. Gateway said: {reason}")
+        return ("gateway-rejected-REFUSED",
+                f"a current gateway REFUSED this manifest (Contract D, or a malformed "
+                f"presentation). REPAIR: fix the registration — direct emit only records "
+                f"the same bad claim as audit. Gateway said: {reason}")
+    return ("gateway-unreachable",
+            f"transport or credential failure (status={status_code}). REPAIR: network or "
+            f"mint. Direct emit is a real stopgap here. Detail: {reason}")
+
+
+def _emit_presentation_to_registrar(
+    *,
+    registrar_url: str,
+    name: str,
+    description: str,
+    subject_uri: str,
+    object_uri: str,
+    archetype: str,
+    expected_fields: list,
+    persona_fit: list,
+    domain_fit: list,
+    version: str,
+    mint=None,
+):
+    """POST a Presentation manifest to the mesh-registrar gateway.
+
+    Returns ``True`` on success, else ``(reason_class, detail)``.
+
+    Mirrors ``_emit_to_registrar`` and shares the SAME transport seam
+    (``register_with_mesh``) so the credential attaches in exactly one place.
+    The manifest carries the SPO triple; the gateway normalises it onto the
+    verb-edge shape and Contract-D-checks both ends.
+
+    NOTE the IRI positions, which are inherited and not invented: the predicate
+    stays COMPACT and subject/object stay FULL, matching every existing row.
+    """
+    try:
+        from iagent_mesh.registration_transport import register_with_mesh  # noqa: PLC0415
+    except ImportError as exc:
+        return ("gateway-unreachable",
+                f"iagent_mesh transport not importable: {exc}")
+
+    manifest = {
+        "name": name,
+        "tool_kind": "Presentation",
+        "subject_uri": _expand_mesh_iri(subject_uri),
+        "predicate_iri": _PREDICATE_RENDERS_AS,
+        "object_uri": _expand_mesh_iri(object_uri),
+        "archetype": archetype,
+        "expected_fields": list(expected_fields),
+        "frontend_id": os.getenv("MESH_FRONTEND_ID", "engine-f"),
+        "owner_persona": (persona_fit[0] if persona_fit else "ANY"),
+        "domains": list(domain_fit),
+        "description": description,
+        "version": version,
+    }
+    try:
+        result = register_with_mesh(
+            registrar_url, manifest, component=name, mint=mint, timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ("gateway-unreachable", f"{type(exc).__name__}: {exc}")
+
+    if getattr(result, "registered", False):
+        return True
+    return _classify_gateway_refusal(
+        getattr(result, "status_code", None), getattr(result, "reason", "")
+    )
+
+
 def register_presentation_to_mesh(
     *,
     name: str,
@@ -427,6 +526,7 @@ def register_presentation_to_mesh(
     persona_fit: Optional[Iterable[str]] = None,
     domain_fit: Optional[Iterable[str]] = None,
     version: str = "0.1.0",
+    mint=None,
 ) -> None:
     """Emit a DataHub MCP describing a presentation capability as a
     ``(subject_uri, mesh:rendersAs, object_uri)`` triple.
@@ -498,18 +598,75 @@ def register_presentation_to_mesh(
         )
         return
 
-    # Presentations don't currently go through the mesh-registrar
-    # gateway — the gateway's RegistrationManifest only models verb
-    # edges (input_uri/output_uri pair); the (subject, mesh:rendersAs,
-    # archetype) triple shape isn't supported yet. When the gateway
-    # adds presentation support, mirror the dispatch above.
-    if os.getenv("MESH_REGISTRAR_URL"):
-        logger.info(
-            "MESH_REGISTRAR_URL set but presentation %s won't go through "
-            "the gateway (presentation triples aren't yet supported by "
-            "RegistrationManifest); using direct DataHub emit.",
-            name,
+    # ── THE GATEWAY IS THE WRITER. Direct emit is the FALLBACK. ──────────────
+    #
+    # RegistrationManifest learned the Presentation species (tool_kind
+    # discriminant, SPO triple normalised onto the verb-edge shape), so this
+    # mirrors the engine dispatch above. Per ADR-0006 §Addendum the gateway is
+    # SOLE WRITER of predicate edges into Neo4j + Weaviate: a presentation that
+    # goes through it lands a rendersAs row, and one that does not lands an
+    # audit record in DataHub and nothing else.
+    #
+    # The fallback exists ONLY so deploy ordering does not matter — an engine-f
+    # that boots before the registrar image ships still registers SOMETHING
+    # rather than failing. It is not a second writer, and it must never be
+    # mistaken for one.
+    #
+    # ═══ RETIREMENT TRIGGER — this branch is scheduled for DELETION ═══
+    # Condition: a successful gateway registration for a presentation appears in
+    # engine-f's log ("presentation registered VIA GATEWAY") on the deployed
+    # image, fleet-wide. Check:
+    #     kubectl -n <ns> logs deploy/iagent-engine-f | grep "VIA GATEWAY"
+    # When that line is present after a cold start, delete this fallback branch
+    # and the `mesh_registration_via` property with it.
+    # WHY A TRIGGER AND NOT A TODO: ADR-0006 preserved doc-tools' linker as a
+    # manual fallback, its DataHub token went stale, and it spent months
+    # returning SUCCESS while writing nothing — a dead path dressed as a working
+    # one. A fallback with no removal condition becomes that. This one has a
+    # condition and a command to check it.
+    registrar_url = os.getenv("MESH_REGISTRAR_URL")
+    if registrar_url:
+        outcome = _emit_presentation_to_registrar(
+            registrar_url=registrar_url,
+            name=name,
+            description=description,
+            subject_uri=subject_uri,
+            object_uri=object_uri,
+            archetype=archetype,
+            expected_fields=list(expected_fields or []),
+            persona_fit=list(persona_fit or []),
+            domain_fit=list(domain_fit or []),
+            version=version,
+            mint=mint,
         )
+        if outcome is True:
+            logger.info(
+                "✅ presentation %s registered VIA GATEWAY — rendersAs row is the "
+                "gateway's to write.", name,
+            )
+            return
+        # FALLING BACK. Loud, and with the REASON CLASS named, because the two
+        # classes have OPPOSITE repairs and one symptom (rendersAs stays 0):
+        #
+        #   gateway-rejected-STALE-IMAGE : the deployed registrar predates the
+        #       Presentation species and is asking for verb-shaped fields.
+        #       REPAIR: ship the registrar image. Direct emit will NOT help.
+        #   gateway-rejected-REFUSED     : a current gateway refused this
+        #       manifest — Contract D, or a genuinely malformed presentation.
+        #       REPAIR: fix the registration. Direct emit will NOT help either;
+        #       it only records the same bad claim as audit.
+        #   gateway-unreachable          : transport/mint failure. REPAIR: the
+        #       network or the credential. Direct emit is a real stopgap here.
+        logger.warning(
+            "⚠️  presentation %s FELL BACK to direct DataHub emit — reason class: %s. "
+            "The fallback writes an AUDIT RECORD ONLY: no rendersAs row reaches "
+            "Weaviate, so this presentation stays undiscoverable via /search_predicates "
+            "until the gateway accepts it. Detail: %s",
+            name, outcome[0], outcome[1],
+        )
+        _fallback_reason = outcome[0]
+    else:
+        _fallback_reason = "no-registrar-url"
 
     gms_url = os.getenv("DATAHUB_GMS_URL")
     token = os.getenv("DATAHUB_TOKEN", "")
@@ -575,6 +732,13 @@ def register_presentation_to_mesh(
         # Versioning.
         "mesh_sdk_version":             "0.0.0",
         "mesh_tool_version":            version,
+        # THE RECORD ADMITS WHAT IT IS. Reaching this emit means the gateway did
+        # not accept the registration, so this row is an AUDIT RECORD and not a
+        # materialised capability: no rendersAs row exists in Weaviate for it and
+        # /search_predicates cannot find it. Stamped so a reader of DataHub can
+        # tell a presentation that ROUTES from one that merely happened, without
+        # cross-referencing Weaviate to find out.
+        "mesh_registration_via":        f"direct-fallback({_fallback_reason})",
     }
 
     props = MLModelPropertiesClass(
