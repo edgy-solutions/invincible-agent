@@ -81,12 +81,21 @@ def union_menu() -> Dict[str, Any]:
 
     Deduped by (subject_uri, archetype): two surfaces registering the same capability is
     agreement, not two options.
+
+    LIVE VIEWS ARE EXCLUDED (ADR-0042 Ruling 9). A live view is a STANDING CONTRACT, not a
+    one-shot rendering, and honouring one for a caller the backend cannot name means an ongoing
+    obligation to an unknown identity against a menu that is a guess. Excluding them HERE
+    rather than only at the entry check closes the back door: `output_uri` is a hint, so a miss
+    WIDENS the search across the whole menu — and a live archetype left sitting in that widened
+    field would be selectable anonymously while the ruling appeared to be honoured.
     """
     with _LOCK:
         entries = list(_REGISTRY.values())
     seen, caps = set(), []
     for e in entries:
         for c in e.get("capabilities") or []:
+            if _is_live_view(c):
+                continue
             key = (str(c.get("subject_uri") or ""), str(c.get("archetype") or ""))
             if key in seen:
                 continue
@@ -97,6 +106,35 @@ def union_menu() -> Dict[str, Any]:
         "frontend_version": "union",
         "capabilities": caps,
     }
+
+
+def _is_live_view(cap: Dict[str, Any]) -> bool:
+    """Does this capability RECOMPUTE against moving state? (ADR-0042 Ruling 9.)
+
+    Read from the component's own contract, where `recomputes` is a FIELD like `layout` — a
+    fact about the component — and emphatically not a refusal reason, which is a fact about a
+    payload. Absence is the honest default: a contract that never declared the flag says
+    NOTHING, and is not read as live.
+    """
+    contract = cap.get("contract")
+    return bool(isinstance(contract, dict) and contract.get("recomputes"))
+
+
+def _live_view_is_registered_for(output_uri: str) -> bool:
+    """Is ANY registered surface offering a live view for this output type?
+
+    Asked across every menu because the caller is anonymous and has none of its own. This is
+    what lets the refusal be specific -- "you asked for a live view" -- rather than a blanket
+    denial of everything an unidentified caller might want.
+    """
+    target = _canonical(output_uri)
+    with _LOCK:
+        entries = list(_REGISTRY.values())
+    for e in entries:
+        for c in e.get("capabilities") or []:
+            if _is_live_view(c) and _canonical(str(c.get("subject_uri") or "")) == target:
+                return True
+    return False
 
 
 def menu_for(frontend_id: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -240,6 +278,29 @@ def select_presentation(
     """
     menu = menu_for(frontend_id)
     anonymous = menu is None
+    if anonymous and _live_view_is_registered_for(output_uri):
+        # ADR-0042 RULING 9. Checked BEFORE the union is built, so the answer is the specific
+        # "you asked for a live view" rather than the generic floor.
+        #
+        # `refused` is a CATEGORY, like the three beside it, carrying its cause in
+        # `refusal_code` -- naming the state after one cause would make it the only one that
+        # is, and would invite a fifth state the next time a selector-level refusal appears.
+        # Distinct from `unrenderable`, which means the selector NOMINATED and nothing fit;
+        # this means it DECLINED TO NOMINATE. Different first question (fix your payload vs
+        # identify yourself), so they must not collapse.
+        #
+        # No `refusals` list: that field means per-candidate contract misses, and this fires
+        # before any candidate is evaluated.
+        return None, {
+            "presentation_source": "refused",
+            "refusal_code": "live_view_requires_registration",
+            "frontend_id": frontend_id or None,
+            "reason": (
+                "a live view recomputes against moving state and is a standing contract; it "
+                "requires a caller that has registered its own render menu. The one-shot "
+                "rendering of the same data remains available."
+            ),
+        }
     if anonymous:
         # ANONYMOUS CALLER -- curl, a script, a UI mid-onboarding. It gets the DERIVED UNION
         # of registered menus, not a collapse to text: these are consumers of the ANSWER,

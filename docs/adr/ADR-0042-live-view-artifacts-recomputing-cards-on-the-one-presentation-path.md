@@ -358,6 +358,28 @@ registered-caller by construction, so §5's `presentation_source == "registered"
 holds everywhere in the workshop tool without exception — the gate has no anonymous case to
 carve out.
 
+## Rollout / current state
+
+- **Built (2026-08-21):** Ruling 3 — Engine P's ten verbs, each with a declared fixed
+  `output_uri`, running server-side over an in-memory seed store. Ruling 6/7 — two component
+  contracts (`PERIOD_SERIES`, `THRESHOLD_GRID`), structural names, union-checked refusal
+  vocabularies, assembled into the registration payload. Ruling 9 — **both halves**: the
+  contracts declare `recomputes: true`, and `select_presentation` now emits
+  `presentation_source: "refused"` + `refusal_code: "live_view_requires_registration"`,
+  with live views excluded from `union_menu()` so the `output_uri`-miss widening cannot
+  become a back door.
+- **Ruled, not yet built:** Ruling 4's per-evaluation `valid_as_of` is rendered by the two
+  components but nothing yet stamps it server-side — the engine returns `state_version`, and
+  the sample-time stamp is owed. Ruling 8's intent catalog is Phase 2.
+- **Blocked on infrastructure, not on this ADR:** none of the above is observable in the
+  cluster while [`capability-registry-not-graph-backed`](../plans/capability-registry-not-graph-backed.md)
+  is open — registration and selection run in different pods over a module-local dict, so no
+  menu reaches the picker and every caller is anonymous from the selector's view. The rulings
+  hold locally against the real selector; the deployed topology cannot yet exercise them.
+- **Inert until primed:** the twelve planning classes are declared in
+  `setup/ontologies/mesh_system.ttl` and become `:OntologyClass` nodes on the next ontology
+  ingest. Until that runs, a planning registration still fails Contract D — correctly.
+
 ## Consequences
 
 - The canvas gains a third card species at the cost of one contract export per renderer.
