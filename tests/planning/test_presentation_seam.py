@@ -158,6 +158,58 @@ def test_the_compact_and_full_iri_forms_fold_to_the_same_capability():
         assert prov["selection_basis"] == "output_uri+payload", uri
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# The second archetype — proving the pattern replicates rather than being
+# a property of the first renderer
+# ─────────────────────────────────────────────────────────────────────────────
+
+THRESHOLD_GRID = {
+    "subject_uri": "mesh:LoadThresholdGrid", "archetype": "THRESHOLD_GRID",
+    "component": "ThresholdGrid", "persona_fit": ["PORTFOLIO_LEAD"],
+    "domain_fit": ["PORTFOLIO_PLANNING"],
+    "contract": {"archetype": "THRESHOLD_GRID", "component": "ThresholdGrid",
+                 "recomputes": True, "fields": {"rows": {}, "value_label": {}, "scope_label": {}}},
+}
+
+
+@pytest.mark.parametrize("verb,binding,archetype", [
+    ("plan_cost_curve", PERIOD_SERIES, "PERIOD_SERIES"),
+    ("plan_site_load", THRESHOLD_GRID, "THRESHOLD_GRID"),
+])
+def test_each_registered_planning_verb_reaches_its_own_archetype(verb, binding, archetype):
+    """Parametrised deliberately. The first renderer proving the seam could be a property of
+    that renderer; two proves it is a property of the MECHANISM, which is the claim ADR-0042
+    §2 actually makes."""
+    state = build_seed()
+    rows = getattr(measures, verb)(state)
+    payload = {"rows": rows,
+               # chart-shaped keys present, because absorption depended on their presence
+               "chart_data": json.dumps([{"k": 1, "v": 2}]), "chart_type": "BAR"}
+
+    cr.register(FRONTEND, "1.0", [CHART, DOC, binding])
+    cap, prov = cr.select_presentation(FRONTEND, measures.OUTPUT_URI[verb], payload,
+                                       persona="PORTFOLIO_LEAD", domain="PORTFOLIO_PLANNING")
+    assert cap["archetype"] == archetype
+    assert prov["presentation_source"] == "registered"
+    assert prov["selection_basis"] == "output_uri+payload"
+    assert cap["contract"]["recomputes"] is True
+
+
+def test_registering_one_planning_archetype_does_not_capture_the_others_output():
+    """The failure this guards: with PERIOD_SERIES registered and THRESHOLD_GRID not, a site
+    load payload must NOT quietly land on PeriodSeries. It will still be absorbed by
+    something — that is the documented widening — but the gate's selection_basis says so, and
+    the absorbed archetype must not be a planning one, because that would look correct."""
+    rows = measures.plan_site_load(build_seed())
+    payload = {"rows": rows, "chart_data": json.dumps([{"k": 1}]), "chart_type": "BAR"}
+
+    cr.register(FRONTEND, "1.0", [CHART, DOC, PERIOD_SERIES])   # grid NOT registered
+    cap, prov = cr.select_presentation(FRONTEND, measures.OUTPUT_URI["plan_site_load"], payload,
+                                       persona="PORTFOLIO_LEAD", domain="PORTFOLIO_PLANNING")
+    assert prov["selection_basis"].startswith("payload-only"), "the gate must be able to say so"
+    assert cap["archetype"] != "THRESHOLD_GRID", "unregistered archetype cannot win"
+
+
 def test_every_planning_output_uri_is_distinct_so_none_can_shadow_another():
     """Ten verbs, ten fixed output types. Two verbs sharing one would make the selector's
     output_uri filter ambiguous between them, and the tie would be broken by affinity — a
