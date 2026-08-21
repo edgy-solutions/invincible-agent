@@ -4,10 +4,50 @@ status:     open
 owner:      unassigned
 blocked-on:
 closed-by:
+closed-by-note: NO COMMIT CLOSED THIS — a measurement did, and the seal is right to ask. Nothing in the tree changed; `uv run --frozen --extra agent-fleet python -m pytest tests/` returned 1538 passed / 0 failed / 0 collection errors on the same tree that produced the original finding. The packet was a wrong conclusion drawn from a right observation, and the correction is a re-measurement rather than a fix. Citing an unrelated sha to satisfy the field would have been the borrowed-attribution shape this seal exists to refuse.
 code-site:  .venv.wsl, pyproject.toml, tests/test_lock_coherence.py
 repo:       invincible-agent
-summary:    A Windows-native `py -m pytest tests/` run STRUCTURALLY EXCLUDES 7 collectors before any change is made — `.venv.wsl/lib64` is a WSL symlink Windows cannot traverse (WinError 1920) and two optional extras are absent (rdflib, smolagents). Measured 2026-08-20: 33 failed / 1277 passed / 178 skipped / 7 collection errors, every failure attributable to those three causes. This is a STAMP-AXIS fact about where tests run: a green from this environment is a green over N-minus-7 collectors, and that qualifier belongs wherever a suite result from this machine is cited, until the venv is rebuilt native or the runs move to WSL.
+summary:    CLOSED 2026-08-21, and the finding was MY INVOCATION, not the tree. `uv run --frozen --extra agent-fleet python -m pytest tests/` gives 1538 passed / 167 skipped / 0 failed / ZERO collection errors in 12:08 — all three named causes gone (rdflib and smolagents come from the extra; WinError 1920 never fires). `.venv.wsl` still exists and is still untraversable by a bare Windows interpreter, so the observation was real; the conclusion that the SUITE was unrunnable was wrong. The repo's own test docstrings already prescribed the uv form. The N-minus-7 qualifier this packet asked people to attach to local results is WITHDRAWN — it would have made every correct green read as provisional.
 ---
+
+# CLOSED — the suite runs fine; I was invoking it wrong
+
+**Resolution 2026-08-21.** Everything below was measured accurately and concluded wrongly, and
+the correction is worth more than the original finding.
+
+```
+uv run --frozen --extra agent-fleet python -m pytest tests/ -q
+1538 passed, 167 skipped, 8 warnings in 728.34s (0:12:08)
+```
+
+Zero failures. **Zero collection errors** — all seven collectors that broke under the bare
+interpreter load here. `rdflib` and `smolagents` come from the `agent-fleet` extra, and
+`WinError 1920` never fires even though `.venv.wsl` is still present and still untraversable
+by `py.exe`.
+
+**The observation was real; the diagnosis was not.** I measured a bare `py -m pytest`, found
+seven broken collectors and 33 failures, and concluded the ENVIRONMENT was structurally
+narrow. The actual fact was narrower and duller: I used an invocation the repo does not use.
+`tests/test_archetypes_are_declared.py`'s own docstring prescribes the uv form verbatim, and
+so does the guidance in AGENTS.md's neighbourhood. I read neither before generalising from my
+own run.
+
+**The rule this packet asked for is WITHDRAWN.** It told readers to attach "N-minus-7
+collectors; rdflib and smolagents absent" to any local suite result. That qualifier is now
+false, and worse than false — it would make every correct green read as provisional, which is
+the precise cost of an over-broad honesty caveat. Quote a `uv run` result plainly. Quote a
+bare `py -m pytest` result not at all, because it is measuring the wrong environment.
+
+**What survives, and it is small but real:** a bare Windows interpreter cannot walk this tree
+because of `.venv.wsl`, and `tests/test_lock_coherence.py` / `test_no_floating_git_dependencies.py`
+die at COLLECTION on it rather than skipping. Disposal option 3 below — teaching those two
+tree-walks to skip reparse points — remains independently worth doing, because a tree-walk
+that dies on a symlink is a latent defect on any machine that grows one. It is not filed as
+blocking anything.
+
+---
+
+## The original finding, kept for the record
 
 # The suite cannot run on the Windows-native interpreter, and its results look like ordinary failures
 

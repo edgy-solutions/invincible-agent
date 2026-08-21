@@ -142,7 +142,7 @@ _Coverage: **58 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
 
-- **suite-unrunnable-on-windows-native** — A Windows-native `py -m pytest tests/` run STRUCTURALLY EXCLUDES 7 collectors before any change is made — `.venv.wsl/lib64` is a WSL symlink Windows cannot traverse (WinError 1920) and two optional extras are absent (rdflib, smolagents). Measured 2026-08-20: 33 failed / 1277 passed / 178 skipped / 7 collection errors, every failure attributable to those three causes. This is a STAMP-AXIS fact about where tests run: a green from this environment is a green over N-minus-7 collectors, and that qualifier belongs wherever a suite result from this machine is cited, until the venv is rebuilt native or the runs move to WSL.
+- **suite-unrunnable-on-windows-native** — CLOSED 2026-08-21, and the finding was MY INVOCATION, not the tree. `uv run --frozen --extra agent-fleet python -m pytest tests/` gives 1538 passed / 167 skipped / 0 failed / ZERO collection errors in 12:08 — all three named causes gone (rdflib and smolagents come from the extra; WinError 1920 never fires). `.venv.wsl` still exists and is still untraversable by a bare Windows interpreter, so the observation was real; the conclusion that the SUITE was unrunnable was wrong. The repo's own test docstrings already prescribed the uv form. The N-minus-7 qualifier this packet asked people to attach to local results is WITHDRAWN — it would have made every correct green read as provisional.
   status: open · owner: unassigned
   → [docs/plans/suite-unrunnable-on-windows-native.md](plans/suite-unrunnable-on-windows-native.md)
 
