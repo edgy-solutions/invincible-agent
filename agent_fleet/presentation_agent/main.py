@@ -346,20 +346,19 @@ def _degrade_edgeless_topology_to_document(
 # DIGITAL_TWIN_3D is intentionally absent because it's not in the
 # current capability table; if it lands, add RenderAsDigitalTwin
 # alongside.
-# Chart-data normalizer extracted to chart_normalizer.py (dep-free)
-# so pure-unit tests can pin all five input shapes without dragging
-# the FastAPI / BAML / uvicorn import chain.
+# SLICE 2c: chart_normalizer.py is GONE. Its coercion was dead compensation for a widget
+# behaviour that no longer exists; its renderable/not decision is now contract validation;
+# and its honest-text extractor -- correct code in the wrong file -- moved to
+# honest_fallback.py. Flatten-aware imports, same shape as before.
 try:
-    from chart_normalizer import (  # type: ignore[no-redef]
-        chart_data_is_empty as _chart_data_is_empty,
-        honest_text_from_response as _honest_text_from_response,
-        normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
-    )
+    from capability_validator import validate_chart_payload as _validate_chart_payload  # type: ignore[no-redef]
+    from honest_fallback import honest_text_from_response as _honest_text_from_response  # type: ignore[no-redef]
 except ImportError:
-    from agent_fleet.presentation_agent.chart_normalizer import (
-        chart_data_is_empty as _chart_data_is_empty,
+    from agent_fleet.presentation_agent.capability_validator import (
+        validate_chart_payload as _validate_chart_payload,
+    )
+    from agent_fleet.presentation_agent.honest_fallback import (
         honest_text_from_response as _honest_text_from_response,
-        normalize_chart_data_to_recharts as _normalize_chart_data_to_recharts,
     )
 
 
@@ -532,18 +531,25 @@ async def _render_archetype_hardened(
         #
         # So both conditions route to the same honest degradation below — the rule this
         # system runs on everywhere else, which was simply missing a branch.
+        # SLICE 2c: VALIDATE against the component's published contract; never COERCE.
+        # The normalizer reshaped chart_data into {name, value} because the widget was
+        # believed to hardcode those dataKeys. It infers them, so the coercion was
+        # information-destroying -- multi-series and scatter payloads were flattened
+        # before they arrived, and nothing failed, which is why it went unnoticed.
+        # The question is no longer "can I reshape this?" (whose "no" discarded payloads
+        # the COMPONENT could draw -- witnessed at work 2026-08-15) but "does this satisfy
+        # the contract the component published?". chart_data is passed through untouched.
         chart_unrenderable = False
-        if isinstance(baml_chart_data, str):
-            normalized = _normalize_chart_data_to_recharts(baml_chart_data)
-            if normalized is not None:
-                component["chart_data"] = normalized
-            elif not _chart_data_is_empty(baml_chart_data):
-                chart_unrenderable = True
-                logger.info(
-                    "render_ui: CHART_WIDGET rows present but NOT normalizable "
-                    "(no numeric measure) -> honest fallback rather than an "
-                    "undrawable widget",
-                )
+        _refusal = _validate_chart_payload(
+            baml_chart_data, component.get("chart_type")
+        )
+        if _refusal is not None:
+            chart_unrenderable = True
+            logger.info(
+                "render_ui: CHART_WIDGET payload does not satisfy the contract "
+                "(%s) -> honest fallback rather than an undrawable widget",
+                _refusal,
+            )
 
         # HONEST FALLBACK (structural, not inference). When the chart came back
         # with NO renderable rows (the query produced nothing, or the SQL errored
@@ -556,7 +562,9 @@ async def _render_archetype_hardened(
         # deterministic carries the agent's `summary` VERBATIM and drops the
         # failed sql_query — so the failure-path payload is coherent (it doesn't
         # ship a failed query as if it had executed).
-        if _chart_data_is_empty(component.get("chart_data")) or chart_unrenderable:
+        # "no rows" is now one of the contract's refusal reasons, so the separate
+        # empty-check is subsumed by the validation above.
+        if chart_unrenderable:
             honest_text = _honest_text_from_response(_extract_agent_response(raw_data))
             if honest_text:
                 logger.info(
