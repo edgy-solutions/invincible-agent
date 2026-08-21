@@ -1473,6 +1473,12 @@ class FrontendCapability(BaseModel):
     expected_fields: list[str] = []
     persona_fit: list[str] = []
     domain_fit: list[str] = []
+    # The component-exported typed contract (ADR-0017 amendment 2026-08-20). Absent on
+    # legacy hand-authored rows, which stay admissible while migration is row-by-row.
+    # This is the field `expected_fields` could never be: it carries ENCODINGS (chart_data
+    # is a JSON-encoded STRING, not an array), cardinality, and the refusal vocabulary.
+    contract: dict | None = None
+    contract_source: str | None = None
 
 
 class RegisterFrontendCapabilitiesRequest(BaseModel):
@@ -1491,6 +1497,9 @@ class RegisterFrontendCapabilitiesRequest(BaseModel):
 class RegisterFrontendCapabilitiesResponse(BaseModel):
     accepted: int
     frontend_id: str
+    # Refused rows are RETURNED, never silently dropped. A drop would reproduce the very
+    # defect admission validation exists to prevent, one layer earlier.
+    rejected: list[dict] = []
 
 
 # Dedicated logger so registrations are easy to slice out in log search.
@@ -3372,6 +3381,31 @@ async def register_frontend_capabilities(
     Keycloak client identity or service account once we have multiple
     surfaces.
     """
+    # ── ADMISSION VALIDATION (ADR-0017 amendment 2026-08-20) ──────────────────────
+    # Was: accept everything, log it, return len(). A frontend could advertise an unknown
+    # archetype or a contract with no fields and the first sign of trouble was a render
+    # that produced nothing -- the failure discovered at the far end of the pipeline.
+    # Now refused AT THE DOOR, per-capability, with the reason returned to the caller.
+    # This is the analog of the registrar's Contract-D check on engine registrations.
+    # It validates WELL-FORMEDNESS AND VOCABULARY ONLY, never authority: a UI's render
+    # menu is a client describing itself, so there is deliberately no entitlement gate.
+    from agent_fleet.presentation_agent.capability_admission import validate_registration
+
+    _admitted, _rejected = validate_registration(
+        [c.model_dump() for c in payload.capabilities]
+    )
+    if _rejected:
+        _frontend_registry_logger.warning(
+            json.dumps({
+                "event": "frontend_capabilities_rejected",
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+                "frontend_id": payload.frontend_id,
+                "frontend_version": payload.frontend_version,
+                "rejected_count": len(_rejected),
+                "rejected": _rejected,
+            })
+        )
+
     _frontend_registry_logger.info(
         json.dumps({
             "event": "frontend_capabilities_registered",
@@ -3396,7 +3430,10 @@ async def register_frontend_capabilities(
         })
     )
     return RegisterFrontendCapabilitiesResponse(
-        accepted=len(payload.capabilities),
+        # ADMITTED, not submitted. Reporting len(payload.capabilities) would call a
+        # refused row accepted, which is the lie this endpoint used to tell.
+        accepted=len(_admitted),
+        rejected=_rejected,
         frontend_id=payload.frontend_id,
     )
 
