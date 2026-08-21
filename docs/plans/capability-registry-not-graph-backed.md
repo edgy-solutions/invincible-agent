@@ -67,6 +67,65 @@ Open design questions for the build, not assumed:
 * freshness/staleness — a graph row outlives a pod, so re-registration must overwrite rather
   than accumulate, and the registration version needs to reach the decision.
 
+## RULED 2026-08-21 — GRAPH AUTHORITATIVE, contract as its own node
+
+**Option A, with one modeling adjustment that dissolves most of its apparent cost.**
+
+### Why graph-authoritative, and not "component authoritative + fetch"
+
+**The symmetry argument is decisive.** Engines already publish `input_uri`/`output_uri` into
+the graph at registration, and the supervisor routes FROM THE GRAPH — nobody fetches from an
+engine at route time to ask what it accepts. The graph is the authoritative snapshot of what
+was published; the component is the PUBLISHER, not a runtime dependency. A fetch-based
+presentation path would break that symmetry for presentation alone.
+
+**And "the component stays authoritative" would have been illusory.** cortex-ui is the
+CALLER. A render-time fetch lands on cortex-bff or wherever an uploaded contract is parked —
+so it does not keep the contract with the component, it creates A SECOND STORE and calls it
+the component. Then there are three: graph, store, client, with the graph demoted to an index
+that can silently diverge. That is the Hole 4 finding again — a live approximation of the UI's
+capabilities held somewhere other than the declared source of record — with an implicit "the
+fetch keeps them synced" doing the enforcement.
+
+### The adjustment: DO NOT inline the contract into the Predicate row
+
+Contracts are DOCUMENTS (encodings, cardinality, refusal vocabulary). Stuffing a typed
+document into row properties creates serialization surface exactly where compact-vs-full form
+drift has bitten this project repeatedly.
+
+Instead: **the contract is its own node, CONTENT-ADDRESSED, and the `rendersAs` triple
+references it by hash/version.** The row-shape change shrinks to ONE reference field; the
+contract becomes a first-class graph citizen with its own identity.
+
+### This answers the other two open questions almost for free
+
+* **Q3 (staleness) —** registration writes the contract node and REPOINTS the reference
+  atomically, MERGE-overwrite on the row. A redeploy that drops a capability removes the row;
+  one that changes the contract writes a NEW node and repoints. Content-addressing yields
+  DRIFT DETECTION as a side effect: a hash mismatch between what the client would publish and
+  what the graph holds IS the staleness signal, and it fires AT REGISTRATION TIME rather than
+  at render time. (The fetch alternative is quiet in the worst way: a row pointing at a
+  contract that changed underneath it serves the NEW contract under the OLD row's authority.)
+* **Q1 (frontend discriminator) —** it lives in CONTRACT CONTENT, not triple semantics. The
+  triple keeps meaning "this shape renders as that archetype"; client applicability is a
+  property of the contract. Whether to add it becomes a separate decision instead of a fork.
+
+### ⚠️ The honest cost, recorded rather than waved away
+
+**Graph-authoritative means the graph schema now VERSIONS WITH THE CONTRACT VOCABULARY.** When
+the refusal vocabulary grows a term, that is a graph-migration concern, not merely a component
+redeploy.
+
+That price is paid AT CHANGE TIME, WITH A VISIBLE MIGRATION. The fetch alternative's price is
+paid CONTINUOUSLY on the render path and collected SILENTLY when the sync assumption fails.
+Recorded here so the first person to hit the migration knows it was chosen, not overlooked.
+
+### A tell worth keeping
+
+Under the fetch option the two-process witness would NOT have proven the fetch edge without
+extending it to three parties. **The option that makes an existing acceptance criterion
+sufficient is usually the one whose architecture matches what is actually being claimed.**
+
 ## Definition of done — a DEPLOYED witness, not a green suite
 
 **The rule this packet exists to enforce:** an arc whose claim is about deployed behaviour
