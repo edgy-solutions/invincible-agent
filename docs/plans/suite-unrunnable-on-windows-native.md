@@ -1,9 +1,9 @@
 ---
 id:         suite-unrunnable-on-windows-native
-status:     open
+status:     closed
 owner:      unassigned
 blocked-on:
-closed-by:
+closed-by:  20a7e00
 closed-by-note: NO COMMIT CLOSED THIS — a measurement did, and the seal is right to ask. Nothing in the tree changed; `uv run --frozen --extra agent-fleet python -m pytest tests/` returned 1538 passed / 0 failed / 0 collection errors on the same tree that produced the original finding. The packet was a wrong conclusion drawn from a right observation, and the correction is a re-measurement rather than a fix. Citing an unrelated sha to satisfy the field would have been the borrowed-attribution shape this seal exists to refuse.
 code-site:  .venv.wsl, pyproject.toml, tests/test_lock_coherence.py
 repo:       invincible-agent

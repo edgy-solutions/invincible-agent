@@ -142,10 +142,6 @@ _Coverage: **58 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
 
-- **suite-unrunnable-on-windows-native** — CLOSED 2026-08-21, and the finding was MY INVOCATION, not the tree. `uv run --frozen --extra agent-fleet python -m pytest tests/` gives 1538 passed / 167 skipped / 0 failed / ZERO collection errors in 12:08 — all three named causes gone (rdflib and smolagents come from the extra; WinError 1920 never fires). `.venv.wsl` still exists and is still untraversable by a bare Windows interpreter, so the observation was real; the conclusion that the SUITE was unrunnable was wrong. The repo's own test docstrings already prescribed the uv form. The N-minus-7 qualifier this packet asked people to attach to local results is WITHDRAWN — it would have made every correct green read as provisional.
-  status: open · owner: unassigned
-  → [docs/plans/suite-unrunnable-on-windows-native.md](plans/suite-unrunnable-on-windows-native.md)
-
 - **supervisor-mint-missing-identity** — Every supervisor dispatch is unauthenticated at work — `mint_supervisor_token()` raises KeyError, so specialists record `caller: none`. Inert under OBSERVE, and it becomes a hard failure the moment REQUIRE_TRANSPORT_AUTH flips.
   status: open · owner: agent · blocked-on: nothing — one read settles it: `printenv` for SUPERVISOR_CLIENT_ID and SUPERVISOR_CLIENT_SECRET in the pod that runs the supervisor. KeyError does not say which.
   → [docs/plans/supervisor-mint-missing-identity.md](plans/supervisor-mint-missing-identity.md)
@@ -225,6 +221,10 @@ _Coverage: **58 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **sdk-transport-auth-handoff** — One authenticated registration transport in the SDK app factory. Verified CONSUMED, not merely shipped - 68e28c0 is an ancestor of tag v0.3.0, and invincible-agent pinned v0.3.0 at the time of verification (now v0.3.1, which supersedes it).
   status: closed · owner: agent · repo: iagent-mesh-sdk · closed-by: 68e28c0
   → [docs/plans/sdk-transport-auth-handoff.md](plans/sdk-transport-auth-handoff.md)
+
+- **suite-unrunnable-on-windows-native** — CLOSED 2026-08-21, and the finding was MY INVOCATION, not the tree. `uv run --frozen --extra agent-fleet python -m pytest tests/` gives 1538 passed / 167 skipped / 0 failed / ZERO collection errors in 12:08 — all three named causes gone (rdflib and smolagents come from the extra; WinError 1920 never fires). `.venv.wsl` still exists and is still untraversable by a bare Windows interpreter, so the observation was real; the conclusion that the SUITE was unrunnable was wrong. The repo's own test docstrings already prescribed the uv form. The N-minus-7 qualifier this packet asked people to attach to local results is WITHDRAWN — it would have made every correct green read as provisional.
+  status: closed · owner: unassigned · closed-by: 20a7e00
+  → [docs/plans/suite-unrunnable-on-windows-native.md](plans/suite-unrunnable-on-windows-native.md)
 
 - **transport-gauge** — Gauge reads only migratable callers: probe paths exempt, 549 -> 22 -> 0-new-unverified.
   status: closed · owner: agent · closed-by: e18b5cf
