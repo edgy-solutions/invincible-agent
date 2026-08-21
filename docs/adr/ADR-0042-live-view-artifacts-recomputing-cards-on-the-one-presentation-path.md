@@ -246,11 +246,67 @@ deliberately withholds `"no series values in scatter data"` because the branch i
 by construction, and the seed test caught it on its first run.
 
 So the refusal joins the **`presentation_source` vocabulary as a fourth state** —
-`registered` · `default-menu` · `unrenderable` · **`refused-anonymous-live`** — alongside the
-three that `capability_registry` already names. It is a fact about the caller meeting the
+`registered` · `default-menu` · `unrenderable` · **`refused`** (first drafted as
+`refused-anonymous-live`; see the amendment below for why the cause moved out of the name) —
+alongside the three that `capability_registry` already names. It is a fact about the caller meeting the
 menu, exactly as `unrenderable` is a fact about the menu meeting the data, and it is labelled
 for the same reason the other three are: an unlabelled refusal is indistinguishable from a
 decision.
+
+**Amendment 2026-08-21 — the state is categorical, and the selector needs something to fire on.**
+Two corrections to the paragraph above, both from review, both worth recording rather than
+silently absorbing.
+
+*The fourth state is `refused`, not `refused-anonymous-live`.* The three existing states are
+cause-agnostic **categories** that carry their specifics in adjacent fields — `unrenderable`
+carries a structured `refusals` list naming which requirement each candidate missed;
+`default-menu` carries `presentation_menu`. A state named after one cause would be the only
+one that is, and it invites a fifth state the next time a selector-level refusal class appears.
+The vocabulary stays categorical and the reasons stay extensible:
+
+```
+presentation_source: "refused"
+refusal_code:        "live_view_requires_registration"   # machine discriminant
+reason:              "live views require a registered caller; …"   # prose, as every state carries
+```
+
+`refusal_code` rather than `refusal_reason` deliberately: `refusals` (plural) already exists in
+this vocabulary meaning *per-candidate contract misses*. The two never co-populate — `refused`
+fires before candidate evaluation, so there is no per-candidate list — but a singular
+`refusal_reason` beside a plural `refusals` makes a reader work out which is which, and this
+project has paid twice for exactly that blur.
+
+`refused` and `unrenderable` are genuinely different diagnostics and must not collapse:
+**`unrenderable`** = the selector nominated and nothing fit — *your menu and this payload
+disagree* (fix: register the archetype, or fix the payload). **`refused`** = the selector
+declined to nominate at all — *policy stopped it before evaluation* (fix: identify yourself).
+Different first question, different operator action.
+
+*The selector needs a discriminant, and it is a contract FIELD — not a refusal reason.* Nothing
+in `select_presentation(frontend_id, output_uri, payload, persona, domain)` says an archetype
+recomputes, so as first drafted this ruling had nothing to fire on. The contract declares it:
+
+```
+LIVE_VIEW_CONTRACT = { archetype: …, component: …, layout: …, recomputes: true, fields: {…} }
+```
+
+This needs **no shape change anywhere**: `assembleDerivedCapabilities()` already places the whole
+`contract` object on the assembled row, and `capability_registry._satisfies()` already reads
+`cap.get("contract")`. The selector has it in hand; it simply had nothing to look for.
+
+Note the ownership split this preserves, which is the same one §2 and §6 draw everywhere else:
+the component declares **that it recomputes** (a fact about the component — §6's home, and a
+contract field like `layout`, never a refusal reason); the selector decides **what to do about
+an anonymous caller asking for one** (a fact about policy — §2's disposal). Putting `recomputes`
+in the contract does not re-open the trap this ruling just closed, because it is not a reason
+the component emits.
+
+*Scope note owed to the union check.* `ChartWidget.contract.test.ts`'s
+*"every refusal reason the contract publishes is one the component can emit"* asserts over
+**component-emittable** reasons. Selector-level refusal codes are outside its subject population
+and must not be added to it — a well-meaning extension covering `refusal_code` would re-create
+the actor blur from the opposite side. That scope statement belongs in the check itself, per
+[`a-green-check-proves-only-its-scope`](../principles/a-green-check-proves-only-its-scope.md).
 
 **Consequence for the demo, and it is not incidental.** Every planning card is
 registered-caller by construction, so §5's `presentation_source == "registered"` assertion

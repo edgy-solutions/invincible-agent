@@ -254,10 +254,32 @@ vocabulary, demoted but not discarded — with the consequence signals that make
 
 1. **Mount** per the fork: new `InterviewPhase` value, new config key, cortex layout and design
    system, chat rail present (wired Phase 2).
-2. **Plan-state store**, sibling to the artifact store: `{ baseline, scenarios, activeScenarioId }`.
-   **Selector `effectiveState()`** = baseline + active scenario's ops. Every view and every verb
-   call reads ONLY through it. Until Phase 3 lands, ops apply to one implicit scenario labelled
-   **SANDBOX** in the UI so nobody believes baseline is being edited.
+2. **Plan state — THE SERVER OWNS IT.** Rev 2 moved the computation server-side and left the
+   store where rev 1 put it, which left two stores with no ruled relationship: a client
+   `effectiveState()` selector, and verbs executing in `invincible-agent` against a server store.
+   **A server verb cannot read a browser selector.** That is the two-masters defect this whole
+   lineage exists to prevent, and it is ruled here rather than improvised on day 3.
+
+   - **Baseline, scenarios, and ops live server-side and are addressable.** A scenario has an id
+     the server can resolve; ops POST as they happen.
+   - **Verbs evaluate over `(state_ref, ops[])`** — stateless with respect to the caller, so an
+     evaluation is reproducible from its arguments and a diff is expressible without a session.
+   - **The client store is an OPTIMISTIC MIRROR**, and its only job is interaction feedback. It
+     is never the source of a number that reaches a card.
+   - `effectiveState()` survives as the client mirror's selector, and the Gate 1 grep-check still
+     applies to *views*. It is no longer claimed as the input to a verb.
+
+   Until Phase 3 lands, ops apply to one implicit scenario labelled **SANDBOX** in the UI so
+   nobody believes baseline is being edited.
+
+   **This single ruling also disposes ADR-0042's open questions 1 and 2**, because all three are
+   the same question wearing different hats: OQ1 (push vs pull re-evaluation) and OQ2 (a diff as
+   one verb over two state refs vs one verb run twice) both presuppose an answer to *where
+   mutable plan state lives*. Server-addressable scenarios make the state-ref form available, so:
+   **OQ2 → one verb over two state refs.** **OQ1 → pull, on a server-issued state version** —
+   the client re-requests when the version it holds is stale, which is the form that survives a
+   second client and a reconnect, where push does not. Record both in the Phase 0.5 survey doc as
+   decided, and amend ADR-0042 to point at that record.
 3. **Contracts before components.** Each renderer ships `<X>.contract.ts` — archetype, component,
    layout, typed field map, `rowRequirements`, `refusalReasons` — and a `DERIVED_BINDINGS` row in
    `assembleCapabilities.ts`. The refusal vocabulary is where honest-empty is *enforced*: "no
@@ -291,8 +313,16 @@ vocabulary, demoted but not discarded — with the consequence signals that make
       looking correct. Only the provenance field distinguishes them. ADR-0042 §5.
 - [ ] Each card's `valid_as_of` advances on re-evaluation and is displayed. A card showing its
       mint-time stamp after a drag is a Gate 1 failure, not a cosmetic one. ADR-0042 §4.
-- [ ] Drag a bar → cost series, load grid, and dependency badges all update in one interaction
-      (<100ms perceived).
+- [ ] **Drag is optimistic; drop is evaluated.** During drag only the BAR moves — that is
+      arrangement, UI-master, legitimately client-side (ADR-0042 §4). On drop, the op commits and
+      the verbs re-evaluate; the strips update from server rows.
+      The gate is **"drop → strips updated within N ms," where N is MEASURED against the real BFF
+      on day 2 and written here** — not asserted in advance.
+      Rev 1's flat `<100ms` was priced for client-side pure functions and is unpassable across a
+      BFF round trip plus Keycloak plus a demo-day network. **An unpassable gate is not a high
+      standard; it is an invitation to compute one little measure in the browser on day 3**, which
+      is the §3 violation this plan is largely about preventing. The drag still feels live and the
+      numbers stay governed.
 - [ ] Seeded tensions (a)(b)(c) are visible on first load with no interaction.
 - [ ] Drill-in shows all model edges for a clicked project; a cost edit re-drives the series.
 - [ ] Honest-empty comes from the **registered refusal vocabulary**, not a UI branch.
@@ -329,13 +359,25 @@ described that way has drifted.
 
 - **Where.** A BFF route. A frontend LLM call fails the transport guard, which runs inside
   `npm run build`. Provider and model are BFF config; the frontend never knows either.
-- **Which provider, stated accurately — CHANGED.** BAML's `MainAgent` is
-  `fallback [OpenRouter, OpenAI, Ollama]` — cloud **first**, Ollama last — and **there is no vLLM
-  client in `clients.baml`.** Rev 1's "internal endpoint only, same path as the current
-  implementation" described a path that does not exist. Choose deliberately and record it: either
-  pin directly to `client Ollama` (the precedent is `VerifyVerbChoice`, which pins for exactly this
-  reason), or add a vLLM client — which is **new work**, not existing infrastructure. The risk-line
-  "one BAML client fronts both endpoints" only becomes true after that client exists.
+- **Provider — RULED: internal only, no cloud fallback, fail closed.** BAML's `MainAgent` is
+  `fallback [OpenRouter, OpenAI, Ollama]` — cloud **first**, Ollama last. For this domain that is
+  not a configuration preference, it is a boundary violation waiting for a bad day: the planning
+  functions carry funding figures, site names, and capability maturity for a defense-adjacent
+  customer, and `MainAgent` sends all of it to OpenRouter the moment the internal endpoint hiccups.
+
+  **`RouteIntent` and `NarrateResult` pin to the internal client with NO cloud fallback.** The
+  precedent is `VerifyVerbChoice`, which pins directly to `client Ollama` for exactly this class of
+  reason. When the internal endpoint is unreachable the functions **fail closed to template
+  captions** — a fallback this plan already carries, which exists for precisely this case. A
+  failure that renders a template caption is a good day compared to a success that exfiltrated the
+  portfolio.
+
+  **Environments — ANSWERED 2026-08-21.** Sandbox is **Ollama**; work/deployment is **vLLM**; the
+  weights and context window are the same, the model NAME differs. So the BFF must not hardcode a
+  model string, and the plan must not assume one name reaches both — `env.OLLAMA_MODEL` already
+  makes this configmap-driven, and the same discipline extends to the vLLM client. **Adding the
+  vLLM client to `clients.baml` is named Phase-2 work**, not existing infrastructure; the
+  risk-line "one BAML client fronts both endpoints" becomes true only once it exists.
 - **Model string — VERIFIED AGAINST THE LIVE ENDPOINT 2026-08-20.** `GET
   http://192.168.1.126:11434/api/tags` returns eight models. Probed:
 
@@ -398,6 +440,13 @@ described that way has drifted.
   holds the prose to the same standard. With a smaller model this WILL fire occasionally — that is
   the fallback working, not a defect.
 - Each successful answer mints a live-view card and appends a `QATrace`.
+
+- **Day-5 eval against the REAL demo endpoint — unconditional.** Rev 2 left this surviving only
+  inside the 20b-fallback clause, which was a downgrade: it is now checking the **provider path**
+  and the **model name** as well as the weights, and both differ between sandbox (Ollama) and work
+  (vLLM). The 51-case suite runs against the endpoint the demo will actually use, by Day 5, in
+  every scenario. If the sandbox fallback is in play it is additionally a hard gate; otherwise it
+  is a blocking check. There is no configuration in which it is skipped.
 
 ### 4.3 Eval fixture — CHANGED (lives in `invincible-agent`)
 
@@ -568,6 +617,8 @@ impossible cap).
 | **Fallback model is a phantom** | `gpt-oss:20b` is not on the endpoint. Pull the tag before declaring it a fallback, or delete the escape hatch — an unverified fallback gets reached under pressure and 404s there |
 | Provider path assumed rather than chosen | `MainAgent` is cloud-first and no vLLM client exists. Pin deliberately (the `VerifyVerbChoice` precedent) or add the client as named work |
 | Intent set drifts between BAML and catalog | Canonical-source ruling + build-time id-agreement check |
+| **Portfolio data leaves the boundary on a bad day** | `MainAgent`'s cloud-first fallback is NOT used. Planning functions pin internal with no cloud fallback and fail closed to template captions. This is the highest-severity row in the table: every other risk costs a demo, this one costs the customer |
+| Sandbox (Ollama) and work (vLLM) name the same model differently | Model name is configmap-driven on both sides; never hardcoded in the BFF. Day-5 eval runs against the real demo endpoint unconditionally, checking provider path AND name, not just weights |
 | Keycloak blocks the demo boot | `RequireAuth` wraps everything; rehearse `VITE_NO_AUTH=true` on the demo machine |
 | **A card renders against the wrong menu** | Gate 1 asserts `presentation_source == "registered"`. Post-`union_menu()` this failure is silent and plausible-looking; rendering is not evidence |
 | Electric reconciliation clobbers minted cards | Sized in Phase 0.5 item 3; narrowed Fork E is the hatch |
