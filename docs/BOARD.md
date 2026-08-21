@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **52 of 54 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **55 of 57 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -102,6 +102,10 @@ _Coverage: **52 of 54 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: unassigned
   → [docs/plans/pcn-extraction-sort.md](plans/pcn-extraction-sort.md)
 
+- **portfolio-review-workshop-tool** — Live portfolio-review workshop tool — a T+7 demo whose real job is to demonstrate the presentation-SPO arc on a second grounding. REVISION 2 (2026-08-20): rev 1 was authored against the architecture as it stood a week earlier and the presentation-SPO arc landed seven commits underneath it; as written it would have rebuilt a parallel presentation stack (client-side measures never crossing /render_ui, an intent catalog naming chart types = `archetype-chosen-before-data` re-opened one day after it closed). Ruled by ADR-0042. Binding changes: measures are VERBS running server-side from commit 1 (mock the store, never the placement); intents declare `output_uri` never a view; every widget ships a `.contract.ts`; Gate 1 asserts `presentation_source == "registered"`, not "a card appeared"; two-repo cycle (BFF routes are in-scope, a second Fastify/tRPC backend is deleted); model string is `gpt-oss:120b` via env.OLLAMA_MODEL — the hyphenated form 404s and clients.baml records that failure.
+  status: open · owner: unassigned
+  → [docs/plans/portfolio-review-workshop-tool.md](plans/portfolio-review-workshop-tool.md)
+
 - **presentation-contract-enumeration** — ADR-0017's capability publication carries expected_fields (NAMES) but no types or cardinality, so every consuming contract lives in a React component and the backend mirrors it by hand. Enumerated 2026-08-19 from the components' actual prop types and key handling. THREE FINDINGS OUTRANK THE ENUMERATION - presentation_agent/capabilities.py hand-duplicates the ENTIRE UI capability registry with no seal; chart_normalizer.py (194 lines) mirrors a shape ChartWidget NO LONGER REQUIRES; and the dispatch boundary is typed `any`.
   status: open · owner: agent · trigger: D4 TIGHTENING - capability_admission.KNOWN_ARCHETYPES deliberately encodes the D4 defect: it admits the UNION of BAML's SemanticArchetype and the five archetypes the interpreter dispatches without the enum declaring them (GROUPED_REVIEW, APPROVAL_TASK, TRIAGE_TASK, WORKFLOW_OBSERVATION, INSTANCES_BY_PROPERTY). Enforcing the enum would refuse archetypes the UI genuinely renders, punishing users for a backend inconsistency they did not create. WHEN THE ENUM IS REPAIRED, THE VALIDATOR'S VOCABULARY MUST TIGHTEN TO MATCH - a validator that permanently encodes a defect becomes that defect's guardian.
   → [docs/plans/presentation-contract-enumeration.md](plans/presentation-contract-enumeration.md)
@@ -126,6 +130,10 @@ _Coverage: **52 of 54 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/suite-signal-session.md](plans/suite-signal-session.md)
 
+- **suite-unrunnable-on-windows-native** — A Windows-native `py -m pytest tests/` run STRUCTURALLY EXCLUDES 7 collectors before any change is made — `.venv.wsl/lib64` is a WSL symlink Windows cannot traverse (WinError 1920) and two optional extras are absent (rdflib, smolagents). Measured 2026-08-20: 33 failed / 1277 passed / 178 skipped / 7 collection errors, every failure attributable to those three causes. This is a STAMP-AXIS fact about where tests run: a green from this environment is a green over N-minus-7 collectors, and that qualifier belongs wherever a suite result from this machine is cited, until the venv is rebuilt native or the runs move to WSL.
+  status: open · owner: unassigned
+  → [docs/plans/suite-unrunnable-on-windows-native.md](plans/suite-unrunnable-on-windows-native.md)
+
 - **supervisor-mint-missing-identity** — Every supervisor dispatch is unauthenticated at work — `mint_supervisor_token()` raises KeyError, so specialists record `caller: none`. Inert under OBSERVE, and it becomes a hard failure the moment REQUIRE_TRANSPORT_AUTH flips.
   status: open · owner: agent · blocked-on: nothing — one read settles it: `printenv` for SUPERVISOR_CLIENT_ID and SUPERVISOR_CLIENT_SECRET in the pod that runs the supervisor. KeyError does not say which.
   → [docs/plans/supervisor-mint-missing-identity.md](plans/supervisor-mint-missing-identity.md)
@@ -147,6 +155,10 @@ _Coverage: **52 of 54 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **engine-o-internal-hardening** — Engine-o's internal read/orchestration routes are accepted at current posture. Fires when in-cluster reachability stops being an acceptable gate.
   status: parked · owner: unassigned · trigger: the cluster stops being closed — a SHARED work cluster, any workload you did not author, or a network-policy change
   → [docs/plans/engine-o-internal-hardening.md](plans/engine-o-internal-hardening.md)
+
+- **section-reference-phantoms-unsealed** — PARKED, evidence-gated. `§N` references inside ADRs have no reader — ADR-0042 shipped a status-line `§9` pointing at a section that did not exist, caught by deliberate audit rather than by any check. One instance does not yet arm a 42-file heading-normalization sweep during a deadline week. TRIGGER: the next §-reference phantom found in the wild — a second instance proves audit does not scale and arms the sweep. FIRST ATTEMPT MEASURED THE INSTRUMENT, NOT THE SUBJECT (see below); a real seal needs heading normalization first.
+  status: parked · owner: unassigned · trigger: the next §-reference phantom found in the wild — one instance caught by deliberate audit proves the defect exists; a SECOND proves the audit does not scale, and that is what arms the 42-file heading-normalization sweep
+  → [docs/plans/section-reference-phantoms-unsealed.md](plans/section-reference-phantoms-unsealed.md)
 
 - **silence-closure-arc** — Inventory of failure modes presenting as silence rather than error; instances checked against the repo.
   status: parked · owner: agent · blocked-on: inventory review
