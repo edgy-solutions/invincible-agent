@@ -1369,6 +1369,13 @@ async def _no_store_per_user_responses(request: Request, call_next):
 # ── Models ────────────────────────────────────────────────
 class InterviewRequest(BaseModel):
     message: str
+    # ADR-0017 amendment: WHICH FRONTEND is asking. The archetype decision is valid only
+    # against the render menu of the client that will render it -- choose CHART_WIDGET
+    # because cortex-ui registered it, hand it to an OpenDDIL session that never did, and
+    # the result is a correct answer with an unrenderable presentation. Optional so
+    # non-UI callers (curl, scripts) keep working; they resolve to the LABELLED default
+    # menu rather than being special-cased.
+    frontend_id: str | None = None
     # Required: identifies the chat thread / DagsterRunTracker key. A missing
     # session_id used to be silently filled with a fresh UUID per request,
     # which defeated the tracker's per-key dedup and caused back-to-back
@@ -2227,6 +2234,10 @@ async def _launch_supervisor_job(
     domain: str = "MAINTENANCE",
     task_plan_json: str = "",
     user_id: str = "default_testing_user",
+    # ADR-0017 amendment: which frontend will render the answer. Threaded to Engine F so
+    # the archetype is chosen from THAT client's registered menu. Empty is not an error --
+    # Engine F falls back to its global table, i.e. today's behaviour.
+    frontend_id: str = "",
     # ADR-0025 hop 2: caller's entitlement key (email) forwarded as a
     # runConfig key so the generalist-fallback subtask can hand it to
     # Engine D's query_metadata for the Topaz can_view ask.
@@ -2299,6 +2310,8 @@ async def _launch_supervisor_job(
         "task_plan_json": task_plan_json,
         "user_id": user_id,
         "user_email": user_email,
+        # ADR-0017 amendment: names the rendering client so Engine F resolves ITS menu.
+        "frontend_id": frontend_id or "",
         # ADR-0009 Step F'.2 additions:
         "user_persona": user_persona,
         "entitled_domains": entitled_domains,
@@ -2896,6 +2909,9 @@ async def generate_dagster_stream(
         task_plan_json=task_plan_json,
         user_id=user_id,
         user_email=user_email,
+        # ADR-0017 amendment: read straight off the request -- the UI names itself, and an
+        # absent value is a NON-UI caller (curl, script), not an error.
+        frontend_id=(request.frontend_id or ""),
         user_persona=user_persona,
         entitled_domains=entitled_domains,
         entity_refs=entity_refs,

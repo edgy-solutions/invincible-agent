@@ -198,6 +198,10 @@ class RenderRequest(BaseModel):
     # BAML.DesignUI.
     output_uri: Optional[str] = None
     domain: Optional[str] = None
+    # ADR-0017 amendment: which frontend will render this. Present -> select from THAT
+    # client's registered menu. Absent -> the global capability table, i.e. today's
+    # behaviour, so unidentified callers do not regress while the callers migrate.
+    frontend_id: Optional[str] = None
 
 
 # Canonicalizer + lookup live in capabilities.py — see the import at
@@ -351,9 +355,13 @@ def _degrade_edgeless_topology_to_document(
 # and its honest-text extractor -- correct code in the wrong file -- moved to
 # honest_fallback.py. Flatten-aware imports, same shape as before.
 try:
+    from capability_registry import select_presentation as _select_presentation  # type: ignore[no-redef]
     from capability_validator import validate_chart_payload as _validate_chart_payload  # type: ignore[no-redef]
     from honest_fallback import honest_text_from_response as _honest_text_from_response  # type: ignore[no-redef]
 except ImportError:
+    from agent_fleet.presentation_agent.capability_registry import (
+        select_presentation as _select_presentation,
+    )
     from agent_fleet.presentation_agent.capability_validator import (
         validate_chart_payload as _validate_chart_payload,
     )
@@ -652,7 +660,43 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
     # Engine W), look up the registered presentation capability and
     # dispatch deterministically.
     if request.output_uri:
-        cap = _lookup_capability(request.output_uri)
+        # ── THE SEAM: select from the CALLER'S registered menu when it names itself ─────
+        # An identified frontend gets menu-scoped selection (filter by output_uri, keep
+        # only what the payload satisfies, rank by the published affinities). An
+        # unidentified one keeps the global table -- today's behaviour -- so nothing
+        # regresses while callers migrate. Wiring this with frontend_id=None instead would
+        # resolve EVERY caller to the labelled default menu and turn every answer into a
+        # KNOWLEDGE_DOCUMENT: a regression that looks like completion.
+        cap = None
+        if request.frontend_id:
+            _agent_resp = _extract_agent_response(request.raw_data) or {}
+            _sel_payload = {
+                "chart_data": _agent_resp.get("data"),
+                "chart_type": None,
+            }
+            cap, _sel_prov = _select_presentation(
+                request.frontend_id, request.output_uri, _sel_payload,
+                persona=effective_persona, domain=request.domain,
+            )
+            logger.info(
+                "render_ui: menu-scoped selection frontend_id=%s source=%s basis=%s -> %s",
+                request.frontend_id,
+                _sel_prov.get("presentation_source"),
+                _sel_prov.get("selection_basis"),
+                (cap or {}).get("archetype") or _sel_prov.get("reason"),
+            )
+            if cap is None and _sel_prov.get("presentation_source") in (
+                "default-menu", "unrenderable"
+            ):
+                # The caller's menu cannot draw this. Honest text beats a widget it never
+                # advertised -- and the provenance above says WHICH refusal produced it.
+                response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
+                return _render_document_deterministic(
+                    request.raw_data, effective_persona,
+                    subject_concept=request.output_uri,
+                )
+        if cap is None:
+            cap = _lookup_capability(request.output_uri)
         if cap:
             archetype = cap["archetype"]
             # ── SLICE 4: THE DATA GETS A VOTE ─────────────────────────────────────────

@@ -112,6 +112,10 @@ class SupervisorQueryConfig(Config):
     # (owner_persona / engine-side) still defaults for the RESPONSE
     # shape, but the CALLER persona recorded in provenance stays None.
     user_persona: Optional[str] = None
+    # ADR-0017 amendment: the calling frontend's registration key, threaded so Engine F can
+    # resolve THIS caller's menu at decision time. Empty -> Engine F falls back to its
+    # global capability table (the pre-seam behaviour), never to a silently smaller menu.
+    frontend_id: str = ""
     entitled_domains: List[str] = []
     entity_refs: List[str] = []
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
@@ -1884,6 +1888,10 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
             # concern.
             "persona": config.user_persona,
             "output_uri": agent_output_uri,
+            # Names the caller so Engine F can select from ITS registered menu rather than
+            # from a global table that answers on behalf of clients which never advertised
+            # those capabilities.
+            "frontend_id": config.frontend_id or None,
         },
         timeout=300,
     )
