@@ -231,6 +231,83 @@ by replying"**, and today's UIs are all the second kind. A future row with both 
 `frontend_id` and an `endpoint_url` is not a contradiction to resolve — it is two different
 species that happen to share a table.
 
+## CONFIRMED 2026-08-21 — the drop mechanism, and a SECOND guard behind it
+
+Read `doc-tools/doc_tools/assets/aitool_linker.py` before proposing anything, as ruled. The
+mechanism is confirmed, and confirming it found a second blocker the hypothesis missed.
+
+### Guard 1 — the linker's field check is VERB-SHAPED
+
+`sync_aitool_predicate_to_neo4j`:
+
+```python
+verb_iri   = props.get("mesh_verb_iri")
+input_uri  = props.get("mesh_input_uri")
+output_uri = props.get("mesh_output_uri")
+if not (verb_iri and input_uri and output_uri):
+    context.log.error(... "Refusing to materialize; tool author must re-register.")
+    return {"status": "rejected", "reason": "incomplete"}
+```
+
+Verified against a LIVE registration (`presentation_chart_widget_for_datasetanalysisreport`),
+which carries:
+
+```
+mesh_tool_kind     = Presentation          <- the discriminator ALREADY EXISTS
+mesh_subject_uri   = mesh:DatasetAnalysisReport
+mesh_predicate_iri = mesh:rendersAs
+mesh_object_uri    = mesh:ChartWidget
+```
+
+**All three required keys are absent.** Every presentation is rejected as `incomplete`, at
+ERROR level, with the instruction *"tool author must re-register"* — **a remedy that cannot
+work**, because re-registering produces the same fields. The scope law in a data pipeline: the
+guard is correct for everything it was built to carry, and `Presentation` was never in its
+population. The linker already READS `tool_kind` (line 209); it just never branches on it.
+
+### Guard 2 — Contract D, and the object end can never satisfy it
+
+Even with the field mapping fixed, `sync_aitool_predicate_to_neo4j` MATCHes both triple
+endpoints as pre-existing `:OntologyClass` nodes (ADR-0019 Contract D — deliberately no
+auto-MERGE, because the prior form fabricated phantom classes). Measured against the live
+substrate (7023 classes, TARGETED lookups — a 400-row scan gave a false negative and was
+discarded):
+
+| IRI | role | is an `:OntologyClass` |
+|---|---|---|
+| `mesh:OwnershipFact` | subject (output shape) | ✅ |
+| `mesh:DatasetAnalysisReport` | subject | ✅ |
+| `mesh:ChartWidget` | **object (archetype)** | ❌ |
+| `mesh:KnowledgeDocument` | object | ❌ |
+| `mesh:ProcessTopology` | object | ❌ |
+
+**Output shapes are declared in the mesh ontology; ARCHETYPES ARE NOT.** So a presentation
+triple fails Contract D on its object end no matter how the fields are mapped.
+
+### What the fix therefore is — TWO repos, and one part is B's own lane
+
+1. **doc-tools:** branch `sync_aitool_predicate_to_neo4j` on `mesh_tool_kind == "Presentation"`
+   and map `subject -> predicate -> object` onto the existing `input -> verb -> output` slots.
+   That mapping is structurally honest: a Predicate row IS a triple and so is a presentation.
+2. **invincible-agent (`setup/ontologies/mesh_system.ttl`):** DECLARE THE ARCHETYPE CLASSES.
+   Without them Contract D rejects, correctly — the archetypes are referenced as IRIs across
+   ADR-0017 and never defined, which is the same "registered a URI nobody declared" pattern
+   Contract D exists to stop.
+
+**Do not weaken Contract D to let presentations through.** It is doing its job; the missing
+declaration is the defect.
+
+### A caution for the mapping, recorded not solved
+
+The Weaviate UUID is deterministic from `(verb_iri, input_uri)`. Every presentation shares
+`verb_iri = mesh:rendersAs`, so uniqueness rests entirely on the subject. That is fine TODAY
+(Engine F registers one archetype per subject) and **collides the moment two frontends
+register different archetypes for the same subject** — which is exactly what the frontend
+registry is for. The frontend-scoped row (`frontend_id, subject_uri, output_uri,
+contract_version`) is a SEPARATE, later shape; today's fix is Engine F's backend-side
+capabilities reaching the graph. **Not the same thing, and conflating them would be the
+two-populations error again.**
+
 ## Definition of done — a DEPLOYED witness, not a green suite
 
 **The rule this packet exists to enforce:** an arc whose claim is about deployed behaviour
