@@ -934,7 +934,13 @@ primeSubstrate:
     # The Neo4j node whose presence signals "the ontology ingest populated
     # the class graph" — restart is deferred until it exists so the
     # re-registering engines don't Contract-D-reject against an empty graph.
-    sentinelUri: "http://invincible-agent/idp#Dataset"
+    # COMMA-SEPARATED; the wait requires EVERY entry to be present. One class
+    # per ontology whose classes the restarting engines actually register
+    # against -- idp_extension for the dataset/lineage verbs, mesh_system for
+    # the presentation archetypes. mesh#ChartWidget is deliberately an
+    # ARCHETYPE rather than a long-standing class: it proves the CURRENT
+    # mesh_system.ttl landed, not merely that some older copy did.
+    sentinelUri: "http://invincible-agent/idp#Dataset,http://invincible-agent/mesh#ChartWidget"
     # Max seconds to wait for the sentinel before restarting anyway. A
     # timeout is best-effort, not failure: the DataHub→doc-tools sensor
     # registration path self-heals via retries once the classes land.

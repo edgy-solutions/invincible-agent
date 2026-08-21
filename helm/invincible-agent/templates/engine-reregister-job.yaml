@@ -130,7 +130,15 @@ spec:
 
               ns = os.environ["POD_NAMESPACE"]
               deploys = [d for d in os.environ["REREGISTER_DEPLOYMENTS"].split(",") if d]
-              sentinel = os.environ["SENTINEL_URI"]
+              # Comma-separated: EVERY listed class must be present before the
+              # engines restart. A single sentinel proves only that ONE ontology
+              # landed -- prime launches its ingests concurrently and out of order,
+              # so idp#Dataset (10th of 12) routinely goes green while mesh_system
+              # (12th) is still QUEUED. Engines that register presentation triples
+              # then hit Contract D against classes that do not exist yet, and the
+              # refusal is silent. Observed 2026-08-21: reregister completed with
+              # the mesh ingest still queued; 0 rendersAs rows resulted.
+              sentinels = [s.strip() for s in os.environ["SENTINEL_URI"].split(",") if s.strip()]
               timeout = int(os.environ.get("SENTINEL_TIMEOUT", "420"))
 
               # 1) Wait for the ingest sentinel — prime fire-and-forgets the
@@ -144,15 +152,17 @@ spec:
               while time.time() < deadline:
                   try:
                       with drv.session() as s:
-                          n = s.run(
-                              "MATCH (c:OntologyClass {uri:$u}) RETURN count(c) AS n",
-                              u=sentinel,
-                          ).single()["n"]
-                      if n > 0:
+                          found = s.run(
+                              "MATCH (c:OntologyClass) WHERE c.uri IN $u "
+                              "RETURN collect(DISTINCT c.uri) AS found",
+                              u=sentinels,
+                          ).single()["found"]
+                      missing = [u for u in sentinels if u not in found]
+                      if not missing:
                           ready = True
-                          print(f"[ready] sentinel present: {sentinel}", flush=True)
+                          print(f"[ready] all {len(sentinels)} sentinels present", flush=True)
                           break
-                      print("[wait] ingest sentinel not present yet...", flush=True)
+                      print(f"[wait] {len(missing)}/{len(sentinels)} sentinels missing: {missing}", flush=True)
                   except Exception as e:
                       print(f"[wait] neo4j not ready: {type(e).__name__}", flush=True)
                   time.sleep(10)
