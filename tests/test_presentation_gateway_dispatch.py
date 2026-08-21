@@ -226,8 +226,42 @@ def test_the_fallback_carries_a_RETIREMENT_TRIGGER():
     refactoring — delete the trigger and this goes red."""
     src = _SRC.read_text(encoding="utf-8")
     assert "RETIREMENT TRIGGER" in src, "the fallback lost its removal condition"
-    assert "VIA GATEWAY" in src, "the trigger lost the log line that proves it fired"
+    assert "manifest_species" in src, "the trigger lost the fact it checks"
     assert "kubectl" in src, "the trigger lost the command that checks it"
+
+
+def test_the_trigger_does_NOT_key_on_a_log_line():
+    """THE REGRESSION ARM, from a trigger that shipped dead on arrival.
+
+    The first version required `kubectl logs | grep "VIA GATEWAY"`. This
+    module's logger propagated to a root uvicorn had replaced, so engine-f
+    registered ten presentations through the gateway and printed nothing — the
+    condition could not be observed even when it was TRUE, which makes it not a
+    condition. A trigger must key on a fact a server states about itself, not on
+    a string a logger might swallow.
+    """
+    src = _SRC.read_text(encoding="utf-8")
+    trigger = src.split("RETIREMENT TRIGGER", 1)[1].split("WHY A TRIGGER", 1)[0]
+    assert "grep" not in trigger or "manifest_species" in trigger, (
+        "the retirement condition is grep-on-logs again — it cannot be observed "
+        "when the logger is silent, which is exactly how it shipped dead"
+    )
+
+
+def test_this_module_uses_a_UVICORN_SAFE_logger():
+    """THE META-DEFECT'S SEAL. A bare getLogger here propagates to a root that
+    uvicorn replaces at startup, so every record this module emits is DROPPED —
+    including the three-way fallback classification whose entire purpose is
+    telling an operator which repair they need.
+
+    Two engines each hand-rolled this fix on their own named logger and neither
+    reached this shared module, which is the one that does the announcing."""
+    src = _SRC.read_text(encoding="utf-8")
+    assert "ensure_stdout_logger" in src, (
+        "mesh_registration went back to a bare getLogger — its records will be "
+        "dropped under uvicorn and the fallback classification goes inaudible"
+    )
+    assert 'logging.getLogger("mesh_registration")' not in src
 
 
 def test_a_contract_d_refusal_NAMING_a_verb_field_is_still_REFUSED():

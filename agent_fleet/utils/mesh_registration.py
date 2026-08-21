@@ -51,7 +51,22 @@ import os
 from iagent_mesh.registration_transport import register_with_mesh
 from typing import Iterable, Optional
 
-logger = logging.getLogger("mesh_registration")
+# NOT a bare getLogger. uvicorn replaces the root handler at startup, so a logger
+# that relies on propagation is silently DROPPED — and this module is the one that
+# announces whether a registration reached the gateway or fell back to audit-only
+# emit. On 2026-08-21 engine-f registered ten presentations through the gateway and
+# printed nothing at all: the three-way fallback classification, built so an
+# operator could tell "ship the image" from "fix the registration" from "check the
+# network", discriminated perfectly into a log nobody could read.
+#
+# The engines had each hand-rolled this repair on their OWN named logger and
+# neither reached here, the shared module they both delegate to.
+try:
+    from agent_fleet.utils.uvicorn_safe_logging import ensure_stdout_logger
+except ImportError:  # flattened image layout (/app/utils/...)
+    from utils.uvicorn_safe_logging import ensure_stdout_logger  # type: ignore
+
+logger = ensure_stdout_logger("mesh_registration")
 
 #: Same opt-in env var semantics as the SDK. Set to one of these (case
 #: insensitive) to actually emit; anything else and the helper logs that
@@ -613,17 +628,24 @@ def register_presentation_to_mesh(
     # mistaken for one.
     #
     # ═══ RETIREMENT TRIGGER — this branch is scheduled for DELETION ═══
-    # Condition: a successful gateway registration for a presentation appears in
-    # engine-f's log ("presentation registered VIA GATEWAY") on the deployed
-    # image, fleet-wide. Check:
-    #     kubectl -n <ns> logs deploy/iagent-engine-f | grep "VIA GATEWAY"
-    # When that line is present after a cold start, delete this fallback branch
-    # and the `mesh_registration_via` property with it.
+    # Condition: every deployed mesh-registrar advertises "Presentation" in
+    # `manifest_species` on /health. Check:
+    #     kubectl -n <ns> exec deploy/iagent-mesh-registrar --     #         python -c "import urllib.request,json;     #         print(json.load(urllib.request.urlopen('http://localhost:8090/health'))['manifest_species'])"
+    # When that lists 'Presentation' fleet-wide, delete this fallback branch and
+    # the `mesh_registration_via` property with it.
+    #
+    # THIS TRIGGER USED TO KEY ON A LOG LINE ("VIA GATEWAY") and was DEAD ON
+    # ARRIVAL: this module's logger propagated to a root that uvicorn had
+    # replaced, so engine-f registered ten presentations through the gateway and
+    # printed nothing — the condition could not be observed even when it was
+    # true. A condition that cannot be observed is not a condition. It now reads
+    # a fact the server states about itself, which cannot go silent the same way
+    # and whose ABSENCE is as meaningful as its content.
+    #
     # WHY A TRIGGER AND NOT A TODO: ADR-0006 preserved doc-tools' linker as a
     # manual fallback, its DataHub token went stale, and it spent months
     # returning SUCCESS while writing nothing — a dead path dressed as a working
-    # one. A fallback with no removal condition becomes that. This one has a
-    # condition and a command to check it.
+    # one. A fallback with no removal condition becomes that.
     registrar_url = os.getenv("MESH_REGISTRAR_URL")
     if registrar_url:
         outcome = _emit_presentation_to_registrar(

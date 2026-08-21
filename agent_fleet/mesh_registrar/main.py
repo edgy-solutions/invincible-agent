@@ -516,6 +516,20 @@ def health() -> dict:
         "neo4j_reachable": db_ok,
         "neo4j_error": db_error,
         "version": REGISTRAR_VERSION,
+        # WHICH MANIFEST SPECIES THIS BUILD ACCEPTS — a CHECKABLE FACT, so a
+        # caller never has to infer capability from a rejection, and a
+        # deploy-ordering fallback has an observable retirement condition
+        # instead of a log line.
+        #
+        # The first version of engine-f's fallback keyed its retirement on
+        # `kubectl logs | grep "VIA GATEWAY"`. That engine's logger was dropping
+        # records, so the condition could never be observed even on success —
+        # a condition that cannot be observed is not a condition. Reading it
+        # from here cannot rot the same way: it is the server answering about
+        # itself, and its absence is as meaningful as its content.
+        "manifest_species": sorted(
+            RegistrationManifest.model_fields["tool_kind"].annotation.__args__
+        ),
     }
 
 
