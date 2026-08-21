@@ -30,14 +30,15 @@ are stubbed for a v0.2 follow-up.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from neo4j import GraphDatabase
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -119,20 +120,81 @@ class RegistrationManifest(BaseModel):
         description="Stable engine+verb identifier — e.g. 'engine_e_neo4j_expert'. "
                     "Used to derive the DataHub tool_urn; idempotent on this field."
     )
+    # Defaulted to "" so a PRESENTATION may omit them -- it supplies the triple
+    # form instead and the model validator normalises it onto these three. The
+    # validator still REQUIRES all three for tool_kind='Engine', so the default
+    # is not a relaxation of engine validation: omit them on an engine and the
+    # registration is refused with a named reason.
     verb_iri: str = Field(
+        default="",
         description="The verb's canonical IRI — e.g. 'mesh:queryKnowledgeGraph' "
-                    "or 'http://invincible-agent/mesh#queryKnowledgeGraph'."
+                    "or 'http://invincible-agent/mesh#queryKnowledgeGraph'. "
+                    "Engine only; presentations supply predicate_iri."
     )
     input_uri: str = Field(
+        default="",
         description="OntologyClass URI for the verb's input. MUST resolve to an "
-                    "existing :OntologyClass node in Neo4j (Contract D)."
+                    "existing :OntologyClass node in Neo4j (Contract D). "
+                    "Engine only; presentations supply subject_uri."
     )
     output_uri: str = Field(
+        default="",
         description="OntologyClass URI for the verb's output. MUST resolve to an "
-                    "existing :OntologyClass node in Neo4j (Contract D)."
+                    "existing :OntologyClass node in Neo4j (Contract D). "
+                    "Engine only; presentations supply object_uri."
     )
-    endpoint_url: str = Field(
-        description="Engine's HTTP endpoint that serves this verb."
+    endpoint_url: Optional[str] = Field(
+        default=None,
+        description="Engine's HTTP endpoint that serves this verb. REQUIRED for "
+                    "tool_kind='Engine'; MUST BE ABSENT for 'Presentation'."
+    )
+
+    # ── SECOND SPECIES: presentations are triples, not verb edges ────────────
+    # Per ADR-0017 a presentation advertises (subject, mesh:rendersAs, archetype).
+    # Before this, the manifest modelled verb edges only, so presentations could
+    # not go through the gateway at all -- they emitted direct-to-DataHub while
+    # the DataHub->Weaviate materialiser was RETIRED (ADR-0006 Addendum), making
+    # those emissions audit records that reached nothing. Measured 2026-08-21:
+    # 11 presentation URNs in DataHub, 0 rendersAs rows in Weaviate.
+    #
+    # `tool_kind` DEFAULTS to "Engine" so every existing caller is byte-identical
+    # -- no engine manifest changes, no version negotiation, no coordinated deploy.
+    tool_kind: Literal["Engine", "Presentation"] = Field(
+        default="Engine",
+        description="Registration species. 'Engine' = verb edge (reached by "
+                    "CALLING endpoint_url). 'Presentation' = rendersAs triple "
+                    "(reached by REPLYING, identified by frontend_id).",
+    )
+    frontend_id: Optional[str] = Field(
+        default=None,
+        description="Which frontend advertises this presentation (e.g. 'cortex', "
+                    "'openddil'). The reached-by-REPLYING counterpart of "
+                    "endpoint_url. REQUIRED for tool_kind='Presentation'.",
+    )
+    subject_uri: Optional[str] = Field(
+        default=None,
+        description="Presentation only: the output-shape IRI this renders. FULL "
+                    "form. Contract-D checked as the edge's input side.",
+    )
+    predicate_iri: Optional[str] = Field(
+        default=None,
+        description="Presentation only: constant 'mesh:rendersAs' (ADR-0017). "
+                    "COMPACT form -- see the per-position convention below.",
+    )
+    object_uri: Optional[str] = Field(
+        default=None,
+        description="Presentation only: the archetype class IRI. FULL form. "
+                    "Contract-D checked as the edge's output side.",
+    )
+    archetype: Optional[str] = Field(
+        default=None,
+        description="Presentation only: BAML archetype enum string, e.g. "
+                    "'KNOWLEDGE_DOCUMENT'.",
+    )
+    expected_fields: list[str] = Field(
+        default_factory=list,
+        description="Presentation only: fields the archetype expects in "
+                    "structured_data.",
     )
     owner_persona: str = Field(
         description="Persona for routing decisions — e.g. 'AUDITOR', 'TECH_WRITER'."
@@ -190,9 +252,71 @@ class RegistrationManifest(BaseModel):
     @field_validator("verb_iri", "input_uri", "output_uri")
     @classmethod
     def _non_empty(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("must be non-empty")
-        return v.strip()
+        # Blank is permitted HERE only so presentations may omit these three;
+        # the per-species model validator below rejects blanks for Engines. A
+        # whitespace-only value is still normalised to "" rather than passed on.
+        return (v or "").strip()
+
+    @model_validator(mode="after")
+    def _validate_species(self) -> "RegistrationManifest":
+        """Per-species required fields, enforced at ADMISSION.
+
+        The branch must not become a bypass: a Presentation missing its own
+        fields is still rejected. That failure mode has already shipped once in
+        this arc -- doc-tools' linker demanded verb-shaped fields of every row,
+        so presentations were refused as "incomplete" at ERROR level with a
+        remedy ("re-register") that could not work. A guard correct for its
+        population and blind to a species it was never told about.
+
+        Presentations are NORMALISED onto the verb-edge shape here, so Contract
+        D, the saga, the Neo4j MERGE and the Weaviate upsert all run unchanged:
+            subject_uri   -> input_uri
+            predicate_iri -> verb_iri
+            object_uri    -> output_uri
+
+        IRI CONVENTION IS PER-POSITION and is INHERITED, not invented. Verified
+        against the 24 live rows on 2026-08-21: the predicate/verb position is
+        stored COMPACT ('mesh:rendersAs', 'mesh:queryKnowledgeGraph') while the
+        subject/object positions are stored FULL
+        ('http://invincible-agent/mesh#OwnershipFact'). Reading "compact = stale"
+        and expanding the predicate would make presentations the only row type
+        with a full verb_iri. No expansion happens here.
+        """
+        if self.tool_kind == "Presentation":
+            missing = [
+                f for f in ("subject_uri", "predicate_iri", "object_uri",
+                            "archetype", "frontend_id")
+                if not (getattr(self, f) or "").strip()
+            ]
+            if missing:
+                raise ValueError(
+                    f"tool_kind='Presentation' requires {missing}. A presentation "
+                    f"missing its own fields is rejected, not waved through."
+                )
+            if self.endpoint_url:
+                # REJECTED, not ignored. A presentation is not callable. Silently
+                # accepting an endpoint would let a caller advertise one and
+                # produce a row that dispatch might later try to invoke -- a
+                # field nobody calls is a claim nobody audits.
+                raise ValueError(
+                    "tool_kind='Presentation' must NOT carry endpoint_url: a "
+                    "presentation is reached by REPLYING (frontend_id), not by "
+                    "calling. Use frontend_id."
+                )
+            # Normalise onto the verb-edge shape the write path already speaks.
+            object.__setattr__(self, "verb_iri", self.predicate_iri.strip())
+            object.__setattr__(self, "input_uri", self.subject_uri.strip())
+            object.__setattr__(self, "output_uri", self.object_uri.strip())
+        else:
+            if not (self.endpoint_url or "").strip():
+                raise ValueError(
+                    "tool_kind='Engine' requires endpoint_url (the verb is "
+                    "reached by CALLING it)."
+                )
+            for f in ("verb_iri", "input_uri", "output_uri"):
+                if not (getattr(self, f) or "").strip():
+                    raise ValueError(f"tool_kind='Engine' requires {f}.")
+        return self
 
 
 class RegistrationResult(BaseModel):
@@ -254,9 +378,15 @@ def _derive_provider(name: str, verb_iri: str) -> str:
 #
 # Keep this in step with the helm sentinel; they are answering the same question and a drift
 # between them means the hook and the registrar disagree about when the substrate is ready.
+# COMMA-SEPARATED, and EVERY entry must be present for the substrate to count as
+# ready. A single sentinel proves only that ONE ontology landed: prime launches
+# its ingests concurrently and out of order, so idp#Dataset (10th of 12) goes
+# green while mesh_system (12th) is still QUEUED. Observed 2026-08-21 on the helm
+# side, where the single-uri wait reported ready on its FIRST poll and the
+# re-register job finished in 47s with the mesh ingest still queued.
 _SUBSTRATE_SENTINEL_URI = os.getenv(
     "MESH_REGISTRAR_SUBSTRATE_SENTINEL",
-    "http://invincible-agent/idp#Dataset",
+    "http://invincible-agent/idp#Dataset,http://invincible-agent/mesh#ChartWidget",
 )
 
 
@@ -296,12 +426,19 @@ def _contract_d_check(input_uri: str, output_uri: str) -> dict:
         missing = rec["missing"] if rec else [input_uri, output_uri]
 
         substrate_ready = True
-        if missing and _SUBSTRATE_SENTINEL_URI:
+        sentinels = [u.strip() for u in _SUBSTRATE_SENTINEL_URI.split(",") if u.strip()]
+        if missing and sentinels:
+            # ALL, not ANY. Answering "is the substrate ready" from one class is
+            # what let the boot race survive a guard built specifically for it.
             srec = session.run(
-                "RETURN EXISTS { MATCH (:OntologyClass {uri: $uri}) } AS present",
-                uri=_SUBSTRATE_SENTINEL_URI,
+                """
+                UNWIND $sentinel_uris AS uri
+                WITH uri WHERE NOT EXISTS { MATCH (:OntologyClass {uri: uri}) }
+                RETURN collect(uri) AS absent
+                """,
+                sentinel_uris=sentinels,
             ).single()
-            substrate_ready = bool(srec["present"]) if srec else False
+            substrate_ready = not (srec["absent"] if srec else sentinels)
 
     return {
         "ok": not missing,
@@ -337,28 +474,7 @@ def _emit_to_datahub(manifest: RegistrationManifest, tool_urn: str) -> dict:
     # when engine-d/e/w opted in and silently failed materialization.
     # Mirror exactly the legacy direct-emit path in
     # ``agent_fleet/utils/mesh_registration.py``.
-    provider = manifest.provider or _derive_provider(manifest.name, manifest.verb_iri)
-    custom_props = {
-        "mesh_is_registration":         "true",
-        "mesh_verb_iri":                manifest.verb_iri,
-        "mesh_input_uri":               manifest.input_uri,
-        "mesh_output_uri":              manifest.output_uri,
-        "mesh_endpoint_url":            manifest.endpoint_url,
-        "mesh_owner_persona":           manifest.owner_persona,
-        "mesh_domains":                 ",".join(manifest.domains),
-        "mesh_cost_class":              manifest.cost_class,
-        "mesh_requires_human_approval": str(manifest.requires_human_approval).lower(),
-        "mesh_verb_synonyms":           ",".join(manifest.verb_synonyms),
-        "mesh_verb_anti_synonyms":      ",".join(manifest.verb_anti_synonyms),
-        "mesh_required_args":           ",".join(manifest.required_args),
-        "mesh_version":                 manifest.version,
-        "mesh_registrar_version":       REGISTRAR_VERSION,
-        "mesh_provider":                provider,
-    }
-    if manifest.timeout_s is not None:
-        custom_props["mesh_timeout_s"] = str(manifest.timeout_s)
-    if manifest.openapi_schema:
-        custom_props["mesh_openapi_schema"] = manifest.openapi_schema
+    custom_props = _build_custom_properties(manifest)
 
     props = MLModelPropertiesClass(
         description=manifest.description or "",
@@ -402,6 +518,61 @@ def health() -> dict:
         "version": REGISTRAR_VERSION,
     }
 
+
+
+def _build_custom_properties(manifest: "RegistrationManifest") -> dict:
+    """Build the DataHub ``customProperties`` bag for either species.
+
+    Extracted so the two-species discrimination is testable without a DataHub,
+    a Neo4j or a Weaviate. The alternative was two skipped tests, and a skipped
+    arm proves nothing -- these cover the discriminator riding in the data and
+    the popped endpoint, which are the design's load-bearing calls.
+    """
+    provider = manifest.provider or _derive_provider(manifest.name, manifest.verb_iri)
+    custom_props = {
+        "mesh_is_registration":         "true",
+        "mesh_verb_iri":                manifest.verb_iri,
+        "mesh_input_uri":               manifest.input_uri,
+        "mesh_output_uri":              manifest.output_uri,
+        "mesh_endpoint_url":            manifest.endpoint_url or "",
+        "mesh_owner_persona":           manifest.owner_persona,
+        "mesh_domains":                 ",".join(manifest.domains),
+        "mesh_cost_class":              manifest.cost_class,
+        "mesh_requires_human_approval": str(manifest.requires_human_approval).lower(),
+        "mesh_verb_synonyms":           ",".join(manifest.verb_synonyms),
+        "mesh_verb_anti_synonyms":      ",".join(manifest.verb_anti_synonyms),
+        "mesh_required_args":           ",".join(manifest.required_args),
+        "mesh_version":                 manifest.version,
+        "mesh_registrar_version":       REGISTRAR_VERSION,
+        "mesh_provider":                provider,
+    }
+    # THE DISCRIMINATOR RIDES IN THE DATA. `mesh_tool_kind` is written for BOTH
+    # species so a consumer never has to infer the shape from which fields
+    # happen to be present. On the doc-tools side this key already existed and
+    # nothing branched on it -- declared but unwired -- which is exactly how
+    # presentations got rejected as malformed engines for weeks.
+    custom_props["mesh_tool_kind"] = manifest.tool_kind
+
+    if manifest.tool_kind == "Presentation":
+        # The SPO triple, under the same key names the legacy direct-emit path
+        # in agent_fleet/utils/mesh_registration.py writes, so a row emitted by
+        # the gateway is byte-comparable with one emitted before the gateway
+        # learned this species.
+        custom_props["mesh_subject_uri"] = manifest.subject_uri or ""
+        custom_props["mesh_predicate_iri"] = manifest.predicate_iri or ""
+        custom_props["mesh_object_uri"] = manifest.object_uri or ""
+        custom_props["mesh_archetype"] = manifest.archetype or ""
+        custom_props["mesh_expected_fields"] = json.dumps(list(manifest.expected_fields))
+        custom_props["mesh_frontend_id"] = manifest.frontend_id or ""
+        # A presentation is not callable; there is no endpoint to advertise.
+        # Popped rather than left blank so no consumer can read "" as a URL.
+        custom_props.pop("mesh_endpoint_url", None)
+
+    if manifest.timeout_s is not None:
+        custom_props["mesh_timeout_s"] = str(manifest.timeout_s)
+    if manifest.openapi_schema:
+        custom_props["mesh_openapi_schema"] = manifest.openapi_schema
+    return custom_props
 
 @app.post("/v1/register", response_model=RegistrationResult)
 def register(manifest: RegistrationManifest) -> RegistrationResult:

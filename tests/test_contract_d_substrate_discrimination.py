@@ -57,7 +57,14 @@ def _load_registrar(monkeypatch, *, present: set[str], sentinel: str = SENTINEL)
         def run(self, cypher, **params):
             if "uris" in params:  # the missing-URI probe
                 return _Result({"missing": [u for u in params["uris"] if u not in present]})
-            # the sentinel probe
+            # The sentinel probe is PLURAL: the registrar waits on every ontology
+            # whose classes the caller may register against, because prime launches
+            # its ingests concurrently and one sentinel only proves that ONE of them
+            # landed. It returns what is ABSENT, so an empty list means ready.
+            if "sentinel_uris" in params:
+                return _Result(
+                    {"absent": [u for u in params["sentinel_uris"] if u not in present]}
+                )
             return _Result({"present": params["uri"] in present})
 
     class _Driver:
@@ -212,3 +219,49 @@ def test_the_status_code_carries_the_distinction(monkeypatch, present, expected_
     with pytest.raises(HTTPException) as exc:
         mod.register(manifest)
     assert exc.value.status_code == expected_status, why
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# THE SENTINEL SET IS PLURAL, AND THE WAIT REQUIRES ALL OF IT (2026-08-21)
+#
+# prime launches twelve ontology ingests concurrently and exits. One sentinel
+# answers for one ontology. `idp#Dataset` is launched 10th of 12 and
+# `mesh_system` 12th, so a single-uri readiness check reports READY while the
+# mesh classes are still QUEUED — and with wipe=false that class was already
+# present from the PREVIOUS prime, so the check passed on its first poll
+# without ever waiting. The helm-side job logged `[ready] sentinel present`
+# and completed in 47s while the mesh ingest sat queued.
+#
+# Existence cannot prove freshness, and ONE class cannot speak for TWELVE.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_MESH_SENTINEL = "http://invincible-agent/mesh#ChartWidget"
+_PLURAL = f"{SENTINEL},{_MESH_SENTINEL}"
+
+
+def test_a_PARTIAL_sentinel_set_is_NOT_ready(monkeypatch):
+    """THE REGRESSION ARM. idp landed, mesh has not — exactly the state the
+    47-second re-register ran in. Reporting ready here is the whole bug."""
+    mod = _load_registrar(monkeypatch, present={SENTINEL}, sentinel=_PLURAL)
+    cd = mod._contract_d_check(WANTED, WANTED)
+    assert cd["substrate_ready"] is False, (
+        "a half-ingested substrate reported READY — engines would register "
+        "against classes that do not exist yet and be refused permanently"
+    )
+
+
+def test_the_FULL_sentinel_set_is_ready(monkeypatch):
+    """THE POSITIVE CONTROL. A check that can never say ready blocks every
+    registration forever, which is indistinguishable from a wedged ingest."""
+    mod = _load_registrar(
+        monkeypatch, present={SENTINEL, _MESH_SENTINEL}, sentinel=_PLURAL
+    )
+    cd = mod._contract_d_check(WANTED, WANTED)
+    assert cd["substrate_ready"] is True
+
+
+def test_the_mesh_half_alone_is_also_not_enough(monkeypatch):
+    """Order-independent: the set is a conjunction, not a sequence. Whichever
+    half is missing, the answer is not-ready."""
+    mod = _load_registrar(monkeypatch, present={_MESH_SENTINEL}, sentinel=_PLURAL)
+    assert mod._contract_d_check(WANTED, WANTED)["substrate_ready"] is False
