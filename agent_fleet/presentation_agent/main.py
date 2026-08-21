@@ -655,6 +655,34 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
         cap = _lookup_capability(request.output_uri)
         if cap:
             archetype = cap["archetype"]
+            # ── SLICE 4: THE DATA GETS A VOTE ─────────────────────────────────────────
+            # `output_uri` is a candidate FILTER, not a verdict. Chosen from the output
+            # type alone, every analyzeDataset result became a CHART_WIDGET -- including a
+            # list of CAGE codes, which are IDENTIFIERS and can never be plotted. The
+            # honest-degradation half shipped 2026-08-15, so the viewer saw the text; the
+            # system still CHOSE WRONG and then recovered. This is the half that stops the
+            # wrong choice being made.
+            #
+            # Checked against the payload ALREADY IN HAND (the agent's rows), before the
+            # BAML render -- which is the whole point, since the previous code decided the
+            # shape and only then produced data to put in it.
+            if archetype == "CHART_WIDGET":
+                _agent_resp = _extract_agent_response(request.raw_data) or {}
+                _rows = _agent_resp.get("data")
+                _refusal = _validate_chart_payload(_rows, None, cap.get("contract"))
+                if _refusal is not None:
+                    logger.info(
+                        "render_ui: output_uri=%s maps to CHART_WIDGET but the payload "
+                        "does not satisfy its contract (%s) -> KNOWLEDGE_DOCUMENT. The "
+                        "data decides the shape; output_uri is a hint.",
+                        request.output_uri, _refusal,
+                    )
+                    response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
+                    return _render_document_deterministic(
+                        request.raw_data,
+                        effective_persona,
+                        subject_concept=request.output_uri,
+                    )
             logger.info(
                 "render_ui: output_uri=%s matched capability archetype=%s",
                 request.output_uri, archetype,

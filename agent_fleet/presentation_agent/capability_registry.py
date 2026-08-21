@@ -136,3 +136,133 @@ def select_archetype(
         "registration_version": menu["frontend_version"],
         "reason": "output_uri " + repr(output_uri) + " is not in this frontend's registered menu",
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SLICE 4 — selection from DATA SHAPE. `output_uri` is a candidate filter, not a verdict.
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# WHAT THIS CLOSES. `archetype-chosen-before-data`: the archetype was resolved from
+# `output_uri` alone, BEFORE anyone looked at the rows. That is how a list of two
+# identifiers got CHART_WIDGET -- the output type said "analysis report", nothing asked
+# whether the payload could be drawn, and the viewer got an undrawable widget. The
+# degradation half shipped (the viewer now sees the honest text), but the system still
+# CHOSE WRONG and then recovered.
+#
+# Selection now runs: filter by output_uri -> keep only what the PAYLOAD SATISFIES ->
+# rank by the already-published persona/domain affinities. The archetype returned is one
+# whose contract this payload meets, so `unrenderable` stops being reachable as a
+# DECISION: the picker cannot choose something the caller cannot draw.
+#
+# `unrenderable` REMAINS in the vocabulary, deliberately. It is still the honest answer
+# when a caller's menu contains nothing this payload satisfies -- but it is now a fact
+# about the MENU meeting the DATA, not a decision made in ignorance of the data.
+
+
+def _satisfies(cap: Dict[str, Any], payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    """None when `payload` satisfies this capability's contract, else the refusal reason.
+
+    Dispatches by archetype because that is where the shape rules live. An archetype with
+    no typed contract is treated as SATISFIED: migration is row-by-row, and refusing the
+    nine not-yet-converted rows would make slice 4 a regression for every archetype except
+    the one that happens to be finished.
+    """
+    if payload is None:
+        return None
+    archetype = str(cap.get("archetype") or "")
+    if archetype == "CHART_WIDGET":
+        # Imported here rather than at module scope to keep this module importable by the
+        # pure unit tests without dragging the validator's json/typing chain into every
+        # registry test.
+        try:
+            from capability_validator import validate_chart_payload  # type: ignore[no-redef]
+        except ImportError:
+            from agent_fleet.presentation_agent.capability_validator import (
+                validate_chart_payload,
+            )
+        return validate_chart_payload(
+            payload.get("chart_data"),
+            payload.get("chart_type"),
+            cap.get("contract"),
+        )
+    return None
+
+
+def select_presentation(
+    frontend_id: Optional[str],
+    output_uri: str,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    persona: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """Choose an archetype the caller can render AND this payload can fill.
+
+    Returns (capability, provenance). Provenance always carries `presentation_source`, and
+    now also `selection_basis` so a reader can tell WHY this archetype won -- the
+    discriminant that was missing when the choice was made from a type annotation alone.
+    """
+    menu = menu_for(frontend_id)
+    if menu is None:
+        return None, {
+            "presentation_source": "default-menu",
+            "presentation_menu": list(UNIVERSAL_ARCHETYPES),
+            "frontend_id": frontend_id or None,
+            "reason": "caller has no registered capability menu",
+        }
+
+    target = _canonical(output_uri)
+    caps: List[Dict[str, Any]] = menu["capabilities"]
+
+    # 1. FILTER (not decide). output_uri narrows the field; it no longer picks the winner.
+    candidates = [c for c in caps if _canonical(str(c.get("subject_uri") or "")) == target]
+    basis = "output_uri+payload"
+    if not candidates:
+        # output_uri matched nothing. It is a HINT, so a miss widens the field rather than
+        # ending the search -- the payload may still satisfy something on this menu.
+        candidates = list(caps)
+        basis = "payload-only (output_uri matched no capability)"
+
+    # 2. KEEP ONLY WHAT THE PAYLOAD SATISFIES. This is the step whose absence produced
+    #    CHART_WIDGET for two identifiers.
+    satisfied, refusals = [], []
+    for c in candidates:
+        reason = _satisfies(c, payload)
+        if reason is None:
+            satisfied.append(c)
+        else:
+            refusals.append({"archetype": c.get("archetype"), "reason": reason})
+
+    if not satisfied:
+        # Nothing on this menu can draw this payload. Honest, and now EXPLAINED: the
+        # refusals name which requirement each candidate missed.
+        return None, {
+            "presentation_source": "unrenderable",
+            "frontend_id": menu["frontend_id"],
+            "registration_version": menu["frontend_version"],
+            "selection_basis": basis,
+            "refusals": refusals,
+            "reason": "no registered capability's contract is satisfied by this payload",
+        }
+
+    # 3. RANK by the affinities already published. Ranking only -- it breaks ties among
+    #    archetypes that can ALL render the payload, and never overrides satisfaction.
+    def _affinity(c: Dict[str, Any]) -> int:
+        score = 0
+        if persona and persona in (c.get("persona_fit") or []):
+            score += 2
+        if domain and domain in (c.get("domain_fit") or []):
+            score += 1
+        return score
+
+    winner = max(satisfied, key=_affinity)
+    return winner, {
+        "presentation_source": "registered",
+        "frontend_id": menu["frontend_id"],
+        "registration_version": menu["frontend_version"],
+        "archetype": winner.get("archetype"),
+        "selection_basis": basis,
+        "candidates_considered": len(candidates),
+        "candidates_satisfied": len(satisfied),
+        "refusals": refusals,
+    }
