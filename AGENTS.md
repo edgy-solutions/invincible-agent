@@ -1429,6 +1429,32 @@ publication mechanism* to *extend an existing seam* — a materially smaller and
 piece of work than the one commissioned. A premise check does not only cancel work; it re-scopes
 it, and the re-scoping is usually the more valuable half.
 
+### ANY RESULT SET EQUAL TO ITS LIMIT IS UNVERIFIED UNTIL COUNTED
+2026-08-21, mid-investigation, in a session ABOUT wrong findings. A scan of the ontology
+substrate at `limit:400` returned **exactly 400 rows**, and the conclusion drawn from it —
+that `mesh:OwnershipFact` was undeclared — was a **FALSE NEGATIVE**. The substrate holds
+**7023**. The finding was one commit from landing in a packet as a missing declaration that
+is not missing.
+
+**A scan that returns exactly its limit is a truncated scan wearing a complete one's
+clothes.** Nothing in the output says "there is more"; the row count looks like an answer,
+and a round number at the boundary is the only tell.
+
+**So: before drawing a negative conclusion from a query, COUNT the population.** One
+aggregate call. Then either raise the limit past the count or — better — ask the targeted
+question directly, because a targeted lookup has no limit to hide behind. The corrected
+table in that investigation came from per-IRI lookups; the truncated scan was discarded
+rather than patched.
+
+This is the sixth member of the truncated-read family and the cheapest detector yet. Its
+sibling one layer up is the `head`-limited grep that produced an "11 rows / 5 components"
+plan for a 14-row table (see the deletion law below): **same defect, different tool, same
+tell — the output ended where the flag said, not where the data did.**
+
+**Negative conclusions are the dangerous direction.** "X is absent" from a windowed read is
+an assertion about everything you did not look at. A positive hit from the same read is
+still true.
+
 ### A DELETION TARGET NAMED BY FILENAME HIDES HOW MANY JOBS THE FILE HOLDS
 2026-08-20, twice in one build, in the same direction. An acceptance said **"delete
 `chart_normalizer.py`"** — the file also held `honest_text_from_response`, correct code in

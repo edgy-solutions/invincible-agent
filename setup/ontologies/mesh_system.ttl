@@ -160,3 +160,67 @@ mesh:DispositionReview a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Disposition Review" ;
   rdfs:comment "Output of proposeDisposition: a server-authored batch of per-part disposition proposals (dispatch-to-qualification / last-time-buy / alternate-sourcing / archive) for a sustainment notice, opened as ONE human review that fans out per-part dispatch tasks on approval." .
+
+# =============================================================================
+# PRESENTATION ARCHETYPES (added 2026-08-21) — the OBJECT end of a rendersAs
+# triple, declared so it can exist.
+# =============================================================================
+#
+# WHY THESE WERE MISSING, and why the gate was right. ADR-0017 registers a
+# presentation capability as (subject_uri, mesh:rendersAs, object_uri) — the object
+# being an ARCHETYPE IRI like mesh:ChartWidget. Those IRIs are referenced across the
+# ADR, the capability table, and every registration Engine F emits at startup, and
+# they were DECLARED NOWHERE. Contract D (ADR-0019) requires both triple endpoints to
+# pre-exist as :OntologyClass nodes and deliberately refuses to auto-MERGE them,
+# because the prior form fabricated phantom classes with no subClassOf edges and no
+# provenance.
+#
+# So every presentation registration failed Contract D on its OBJECT end — correctly.
+# Measured 2026-08-21 against the live substrate (7023 classes, targeted lookups): the
+# SUBJECTS are all declared (mesh:OwnershipFact, mesh:DatasetAnalysisReport, …) and not
+# one ARCHETYPE was. Same species as mesh:DispositionReview above: a URI named by a
+# registration and declared by nothing — green in every conversation, impossible in
+# every fresh substrate. Weakening the gate to let presentations through would have
+# been fixing the alarm.
+#
+# A NOTE ON WHAT THESE ARE. An archetype is not a request and not a response — it is
+# the RENDERING KIND a response can be presented as, so it hangs off its own parent
+# rather than being forced under mesh:Response. The distinction is load-bearing at the
+# graph level: mesh:DatasetAnalysisReport is a thing an engine PRODUCES;
+# mesh:ChartWidget is a way a client can DRAW it. One is the payload, the other is the
+# treatment.
+#
+# INERT UNTIL PRIMED. A TTL edit does not reach Neo4j by itself — these become
+# :OntologyClass nodes on the next ontology ingest (prime → MinIO → Fuseki → Neo4j via
+# doc-tools' sync_jena_ontologies_to_neo4j). Until that runs, the presentation sync
+# still fails Contract D, and correctly so.
+
+mesh:Archetype a owl:Class ;
+  rdfs:subClassOf prov:Entity ;
+  rdfs:label "Archetype" ;
+  rdfs:comment "Abstract parent of presentation archetypes — a RENDERING KIND a response can be presented as, never a payload shape itself. The object end of a mesh:rendersAs triple." .
+
+mesh:KnowledgeDocument a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Knowledge Document" ;
+  rdfs:comment "Prose rendered as markdown. The UNIVERSAL archetype: its renderer accepts any string and publishes an EMPTY refusal vocabulary, which is why it is the fallback an unsatisfiable payload can always land on." .
+
+mesh:ChartWidget a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Chart Widget" ;
+  rdfs:comment "A plotted series. Requires rows carrying at least one numeric column; categorical-axis kinds additionally require a label column, and scatter requires two numeric columns. Refuses rather than drawing an undrawable payload." .
+
+mesh:ProcessTopology a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Process Topology" ;
+  rdfs:comment "A directed graph of steps and connectors — nodes carrying identity and edges carrying source and target." .
+
+mesh:AssetStateMetric a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Asset State Metric" ;
+  rdfs:comment "Tabular state or telemetry. Its renderer derives columns from the FIRST ROW, so heterogeneous rows lose the columns absent from it — a constraint on what a producer may send, not a display preference." .
+
+mesh:HazardDeclaration a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Hazard Declaration" ;
+  rdfs:comment "A safety or risk statement with an optional enumerated hazard list and a severity of CRITICAL, WARNING or INFO." .
