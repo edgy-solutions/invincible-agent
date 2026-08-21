@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **56 of 58 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **57 of 59 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -37,6 +37,10 @@ _Coverage: **56 of 58 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **broker-endpoint-env-divergence** — A domain broker re-loads the code location's Definitions in its OWN pod, so every env var that shapes an asset key must match between the two — and three did not, each producing an identical-looking 404. The asset key is assembled from env nobody owns, and identity silently follows any of it.
   status: open · owner: human · blocked-on: the source of the stuck PUBLOG_S3_BUCKET_URL is unfound — absent from `helm template`, absent from the image, present in the live Deployment. Removed by hand to unblock; will recur if a values layer still supplies it.
   → [docs/plans/broker-endpoint-env-divergence.md](plans/broker-endpoint-env-divergence.md)
+
+- **capability-registry-not-graph-backed** — ⚠️ LIVE DEFECT, found by the 2026-08-21 redeploy. The frontend capability registry is a MODULE-LOCAL DICT, and registration and selection run in DIFFERENT PODS — `/register_frontend_capabilities` is served by cortex-bff, `/render_ui` by presentation-agent. Registration can therefore NEVER reach the selector: every caller is anonymous from engine-f's view, the union is always empty, and every answer falls to the labelled floor. CHART_WIDGET is currently unselectable in production for anyone. ADR-0017's own mechanism (rendersAs triples in the shared Predicate collection, read via /search_predicates) was always the design; the in-memory dict was scaffolding that was never written down as a divergence.
+  status: open · owner: agent
+  → [docs/plans/capability-registry-not-graph-backed.md](plans/capability-registry-not-graph-backed.md)
 
 - **cortex-ui-no-test-runner** — cortex-ui has NO test runner at all — no vitest, no jest, no `test` script, zero test files. Found 2026-08-20 while building the presentation contract slice. This is why ten hand-copied capability contracts could drift with nothing pinning them: the drift was not missed, it was UNOBSERVABLE. Sibling of no-ci-gate-on-the-suite, one repo over.
   status: open · owner: unassigned · repo: cortex-ui
