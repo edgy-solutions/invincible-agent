@@ -156,6 +156,51 @@ silent. A gate that asserts on rendering cannot tell the two apart;
 [`a-green-check-proves-only-its-scope`](../principles/a-green-check-proves-only-its-scope.md)
 is the general form. The provenance field is right there in the envelope. Read it.
 
+**Amendment 2026-08-21 — `presentation_source` alone is not enough. Read `selection_basis` too.**
+Found by running the selector against a planning `output_uri`, not by reading it.
+
+`select_presentation` treats `output_uri` as a HINT: when it matches no capability on the
+caller's menu, the search **widens to the whole menu** rather than ending — *"a miss widens
+the field rather than ending the search."* That is correct for its purpose. Its consequence
+for a gate is not obvious and is severe:
+
+```
+output_uri = mesh:PeriodCostSeries        (a planning verb, no contract registered yet)
+payload    = [{period, total}]            (one categorical column, one numeric)
+
+ARCHETYPE CHOSEN     CHART_WIDGET
+presentation_source  "registered"      <-- §5's assertion PASSES
+selection_basis      "payload-only (output_uri matched no capability)"
+```
+
+The caller has a menu, a capability was selected from it, and the card draws — as a bar
+chart, plausibly, wrongly. `presentation_source` is a fact about **whether a menu was
+consulted**. It is not a fact about **whether this output type was found on it**.
+
+So a live-view gate asserts BOTH:
+
+```
+presentation_source == "registered"
+selection_basis     == "output_uri+payload"      # NOT "payload-only (…)"
+```
+
+The second is the discriminant between *my registered contract was found* and *something
+else absorbed my payload*. Without it the gate is green while the archetype is wrong, which
+is precisely the same-observation-opposite-reasons shape this ruling already exists to
+close — arriving one layer deeper, through the field the ruling told the reader to trust.
+
+Recorded with its own irony intact: this section ends *"the provenance field is right there
+in the envelope. Read it."* Reading ONE of the provenance fields was not enough.
+[`a-green-check-proves-only-its-scope`](../principles/a-green-check-proves-only-its-scope.md)
+applied to the check this ADR itself prescribed.
+
+**Corollary for Phase 1's build order.** Until a planning renderer's `.contract.ts` is
+registered, planning payloads do not refuse — they are ABSORBED by whichever existing
+archetype their shape happens to satisfy. So the contracts are not a tidying step that can
+follow the widgets; they are what makes the widgets addressable at all, and a planning card
+that "already renders" before its contract exists is evidence of the absorption, not of
+progress.
+
 ### 6. The renderer's contract is its home, and its refusal vocabulary is published.
 
 Per the ADR-0017 amendment, every live-view renderer exports its contract beside itself —

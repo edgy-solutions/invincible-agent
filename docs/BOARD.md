@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **55 of 57 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **56 of 58 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -121,6 +121,10 @@ _Coverage: **55 of 57 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **seeder-manufactures-declarations** — The sandbox seeder MERGEs endpoint OntologyClass nodes as a SIDE EFFECT of seeding a predicate, so it manufactures declarations no TTL contains. Sandbox is green forever and no fresh cluster can be — and nothing inside sandbox can detect the difference.
   status: open · owner: agent · blocked-on: nothing — the instance is fixed and the sweep is clean; what remains is making the mechanism unable to recur.
   → [docs/plans/seeder-manufactures-declarations.md](plans/seeder-manufactures-declarations.md)
+
+- **stale-sandbox-images-predate-presentation-arc** — The sandbox runs pre-arc builds. `iagent-engine-f` started 2026-08-18 and `iagent-cortex-ui` started 2026-08-15; the ENTIRE presentation-SPO arc (slices 2a/2b/2c/4, the frontend_id seam, the union fallback, and every component contract) landed 2026-08-20. Probed 2026-08-21: a planning `output_uri` to `/render_ui` returns `x-presentation-path: fallback-designui` — the OLD LLM path, because the deployed code has no `select_presentation`. CONSEQUENCE: any integration check against sandbox today is testing an architecture that no longer exists in the tree, and would report green or red for reasons unrelated to the code under test. Blocks the portfolio-review plan's Gate 1, which asserts provenance the deployed engine cannot emit.
+  status: open · owner: unassigned
+  → [docs/plans/stale-sandbox-images-predate-presentation-arc.md](plans/stale-sandbox-images-predate-presentation-arc.md)
 
 - **subject-resolution-at-composition** — A resolvable MPN composes as subject_unresolved. Two hypotheses eliminated 2026-08-10; one survives (frozen-at-composition) with a named discriminating read.
   status: open · owner: unassigned

@@ -307,10 +307,20 @@ vocabulary, demoted but not discarded — with the consequence signals that make
 
 ### 3.2 Gate 1
 
-- [ ] **`presentation_source == "registered"` on every planning card.** Not "a card appeared."
-      Before `e947069` an unidentified caller collapsed loudly to `KNOWLEDGE_DOCUMENT`; after it,
-      `union_menu()` returns a *plausible* archetype from someone else's menu and the card draws
-      looking correct. Only the provenance field distinguishes them. ADR-0042 §5.
+- [ ] **BOTH provenance fields, on every planning card** — VERIFIED NECESSARY 2026-08-21 by
+      running the selector, not by reading it:
+      `presentation_source == "registered"` **AND**
+      `selection_basis == "output_uri+payload"` (never `"payload-only (…)"`).
+      `presentation_source` alone is INSUFFICIENT and would have passed this gate while the
+      card rendered wrong: `output_uri` is a HINT, so a miss widens the search to the whole
+      menu, and a planning cost series (`[{period, total}]`) satisfies CHART_WIDGET's contract
+      and is absorbed by it — `presentation_source: "registered"`, archetype CHART_WIDGET,
+      card draws, looks plausible. Only `selection_basis` separates *my contract was found*
+      from *something else absorbed my payload*. ADR-0042 §5 + its 2026-08-21 amendment.
+- [ ] Corollary, and it reorders the work: **contracts are not a tidying step after the
+      widgets.** Until a planning renderer's `.contract.ts` is registered, its payloads do not
+      refuse — they are absorbed. A planning card that "already renders" before its contract
+      exists is evidence of absorption, not progress.
 - [ ] Each card's `valid_as_of` advances on re-evaluation and is displayed. A card showing its
       mint-time stamp after a drag is a Gate 1 failure, not a cosmetic one. ADR-0042 §4.
 - [ ] **Drag is optimistic; drop is evaluated.** During drag only the BAR moves — that is
@@ -465,7 +475,9 @@ suite is Phase 2's acceptance instrument and the release gate for Phase 7.
 - [ ] Interpretation card on every answer; slot-edit re-run works.
 - [ ] Number-check wired and demonstrably strips a violation (one adversarial test).
 - [ ] Two questions leave TWO cards on the canvas — accumulation, not replacement.
-- [ ] Every minted card carries `presentation_source == "registered"`.
+- [ ] Every minted card carries `presentation_source == "registered"` AND
+      `selection_basis == "output_uri+payload"` (see Gate 1 — the first without the second is
+      green while the archetype is wrong).
 
 ---
 
@@ -620,7 +632,8 @@ impossible cap).
 | **Portfolio data leaves the boundary on a bad day** | `MainAgent`'s cloud-first fallback is NOT used. Planning functions pin internal with no cloud fallback and fail closed to template captions. This is the highest-severity row in the table: every other risk costs a demo, this one costs the customer |
 | Sandbox (Ollama) and work (vLLM) name the same model differently | Model name is configmap-driven on both sides; never hardcoded in the BFF. Day-5 eval runs against the real demo endpoint unconditionally, checking provider path AND name, not just weights |
 | Keycloak blocks the demo boot | `RequireAuth` wraps everything; rehearse `VITE_NO_AUTH=true` on the demo machine |
-| **A card renders against the wrong menu** | Gate 1 asserts `presentation_source == "registered"`. Post-`union_menu()` this failure is silent and plausible-looking; rendering is not evidence |
+| **A card renders against the wrong menu** | Gate 1 asserts `presentation_source == "registered"` AND `selection_basis == "output_uri+payload"`. Verified 2026-08-21: the first alone PASSES while a planning series is absorbed by CHART_WIDGET via payload-only widening. Rendering is not evidence, and neither is one provenance field |
+| **Sandbox cluster runs pre-arc builds** | engine-f (2026-08-18) and cortex-ui (2026-08-15) both predate the entire presentation-SPO arc; a probe today returns `x-presentation-path: fallback-designui`, the OLD LLM path. Any integration check before a redeploy is testing architecture that no longer exists in the tree. See `stale-sandbox-images-predate-presentation-arc` |
 | Electric reconciliation clobbers minted cards | Sized in Phase 0.5 item 3; narrowed Fork E is the hatch |
 | Planning work destabilizes the grounding demo | Flag-off smoke check at Gate 1; shared components extended, never restructured |
 | Scope creep from this document | Anti-goals are binding; anything not in a phase task list is Phase 7+ by default |
