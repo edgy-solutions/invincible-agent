@@ -167,6 +167,70 @@ read. Two candidate resolutions, neither assumed:
 **Recorded rather than chosen, because picking here would repeat the mistake this packet
 exists to document: building on an assumed topology.**
 
+## RULED 2026-08-21 — the row shape, and why `endpoint_url` stays empty
+
+The sync repair is the convergent fix; reading DataHub directly from the selector is a detour
+that becomes debt. It would put a catalog API call **inside the render decision path** —
+latency on every answer, a new runtime dependency for Engine F, and DataHub load-bearing at
+request time for nothing else. More decisively: the ruling's point was ONE SUBSTRATE FOR ALL
+REGISTRATIONS, and a DataHub-direct read is a SECOND READ PATH WEARING THE GRAPH'S CLOTHES —
+the two-masters shape again, the day the sync gets fixed anyway.
+
+### Why a presentation has no endpoint — the question the shape turns on
+
+`endpoint_url` on a verb row is **the callable-ness of the thing.** When Engine A registers
+`mesh:lookupOwnership` with `endpoint_url: http://engine-a:8081/execute`, that URL is where
+the mesh GOES TO INVOKE the capability. The registrant is a server at a stable address,
+waiting to be called, and routing writes the address down so dispatch knows where to send work.
+
+**A presentation inverts every part of that.** `ChartWidget rendersAs mesh:PeriodCostSeries`
+does not mean "call this URL to get a chart rendered." Nobody dispatches to the UI — the UI
+ASKED THE QUESTION and is already holding the answer's socket. The renderer is not a service
+at an address; it is JavaScript in whichever browser tab initiated the request. There is no URL
+where the mesh could POST a payload and receive rendering. **The endpoint is the requesting
+client itself, reached by REPLYING, not by CALLING.**
+
+So the triple's honest content is: *a frontend of this identity, currently registered, can
+render this output type under this contract.* Identity and contract, no address — because the
+transport back to the renderer is the response channel that already exists.
+
+### `frontend_id` is doing the endpoint's JOB, in the other direction
+
+A verb's `endpoint_url` answers **"where do I send work?"**
+A presentation's `frontend_id` answers **"whose reply channel does this decision bind to?"**
+
+Both are the registrant's identity-for-dispatch; one is an ADDRESS, the other a KEY. That
+near-symmetry is why the verb-shaped row ALMOST fits — and the mismatch is exactly the field
+where the analogy breaks.
+
+**Do not stuff a placeholder URL into `endpoint_url`** (the UI's public origin, say). The row
+would parse and would mean nothing: nothing ever calls it, and the first person to treat it as
+callable inherits a lie. That is [[a-borrowed-name-is-a-claim]] in schema form — **a field
+nobody calls is a claim nobody audits.**
+
+### The proposed shape
+
+    frontend_id, subject_uri (archetype), output_uri, contract_version
+
+— the key that scopes selection, the two ends of the triple, and the version the envelope
+stamps. Structurally a SIBLING of the verb row with `endpoint_url` swapped for `frontend_id`,
+which argues for a discriminated row type in `Predicate` or a small parallel collection, and
+AGAINST forcing it into the verb shape with a placeholder.
+
+**Sequencing is unchanged:** confirm the drop mechanism in doc-tools FIRST, then propose the
+shape, then fix. B's read path resumes only when a `rendersAs` row exists in Weaviate for a
+registered presentation — the substrate proves it can carry the data before anything builds on
+reading it.
+
+### Footnote for the far future, and it is a real discriminator
+
+If a SERVER-SIDE renderer ever exists — headless chart generation for a mailbox path — **that
+one has a real endpoint and registers verb-shaped**, because it genuinely is a callable
+service. The distinction is not "presentation vs verb"; it is **"reached by calling vs reached
+by replying"**, and today's UIs are all the second kind. A future row with both a
+`frontend_id` and an `endpoint_url` is not a contradiction to resolve — it is two different
+species that happen to share a table.
+
 ## Definition of done — a DEPLOYED witness, not a green suite
 
 **The rule this packet exists to enforce:** an arc whose claim is about deployed behaviour

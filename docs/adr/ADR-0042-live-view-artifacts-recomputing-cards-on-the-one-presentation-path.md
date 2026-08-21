@@ -387,10 +387,50 @@ carve out.
 
 ## Open questions
 
-1. **Evaluation trigger.** Whether re-evaluation is push (the state store notifies) or pull
-   (the card re-requests on a state version bump) is a build-time choice, not decided here.
-   The constraint that binds either choice is §4: whatever fires the evaluation must stamp
-   the resulting `valid_as_of`.
+1. **Evaluation trigger.** ~~Whether re-evaluation is push (the state store notifies) or pull
+   (the card re-requests on a state version bump) is a build-time choice, not decided here.~~
+   **ANSWERED 2026-08-21: EVENT-DRIVEN, OVER THE SUBSTRATE THAT ALREADY EXISTS.** Left
+   recorded rather than deleted, because the answer's value is that it required NO NEW
+   MACHINERY, and a reader who sees only the conclusion cannot tell that was in doubt.
+
+   **The decision routes identically to a one-shot.** A live card is chosen the same way: the
+   caller's `frontend_id` scopes the menu, payload-and-output-type nominate,
+   `select_presentation` disposes — with Ruling 9's one addition that a live archetype
+   requires a REGISTERED caller (no anonymous union). **The decision is one-shot in both
+   cases; what differs is what gets DELIVERED.** A one-shot delivers rows; a live card
+   delivers a STANDING INSTRUCTION — per §2 its content is `{output_uri, params}`, so the
+   artifact says *"I am a PERIOD_SERIES over portfolio_rollup(params)"* rather than *"here are
+   the numbers as of minting."*
+
+   **The refresh routes over the pipe that already hydrates every artifact.** No WebSocket, no
+   backend-pushes-to-UI path: the measure verb's output lands in the projection store like
+   every other governed write, ElectricSQL streams the shape diff, and the card's subscription
+   re-renders. **The backend never addresses the UI; the UI holds a subscription and the
+   substrate publishes into it** — the reached-by-replying model extended in time, with the
+   reply channel simply staying open. (See the row-shape ruling in
+   [[capability-registry-not-graph-backed]] for why a renderer has no address to be called at.)
+
+   **WHO recomputes is the one genuinely open lever, and the demo takes the cheap answer:**
+   recomputation fires when the INPUTS change — a scenario op lands, a commit applies —
+   because those are governed writes already flowing through the pipeline. Write applies ->
+   measure re-evaluates server-side (§3) -> projection row updates -> Electric streams ->
+   every subscribed card redraws. **Event-driven by construction, no scheduler.** The cadence
+   variant ("re-evaluate every N seconds against drifting external data") is the OpenDDIL
+   `emit_interval_seconds` pattern and exists as prior art if a card ever needs it — nothing
+   in the portfolio demo does, because planning state changes when someone changes it.
+
+   Three inherited rules answer the follow-ons before they are asked:
+   * **Coalescing.** Electric delivers LATEST-STATE, which is exactly right for a rollup card
+     — you want current truth, not every intermediate. A trend-history card would need the
+     append-only split, and §6/§7 name which archetype gets which.
+   * **Rate ceiling.** Human-speed planning ops sit deep inside the comfortable zone. Nobody
+     builds throttling for a problem the physics does not pose.
+   * **Validity.** §4's stamp-per-evaluation means each redraw carries a fresh `valid_as_of`,
+     and a broken subscription renders as the LABELLED STALE state — never a silently old
+     chart.
+
+   The constraint that bound either choice still binds this one: whatever fires the evaluation
+   must stamp the resulting `valid_as_of`.
 2. **Where the diff lives.** A diff between two states is structurally a `DELTA_SET` payload
    over two evaluations. Whether it is computed by a verb taking two state refs, or by the
    caller running one verb twice, is open — but the `DELTA_SET` archetype and its contract
