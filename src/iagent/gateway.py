@@ -3406,6 +3406,16 @@ async def register_frontend_capabilities(
             })
         )
 
+    # STORE the admitted rows so decision-time lookup can consult THIS caller's menu.
+    # Only admitted rows are stored: a refused capability that still influenced a decision
+    # would make the refusal decorative. Replaces rather than merges -- a capability
+    # dropped in a redeploy must not survive as a ghost the backend keeps choosing.
+    from agent_fleet.presentation_agent import capability_registry as _cap_registry
+
+    _stored = _cap_registry.register(
+        payload.frontend_id, payload.frontend_version, _admitted
+    )
+
     _frontend_registry_logger.info(
         json.dumps({
             "event": "frontend_capabilities_registered",
@@ -3414,6 +3424,9 @@ async def register_frontend_capabilities(
             "frontend_id": payload.frontend_id,
             "frontend_version": payload.frontend_version,
             "capability_count": len(payload.capabilities),
+            "admitted_count": len(_admitted),
+            "rejected_count": len(_rejected),
+            "stored_count": _stored,
             "capabilities": [
                 {
                     "subject_uri": c.subject_uri,

@@ -5,6 +5,7 @@ blocked-by-ruling: RESOLVED 2026-08-20 - see the AMENDMENT in docs/adr/ADR-0017-
 owner:      agent
 blocked-on:
 closed-by:
+trigger:    D4 TIGHTENING - capability_admission.KNOWN_ARCHETYPES deliberately encodes the D4 defect: it admits the UNION of BAML's SemanticArchetype and the five archetypes the interpreter dispatches without the enum declaring them (GROUPED_REVIEW, APPROVAL_TASK, TRIAGE_TASK, WORKFLOW_OBSERVATION, INSTANCES_BY_PROPERTY). Enforcing the enum would refuse archetypes the UI genuinely renders, punishing users for a backend inconsistency they did not create. WHEN THE ENUM IS REPAIRED, THE VALIDATOR'S VOCABULARY MUST TIGHTEN TO MATCH - a validator that permanently encodes a defect becomes that defect's guardian.
 repo:       invincible-agent
 summary:    ADR-0017's capability publication carries expected_fields (NAMES) but no types or cardinality, so every consuming contract lives in a React component and the backend mirrors it by hand. Enumerated 2026-08-19 from the components' actual prop types and key handling. THREE FINDINGS OUTRANK THE ENUMERATION - presentation_agent/capabilities.py hand-duplicates the ENTIRE UI capability registry with no seal; chart_normalizer.py (194 lines) mirrors a shape ChartWidget NO LONGER REQUIRES; and the dispatch boundary is typed `any`.
 ---
