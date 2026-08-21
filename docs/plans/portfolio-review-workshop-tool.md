@@ -6,7 +6,7 @@ blocked-on:
 closed-by:
 code-site:  agent_fleet/presentation_agent/capability_registry.py, src/iagent/gateway.py
 repo:       invincible-agent
-summary:    Live portfolio-review workshop tool — a T+7 demo whose real job is to demonstrate the presentation-SPO arc on a second grounding. REVISION 2 (2026-08-20): rev 1 was authored against the architecture as it stood a week earlier and the presentation-SPO arc landed seven commits underneath it; as written it would have rebuilt a parallel presentation stack (client-side measures never crossing /render_ui, an intent catalog naming chart types = `archetype-chosen-before-data` re-opened one day after it closed). Ruled by ADR-0042. Binding changes: measures are VERBS running server-side from commit 1 (mock the store, never the placement); intents declare `output_uri` never a view; every widget ships a `.contract.ts`; Gate 1 asserts `presentation_source == "registered"`, not "a card appeared"; two-repo cycle (BFF routes are in-scope, a second Fastify/tRPC backend is deleted); model string is `gpt-oss:120b` via env.OLLAMA_MODEL — the hyphenated form 404s and clients.baml records that failure.
+summary:    Live portfolio-review workshop tool — a T+7 demo whose real job is to demonstrate the presentation-SPO arc on a second grounding. REVISION 2 (2026-08-20): rev 1 was authored against the architecture as it stood a week earlier and the presentation-SPO arc landed seven commits underneath it; as written it would have rebuilt a parallel presentation stack (client-side measures never crossing /render_ui, an intent catalog naming chart types = `archetype-chosen-before-data` re-opened one day after it closed). Ruled by ADR-0042. Binding changes: measures are VERBS running server-side from commit 1 (mock the store, never the placement); intents declare `output_uri` never a view; every widget ships a `.contract.ts`; Gate 1 asserts `presentation_source == "registered"`, not "a card appeared"; two-repo cycle (BFF routes are in-scope, a second Fastify/tRPC backend is deleted); D6 VERIFIED 2026-08-20 against the live endpoint (/api/tags): `gpt-oss-120b` is ABSENT (the documented 404), sandbox is configured for `gpt-oss-128k:120b` (131072 context) NOT plain `gpt-oss:120b`, and the declared hardware fallback `gpt-oss:20b` IS NOT PRESENT — pull it or delete the escape hatch.
 ---
 
 # Live portfolio-review workshop tool — phased build (revision 2)
@@ -336,12 +336,36 @@ described that way has drifted.
   pin directly to `client Ollama` (the precedent is `VerifyVerbChoice`, which pins for exactly this
   reason), or add a vLLM client — which is **new work**, not existing infrastructure. The risk-line
   "one BAML client fronts both endpoints" only becomes true after that client exists.
-- **Model string — CHANGED, and this one is a live grenade.** The tag is **`gpt-oss:120b`** with a
-  COLON. `clients.baml` carries a comment recording that the hyphenated `gpt-oss-120b` was a 404 on
-  every request and is why `VerifyVerbChoice` failed with "model not found." Rev 1 wrote the
-  hyphenated form five times. The model is configmap-driven via `env.OLLAMA_MODEL`, so switching is
-  a rolling restart — and `temperature 0` is already pinned in the client config, so rev 1's
-  "pin sampling params" task is already done.
+- **Model string — VERIFIED AGAINST THE LIVE ENDPOINT 2026-08-20.** `GET
+  http://192.168.1.126:11434/api/tags` returns eight models. Probed:
+
+  | string | endpoint says |
+  |---|---|
+  | `gpt-oss-120b` (rev 1 wrote this five times) | **ABSENT** — the 404 `clients.baml` documents |
+  | `gpt-oss:120b` | present |
+  | `gpt-oss-128k:120b` | present, and **this is what `values-sandbox.yaml` actually sets** |
+  | `gpt-oss:20b` (rev 1's declared hardware fallback) | **ABSENT** |
+
+  Two findings beyond the grenade, both from the same ten-minute check:
+
+  1. **The configured model is `gpt-oss-128k:120b`, not `gpt-oss:120b`.**
+     `helm/invincible-agent/values-sandbox.yaml:174` sets `OLLAMA_MODEL: "gpt-oss-128k:120b"` —
+     the extended-context variant (`parent_model: gpt-oss:120b`, `context_length: 131072`).
+     Both tags exist, so this is not a 404; it is a **context-length divergence**, and it matters
+     for a workload carrying few-shot exemplars per intent plus result rows. Name the variant
+     deliberately rather than inheriting it.
+  2. **The declared hardware fallback does not exist.** `gpt-oss:20b` is not on this endpoint.
+     Any plan that permits falling back to it is permitting a fallback to a 404. Either pull the
+     tag first or delete the escape hatch — a fallback nobody verified is worse than none,
+     because it will be reached under pressure.
+
+  Also confirmed from the same response: the model advertises `capabilities: ["completion",
+  "tools", "thinking"]` — so BAML tool-use is supported and the separate reasoning channel the
+  harmony-format rule below governs is real, not assumed.
+
+  The model is configmap-driven via `env.OLLAMA_MODEL`, so switching is a rolling restart, and
+  `temperature 0` is already pinned in the client config — rev 1's "pin sampling params" task is
+  already done.
 - **Structured output via BAML** — the existing enforcement mechanism; do not introduce a second.
   Intents are BAML functions (`RouteIntent(question, context) -> Intent`, a union of typed intent
   classes; `NarrateResult(rows) -> string`). Malformed model output becomes a typed parse failure,
@@ -355,9 +379,11 @@ described that way has drifted.
 - **Harmony-format rule.** gpt-oss emits reasoning in a channel separate from the final answer. The
   BFF extracts ONLY the final channel; the number-check runs against final-channel text;
   reasoning-channel text never reaches a card, the canvas, or a demo-visible log.
-- **Sandbox hardware caveat.** `gpt-oss:120b` needs ~60–80GB. Falling back to `gpt-oss:20b` for dev
-  is permitted ONLY as a declared fallback recorded in the plan notes, and the Day-5 real-endpoint
-  eval is then promoted from check to hard gate. No silent substitution.
+- **Sandbox hardware caveat — the fallback must be pulled before it is declared.** The 120b is
+  ~65GB on disk and needs comparable memory. `gpt-oss:20b` is **not present on the endpoint**
+  (verified above), so it is not currently a fallback at all. If dev needs one, pull the tag
+  first and record the pull; then the Day-5 real-endpoint eval is promoted from check to hard
+  gate. No silent substitution, and no undeclared-but-assumed one either.
 - **Entity resolution before slot fill** reuses [ADR-0031](../adr/ADR-0031-instance-resolution-ladder.md)'s
   ladder — exact, containment, LLM-candidate, abstain — not a second fuzzy matcher. Ambiguous match
   → interpretation card lists candidates; zero match → refusal.
@@ -538,7 +564,8 @@ impossible cap).
 | Diff magnitudes wrong in the room | Every magnitude comes from verb functions unit-tested against hand-computed seed values; no LLM numbers anywhere |
 | Goal-seek flaky | Day-4 fork rule cuts it cleanly; the script has a no-Phase-5 variant |
 | Demo-day LLM outage | Template captions render without the LLM (narration is additive); app boots from local DB; rehearse the LLM-down path once |
-| **Wrong model string** | `gpt-oss:120b`, colon, via `env.OLLAMA_MODEL`. The hyphenated form 404s and `clients.baml` records that exact failure. Verify against the real endpoint on Day 1, not Day 7 |
+| **Wrong model string** | CLOSED 2026-08-20 by live probe of `/api/tags`. `gpt-oss-120b` confirmed ABSENT; sandbox is configured for `gpt-oss-128k:120b` (131072 context), not plain `gpt-oss:120b`. Re-probe if the endpoint or configmap changes |
+| **Fallback model is a phantom** | `gpt-oss:20b` is not on the endpoint. Pull the tag before declaring it a fallback, or delete the escape hatch — an unverified fallback gets reached under pressure and 404s there |
 | Provider path assumed rather than chosen | `MainAgent` is cloud-first and no vLLM client exists. Pin deliberately (the `VerifyVerbChoice` precedent) or add the client as named work |
 | Intent set drifts between BAML and catalog | Canonical-source ruling + build-time id-agreement check |
 | Keycloak blocks the demo boot | `RequireAuth` wraps everything; rehearse `VITE_NO_AUTH=true` on the demo machine |
