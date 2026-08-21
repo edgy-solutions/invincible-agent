@@ -110,10 +110,6 @@ _Coverage: **52 of 54 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: repair 3 (the registrar discrimination) LANDED in fbf7307. Repair 1 is still owed and unanswered — WHICH of the three ways the re-register hook failed to fire at work. Until that read is done, a deploy still depends on a hook nobody has verified runs.
   → [docs/plans/registration-boot-order-race.md](plans/registration-boot-order-race.md)
 
-- **render-request-carries-no-frontend-id** — ACCEPTANCE GREW 2026-08-20: the seam and the retirement of agent_fleet/presentation_agent/capabilities.py are ONE change, because the seam is what makes the registered menu AUTHORITATIVE. The multi-UI promise is proven in tests and unreachable in production. `select_presentation` filters a caller's REGISTERED menu by payload satisfaction, but `RenderRequest` carries no `frontend_id`, so nothing can name the calling client. Small plumbing — a request-model field plus the cortex-bff caller threading it. ⚠️ DO NOT wire it with frontend_id=None: that resolves every caller to the default menu and turns every answer into a KNOWLEDGE_DOCUMENT.
-  status: open · owner: unassigned
-  → [docs/plans/render-request-carries-no-frontend-id.md](plans/render-request-carries-no-frontend-id.md)
-
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
   → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
@@ -197,6 +193,10 @@ _Coverage: **52 of 54 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **registration-wiring** — Six engines mint on /v1/register under decode-witnessed identities. Witnessed at a clean log boundary: 0 new unverified, 6 verified (svc:engine-o 1, svc:engine-w 5 — multiplicities matching each engine's verb count).
   status: closed · owner: agent · closed-by: 9d93146
   → [docs/plans/register-caller-enumeration.md](plans/register-caller-enumeration.md)
+
+- **render-request-carries-no-frontend-id** — CLOSED 2026-08-20 by e947069. frontend_id threads all five hops (cortex-ui -> bff -> SupervisorQueryConfig -> supervisor -> /render_ui); select_presentation is wired live; anonymous callers get the DERIVED UNION of registered menus, labelled default-menu, with the empty-registry floor pinned. The acceptance's third item was REWORDED, not met as written: capabilities.py is NOT deleted — only its dead `lookup_capability` is. Was: ACCEPTANCE GREW 2026-08-20: the seam and the retirement of agent_fleet/presentation_agent/capabilities.py are ONE change, because the seam is what makes the registered menu AUTHORITATIVE. The multi-UI promise is proven in tests and unreachable in production. `select_presentation` filters a caller's REGISTERED menu by payload satisfaction, but `RenderRequest` carries no `frontend_id`, so nothing can name the calling client. Small plumbing — a request-model field plus the cortex-bff caller threading it. ⚠️ DO NOT wire it with frontend_id=None: that resolves every caller to the default menu and turns every answer into a KNOWLEDGE_DOCUMENT.
+  status: closed · owner: unassigned · closed-by: e947069
+  → [docs/plans/render-request-carries-no-frontend-id.md](plans/render-request-carries-no-frontend-id.md)
 
 - **sdk-transport-auth-handoff** — One authenticated registration transport in the SDK app factory. Verified CONSUMED, not merely shipped - 68e28c0 is an ancestor of tag v0.3.0, and invincible-agent pinned v0.3.0 at the time of verification (now v0.3.1, which supersedes it).
   status: closed · owner: agent · repo: iagent-mesh-sdk · closed-by: 68e28c0

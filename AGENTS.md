@@ -1429,6 +1429,36 @@ publication mechanism* to *extend an existing seam* — a materially smaller and
 piece of work than the one commissioned. A premise check does not only cancel work; it re-scopes
 it, and the re-scoping is usually the more valuable half.
 
+### A DELETION TARGET NAMED BY FILENAME HIDES HOW MANY JOBS THE FILE HOLDS
+2026-08-20, twice in one build, in the same direction. An acceptance said **"delete
+`chart_normalizer.py`"** — the file also held `honest_text_from_response`, correct code in
+the wrong home, load-bearing for the honest-degradation path. An acceptance said **"delete
+`capabilities.py`"** — the file held THREE exports with three different consumers, and one
+of them, `PRESENTATION_CAPABILITIES`, seeds the `rendersAs` triples into the mesh graph at
+Engine F startup. **That is the presentation-as-predicate registration ADR-0017 is named
+for.** Deleting the file would have silently stopped it, and the symptom — specialist
+outputs losing their renderers — would have surfaced days later at render time, three layers
+from a commit that claimed completion.
+
+Both acceptances named a **FILE** when the claim was about a **ROLE**. The role really was
+dead each time; the file was not.
+
+**So: an acceptance that DELETES must enumerate the target's exports and disposition each
+one — remove, relocate, or keep-with-reason — BEFORE the deletion is scoped.** That is
+[[consolidation-completes-at-the-last-consumer]]'s enumerate-the-consumers check pointed at
+the thing being REMOVED rather than the thing being added, and it costs one grep per export.
+
+**The detection is the tell, and it is the same arithmetic as the premise check above: the
+WORK found the extra jobs, not the plan.** In both cases the deletion was scoped from a
+filename and corrected only when someone opened the file to remove it. A plan that names a
+file has not yet looked inside it.
+
+Sibling disposal rule, from the same build: **a property with two owners is not lost when
+one owner retires.** Four tests died with `lookup_capability`; the compact-vs-full IRI
+folding they guarded is still pinned where the helper lives, and the registry pins the same
+match behaviour independently. Keeping tests for a deleted function is the corpse-guarding
+inversion — tests protecting the thing they described rather than the property it served.
+
 **Corollary — conversational shorthand does not exist in the repo.** "Hole 4" appears NOWHERE in
 `ADR-0017-presentation-as-predicate.md`; it is a chat-side label. A future agent grepping for it
 would conclude the finding did not exist. **A commissioned packet must use the ADR's own

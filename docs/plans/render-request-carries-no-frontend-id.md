@@ -1,12 +1,12 @@
 ---
 id:         render-request-carries-no-frontend-id
-status:     open
+status:     closed
 owner:      unassigned
 blocked-on:
-closed-by:
+closed-by:  e947069
 code-site:  agent_fleet/presentation_agent/main.py, src/iagent/gateway.py
 repo:       invincible-agent
-summary:    ACCEPTANCE GREW 2026-08-20: the seam and the retirement of agent_fleet/presentation_agent/capabilities.py are ONE change, because the seam is what makes the registered menu AUTHORITATIVE. The multi-UI promise is proven in tests and unreachable in production. `select_presentation` filters a caller's REGISTERED menu by payload satisfaction, but `RenderRequest` carries no `frontend_id`, so nothing can name the calling client. Small plumbing — a request-model field plus the cortex-bff caller threading it. ⚠️ DO NOT wire it with frontend_id=None: that resolves every caller to the default menu and turns every answer into a KNOWLEDGE_DOCUMENT.
+summary:    CLOSED 2026-08-20 by e947069. frontend_id threads all five hops (cortex-ui -> bff -> SupervisorQueryConfig -> supervisor -> /render_ui); select_presentation is wired live; anonymous callers get the DERIVED UNION of registered menus, labelled default-menu, with the empty-registry floor pinned. The acceptance's third item was REWORDED, not met as written: capabilities.py is NOT deleted — only its dead `lookup_capability` is. Was: ACCEPTANCE GREW 2026-08-20: the seam and the retirement of agent_fleet/presentation_agent/capabilities.py are ONE change, because the seam is what makes the registered menu AUTHORITATIVE. The multi-UI promise is proven in tests and unreachable in production. `select_presentation` filters a caller's REGISTERED menu by payload satisfaction, but `RenderRequest` carries no `frontend_id`, so nothing can name the calling client. Small plumbing — a request-model field plus the cortex-bff caller threading it. ⚠️ DO NOT wire it with frontend_id=None: that resolves every caller to the default menu and turns every answer into a KNOWLEDGE_DOCUMENT.
 ---
 
 # The render request cannot name its caller
@@ -85,3 +85,38 @@ Three things in one commit:
 Witnessed by two surfaces with different menus receiving different archetypes for the same
 `output_uri` — the case `test_two_frontends_get_DIFFERENT_answers_for_the_same_output_uri`
 already proves in isolation and cannot prove in production until step 1 lands.
+
+
+## CLOSED 2026-08-20 — and the third acceptance item was WRONG AS WRITTEN
+
+`e947069`, `54b769f` (backend) and `c583c86` (cortex-ui).
+
+**Delivered:**
+* `frontend_id` threads all five hops. cortex-ui merges it at the SINGLE transport site, so
+  a caller cannot forget it, reusing the id it registers capabilities under — one identity,
+  one menu.
+* `select_presentation` wired live: an identified caller selects from ITS menu.
+* `lookup_capability` removed — **no path reads a hand-maintained table.**
+
+**Reworded, not met as written — "capabilities.py deleted" over-reached.** The file holds
+three exports with three consumers and only ONE was replaced:
+
+| export | role | disposition |
+|---|---|---|
+| `lookup_capability` | render-time lookup | **removed** |
+| `PRESENTATION_CAPABILITIES` | Engine F's startup registration of `rendersAs` triples INTO THE MESH GRAPH | **kept** — this is the presentation-as-predicate registration ADR-0017 is named for |
+| `canonical_iri_for_lookup` | compact/full IRI folding | kept, still consumed |
+
+Deleting the file would have silently stopped Engine F advertising its render capabilities
+to the graph, surfacing days later as specialist outputs losing their renderers. See
+[[a-deletion-target-named-by-filename-hides-how-many-jobs-the-file-holds]] in AGENTS.md —
+this is its second instance, and the law was banked from the pair.
+
+**The ruling that changed the design for the better:** anonymous callers get the DERIVED
+UNION of registered menus rather than collapsing to text. curl and scripts are not UIs that
+forgot to register — they are consumers of the ANSWER, and its presentation metadata is part
+of its truth. The union-that-lies objection does not apply: it was fatal for a SPECIFIC
+caller, and an anonymous caller has no menu to contradict.
+
+**Third case pinned:** empty registry -> empty union -> the labelled floor. That is the
+post-restart state, since presentation capabilities are runtime state.
