@@ -764,6 +764,18 @@ services:
         consumers: [cortex-ui]
         class: releasable_by_design
         justification: "caller's own HITL queue (self-scoped filter)"
+      - method: POST
+        path: /plan/measure/{fn}
+        identity: get_current_user
+        gate: "auth + engine-side entitlement"
+        exposes: read-model
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "thin pass-through to Engine P's planning verbs. Carries output_uri and
+          rows and NAMES NO ARCHETYPE — presentation is select_presentation's decision from the
+          payload against the caller's registered menu (ADR-0042 §2). Plan state is portfolio
+          read-model, entitlement-scoped where the verb runs; the BFF adds no scoping of its
+          own and must not, or there would be two places deciding what a caller may see."
       - method: GET
         path: /me/canvases
         identity: get_current_user

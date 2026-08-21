@@ -19,7 +19,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from . import measures
@@ -117,7 +117,27 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Engine P — Planning", lifespan=lifespan)
+# TRANSPORT AUTH (OBSERVE) — the birth rule, and the suite caught its absence on the first
+# run of tests/test_transport_auth_applied_everywhere.py against this engine. An engine born
+# without it is an unauthenticated inbound surface that looks finished, which is exactly the
+# class `unminted-caller-enumeration` found across five repos.
+#
+# One implementation, from the mesh membership package: validate whatever arrives, log the
+# caller posture per request, REFUSE NOTHING until REQUIRE_TRANSPORT_AUTH flips. The
+# announcement is the pre-positioned string the fresh-deploy gauge reads — an engine that
+# takes the dependency but loses the announcement has a real posture nothing can observe.
+from iagent_mesh.transport_auth import announce as _announce_transport_auth
+from iagent_mesh.transport_auth import app_docs_kwargs as _docs_kwargs
+from iagent_mesh.transport_auth import make_transport_auth_dependency as _transport_auth
+
+_announce_transport_auth(component="engine-p")
+
+app = FastAPI(
+    title="Engine P — Planning",
+    **_docs_kwargs(),  # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
+    dependencies=[Depends(_transport_auth("engine-p"))],
+    lifespan=lifespan,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
