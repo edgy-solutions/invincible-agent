@@ -661,7 +661,7 @@ def clear_ontology_graphs() -> None:
         raise
 
 
-def trigger_ingest_jobs() -> None:
+def trigger_ingest_jobs(*, wait: bool = False, wait_timeout: int = 1800) -> None:
     """OPTIONAL: trigger dagster ingest_ontology_job for each TTL partition.
 
     Without this, the TTLs are uploaded to MinIO but the canonical
@@ -721,6 +721,7 @@ def trigger_ingest_jobs() -> None:
         "repositoryName": "__repository__",
     }
 
+    launched: list[tuple[str, str]] = []
     for entry in CANONICAL_TTL_MANIFEST:
         domain = entry["domain"]
         s3_key = entry["s3_key"]
@@ -813,18 +814,84 @@ def trigger_ingest_jobs() -> None:
             data = resp.json().get("data", {}).get("launchPipelineExecution", {})
             if data.get("__typename") == "LaunchRunSuccess":
                 run_id = data.get("run", {}).get("runId")
+                launched.append((entry["name"], run_id))
                 print(f"  [LAUNCHED] {entry['name']} → run {run_id}")
             else:
                 print(f"  [WARNING] {entry['name']}: {data}")
         except Exception as e:
             print(f"  [WARNING] {entry['name']}: {e}")
 
-    print(
-        "[NOTE] Runs launched asynchronously. Monitor in the Dagster UI; "
-        "poll the runOrError query for status. The full chain takes "
-        "~30-60s per partition."
-    )
+    if not wait:
+        print(
+            "[NOTE] Runs launched asynchronously. Monitor in the Dagster UI; "
+            "poll the runOrError query for status. The full chain takes "
+            "~30-60s per partition."
+        )
+        return
 
+    # WAIT FOR WHAT WE LAUNCHED.
+    #
+    # Without this, "Prime complete" means "twelve runs were enqueued", and the
+    # helm hook chain -- prime(10) -> ontologySeed(15) -> reregister(20), which
+    # the chart calls "a correctness invariant, not a tunable" -- sequences the
+    # JOBS while the actual ingest escapes the ordering entirely. Engines then
+    # re-register against classes that do not exist yet and Contract D refuses
+    # the triples SILENTLY.
+    #
+    # The reregister job's sentinel was supposed to cover this, and cannot: with
+    # wipe=false the sentinel class is still present from the PREVIOUS prime, so
+    # `class exists` is satisfied by leftover state on the first poll and the
+    # wait is a no-op. Observed 2026-08-21: reregister logged `[ready] sentinel
+    # present` immediately and completed in 47s while the mesh ingest was still
+    # QUEUED. Existence cannot prove freshness; only the run status can.
+    _await_ingest_runs(launched, graphql, wait_timeout)
+
+
+
+def _await_ingest_runs(
+    launched: "list[tuple[str, str]]",
+    graphql: str,
+    wait_timeout: int,
+) -> None:
+    """Block until every launched ingest run reaches a terminal state.
+
+    Raises SystemExit if any run failed or is still unfinished at the deadline.
+    Extracted from ``trigger_ingest_jobs`` so the failure arms are testable
+    without a cluster: the LOUD path is the whole point of this function, and a
+    path that has never been exercised is not known to work.
+    """
+    print(f"--- Waiting for {len(launched)} ingest run(s) ---", flush=True)
+    pending = {rid: name for name, rid in launched if rid}
+    done, failed = {}, {}
+    deadline = time.time() + wait_timeout
+    while pending and time.time() < deadline:
+        for rid in list(pending):
+            try:
+                q = ('{runOrError(runId:"%s"){__typename ... on Run{status}}}' % rid)
+                r = requests.post(graphql, json={"query": q}, timeout=15)
+                st = (r.json().get("data", {}).get("runOrError", {}) or {}).get("status")
+            except Exception:
+                continue  # transient; retry on the next sweep
+            if st in ("SUCCESS", "FAILURE", "CANCELED"):
+                name = pending.pop(rid)
+                (done if st == "SUCCESS" else failed)[rid] = name
+                print(f"  [{st}] {name}", flush=True)
+        if pending:
+            time.sleep(10)
+
+    for rid, name in pending.items():
+        print(f"  [TIMEOUT] {name} still running after {wait_timeout}s (run {rid})")
+
+    print(f"--- Ingest: {len(done)} ok, {len(failed)} failed, {len(pending)} unfinished ---")
+    if failed or pending:
+        # Loud, not advisory. A downstream step that re-registers against a
+        # half-ingested ontology produces confidently-wrong routing, which is
+        # far more expensive to find than a failed upgrade.
+        raise SystemExit(
+            "[ERROR] ontology ingest did not complete cleanly; refusing to report "
+            "success. Downstream reregistration would run against a partial class "
+            "graph. Re-run prime after resolving the failures above."
+        )
 
 # ============================================================================
 # Step 4: Guarded wipe
@@ -1163,6 +1230,17 @@ def main() -> None:
                         help="Just upload TTLs to MinIO; skip Neo4j constraints + Jena provisioning.")
     parser.add_argument("--skip-uploads", action="store_true",
                         help="Skip MinIO upload step (use when TTLs are already there).")
+    parser.add_argument("--wait-for-ingest", action="store_true",
+                        help="After launching ingest runs, BLOCK until each reaches a "
+                             "terminal state and exit non-zero if any failed. Without "
+                             "this, 'Prime complete' means only that runs were enqueued, "
+                             "and the helm hook chain's documented ordering "
+                             "(prime -> ontologySeed -> reregister) does not actually "
+                             "hold for the ingest.")
+    parser.add_argument("--ingest-timeout", type=int, default=1800,
+                        help="Seconds to wait with --wait-for-ingest (default 1800). "
+                             "Serialized ingests on arm64 nodes are slow; size this to "
+                             "the SLOWEST full chain, not the median.")
     parser.add_argument("--trigger-ingest", action="store_true",
                         help="Trigger dagster ingest_ontology_job for each partition after upload. "
                              "Off by default — the dagster sensor will pick up uploaded files OR "
@@ -1228,7 +1306,8 @@ def main() -> None:
     if args.upload_only:
         upload_canonical_ttls()
         if args.trigger_ingest:
-            trigger_ingest_jobs()
+            trigger_ingest_jobs(wait=args.wait_for_ingest,
+                                wait_timeout=args.ingest_timeout)
         return
 
     prime_neo4j()
@@ -1238,7 +1317,8 @@ def main() -> None:
         upload_canonical_ttls()
 
     if args.trigger_ingest:
-        trigger_ingest_jobs()
+        trigger_ingest_jobs(wait=args.wait_for_ingest,
+                            wait_timeout=args.ingest_timeout)
 
     print("=== Prime complete ===")
     print(

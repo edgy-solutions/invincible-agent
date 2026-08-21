@@ -791,6 +791,19 @@ primeSubstrate:
   # delete answer history. Use for a fresh routing re-prime; flip back to
   # false after it runs. For scorched-earth, ALSO set nuclear=true below.
   wipe: false
+  # BLOCK until the launched ontology ingests finish, and fail the job if any
+  # of them failed. ON by default because the alternative is the failure this
+  # was added for: every hook in the chain reports success while the substrate
+  # is still filling, engines re-register against classes that do not exist,
+  # and Contract D refuses the triples silently. A failed upgrade is far
+  # cheaper to diagnose than a green one that produced a wrong graph.
+  #
+  # COST: the upgrade now blocks for the full ingest. On the arm64 sandbox the
+  # runs are serialized and the chain can take 20-30+ minutes, so `helm upgrade`
+  # needs a --timeout at least as large (scripts/upgrade-sandbox.sh passes one).
+  # Set false to restore the old fire-and-forget behaviour.
+  waitForIngest: true
+  ingestTimeout: 1800
   # When true (AND wipe=true), escalates to a NUCLEAR wipe: additionally
   # deletes the answer-durability graph AND resets the Postgres projection
   # stores (answer_artifact_projection / human_task_projection truncated,

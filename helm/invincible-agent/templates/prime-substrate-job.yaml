@@ -201,6 +201,14 @@ spec:
             # the upload happens; ingestion waits for the dagster
             # sensor or a manual UI trigger.
             - "--trigger-ingest"
+            {{- if .Values.primeSubstrate.waitForIngest }}
+            # Makes "Prime complete" mean the ingest FINISHED, not that runs
+            # were enqueued. The hook weights order the JOBS; without this the
+            # async ingest escapes that ordering and reregister(20) runs against
+            # a class graph that is still filling.
+            - "--wait-for-ingest"
+            - "--ingest-timeout={{ .Values.primeSubstrate.ingestTimeout }}"
+            {{- end }}
             {{- end }}
           # Pull cluster-wide config (Neo4j/Weaviate/Jena URLs) from the
           # ConfigMap. The same ConfigMap engines envFrom so the priming

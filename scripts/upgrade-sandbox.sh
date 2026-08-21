@@ -50,4 +50,9 @@ done
 echo "helm upgrade ${RELEASE} -n ${NAMESPACE}"
 for f in "${VALUES[@]}"; do echo "  -f ${f##*/}"; done
 
-exec helm upgrade "${RELEASE}" "${CHART}" -n "${NAMESPACE}" "${ARGS[@]}" "$@"
+# primeSubstrate.waitForIngest makes the prime hook BLOCK until every ontology
+# ingest finishes, so the upgrade outlives helm's 5m default by a wide margin.
+# The arm64 sandbox serializes those runs and a full chain has been observed
+# past 30 minutes. Anything passed in "$@" comes after and therefore wins.
+HELM_TIMEOUT="${HELM_TIMEOUT:-40m}"
+exec helm upgrade "${RELEASE}" "${CHART}" -n "${NAMESPACE}" "${ARGS[@]}"      --timeout "${HELM_TIMEOUT}" "$@"
