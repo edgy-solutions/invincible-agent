@@ -391,6 +391,31 @@ def register_engine_to_mesh(
         )
 
 
+#: Namespaces the compact `prefix:Local` forms expand against. Kept beside the registration
+#: helpers because THIS is where the wire form is decided; the read side folds both forms via
+#: `capabilities.canonical_iri_for_lookup`, but a producer must pick one and it must be the
+#: one the graph stores.
+_IRI_PREFIXES = {
+    "mesh:": "http://invincible-agent/mesh#",
+    "idp:": "http://invincible-agent/idp#",
+}
+
+
+def _expand_mesh_iri(iri: str) -> str:
+    """`mesh:ChartWidget` -> `http://invincible-agent/mesh#ChartWidget`.
+
+    Idempotent: an already-full IRI is returned unchanged, so a caller that already passes
+    full form (every engine registration does) is unaffected. An unknown prefix is left
+    alone rather than guessed at — inventing a namespace would fabricate the same phantom
+    class Contract D exists to refuse.
+    """
+    s = (iri or "").strip()
+    for pfx, ns in _IRI_PREFIXES.items():
+        if s.startswith(pfx):
+            return ns + s[len(pfx):]
+    return s
+
+
 def register_presentation_to_mesh(
     *,
     name: str,
@@ -514,6 +539,22 @@ def register_presentation_to_mesh(
 
     urn = f"urn:li:mlModel:(urn:li:dataPlatform:mesh,{name},PROD)"
     namespace_authority = "platform" if subject_uri.startswith("mesh:") else "domain"
+
+    # ── THE WIRE CARRIES FULL IRIs (2026-08-21) ───────────────────────────────────────
+    # doc-tools' linker materializes a registration by MATCHing both triple endpoints as
+    # :OntologyClass nodes, and those nodes hold FULL IRIs. Engine registrations already
+    # satisfy that because their callers pass full form
+    # (`http://invincible-agent/idp#Dataset`); PRESENTATION_CAPABILITIES uses COMPACT form
+    # (`mesh:OwnershipFact`), so a presentation's MATCH missed on BOTH ends and the row was
+    # never created. Measured against the live substrate 2026-08-21.
+    #
+    # Expanded HERE, at the emit boundary, rather than by rewriting the table: the compact
+    # form is the in-repo vocabulary and `canonical_iri_for_lookup` exists to fold both, but
+    # THE WIRE HAS ONE CONVENTION and it is the one the linker reads. Fixing it at the
+    # boundary keeps presentations byte-comparable with engine registrations instead of
+    # asking the linker to compensate for a producer that speaks differently.
+    subject_uri = _expand_mesh_iri(subject_uri)
+    object_uri = _expand_mesh_iri(object_uri)
 
     custom_props = {
         # Marker for doc-tools' filter — same key as engine registrations.
