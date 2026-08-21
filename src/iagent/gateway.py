@@ -40,7 +40,7 @@ from typing import AsyncGenerator, Any, Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from neo4j import GraphDatabase
@@ -990,6 +990,69 @@ async def instances_by_property_dashboard(
         "row_identity": {"key": "instance", "iri": True, "display_from_local_name": True},
         "state_vocabulary": _PCN_STATE_VOCABULARY,
         "rows": rows,
+    }
+
+
+# ── Engine P planning measures (ADR-0042) ────────────────────────────────────
+#
+# A THIN PASS-THROUGH, deliberately. This route carries `output_uri` and rows and NAMES NO
+# ARCHETYPE — the archetype is `select_presentation`'s decision, made from the PAYLOAD against
+# the CALLER'S registered menu. `/instances_by_property` above hand-sets its archetype and is
+# a documented temporary feeder; copying that here would re-open `archetype-chosen-before-data`
+# at the BFF, one hop from where it was closed.
+#
+# `frontend_id` is threaded from a header rather than assumed. Wiring it as None is the trap
+# `docs/plans/render-request-carries-no-frontend-id.md` records: every caller resolves to the
+# default menu and every answer becomes a KNOWLEDGE_DOCUMENT — a regression that reads as
+# completion. Absent stays ABSENT; a plausible substitute would make an anonymous caller
+# indistinguishable from a registered one, which is the distinction ADR-0042 Ruling 9 rests on.
+_ENGINE_P_URL = os.getenv("ENGINE_P_URL", "http://iagent-planning-agent:8095")
+
+
+class PlanMeasureBody(_BaseModel):
+    """`state_ref` is what makes a diff expressible without a session (ADR-0042 OQ2):
+    the same verb over two refs IS the diff. Defaults to baseline so a caller that does not
+    care about scenarios never has to know they exist."""
+    state_ref: str = "baseline"
+    params: dict = {}
+
+
+@app.post("/plan/measure/{fn}")
+async def plan_measure(
+    fn: str,
+    body: PlanMeasureBody,
+    x_frontend_id: Optional[str] = Header(default=None, alias="X-Frontend-Id"),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            rr = await client.post(
+                f"{_ENGINE_P_URL}/measure/{fn}",
+                json={"state_ref": body.state_ref, "params": body.params},
+            )
+    except Exception as exc:
+        # 502, never a 200 with empty rows. An unreachable engine and an empty result are
+        # different facts and only one of them means "nothing is planned".
+        raise HTTPException(status_code=502,
+                            detail={"error": "planning_engine_unreachable", "message": str(exc)})
+
+    if rr.status_code == 422:
+        # The honest-refusal path, preserved across the hop. Collapsing `not_in_model` into a
+        # 200 with [] would render as "none found" — a false statement about something that
+        # does not exist.
+        raise HTTPException(status_code=422, detail=rr.json().get("detail"))
+    if rr.status_code >= 400:
+        raise HTTPException(status_code=rr.status_code, detail=rr.json())
+
+    out = rr.json()
+    return {
+        "measure": out.get("measure", fn),
+        "output_uri": out.get("output_uri"),
+        "state_ref": out.get("state_ref", body.state_ref),
+        # The pull trigger's discriminant (ADR-0042 OQ1) and the live view's freshness stamp.
+        "state_version": out.get("state_version"),
+        "rows": out.get("rows"),
+        "frontend_id": x_frontend_id,
     }
 
 
