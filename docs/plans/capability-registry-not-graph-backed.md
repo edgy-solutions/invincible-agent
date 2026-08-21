@@ -126,6 +126,47 @@ Under the fetch option the two-process witness would NOT have proven the fetch e
 extending it to three parties. **The option that makes an existing acceptance criterion
 sufficient is usually the one whose architecture matches what is actually being claimed.**
 
+## ⚠️ BLOCKER FOUND 2026-08-21 — the graph path itself is dead
+
+**Premise-checked before building on it, and the ground is not there.** The ruling assumes
+Engine F can read capabilities from the shared `Predicate` collection. It cannot today,
+because presentation registrations never arrive in it.
+
+Verified against the live system, not inferred:
+
+| step | state |
+|---|---|
+| `register_presentation_to_mesh` called | ✅ works — direct DataHub emit, confirmed by running it in the pod: `✅ Registered … as (mesh:DiagProbe -> mesh:rendersAs -> mesh:KnowledgeDocument)` |
+| registrations reach DataHub | ✅ **11 presentation mlModels** present (10 real + 1 diagnostic) |
+| DataHub -> Weaviate `Predicate` sync | ❌ **0 rendersAs rows** — 24 Predicate rows, all engine verbs |
+
+So the emit half works and the SYNC half does not carry presentations. Engine F's startup
+loop is fine; its per-capability logs simply do not surface (a logging-config quirk in the
+lifespan, NOT a functional failure — the DataHub entities prove the emits happened).
+
+**The likely mechanism, not yet confirmed:** the `Predicate` row shape is verb-shaped —
+`verb_iri`, `input_uri`, `output_uri`, `endpoint_url`. A presentation has NO `endpoint_url`,
+and its triple is `subject -> mesh:rendersAs -> object` rather than input/output. doc-tools'
+`aitool_linker` builds Predicate rows from the DataHub properties, and presentations may be
+dropped or mis-shaped there. **That is a doc-tools change, a different repo and lane.**
+
+### What this means for the build
+
+The graph-authoritative ruling stands — the reasoning (symmetry with engine registration, the
+second-store illusion, content-addressed drift detection) is unaffected. What changes is the
+ORDER: the read path cannot be built until presentations actually land somewhere Engine F can
+read. Two candidate resolutions, neither assumed:
+
+1. **Fix the sync** so `rendersAs` rows reach `Predicate` (doc-tools; needs the row shape to
+   admit a presentation, or a sibling collection).
+2. **Read from DataHub directly** at registration/refresh time, treating Weaviate as an
+   optimisation rather than the source. Cheaper to land, but it puts a DataHub dependency on
+   the presentation path and should be weighed against the engine-side symmetry that motivated
+   the ruling.
+
+**Recorded rather than chosen, because picking here would repeat the mistake this packet
+exists to document: building on an assumed topology.**
+
 ## Definition of done — a DEPLOYED witness, not a green suite
 
 **The rule this packet exists to enforce:** an arc whose claim is about deployed behaviour
