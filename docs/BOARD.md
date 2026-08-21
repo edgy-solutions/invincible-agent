@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **51 of 53 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **52 of 54 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -29,10 +29,6 @@ _Coverage: **51 of 53 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **answer-latency-tier1** — DECOMPOSED 2026-08-19 (n=5 + isolated hop probes). Tier-1 answer is 262.0s +/- 10.6 (the filed 324.9s was a ~6-sigma outlier, likely a cold 64.7GB model load). >99% is sequential LLM generation; ALL data/graph work totals 2.3s. Root cause: a 116.8B REASONING model at ~33 tok/s where 95-97% of generated tokens are hidden reasoning, called ~sequentially. Largest phase is composing (102.5s), which the original filing never named.
   status: open · owner: unassigned
   → [docs/plans/answer-latency-tier1.md](plans/answer-latency-tier1.md)
-
-- **archetype-chosen-before-data** — The UI archetype is selected from the verb's output_uri before anything looks at the rows, so every analyzeDataset result becomes a CHART_WIDGET — including a list of CAGE codes, which are identifiers and can never be plotted. The payload's shape should decide; output_uri is a hint, not a verdict.
-  status: open · owner: agent · blocked-on: nothing — small and mechanical. The honest-degradation half shipped 2026-08-15; this is the half that stops forcing the wrong shape in the first place.
-  → [docs/plans/archetype-chosen-before-data.md](plans/archetype-chosen-before-data.md)
 
 - **board-migration** — Retrofit ADR-0040 headers onto the unheadered packets; the board's first tracked item is its own completion.
   status: open · owner: unassigned
@@ -114,6 +110,10 @@ _Coverage: **51 of 53 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: repair 3 (the registrar discrimination) LANDED in fbf7307. Repair 1 is still owed and unanswered — WHICH of the three ways the re-register hook failed to fire at work. Until that read is done, a deploy still depends on a hook nobody has verified runs.
   → [docs/plans/registration-boot-order-race.md](plans/registration-boot-order-race.md)
 
+- **render-request-carries-no-frontend-id** — The multi-UI promise is proven in tests and unreachable in production. `select_presentation` filters a caller's REGISTERED menu by payload satisfaction, but `RenderRequest` carries no `frontend_id`, so nothing can name the calling client. Small plumbing — a request-model field plus the cortex-bff caller threading it. ⚠️ DO NOT wire it with frontend_id=None: that resolves every caller to the default menu and turns every answer into a KNOWLEDGE_DOCUMENT.
+  status: open · owner: unassigned
+  → [docs/plans/render-request-carries-no-frontend-id.md](plans/render-request-carries-no-frontend-id.md)
+
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
   → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
@@ -165,6 +165,10 @@ _Coverage: **51 of 53 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **approval-bypass-bpmn-runner** — HIGH — RESOLVED d3ef8bf. The approval plane resolved promises with no caller identity. Gated on THREE surfaces, not the two declared: engine-a's route, the Restate approve handler, and GroupedReview.submit_decision (found while fixing the other two). Audience read from the workflow journal, never the request.
   status: closed · owner: unassigned · closed-by: d3ef8bf
   → [docs/plans/approval-bypass-bpmn-runner.md](plans/approval-bypass-bpmn-runner.md)
+
+- **archetype-chosen-before-data** — CLOSED 2026-08-20 by 15fcf17 — the claim is now FALSE BY CONSTRUCTION. The payload is validated against the published contract BEFORE the archetype is accepted, so a list of CAGE codes fails as `rows aren't objects` and CHART_WIDGET never enters the candidate set. Was: The UI archetype is selected from the verb's output_uri before anything looks at the rows, so every analyzeDataset result becomes a CHART_WIDGET — including a list of CAGE codes, which are identifiers and can never be plotted. The payload's shape should decide; output_uri is a hint, not a verdict.
+  status: closed · owner: agent · closed-by: 15fcf17
+  → [docs/plans/archetype-chosen-before-data.md](plans/archetype-chosen-before-data.md)
 
 - **broker-catalog-urn-derivation** — CLOSED — the broker keyed its Redis routes from a derivation forcing platform="dagster", which also flipped the NAME LAYOUT to dotted, so one asset had two irreconcilable identities and every data read 404'd against a routing table that looked fully populated. Proven end-to-end at work 2026-08-15.
   status: closed · owner: agent · repo: dag-tools · closed-by: a99779f

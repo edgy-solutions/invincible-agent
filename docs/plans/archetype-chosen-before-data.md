@@ -1,12 +1,12 @@
 ---
 id:         archetype-chosen-before-data
-status:     open
+status:     closed
 owner:      agent
-blocked-on: nothing — small and mechanical. The honest-degradation half shipped 2026-08-15; this is the half that stops forcing the wrong shape in the first place.
-closed-by:
+blocked-on:
+closed-by:  15fcf17
 code-site:  agent_fleet/presentation_agent/main.py
 repo:       invincible-agent
-summary:    The UI archetype is selected from the verb's output_uri before anything looks at the rows, so every analyzeDataset result becomes a CHART_WIDGET — including a list of CAGE codes, which are identifiers and can never be plotted. The payload's shape should decide; output_uri is a hint, not a verdict.
+summary:    CLOSED 2026-08-20 by 15fcf17 — the claim is now FALSE BY CONSTRUCTION. The payload is validated against the published contract BEFORE the archetype is accepted, so a list of CAGE codes fails as `rows aren't objects` and CHART_WIDGET never enters the candidate set. Was: The UI archetype is selected from the verb's output_uri before anything looks at the rows, so every analyzeDataset result becomes a CHART_WIDGET — including a list of CAGE codes, which are identifiers and can never be plotted. The payload's shape should decide; output_uri is a hint, not a verdict.
 ---
 
 # A capability map decides the shape, and the data is never consulted
@@ -61,3 +61,31 @@ An instance of [[deterministic-decisions-made-by-llm]] — a decision that could
 data's declared structure is instead made by a static type mapping that cannot see it. Same
 family as subject selection, different mechanism: there a model overrides the scores, here a
 lookup table never consults the rows.
+
+
+## CLOSED 2026-08-20 — the claim is false by construction
+
+This packet's claim was specific: **the archetype is chosen before anyone looks at the data.**
+That is no longer true. `15fcf17` validates the payload against the component's published
+contract BEFORE the archetype is accepted, using the agent's rows already in hand.
+
+**Witnessed on the founding payload.** `["00000", "00001"]` — CAGE codes, identifiers, never
+plottable — fails as `rows aren't objects`, so CHART_WIDGET never enters the candidate set and
+the answer routes to a KNOWLEDGE_DOCUMENT that can actually render it.
+
+**The difference from the 2026-08-15 fix is the ordering.** That shipped the honest
+degradation: the wrong archetype was still chosen, the coercion still tried to reshape
+identifiers into bars, and the fallback rescued the viewer afterwards. Chooses wrong, then
+recovers. This makes the wrong choice unreachable.
+
+The refusal names itself, which is the eight-reason vocabulary from the contract threading all
+the way through: **the contract publishes the reasons, the validator enforces them, the
+decision cites them.** One vocabulary, one home, three consumers.
+
+### What this packet does NOT cover, deliberately
+
+The menu-scoped half — *the decision must bind to the CALLING CLIENT's capabilities* — is a
+DIFFERENT claim. `select_presentation` is built and tested but unreachable, because
+`RenderRequest` carries no `frontend_id`. Filed as its own item
+([[render-request-carries-no-frontend-id]]) rather than held open here: keeping a packet open
+past its own scope to cover adjacent work is how a summary drifts from its header.
