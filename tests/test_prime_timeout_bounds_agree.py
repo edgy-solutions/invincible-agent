@@ -77,15 +77,39 @@ def test_the_outer_bound_leaves_real_headroom():
     )
 
 
+_PRIME = _ROOT / "setup" / "prime_databases.py"
+
+
+def _ingest_count() -> int:
+    """How many ingests one prime launches — DERIVED, not remembered.
+
+    This was hardcoded to 15 and went stale the day a sixteenth ontology was added. The
+    whole point of the seal is that two numbers describing one fact must not drift, so
+    hardcoding one of them reproduced the original defect inside its own guard.
+
+    One `s3_key` per ontology the prime uploads and then waits on.
+    """
+    return len(re.findall(r'"s3_key":', _PRIME.read_text(encoding="utf-8")))
+
+
+def test_the_ingest_count_is_readable():
+    """Positive control: a regex that matched nothing would make the queue check vacuous."""
+    count = _ingest_count()
+    assert count >= 10, f"parsed only {count} ingests from prime_databases.py — shape moved"
+
+
 def test_the_inner_bound_covers_the_serialised_queue():
     """The arithmetic that made this a disposal rather than a guess, pinned so a later
     'tidy the timeouts down' has to argue with the measurement.
 
-    15 ingests, dagster max_concurrent_runs 2 => 8 batches; observed ~6 min per run-slot on
-    this cluster (10 runs completed within 1800s). ~45 min for all 15.
+    dagster max_concurrent_runs 2, so N ingests serialise into ceil(N/2) batches; observed
+    ~6 min per run-slot on this cluster (10 runs completed within 1800s on 2026-08-22).
+
+    The ingest count is READ from prime_databases.py, so adding an ontology tightens this
+    seal automatically instead of silently eating the margin.
     """
     observed_seconds_per_slot = 360      # 10 runs / 1800s, measured 2026-08-22
-    ingests, concurrency = 15, 2
+    ingests, concurrency = _ingest_count(), 2
     batches = -(-ingests // concurrency)  # ceil
     needed = batches * observed_seconds_per_slot
     assert _inner_seconds() >= needed, (
