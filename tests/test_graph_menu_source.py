@@ -310,3 +310,33 @@ def test_a_real_frontend_is_still_served_its_own_menu(monkeypatch):
     ])
     menu = m.menu_for("cortex")
     assert menu is not None and menu["frontend_id"] == "cortex"
+
+
+def test_the_LAUNDERING_ATTACK_end_to_end(monkeypatch):
+    """THE ATTACK ITSELF, through the public path rather than the unit.
+
+    menu_for() returning None is the mechanism; what an attacker actually gets
+    is what matters. A caller naming the sentinel must receive the union labelled
+    `default-menu` -- the honest "you have no menu" -- and never `registered`,
+    which would assert it chose from capabilities it registered.
+
+    Provenance is the only thing separating a caller's decision from a fallback,
+    and a caller that can pick its own provenance makes every downstream reading
+    of that field worthless.
+    """
+    m = _reg()
+    monkeypatch.setenv("PRESENTATION_GRAPH_MENU", "0")
+    m.clear()
+    m.register(m.SYSTEM_DEFAULT_FRONTEND_ID, "1.0", [
+        {"subject_uri": f"{_MESH}OwnershipFact", "archetype": "KNOWLEDGE_DOCUMENT"},
+    ])
+    _cap, prov = m.select_presentation(
+        m.SYSTEM_DEFAULT_FRONTEND_ID,
+        f"{_MESH}OwnershipFact",
+        {"owner": "x"},
+    )
+    assert prov["presentation_source"] != "registered", (
+        "a caller upgraded its own provenance by naming the system-default "
+        "sentinel — it registered nothing"
+    )
+    assert prov["presentation_source"] == "default-menu"
