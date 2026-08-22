@@ -46,6 +46,15 @@ KNOWN_ARCHETYPES = frozenset({
     "TRIAGE_TASK",
     "WORKFLOW_OBSERVATION",
     "INSTANCES_BY_PROPERTY",
+    # LIVE VIEWS (ADR-0042). Added 2026-08-22 after all four were REFUSED AT THE DOOR on
+    # their first real registration: "a frontend cannot advertise a render the backend has
+    # no name for." The gate was right and the vocabulary was short -- the archetypes had
+    # been declared in the ontology, exported as contracts, and bound in DERIVED_BINDINGS,
+    # and this was the one registry nobody enumerated. See test_archetype_registries_agree.
+    "PERIOD_SERIES",
+    "THRESHOLD_GRID",
+    "MATRIX_GRID",
+    "DELTA_SET",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that

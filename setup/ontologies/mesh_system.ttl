@@ -313,6 +313,28 @@ mesh:PeriodSeries a owl:Class ;
   rdfs:label "Period Series" ;
   rdfs:comment "A time-phased series drawn against an optional threshold line. Refuses a payload with no periods, an unlabelled row, or no numeric amount anywhere. A LIVE VIEW: content is replaced wholesale on re-evaluation and its freshness stamp is per evaluation, never inherited from mint time." .
 
+# --- SUBJECT ends the four review archetypes render FOR ------------------------
+# Added 2026-08-22. Declaring the four ARCHETYPES was only half the triple: Contract D
+# requires BOTH endpoints, and these two subjects were declared nowhere, so GROUPED_REVIEW
+# and APPROVAL_TASK were refused on their SUBJECT end with `gateway-rejected-REFUSED`.
+#
+# WHY THE OTHER TWO SLIPPED THROUGH AND HID THIS: mesh:InstancesByProperty and
+# mesh:WorkflowObservation use the SAME IRI for subject and object, so declaring the
+# archetype declared both ends by accident. They registered successfully for a reason that
+# had nothing to do with being correct — and had all four shared that shape, the subject-end
+# gap would have stayed invisible. Two landing for the wrong reason is what made the
+# discriminant visible.
+
+mesh:PartObsolescenceReviewBatch a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Part Obsolescence Review Batch" ;
+  rdfs:comment "A batch of affected items awaiting one approver's disposition, carrying the notice it derives from and a per-item override vocabulary. The SUBJECT a grouped review renders for — an engine output, not a rendering kind." .
+
+mesh:HumanApprovalTask a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Human Approval Task" ;
+  rdfs:comment "A single decision awaiting a named audience, carrying its subject reference and requester. The SUBJECT an approval card renders for; the honest default when no more specific task shape claims it." .
+
 # --- THE FOUR REVIEW ARCHETYPES -----------------------------------------------
 # Registered by cortex-ui since before the presentation arc, declared NOWHERE until now — the
 # same gap the chart and document archetypes had, surviving in the four that were converted
