@@ -34,6 +34,7 @@ SERVICE_FILES: dict[str, str] = {
     "weaviate_expert": "agent_fleet/weaviate_expert/main.py",
     "restate_analyst": "agent_fleet/restate_analyst/main.py",
     "data_analyst": "agent_fleet/data_analyst/main.py",
+    "planning_agent": "agent_fleet/planning_agent/main.py",
     "presentation_agent": "agent_fleet/presentation_agent/main.py",
     "mesh_registrar": "agent_fleet/mesh_registrar/main.py",
     "projector": "src/iagent/projector/app.py",

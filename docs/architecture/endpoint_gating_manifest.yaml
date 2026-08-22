@@ -617,6 +617,101 @@ services:
         class: delegates
         justification: "data-plane can_read enforced in the central gateway via X-Originator-Email; engine-side Topaz authz explicitly removed (the DA-read seal)"
 
+  planning_agent:
+    inbound_transport_auth: engine-p
+    notes: |
+      Engine P — ten planning verbs over server-owned plan state (ADR-0042). Every response
+      carries `output_uri` and rows and NAMES NO ARCHETYPE; presentation is
+      select_presentation's decision from the payload against the caller's registered menu.
+
+      REACHED ONLY VIA cortex-bff's /plan/measure, never by a browser. The engine is
+      cluster-internal and takes the mesh transport-auth dependency in OBSERVE posture, the
+      same as every other engine — it was born WITHOUT it and the glob-based transport seal
+      caught that on its first run, which is why this service now appears here at all.
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: liveness
+        consumers: [kubelet]
+        class: releasable_by_design
+        justification: "liveness only — verb count and store version, no plan content"
+      - method: GET
+        path: /verbs
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: capability-catalogue
+        consumers: [cortex-bff, operators]
+        class: releasable_by_design
+        justification: "the engine's own view of what it registered. Diagnostic: when this and
+          the mesh disagree, registration is what failed. Names verbs and output types, never
+          plan data."
+      - method: POST
+        path: /measure/{fn}
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: read-model
+        consumers: [cortex-bff]
+        class: releasable_by_design
+        justification: "executes one verb over one state_ref. Returns output_uri + rows +
+          state_version. An out-of-model subject is 422 not_in_model, never an empty 200 —
+          an empty row set renders as 'none found', a false statement about something that
+          does not exist."
+      - method: GET
+        path: /state/{state_ref}/version
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: read-model
+        consumers: [cortex-bff]
+        class: releasable_by_design
+        justification: "the cheap poll behind ADR-0042 OQ1's pull trigger. An integer only —
+          a client holding an older version knows to re-request without being told."
+      - method: POST
+        path: /scenario
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: action
+        consumers: [cortex-bff]
+        class: releasable_by_design
+        justification: "forks a named scenario from baseline or another scenario. Creates no
+          plan change by itself."
+      - method: GET
+        path: /scenario
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: read-model
+        consumers: [cortex-bff]
+        class: releasable_by_design
+        justification: "open scenarios with their versions and op counts"
+      - method: POST
+        path: /scenario/{scenario_id}/op
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: action
+        consumers: [cortex-bff]
+        class: releasable_by_design
+        justification: "appends one op to a scenario and bumps its version. Validated by
+          applying eagerly, so a bad op is refused at POST time rather than surfacing at read
+          time — a silently-dropped op would leave the room believing it made a change the
+          diff never shows."
+      - method: POST
+        path: /baseline/op
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: action
+        consumers: [cortex-bff]
+        class: internal
+        justification: "THE ONE ROUTE THAT WRITES BASELINE, and deliberately narrow: funding
+          ops only. A schedule change here is a 400 — the anti-goal 'no editing baseline
+          directly from a drag' with a stack trace.
+          `internal` describes its REACHABILITY honestly (cluster-only, cortex-bff is the sole
+          caller) and deliberately does not describe it as safe. Baseline is the shared plan of
+          record and this is the only door to it, so when persistence lands in Phase 4 this
+          route needs a CALLER IDENTITY and a change record, not just a transport posture.
+          Recorded here rather than in a packet because the manifest is where the next reader
+          of this route will actually be looking."
+
   presentation_agent:
     file: agent_fleet/presentation_agent/main.py
     # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it
