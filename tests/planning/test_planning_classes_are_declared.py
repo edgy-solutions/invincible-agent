@@ -26,6 +26,8 @@ fails loudly here rather than silently in a cluster.
 """
 from __future__ import annotations
 
+import pathlib
+import re
 import sys
 from pathlib import Path
 
@@ -101,7 +103,7 @@ def test_the_ontology_is_inhabited(graph):
 
 
 def test_every_engine_p_output_type_is_declared(graph):
-    """The SUBJECT end of all ten planning registrations."""
+    """The SUBJECT end of all twelve planning registrations."""
     declared = _declared(graph)
     missing = sorted(uri for uri in measures.OUTPUT_URI.values() if uri not in declared)
     assert not missing, (
@@ -151,3 +153,74 @@ def test_every_declared_planning_class_carries_a_comment(graph):
         if not list(graph.objects(rdflib.URIRef(iri), RDFS.comment)):
             naked.append(iri)
     assert not naked, f"declared with no rdfs:comment: {naked}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE OTHER END OF CONTRACT D.
+#
+# Everything above guards the OUTPUT half — `measures.OUTPUT_URI` and the archetypes. That is
+# one end of one triple, and Contract D checks BOTH ends of the verb edge. The input half was
+# never guarded, so it was never authored, and the omission was invisible until the registrar
+# said so in production:
+#
+#   422 (Contract D): {"ok": false, "missing": ["http://invincible-agent/idp#Portfolio"]}
+#
+# Twelve registrations, twelve refusals, an engine reporting healthy the whole time. A seal
+# that covers half of a two-ended contract reads exactly like a seal that covers the contract.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PRIME = _ROOT / "setup" / "prime_databases.py"
+_INGESTED_PATH = re.compile(r'"path":\s*"(ontologies/[^"]+\.ttl)"')
+
+
+def _ingested_ttls() -> list[pathlib.Path]:
+    """Only the TTLs the prime actually ingests count as "declared".
+
+    A class in a TTL that no prime entry names is not in the graph, so crediting it here
+    would let the seal pass while Contract D still refuses. setup/prime_databases.py is the
+    registry; reading it means a new ontology file cannot be declared-but-unwired.
+    """
+    text = _PRIME.read_text(encoding="utf-8")
+    return [_ROOT / "setup" / rel for rel in sorted(set(_INGESTED_PATH.findall(text)))]
+
+
+@pytest.fixture(scope="module")
+def domain_graph():
+    """Every ingested ontology — input classes may live in any of them."""
+    g = rdflib.Graph()
+    loaded = 0
+    for ttl in _ingested_ttls():
+        if ttl.exists():
+            g.parse(str(ttl), format="turtle")
+            loaded += 1
+    assert loaded >= 8, f"only {loaded} ingested TTLs parsed — prime_databases.py shape moved"
+    return g
+
+
+def test_the_domain_ontology_is_inhabited(domain_graph):
+    """Positive control for the second graph, same reason as the first."""
+    declared = _declared(domain_graph)
+    assert "http://invincible-agent/idp#Dataset" in declared, (
+        "idp:Dataset missing — idp_extension.ttl did not parse or the namespace moved"
+    )
+
+
+def test_every_engine_p_input_class_is_declared(domain_graph):
+    """The INPUT end of every verb edge Engine P registers.
+
+    Measured 2026-08-22 against the sandbox registrar: five distinct input classes
+    (Portfolio, Site, Capability, BusinessProcess, Technology) and NONE of them declared,
+    so all twelve registrations were refused 422 while the engine served /health normally.
+    """
+    from agent_fleet.planning_agent import main as _main
+
+    declared = _declared(domain_graph)
+    needed = sorted({v["input_uri"] for v in _main.VERBS})
+    missing = [uri for uri in needed if uri not in declared]
+
+    assert not missing, (
+        f"{len(missing)} of {len(needed)} Engine P input class(es) on the wire but NOT "
+        f"declared in any ontology: {missing}.\nContract D refuses the verb edge on its "
+        f"INPUT end and the engine stays up, so the only symptom is that nothing routes. "
+        f"Declare the class; do not weaken the gate."
+    )

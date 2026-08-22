@@ -290,6 +290,25 @@ CANONICAL_TTL_MANIFEST = [
         "path": "ontologies/idp_extension.ttl",
     },
 
+    # ----- LAYER 3b: PORTFOLIO_PLANNING (Engine P's subject nouns) -----
+    # The INPUT end of Contract D for all twelve planning verbs. The output end
+    # (the mesh:Plan* response types) rides in mesh_system.ttl, which is exactly why
+    # the output half landed and the input half did not: only one of the two was ever
+    # authored. Measured 2026-08-22 — twelve registrations, twelve 422s naming these
+    # five URIs, while the engine served /health normally throughout.
+    #
+    # DOMAIN IS PORTFOLIO_PLANNING, matching what Engine P registers its verbs under
+    # (agent_fleet/planning_agent/main.py). The resolver queries by semantic domain
+    # name, and a class whose domain does not match what the resolver asks for gives a
+    # silent UNKNOWN cascade — the same shape the DATA_ENGINEERING note above records
+    # from a fresh-bootstrap rehearsal.
+    {
+        "domain": "PORTFOLIO_PLANNING",
+        "name": "portfolio_planning_extension",
+        "s3_key": "planning/portfolio_planning_extension.ttl",
+        "path": "ontologies/portfolio_planning_extension.ttl",
+    },
+
     # ----- LAYER 4: MANUFACTURING (the manufacturing content-kind axis) -----
     # General mfg:WorkInstruction kind only — the routing-visible class the
     # ManufacturingPlugin's INSTANCE_OF stamping (ADR-0021) targets. Single
@@ -1326,7 +1345,7 @@ def main() -> None:
         "  - If you did NOT pass --trigger-ingest, fire ingest_ontology_job from the "
         "Dagster UI (or wait for the sensor to auto-detect uploads).\n"
         "  - After ingest, verify with: cypher MATCH (c:OntologyClass) WHERE c.domain "
-        "IN ['MAINTENANCE','MIL','MESH','DATA_ENGINEERING','SUSTAINMENT'] RETURN c.domain, count(c)\n"
+        "IN ['MAINTENANCE','MIL','MESH','DATA_ENGINEERING','SUSTAINMENT','PORTFOLIO_PLANNING'] RETURN c.domain, count(c)\n"
         "  - Then deploy engines (Helm) and run the routing matrix to confirm "
         "deployability."
     )

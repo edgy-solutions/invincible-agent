@@ -1,0 +1,48 @@
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix idp:   <http://invincible-agent/idp#> .
+
+<http://internal/portfolio_planning> a owl:Ontology ;
+    rdfs:label "Portfolio planning domain extension" ;
+    rdfs:comment "The subject nouns Engine P's twelve planning verbs operate ON. Contract D (ADR-0019) requires BOTH ends of a verb edge to pre-exist as owl:Class, and these are the INPUT end; the output end lives in mesh_system.ttl. Declared 2026-08-22 after all twelve registrations were refused 422 for exactly these five URIs." .
+
+# CONVENTIONS INHERITED FROM idp_extension.ttl, and they are not stylistic:
+#
+#   * rdfs:comment ONLY. The Jena->Weaviate sync UNIONs skos:definition with rdfs:comment and
+#     the last row wins, so a skos:definition silently clobbers. rdfs:comment is what lands in
+#     Weaviate.OntologyClass.definition.
+#   * The definition IS the recall signal. It is written for the CLASS, never for a query.
+#   * No sibling-name bleed. A definition that names a neighbouring class competes for that
+#     class's traffic — measured on idp:Pipeline, which ranked top for a question squarely
+#     about idp:Dataset purely because it said "datasets" twice.
+#
+# GENERIC AT BIRTH. These are structural planning nouns, deliberately carrying no
+# organisation, product or customer vocabulary. A deployment renames them through the
+# vocabulary overlay; the ontology never learns the local words.
+
+idp:Portfolio a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Portfolio" ;
+    rdfs:comment "The whole governed body of planned change under one funding authority, spanning every initiative and phase within a planning horizon. Questions about total spend over time, funding shortfalls against commitments, sequencing conflicts, or portfolio-wide risk target this class. It is the widest planning subject: an answer scoped to it summarises across everything below it." .
+
+idp:Site a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Site" ;
+    rdfs:comment "A physical or organisational location that absorbs change and has a finite tolerance for how much it can absorb at once. Questions about concurrent load, saturation against a governed threshold, or which locations are over-committed in a period target this class. The constraint it carries is absorption capacity, not headcount or labour cost." .
+
+idp:Capability a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Capability" ;
+    rdfs:comment "A named ability the organisation intends to hold, assessed by maturity level and advanced by the work that contributes to it. Questions about current versus target maturity, which abilities remain uncovered by any planned work, or the path from one maturity level to another target this class. It describes what the organisation can DO, independent of the projects that build it." .
+
+idp:BusinessProcess a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Business Process" ;
+    rdfs:comment "A repeatable operational activity that planned change modifies, replaces, or retires. Questions about which activities a change touches, where operational disruption concentrates, or which activities have no owner in the plan target this class. It is the operational surface on which change lands." .
+
+idp:Technology a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Technology" ;
+    rdfs:comment "A deployed or planned technical component that enables abilities and is carried by the work that installs it. Questions about lifecycle stage, which components are scheduled for replacement, or what an ability depends on technically target this class. It names the enabling component itself, not the effort to deploy it." .
