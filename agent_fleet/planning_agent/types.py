@@ -81,6 +81,17 @@ class Portfolio:
     portfolio_id: str
     name: str
     tenant_id: str  # multi-tenant from birth; retrofitting a tenant key is a migration
+    # REV 3 — three DISTINCT owner roles at the upper tiers. A single owner field forces a
+    # choice the organisation has not made: "who signs off on the money" and "who is
+    # accountable for the outcome" have different answers.
+    executive_owner: Optional[str] = None
+    business_owner: Optional[str] = None
+    technology_owner: Optional[str] = None
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -91,6 +102,20 @@ class Initiative:
     # ENUM, not a free string. A free status field becomes six spellings of "active" within
     # a quarter and every filter silently under-counts.
     status: Literal["proposed", "approved", "active", "paused", "done"]
+    executive_owner: Optional[str] = None
+    business_owner: Optional[str] = None
+    technology_owner: Optional[str] = None
+    # REV 3 — priority and criticality are SEPARATE questions. Priority is "what do we do
+    # first" (a sequencing choice the room makes); criticality is "what happens if this fails"
+    # (a property of the thing). Collapsing them loses the case that matters most: low
+    # priority, high criticality. Ordinals; the LABELS are data (see the rev-3 delta §C).
+    priority: Optional[int] = None
+    criticality: Optional[int] = None
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -103,6 +128,17 @@ class Phase:
     # fatal gap, since the anchor projection is a timeline of exactly these.
     planned: Interval
     actual: Optional[Interval] = None  # P-Plan: plan and execution are distinct records
+    # REV 3 — one owner at the working tiers. Three roles here would be ceremony; the
+    # distinction only exists where accountability actually splits.
+    owner: Optional[str] = None
+    # How FIRM the interval is. Without it a Q3 date and a Q3 guess draw identically, and a
+    # room cannot tell which bars it may safely move.
+    timing_confidence: Optional[str] = None
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -117,6 +153,14 @@ class Project:
     # requirements silently drifted from what was approved.
     capex_budget: float = 0.0
     opex_budget: float = 0.0
+    owner: Optional[str] = None
+    priority: Optional[int] = None
+    criticality: Optional[int] = None
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -141,6 +185,11 @@ class Capability:
     # Q2's edge, absent from the source model: a capability ENABLES processes. Without it,
     # "which capabilities does this process depend on" has no answer.
     enables_process_ids: list[str] = field(default_factory=list)
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -164,6 +213,20 @@ class Site:
     # how much concurrent change a site absorbs; a measure that invents the line is an
     # invented measure. This field is where the judgement is recorded and owned.
     saturation_threshold: float
+    # REV 3 (B3) — Site generalises to a DEPLOYMENT TARGET. A program is a target too: it
+    # absorbs concurrent change and has a saturation line, which is the whole of what the load
+    # machinery needs. `SiteImpact` already carries its own window and the threshold is already
+    # a per-subject governance field, so the load machinery is UNCHANGED and THRESHOLD_GRID
+    # needs no edit at all — it draws "subjects x periods against a threshold the subject
+    # owns" and has never known what a subject is.
+    target_type: Literal["site", "program"] = "site"
+    active: Optional[Interval] = None
+    status: Optional[str] = None
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -183,6 +246,11 @@ class SiteImpact:
 class Technology:
     tech_id: str
     name: str
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -225,6 +293,11 @@ class Organization:
     """
     org_id: str
     name: str
+    # REV 3 — the extras map. Answers "highly configurable attributes" without becoming a
+    # document store: the graph substrate at Phase 8 is the real answer, and this is the seam
+    # that makes waiting survivable. NOT a place to hide modelled fields — a date or an amount
+    # in here is invisible to every measure that reads a typed field, and a test guards it.
+    attributes: dict = field(default_factory=dict)
 
 
 FundingKind = Literal["capex", "expense"]
@@ -253,6 +326,15 @@ class FundingCommitment:
     period: FiscalPeriod
     kind: FundingKind
     amount: float
+    # REV 3 — a PENDING commitment is a hope, not money. The enum is what lets the gap verb
+    # separate SECURED (committed + approved) from AT-RISK, and a gap measure that counts
+    # hopes as money is the measure a portfolio review exists to replace.
+    #
+    # THERE IS NO STORED GAP FIELD ANYWHERE, deliberately: at-risk is DERIVED from these rows
+    # by plan_funding_gap. Storing it beside its own inputs is stored-beside-derivable, the
+    # two-masters defect this arc has already paid for twice.
+    status: Literal["pending", "committed", "approved"] = "committed"
+    attributes: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -271,6 +353,10 @@ class MaturityAssessment:
     assessed_at: ISODate
     assessed_by: str
     evidence_ref: Optional[str] = None
+    # REV 3 (B2) — which named ordinal scale these levels belong to. The LABELS are data, not
+    # code: the repo ships a neutral default and customer labels load from an overlay.
+    scale_id: str = "generic-1-5"
+    attributes: dict = field(default_factory=dict)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -137,7 +137,17 @@ def plan_funding_gap(
     committed to it. A project with requirements and NO commitment at all is attributed to
     the sentinel org id `"(uncommitted)"` — visible as an unfunded row rather than vanishing,
     which is the whole point of splitting demand from supply.
+
+    REV 3 — SECURED IS NOT THE SAME AS COMMITTED-ON-PAPER. A `pending` commitment is a hope.
+    `secured` counts only `committed` + `approved`; `at_risk` is the part of the requirement
+    covered by nothing or by pending money only. A gap measure that counted hopes as money
+    would be the measure a portfolio review exists to replace.
+
+    NOTHING HERE IS STORED. `gap`, `secured` and `at_risk` are all computed from requirement
+    and commitment rows on every call. A stored field beside them would be a second writer for
+    a fact that already has one — see the rev-3 delta's refusal of a `funding_gap` field.
     """
+    SECURED_STATUSES = ("committed", "approved")
     if group_by not in ("org", "initiative"):
         raise NotInModel(f"cannot group funding by {group_by!r}")
 
@@ -156,12 +166,18 @@ def plan_funding_gap(
                     return init is not None and init.initiative_id == gid
                 required = sum(r.amount for r in reqs if in_g(r.project_id))
                 committed = sum(k.amount for k in commits if in_g(k.project_id))
+                secured = sum(k.amount for k in commits
+                              if in_g(k.project_id) and k.status in SECURED_STATUSES)
                 if required == 0 and committed == 0:
                     continue  # deliberate-absent: a group with no activity is not a zero row
                 rows.append({
                     "group_by": "initiative", "initiative_id": gid, "period": period,
                     "required": required, "committed": committed,
+                    "secured": secured,
                     "gap": required - committed,
+                    # What the requirement leaves uncovered by SECURED money. Never negative:
+                    # over-securing one group is not negative risk elsewhere.
+                    "at_risk": max(0.0, required - secured),
                 })
             continue
 
@@ -170,6 +186,7 @@ def plan_funding_gap(
         for k in commits:
             org_of_project.setdefault(k.project_id, set()).add(k.org_id)
 
+        blank = {"required": 0.0, "committed": 0.0, "secured": 0.0}
         by_org: dict[str, dict[str, float]] = {}
         for r in reqs:
             owners = org_of_project.get(r.project_id) or {"(uncommitted)"}
@@ -177,16 +194,21 @@ def plan_funding_gap(
             # absent a per-requirement funder, and it keeps the column totals correct.
             share = r.amount / len(owners)
             for oid in owners:
-                by_org.setdefault(oid, {"required": 0.0, "committed": 0.0})["required"] += share
+                by_org.setdefault(oid, dict(blank))["required"] += share
         for k in commits:
-            by_org.setdefault(k.org_id, {"required": 0.0, "committed": 0.0})["committed"] += k.amount
+            entry = by_org.setdefault(k.org_id, dict(blank))
+            entry["committed"] += k.amount
+            if k.status in SECURED_STATUSES:
+                entry["secured"] += k.amount
 
         for oid in sorted(by_org):
             v = by_org[oid]
             rows.append({
                 "group_by": "org", "org_id": oid, "period": period,
                 "required": v["required"], "committed": v["committed"],
+                "secured": v["secured"],
                 "gap": v["required"] - v["committed"],
+                "at_risk": max(0.0, v["required"] - v["secured"]),
             })
     return rows
 
