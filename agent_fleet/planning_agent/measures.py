@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal, Optional
 
-from .types import FISCAL_PERIODS, PERIOD_ORDER, FiscalPeriod, Interval, PlanState
+from .entities import FISCAL_PERIODS, PERIOD_ORDER, FiscalPeriod, Interval, PlanState
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The output-type contract. Declared, fixed, and the ONLY thing an intent names.

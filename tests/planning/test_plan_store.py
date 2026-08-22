@@ -20,7 +20,7 @@ from agent_fleet.planning_agent.seed import build_seed
 from agent_fleet.planning_agent.state import (
     MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget, apply_ops,
 )
-from agent_fleet.planning_agent.types import Interval
+from agent_fleet.planning_agent.entities import Interval
 
 M = 1_000_000.0
 

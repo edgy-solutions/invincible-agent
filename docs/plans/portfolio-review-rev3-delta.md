@@ -4,7 +4,7 @@ status:     open
 owner:      unassigned
 blocked-on: architect fills C3's private-overlay path
 closed-by:
-code-site:  agent_fleet/planning_agent/types.py, agent_fleet/planning_agent/measures.py
+code-site:  agent_fleet/planning_agent/entities.py, agent_fleet/planning_agent/measures.py
 repo:       invincible-agent
 summary:    Revision 3 of the portfolio-review plan, in DELTA form — what sections B/C/D of the 2026-08-21 requirements packet ADD to what is already built, never a re-plan of section A. A is not merely planned, it is LANDED AND CITED (abf16fd, 83 tests), and re-deriving built work in a plan document is how a plan drifts from its own repo. Every B item names the existing type or verb it extends so a reader can tell extension from invention. Carries one correction back to the packet: the sandbox runs `gpt-oss-128k:120b`, so the Day-5 eval must assert the CONFIGURED model name, not the name a document remembers.
 ---
@@ -53,7 +53,7 @@ naming it is a permitted fallback to a 404.
 
 ### B1 — type additions
 
-All of these EXTEND existing dataclasses in `agent_fleet/planning_agent/types.py`. None
+All of these EXTEND existing dataclasses in `agent_fleet/planning_agent/entities.py`. None
 introduces a new entity.
 
 | addition | extends | note |

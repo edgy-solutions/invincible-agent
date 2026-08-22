@@ -92,7 +92,7 @@ def test_tension_b_dragging_p5_left_springs_the_trap(state):
     """D4: P3 finishes 2026-06-30, P5 must start >= 14 days later (2026-07-14). Moving P5
     left to relieve the Q3 peak — the natural first move in the room — violates it."""
     from agent_fleet.planning_agent.state import MoveProject, apply_ops
-    from agent_fleet.planning_agent.types import Interval
+    from agent_fleet.planning_agent.entities import Interval
 
     moved = apply_ops(state, [MoveProject("P5", Interval("2026-07-01", "2026-09-30"))])
     violations = measures.plan_dependency_violations(moved)

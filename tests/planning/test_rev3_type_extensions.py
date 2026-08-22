@@ -17,7 +17,7 @@ import dataclasses
 
 import pytest
 
-from agent_fleet.planning_agent import measures, types
+from agent_fleet.planning_agent import entities, measures
 from agent_fleet.planning_agent.seed import build_seed
 
 M = 1_000_000.0
@@ -35,7 +35,7 @@ def test_upper_tiers_carry_the_three_owner_roles():
     """Executive / business / technology are DISTINCT roles, not one 'owner' string. A single
     owner field forces a choice the organisation has not made, and the question 'who signs off
     on the money' has a different answer from 'who is accountable for the outcome'."""
-    for cls in (types.Portfolio, types.Initiative):
+    for cls in (entities.Portfolio, entities.Initiative):
         f = _fields(cls)
         assert {"executive_owner", "business_owner", "technology_owner"} <= f, cls.__name__
 
@@ -43,7 +43,7 @@ def test_upper_tiers_carry_the_three_owner_roles():
 def test_working_tiers_carry_a_single_owner():
     """Phase and Project get ONE owner. Three roles at this tier would be ceremony — the
     distinction only exists where accountability actually splits."""
-    for cls in (types.Phase, types.Project):
+    for cls in (entities.Phase, entities.Project):
         assert "owner" in _fields(cls), cls.__name__
 
 
@@ -51,7 +51,7 @@ def test_priority_and_criticality_are_separate_fields():
     """They are different questions. Priority is 'what do we do first' (a sequencing choice
     the room makes); criticality is 'what happens if this fails' (a property of the thing).
     Collapsing them loses the case that matters most: low priority, high criticality."""
-    for cls in (types.Initiative, types.Project):
+    for cls in (entities.Initiative, entities.Project):
         f = _fields(cls)
         assert "priority" in f and "criticality" in f, cls.__name__
 
@@ -59,7 +59,7 @@ def test_priority_and_criticality_are_separate_fields():
 def test_phase_carries_timing_confidence():
     """How firm the interval is. Without it a Q3 date and a Q3 guess draw identically, and a
     room cannot tell which bars it may safely move."""
-    assert "timing_confidence" in _fields(types.Phase)
+    assert "timing_confidence" in _fields(entities.Phase)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,8 +67,8 @@ def test_phase_carries_timing_confidence():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("cls", [
-    types.Portfolio, types.Initiative, types.Phase, types.Project,
-    types.Capability, types.Site, types.Organization, types.Technology,
+    entities.Portfolio, entities.Initiative, entities.Phase, entities.Project,
+    entities.Capability, entities.Site, entities.Organization, entities.Technology,
 ])
 def test_every_entity_carries_an_extras_map(cls):
     """Answers "highly configurable attributes" without becoming a document store. The graph
@@ -96,7 +96,7 @@ def test_the_extras_map_is_not_a_place_to_hide_modelled_fields():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_funding_commitment_carries_a_status_enum():
-    assert "status" in _fields(types.FundingCommitment)
+    assert "status" in _fields(entities.FundingCommitment)
 
 
 def test_no_stored_funding_gap_field_exists():
@@ -105,8 +105,8 @@ def test_no_stored_funding_gap_field_exists():
     derived contracts, and as the backend capability copy beside the frontend's. Two instances
     already paid for; this refuses the third."""
     banned = {"funding_gap", "gap", "at_risk", "shortfall", "unfunded"}
-    for cls in (types.FundingRequirement, types.FundingCommitment, types.Project,
-                types.Initiative, types.Portfolio):
+    for cls in (entities.FundingRequirement, entities.FundingCommitment, entities.Project,
+                entities.Initiative, entities.Portfolio):
         overlap = banned & _fields(cls)
         assert not overlap, (
             f"{cls.__name__} stores {sorted(overlap)} — funding at-risk is DERIVED by "

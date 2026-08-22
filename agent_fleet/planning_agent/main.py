@@ -27,7 +27,7 @@ from .seed import build_seed, check_consistency
 from .state import (
     MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
 )
-from .types import Interval
+from .entities import Interval
 
 IDP = "http://invincible-agent/idp#"
 

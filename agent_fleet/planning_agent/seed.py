@@ -24,7 +24,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .types import (
+from .entities import (
     BusinessProcess, Capability, CapabilityContribution, Dependency, FundingCommitment,
     FundingRequirement, Initiative, Interval, MaturityAssessment, Organization, Phase,
     PlanState, Plateau, Portfolio, Project, Site, SiteImpact, TechEnablesCapability,
