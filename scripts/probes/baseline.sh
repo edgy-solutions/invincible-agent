@@ -8,6 +8,7 @@
 #                     (20 new declarations: 12 planning output types + 4 review archetypes +
 #                      PeriodSeries, ThresholdGrid, MatrixGrid, DeltaSet)
 #   2. RE-REGISTER -> cortex registration ROWS IN WEAVIATE: 44 -> 48, zero refusals
+#                     (44 MEASURED 2026-08-22, not assumed — Aggregate{Predicate{count}})
 #                     (the four previously-refused review archetypes landing)
 #
 # The second is MEANINGLESS UNTIL THE FIRST HOLDS — Contract D refuses a rendersAs triple whose
@@ -33,6 +34,15 @@ UNWIND want AS w
 OPTIONAL MATCH (c:OntologyClass {uri: 'http://invincible-agent/mesh#' + w})
 RETURN sum(CASE WHEN c IS NULL THEN 0 ELSE 1 END) AS already_present, count(*) AS expected_total;
 " 2>/dev/null | tail -2
+
+echo
+echo "=== PREDICTION 2: Weaviate Predicate rows (44 -> 48) ==="
+# The SECOND substrate. Neo4j holds the CLASSES; Weaviate holds the registration ROWS that
+# reference them. Contract D refuses a rendersAs triple whose object class does not exist, so
+# these two numbers are causally ordered: classes must land before rows can.
+kubectl run wvprobe-$$ --rm -i --restart=Never -n sandbox --image=curlimages/curl:latest --quiet -- \
+  sh -c 'curl -s -X POST http://iagent-weaviate:8080/v1/graphql -H "Content-Type: application/json" \
+    -d "{\"query\":\"{ Aggregate { Predicate { meta { count } } } }\"}"' 2>/dev/null | tail -1
 
 echo
 echo "=== the four review archetypes specifically (B was blocked on these) ==="
