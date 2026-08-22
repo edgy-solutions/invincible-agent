@@ -4,7 +4,19 @@ import os
 from contextlib import asynccontextmanager
 
 import duckdb
+import polars as pl
 import restate
+
+#: Ceiling on SOURCE-TABLE size, counted in CELLS (rows x columns) rather than
+#: rows, because the memory a load costs is a property of the TABLE's shape and
+#: not of the question asked. A row-only cap leaves the next WIDER table finding
+#: the same cliff — the same reason raising the container's memory limit only
+#: moves it. 40M cells is roughly a 2M-row x 20-column table, comfortably under
+#: the 2Gi container limit with room for the query's own working set.
+#:
+#: Tunable per deployment, but note that raising it is a MITIGATION: it buys
+#: headroom and moves the cliff. The removal is aggregating at the source.
+_MAX_SOURCE_CELLS = int(os.getenv("DA_MAX_SOURCE_CELLS", "40000000"))
 from fastapi import FastAPI, Request
 from restate import Context, Service
 from smolagents import CodeAgent, tool
@@ -459,15 +471,71 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
                     f"NOT retry; report that access is denied."
                 ) from e
             raise
-        dataset = lazy_df.collect()
+        # ── SIZE GATE, BEFORE ANY MATERIALISATION ────────────────────────────
+        #
+        # `get_dataframe` returns a LAZY frame (pl.scan_parquet), and the line
+        # that used to be here — `dataset = lazy_df.collect()` — threw that
+        # laziness away ONE LINE after acquiring it, materialising the ENTIRE
+        # source table before the GROUP BY that would shrink it ever ran. On a
+        # wide publog table that exceeds the 2Gi container limit and the kernel
+        # kills the pod: exit 137, CrashLoopBackOff.
+        #
+        # THE FAILURE WAS SILENT FROM THE UI, which is why it outranks its size:
+        # routing succeeded with high confidence, the card rendered its title,
+        # and the body was empty with "No citations yet" — death that reads like
+        # patience. An honest refusal is strictly better than a confident blank.
+        #
+        # THE GATE COUNTS CELLS, NOT ROWS. Memory is a property of the SOURCE
+        # TABLE (width x length), not of the question, so a row-only cap leaves
+        # the next wider table finding the same cliff — the same reason raising
+        # the memory limit only MOVES the cliff. Both numbers are cheap here:
+        # row count comes from parquet metadata via a pushed-down `pl.len()`,
+        # and the schema is metadata too.
+        try:
+            n_rows = int(lazy_df.select(pl.len()).collect().item())
+            n_cols = len(lazy_df.collect_schema().names())
+        except Exception as exc:  # noqa: BLE001
+            # A precheck that cannot run must not become a silent bypass, but it
+            # must also not fail a query that would have worked. Proceed, and say
+            # the guard is not covering this call.
+            # This module reports with print(); matching the local idiom rather
+            # than introducing a second channel for one warning. Loud on purpose:
+            # a precheck that cannot run must not become a SILENT bypass.
+            print(
+                f"DA_SIZE_PRECHECK_FAILED urn={urn} "
+                f"error={type(exc).__name__}: {exc} — proceeding UNGATED; an "
+                f"oversized table can still OOM this container.",
+                flush=True,
+            )
+            n_rows = n_cols = None
 
+        if n_rows is not None:
+            cells = n_rows * max(n_cols or 1, 1)
+            if cells > _MAX_SOURCE_CELLS:
+                _annotate_query_success(urn, row_count=0)
+                raise ValueError(
+                    f"SOURCE_TOO_LARGE reading {urn}: the table is "
+                    f"{n_rows:,} rows x {n_cols:,} columns ({cells:,} cells), "
+                    f"over this engine's limit of {_MAX_SOURCE_CELLS:,}. It "
+                    f"cannot be loaded into memory here. Do NOT retry the same "
+                    f"query — narrow it first: select fewer columns, filter "
+                    f"rows, or aggregate at the source."
+                )
+
+        # The LAZY frame is registered, not a collected one. DuckDB can consume a
+        # polars LazyFrame directly (verified duckdb 1.5.5 / polars 1.43), which
+        # lets it push work down where it can. NOTE this is opportunistic, NOT the
+        # protection: whether DuckDB streams or collects internally is its
+        # business, so the SIZE GATE above is what actually bounds memory. Do not
+        # remove the gate on the theory that laziness is sufficient.
+        #
         # DuckDB sees `dataset` because it picks up registered Python
         # variables from the calling frame at query() time. The previous
         # code relied on this but the scope wasn't right — the agent ran
         # SQL in a different frame than this tool. Register explicitly
         # on a dedicated connection so the query sees the table.
         con = duckdb.connect()
-        con.register("dataset", dataset)
+        con.register("dataset", lazy_df)
         try:
             result_df = con.execute(sql_query).pl()
         finally:
