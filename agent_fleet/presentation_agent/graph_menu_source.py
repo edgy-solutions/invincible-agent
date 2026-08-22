@@ -25,7 +25,25 @@ TWO HARD-WON TOLERANCES, both found by checking the cluster before writing this:
    substrate is a reader with a poisoned population. Orphans are counted and
    logged so they announce themselves instead of accumulating quietly.
 
-2. `recomputes` MAY NOT EXIST AS A PROPERTY AT ALL. Weaviate's auto-schema
+2. KNOWN GAP — THIS READ IS NOT CONJUNCTIVE. The registrar writes BOTH stores
+   and the system's stated invariant is that `/classify_predicate` "only sees
+   verbs present in BOTH stores", which is what makes a half-written
+   registration harmless everywhere else: benignly orphaned, therefore unrouted.
+   This reader consults WEAVIATE ONLY, so a row whose Neo4j edge is missing --
+   the exact debris a failed-and-compensated registration leaves -- is served as
+   a valid menu entry.
+
+   Observed 2026-08-21, not hypothesised: a saga bug compensated ten good writes,
+   the Weaviate compensation addressed the wrong uuid and left the rows standing,
+   and those ten orphans WOULD have been served to cortex-ui-desktop as its menu.
+   The reader would have treated the debris of a failure as a registration.
+
+   Not closed here, and deliberately so: honouring the invariant means a second
+   round trip per read, and the right shape (a completeness marker written last,
+   or a Neo4j-side confirm) is a design decision rather than a patch. It is
+   STATED because an unstated gap becomes an assumed guarantee.
+
+3. `recomputes` MAY NOT EXIST AS A PROPERTY AT ALL. Weaviate's auto-schema
    creates a property when something first WRITES it, and `recomputes` is
    tri-state: omitted when a component never declared it (ADR-0042 Ruling 9's
    honest default, per `_is_live_view` in ab0bcfd). So until the first live view
