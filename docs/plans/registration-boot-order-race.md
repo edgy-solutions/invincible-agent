@@ -2,11 +2,13 @@
 id:         registration-boot-order-race
 status:     open
 owner:      agent
-blocked-on: repair 3 (the registrar discrimination) LANDED in fbf7307. Repair 1 is still owed and unanswered — WHICH of the three ways the re-register hook failed to fire at work. Until that read is done, a deploy still depends on a hook nobody has verified runs.
+blocked-on:
 closed-by:
+closed-by-note: NO COMMIT CLOSED THIS — TWO CLUSTER WITNESSES did, days apart, and the seal is right to ask. The hook's behaviour was established by running it: a helm-driven prime that REFUSED on a partial graph (2026-08-22, "Ingest: 10 ok, 0 failed, 5 unfinished" -> reregister never ran), and a reregister that OPENED on a full one ("[ready] all 2 sentinels present", six engines, SUCCEEDED). The repairs themselves landed earlier under fbf7307 / 6f7f217 / 9e31ae8; what was missing was evidence they work, and evidence is not a commit.
+diverges-from: ADR-0017-presentation-as-predicate
 code-site:  agent_fleet/mesh_registrar/main.py:238
 repo:       invincible-agent
-summary:    An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries — the ruling says 422 is permanent, and it is right for a real contract violation and wrong for "the graph is not populated yet". Witnessed at work 2026-08-14; recovery was a hand restart. The registrar is the only party that can tell the two apart.
+summary:    CLOSED 2026-08-22 on SANDBOX, both arms witnessed. The hook REFUSES on a partial class graph (so no engine restarts against classes that do not exist) and OPENS on a full one (sentinels present, six engines restarted, job succeeded) — the first unbroken prime -> ontologySeed -> reregister in the arc. The 422-at-boot defect this packet named is therefore prevented on sandbox by construction rather than by hand restarts. ⚠️ THE WORK-CLUSTER QUESTION IS NOT ANSWERED AND IS NOT BURIED: repair 1 (which of three ways the hook failed to fire at work on 2026-08-14) is re-homed to `reregister-hook-failure-mode-at-work-unknown`, blocked behind fence clause 3. Originally: An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries.
 ---
 
 # A 422 at boot is two different facts wearing one status code
@@ -240,3 +242,19 @@ distinguishable, photographed mid-act. The marker was working; the reader was ha
 **The pattern that costs nothing and fixes it: read → settle → re-read → confirm.** Any
 post-rollout assertion about registration state needs it. "44/44 marked, verified stable across
 three reads" is a property; the same sentence after one read is a guess wearing a number.
+
+---
+
+## CLOSED 2026-08-22 — and where the owed question went
+
+Both arms witnessed on sandbox (see the witness section above). What this closure does **not**
+cover is repair 1: *which of three ways the re-register hook failed to fire at WORK* on
+2026-08-14. That is a different cluster, a different chart version, and a different Dagster
+configuration, and it sits behind AGENTS.md fence clause 3.
+
+**It is re-homed, not dropped:**
+[`reregister-hook-failure-mode-at-work-unknown`](reregister-hook-failure-mode-at-work-unknown.md)
+— its own board line, its own fence, `blocked-on-human`.
+
+Closing this packet with that question inside it would have made the closure read as broader
+than the evidence supports. A witness carries the environment it was measured in.

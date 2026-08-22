@@ -4,9 +4,13 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **62 of 64 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **63 of 65 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
+
+- **reregister-hook-failure-mode-at-work-unknown** — RE-HOMED 2026-08-22 from `registration-boot-order-race`, which closed on its sandbox witnesses. The owed question survives here with its own board line: at WORK on 2026-08-14, engines booted before the ontology ingest landed, took a Contract-D 422, never retried, and recovery was a hand restart — and nobody established WHICH of three ways the re-register hook failed to fire there. The hook is now characterised on SANDBOX in both directions (refuses on a partial graph, opens on a full one), which makes the work-cluster question narrower but does not answer it: the two clusters differ in timing, image lag and Dagster concurrency. Requires a read against work, which is the human's under clause 3.
+  status: blocked-on-human · owner: human · blocked-on: work-cluster read access — AGENTS.md fence clause 3 ("Work-cluster anything is the human's until agents get read credentials there")
+  → [docs/plans/reregister-hook-failure-mode-at-work-unknown.md](plans/reregister-hook-failure-mode-at-work-unknown.md)
 
 - **urn-reconciliation-guard** — Nothing checks that a URN a broker registers corresponds to a real DataHub entity. Every identity defect this week — platform, endpoint, bucket — produced the same silent 404, and this one check would have caught all three at startup instead of at a demo.
   status: blocked-on-human · owner: human · repo: dag-tools · blocked-on: a POSTURE ruling — fail broker startup on a URN that does not resolve in DataHub, or warn and serve. Fail-closed is the honest reading and also means a DataHub outage stops every broker. That trade is the human's to make.
@@ -126,8 +130,8 @@ _Coverage: **62 of 64 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/registrar-models-presentation-triples.md](plans/registrar-models-presentation-triples.md)
 
-- **registration-boot-order-race** — An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries — the ruling says 422 is permanent, and it is right for a real contract violation and wrong for "the graph is not populated yet". Witnessed at work 2026-08-14; recovery was a hand restart. The registrar is the only party that can tell the two apart.
-  status: open · owner: agent · blocked-on: repair 3 (the registrar discrimination) LANDED in fbf7307. Repair 1 is still owed and unanswered — WHICH of the three ways the re-register hook failed to fire at work. Until that read is done, a deploy still depends on a hook nobody has verified runs.
+- **registration-boot-order-race** — CLOSED 2026-08-22 on SANDBOX, both arms witnessed. The hook REFUSES on a partial class graph (so no engine restarts against classes that do not exist) and OPENS on a full one (sentinels present, six engines restarted, job succeeded) — the first unbroken prime -> ontologySeed -> reregister in the arc. The 422-at-boot defect this packet named is therefore prevented on sandbox by construction rather than by hand restarts. ⚠️ THE WORK-CLUSTER QUESTION IS NOT ANSWERED AND IS NOT BURIED: repair 1 (which of three ways the hook failed to fire at work on 2026-08-14) is re-homed to `reregister-hook-failure-mode-at-work-unknown`, blocked behind fence clause 3. Originally: An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries.
+  status: open · owner: agent
   → [docs/plans/registration-boot-order-race.md](plans/registration-boot-order-race.md)
 
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
