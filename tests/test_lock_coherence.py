@@ -39,13 +39,18 @@ from pathlib import Path
 
 import pytest
 
+from tests._treewalk import find_files
+
 _ROOT = Path(__file__).resolve().parents[1]
 
 
 def _locked_projects() -> list[Path]:
     """Every directory holding a uv.lock — derived, never hand-listed."""
-    found = sorted({p.parent for p in _ROOT.rglob("uv.lock")
-                    if not any(x in p.parts for x in (".venv", ".venv.wsl", "node_modules"))})
+    # PRUNING walk, not rglob-then-filter. rglob must TRAVERSE a directory to yield anything
+    # from it, so the exclusion ran after the descent it was meant to prevent — and the descent
+    # hit `.venv.wsl/lib64`, raising WinError 1920 at IMPORT time and removing this whole file
+    # from the run while the suite still printed green. See tests/_treewalk.py.
+    found = sorted({p.parent for p in find_files(_ROOT, "uv.lock")})
     assert found, "positive control: no uv.lock found anywhere — the glob is broken"
     return found
 
@@ -120,9 +125,11 @@ def test_domain_broker_sdk_version_matches_the_fleet_pin():
     chart_version = m.group("v")
 
     pins = set()
-    for pp in _ROOT.rglob("pyproject.toml"):
-        if any(x in pp.parts for x in (".venv", ".venv.wsl", "node_modules")):
-            continue
+    # The SECOND walk site in this file, and the reason the first fix looked complete when it
+    # was not: collection stopped failing, 41 tests started running, and this one still raised
+    # from inside a test body. A rglob-then-filter that is correct about its RESULT is still
+    # wrong about its TRAVERSAL, everywhere it appears.
+    for pp in find_files(_ROOT, "pyproject.toml"):
         for pm in re.finditer(r'"iagent-mesh @ git\+[^"@]+\.git@(?P<v>v\d+\.\d+\.\d+)"',
                               pp.read_text(encoding="utf-8")):
             pins.add(pm.group("v"))

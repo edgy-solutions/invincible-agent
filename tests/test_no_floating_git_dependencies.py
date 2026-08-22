@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._treewalk import find_files
+
 _ROOT = Path(__file__).resolve().parents[1]
 
 # Every git dependency in the repo, discovered — never enumerated by hand.
@@ -57,9 +59,8 @@ _HAS_SPECIFIER = re.compile(r"[=<>~!]")
 
 
 def _pyprojects() -> list[Path]:
-    found = sorted(p for p in _ROOT.rglob("pyproject.toml")
-                   if not any(part in {".venv", ".venv.wsl", "node_modules", ".git"}
-                              for part in p.parts))
+    # PRUNING walk — see tests/_treewalk.py and the note in test_lock_coherence.py.
+    found = sorted(find_files(_ROOT, "pyproject.toml"))
     assert found, "positive control: no pyproject.toml found at all — the glob is broken"
     return found
 
