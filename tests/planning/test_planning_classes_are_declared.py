@@ -43,8 +43,33 @@ from agent_fleet.planning_agent import measures  # noqa: E402
 _TTL = _ROOT / "setup" / "ontologies" / "mesh_system.ttl"
 _MESH = rdflib.Namespace("http://invincible-agent/mesh#")
 
-# Mirrors cortex-ui's DERIVED_BINDINGS. See the module docstring on why this is a mirror.
-PLANNING_ARCHETYPE_IRIS = ["mesh:PeriodSeries", "mesh:ThresholdGrid", "mesh:MatrixGrid", "mesh:DeltaSet"]
+# DERIVED from cortex-ui's DERIVED_BINDINGS when that repo is a sibling on disk, and falling
+# back to a mirrored list when it is not (CI, a clone without the sibling).
+#
+# WHY DERIVE. Hand-listing found three archetypes and missed four — GroupedReview, ApprovalTask,
+# WorkflowObservation and InstancesByProperty had been registered since before the presentation
+# arc and declared nowhere, and a hand-kept list finds whichever ones someone remembers. The
+# fallback is honest about being a mirror; the derived path is what actually catches drift.
+_SIBLING = _ROOT.parent / "cortex-ui" / "src" / "registry" / "assembleCapabilities.ts"
+
+_MIRRORED = [
+    "mesh:PeriodSeries", "mesh:ThresholdGrid", "mesh:MatrixGrid", "mesh:DeltaSet",
+    "mesh:GroupedReview", "mesh:ApprovalTask", "mesh:WorkflowObservation",
+    "mesh:InstancesByProperty", "mesh:ChartWidget", "mesh:KnowledgeDocument",
+    "mesh:ProcessTopology", "mesh:AssetStateMetric", "mesh:HazardDeclaration",
+]
+
+
+def _archetype_iris() -> list[str]:
+    if _SIBLING.is_file():
+        import re
+        found = re.findall(r'object_uri:\s*"(mesh:\w+)"', _SIBLING.read_text(encoding="utf-8"))
+        if found:
+            return sorted(set(found))
+    return sorted(set(_MIRRORED))
+
+
+PLANNING_ARCHETYPE_IRIS = _archetype_iris()
 
 
 def _graph():

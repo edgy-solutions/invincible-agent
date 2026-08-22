@@ -308,6 +308,37 @@ mesh:PeriodSeries a owl:Class ;
   rdfs:label "Period Series" ;
   rdfs:comment "A time-phased series drawn against an optional threshold line. Refuses a payload with no periods, an unlabelled row, or no numeric amount anywhere. A LIVE VIEW: content is replaced wholesale on re-evaluation and its freshness stamp is per evaluation, never inherited from mint time." .
 
+# --- THE FOUR REVIEW ARCHETYPES -----------------------------------------------
+# Registered by cortex-ui since before the presentation arc, declared NOWHERE until now — the
+# same gap the chart and document archetypes had, surviving in the four that were converted
+# last. Contract D refuses a rendersAs triple whose object end does not pre-exist, so every one
+# of these registrations was being rejected on its object end, correctly, and the rejection
+# reads as "incomplete" rather than "undeclared".
+#
+# Found by DERIVING the population rather than listing it: every `object_uri` in cortex-ui's
+# DERIVED_BINDINGS, minus every `owl:Class` in this file. A hand-kept list would have found
+# whichever ones someone remembered.
+
+mesh:GroupedReview a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Grouped Review" ;
+  rdfs:comment "A batch of affected items resolved in ONE approval action, with per-item overrides that each capture a reason. The grouping is the point: N items sharing a cause are one decision, and forcing N decisions is how a reviewer stops reading them. Items needing review are shown, never hidden." .
+
+mesh:ApprovalTask a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Approval Task" ;
+  rdfs:comment "A single accept-or-reject decision carried to whoever may act on it. The honest DEFAULT archetype for a task kind nothing else claims — an undeclared kind lands here rather than being silently guessed at." .
+
+mesh:WorkflowObservation a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Workflow Observation" ;
+  rdfs:comment "A read-only, entitlement-gated view of a running workflow: its stages, current position, steps and participants. Observer-facing by construction — redactions happen server-side before the projection is built, so the renderer never holds what the observer may not see." .
+
+mesh:InstancesByProperty a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Instances By Property" ;
+  rdfs:comment "Instances of a class filtered by one property, as a table. DOMAIN-AGNOSTIC BY CONSTRUCTION: the payload carries the columns, rows, row identity and state vocabulary, and the renderer knows none of them. The precedent every later generic archetype copies." .
+
 mesh:DeltaSet a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Delta Set" ;
