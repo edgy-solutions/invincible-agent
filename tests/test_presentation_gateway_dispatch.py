@@ -294,3 +294,67 @@ def test_a_genuine_stale_image_message_still_classifies_as_STALE():
     ):
         cls, _ = m._classify_gateway_refusal(422, reason)
         assert cls == "gateway-rejected-STALE-IMAGE", f"missed stale signature: {reason!r}"
+
+
+# ── THE BFF CONVERSION: identity is the CALLER'S, never the carrier's ──────
+
+def test_a_declared_frontend_id_overrides_the_system_sentinel(monkeypatch):
+    """THE PROVIDER-IS-NOT-A-FRONTEND DEFECT, prevented one hop up.
+
+    cortex-bff carries a UI's registration; the stamp that lands must be the
+    UI's declared identity, not the bff's. Defaulting it to anything the carrier
+    knows about itself would put "cortex-bff" in the field the way "engine-f"
+    was, and every UI behind that bff would share one menu.
+    """
+    m = _mod()
+    cap = _stub_transport(monkeypatch, m, registered=True)
+    m._emit_presentation_to_registrar(
+        registrar_url="http://r:8080", name="p", description="d",
+        subject_uri=f"{_MESH}OwnershipFact", object_uri=f"{_MESH}KnowledgeDocument",
+        archetype="KNOWLEDGE_DOCUMENT", expected_fields=[], persona_fit=[],
+        domain_fit=[], version="0.1.0", frontend_id="cortex-ui-desktop",
+    )
+    assert cap["manifest"]["frontend_id"] == "cortex-ui-desktop"
+
+
+def test_no_declared_identity_falls_back_to_the_SYSTEM_SENTINEL(monkeypatch):
+    """Engine F advertises the universal fallback and has no frontend identity —
+    it must stamp the sentinel, not invent a surface name."""
+    m = _mod()
+    cap = _stub_transport(monkeypatch, m, registered=True)
+    monkeypatch.delenv("MESH_FRONTEND_ID", raising=False)
+    m._emit_presentation_to_registrar(
+        registrar_url="http://r:8080", name="p", description="d",
+        subject_uri=f"{_MESH}OwnershipFact", object_uri=f"{_MESH}KnowledgeDocument",
+        archetype="KNOWLEDGE_DOCUMENT", expected_fields=[], persona_fit=[],
+        domain_fit=[], version="0.1.0",
+    )
+    assert cap["manifest"]["frontend_id"] == m.SYSTEM_DEFAULT_FRONTEND_ID
+
+
+def test_undeclared_recomputes_never_reaches_the_wire(monkeypatch):
+    """TRI-STATE END TO END. None must not become False on the manifest, or it
+    asserts 'not a live view' about a component that never said."""
+    m = _mod()
+    cap = _stub_transport(monkeypatch, m, registered=True)
+    m._emit_presentation_to_registrar(
+        registrar_url="http://r:8080", name="p", description="d",
+        subject_uri=f"{_MESH}OwnershipFact", object_uri=f"{_MESH}KnowledgeDocument",
+        archetype="KNOWLEDGE_DOCUMENT", expected_fields=[], persona_fit=[],
+        domain_fit=[], version="0.1.0",
+    )
+    assert "recomputes" not in cap["manifest"]
+
+
+def test_a_declared_live_view_DOES_reach_the_wire(monkeypatch):
+    """The positive control: Ruling 9 needs the declaration to survive transport."""
+    m = _mod()
+    cap = _stub_transport(monkeypatch, m, registered=True)
+    m._emit_presentation_to_registrar(
+        registrar_url="http://r:8080", name="p", description="d",
+        subject_uri=f"{_MESH}AssetProfile", object_uri=f"{_MESH}AssetStateMetric",
+        archetype="ASSET_STATE_METRIC", expected_fields=[], persona_fit=[],
+        domain_fit=[], version="0.1.0", frontend_id="cortex-ui-desktop",
+        recomputes=True,
+    )
+    assert cap["manifest"]["recomputes"] is True

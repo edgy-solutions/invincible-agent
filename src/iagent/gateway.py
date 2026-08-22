@@ -3468,6 +3468,19 @@ async def register_frontend_capabilities(
     # This is the analog of the registrar's Contract-D check on engine registrations.
     # It validates WELL-FORMEDNESS AND VOCABULARY ONLY, never authority: a UI's render
     # menu is a client describing itself, so there is deliberately no entitlement gate.
+    # A BLANK STAMP IS NOT AN IDENTITY. `frontend_id: str` makes the field
+    # required, but "" satisfies that and would mint a presentation row belonging
+    # to nobody's menu -- precisely the payload-less orphan shape the graph reader
+    # skips structurally. Refused here so it is never written, rather than
+    # tolerated downstream forever.
+    if not (payload.frontend_id or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="frontend_id must be a non-empty identity (e.g. 'cortex-ui-desktop'). "
+                   "A registration with no scope belongs to no menu and cannot be served "
+                   "to any caller.",
+        )
+
     from agent_fleet.presentation_agent.capability_admission import validate_registration
 
     _admitted, _rejected = validate_registration(
@@ -3495,6 +3508,69 @@ async def register_frontend_capabilities(
         payload.frontend_id, payload.frontend_version, _admitted
     )
 
+    # ── THE CONVERSION: the menu becomes ROWS, via the sole writer ───────────
+    #
+    # Storing in `_cap_registry` alone was the packet's core defect: that registry
+    # is a MODULE-LOCAL DICT and this handler runs in cortex-bff while /render_ui
+    # runs in presentation-agent, so the menu could never reach the selector. The
+    # in-process store stays as the single-process fallback; the GRAPH is what the
+    # selector actually reads.
+    #
+    # THE STAMP IS THE CALLER'S DECLARED IDENTITY, never this process's. Defaulting
+    # it to anything cortex-bff knows about itself would re-mint the
+    # provider-is-not-a-frontend defect one hop up, with "cortex-bff" wearing the
+    # field the way "engine-f" did -- and every UI behind this bff would then share
+    # one menu. There is deliberately no default: absent is refused above.
+    _graph_registered, _graph_failed = 0, []
+    _registrar_url = os.getenv("MESH_REGISTRAR_URL")
+    if _registrar_url:
+        from agent_fleet.utils.mesh_registration import _emit_presentation_to_registrar
+
+        for _c in _admitted:
+            _contract = _c.get("contract") if isinstance(_c, dict) else None
+            _recomputes = None
+            if isinstance(_contract, dict) and "recomputes" in _contract:
+                # Tri-state preserved end to end: only a DECLARED value travels.
+                _recomputes = bool(_contract.get("recomputes"))
+            _outcome = _emit_presentation_to_registrar(
+                registrar_url=_registrar_url,
+                name=(
+                    f"presentation_{str(_c.get('archetype') or '').lower()}"
+                    f"_for_{str(_c.get('subject_uri') or '').rsplit('#', 1)[-1].lower()}"
+                    f"__{payload.frontend_id}"
+                ),
+                description=(
+                    f"{payload.frontend_id} renders {_c.get('subject_uri')} "
+                    f"as {_c.get('archetype')}"
+                ),
+                subject_uri=str(_c.get("subject_uri") or ""),
+                object_uri=str(_c.get("object_uri") or ""),
+                archetype=str(_c.get("archetype") or ""),
+                expected_fields=list(_c.get("expected_fields") or []),
+                persona_fit=list(_c.get("persona_fit") or []),
+                domain_fit=list(_c.get("domain_fit") or []),
+                version=payload.frontend_version,
+                frontend_id=payload.frontend_id,
+                recomputes=_recomputes,
+            )
+            if _outcome is True:
+                _graph_registered += 1
+            else:
+                _graph_failed.append({"subject_uri": _c.get("subject_uri"),
+                                      "reason_class": _outcome[0], "detail": _outcome[1][:200]})
+        if _graph_failed:
+            # LOUD, and per-capability: a menu that is half in the graph renders
+            # inconsistently depending on which shape an answer takes, which is far
+            # harder to read than a named failure at registration time.
+            _frontend_registry_logger.warning(
+                json.dumps({
+                    "event": "frontend_capabilities_graph_registration_failed",
+                    "frontend_id": payload.frontend_id,
+                    "failed_count": len(_graph_failed),
+                    "failures": _graph_failed,
+                })
+            )
+
     _frontend_registry_logger.info(
         json.dumps({
             "event": "frontend_capabilities_registered",
@@ -3506,6 +3582,8 @@ async def register_frontend_capabilities(
             "admitted_count": len(_admitted),
             "rejected_count": len(_rejected),
             "stored_count": _stored,
+            "graph_registered_count": _graph_registered,
+            "graph_failed_count": len(_graph_failed),
             "capabilities": [
                 {
                     "subject_uri": c.subject_uri,

@@ -488,6 +488,8 @@ def _emit_presentation_to_registrar(
     domain_fit: list,
     version: str,
     mint=None,
+    frontend_id: Optional[str] = None,
+    recomputes: Optional[bool] = None,
 ):
     """POST a Presentation manifest to the mesh-registrar gateway.
 
@@ -526,12 +528,23 @@ def _emit_presentation_to_registrar(
         # The sentinel is deliberately un-typeable as a real frontend id and is
         # REFUSED by menu_for(), so these rows reach callers only through the
         # union, labelled `default-menu`, which is what they are.
-        "frontend_id": os.getenv("MESH_FRONTEND_ID", SYSTEM_DEFAULT_FRONTEND_ID),
+        # IDENTITY IS AN ARGUMENT. A caller that HAS a declared identity passes it;
+        # only the system-default provider falls through to the sentinel. Reading
+        # this from ambient env for every caller is how a provider's name ended up
+        # in a frontend's field, and how cortex-bff would have stamped its own
+        # process identity onto every UI behind it.
+        "frontend_id": (frontend_id or "").strip()
+                       or os.getenv("MESH_FRONTEND_ID", SYSTEM_DEFAULT_FRONTEND_ID),
         "owner_persona": (persona_fit[0] if persona_fit else "ANY"),
         "domains": list(domain_fit),
         "description": description,
         "version": version,
     }
+    # TRI-STATE, END TO END. Only a DECLARED value travels; None never becomes
+    # False on the wire, or the manifest would assert "not a live view" about a
+    # component that never said (ADR-0042 Ruling 9's honest default).
+    if recomputes is not None:
+        manifest["recomputes"] = bool(recomputes)
     try:
         result = register_with_mesh(
             registrar_url, manifest, component=name, mint=mint, timeout=30.0,
