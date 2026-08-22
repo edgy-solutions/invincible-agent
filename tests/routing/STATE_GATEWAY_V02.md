@@ -1613,8 +1613,17 @@ under the right gate.
 
 ### Auto-memory updated
 
-- [B3 DMC capability shipped on Engine E](C:/Users/cnogr/.claude/projects/c--Users-cnogr-git-iagent-mesh-sdk/memory/project_b3_done.md) — instance-resolution generality gate's third proof.
-- [Phase-5-prophecy third occurrence](C:/Users/cnogr/.claude/projects/c--Users-cnogr-git-iagent-mesh-sdk/memory/project_phase5_third_occurrence.md) — A3-miss in Engine O's discovery Cypher, masked by cache, surfaced by B3 restart.
+<!-- NAMED, NOT LINKED. These live in the iagent-mesh-sdk agent's auto-memory, OUTSIDE this
+     repo and outside any repo — an absolute path on one operator's machine. As markdown links
+     they were unresolvable for everyone, and INVISIBLY so: on Windows `C:/…` parses as an
+     absolute path and the link checker skipped it, while on Linux it is RELATIVE, gets joined
+     to `tests/routing/`, and fails. The citation was broken the whole time; only the OS
+     decided whether anyone found out. -->
+- **B3 DMC capability shipped on Engine E** (`iagent-mesh-sdk` auto-memory: `project_b3_done`)
+  — instance-resolution generality gate's third proof.
+- **Phase-5-prophecy third occurrence** (`iagent-mesh-sdk` auto-memory:
+  `project_phase5_third_occurrence`) — A3-miss in Engine O's discovery Cypher, masked by cache,
+  surfaced by B3 restart.
 
 ## 2026-06-13 architect reframe of B2's close — three observations worth banking
 

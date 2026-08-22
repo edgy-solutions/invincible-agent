@@ -167,6 +167,60 @@ def _iter_relative_links():
                 yield rel, lineno, target, repo_rel
 
 
+# A markdown target naming a MACHINE path: a drive letter (`C:/…`, `C:\\…`) or a POSIX
+# absolute (`/home/…`). Neither is ever a valid relative link in a repo — they resolve only on
+# the machine that wrote them, if there.
+_MACHINE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|/(?!/))")
+
+
+def _iter_machine_path_links():
+    """-> (citing_file, lineno, target) for markdown links naming an absolute machine path."""
+    for path in _iter_text_files():
+        if path.suffix.lower() != ".md":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, PermissionError, OSError):
+            continue
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for m in MD_LINK.finditer(line):
+                target = m.group(1)
+                if target.startswith(("http://", "https://", "mailto:")) or PLACEHOLDER.search(target):
+                    continue
+                if _MACHINE_PATH.match(target):
+                    yield rel, lineno, target
+
+
+def test_no_markdown_link_targets_an_absolute_machine_path():
+    """A link that resolves on ONE OPERATOR'S LAPTOP, and the OS decided whether anyone noticed.
+
+    MEASURED 2026-08-22. `tests/routing/STATE_GATEWAY_V02.md` linked twice into
+    `C:/Users/<user>/.claude/projects/…/memory/*.md` — another repo's agent auto-memory,
+    outside this repo and outside any repo. The link was broken for every reader from the day
+    it was written. Whether a TEST said so depended entirely on the operating system:
+
+      Windows   `path.parent / "C:/Users/…"` -> pathlib sees an ABSOLUTE path, discards the
+                left side, `relative_to(ROOT)` raises ValueError, and the iterator's
+                `continue  # escapes the repo entirely` skips it. GREEN.
+      Linux     `C:/Users/…` has no leading slash, so it is RELATIVE: it joins to
+                `tests/routing/C:/Users/…`, stays under ROOT, gets checked, and FAILS.
+
+    So the suite was green on Windows and red on Linux for the same commit, and the red one is
+    the one that matches CI. `test_relative_markdown_links_resolve` cannot cover this by
+    itself — its own escape hatch is what hides it on half the machines.
+
+    This test is OS-INVARIANT by construction: it matches the SHAPE of the target string and
+    never asks the filesystem anything. A check whose verdict depends on which machine ran it
+    is not a check.
+    """
+    offenders = [f"  {rel}:{lineno}  ->  {target}" for rel, lineno, target in _iter_machine_path_links()]
+    assert not offenders, (
+        "markdown link(s) target an absolute machine path — they resolve only on the machine "
+        "that wrote them. Name the thing instead of linking it:\n" + "\n".join(sorted(offenders))
+    )
+
+
 def _collect_relative_link_targets() -> set[str]:
     return {repo_rel for _, _, _, repo_rel in _iter_relative_links()}
 
