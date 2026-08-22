@@ -70,9 +70,36 @@ Two aggravating facts found alongside:
 - **Restarts were invisible.** The previous pod restarted 15 times in 173 minutes while the
   surface looked healthy, and nothing surfaced it until someone read a pod list by hand.
 
+## The mechanism, read from the code (`main.py:417` `query_datahub_asset`)
+
+```python
+lazy_df = client.get_dataframe(urn)     # LAZY — the client hands back a LazyFrame
+dataset = lazy_df.collect()             # (1) MATERIALISES THE WHOLE SOURCE TABLE
+con.register("dataset", dataset)
+result_df = con.execute(sql_query).pl()
+return result_df.write_json()           # (2) serialises the WHOLE result into the LLM context
+```
+
+**Two materialisation points, and the first is the bigger one.** `get_dataframe` returns a
+LAZY frame — exactly the shape that would let a `GROUP BY` be pushed down and never hold the
+source table whole — and the next line collapses it with `.collect()`. The laziness is
+acquired and immediately discarded, so peak memory is the SOURCE TABLE, not the result. A
+question whose *answer* is a few hundred rows still pays for every row of `p_cage`.
+
+The second point matters for a different reason: `write_json()` puts the entire result set into
+the agent's context, so a large-but-fitting result becomes a token problem after it stops being
+a memory problem.
+
+**This is why "raise the limit" only moves the cliff:** the memory needed is a property of the
+source table, not of the question, so the next wider table finds the new limit too.
+
 ## Disposal
 
-1. **Bound the result set in the engine.** The real fix. An analytical engine should refuse or
+0. **Stop discarding the laziness** (`main.py:463`). Cheapest real improvement: count rows
+   first (`lazy_df.select(pl.len()).collect()` is cheap), refuse above a threshold with a named
+   reason, and let DuckDB read the lazy frame so an aggregation is pushed down rather than
+   materialised. This is where the 2Gi actually goes.
+1. **Bound the result set in the engine.** The other half. An analytical engine should refuse or
    page a query whose result will not fit, and say so — the honest-degradation path this
    codebase already has for undrawable payloads, applied to unfittable ones. A `LIMIT`-injection
    or row-count precheck turns an OOM into an answer.
