@@ -6,7 +6,7 @@ blocked-on:
 closed-by:
 code-site:  helm/invincible-agent/values.yaml, src/iagent/gateway.py
 repo:       invincible-agent
-summary:    ⚠️ DEMO RISK, classified 2026-08-22. cortex-bff was SIGKILLed (exit 137) under ordinary traffic — not OOM, a LIVENESS PROBE KILL. The probe allows `/health` `timeoutSeconds: 1` with `failureThreshold: 3`; kubelet recorded "Liveness probe failed x4 over 105m" and "Readiness probe failed x6" with `context deadline exceeded`. A single-threaded FastAPI event loop busy with an Electric shape proxy or a graph query cannot always answer within one second, so the BFF is killed for being busy. In a demo this is every answer failing at once with nothing in the log to point at — the container dies without writing a reason.
+summary:    ⚠️ DEMO RISK, classified 2026-08-22, SCOPE CORRECTED the same day: this is CHART-WIDE, not one service. 16 of 27 deployments carry `timeoutSeconds: 1` on LIVENESS — every engine, the BFF, the registrar, the projector. Most engines pair it with `readiness: 10`, so someone already judged 1s too tight for readiness and did not carry that to the check that KILLS — the inversion is the finding. Two observed failing so far (BFF SIGKILLed exit 137; Engine DA flapping); the other fourteen have not been under load yet. cortex-bff was SIGKILLed (exit 137) under ordinary traffic — not OOM, a LIVENESS PROBE KILL. The probe allows `/health` `timeoutSeconds: 1` with `failureThreshold: 3`; kubelet recorded "Liveness probe failed x4 over 105m" and "Readiness probe failed x6" with `context deadline exceeded`. A single-threaded FastAPI event loop busy with an Electric shape proxy or a graph query cannot always answer within one second, so the BFF is killed for being busy. In a demo this is every answer failing at once with nothing in the log to point at — the container dies without writing a reason.
 ---
 
 # The BFF is killed for being busy, and it dies without saying so
@@ -52,6 +52,32 @@ Someone debugging live sees answers stop and a healthy-looking log. The reason e
 This is also why a registration's rejection log went missing for twenty minutes of
 investigation today: the evidence was in the previous container, and nothing in the current
 one hinted that a previous container existed.
+
+## SCOPE CORRECTION 2026-08-22 — it is not the BFF, it is the chart
+
+Surveyed after a second service showed the identical symptom. **16 of 27 deployments carry a
+`timeoutSeconds: 1` liveness probe**, including EVERY engine:
+
+```
+cortex-bff, central-gateway, data-analyst, mesh-registrar, projector, electric,
+engine-a, engine-d, engine-e, engine-f, engine-o, engine-w,
+dagster-webserver, redis, topaz, datahub-frontend
+```
+
+So this packet was mis-titled. It is not "the BFF has a bad probe" — it is **any workload in
+this chart is killed for being busy for one second**. Two have been observed doing it (the BFF
+was SIGKILLed; Engine DA flaps with `context deadline exceeded`); the other fourteen have
+simply not been under load yet. A defect that has surfaced twice in a population of sixteen is
+not two incidents.
+
+**The pattern inside the numbers is the tell.** Most engines carry `readiness: 10` and
+`liveness: 1` — someone already concluded that one second was too tight for readiness and did
+not carry the conclusion to liveness. **The stricter budget is on the check that KILLS**, which
+is exactly backwards: an unready service is removed from a load balancer and recovers by
+itself; a failed liveness probe destroys the process and whatever it was doing.
+
+That inversion is the finding. It makes the fix a single chart-wide default rather than a
+per-service patch, and it is cheaper than either service's individual repair.
 
 ## Disposal
 
