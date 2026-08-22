@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **63 of 65 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **64 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -49,6 +49,10 @@ _Coverage: **63 of 65 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **capability-registry-not-graph-backed** — ⚠️ LIVE DEFECT, found by the 2026-08-21 redeploy. The frontend capability registry is a MODULE-LOCAL DICT, and registration and selection run in DIFFERENT PODS — `/register_frontend_capabilities` is served by cortex-bff, `/render_ui` by presentation-agent. Registration can therefore NEVER reach the selector: every caller is anonymous from engine-f's view, the union is always empty, and every answer falls to the labelled floor. CHART_WIDGET is currently unselectable in production for anyone. ADR-0017's own mechanism (rendersAs triples in the shared Predicate collection, read via /search_predicates) was always the design; the in-memory dict was scaffolding that was never written down as a divergence.
   status: open · owner: agent
   → [docs/plans/capability-registry-not-graph-backed.md](plans/capability-registry-not-graph-backed.md)
+
+- **container-layout-defects-found-only-by-deploying** — FOUND 2026-08-22 by deploying Engine P three times. The agent image is built with `COPY ${AGENT_DIR}/ /app/` under `WORKDIR /app`, so agent modules run FLAT — a layout the repo's 1679-test suite cannot exercise, because in the repo they are a package. Two defects of this class shipped and were found only as CrashLoopBackOff: `types.py` shadowing the stdlib (interpreter died before main.py) and bare relative imports (`attempted relative import with no known parent package`). Both are now sealed statically by tests/test_agent_modules_survive_flat_layout.py, but the seals enumerate KNOWN failure modes; a third is not covered by construction. PROPOSAL: run `python -c "import <main_module>"` inside the built image before pushing it. Needs care — an agent whose import path touches the network or requires env vars would start failing its build, and whether that is a defect or a deliberate design is per-agent.
+  status: open · owner: unassigned
+  → [docs/plans/container-layout-defects-found-only-by-deploying.md](plans/container-layout-defects-found-only-by-deploying.md)
 
 - **cortex-ui-no-test-runner** — cortex-ui has NO test runner at all — no vitest, no jest, no `test` script, zero test files. Found 2026-08-20 while building the presentation contract slice. This is why ten hand-copied capability contracts could drift with nothing pinning them: the drift was not missed, it was UNOBSERVABLE. Sibling of no-ci-gate-on-the-suite, one repo over.
   status: open · owner: unassigned · repo: cortex-ui
