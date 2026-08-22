@@ -303,6 +303,11 @@ mesh:PeriodSeries a owl:Class ;
   rdfs:label "Period Series" ;
   rdfs:comment "A time-phased series drawn against an optional threshold line. Refuses a payload with no periods, an unlabelled row, or no numeric amount anywhere. A LIVE VIEW: content is replaced wholesale on re-evaluation and its freshness stamp is per evaluation, never inherited from mint time." .
 
+mesh:MatrixGrid a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Matrix Grid" ;
+  rdfs:comment "Rows by columns of a level against a PER-CELL target. Distinct from mesh:ThresholdGrid on purpose: a threshold grid asks whether a value is over a line (a breach, read as danger); this asks how far a value is from a goal (a distance, read as progress), and one colour ramp cannot serve both readings. A cell never assessed is ABSENT, never level 0 — never-measured and measured-at-zero have different next actions. A LIVE VIEW." .
+
 mesh:ThresholdGrid a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Threshold Grid" ;

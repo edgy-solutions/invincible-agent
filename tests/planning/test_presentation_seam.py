@@ -172,9 +172,19 @@ THRESHOLD_GRID = {
 }
 
 
+MATRIX_GRID = {
+    "subject_uri": "mesh:MaturityMatrix", "archetype": "MATRIX_GRID",
+    "component": "MatrixGrid", "persona_fit": ["PORTFOLIO_LEAD"],
+    "domain_fit": ["PORTFOLIO_PLANNING"],
+    "contract": {"archetype": "MATRIX_GRID", "component": "MatrixGrid",
+                 "recomputes": True, "fields": {"rows": {}, "level_label": {}}},
+}
+
+
 @pytest.mark.parametrize("verb,binding,archetype", [
     ("plan_cost_curve", PERIOD_SERIES, "PERIOD_SERIES"),
     ("plan_site_load", THRESHOLD_GRID, "THRESHOLD_GRID"),
+    ("plan_maturity_grid", MATRIX_GRID, "MATRIX_GRID"),
 ])
 def test_each_registered_planning_verb_reaches_its_own_archetype(verb, binding, archetype):
     """Parametrised deliberately. The first renderer proving the seam could be a property of

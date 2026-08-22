@@ -44,7 +44,7 @@ _TTL = _ROOT / "setup" / "ontologies" / "mesh_system.ttl"
 _MESH = rdflib.Namespace("http://invincible-agent/mesh#")
 
 # Mirrors cortex-ui's DERIVED_BINDINGS. See the module docstring on why this is a mirror.
-PLANNING_ARCHETYPE_IRIS = ["mesh:PeriodSeries", "mesh:ThresholdGrid"]
+PLANNING_ARCHETYPE_IRIS = ["mesh:PeriodSeries", "mesh:ThresholdGrid", "mesh:MatrixGrid"]
 
 
 def _graph():
