@@ -238,12 +238,50 @@ pyproject.toml              # Orchestrator project config
 
 ## Workflow Rules
 
-### Running the tests — the extra is not optional
-`uv run --frozen --extra agent-fleet python -m pytest tests/ -q`
+### Running the tests — WHICH ENVIRONMENT, then the extra
+
+**Use `./scripts/run-tests.sh`.** It picks the right virtualenv for whichever side you are on
+and prints what your result is scoped to. If you run pytest by hand instead, read this section
+first — the failure mode here is silent and it damages the OTHER side's environment.
+
+**THIS TREE CARRIES TWO VIRTUALENVS.**
+
+| | interpreter | matches CI? |
+|---|---|---|
+| `.venv` | **Windows** CPython 3.11 | no |
+| `.venv.wsl` | **Linux** CPython 3.12 | **yes** — CI is `ubuntu-latest` / `3.12` |
+
+`.venv.wsl` is a Linux venv living in the shared tree (its `pyvenv.cfg` points into a Linux
+uv-managed CPython). From Windows its `lib64` is an untraversable reparse point; from Linux it
+is the environment closest to what actually deploys.
+
+**⚠️ `UV_PROJECT_ENVIRONMENT` IS UNSET ON BOTH SIDES.** So **from WSL, a bare `uv run` targets
+`.venv` — the WINDOWS venv — and rebuilds it with Linux wheels.** The Windows side then breaks
+in a way that looks unrelated to whoever ran the tests. From WSL you must always:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv.wsl uv run --frozen --extra agent-fleet python -m pytest tests/ -q
+```
+
+From Windows the default is already correct:
+
+```bash
+uv run --frozen --extra agent-fleet python -m pytest tests/ -q
+```
+
+**WHICH TO PREFER.** WSL, when you have the choice — it is closer to the deployment and to CI.
+Windows is fine for local iteration. **A Windows green is a real signal and is not a CI
+signal**, and any suite result quoted anywhere should say which side produced it. When the two
+disagree, WSL is the one that matches what ships.
+
+**The extra is not optional, on either side.**
 
 `rdflib`, `restate-sdk` and `smolagents` live in the **`agent-fleet` optional extra**, so a
 plain `uv run --frozen` (or a bare system `python`/`py`) collects `test_review_starter`,
-`test_restate_analyst` and friends as import errors. Those are **environment selection**,
+`test_restate_analyst` and friends as import errors. A bare `py -m pytest` on Windows
+additionally cannot traverse `.venv.wsl` and reported seven collection errors before
+`tests/_treewalk.py` fixed the walks — the same class found on 2026-08-05 and not converted
+into a guard until 2026-08-22. Those are **environment selection**,
 not repo breakage — and reporting them as "pre-existing failures" is how a genuinely red
 test hides in the noise. If a suite is red, first re-run it with the extra before
 attributing the failure to anything.
