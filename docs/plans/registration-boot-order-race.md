@@ -181,3 +181,62 @@ last one, so no further permanent-422 is queued for the next fresh cluster from 
 folding `_IDP + "Dataset"` with a hardcoded `mesh#` prefix — the seeder is correct and matches
 `data_analyst/main.py:109`. Reading the prefix constants instead of assuming them is what
 turned a false positive into the clean result above.)
+
+---
+
+## Sandbox witness, 2026-08-22 — the hook runs, BOTH arms, and it is NOT repair 1
+
+Added by the planning-lane agent. **Scoped to SANDBOX (`edge`), not work.** Repair 1 asks which
+of three ways the re-register hook failed to fire *at work*; the work cluster is out of reach
+under the fence's clause 3, so nothing below answers that. What it does supply is the first
+live characterisation of the hook's behaviour anywhere.
+
+**Arm 1 — it REFUSES on a partial graph.** A helm-driven prime launched 15 ontology ingests;
+dagster's `max_concurrent_runs` is 2, so five had not been reached when
+`primeSubstrate.ingestTimeout` (1800s) expired. The prime printed
+`Ingest: 10 ok, 0 failed, 5 unfinished` and then:
+
+> `[ERROR] ontology ingest did not complete cleanly; refusing to report success. Downstream
+> reregistration would run against a partial class graph.`
+
+`reregister` never ran. No engine restarted against classes that did not exist. Under the
+pre-`9e31ae8` behaviour this exact run reports "Prime complete" at the `[LAUNCHED]` lines
+(~47s) and reproduces the 2026-08-21 zero-`rendersAs` defect verbatim.
+(See [`prime-ingest-timeout-shorter-than-its-own-queue`](prime-ingest-timeout-shorter-than-its-own-queue.md)
+— the timeout is ~two thirds of the queue it waits on; zero ingests ever actually failed.)
+
+**Arm 2 — it OPENS on a full graph.** Once the queue drained on its own (all five late ingests
+succeeded untouched), the reregister job was run standalone:
+
+```
+[ready] all 2 sentinels present
+[restart] iagent-engine-a: OK      [restart] iagent-engine-w: OK
+[restart] iagent-engine-d: OK      [restart] iagent-engine-f: OK
+[restart] iagent-engine-e: OK      [restart] iagent-data-analyst: OK
+```
+
+No wait, six restarts, job SUCCEEDED. The two-sentinel population from `6f7f217`
+(`idp#Dataset` + `mesh#ChartWidget`) is what makes this meaningful: the second sentinel comes
+from the LAST-launched ingest, so passing it means the graph really was full.
+
+**Why both arms matter.** A guard witnessed only refusing is half-characterised — it could be
+one that never opens. Days apart, against the live cluster, this one has now done both. The
+manual-path habit existed because the chain used to green in 47 seconds over nothing; on
+sandbox that justification is now retired *on evidence*. Work remains repair 1's question.
+
+## Two facts for the redeploy checklist
+
+**1. `engine-f` reports Ready BEFORE its `lifespan` registration finishes.** Its presentation
+capabilities register inside `lifespan`, and the pod passes its readiness probe first. So
+`kubectl rollout status` completing does NOT mean registration completed.
+
+**2. A single read of a system with in-flight writes samples a MOMENT, not a property.**
+Measured the hard way: a Weaviate read taken immediately after that rollout showed **9 rows
+without `registration_complete`** and was reported as possible debris. A re-read minutes later
+showed **44/44 marked**, stable across a third confirming read. Those nine rows were
+written-but-not-yet-marked — *precisely* the transient B's completeness marker exists to make
+distinguishable, photographed mid-act. The marker was working; the reader was hasty.
+
+**The pattern that costs nothing and fixes it: read → settle → re-read → confirm.** Any
+post-rollout assertion about registration state needs it. "44/44 marked, verified stable across
+three reads" is a property; the same sentence after one read is a guess wearing a number.
