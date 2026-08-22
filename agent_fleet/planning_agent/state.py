@@ -26,7 +26,10 @@ import copy
 from dataclasses import dataclass, field, replace
 from typing import Literal, Optional, Union
 
-from .entities import FiscalPeriod, FundingCommitment, FundingKind, Interval, PlanState
+try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
+    from entities import FiscalPeriod, FundingCommitment, FundingKind, FundingRequirement, Interval, PlanState
+except ImportError:
+    from agent_fleet.planning_agent.entities import FiscalPeriod, FundingCommitment, FundingKind, FundingRequirement, Interval, PlanState
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,7 +121,6 @@ def apply_ops(base: PlanState, ops: list[PlanOp]) -> PlanState:
                 # A NEW requirement row, not an edit of a neighbouring period. Costs are
                 # entered per period; folding a new period into an existing row would
                 # silently move money through time.
-                from .entities import FundingRequirement
                 s.requirements.append(FundingRequirement(
                     req_id=f"R-op-{len(s.requirements) + 1}",
                     project_id=op.project_id, period=op.period,

@@ -24,12 +24,20 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .entities import (
-    BusinessProcess, Capability, CapabilityContribution, Dependency, FundingCommitment,
-    FundingRequirement, Initiative, Interval, MaturityAssessment, Organization, Phase,
-    PlanState, Plateau, Portfolio, Project, Site, SiteImpact, TechEnablesCapability,
-    TechInProject, Technology,
-)
+try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
+    from entities import (
+            BusinessProcess, Capability, CapabilityContribution, Dependency, FundingCommitment,
+            FundingRequirement, Initiative, Interval, MaturityAssessment, Organization, Phase,
+            PlanState, Plateau, Portfolio, Project, Site, SiteImpact, TechEnablesCapability,
+            TechInProject, Technology,
+    )
+except ImportError:
+    from agent_fleet.planning_agent.entities import (
+            BusinessProcess, Capability, CapabilityContribution, Dependency, FundingCommitment,
+            FundingRequirement, Initiative, Interval, MaturityAssessment, Organization, Phase,
+            PlanState, Plateau, Portfolio, Project, Site, SiteImpact, TechEnablesCapability,
+            TechInProject, Technology,
+    )
 
 M = 1_000_000.0
 

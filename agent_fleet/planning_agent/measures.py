@@ -23,7 +23,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal, Optional
 
-from .entities import FISCAL_PERIODS, PERIOD_ORDER, FiscalPeriod, Interval, PlanState
+try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
+    from entities import FISCAL_PERIODS, PERIOD_ORDER, FiscalPeriod, Interval, PlanState
+except ImportError:
+    from agent_fleet.planning_agent.entities import FISCAL_PERIODS, PERIOD_ORDER, FiscalPeriod, Interval, PlanState
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The output-type contract. Declared, fixed, and the ONLY thing an intent names.

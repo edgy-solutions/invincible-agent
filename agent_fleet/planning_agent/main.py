@@ -22,12 +22,20 @@ from typing import Any, Optional
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from . import measures
-from .seed import build_seed, check_consistency
-from .state import (
-    MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
-)
-from .entities import Interval
+try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
+    import measures
+    from seed import build_seed, check_consistency
+    from state import (
+        MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
+    )
+    from entities import Interval
+except ImportError:
+    from agent_fleet.planning_agent import measures
+    from agent_fleet.planning_agent.seed import build_seed, check_consistency
+    from agent_fleet.planning_agent.state import (
+        MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
+    )
+    from agent_fleet.planning_agent.entities import Interval
 
 IDP = "http://invincible-agent/idp#"
 
