@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **64 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **65 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -113,6 +113,10 @@ _Coverage: **64 of 66 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **no-granted-and-fetchable-asset** — NO ASSET ON SANDBOX IS BOTH GRANTED AND FETCHABLE — p_cage was materialized 2026-08-15 and has no read grant; the one granted asset returns HTTP 404 on read. So the data path cannot serve ANY query, which makes item 1's success arm unwitnessable and Tier-3 row 8 impossible. Discovered by the live witness, named on no board line, and it sits AHEAD of da-collects-before-filtering.
   status: open · owner: human · blocked-on: A CHOICE BETWEEN TWO CHEAP PATHS, either of which closes it — (a) grant alice a read on `publog/p_cage` (a `policy/asset_grants.yaml` write plus sync; the live Topaz write is a human act), or (b) fix the HTTP 404 on the already-granted `mesh_demo_customers` (the queued `minio-svc` values change). (a) is minutes; (b) also retires a demo-day risk.
   → [docs/plans/no-granted-and-fetchable-asset.md](plans/no-granted-and-fetchable-asset.md)
+
+- **packaged-imports-unresolvable-in-agent-images** — FOUND 2026-08-22 by a seal written after Engine P hit the same defect. `v2_restate.py:162` does `from agent_fleet.mesh_registrar.main import _get_neo4j_driver, _get_weaviate_client` inside the RegistrationSaga handler. `agent_fleet` DOES NOT EXIST in the agent image — verified live against the running mesh-registrar pod: `ModuleNotFoundError: No module named 'agent_fleet'`. The VirtualObject IS mounted ("Mounted Restate VirtualObject 'RegistrationSaga' at /restate"), so the handler raises on invocation rather than at boot, which is why the pod is healthy and has been for as long as anyone has looked. NOT FIXED HERE — mesh_registrar is registry work and belongs to another lane; recorded, waived explicitly in tests/test_agent_modules_survive_flat_layout.py with an expiry guard that fails once the defect is gone.
+  status: open · owner: unassigned
+  → [docs/plans/packaged-imports-unresolvable-in-agent-images.md](plans/packaged-imports-unresolvable-in-agent-images.md)
 
 - **pcn-extraction-sort** — The decided three-pile sort (rename-and-promote / keep-domain-specific / delete) so the M2 extraction milestone is a mechanical execution rather than a fresh analysis. Pairs with the generic-at-birth rule. DECIDED, NOT EXECUTED - verified 2026-08-19: no three-pile implementation exists, and the cited 0cc406e is the review-state tripwire, a different artifact.
   status: open · owner: unassigned

@@ -343,6 +343,11 @@ enginePlanning:
     name: planning-agent
     tag: ""
   port: 8095
+  env:
+    # Matches engineW/engineE: the engine advertises the URL it can be reached on, and the
+    # code default must agree with it. The SERVICE is named by component (engine-p), not by
+    # image (planning-agent) — those differ for this engine and only for this engine.
+    ENGINE_P_PUBLIC_URL: "http://iagent-engine-p:8095"
   resources:
     requests:
       cpu: 100m

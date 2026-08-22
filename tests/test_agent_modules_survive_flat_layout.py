@@ -152,3 +152,120 @@ def test_relative_imports_are_recoverable() -> None:
         + "\n\nWrap in a try/except ImportError with the other layout as the fallback; "
         "either ordering is fine, and both are already used in the fleet."
     )
+
+
+# ── Waived, with the reason and an expiry mechanism ──────────────────────────────────
+# A real defect this seal found, in code that is NOT this lane's to change. Registry work
+# belongs to another agent, so it is RECORDED rather than silently fixed or silently
+# allowed. Verified live against the running mesh-registrar image on 2026-08-22:
+#     >>> from agent_fleet.mesh_registrar.main import _get_neo4j_driver
+#     ModuleNotFoundError: No module named 'agent_fleet'
+# The RegistrationSaga VirtualObject IS mounted, so the handler raises when invoked.
+# See docs/plans/packaged-imports-unresolvable-in-agent-images.md.
+WAIVED = {
+    "agent_fleet/mesh_registrar/v2_restate.py:162":
+        "another lane's file; live-verified real, filed as its own packet",
+}
+
+
+def _imported_modules(node: ast.AST) -> list[str]:
+    """Every module name imported anywhere in this subtree (absolute names only)."""
+    names = []
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.ImportFrom) and not (inner.level or 0):
+            names.append(inner.module or "")
+        elif isinstance(inner, ast.Import):
+            names.extend(alias.name for alias in inner.names)
+    return names
+
+
+def _packaged_imports_without_a_flat_alternative(source: str) -> list[int]:
+    """`from agent_fleet.x import y` with no non-agent_fleet import to fall back to.
+
+    `agent_fleet` is not a package inside the image — /app IS the agent directory, and its
+    siblings (utils, llm_utils) sit beside it as top-level modules. So a lone
+    `from agent_fleet.utils... import f` raises ModuleNotFoundError there and resolves fine
+    in the repo, which is the whole trap.
+
+    Guarding it is NOT enough, and that is the sharp edge: Engine P's registration was
+    wrapped in `try/except ImportError` and set the helper to None on failure, so twelve
+    registrations were skipped in SILENCE and the engine reported healthy. A try/except
+    makes the crash go away without making the import work.
+
+    The rule therefore asks for a real ALTERNATIVE — some import in the same try/except
+    that is not agent_fleet-prefixed. Both fleet orderings satisfy it.
+    """
+    tree = ast.parse(source)
+
+    covered: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        modules = _imported_modules(node)
+        has_packaged = any(m.startswith("agent_fleet") for m in modules)
+        has_alternative = any(not m.startswith("agent_fleet") for m in modules) or any(
+            isinstance(i, ast.ImportFrom) and (i.level or 0) > 0 for i in ast.walk(node)
+        )
+        if has_packaged and has_alternative:
+            for inner in ast.walk(node):
+                covered.add(id(inner))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("agent_fleet"):
+            if id(node) not in covered:
+                offenders.append(node.lineno)
+        elif isinstance(node, ast.Import):
+            if any(a.name.startswith("agent_fleet") for a in node.names) and id(node) not in covered:
+                offenders.append(node.lineno)
+    return sorted(offenders)
+
+
+def test_packaged_imports_have_a_flat_alternative() -> None:
+    """A repo-only import path silently disables whatever it guards.
+
+    Engine P deployed healthy, served /health, and registered NOTHING — because
+    `from agent_fleet.utils.mesh_registration import register_engine_to_mesh` cannot
+    resolve in the image, and the except-arm set the helper to None. The Predicate count
+    stayed at 52 across two settled reads with no error anywhere in the log.
+    """
+    offenders = []
+    for agent_dir in _flattened_agent_dirs():
+        if not agent_dir.is_dir():
+            continue
+        for path in sorted(agent_dir.glob("*.py")):
+            for line_no in _packaged_imports_without_a_flat_alternative(
+                path.read_text(encoding="utf-8")
+            ):
+                offenders.append(f"{path.relative_to(REPO).as_posix()}:{line_no}")
+
+    unwaived = [o for o in offenders if o not in WAIVED]
+    assert not unwaived, (
+        "agent_fleet-prefixed imports with no flat alternative — these resolve in the repo "
+        "and fail in the image, disabling whatever they guard:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nPair each with a flat import in the same try/except:\n"
+        "    try:\n"
+        "        from utils.mesh_registration import register_engine_to_mesh\n"
+        "    except ImportError:\n"
+        "        from agent_fleet.utils.mesh_registration import register_engine_to_mesh"
+    )
+
+
+def test_no_waiver_outlives_its_defect() -> None:
+    """A waiver that survives its own fix is a lie the next reader has to disprove."""
+    live = set()
+    for agent_dir in _flattened_agent_dirs():
+        if not agent_dir.is_dir():
+            continue
+        for path in sorted(agent_dir.glob("*.py")):
+            for line_no in _packaged_imports_without_a_flat_alternative(
+                path.read_text(encoding="utf-8")
+            ):
+                live.add(f"{path.relative_to(REPO).as_posix()}:{line_no}")
+
+    stale = sorted(set(WAIVED) - live)
+    assert not stale, (
+        "these waivers no longer describe a real offender — delete them:\n  "
+        + "\n  ".join(f"{s} ({WAIVED[s]})" for s in stale)
+    )

@@ -103,13 +103,27 @@ async def lifespan(app: FastAPI):
         # quietly wrong rather than absent, which is the failure mode with no symptom.
         raise RuntimeError("planning seed is inconsistent: " + "; ".join(problems[:5]))
 
+    # FLAT FIRST. In the image /app IS this directory, so `utils` is a sibling top-level
+    # module and `agent_fleet` does not exist at all. The packaged path is the repo form.
+    # Getting this backwards cost a full roll: the import failed, the helper became None,
+    # and twelve registrations were skipped while the engine reported perfectly healthy.
     try:
-        from agent_fleet.utils.mesh_registration import register_engine_to_mesh
-    except ImportError:  # pragma: no cover — local runs without the fleet extra
-        register_engine_to_mesh = None
+        from utils.mesh_registration import register_engine_to_mesh
+    except ImportError:
+        try:
+            from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+        except ImportError:  # pragma: no cover — local runs without the fleet extra
+            register_engine_to_mesh = None
+
+    if register_engine_to_mesh is None:
+        # SAY SO. A registration that silently does not happen leaves an engine that passes
+        # every probe and answers nothing, which is the failure mode with no symptom.
+        print("[engine-p] mesh registration helper unavailable — NO verbs registered")
 
     if register_engine_to_mesh is not None:
-        base = os.getenv("ENGINE_P_PUBLIC_URL", "http://iagent-planning-agent:8095")
+        # The SERVICE is iagent-engine-p (templates/engines.yaml names it by component,
+        # not by image). The image is called planning-agent; the service is not.
+        base = os.getenv("ENGINE_P_PUBLIC_URL", "http://iagent-engine-p:8095")
         for v in VERBS:
             try:
                 register_engine_to_mesh(
