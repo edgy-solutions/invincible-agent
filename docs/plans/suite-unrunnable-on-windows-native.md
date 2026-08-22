@@ -47,6 +47,46 @@ blocking anything.
 
 ---
 
+## Correction 2026-08-22 — two things the closure got wrong
+
+**1. THE CLASS WAS FOUND 16 DAYS EARLIER AND I RE-DISCOVERED IT AS NEW.**
+[`suite-signal-session.md`](suite-signal-session.md) §"instrument defects", 2026-08-05:
+
+> the main tree had `agent_fleet/restate_analyst/.venv.wsl`, whose `lib64` symlink Windows
+> cannot stat, crashing three tree-walking tests with `OSError: [WinError 1920]` before they
+> asserted anything.
+
+Same symlink class, same error number, same three-ish tests. That session banked it as an
+**instrument-defect lesson** ("a baseline in a different filesystem state is not a baseline")
+and did not convert it into a guard — so the walks stayed unfixed and the defect fired again on
+2026-08-21 against a different reader. `agent_fleet/restate_analyst/.venv.wsl` is STILL in the
+tree today.
+
+That is the finding worth more than the fix: **a banked lesson that is not converted into a
+guard recurs on schedule.** `tests/_treewalk.py` is the conversion this class was owed in
+August, and the prior instance is what earns it rather than my own re-discovery.
+
+**2. "THE SUITE RUNS FINE" IS TRUE OF AN ENVIRONMENT THAT IS NOT CI'S.**
+The closure quoted 1538 passed and implied the environment question was settled. It was not —
+there are THREE environments here, not two, and I measured the one that matches CI least:
+
+| environment | interpreter | matches CI? |
+|---|---|---|
+| bare `py` | Windows, CPython 3.11 | no |
+| `uv run` → `.venv` | **Windows**, CPython 3.11 | no — this is what I measured |
+| `.venv.wsl` | **Linux, CPython 3.12** | **yes** — ubuntu-latest / 3.12 per the workflows |
+
+`.venv.wsl` is a Linux venv living in the shared tree (its `pyvenv.cfg` points at
+`/home/…/cpython-3.12-linux-x86_64-gnu`). It is the CI-matching environment, and I could not
+run the suite in it: **it has 251 packages and no pytest** — a runtime venv without dev
+dependencies. Populating it is a write to a developer's environment and was not mine to make
+unasked.
+
+So the honest scope of every green quoted in this arc: **Windows, CPython 3.11, via `uv run`.**
+That is a real signal and it is not a CI signal. A Linux/3.12 run remains unmeasured by me.
+
+---
+
 ## The original finding, kept for the record
 
 # The suite cannot run on the Windows-native interpreter, and its results look like ordinary failures

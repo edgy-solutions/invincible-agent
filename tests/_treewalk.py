@@ -24,6 +24,16 @@ TWO PROPERTIES, and the second is the one a rewrite would drop:
           points at the test rather than at the tree.
 
 Neither property is available from `rglob`, which offers no pruning hook and no error callback.
+
+THIS CLASS WAS FOUND ON 2026-08-05, NOT BY ME. `docs/plans/suite-signal-session.md` records
+`agent_fleet/restate_analyst/.venv.wsl`'s `lib64` symlink "crashing three tree-walking tests
+with OSError: [WinError 1920] before they asserted anything" — same symlink, same error, same
+walks. That session banked it as an instrument-defect LESSON and did not convert it into a
+GUARD, so the walks stayed unfixed and it fired again sixteen days later against a different
+reader. Both `.venv.wsl` directories are still in the tree.
+
+That is the reason this file exists rather than a fourth write-up: a banked lesson that is not
+converted into a guard recurs on schedule.
 """
 from __future__ import annotations
 
