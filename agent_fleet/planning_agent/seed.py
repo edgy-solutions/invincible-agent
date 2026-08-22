@@ -19,6 +19,11 @@ ADR-0042 §3. What must not move is where the measures run.
 """
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+from typing import Optional
+
 from .types import (
     BusinessProcess, Capability, CapabilityContribution, Dependency, FundingCommitment,
     FundingRequirement, Initiative, Interval, MaturityAssessment, Organization, Phase,
@@ -29,7 +34,66 @@ from .types import (
 M = 1_000_000.0
 
 
-def build_seed() -> PlanState:  # noqa: C901 — a dataset, not a branchy function
+# The label collections an overlay may address. NOTHING ELSE IS ADDRESSABLE, and that is the
+# C-series promise made mechanical rather than disciplinary: an overlay swaps NAMES, and there
+# is no code path by which customer STRUCTURE enters this repo because the overlay has no
+# vocabulary for it.
+_OVERLAY_COLLECTIONS = {
+    "portfolios": ("portfolios", "portfolio_id"),
+    "initiatives": ("initiatives", "initiative_id"),
+    "phases": ("phases", "phase_id"),
+    "projects": ("projects", "project_id"),
+    "processes": ("processes", "process_id"),
+    "capabilities": ("capabilities", "capability_id"),
+    "sites": ("sites", "site_id"),
+    "organizations": ("organizations", "org_id"),
+    "technologies": ("technologies", "tech_id"),
+}
+
+
+def _apply_overlay(s: PlanState, overlay: dict) -> PlanState:
+    """Swap display names. Structure, intervals, amounts and thresholds are untouched.
+
+    WHY LABELS AND NOT A DATASET REPLACEMENT. The gates depend on the shipped dataset's
+    STRUCTURE -- six seeded tensions, each asserted by a test, each a beat in the demo script.
+    A full-replacement overlay would run the demo on a dataset no gate has ever seen, and the
+    first time anyone noticed a flattened tension would be in the room.
+
+    Unknown keys and unknown ids are REFUSED, never ignored. An overlay that appears to apply
+    and does not is how a demo runs half-themed and nobody notices until a screenshot.
+    """
+    unknown_keys = sorted(set(overlay) - set(_OVERLAY_COLLECTIONS))
+    if unknown_keys:
+        raise ValueError(
+            "seed overlay may only rename known collections; refused: "
+            + ", ".join(unknown_keys)
+            + ". An overlay swaps NAMES -- it cannot express structure."
+        )
+    for key, mapping in overlay.items():
+        attr, id_field = _OVERLAY_COLLECTIONS[key]
+        entities = getattr(s, attr)
+        by_id = {getattr(e, id_field): e for e in entities}
+        missing = sorted(set(mapping) - set(by_id))
+        if missing:
+            raise ValueError(
+                f"seed overlay names unknown {key}: {', '.join(missing)}. "
+                "A typo that silently does nothing leaves a demo half-themed."
+            )
+        for ident, label in mapping.items():
+            by_id[ident].name = label
+    return s
+
+
+def build_seed(overlay_path: Optional[str] = None) -> PlanState:  # noqa: C901
+    """The shipped generic dataset, optionally re-labelled by a private overlay.
+
+    ABSENT BY DEFAULT: with no overlay configured this returns the invented dataset every gate
+    and every test runs against. `overlay_path` falls back to the PLANNING_SEED_OVERLAY
+    environment variable so a deployment can point at a file OUTSIDE this repo.
+
+    Configured-but-missing is a LOUD error, never a silent fallback -- falling back would run a
+    customer demo on the generic dataset and look entirely normal doing it.
+    """
     s = PlanState()
 
     s.portfolios = [Portfolio("PF1", "Enterprise Transformation", "tenant-demo")]
@@ -288,6 +352,16 @@ def build_seed() -> PlanState:  # noqa: C901 — a dataset, not a branchy functi
         # FY27-Q2 deliberately has NO cap — honestly uncapped, not capped at zero.
     }
 
+    path = overlay_path or os.getenv("PLANNING_SEED_OVERLAY")
+    if path:
+        f = Path(path)
+        if not f.is_file():
+            raise FileNotFoundError(
+                f"seed overlay configured but not found: {path}. Configured-but-absent is a "
+                "different state from not-configured, and silently using the generic dataset "
+                "would look entirely normal."
+            )
+        s = _apply_overlay(s, json.loads(f.read_text(encoding="utf-8")))
     return s
 
 
