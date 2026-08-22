@@ -372,6 +372,12 @@ fuseki:
 # idempotent), so leaving it ON is self-healing on every install/upgrade rather than a
 # one-shot "flip on then flip back" manual toggle. For a scorched-earth routing re-prime set
 # wipe:true temporarily (preserves answer-durability data); see values.yaml for the guards.
+# Engine P ON for sandbox: the portfolio-review workshop tool's twelve verbs. The BFF's
+# /plan/measure route returns an honest 502 planning_engine_unreachable without it — correct,
+# and not an answer.
+enginePlanning:
+  enabled: true
+
 primeSubstrate:
   enabled: true
   wipe: false

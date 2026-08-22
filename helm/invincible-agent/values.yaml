@@ -327,6 +327,31 @@ engineC:
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
   env: { SWARMS_MODEL: "gpt-oss-128k:120b" }
 
+# Engine P — the planning engine (ADR-0042). Twelve verbs over an in-memory plan model.
+#
+# DEFAULT-OFF, deliberately. It serves the portfolio-review workshop tool and nothing else
+# yet; a cluster that does not want that surface should not carry it. values-sandbox.yaml
+# turns it on.
+#
+# DELIBERATELY THIN: no LLM client, no DataHub, no restate. Intent routing and narration
+# live in the BFF (pinned internal, no cloud fallback); this engine computes and never
+# speaks. That is why its resources are the smallest in the fleet.
+enginePlanning:
+  enabled: false
+  replicas: 1
+  image:
+    name: planning-agent
+    tag: ""
+  port: 8095
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env: {}
+
 engineD:
   enabled: true
   replicas: 1
@@ -1492,6 +1517,20 @@ keycloak:
     - clientId: "iagent-doc-tools"
       authzId: "svc:doc-tools"
       secretRef: "docToolsClientSecret"
+    # Engine P's transport identity (2026-08-22). NINTH identity, scaffolded through the same
+    # reconcile path as the eight above rather than minted by hand.
+    #
+    # TRANSPORT, NOT ENTITLEMENT — the standing distinction. It says WHICH SERVICE called,
+    # never whose plan data may be read. Engine P serves an in-memory model with no per-user
+    # scoping today; when Phase 4 gives plan state a real store, the ENTITLEMENT question
+    # arrives separately and this credential does not answer it.
+    #
+    # Given an identity even though the engine is DEFAULT-OFF, because a service that appears
+    # later without one is a service that flips REQUIRE_TRANSPORT_AUTH from working to broken
+    # — the empty-caller failure, predicted from the caller graph rather than waited for.
+    - clientId: "iagent-planning-agent"
+      authzId: "svc:planning-agent"
+      secretRef: "planningAgentClientSecret"
 
   # Registration identity for engine-d (see serviceClients above).
   engineDClientSecret: "sandbox-engine-d-secret"
@@ -1502,6 +1541,9 @@ keycloak:
   # Registration identity for engine-w (see serviceClients above).
   engineWClientSecret: "sandbox-engine-w-secret"
   reviewStarterClientSecret: "sandbox-review-starter-secret"
+  # Engine P's service-account client secret (iagent-planning-agent). Same contract as the
+  # engines above: a PLACEHOLDER in the tracked file, overridden by values-sandbox.secret.yaml.
+  planningAgentClientSecret: "sandbox-planning-agent-secret"
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
   # review starter's above — this value AND the realm import's `secret` come from here, so
   # they cannot drift. Override per deployment (a real secret at work); the sandbox default

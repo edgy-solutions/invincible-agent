@@ -66,6 +66,9 @@ jobs:
           - service: data-analyst
             path: agent_fleet/data_analyst
             port: "8089"
+          - service: planning-agent
+            path: agent_fleet/planning_agent
+            port: "8095"
           - service: cortex-bff
             path: .
             # Port aligned with the helm chart's cortexBff.port (8090).
