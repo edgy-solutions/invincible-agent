@@ -108,7 +108,9 @@ source table, not of the question, so the next wider table finds the new limit t
 3. **Fix the probe defaults** (shared with the BFF packet) so a busy engine is not also an
    unready one.
 
-**Do 1.** Do 2 as well if the demo is close, and say out loud that it is a mitigation.
+**Do 0, then 1.** 0 is where the 2Gi actually goes and is the smaller change; 1 stops a
+large-but-fitting result becoming a token problem instead. Do 2 as well if the demo is close —
+and say out loud that it is a mitigation, because it moves the cliff rather than removing it.
 
 ## Acceptance
 
