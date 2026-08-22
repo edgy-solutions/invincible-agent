@@ -292,6 +292,11 @@ mesh:ChangeLog a owl:Class ;
   rdfs:label "Change Log" ;
   rdfs:comment "The ordered operations accumulated in a scenario. The record a decision is reconstructed from long after the session that produced it." .
 
+mesh:CoverageGapSet a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Coverage Gap Set" ;
+  rdfs:comment "What nothing is working on -- an ABSENCE query. Reports capabilities no work contributes to (a portfolio problem) SEPARATELY from processes with no capability modelled at all (a model problem), because the two send a reader to different meetings. Absence is what a graph shape answers and a table cannot: a row that is not there cannot be filtered for." .
+
 mesh:EffectSet a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Effect Set" ;

@@ -9,6 +9,7 @@ deliberately, each one is asserted by a test, and each one is a beat in the scri
   (c) Site B over threshold in FY26-Q4                   -> "which sites are hammered in Q4?"
   (d) an org whose commitments leave a visible gap       -> the funding-gap card
   (e) a capability path that misses its process plateau  -> the capability question
+  (f) a capability NO project contributes to             -> the coverage-gap question
 
 If a test asserting one of these ever fails, the DATA changed, not the measure — check here
 before touching a verb.
@@ -96,6 +97,12 @@ def build_seed() -> PlanState:  # noqa: C901 — a dataset, not a branchy functi
         Capability("C6", "Master Data Governance",       ["BP1", "BP2"]),
         Capability("C7", "Integration Platform",         ["BP1", "BP2"]),
         Capability("C8", "Analytics & Reporting",        ["BP1"]),
+        # TENSION (f): NOTHING contributes to C9. Added because plan_coverage_gap found
+        # the seed had FULL capability coverage on its first run -- a verb that answers
+        # "what is nobody working on" needs something nobody is working on, or the demo
+        # beat is a green checkmark. It enables BP1, so the absence is not merely tidy:
+        # a modelled process depends on a capability with no project behind it.
+        Capability("C9", "Regulatory Reporting",         ["BP1"]),
     ]
 
     s.contributions = [

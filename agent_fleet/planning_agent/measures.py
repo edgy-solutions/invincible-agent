@@ -42,6 +42,7 @@ OUTPUT_URI: dict[str, str] = {
     "plan_schedule":              MESH + "IntervalSchedule",
     "plan_session_changes":       MESH + "ChangeLog",
     "plan_diff":                  MESH + "EffectSet",
+    "plan_coverage_gap":          MESH + "CoverageGapSet",
 }
 
 
@@ -506,16 +507,33 @@ def plan_tech_footprint(state: PlanState, *, tech_id: str) -> dict[str, Any]:
 # 9. plan_schedule  ->  mesh:IntervalSchedule          (Q4, Q5, Q6)
 # ─────────────────────────────────────────────────────────────────────────────
 
+_GROUP_BY = ("initiative", "capability", "target")
+_COLOR_BY = ("funding_risk", "status", "confidence")
+
+
 def plan_schedule(
     state: PlanState,
     *,
     scope_initiative_id: Optional[str] = None,
     site_id: Optional[str] = None,
+    group_by: str = "initiative",
+    color_by: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Initiative → phase → project rows with intervals. The timeline's data.
 
     Flat rows carrying their parentage rather than a nested tree: the renderer groups, and a
     flat row set diffs cleanly against another state, which a tree does not.
+
+    REV 3 -- `group_by` IS THE MARQUEE PIVOT AND IT IS ONE PARAMETER. Grouping by capability
+    reads `CapabilityContribution`, the project-capability many-to-many that has existed
+    since Phase 0; initiative-capability is derived from it rather than stored in parallel.
+    A project contributing to two capabilities APPEARS UNDER BOTH -- that is what
+    many-to-many means, and it is the thing the source model could not express. A project
+    contributing to nothing lands in an explicit `(none)` bucket rather than being dropped:
+    a pivot that silently drops rows makes the timeline lie about what the portfolio holds.
+
+    `color_by` names a STYLING KEY and the value rides the payload. The renderer receives a
+    flag; it never learns that today's flag means funding risk (GENERIC-AT-BIRTH).
     """
     if scope_initiative_id is not None and not any(
         i.initiative_id == scope_initiative_id for i in state.initiatives
@@ -523,6 +541,12 @@ def plan_schedule(
         raise NotInModel(f"unknown initiative {scope_initiative_id!r}")
     if site_id is not None and state.site(site_id) is None:
         raise NotInModel(f"unknown site {site_id!r}")
+    if group_by not in _GROUP_BY:
+        # REFUSED, never a silent fallback to the default. Falling back would answer a
+        # different question than the one asked, and look correct doing it.
+        raise NotInModel(f"cannot group a schedule by {group_by!r}")
+    if color_by is not None and color_by not in _COLOR_BY:
+        raise NotInModel(f"cannot colour by {color_by!r}")
 
     site_projects = (
         {i.project_id for i in state.site_impacts if i.site_id == site_id}
@@ -545,7 +569,7 @@ def plan_schedule(
             for proj in projects:
                 if site_projects is not None and proj.project_id not in site_projects:
                     continue
-                rows.append({
+                base_row = {
                     "initiative_id": init.initiative_id,
                     "initiative_name": init.name,
                     "initiative_status": init.status,
@@ -560,8 +584,110 @@ def plan_schedule(
                     "planned_end": proj.planned.end,
                     "actual_start": proj.actual.start if proj.actual else None,
                     "actual_end": proj.actual.end if proj.actual else None,
-                })
+                    "risk_flag": _risk_flag(state, proj.project_id, color_by),
+                }
+                rows.extend(_pivot(state, proj.project_id, base_row, group_by, init))
     return rows
+
+
+def _risk_flag(state: PlanState, project_id: str, color_by: Optional[str]) -> Optional[str]:
+    """A generic styling flag. The VALUE is domain vocabulary and rides the payload; the
+    renderer styles whatever string arrives and knows none of them."""
+    if color_by is None:
+        return None
+    if color_by == "funding_risk":
+        req = sum(r.amount for r in state.requirements if r.project_id == project_id)
+        secured = sum(k.amount for k in state.commitments
+                      if k.project_id == project_id and k.status in ("committed", "approved"))
+        if req > 0 and secured < req:
+            return "at-risk" if secured > 0 else "unfunded"
+        return None
+    if color_by == "status":
+        init = state.initiative_of_project(project_id)
+        return init.status if init else None
+    if color_by == "confidence":
+        proj = state.project(project_id)
+        ph = state.phase(proj.phase_id) if proj else None
+        return ph.timing_confidence if ph else None
+    return None  # pragma: no cover - guarded at the entry
+
+
+def _pivot(state: PlanState, project_id: str, base: dict[str, Any],
+           group_by: str, init: Any) -> list[dict[str, Any]]:
+    """One project becomes N rows under a many-to-many pivot. That fan-out IS the feature."""
+    if group_by == "initiative":
+        return [{**base, "group_kind": "initiative", "group_id": init.initiative_id,
+                 "group_name": init.name, "group_weight": None}]
+    if group_by == "capability":
+        contribs = [c for c in state.contributions if c.project_id == project_id]
+        if not contribs:
+            # EXPLICIT, not dropped. A pivot that silently loses rows makes the timeline lie
+            # about what the portfolio contains.
+            return [{**base, "group_kind": "capability", "group_id": "(none)",
+                     "group_name": "no capability recorded", "group_weight": None}]
+        out = []
+        for c in sorted(contribs, key=lambda x: x.capability_id):
+            cap = state.capability(c.capability_id)
+            out.append({**base, "group_kind": "capability", "group_id": c.capability_id,
+                        "group_name": cap.name if cap else c.capability_id,
+                        "group_weight": c.weight})
+        return out
+    impacts = [i for i in state.site_impacts if i.project_id == project_id]
+    if not impacts:
+        return [{**base, "group_kind": "target", "group_id": "(none)",
+                 "group_name": "no target recorded", "group_weight": None}]
+    out = []
+    for i in sorted(impacts, key=lambda x: x.site_id):
+        site = state.site(i.site_id)
+        out.append({**base, "group_kind": "target", "group_id": i.site_id,
+                    "group_name": site.name if site else i.site_id,
+                    "group_weight": i.load_weight})
+    return out
+
+
+# -----------------------------------------------------------------------------
+# 12. plan_coverage_gap  ->  mesh:CoverageGapSet          (B4)
+# -----------------------------------------------------------------------------
+
+def plan_coverage_gap(state: PlanState) -> dict[str, Any]:
+    """What NOTHING is working on -- an absence query.
+
+    THE ONLY GENUINELY NEW VERB IN REVISION 3, and the one a spreadsheet cannot answer: a row
+    that is not there cannot be filtered for. Finding it needs the capability-process edge and
+    the project-capability edge together, which is exactly what the graph shape buys.
+
+    TWO FINDINGS, KEPT SEPARATE because they send you to different meetings:
+      uncovered_capabilities  a capability nobody is maturing  -> a PORTFOLIO problem
+      unmodelled_processes    a process with no capability     -> a MODEL problem
+    Folding them would send someone to the wrong one.
+    """
+    contributed = {c.capability_id for c in state.contributions}
+    uncovered = []
+    for cap in state.capabilities:
+        if cap.capability_id in contributed:
+            continue
+        uncovered.append({
+            "capability_id": cap.capability_id,
+            "capability_name": cap.name,
+            # A capability nobody is maturing only MATTERS because a process depends on it.
+            # Reporting the capability alone makes the reader do a join the model already holds.
+            "exposes_processes": sorted(cap.enables_process_ids),
+        })
+
+    enabled = {pid for c in state.capabilities for pid in c.enables_process_ids}
+    unmodelled = [
+        {"process_id": p.process_id, "process_name": p.name}
+        for p in state.processes if p.process_id not in enabled
+    ]
+
+    return {
+        # Empty LISTS, never omitted keys. A missing key reads as "not computed"; an empty list
+        # reads as "computed, and clean".
+        "uncovered_capabilities": sorted(uncovered, key=lambda c: c["capability_id"]),
+        "unmodelled_processes": sorted(unmodelled, key=lambda p: p["process_id"]),
+        "capability_count": len(state.capabilities),
+        "covered_count": len(contributed),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

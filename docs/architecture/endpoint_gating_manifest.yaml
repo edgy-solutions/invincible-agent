@@ -620,7 +620,7 @@ services:
   planning_agent:
     inbound_transport_auth: engine-p
     notes: |
-      Engine P — ten planning verbs over server-owned plan state (ADR-0042). Every response
+      Engine P — twelve planning verbs over server-owned plan state (ADR-0042). Every response
       carries `output_uri` and rows and NAMES NO ARCHETYPE; presentation is
       select_presentation's decision from the payload against the caller's registered menu.
 

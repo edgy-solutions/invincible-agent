@@ -45,7 +45,8 @@ def test_seed_is_at_the_scale_the_plan_specifies(state):
     assert len(state.phases) == 12
     assert 12 <= len(state.projects) <= 15
     assert len(state.sites) == 4
-    assert len(state.capabilities) == 8
+    # 9, not 8: C9 is deliberately uncovered so the coverage-gap verb has data.
+    assert len(state.capabilities) == 9
     assert len(state.processes) == 2
     assert len(state.technologies) == 5
     assert len(state.organizations) == 3
