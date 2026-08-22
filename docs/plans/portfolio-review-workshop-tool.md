@@ -569,6 +569,39 @@ impossible cap).
 
 ## 8. Phase 6 — Hardening + rehearsal (Day 7. NOTHING NEW.)
 
+### 8.0 Seed facts the script depends on — READ BEFORE WRITING A BEAT
+
+These are properties of the seeded dataset, discovered by the verbs on their first runs rather
+than designed in. A beat that contradicts one of them will shrug instead of landing, and the
+discovery will happen in the room.
+
+**THE "WATCH A MOVE BREAK A SITE" BEAT ONLY WORKS AT SITE B, BY CONSTRUCTION.**
+Summing every impact each target carries: S1 1.8 / 2.0, S3 2.2 / 2.5, S4 2.0 / 2.5, S2 2.7 / 2.0.
+**No target except S2 can be pushed over its threshold by moving a window**, because moving a
+window cannot create load that does not exist. Only S2 is over, and it is over at rest.
+
+So the reachable move on this seed is **RELIEF, not breach**: pull one of Site B's three
+overlapping Q4 impacts out and the cell drops 2.7 → 1.8, which reads as `improved` in the diff.
+Scripting "watch me overload a site" would need a *new* impact — a different op than this cycle
+has — or a seed with headroom. Found when `plan_diff` falsified a test its own author wrote.
+
+**THE COVERAGE-GAP BEAT HAS DATA, AND IT DID NOT AT FIRST.**
+The first run of `plan_coverage_gap` found FULL capability coverage — every capability had a
+contributor, so "what is nobody working on" answered with a green checkmark. Tension (f) was
+seeded in response: **C9 (Regulatory Reporting) has no contributing project and enables a
+modelled process**, so the absence is not merely tidy — a process depends on a capability with
+nothing behind it. Verified: 9 capabilities, 8 covered, C9 exposing BP1.
+
+**THE BASELINE IS DEPENDENCY-CLEAN AT REST, DELIBERATELY.** D4 is the sprung trap (P3 → P5,
+FS + 14 days). D8's lag was reduced to 0 because at 30 it fired as a *baseline* violation, and
+a baseline already showing red teaches the room to ignore red — which destroys the diff card's
+only signal.
+
+**SIX SEEDED TENSIONS, each with a test.** If a test in `tests/planning/test_seeded_tensions.py`
+goes red, the DATA changed, not the measure — and a lost tension is a lost beat.
+
+
+
 1. **Script the meeting, not the features** (5 minutes):
    - Open on the canvas: timeline + strips; tensions (a)(c) already red. "It's the quarterly review."
    - "Why is Q3 red?" → interpretation card → cost series card + one-line narration. (INV-1)

@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
-# Read-only baseline for the morning's prime. Establishes the BEFORE so the AFTER is measurable.
+# Read-only baseline for the prime. Establishes the BEFORE so the AFTER is measurable.
+#
+# TWO PREDICTIONS, DIFFERENT SUBSTRATES, STRICTLY ORDERED. They were briefly confused for one
+# number; they are not, and both are falsifiable:
+#
+#   1. PRIME       -> mesh# OntologyClass NODES IN NEO4J:  29 -> 49
+#                     (20 new declarations: 12 planning output types + 4 review archetypes +
+#                      PeriodSeries, ThresholdGrid, MatrixGrid, DeltaSet)
+#   2. RE-REGISTER -> cortex registration ROWS IN WEAVIATE: 44 -> 48, zero refusals
+#                     (the four previously-refused review archetypes landing)
+#
+# The second is MEANINGLESS UNTIL THE FIRST HOLDS — Contract D refuses a rendersAs triple whose
+# object end does not pre-exist, so re-registering before the prime just re-earns the refusal.
+# Run this script after EACH step.
 set -uo pipefail
 CS="kubectl exec -n sandbox iagent-neo4j-0 -- cypher-shell -u neo4j -p changeme-neo4j-sandbox --format plain"
 
