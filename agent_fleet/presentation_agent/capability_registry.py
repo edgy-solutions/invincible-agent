@@ -33,6 +33,7 @@ layer down.
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,6 +43,12 @@ UNIVERSAL_ARCHETYPES = ("KNOWLEDGE_DOCUMENT",)
 
 _LOCK = threading.Lock()
 _REGISTRY: Dict[str, Dict[str, Any]] = {}
+
+#: Scope stamp for the SYSTEM DEFAULTS (the universal fallback the `default-menu`
+#: provenance names), as written by agent_fleet/utils/mesh_registration.py. Kept
+#: as a literal rather than imported so this module stays importable in the
+#: flattened engine image, where that package path does not exist.
+SYSTEM_DEFAULT_FRONTEND_ID = "__system_default__"
 
 
 def register(frontend_id: str, frontend_version: str, capabilities: List[Dict[str, Any]]) -> int:
@@ -62,6 +69,60 @@ def register(frontend_id: str, frontend_version: str, capabilities: List[Dict[st
         }
         return len(_REGISTRY[fid]["capabilities"])
 
+
+
+# ---------------------------------------------------------------------------
+# THE SOURCE SEAM — one place names the substrate
+# ---------------------------------------------------------------------------
+# `_REGISTRY` is a MODULE-LOCAL DICT, and registration and selection run in
+# DIFFERENT PODS: `/register_frontend_capabilities` is served by cortex-bff,
+# `/render_ui` by presentation-agent. Registration could therefore NEVER reach
+# the selector -- every caller looked anonymous, the union was always empty, and
+# every answer fell to the labelled floor. 71 green tests proved the LOGIC and
+# never touched the TOPOLOGY.
+#
+# ADR-0017's own mechanism was always the answer: rendersAs triples in the shared
+# Predicate collection, written by the mesh-registrar (sole writer, ADR-0006
+# Addendum) and read here. Every reader below goes through `_entries()`, so the
+# selection logic -- including ADR-0042 Ruling 9 -- is untouched and stays
+# menu-source-agnostic exactly as its author built it.
+
+_GRAPH_DISABLED = "0"
+
+
+def _graph_enabled() -> bool:
+    """Graph read is ON unless explicitly disabled.
+
+    An escape hatch that is ANNOUNCED rather than silent: set
+    PRESENTATION_GRAPH_MENU=0 to fall back to the in-process dict, which is only
+    correct when write and read share a process (tests, single-binary dev).
+    """
+    return (os.getenv("PRESENTATION_GRAPH_MENU", "1").strip() or "1") != _GRAPH_DISABLED
+
+
+def _entries() -> List[Dict[str, Any]]:
+    """Every registered menu, from the graph when available.
+
+    Falls back to the in-process dict when the graph is unreachable or disabled.
+    The fallback is NOT a second source of truth: it is what keeps a network blip
+    from turning /render_ui into a 500, and it announces itself when used.
+    """
+    if _graph_enabled():
+        try:
+            from . import graph_menu_source  # noqa: PLC0415
+        except ImportError:  # flattened image layout
+            try:
+                import graph_menu_source  # type: ignore # noqa: PLC0415
+            except ImportError:
+                graph_menu_source = None  # type: ignore
+        if graph_menu_source is not None:
+            fetched = graph_menu_source.fetch_registered_entries()
+            # None == could not reach the graph. {} == reached it, nobody has
+            # registered. Those have OPPOSITE repairs and must not collapse.
+            if fetched is not None:
+                return list(fetched.values())
+    with _LOCK:
+        return list(_REGISTRY.values())
 
 def union_menu() -> Dict[str, Any]:
     """The union of every currently-registered menu — the ANONYMOUS caller's menu.
@@ -89,8 +150,7 @@ def union_menu() -> Dict[str, Any]:
     WIDENS the search across the whole menu — and a live archetype left sitting in that widened
     field would be selectable anonymously while the ruling appeared to be honoured.
     """
-    with _LOCK:
-        entries = list(_REGISTRY.values())
+    entries = _entries()
     seen, caps = set(), []
     for e in entries:
         for c in e.get("capabilities") or []:
@@ -128,8 +188,7 @@ def _live_view_is_registered_for(output_uri: str) -> bool:
     denial of everything an unidentified caller might want.
     """
     target = _canonical(output_uri)
-    with _LOCK:
-        entries = list(_REGISTRY.values())
+    entries = _entries()
     for e in entries:
         for c in e.get("capabilities") or []:
             if _is_live_view(c) and _canonical(str(c.get("subject_uri") or "")) == target:
@@ -141,9 +200,18 @@ def menu_for(frontend_id: Optional[str]) -> Optional[Dict[str, Any]]:
     """The caller's registered menu, or None when the caller never registered."""
     if not frontend_id:
         return None
-    with _LOCK:
-        entry = _REGISTRY.get(frontend_id.strip())
-        return dict(entry) if entry else None
+    fid = frontend_id.strip()
+    if fid == SYSTEM_DEFAULT_FRONTEND_ID:
+        # A PROVIDER IS NOT A CALLER. The system defaults reach callers through
+        # the UNION, labelled `default-menu` -- which is exactly what they are.
+        # Serving them as a scoped menu would report `registered` for a caller
+        # that registered nothing, letting anyone upgrade their own provenance
+        # by naming the sentinel. Anonymous is the honest answer here.
+        return None
+    for e in _entries():
+        if str(e.get("frontend_id") or "").strip() == fid:
+            return dict(e)
+    return None
 
 
 def clear() -> None:

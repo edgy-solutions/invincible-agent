@@ -68,6 +68,11 @@ except ImportError:  # flattened image layout (/app/utils/...)
 
 logger = ensure_stdout_logger("mesh_registration")
 
+#: Scope stamp for capabilities that are the SYSTEM DEFAULTS rather than any one
+#: surface's menu. Shared with capability_registry.menu_for(), which refuses it
+#: as a caller identity — a provider is not a frontend.
+SYSTEM_DEFAULT_FRONTEND_ID = "__system_default__"
+
 #: Same opt-in env var semantics as the SDK. Set to one of these (case
 #: insensitive) to actually emit; anything else and the helper logs that
 #: it's skipping and returns.
@@ -510,7 +515,18 @@ def _emit_presentation_to_registrar(
         "object_uri": _expand_mesh_iri(object_uri),
         "archetype": archetype,
         "expected_fields": list(expected_fields),
-        "frontend_id": os.getenv("MESH_FRONTEND_ID", "engine-f"),
+        # THE SYSTEM DEFAULTS ARE NOT A FRONTEND'S MENU. Engine F advertises the
+        # UNIVERSAL FALLBACK -- the population `default-menu` provenance refers to
+        # -- not one surface's private capabilities. Stamping these "engine-f"
+        # made a PROVIDER look like a registered SURFACE, and left a small
+        # honesty hole: a caller sending frontend_id="engine-f" would get
+        # `presentation_source: "registered"` against defaults it never
+        # registered, upgrading its own provenance by naming a provider.
+        #
+        # The sentinel is deliberately un-typeable as a real frontend id and is
+        # REFUSED by menu_for(), so these rows reach callers only through the
+        # union, labelled `default-menu`, which is what they are.
+        "frontend_id": os.getenv("MESH_FRONTEND_ID", SYSTEM_DEFAULT_FRONTEND_ID),
         "owner_persona": (persona_fit[0] if persona_fit else "ANY"),
         "domains": list(domain_fit),
         "description": description,
