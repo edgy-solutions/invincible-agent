@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **61 of 63 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **62 of 64 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -81,6 +81,10 @@ _Coverage: **61 of 63 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **endpoint-table-generation** — Generate the README endpoint table from the live route census instead of asserting it.
   status: open · owner: agent
   → [docs/plans/endpoint-table-generation.md](plans/endpoint-table-generation.md)
+
+- **engine-da-ooms-on-a-plausible-question** — ⚠️ DEMO BLOCKER, diagnosed 2026-08-22. Engine DA is OOMKilled (exit 137, `Reason: OOMKilled`, 2Gi limit) executing an ordinary analytical question — `SELECT company, ARRAY_AGG(DISTINCT cage_code) FROM dataset GROUP BY company` over a publog table. It crashed MID-STEP on a real user question and the pod has been in CrashLoopBackOff; the previous pod restarted 15 times in 173 minutes. THE FAILURE IS SILENT FROM THE UI: routing succeeds and reports high confidence, the answer card renders with its title, and the body is empty with "No citations yet" — because the engine died before returning anything. An error would be better; this looks like an answer.
+  status: open · owner: unassigned
+  → [docs/plans/engine-da-ooms-on-a-plausible-question.md](plans/engine-da-ooms-on-a-plausible-question.md)
 
 - **first-viewer-critical-path** — TRIAGE — FOUR load-bearing now (a prerequisite the triage missed was found by item 1's live witness: no asset is both granted and fetchable, so the data path serves nothing — inserted ahead of da-collects). Of 27 live board items, originally THREE were load-bearing for "one other person can use this", in a stated order. The other 24 sort into demo-day operational risk (3, now a runbook not board work) and hygiene/posture/architecture (21). The goal is three items away, not thirty-nine, and this packet names which and why the other 24 are not.
   status: open · owner: human · blocked-on: nothing — the scope sentence is ANSWERED (2026-08-15): Tier-3 row 8 IS in scope, so the path is three items in the order stated below. What remains is building them.
