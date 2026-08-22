@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **58 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **59 of 61 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -105,6 +105,10 @@ _Coverage: **58 of 60 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **pcn-extraction-sort** — The decided three-pile sort (rename-and-promote / keep-domain-specific / delete) so the M2 extraction milestone is a mechanical execution rather than a fresh analysis. Pairs with the generic-at-birth rule. DECIDED, NOT EXECUTED - verified 2026-08-19: no three-pile implementation exists, and the cited 0cc406e is the review-state tripwire, a different artifact.
   status: open · owner: unassigned
   → [docs/plans/pcn-extraction-sort.md](plans/pcn-extraction-sort.md)
+
+- **portfolio-review-rev3-delta** — Revision 3 of the portfolio-review plan, in DELTA form — what sections B/C/D of the 2026-08-21 requirements packet ADD to what is already built, never a re-plan of section A. A is not merely planned, it is LANDED AND CITED (abf16fd, 83 tests), and re-deriving built work in a plan document is how a plan drifts from its own repo. Every B item names the existing type or verb it extends so a reader can tell extension from invention. Carries one correction back to the packet: the sandbox runs `gpt-oss-128k:120b`, so the Day-5 eval must assert the CONFIGURED model name, not the name a document remembers.
+  status: open · owner: unassigned · blocked-on: architect fills C3's private-overlay path
+  → [docs/plans/portfolio-review-rev3-delta.md](plans/portfolio-review-rev3-delta.md)
 
 - **portfolio-review-workshop-tool** — Live portfolio-review workshop tool — a T+7 demo whose real job is to demonstrate the presentation-SPO arc on a second grounding. REVISION 2 (2026-08-20): rev 1 was authored against the architecture as it stood a week earlier and the presentation-SPO arc landed seven commits underneath it; as written it would have rebuilt a parallel presentation stack (client-side measures never crossing /render_ui, an intent catalog naming chart types = `archetype-chosen-before-data` re-opened one day after it closed). Ruled by ADR-0042. Binding changes: measures are VERBS running server-side from commit 1 (mock the store, never the placement); intents declare `output_uri` never a view; every widget ships a `.contract.ts`; Gate 1 asserts `presentation_source == "registered"`, not "a card appeared"; two-repo cycle (BFF routes are in-scope, a second Fastify/tRPC backend is deleted); D6 VERIFIED 2026-08-20 against the live endpoint (/api/tags): `gpt-oss-120b` is ABSENT (the documented 404), sandbox is configured for `gpt-oss-128k:120b` (131072 context) NOT plain `gpt-oss:120b`, and the declared hardware fallback `gpt-oss:20b` IS NOT PRESENT — pull it or delete the escape hatch.
   status: open · owner: unassigned

@@ -11,6 +11,11 @@ summary:    Live portfolio-review workshop tool — a T+7 demo whose real job is
 
 # Live portfolio-review workshop tool — phased build (revision 2)
 
+**Revision 3 (2026-08-21) is a DELTA, not a rewrite:**
+[`portfolio-review-rev3-delta.md`](portfolio-review-rev3-delta.md). It records what the
+requirements packet ADDS to what is built; section A of that packet is already landed and cited
+here. Where the delta and the repo disagree, the repo is right.
+
 **Ruled by:** [ADR-0042](../adr/ADR-0042-live-view-artifacts-recomputing-cards-on-the-one-presentation-path.md).
 Read it before Phase 0. Where this plan and that ADR disagree, the ADR wins and this plan is wrong.
 
