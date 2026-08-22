@@ -4,3 +4,14 @@
 # a Windows regen to add one function churns ~4700 lines (see ADR-0030-era
 # commit 1819e70). Store and check out as LF.
 baml_shared/baml_client/** text eol=lf
+
+# Shell scripts are LF, always. This tree is used from BOTH Windows and WSL against the SAME
+# working copy, and a .sh with CRLF is silently fine under Git Bash and a hard parse error
+# under WSL bash:
+#     scripts/run-tests.sh: line 18: set: pipefail: invalid option name
+#     scripts/run-tests.sh: line 26: syntax error near unexpected token `$'in\r''
+# core.autocrlf=input normalizes on COMMIT, so the repo blobs were already LF — but nothing
+# rewrites a working-copy file until git touches it, so a script edited by a Windows tool
+# stays CRLF locally and breaks only on the Linux side. Found 2026-08-22 when a "CI-matching"
+# run died before its first test.
+*.sh text eol=lf
