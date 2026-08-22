@@ -407,3 +407,44 @@ def test_a_marked_row_still_carries_its_menu_payload(monkeypatch):
     cap = m.fetch_registered_entries()["cortex"]["capabilities"][0]
     assert cap["archetype"] == "KNOWLEDGE_DOCUMENT"
     assert cap["expected_fields"] == ["owner"]
+
+
+# ── THE HOST NAME MUST BE THE CLUSTER'S, NOT AN INVENTED ONE ───────────────
+
+def test_it_reads_WEAVIATE_HTTP_HOST_the_name_the_cluster_publishes(monkeypatch):
+    """THE INERT-IN-PRODUCTION ARM.
+
+    The reader originally looked for WEAVIATE_HOST / WEAVIATE_URL — names
+    INVENTED rather than read from the configMap. Nothing sets them, so the
+    graph menu source logged "inactive" and fell back to an empty in-process
+    registry: rows correct, tests green, read path reading NOTHING in the
+    cluster. The failure was invisible to every test because tests set whatever
+    env they please.
+    """
+    m = _gms()
+    monkeypatch.delenv("WEAVIATE_HOST", raising=False)
+    monkeypatch.delenv("WEAVIATE_URL", raising=False)
+    monkeypatch.setenv("WEAVIATE_HTTP_HOST", "iagent-weaviate.sandbox.svc.cluster.local:8080")
+    assert m._weaviate_http() == "http://iagent-weaviate.sandbox.svc.cluster.local:8080"
+
+
+def test_the_combined_host_port_form_is_parsed_not_mangled(monkeypatch):
+    """WEAVIATE_HTTP_HOST is published as `host:port`, not a bare host — appending
+    a default port would produce `host:8080:8080` and fail every read."""
+    m = _gms()
+    monkeypatch.setenv("WEAVIATE_HTTP_HOST", "weaviate:8080")
+    assert m._weaviate_http() == "http://weaviate:8080"
+
+
+def test_a_bare_host_still_gets_a_port(monkeypatch):
+    """Backward compatible with a host that carries no port."""
+    m = _gms()
+    monkeypatch.delenv("WEAVIATE_PORT", raising=False)
+    monkeypatch.setenv("WEAVIATE_HTTP_HOST", "weaviate")
+    assert m._weaviate_http() == "http://weaviate:8080"
+
+
+def test_an_explicit_url_is_left_alone(monkeypatch):
+    m = _gms()
+    monkeypatch.setenv("WEAVIATE_HTTP_HOST", "https://wv.example.com/")
+    assert m._weaviate_http() == "https://wv.example.com"

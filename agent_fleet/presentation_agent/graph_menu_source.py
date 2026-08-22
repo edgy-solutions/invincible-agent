@@ -91,17 +91,35 @@ _BASE_FIELDS = (
 def _weaviate_http() -> Optional[str]:
     """Base URL for Weaviate's REST/GraphQL surface, or None when unconfigured.
 
-    Unconfigured is NOT an error: it means this deployment has no graph source
-    and the caller falls back to whatever it held before. Returning None rather
-    than raising keeps a missing env var from turning /render_ui into a 500.
+    READS THE CLUSTER'S OWN CONVENTION. `WEAVIATE_HTTP_HOST` is published as a
+    COMBINED ``host:port`` string (e.g.
+    ``iagent-weaviate.sandbox.svc.cluster.local:8080``) and is what every other
+    consumer in this repo parses — see agent_fleet/utils/weaviate_utils.py.
+
+    An earlier version of this function looked for `WEAVIATE_HOST` / `WEAVIATE_URL`,
+    names INVENTED rather than read. Nothing sets them, so the graph menu source
+    logged "inactive" and silently fell back to an empty in-process registry: every
+    row correct, every test green, and the read path reading NOTHING in the
+    cluster. The same guessed-vs-read miss as assuming the frontend id was
+    "cortex" when the UI declares "cortex-ui-desktop".
+
+    Unconfigured is still NOT an error: it means this deployment has no graph
+    source, and returning None keeps a missing env var from turning /render_ui
+    into a 500.
     """
-    host = os.getenv("WEAVIATE_HOST") or os.getenv("WEAVIATE_URL")
-    if not host:
+    raw = (
+        os.getenv("WEAVIATE_HTTP_HOST")
+        or os.getenv("WEAVIATE_URL")
+        or os.getenv("WEAVIATE_HOST")
+    )
+    if not raw:
         return None
-    if host.startswith("http://") or host.startswith("https://"):
-        return host.rstrip("/")
-    port = os.getenv("WEAVIATE_PORT", "8080")
-    return f"http://{host}:{port}" if ":" not in host else f"http://{host}"
+    raw = raw.strip()
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw.rstrip("/")
+    if ":" in raw:
+        return f"http://{raw}"
+    return f"http://{raw}:{os.getenv('WEAVIATE_PORT', '8080')}"
 
 
 def _gql(base: str, query: str, timeout: float) -> Optional[Dict[str, Any]]:
