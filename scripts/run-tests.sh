@@ -34,6 +34,22 @@ case "$(uname -s)" in
     ;;
 esac
 
+# PREFLIGHT. A non-login shell (`wsl bash script.sh`, most CI shells, anything an agent
+# spawns) does not read .bashrc, so uv's install dir is off PATH and `uv` is simply absent.
+# Found 2026-08-22 when a "CI-equivalent" run printed its scope banner, ran ZERO tests, and
+# exited 0 through a pipe to tail.
+for d in "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+  [ -x "$d/uv" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$d:$PATH" ;; esac
+done
+export PATH
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "!! NO RESULT — uv is not on PATH, so no tests ran." >&2
+  echo "   Looked in: PATH, \$HOME/.local/bin, \$HOME/.cargo/bin" >&2
+  echo "   This is NOT a test failure and NOT a green. Nothing was measured." >&2
+  exit 127
+fi
+
 echo "── running in: ${WHERE}"
 echo "── env:        ${UV_PROJECT_ENVIRONMENT:-.venv (uv default)}"
 echo
@@ -41,6 +57,18 @@ echo
 uv run "${EXTRA[@]}" python -m pytest "${@:-tests/}" -q
 rc=$?
 
+# A SCOPE CLAIM IS ONLY HONEST WHEN TESTS ACTUALLY RAN.
+#
+# pytest: 0 = passed, 1 = failures — both are real results and deserve the scope line.
+# 2 interrupted / 3 internal / 4 usage / 5 nothing-collected, and 127 command-not-found, are
+# NON-RESULTS. Printing "that result is scoped to CI-matching Linux" over one of those invites
+# quoting a green that never happened, which is the guard-gone-quiet shape this repo keeps
+# paying for — here in the very tool used to quote greens.
 echo
-echo "── that result is scoped to: ${WHERE}"
+case "$rc" in
+  0|1) echo "── that result is scoped to: ${WHERE}" ;;
+  5)   echo "!! NO RESULT — pytest collected ZERO tests (exit 5). Nothing was measured." >&2 ;;
+  *)   echo "!! NO RESULT — pytest exited ${rc} before producing a result (interrupted," >&2
+       echo "   internal error, or bad usage). This is neither a pass nor a failure." >&2 ;;
+esac
 exit $rc
