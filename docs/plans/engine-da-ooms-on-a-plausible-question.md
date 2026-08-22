@@ -1,12 +1,12 @@
 ---
 id:         engine-da-ooms-on-a-plausible-question
-status:     open
-owner:      unassigned
+status:     closed
+owner:      agent
 blocked-on:
-closed-by:
+closed-by:  d06da52
 code-site:  agent_fleet/data_analyst/main.py, helm/invincible-agent/values.yaml
 repo:       invincible-agent
-summary:    ⚠️ DEMO BLOCKER, diagnosed 2026-08-22. Engine DA is OOMKilled (exit 137, `Reason: OOMKilled`, 2Gi limit) executing an ordinary analytical question — `SELECT company, ARRAY_AGG(DISTINCT cage_code) FROM dataset GROUP BY company` over a publog table. It crashed MID-STEP on a real user question and the pod has been in CrashLoopBackOff; the previous pod restarted 15 times in 173 minutes. THE FAILURE IS SILENT FROM THE UI: routing succeeds and reports high confidence, the answer card renders with its title, and the body is empty with "No citations yet" — because the engine died before returning anything. An error would be better; this looks like an answer.
+summary:    ✅ CLOSED 2026-08-22 by d06da52 — the `.collect()` is gone, the lazy frame reaches DuckDB, and a cell-count gate refuses an unfittable table by name instead of dying on it. The reproducer now returns a REAL ANSWER (a CHART_WIDGET of distinct cage codes per company) and the gate never fired, which proves `p_cage` was never too large: the OOM was ENTIRELY the discarded laziness, not an unfittable dataset. Restart count 0 across 12 minutes / 9 samples, against a predecessor that died 10 times. Was: ⚠️ DEMO BLOCKER, diagnosed 2026-08-22. Engine DA is OOMKilled (exit 137, `Reason: OOMKilled`, 2Gi limit) executing an ordinary analytical question — `SELECT company, ARRAY_AGG(DISTINCT cage_code) FROM dataset GROUP BY company` over a publog table. It crashed MID-STEP on a real user question and the pod has been in CrashLoopBackOff; the previous pod restarted 15 times in 173 minutes. THE FAILURE IS SILENT FROM THE UI: routing succeeds and reports high confidence, the answer card renders with its title, and the body is empty with "No citations yet" — because the engine died before returning anything. An error would be better; this looks like an answer.
 ---
 
 # Engine DA dies on a question a room would actually ask
@@ -126,3 +126,69 @@ and say out loud that it is a mitigation, because it moves the cliff rather than
 
 The reproducer question above returns either an answer or an explicit refusal naming the size
 limit — never an empty card. Restart count on the deployment stable, read twice with a gap.
+
+---
+
+# CLOSED 2026-08-22 — `d06da52`
+
+## What the fix was
+
+`main.py` acquired a LAZY frame and discarded it one line later:
+
+```python
+lazy_df = client.get_dataframe(urn)   # pl.scan_parquet — lazy
+dataset  = lazy_df.collect()          # the ENTIRE source table, in memory
+con.register("dataset", dataset)      # only NOW does the GROUP BY run
+```
+
+The `.collect()` is gone. DuckDB is handed the LazyFrame directly (verified
+duckdb 1.5.5 / polars 1.43, with a test arm so a future version dropping support
+goes red in CI rather than in a pod), and a size gate runs BEFORE the query.
+
+**The gate counts CELLS, not rows** — this packet's own argument applied to its
+own fix. Memory is a property of the table's SHAPE, not of the question, so a
+row-only cap leaves the next WIDER table finding the same cliff, which is the
+same reason option 2 (raise the limit) only moves it. A 1,000-row ×
+1,000,000-column table is the case a row cap misses entirely; it has an arm.
+Both numbers are cheap — row count pushes down to parquet metadata, the schema
+IS metadata — so the guard does not cost what it prevents.
+
+`SOURCE_TOO_LARGE` names the shape, the limit, and the remedy, and forbids retry:
+an agent that retries an oversized query just OOMs again. A precheck that cannot
+run is LOUD (`DA_SIZE_PRECHECK_FAILED … UNGATED`) rather than a silent bypass.
+
+## The finding the fix produced
+
+**The gate never fired, and the question returned a real answer.**
+
+That is worth more than the repair. It proves `p_cage` was never too large: the
+OOM was ENTIRELY the discarded laziness, not an unfittable dataset. Option 2
+(raise the memory limit) would also have "worked" — and would have buried that,
+leaving a mitigation in place of a fix and the real cause undiscovered until a
+table that genuinely does not fit arrived.
+
+## Acceptance — met, measured
+
+| criterion | result |
+|---|---|
+| reproducer returns an answer or explicit refusal, never an empty card | ✅ **an answer** — CHART_WIDGET, distinct cage codes per company, with a source citation |
+| restart count stable, read twice with a gap | ✅ `restarts=0` across 12 minutes, 9 samples (predecessor died 10×) |
+| suite | ✅ 1674 passed, zero failures |
+
+Confirmed alongside, unplanned: the answer card rendered as a **CHART_WIDGET**,
+which is the graph-backed presentation path selecting
+`DatasetAnalysisReport → CHART_WIDGET` from a registered menu. Two arcs witnessed
+in one frame.
+
+## NOT done — deliberately, and still open
+
+* **Bound the RESULT set** (disposal step 1). This fix bounds the SOURCE. A
+  large-but-fitting result still becomes a token problem after it stops being a
+  memory problem.
+* **Raise the memory limit** (step 2). Not taken. It moves the cliff, and the
+  finding above shows it would have hidden the cause. Take it for headroom if a
+  demo is close — and say out loud that it is a mitigation.
+* **The readiness probe** (step 3, shared with
+  [`bff-liveness-probe-kills-under-load`](bff-liveness-probe-kills-under-load.md)).
+  Untouched. `/health` with a 1s timeout on BOTH engines makes it a chart-wide
+  default rather than one service's mistake, so it should be fixed as a default.
