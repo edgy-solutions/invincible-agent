@@ -1,12 +1,12 @@
 ---
 id:         prime-ingest-timeout-shorter-than-its-own-queue
-status:     open
+status:     closed
 owner:      unassigned
 blocked-on:
-closed-by:
+closed-by:  6a8e918
 code-site:  helm/invincible-agent/values.yaml, helm/invincible-agent/templates/prime-substrate-job.yaml
 repo:       invincible-agent
-summary:    ⚠️ MEASURED 2026-08-22 by a real helm-driven prime. `primeSubstrate.ingestTimeout` is 1800s; the prime launches 15 ontology ingests and dagster's `max_concurrent_runs` is 2, so they SERIALISE into ~8 batches. Ten finished inside the window, five did not — `mesh_system` (which carries every archetype class) among them. The prime then REFUSED to report success, which is the 9e31ae8 fix behaving exactly as designed: `reregister` never ran and no engine restarted against a partial class graph. Substrate left undamaged at its before-numbers (29 classes / 44 rows). The timeout is not tuned to the queue it waits on, and the two numbers have never been compared.
+summary:    CLOSED 2026-08-22 by 6a8e918 (ingestTimeout 1800->3600, HELM_TIMEOUT 40m->75m, both bounds moved because raising the inner alone makes helm the binding constraint) plus tests/test_prime_timeout_bounds_agree.py. WITNESSED: the next prime ran 15 ok / 0 failed / 0 unfinished in ~2760s — inside the new bound, and past where the old one died at ingest ~10. Originally: MEASURED 2026-08-22 by a real helm-driven prime. `primeSubstrate.ingestTimeout` is 1800s; the prime launches 15 ontology ingests and dagster's `max_concurrent_runs` is 2, so they SERIALISE into ~8 batches. Ten finished inside the window, five did not — `mesh_system` (which carries every archetype class) among them. The prime then REFUSED to report success, which is the 9e31ae8 fix behaving exactly as designed: `reregister` never ran and no engine restarted against a partial class graph. Substrate left undamaged at its before-numbers (29 classes / 44 rows). The timeout is not tuned to the queue it waits on, and the two numbers have never been compared.
 ---
 
 # The prime waits 1800s for a queue that cannot drain in 1800s
@@ -87,5 +87,13 @@ partial-graph priming through the front door.
 ## Acceptance
 
 A helm-driven prime that reports `Ingest: 15 ok, 0 failed, 0 unfinished`, followed by
-`reregister` running and `scripts/probes/baseline.sh` showing **49 classes / 48 rows, zero
-refusals**. Both numbers, one command, after the chain — not during it.
+`reregister` running and `scripts/probes/baseline.sh` showing ~~49 classes / 48 rows~~, zero
+refusals. Both numbers, one command, after the chain — not during it.
+
+**MET 2026-08-22, at different numbers than written, and the difference is honest.** The run
+reported `Ingest: 15 ok, 0 failed, 0 unfinished` in ~2760s; `ontologySeed` and `reregister` both
+completed (the first unbroken chain in the arc); the probe read **51 classes / 52 rows, zero
+refusals, 52/52 marked**. The acceptance was written when the model had 49 classes and 48
+expected rows; two more subject classes and four more archetypes were declared between filing
+and closing. The *shape* of the acceptance held exactly — the numbers moved because the model
+grew, which is the right reason for an acceptance figure to be stale.
