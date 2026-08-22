@@ -285,3 +285,77 @@ def test_the_saga_PASSES_the_identity_to_both():
         "the saga does not thread the identity to the writer, the probe and the "
         "compensator — one of them will address the wrong row"
     )
+
+
+# ── THE COMPLETION MARKER IS THE COMMIT POINT ──────────────────────────────
+#
+# The field means "this registration FINISHED", never "a write landed here" —
+# and that distinction is entirely a matter of WHEN it is written. Stamped by
+# the writer, it would mean the latter and guard nothing: the debris of a failed
+# registration would carry it too.
+
+def test_the_upsert_does_NOT_mark_the_row_complete():
+    """THE ORDERING ARM. If upsert stamped it, every half-written row would claim
+    completion and the marker would certify exactly the state it exists to
+    exclude."""
+    v = _sub()
+    c = _Captor()
+    _write(v, c)
+    assert "registration_complete" not in c.props, (
+        "the writer stamped completion before the probe confirmed both stores — "
+        "the marker would certify debris"
+    )
+
+
+def test_mark_registration_complete_stamps_the_SAME_row_the_write_created():
+    """It must address the row by the full identity, or it marks nothing (or
+    worse, something else)."""
+    v = _sub()
+    marked = {}
+
+    class _Coll:
+        def __init__(self): self.data = self
+        def exists(self, uuid=None): return True
+        def update(self, uuid=None, properties=None): marked.update({"uuid": uuid, **(properties or {})})
+
+    class _Client:
+        collections = type("C", (), {"get": staticmethod(lambda n: _Coll())})()
+
+    ok = v.mark_registration_complete(
+        weaviate_client=_Client(), verb_iri="mesh:rendersAs",
+        input_uri=f"{_MESH}OwnershipFact", frontend_id="cortex-ui-desktop",
+        archetype="KNOWLEDGE_DOCUMENT",
+    )
+    assert ok is True
+    assert marked["registration_complete"] is True
+    assert marked["uuid"] == v._deterministic_predicate_uuid(
+        "mesh:rendersAs", f"{_MESH}OwnershipFact", "cortex-ui-desktop", "KNOWLEDGE_DOCUMENT"
+    )
+
+
+def test_marking_an_ABSENT_row_reports_False_rather_than_pretending():
+    """Nothing to mark is a disagreement worth surfacing: the saga just proved
+    both stores held the row, so its absence here means something moved."""
+    v = _sub()
+
+    class _Coll:
+        def __init__(self): self.data = self
+        def exists(self, uuid=None): return False
+        def update(self, uuid=None, properties=None): raise AssertionError("must not update")
+
+    class _Client:
+        collections = type("C", (), {"get": staticmethod(lambda n: _Coll())})()
+
+    assert v.mark_registration_complete(
+        weaviate_client=_Client(), verb_iri="mesh:rendersAs",
+        input_uri=f"{_MESH}OwnershipFact", frontend_id="x", archetype="y",
+    ) is False
+
+
+def test_the_saga_marks_AFTER_the_probe_not_before():
+    """Source-level ordering pin: the mark must follow probe_both_stores, or the
+    field stops meaning 'both stores confirmed'."""
+    src = (_REPO / "agent_fleet" / "mesh_registrar" / "v2_saga.py").read_text(encoding="utf-8")
+    probe_at = src.index('name="probe_both_stores"')
+    mark_at = src.index("mark_registration_complete(")
+    assert probe_at < mark_at, "the completion marker is written before the probe confirms both stores"

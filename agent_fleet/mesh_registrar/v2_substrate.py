@@ -287,6 +287,28 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
             # two ends of that contract must keep the same honest default, so this
             # cites that author rather than re-deciding it here.
             wvc.config.Property(name="recomputes", data_type=wvc.config.DataType.BOOL),
+            # ── THE COMMIT POINT, AS A FIELD ──────────────────────────────────
+            # Written LAST, after the probe has confirmed BOTH stores. Its
+            # presence is the row's own assertion that its registration
+            # completed; its ABSENCE means the row is debris — a write that
+            # landed and whose registration never finished.
+            #
+            # WHY IT EXISTS. The registrar writes two stores and the system's
+            # invariant is conjunctive: /classify_predicate "only sees verbs
+            # present in BOTH", which is what makes a half-write benignly
+            # orphaned. graph_menu_source reads WEAVIATE ONLY, so without this a
+            # row whose Neo4j edge is missing is served as a valid menu entry.
+            # Observed 2026-08-21: a saga bug compensated ten good writes, the
+            # Weaviate compensation addressed the wrong uuid and left the rows
+            # standing, and those orphans would have been served as
+            # cortex-ui-desktop's menu — the debris of a FAILURE read as a
+            # registration.
+            #
+            # ONE FIELD, THREE CONSUMERS: the reader FILTERS on it, the
+            # compensator SELECTS by it, a sweeper KEYS on it. Cheaper than a
+            # Neo4j round trip inside every render decision, which would pay
+            # latency forever to guard a state that exists only during failures.
+            wvc.config.Property(name="registration_complete", data_type=wvc.config.DataType.BOOL),
         ],
     )
     logger.info(
@@ -412,6 +434,37 @@ def upsert_weaviate_predicate_row(
         collection.data.replace(**write_kwargs)
     else:
         collection.data.insert(**write_kwargs)
+
+
+
+def mark_registration_complete(
+    *,
+    weaviate_client: Any,
+    verb_iri: str,
+    input_uri: str,
+    frontend_id: str = "",
+    archetype: str = "",
+) -> bool:
+    """Stamp the row as COMPLETE. The saga's final act, after the probe.
+
+    Called only once both stores have been confirmed by ``probe_both_stores``,
+    so the field means exactly "this registration finished" and never "a write
+    landed here". A row written but never marked is debris by definition, which
+    is what lets a single-store reader stay honest without a second round trip.
+
+    Returns False when the row is absent — the caller has nothing to mark, which
+    is itself a disagreement worth surfacing rather than swallowing.
+    """
+    deterministic_uuid = _deterministic_predicate_uuid(
+        verb_iri, input_uri, frontend_id or "", archetype or ""
+    )
+    collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
+    if not collection.data.exists(uuid=deterministic_uuid):
+        return False
+    collection.data.update(
+        uuid=deterministic_uuid, properties={"registration_complete": True}
+    )
+    return True
 
 
 def compensate_weaviate_predicate_row(

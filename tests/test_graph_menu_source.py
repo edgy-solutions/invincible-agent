@@ -71,9 +71,11 @@ def _row(**over):
 class _Fake:
     """Stands in for Weaviate's REST+GraphQL surface."""
 
-    def __init__(self, rows, *, has_recomputes=False, gql_errors=None, boom=False):
+    def __init__(self, rows, *, has_recomputes=False, has_marker=False,
+                 gql_errors=None, boom=False):
         self.rows = rows
         self.has_recomputes = has_recomputes
+        self.has_marker = has_marker
         self.gql_errors = gql_errors
         self.boom = boom
         self.selected_fields = None
@@ -86,6 +88,8 @@ class _Fake:
             props = [{"name": "verb_iri"}, {"name": "frontend_id"}]
             if self.has_recomputes:
                 props.append({"name": "recomputes"})
+            if self.has_marker:
+                props.append({"name": "registration_complete"})
             return _Resp({"properties": props})
         body = json.loads(req.data.decode())
         self.selected_fields = body["query"]
@@ -340,3 +344,66 @@ def test_the_LAUNDERING_ATTACK_end_to_end(monkeypatch):
         "sentinel — it registered nothing"
     )
     assert prov["presentation_source"] == "default-menu"
+
+
+# ── THE COMPLETENESS MARKER: debris is not a menu entry ────────────────────
+#
+# The registrar writes BOTH stores and the system's invariant is conjunctive.
+# This reader consults Weaviate alone, so without a marker a row whose Neo4j
+# edge is missing -- the debris a failed-and-compensated registration leaves --
+# is served as a valid menu entry. Observed for real on 2026-08-21: a saga bug
+# left ten such rows standing and they WOULD have been served as
+# cortex-ui-desktop's menu.
+
+def test_an_UNMARKED_row_is_not_served_once_the_marker_exists(monkeypatch):
+    """THE DEBRIS ARM. A complete-looking row that never finished registering
+    must not reach a menu."""
+    m = _gms()
+    _install(monkeypatch, m, _Fake([
+        _row(frontend_id="cortex", registration_complete=True),
+        _row(frontend_id="cortex", input_uri=f"{_MESH}ImpactSet"),  # no marker
+    ], has_marker=True))
+    e = m.fetch_registered_entries()
+    subjects = {c["subject_uri"] for c in e["cortex"]["capabilities"]}
+    assert subjects == {f"{_MESH}OwnershipFact"}, "debris reached the menu"
+
+
+def test_an_explicitly_FALSE_marker_is_not_served(monkeypatch):
+    """A row mid-registration is not a capability yet."""
+    m = _gms()
+    _install(monkeypatch, m, _Fake([
+        _row(frontend_id="cortex", registration_complete=False),
+    ], has_marker=True))
+    assert m.fetch_registered_entries() == {}
+
+
+def test_the_filter_is_INERT_until_the_property_exists(monkeypatch):
+    """THE ERA ARM, and the reason this rollout is safe.
+
+    Until the registrar marks its first row the property does not exist, and
+    filtering on it would empty every menu — turning a new guard into a total
+    outage. The filter activates exactly when there is something to filter by.
+    """
+    m = _gms()
+    _install(monkeypatch, m, _Fake([_row(frontend_id="cortex")], has_marker=False))
+    e = m.fetch_registered_entries()
+    assert len(e["cortex"]["capabilities"]) == 1
+
+
+def test_it_does_not_SELECT_the_marker_before_the_property_exists(monkeypatch):
+    """Selecting a never-written property is a GraphQL error, not a null."""
+    m = _gms()
+    f = _install(monkeypatch, m, _Fake([_row(frontend_id="cortex")], has_marker=False))
+    m.fetch_registered_entries()
+    assert "registration_complete" not in f.selected_fields
+
+
+def test_a_marked_row_still_carries_its_menu_payload(monkeypatch):
+    """The positive control: filtering must not cost the fields the menu needs."""
+    m = _gms()
+    _install(monkeypatch, m, _Fake([
+        _row(frontend_id="cortex", registration_complete=True),
+    ], has_marker=True))
+    cap = m.fetch_registered_entries()["cortex"]["capabilities"][0]
+    assert cap["archetype"] == "KNOWLEDGE_DOCUMENT"
+    assert cap["expected_fields"] == ["owner"]

@@ -365,6 +365,38 @@ def run_registration_saga(
             elapsed_s=_now() - started,
         )
 
+    # ── COMMIT POINT. The probe has confirmed BOTH stores; only now is this
+    # registration COMPLETE, and only now may a single-store reader trust the
+    # row. Stamped as the saga's final act so the field can never mean "a write
+    # landed" — it means "this finished".
+    #
+    # Best-effort by design: the registration genuinely succeeded, and failing
+    # the whole thing because the marker did not stick would compensate a good
+    # write for a bookkeeping miss. An unmarked row is treated as incomplete by
+    # readers, so the failure mode is a capability that is INVISIBLE until the
+    # next registration — degraded and self-healing, never wrong.
+    try:
+        _marked = substrate.mark_registration_complete(
+            weaviate_client=weaviate_client,
+            verb_iri=verb_iri,
+            input_uri=input_uri,
+            frontend_id=frontend_id,
+            archetype=archetype,
+        )
+        if not _marked:
+            logger.warning(
+                "registration completed but the row could not be marked complete "
+                "(verb_iri=%r input_uri=%r frontend_id=%r): readers will treat it "
+                "as incomplete until the next registration.",
+                verb_iri, input_uri, frontend_id,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "registration completed but marking failed (%s: %s); the capability "
+            "stays invisible to readers until re-registered.",
+            type(exc).__name__, exc,
+        )
+
     return SagaOutcome(
         status="registered",
         http_code=200,

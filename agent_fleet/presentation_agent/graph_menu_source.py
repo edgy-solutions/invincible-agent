@@ -120,21 +120,20 @@ def _gql(base: str, query: str, timeout: float) -> Optional[Dict[str, Any]]:
     return body.get("data") or None
 
 
-def _schema_has_recomputes(base: str, timeout: float) -> bool:
-    """Does the collection have the `recomputes` property YET?
+def _schema_has(base: str, prop: str, timeout: float) -> bool:
+    """Is `prop` a property of the collection YET?
 
-    Selecting a property Weaviate has never had written is an ERROR, not a null.
-    The property materialises the first time any registration declares
-    `recomputes: true`; until then its absence and a row's absence mean the same
-    thing — not a live view.
+    Weaviate creates a property when something first WRITES it, so selecting one
+    that has never been written is an ERROR rather than a null column. Every
+    optional field this reader wants must be probed, not assumed.
     """
     try:
         with urllib.request.urlopen(f"{base}/v1/schema/{_COLLECTION}", timeout=timeout) as r:
             names = {p.get("name") for p in (json.load(r).get("properties") or [])}
-        return "recomputes" in names
+        return prop in names
     except Exception as exc:  # noqa: BLE001
-        logger.warning("could not read %s schema (%s); treating recomputes as absent",
-                       _COLLECTION, type(exc).__name__)
+        logger.warning("could not read %s schema (%s); treating %r as absent",
+                       _COLLECTION, type(exc).__name__, prop)
         return False
 
 
@@ -154,8 +153,20 @@ def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optio
         return None
 
     fields = list(_BASE_FIELDS)
-    if _schema_has_recomputes(base, timeout):
+    if _schema_has(base, "recomputes", timeout):
         fields.append("recomputes")
+
+    # THE COMPLETENESS FILTER IS SELF-ACTIVATING. Until the registrar has marked
+    # its first row the property does not exist, and filtering on it would empty
+    # every menu -- so the filter turns on exactly when there is something to
+    # filter by. Rows registered BEFORE the marker shipped are complete but
+    # unmarked, so they drop out of menus until their next registration; that is
+    # a real transition, and it is LOGGED WITH A COUNT rather than silently
+    # shrinking the menu, because a menu that quietly loses entries presents as
+    # "that shape cannot render" at the far end of the pipeline.
+    _filter_on_complete = _schema_has(base, "registration_complete", timeout)
+    if _filter_on_complete:
+        fields.append("registration_complete")
 
     query = "{Get{%s(limit:%d){%s}}}" % (_COLLECTION, int(limit), " ".join(fields))
     try:
@@ -179,10 +190,17 @@ def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optio
 
     entries: Dict[str, Dict[str, Any]] = {}
     orphans = 0
+    incomplete = 0
     for row in rows:
         if (row.get("tool_kind") or "") != "Presentation":
             continue  # verb rows share this collection; they are not menu entries
         if _RENDERS_AS_LOCAL not in (row.get("verb_iri") or ""):
+            continue
+        if _filter_on_complete and not row.get("registration_complete"):
+            # DEBRIS, not a menu entry: the write landed and the registration
+            # never finished. This is the half-write the conjunctive invariant
+            # protects against everywhere else in the system.
+            incomplete += 1
             continue
         fid = (row.get("frontend_id") or "").strip()
         if not fid:
@@ -207,6 +225,13 @@ def fetch_registered_entries(*, timeout: float = 5.0, limit: int = 500) -> Optio
             "capabilities": [],
         })["capabilities"].append(cap)
 
+    if incomplete:
+        logger.warning(
+            "graph menu source skipped %d row(s) with no completion marker — either "
+            "debris from a failed registration, or rows registered before the marker "
+            "shipped, which re-register into visibility. They are NOT served.",
+            incomplete,
+        )
     if orphans:
         logger.warning(
             "graph menu source skipped %d payload-less presentation row(s) with no "
