@@ -803,7 +803,29 @@ primeSubstrate:
   # needs a --timeout at least as large (scripts/upgrade-sandbox.sh passes one).
   # Set false to restore the old fire-and-forget behaviour.
   waitForIngest: true
-  ingestTimeout: 1800
+  # DERIVED, not picked — 2026-08-22. Was 1800 (30 min), which was roughly two thirds of the
+  # work it waited on, so a prime timed out on a queue that had not failed.
+  #
+  #   ingests launched per prime      15   (prime_databases.py partition set)
+  #   dagster max_concurrent_runs      2   (dagster instance config)
+  #   => serialised batches            8
+  #   observed throughput   10 runs / 1800s  ~= 6 min per run-slot   (measured, this cluster)
+  #   => all 15                     ~45 min = 2700s
+  #   + margin for a slower day                3600s
+  #
+  # THE EVIDENCE IS COMPLETE, so this is a disposal rather than a guess:
+  #   - the arithmetic was written down BEFORE the outcome (packet f8dbedb);
+  #   - all five "[TIMEOUT]" runs later SUCCEEDED untouched — zero ingests ever failed;
+  #   - the fifth (mesh_system) was watched clearing, and the class count moved 29 -> 49.
+  # Re-running the chain into a known-short bound to re-prove it is short would manufacture a
+  # fourth data point nobody needs.
+  #
+  # ⚠️ THE OUTER BOUND MUST EXCEED THIS ONE. scripts/upgrade-sandbox.sh's HELM_TIMEOUT wraps
+  # the whole hook chain; if it is smaller, helm gives up first and the binding constraint
+  # silently moves back out. That is exactly how this defect survived: the outer bound was
+  # widened to 40m for this reason and the inner one was never revisited.
+  # tests/test_prime_timeout_bounds_agree.py asserts the ordering.
+  ingestTimeout: 3600
   # When true (AND wipe=true), escalates to a NUCLEAR wipe: additionally
   # deletes the answer-durability graph AND resets the Postgres projection
   # stores (answer_artifact_projection / human_task_projection truncated,

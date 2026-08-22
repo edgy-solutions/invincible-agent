@@ -54,5 +54,9 @@ for f in "${VALUES[@]}"; do echo "  -f ${f##*/}"; done
 # ingest finishes, so the upgrade outlives helm's 5m default by a wide margin.
 # The arm64 sandbox serializes those runs and a full chain has been observed
 # past 30 minutes. Anything passed in "$@" comes after and therefore wins.
-HELM_TIMEOUT="${HELM_TIMEOUT:-40m}"
+# MUST EXCEED primeSubstrate.ingestTimeout (3600s = 60m), which blocks inside this
+# window. 40m was smaller than the 45-min queue and made helm the binding constraint;
+# 75m leaves the inner bound room to be the thing that actually fails, which is the one
+# that can say WHY. tests/test_prime_timeout_bounds_agree.py asserts the ordering.
+HELM_TIMEOUT="${HELM_TIMEOUT:-75m}"
 exec helm upgrade "${RELEASE}" "${CHART}" -n "${NAMESPACE}" "${ARGS[@]}"      --timeout "${HELM_TIMEOUT}" "$@"
