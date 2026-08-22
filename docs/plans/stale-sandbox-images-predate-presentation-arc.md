@@ -1,9 +1,9 @@
 ---
 id:         stale-sandbox-images-predate-presentation-arc
-status:     open
+status:     closed
 owner:      unassigned
 blocked-on:
-closed-by:
+closed-by:  538caf9
 closed-by-note: NO COMMIT CLOSED THIS — a DEPLOYMENT did, and the seal is right to ask. The defect was pods running pre-arc images; the fix was `kubectl rollout restart` on cortex-ui/cortex-bff and then `helm upgrade` to chart 0.3.39 (rev 74). 93e19db only bumped the chart VERSION and touches neither this packet nor values-sandbox.yaml, so citing it would be borrowed attribution for work a cluster action did.
 code-site:  helm/invincible-agent/values-sandbox.yaml
 repo:       invincible-agent
