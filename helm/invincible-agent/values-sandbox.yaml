@@ -377,6 +377,12 @@ fuseki:
 # and not an answer.
 enginePlanning:
   enabled: true
+  image:
+    # REQUIRED, not cosmetic. values.yaml leaves this "" so production pins the
+    # chart appVersion deliberately; sandbox tracks master. Without this override
+    # the pod asks for planning-agent:2026.07.02 — a tag that never existed, since
+    # this image was first built today — and sits in ImagePullBackOff.
+    tag: "latest"
 
 primeSubstrate:
   enabled: true
