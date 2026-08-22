@@ -56,10 +56,20 @@ surfacing together are not one failure.
 
 ## Cause
 
-`ARRAY_AGG(DISTINCT …) GROUP BY …` over a wide publog table, executed through the
-smolagents/LiteLLM path, materialises its result set in the engine's process. 2Gi is not enough
-for a wide aggregation over a large table, so the pod is killed by the kernel rather than
-returning an honest "too large".
+~~`ARRAY_AGG(DISTINCT …) GROUP BY …` over a wide publog table … 2Gi is not enough for a wide
+aggregation over a large table.~~ **FALSIFIED 2026-08-22 by the fix.** That sentence implied the
+DATA was too big. It was not: after `d06da52` the same question returns a real answer, and the
+size gate **never fired** — `p_cage` was comfortably inside the ceiling all along.
+
+**The cause was purely the discarded laziness**, exactly as the mechanism section below (added
+later, after reading the code) states: the entire source table was materialised before the
+`GROUP BY` that would have shrunk it. Nothing about the dataset was oversized; the code simply
+refused to let Polars do what it was handed a LazyFrame to do.
+
+This distinction is worth more than a corrected sentence: **raising the memory limit would also
+have "worked"** — and would have permanently hidden the fact that the query never needed that
+memory. Disposal 2 was ranked third for a reason, and this is the evidence that the ranking was
+right rather than cautious.
 
 Two aggravating facts found alongside:
 
