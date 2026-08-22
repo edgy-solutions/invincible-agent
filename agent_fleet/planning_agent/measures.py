@@ -41,6 +41,7 @@ OUTPUT_URI: dict[str, str] = {
     "plan_tech_footprint":        MESH + "FootprintSet",
     "plan_schedule":              MESH + "IntervalSchedule",
     "plan_session_changes":       MESH + "ChangeLog",
+    "plan_diff":                  MESH + "EffectSet",
 }
 
 
@@ -573,4 +574,130 @@ def plan_session_changes(
         "scenario_name": scenario_name,
         "change_count": len(entries),
         "changes": entries,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. plan_diff  ->  mesh:EffectSet                     (INV-3)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ADR-0042 OQ2, resolved: ONE VERB OVER TWO STATE REFS. Expressible only because Seam 1 made
+# scenarios server-addressable and `apply_ops` never mutates its input — a mutating apply
+# could not be asked about two worlds at once.
+#
+# NO LLM TOUCHES A NUMBER HERE. Every magnitude is computed and formatted from computed
+# values. The plan's highest-severity correctness risk is "diff magnitudes wrong in the room";
+# this function and its tests are the whole of the mitigation.
+
+def _fmt_money(n: float) -> str:
+    a = abs(n)
+    if a >= 1_000_000:
+        return f"${a / 1_000_000:.2f}M"
+    if a >= 1_000:
+        return f"${a / 1_000:.0f}K"
+    return f"${a:.0f}"
+
+
+# Below these, a change is NOISE and is suppressed. A card listing a $50 move beside a $1M
+# move has made both unreadable.
+#
+# NOTE THE ABSENCES, which are deliberate: `plan_dependency_violations` has no floor because
+# violations are COUNTED, not measured — "you broke a dependency" has no small version, and a
+# floor that hid it would hide the thing most worth seeing. `plan_site_load` uses a threshold
+# CROSSING rather than a magnitude for the same reason.
+_MATERIALITY = {
+    "plan_cost_curve": 10_000.0,   # $10K — below a rounding error at portfolio scale
+    "plan_funding_gap": 10_000.0,
+}
+
+
+def plan_diff(state: PlanState, *, baseline_state: PlanState) -> dict[str, Any]:
+    """Effects of `state` versus `baseline_state`, in leader language, computed not generated.
+
+    DIRECTION IS A JUDGEMENT AND THE MEASURE OWNS IT. Cost down is improved; load up is
+    degraded; a violation appearing is degraded regardless of size. A diff that reported raw
+    deltas without direction would hand the interpretation back to the room, which is the work
+    the tool exists to remove.
+    """
+    effects: list[dict[str, Any]] = []
+
+    # ── cost: per-period totals ──
+    base_cost = {r["period"]: r["total"] for r in plan_cost_curve(baseline_state)}
+    new_cost = {r["period"]: r["total"] for r in plan_cost_curve(state)}
+    moved = {p: new_cost.get(p, 0.0) - base_cost.get(p, 0.0)
+             for p in set(base_cost) | set(new_cost)}
+    material = {p: d for p, d in moved.items() if abs(d) >= _MATERIALITY["plan_cost_curve"]}
+    if material:
+        total = sum(material.values())
+        periods = sorted(material)
+        effects.append({
+            "metric": "plan_cost_curve",
+            "direction": "improved" if total < 0 else "degraded" if total > 0 else "neutral",
+            "delta": total,
+            "magnitude": f"{'-' if total < 0 else '+'}{_fmt_money(total)} in {', '.join(periods)}",
+            "affected": periods,
+        })
+
+    # ── funding gap ──
+    def _gap_total(s: PlanState) -> float:
+        return sum(max(0.0, r["gap"]) for r in plan_funding_gap(s, group_by="org"))
+    gap_delta = _gap_total(state) - _gap_total(baseline_state)
+    if abs(gap_delta) >= _MATERIALITY["plan_funding_gap"]:
+        effects.append({
+            "metric": "plan_funding_gap",
+            "direction": "improved" if gap_delta < 0 else "degraded",
+            "delta": gap_delta,
+            "magnitude": f"{'-' if gap_delta < 0 else '+'}{_fmt_money(gap_delta)} unfunded",
+            "affected": ["portfolio"],
+        })
+
+    # ── site load: THRESHOLD CROSSINGS, not magnitudes ──
+    # A load rising within tolerance is not news; a cell crossing its line is. Reporting the
+    # crossing rather than the delta is what keeps this effect actionable.
+    def _breached(s: PlanState) -> set[tuple[str, str]]:
+        return {(r["site_id"], r["period"]) for r in plan_site_load(s) if r["over_threshold"]}
+    was, now = _breached(baseline_state), _breached(state)
+    newly, cleared = sorted(now - was), sorted(was - now)
+    if newly:
+        effects.append({
+            "metric": "plan_site_load",
+            "direction": "degraded",
+            "delta": len(newly),
+            "magnitude": f"{len(newly)} cell(s) newly over threshold",
+            "affected": [f"{s}/{p}" for s, p in newly],
+        })
+    if cleared:
+        effects.append({
+            "metric": "plan_site_load",
+            "direction": "improved",
+            "delta": -len(cleared),
+            "magnitude": f"{len(cleared)} cell(s) back under threshold",
+            "affected": [f"{s}/{p}" for s, p in cleared],
+        })
+
+    # ── dependency violations: COUNTED, never floored ──
+    base_v = {v["dependency_id"] for v in plan_dependency_violations(baseline_state)}
+    new_v = {v["dependency_id"] for v in plan_dependency_violations(state)}
+    broke, fixed = sorted(new_v - base_v), sorted(base_v - new_v)
+    if broke:
+        effects.append({
+            "metric": "plan_dependency_violations",
+            "direction": "degraded",
+            "delta": len(broke),
+            "magnitude": f"{len(broke)} dependency violated ({', '.join(broke)})",
+            "affected": broke,
+        })
+    if fixed:
+        effects.append({
+            "metric": "plan_dependency_violations",
+            "direction": "improved",
+            "delta": -len(fixed),
+            "magnitude": f"{len(fixed)} dependency resolved ({', '.join(fixed)})",
+            "affected": fixed,
+        })
+
+    return {
+        "effects": effects,
+        "improved": sum(1 for e in effects if e["direction"] == "improved"),
+        "degraded": sum(1 for e in effects if e["direction"] == "degraded"),
     }

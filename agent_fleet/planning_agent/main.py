@@ -68,6 +68,9 @@ VERBS: list[dict[str, Any]] = [
     {"fn": "plan_schedule", "verb": "mesh:planSchedule", "input_uri": IDP + "Portfolio",
      "desc": "Initiative to phase to project rows with planned and actual intervals. The timeline's data.",
      "synonyms": ["schedule", "timeline", "gantt", "what is happening when", "projects in window"]},
+    {"fn": "plan_diff", "verb": "mesh:planDiff", "input_uri": IDP + "Portfolio",
+     "desc": "The consequences of one plan state versus another — what improved, what degraded, each with a computed magnitude and the named things affected. Never a before-and-after of two states: a comparison, so the price of a change is visible beside its benefit.",
+     "synonyms": ["diff", "what changed", "consequences", "trade-off", "compare scenarios", "what does this cost"]},
     {"fn": "plan_session_changes", "verb": "mesh:planSessionChanges", "input_uri": IDP + "Portfolio",
      "desc": "The ops accumulated in a scenario rendered as a change log. The meeting's memory.",
      "synonyms": ["what changed", "session changes", "what did we decide", "summarize session"]},
@@ -239,6 +242,16 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     params = dict(req.params)
+    if fn == "plan_diff":
+        # THE TWO-STATE VERB (ADR-0042 OQ2). `vs` names what to compare AGAINST and defaults
+        # to baseline, which is the question a room actually asks — "what does my scenario
+        # cost me relative to the plan of record". Resolved here rather than passed as rows so
+        # the comparison is always against a real, addressable state.
+        vs = params.pop("vs", "baseline")
+        try:
+            params["baseline_state"] = STORE.resolve(vs)
+        except UnknownTarget as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     if fn == "plan_session_changes":
         # The one measure that reads ops rather than state — it is the change log.
         sc = None if req.state_ref == "baseline" else STORE.scenario(req.state_ref)

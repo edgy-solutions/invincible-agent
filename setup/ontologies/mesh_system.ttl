@@ -292,7 +292,12 @@ mesh:ChangeLog a owl:Class ;
   rdfs:label "Change Log" ;
   rdfs:comment "The ordered operations accumulated in a scenario. The record a decision is reconstructed from long after the session that produced it." .
 
-# --- the two matching ARCHETYPES (object end) --------------------------------
+mesh:EffectSet a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Effect Set" ;
+  rdfs:comment "The consequences of one state versus another, each carrying a direction (improved/degraded/neutral), a computed magnitude and the named things affected. Direction is a JUDGEMENT the producing measure owns — a set of raw deltas would hand interpretation back to the reader, which is the work this shape exists to remove. Constraint breaches are counted and never suppressed by a materiality floor; a floor that hid them would hide the thing most worth seeing." .
+
+# --- the matching ARCHETYPES (object end) --------------------------------
 # Live views (ADR-0042): their content is recomputed against mutable state rather than being
 # born complete, and their contracts declare `recomputes: true` so the selector can identify
 # them. Structural names — PERIOD_SERIES not COST_CURVE — because the archetype string is
@@ -302,6 +307,11 @@ mesh:PeriodSeries a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Period Series" ;
   rdfs:comment "A time-phased series drawn against an optional threshold line. Refuses a payload with no periods, an unlabelled row, or no numeric amount anywhere. A LIVE VIEW: content is replaced wholesale on re-evaluation and its freshness stamp is per evaluation, never inherited from mint time." .
+
+mesh:DeltaSet a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Delta Set" ;
+  rdfs:comment "Consequences grouped by direction — what improved, what degraded, each with a magnitude and the things it touched. Renders a comparison, never a state: the reader sees the PRICE of a change alongside its benefit, which a before-and-after of two states does not show. A LIVE VIEW." .
 
 mesh:MatrixGrid a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;

@@ -57,6 +57,8 @@ MINIMUM_PARAMS: dict[str, dict] = {
     "plan_capability_path":   {"capability_id": "C4"},
     "plan_process_evolution": {"process_id": "BP2"},
     "plan_tech_footprint":    {"tech_id": "T1"},
+    # plan_diff needs no params: `vs` defaults to baseline, and a scenario
+    # diffed against baseline with no ops is legitimately empty.
 }
 
 
@@ -64,9 +66,9 @@ def test_every_declared_verb_runs_and_declares_a_distinct_output_uri(client):
     """The catalogue and the module must not drift. A verb registered to the mesh that 404s
     here is a routable promise with nothing behind it."""
     listed = client.get("/verbs").json()["verbs"]
-    assert len(listed) == 10
+    assert len(listed) == 11
     uris = {v["output_uri"] for v in listed}
-    assert len(uris) == 10, "two verbs share an output_uri — the type is meant to be fixed AND distinct"
+    assert len(uris) == 11, "two verbs share an output_uri — the type is meant to be fixed AND distinct"
     for v in listed:
         body = {"params": MINIMUM_PARAMS.get(v["fn"], {})}
         r = client.post(f"/measure/{v['fn']}", json=body)

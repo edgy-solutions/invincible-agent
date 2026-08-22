@@ -145,12 +145,16 @@ def build_seed() -> PlanState:  # noqa: C901 — a dataset, not a branchy functi
         SiteImpact("P14", "S4", Interval("2026-11-01", "2027-02-28"), 0.9),
     ]
 
+    # INVENTED PRODUCTS, not real ones. The first draft named actual vendor products; in a
+    # public repo's demo data that reads as somebody's actual stack, and the seed is supposed
+    # to be a fictional manufacturer. Generic CATEGORY names carry the same modelling weight
+    # (a technology enables capabilities and participates in projects) and imply nothing.
     s.technologies = [
-        Technology("T1", "SAP S/4HANA"),
-        Technology("T2", "MQTT Broker Fleet"),
-        Technology("T3", "Kafka"),
-        Technology("T4", "Snowflake"),
-        Technology("T5", "MES Suite"),
+        Technology("T1", "Core ERP Platform"),
+        Technology("T2", "Device Telemetry Bus"),
+        Technology("T3", "Event Streaming Backbone"),
+        Technology("T4", "Analytics Warehouse"),
+        Technology("T5", "Manufacturing Execution Suite"),
     ]
     s.tech_capabilities = [
         TechEnablesCapability("T1", "C1"), TechEnablesCapability("T1", "C6"),
