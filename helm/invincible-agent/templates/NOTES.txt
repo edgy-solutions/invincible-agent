@@ -58,6 +58,9 @@ Your release "{{ .Release.Name }}" has been deployed.
 {{- if .Values.dataAnalyst.enabled }}
     Engine DA (Analyst):   {{ .Release.Name }}-data-analyst:{{ .Values.dataAnalyst.port }}
 {{- end }}
+{{- if .Values.enginePlanning.enabled }}
+    Engine P (Planning):   {{ .Release.Name }}-engine-p:{{ .Values.enginePlanning.port }}
+{{- end }}
 {{- if .Values.centralGateway.enabled }}
     Central Gateway:       {{ .Release.Name }}-central-gateway:{{ .Values.centralGateway.port }}
 {{- end }}
