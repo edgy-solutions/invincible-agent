@@ -60,6 +60,12 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+# src/iagent/database.py defaults DATABASE_URL to sqlite+aiosqlite:///./cortex.db, so ANY
+# import of the gateway outside a configured environment drops this file in the repo root.
+# Importing the gateway is what a route test does, so the suite creates it — untracked,
+# unignored, and one `git add -A` away from being committed by someone who did not make it.
+cortex.db
+cortex.db-journal
 
 # Flask stuff:
 instance/
