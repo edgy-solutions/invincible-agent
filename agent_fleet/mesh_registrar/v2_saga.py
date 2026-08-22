@@ -163,6 +163,15 @@ def run_registration_saga(
     requires_human_approval: bool,
     synonyms: list[str],
     anti_synonyms: list[str],
+    # SECOND SPECIES PAYLOAD, defaulted so every existing caller is unchanged.
+    # A presentation row needs more than the triple: whose menu it is on, what
+    # archetype to name, which fields that archetype needs, and whether it
+    # recomputes. Without them the row carries the edge and not the MENU.
+    tool_kind: str = "Engine",
+    frontend_id: str = "",
+    archetype: str = "",
+    expected_fields: list[str] | None = None,
+    recomputes: bool | None = None,
     budget_s: float | None = None,
 ) -> SagaOutcome:
     """Execute the v0.2 atomic registration saga end-to-end.
@@ -236,6 +245,11 @@ def run_registration_saga(
                 synonyms=synonyms,
                 anti_synonyms=anti_synonyms,
                 tool_urn=tool_urn,
+                tool_kind=tool_kind,
+                frontend_id=frontend_id,
+                archetype=archetype,
+                expected_fields=expected_fields,
+                recomputes=recomputes,
             ),
             deadline=deadline,
         )

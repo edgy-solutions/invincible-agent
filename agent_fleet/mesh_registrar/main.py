@@ -196,6 +196,16 @@ class RegistrationManifest(BaseModel):
         description="Presentation only: fields the archetype expects in "
                     "structured_data.",
     )
+    recomputes: Optional[bool] = Field(
+        default=None,
+        description="Presentation only: does this view RECOMPUTE against moving "
+                    "state? (ADR-0042 Ruling 9.) Tri-state ON PURPOSE — None "
+                    "means the component never declared it and is NOT read as "
+                    "live. False-by-default and live-by-accident are both lies "
+                    "about a component nobody asked. Matches _is_live_view() in "
+                    "capability_registry.py (ab0bcfd), which must keep the same "
+                    "default or the ruling means different things at each end.",
+    )
     owner_persona: str = Field(
         description="Persona for routing decisions — e.g. 'AUDITOR', 'TECH_WRITER'."
     )
@@ -862,6 +872,16 @@ def _run_saga(
         requires_human_approval=bool(manifest.requires_human_approval),
         synonyms=list(manifest.verb_synonyms or []),
         anti_synonyms=list(manifest.verb_anti_synonyms or []),
+        # The species and its payload reach the ROW, not just the DataHub aspect.
+        # They were already assembled for the audit record; a reader of the graph
+        # could not see them, so `menu_for()` could not scope, `_satisfies()`
+        # could not evaluate fit, and ADR-0042 Ruling 9 would have been silently
+        # vacuous -- always-False `recomputes` reads as "no live views exist".
+        tool_kind=manifest.tool_kind,
+        frontend_id=manifest.frontend_id or "",
+        archetype=manifest.archetype or "",
+        expected_fields=list(manifest.expected_fields or []),
+        recomputes=manifest.recomputes,
     )
 
 

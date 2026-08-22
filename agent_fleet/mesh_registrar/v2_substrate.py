@@ -55,12 +55,40 @@ def _build_search_text(
     return " ".join(filter(None, parts))
 
 
-def _deterministic_predicate_uuid(verb_iri: str, input_uri: str) -> UUID:
+def _deterministic_predicate_uuid(
+    verb_iri: str,
+    input_uri: str,
+    frontend_id: str = "",
+    archetype: str = "",
+) -> UUID:
     """Same UUID5 derivation as ``aitool_linker.sync_predicate_to_weaviate``
     — keeps the deterministic key compatible across the gateway and the
-    historic sensor path so re-syncs upsert the same row."""
+    historic sensor path so re-syncs upsert the same row.
+
+    TWO SPECIES, TWO KEY SHAPES, and the verb shape is FROZEN.
+
+    A verb is uniquely identified by ``(verb_iri, input_uri)``: one provider
+    answers one verb for one input type. Passing no frontend/archetype produces
+    a byte-identical name string to the original derivation, so every existing
+    verb row upserts to the SAME uuid it already has. Changing that would not
+    "migrate" them — it would mint new uuids and leave the originals orphaned as
+    duplicates, which is the failure a schema change is most likely to cause
+    silently.
+
+    A PRESENTATION is not: a menu entry is ``(subject, archetype)`` and it
+    belongs to a specific frontend. Cortex rendering OwnershipFact as a
+    KNOWLEDGE_DOCUMENT and OpenDDIL rendering the same subject as a CHART_WIDGET
+    are two real, simultaneous menu entries — under the verb-shaped key they
+    collide on ``(mesh:rendersAs, OwnershipFact)`` and the second silently
+    overwrites the first. That collision was DEFERRED when the manifest learned
+    the species, on the grounds that nothing yet read per-frontend menus. The
+    read path is what makes it bite, so it is closed here rather than discovered
+    as a mystery overwrite by the first two-frontend deployment.
+    """
     import hashlib
     name = f"{verb_iri}|{input_uri}"
+    if frontend_id or archetype:
+        name = f"{name}|{frontend_id}|{archetype}"
     # uuid5 over NAMESPACE_DNS with a known name string. We compute it
     # without importing weaviate's helper to keep this module
     # dependency-light at import time.
@@ -240,6 +268,25 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
             wvc.config.Property(name="anti_synonyms", data_type=wvc.config.DataType.TEXT_ARRAY),
             wvc.config.Property(name="description", data_type=wvc.config.DataType.TEXT),
             wvc.config.Property(name="tool_urn", data_type=wvc.config.DataType.TEXT),
+            # ── SECOND SPECIES PAYLOAD (presentations) ────────────────────────
+            # A verb row is fully described by (input)-[verb]->(output). A
+            # PRESENTATION row is not: the selector also needs to know WHOSE menu
+            # it is on, what archetype to name, which fields the archetype needs,
+            # and whether it recomputes. Without these the row carries the triple
+            # and not the MENU -- `menu_for()` cannot scope, `_satisfies()` cannot
+            # evaluate fit, and `_is_live_view()` is always False, which would
+            # make ADR-0042 Ruling 9 silently vacuous while reading as enforced.
+            wvc.config.Property(name="tool_kind", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="frontend_id", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="archetype", data_type=wvc.config.DataType.TEXT),
+            wvc.config.Property(name="expected_fields", data_type=wvc.config.DataType.TEXT_ARRAY),
+            # BOOL, and ABSENT MEANS NOTHING -- not False-meaning-live and not
+            # True-meaning-live by accident. This mirrors `_is_live_view()` in
+            # agent_fleet/presentation_agent/capability_registry.py (ab0bcfd),
+            # where a contract that never declared `recomputes` says NOTHING. The
+            # two ends of that contract must keep the same honest default, so this
+            # cites that author rather than re-deciding it here.
+            wvc.config.Property(name="recomputes", data_type=wvc.config.DataType.BOOL),
         ],
     )
     logger.info(
@@ -252,6 +299,11 @@ def _ensure_predicate_collection(weaviate_client: Any) -> None:
 def upsert_weaviate_predicate_row(
     *,
     weaviate_client: Any,
+    tool_kind: str = "Engine",
+    frontend_id: str = "",
+    archetype: str = "",
+    expected_fields: "list[str] | None" = None,
+    recomputes: "bool | None" = None,
     verb_iri: str,
     input_uri: str,
     output_uri: str,
@@ -295,9 +347,30 @@ def upsert_weaviate_predicate_row(
         "anti_synonyms": list(anti_synonyms),
         "description": description,
         "tool_urn": tool_urn,
+        # SECOND SPECIES PAYLOAD. Written for BOTH kinds so a reader never has to
+        # infer the species from which fields happen to be present -- the same
+        # discriminator-rides-in-the-data rule the manifest follows.
+        "tool_kind": tool_kind or "Engine",
+        "frontend_id": frontend_id or "",
+        "archetype": archetype or "",
+        "expected_fields": list(expected_fields or []),
     }
+    # ABSENT MEANS NOTHING. `recomputes` is OMITTED rather than written False
+    # when the caller did not declare it, because False-by-default and
+    # live-by-accident are both lies about a component nobody asked. This
+    # mirrors `_is_live_view()` in capability_registry.py (ab0bcfd): "a contract
+    # that never declared the flag says NOTHING, and is not read as live." The
+    # two ends of ADR-0042 Ruling 9 must keep the same default or the ruling
+    # means different things at the writer and the reader.
+    if recomputes is not None:
+        properties["recomputes"] = bool(recomputes)
 
-    deterministic_uuid = _deterministic_predicate_uuid(verb_iri, input_uri)
+    # Presentations key per FRONTEND and per ARCHETYPE; verbs keep the frozen
+    # two-part key (empty extras reproduce the original name string byte for
+    # byte, so all existing verb rows upsert in place rather than duplicating).
+    deterministic_uuid = _deterministic_predicate_uuid(
+        verb_iri, input_uri, frontend_id or "", archetype or ""
+    )
     # Create the collection WITH the length index if absent, BEFORE the
     # get()+insert below — otherwise Weaviate auto-schema creates it indexless
     # and Engine O's domain-scope filter can never run (see helper docstring).
