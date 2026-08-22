@@ -130,10 +130,6 @@ _Coverage: **63 of 65 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent
   → [docs/plans/registrar-models-presentation-triples.md](plans/registrar-models-presentation-triples.md)
 
-- **registration-boot-order-race** — CLOSED 2026-08-22 on SANDBOX, both arms witnessed. The hook REFUSES on a partial class graph (so no engine restarts against classes that do not exist) and OPENS on a full one (sentinels present, six engines restarted, job succeeded) — the first unbroken prime -> ontologySeed -> reregister in the arc. The 422-at-boot defect this packet named is therefore prevented on sandbox by construction rather than by hand restarts. ⚠️ THE WORK-CLUSTER QUESTION IS NOT ANSWERED AND IS NOT BURIED: repair 1 (which of three ways the hook failed to fire at work on 2026-08-14) is re-homed to `reregister-hook-failure-mode-at-work-unknown`, blocked behind fence clause 3. Originally: An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries.
-  status: open · owner: agent
-  → [docs/plans/registration-boot-order-race.md](plans/registration-boot-order-race.md)
-
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
   → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
@@ -225,6 +221,10 @@ _Coverage: **63 of 65 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **prime-ingest-timeout-shorter-than-its-own-queue** — CLOSED 2026-08-22 by 6a8e918 (ingestTimeout 1800->3600, HELM_TIMEOUT 40m->75m, both bounds moved because raising the inner alone makes helm the binding constraint) plus tests/test_prime_timeout_bounds_agree.py. WITNESSED: the next prime ran 15 ok / 0 failed / 0 unfinished in ~2760s — inside the new bound, and past where the old one died at ingest ~10. Originally: MEASURED 2026-08-22 by a real helm-driven prime. `primeSubstrate.ingestTimeout` is 1800s; the prime launches 15 ontology ingests and dagster's `max_concurrent_runs` is 2, so they SERIALISE into ~8 batches. Ten finished inside the window, five did not — `mesh_system` (which carries every archetype class) among them. The prime then REFUSED to report success, which is the 9e31ae8 fix behaving exactly as designed: `reregister` never ran and no engine restarted against a partial class graph. Substrate left undamaged at its before-numbers (29 classes / 44 rows). The timeout is not tuned to the queue it waits on, and the two numbers have never been compared.
   status: closed · owner: unassigned · closed-by: 6a8e918
   → [docs/plans/prime-ingest-timeout-shorter-than-its-own-queue.md](plans/prime-ingest-timeout-shorter-than-its-own-queue.md)
+
+- **registration-boot-order-race** — CLOSED 2026-08-22 on SANDBOX, both arms witnessed. The hook REFUSES on a partial class graph (so no engine restarts against classes that do not exist) and OPENS on a full one (sentinels present, six engines restarted, job succeeded) — the first unbroken prime -> ontologySeed -> reregister in the arc. The 422-at-boot defect this packet named is therefore prevented on sandbox by construction rather than by hand restarts. ⚠️ THE WORK-CLUSTER QUESTION IS NOT ANSWERED AND IS NOT BURIED: repair 1 (which of three ways the hook failed to fire at work on 2026-08-14) is re-homed to `reregister-hook-failure-mode-at-work-unknown`, blocked behind fence clause 3. Originally: An engine that boots before the ontology ingest lands gets a 422 Contract D rejection and NEVER retries.
+  status: closed · owner: agent · closed-by: 20a9fdc
+  → [docs/plans/registration-boot-order-race.md](plans/registration-boot-order-race.md)
 
 - **registration-wiring** — Six engines mint on /v1/register under decode-witnessed identities. Witnessed at a clean log boundary: 0 new unverified, 6 verified (svc:engine-o 1, svc:engine-w 5 — multiplicities matching each engine's verb count).
   status: closed · owner: agent · closed-by: 9d93146

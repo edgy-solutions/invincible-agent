@@ -1,9 +1,9 @@
 ---
 id:         registration-boot-order-race
-status:     open
+status:     closed
 owner:      agent
 blocked-on:
-closed-by:
+closed-by:  20a9fdc
 closed-by-note: NO COMMIT CLOSED THIS — TWO CLUSTER WITNESSES did, days apart, and the seal is right to ask. The hook's behaviour was established by running it: a helm-driven prime that REFUSED on a partial graph (2026-08-22, "Ingest: 10 ok, 0 failed, 5 unfinished" -> reregister never ran), and a reregister that OPENED on a full one ("[ready] all 2 sentinels present", six engines, SUCCEEDED). The repairs themselves landed earlier under fbf7307 / 6f7f217 / 9e31ae8; what was missing was evidence they work, and evidence is not a commit.
 diverges-from: ADR-0017-presentation-as-predicate
 code-site:  agent_fleet/mesh_registrar/main.py:238
