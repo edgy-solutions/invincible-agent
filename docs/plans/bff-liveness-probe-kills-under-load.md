@@ -53,7 +53,45 @@ This is also why a registration's rejection log went missing for twenty minutes 
 investigation today: the evidence was in the previous container, and nothing in the current
 one hinted that a previous container existed.
 
-## SCOPE CORRECTION 2026-08-22 — it is not the BFF, it is the chart
+## SECOND SCOPE CORRECTION 2026-08-22 — 6, not 16, and the engines already solved it
+
+**My first correction was wrong in the other direction.** I surveyed `timeoutSeconds <= 1` and
+counted 16 deployments, including every engine. That measured a PROXY, not the property.
+
+`templates/engines.yaml` uses a **TCP** liveness probe, with the reasoning already written down
+in the template:
+
+> *"Liveness uses a TCP probe to avoid re-killing the pod for a slow /health response during a
+> transient loop hiccup; only a true port loss restarts the container."*
+
+A 1-second TCP connect is fine — it never asks the event loop to answer anything. A 1-second
+**HTTP** health check is the defect. Re-surveyed on the real property — *liveness that is
+`httpGet` with a timeout ≤ 2s* — the population is **6**:
+
+```
+iagent-cortex-bff          ← the one actually killed (exit 137)
+iagent-mesh-registrar
+iagent-projector
+iagent-electric
+iagent-dagster-webserver
+datahub-datahub-frontend   ← third-party chart, not ours to change
+```
+
+**Five are ours.** The engines are already correct and have been; someone reasoned this through
+for them and the reasoning never propagated to the services outside `engines.yaml`.
+
+So the fix is not a new default to invent — it is **the engines' existing pattern, applied to
+the five that never got it.** That is a smaller, better-evidenced change than the chart-wide
+sweep I proposed an hour ago, and it copies a decision this repo already made rather than
+making a second one.
+
+**The lesson is mine and it is the session's recurring one:** I measured `timeoutSeconds` and
+called it "the probe defect," when the defect is *what the probe asks of a busy process*. A
+count over the wrong predicate produced a population 2.7× too large — and would have had me
+"fixing" eleven deployments that were already right, including by replacing a deliberate design
+with my own.
+
+## SUPERSEDED — first scope correction, kept for the record
 
 Surveyed after a second service showed the identical symptom. **16 of 27 deployments carry a
 `timeoutSeconds: 1` liveness probe**, including EVERY engine:

@@ -136,6 +136,22 @@ spec:
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30
+            # PROBE BUDGET, made explicit 2026-08-22. Was UNSET, so it inherited
+            # Kubernetes' defaults: timeoutSeconds 1, failureThreshold 3. Nobody chose
+            # one second — nobody chose anything, and the default is the one value that
+            # asks a single-threaded event loop to answer inside a tick.
+            #
+            # cortex-bff was SIGKILLed by exactly this (exit 137, Reason: Error, kubelet
+            # "Liveness probe failed x4 over 105m: context deadline exceeded") while
+            # proxying Electric shapes. It was killed FOR BEING BUSY, and it died without
+            # writing a reason — the last log lines are ordinary 200s.
+            #
+            # templates/engines.yaml solved this already, and says why: liveness there is a
+            # TCP probe so "only a true port loss restarts the container". These services
+            # keep an HTTP liveness check (their /health is meaningful), so they get the
+            # other half of the same idea: a budget that survives a busy loop.
+            timeoutSeconds: 5
+            failureThreshold: 5
 ---
 apiVersion: v1
 kind: Service

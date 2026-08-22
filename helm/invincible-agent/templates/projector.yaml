@@ -104,6 +104,13 @@ spec:
               port: http
             initialDelaySeconds: 15
             periodSeconds: 30
+            # PROBE BUDGET, made explicit 2026-08-22 — the same unset-default this chart
+            # carried on four other services. Decision 4 above chose WHAT this probe asks
+            # (a cheap shape-check) and never stated HOW LONG it may take, so it inherited
+            # Kubernetes' 1s / 3-failure default. cortex-bff was SIGKILLed by exactly that.
+            # The projector's apply loop can be mid-batch when the kubelet knocks.
+            timeoutSeconds: 5
+            failureThreshold: 5
 ---
 apiVersion: v1
 kind: Service
