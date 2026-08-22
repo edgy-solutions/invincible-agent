@@ -224,3 +224,64 @@ def test_a_verb_row_carries_the_species_too():
     _write(v, c, tool_kind="Engine", frontend_id="", archetype="", expected_fields=[])
     assert c.props["tool_kind"] == "Engine"
     assert c.props["frontend_id"] == ""
+
+
+# ── WRITE, PROBE AND COMPENSATE MUST ADDRESS THE SAME ROW ──────────────────
+#
+# WHAT WENT WRONG (2026-08-21, in this very commit's first deploy). The key
+# gained frontend/archetype parts for presentations and the WRITE call site was
+# updated. The saga's read-back probe and its compensation were not. So the
+# upsert landed at one uuid, the probe looked for another, concluded "the upsert
+# claimed success but the read-back disagrees", COMPENSATED A PERFECTLY GOOD
+# WRITE, and returned 503 — for fourteen registrations, each burning its full
+# retry ladder.
+#
+# The same species as everything else in this arc, this time self-inflicted an
+# hour after writing the seal that names it: a change correct at its own site
+# and blind to its neighbours. A key derivation has THREE call sites and they
+# are only correct together.
+
+def _key_call_sites(src: str):
+    import re
+    return re.findall(r"_deterministic_predicate_uuid\(\s*([^)]*)\)", src, re.S)
+
+
+def test_every_uuid_call_site_passes_the_FULL_identity():
+    """A key with three call sites is only correct when all three agree.
+
+    Two of them addressed a different row than the writer for one deploy; the
+    symptom was a saga compensating its own successful write.
+    """
+    src = (_REPO / "agent_fleet" / "mesh_registrar" / "v2_substrate.py").read_text(
+        encoding="utf-8"
+    )
+    # Skip the definition itself; every remaining call must carry all four parts.
+    calls = [c for c in _key_call_sites(src) if "verb_iri: str" not in c]
+    assert calls, "no call sites found — this pin is measuring nothing"
+    for c in calls:
+        assert "frontend_id" in c and "archetype" in c, (
+            f"a _deterministic_predicate_uuid call omits the identity parts and "
+            f"will address a different row than the writer: {c.strip()[:90]!r}"
+        )
+
+
+def test_probe_and_compensate_accept_the_identity():
+    """The signatures must be able to receive it, or the saga cannot pass it."""
+    src = (_REPO / "agent_fleet" / "mesh_registrar" / "v2_substrate.py").read_text(
+        encoding="utf-8"
+    )
+    for fn in ("def probe_both_stores(", "def compensate_weaviate_predicate_row("):
+        i = src.index(fn)
+        block = src[i:i + 500]
+        assert "frontend_id" in block and "archetype" in block, f"{fn} cannot receive the identity"
+
+
+def test_the_saga_PASSES_the_identity_to_both():
+    """Signatures that accept it are not enough — the saga must supply it."""
+    src = (_REPO / "agent_fleet" / "mesh_registrar" / "v2_saga.py").read_text(
+        encoding="utf-8"
+    )
+    assert src.count("frontend_id=frontend_id") >= 3, (
+        "the saga does not thread the identity to the writer, the probe and the "
+        "compensator — one of them will address the wrong row"
+    )

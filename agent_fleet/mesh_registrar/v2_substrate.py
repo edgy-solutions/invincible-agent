@@ -415,14 +415,23 @@ def upsert_weaviate_predicate_row(
 
 
 def compensate_weaviate_predicate_row(
-    *, weaviate_client: Any, verb_iri: str, input_uri: str
+    *, weaviate_client: Any, verb_iri: str, input_uri: str,
+    frontend_id: str = "", archetype: str = "",
 ) -> bool:
-    """DELETE the Predicate row for this (verb_iri, input_uri) identity.
+    """DELETE the Predicate row for this identity.
 
     Returns True if the row was deleted, False if it didn't exist (the
     saga is replaying a compensation that already ran). Idempotent.
+
+    THE IDENTITY MUST MATCH THE WRITE'S. When the key gained its
+    frontend/archetype parts for presentations, this call site kept the
+    two-part form and silently addressed a DIFFERENT row — so a
+    compensation would delete nothing while reporting success, leaving the
+    half-written row it was supposed to remove.
     """
-    deterministic_uuid = _deterministic_predicate_uuid(verb_iri, input_uri)
+    deterministic_uuid = _deterministic_predicate_uuid(
+        verb_iri, input_uri, frontend_id or "", archetype or ""
+    )
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
     if not collection.data.exists(uuid=deterministic_uuid):
         return False
@@ -590,6 +599,8 @@ def probe_both_stores(
     input_uri: str,
     output_uri: str,
     tool_urn: str,
+    frontend_id: str = "",
+    archetype: str = "",
 ) -> dict:
     """Read both stores back and assert the registration is observable.
 
@@ -615,8 +626,16 @@ def probe_both_stores(
             f"will compensate."
         )
 
-    # Weaviate side
-    deterministic_uuid = _deterministic_predicate_uuid(verb_iri, input_uri)
+    # Weaviate side.
+    # SAME IDENTITY AS THE WRITE. This read-back is the saga's proof that the
+    # upsert landed; addressing a different uuid than the writer used makes it
+    # report "the upsert claimed success but the read-back disagrees" for a row
+    # that is sitting there perfectly — and the saga then COMPENSATES a good
+    # write and returns 503. Observed 2026-08-21 the moment presentation rows
+    # gained a per-frontend key and this call site did not.
+    deterministic_uuid = _deterministic_predicate_uuid(
+        verb_iri, input_uri, frontend_id or "", archetype or ""
+    )
     collection = weaviate_client.collections.get(_PREDICATE_COLLECTION)
     if not collection.data.exists(uuid=deterministic_uuid):
         raise RuntimeError(

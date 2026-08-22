@@ -325,6 +325,8 @@ def run_registration_saga(
                     input_uri=input_uri,
                     output_uri=output_uri,
                     tool_urn=tool_urn,
+                    frontend_id=frontend_id,
+                    archetype=archetype,
                 ),
             ),
             deadline=deadline,
@@ -338,6 +340,8 @@ def run_registration_saga(
             weaviate_client=weaviate_client,
             verb_iri=verb_iri,
             input_uri=input_uri,
+            frontend_id=frontend_id,
+            archetype=archetype,
         )
         _compensate_neo4j_best_effort(
             driver=driver,
@@ -416,13 +420,16 @@ def _compensate_neo4j_best_effort(
 
 
 def _compensate_weaviate_best_effort(
-    *, weaviate_client: Any, verb_iri: str, input_uri: str
+    *, weaviate_client: Any, verb_iri: str, input_uri: str,
+    frontend_id: str = "", archetype: str = "",
 ) -> None:
     try:
         deleted = substrate.compensate_weaviate_predicate_row(
             weaviate_client=weaviate_client,
             verb_iri=verb_iri,
             input_uri=input_uri,
+            frontend_id=frontend_id,
+            archetype=archetype,
         )
         logger.info(
             "saga compensation: DELETE Weaviate Predicate row for "
