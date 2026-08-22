@@ -53,6 +53,9 @@ users:
       - aviation-engineers
       - defense-engineers
       - enterprise-architects
+      - portfolio-leads     # FIXTURE grant, 2026-08-22: alice is the
+                            # portfolio-review demo actor. Not a claim that
+                            # alice-the-persona owns portfolio governance.
       - data-engineers      # FIXTURE grant: added so demo scenarios that
                             # need a catalog-entitled power user have one.
                             # NOT an assertion that alice-the-persona owns

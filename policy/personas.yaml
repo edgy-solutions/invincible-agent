@@ -12,6 +12,10 @@
 # consumer of the persona claim is the source of truth for what
 # personas the router recognizes; this file mirrors it into topaz).
 personas:
+  # Engine P registers its twelve planning verbs with
+  # owner_persona=PORTFOLIO_LEAD (agent_fleet/planning_agent/main.py).
+  # Added 2026-08-22 for the portfolio-review demo.
+  - PORTFOLIO_LEAD
   - DATA_STEWARD
   - DATA_ENGINEER
   - ARCHITECT

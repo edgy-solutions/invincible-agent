@@ -7,6 +7,15 @@
 # group) IS the assertion. Every line has a named human via
 # `git blame`.
 groups:
+  # ── Portfolio review (2026-08-22) ────────────────────────────────
+  # The cell Engine P's verbs live in. Without it /resolve scopes the
+  # OntologyClass pool to cells the caller holds, none of which contain the
+  # five planning subjects — so the question grounds to nothing and routes
+  # nowhere, while every engine reports healthy.
+  portfolio-leads:
+    grants:
+      - {persona: PORTFOLIO_LEAD, domain: PORTFOLIO_PLANNING}
+
   aviation-stewards:
     grants:
       - {persona: DATA_STEWARD, domain: AVIATION}

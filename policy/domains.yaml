@@ -4,6 +4,11 @@
 # ADR-0009 first (which is the code-side source of truth for what
 # domains the router recognizes) and this file mirrors it into topaz.
 domains:
+  # The domain Engine P's verbs are registered under, and the domain its
+  # five OntologyClass subjects carry. /resolve domain-scopes the class pool to
+  # the caller's cells, so a planning question only grounds+routes to Engine P
+  # from a PORTFOLIO_PLANNING cell. Added 2026-08-22.
+  - PORTFOLIO_PLANNING
   - AVIATION
   - DEFENSE
   - ENTERPRISE
