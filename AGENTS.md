@@ -1424,6 +1424,26 @@ query that had errored — a count for a query that never ran.
 
 **So: read exit codes BARE, or with `set -o pipefail`, never off the tail of a pipe.**
 
+### COMPOSED-BY-REFERENCE IS ASSERTED BY IDENTITY, NEVER BY DEEP EQUALITY
+2026-08-22. `DECISION_RECORD` was ruled to COMPOSE the disposition contracts rather than
+parallel them — composition that does not import is duplication wearing composition's name. The
+enforcement test asserts `toBe` (identity), and a negative control proved why: injecting a
+hand-copied duplicate with **identical keys** failed on `Object.is equality` and **would have
+passed deep equality**.
+
+That is not a coincidence. **A hand-copied duplicate is deep-equal BY CONSTRUCTION** — copying
+is what produced it. So deep equality is blind to precisely the defect being guarded against,
+while identity is the only instrument that sees it.
+
+The instinct runs backwards here: deep-equal feels like the *stricter* check. For structural
+agreement between two independently-derived values it is. For "did this import the shared
+thing, or restate it?", structure is exactly what the defect preserves.
+
+**So: any test enforcing composed-by-reference asserts identity.** And say so in its docstring
+when it is the ONLY enforcement — `requiredKeys` is read by nothing at runtime, so that test is
+load-bearing rather than belt-and-braces, and a reader who deletes it as redundant silently
+converts the contract into a lookalike.
+
 ```bash
 cmd > /tmp/out 2>&1; echo "exit=$?"; head /tmp/out     # right
 cmd 2>&1 | head; echo "exit=$?"                        # WRONG — head's status
