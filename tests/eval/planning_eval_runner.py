@@ -7,16 +7,17 @@ configured (`OLLAMA_MODEL`, currently `gpt-oss-128k:120b` — the extended-conte
 variant, not `gpt-oss:120b`), the routing prompt, and routing/slot quality on
 real phrasings.
 
-DOES **NOT** EXERCISE: BAML's parser. `planning_qa.baml` declares the intent
-union, but `baml_shared/baml_client/` is GENERATED CODE shared with other lanes,
-and regenerating it to pick up a new file rewrites contracts this lane does not
-own. That is a build step requiring coordination, not a 3am unilateral.
+ALSO EXERCISES BAML'S PARSER, as of the 2026-08-22 regeneration. An earlier
+version of this runner sent the same prompt to the same model and parsed the JSON
+itself, because `baml_shared/baml_client/` is generated code shared with other
+lanes and regenerating it was a build step needing coordination. With that
+authorized and the client regenerated (verified purely additive — every
+pre-existing class survived), the runner now calls `b.RouteIntent` and the
+measurement covers the WHOLE pipeline: provider path, model name, prompt, the
+typed union parse, and routing quality.
 
-So this runner sends the same prompt to the same model and parses the JSON
-itself. The number it produces is a ROUTING QUALITY measurement, and the
-BAML-parse layer remains unmeasured until the client is regenerated with the
-owners awake. Stated rather than blurred: a runner that quietly skips a layer
-reports a number for a pipeline that does not exist.
+That distinction mattered enough to state while it was true, because a runner
+that quietly skips a layer reports a number for a pipeline that does not exist.
 
 ── PER-ARM ATTRIBUTION (the deliverable) ──────────────────────────────────────
 
@@ -79,7 +80,49 @@ def _catalog_prompt() -> str:
     )
 
 
-def _ask(question: str) -> dict[str, Any]:
+def _intent_id_by_class() -> dict[str, str]:
+    """Map generated CLASS NAME -> intent_id, from the `@@intent_id` markers.
+
+    Read from the .baml rather than guessing a snake_case conversion of the class
+    name: a naming convention is a third encoding wearing a convention's clothes,
+    and it breaks silently the first time someone names a class reasonably but
+    differently.
+    """
+    baml = (Path(__file__).resolve().parents[2] / "baml_shared" / "baml_src"
+            / "planning_qa.baml").read_text(encoding="utf-8")
+    out: dict[str, str] = {}
+    for m in re.finditer(r"class\s+(\w+)\s*\{(.*?)\n\}", baml, re.S):
+        marker = re.search(r"//\s*@@intent_id:\s*([a-z_]+)", m.group(2))
+        if marker:
+            out[m.group(1)] = marker.group(1)
+    return out
+
+
+def _ask_baml(question: str) -> dict[str, Any]:
+    """Route through the REAL BAML function — typed union, real parse."""
+    import sys as _sys  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[2] / "baml_shared" / "baml_client"
+    if str(root) not in _sys.path:
+        _sys.path.insert(0, str(root))
+    from baml_client.sync_client import b  # noqa: PLC0415
+
+    try:
+        result = b.RouteIntent(question=question, context="")
+    except Exception as exc:  # noqa: BLE001
+        # A PARSE FAILURE IS A REAL OUTCOME, not an error to retry away: BAML
+        # refusing malformed model output is the enforcement working, and it must
+        # show up in the table as its own arm rather than as a crash.
+        return {"intent_id": "__parse_failure__", "slots": {},
+                "error": f"{type(exc).__name__}: {exc}"[:200]}
+
+    cls = type(result).__name__
+    intent_id = _intent_id_by_class().get(cls, f"__unmapped__{cls}")
+    slots = {k: v for k, v in vars(result).items() if not k.startswith("_")}
+    return {"intent_id": intent_id, "slots": slots}
+
+
+def _ask_raw(question: str) -> dict[str, Any]:
     base, model = _endpoint()
     body = {
         "model": model,
@@ -140,7 +183,29 @@ def _slots_match(expected: dict, got: dict) -> bool:
     return True
 
 
+def _require_env() -> None:
+    """Fail LOUDLY and EARLY when the client's env is unset.
+
+    BAML's Ollama client reads `env.OLLAMA_MODEL` and `env.OLLAMA_BASE_URL`. With
+    either missing, every call raises and the runner would report 105 parse
+    failures — a number that reads as catastrophic routing quality when the real
+    cause is an unset variable. A measurement that can fail for an environmental
+    reason WHILE LOOKING LIKE A RESULT is worse than no measurement, so this
+    refuses to start rather than producing one.
+    """
+    missing = [v for v in ("OLLAMA_MODEL", "OLLAMA_BASE_URL") if not os.getenv(v)]
+    if missing:
+        raise RuntimeError(
+            f"{missing} unset — BAML's Ollama client reads them from env. "
+            f"Sandbox values live in the iagent-config ConfigMap "
+            f"(OLLAMA_BASE_URL=http://192.168.1.126:11434/v1, "
+            f"OLLAMA_MODEL=gpt-oss-128k:120b). Refusing to run: every call would "
+            f"fail and the table would read as a routing collapse."
+        )
+
+
 def run_suite(fixture: dict) -> dict:
+    _require_env()
     cases = fixture["cases"]
     refusals = fixture["refusals"]
 
@@ -150,7 +215,7 @@ def run_suite(fixture: dict) -> dict:
 
     for case in cases:
         exp = case["expect"]
-        observations = [_ask(case["question"]) for _ in range(_PASSES)]
+        observations = [_ask_baml(case["question"]) for _ in range(_PASSES)]
 
         # NONDETERMINISM IS A FAILURE, NOT NOISE. A router that answers
         # differently on identical input has no answer; averaging hides exactly
@@ -181,7 +246,7 @@ def run_suite(fixture: dict) -> dict:
         slots_ok += 1
 
     for r in refusals:
-        got = _ask(r["question"])
+        got = _ask_baml(r["question"])
         if got.get("intent_id") == "no_intent_match":
             refusal_ok += 1
         else:

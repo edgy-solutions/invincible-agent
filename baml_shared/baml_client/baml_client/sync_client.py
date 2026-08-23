@@ -248,6 +248,20 @@ class BamlSyncClient:
                 "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
             })
             return typing.cast(types.BPMNInterviewState, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def NarrateResult(self, rows: str,
+        baml_options: BamlCallOptions = {},
+    ) -> str:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.NarrateResult(rows=rows,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="NarrateResult", args={
+                "rows": rows,
+            })
+            return typing.cast(str, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def RenderAsChart(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> types.ChartUI:
@@ -318,6 +332,20 @@ class BamlSyncClient:
                 "user_query": user_query,
             })
             return typing.cast(types.MeshRoutingDecision, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def RouteIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"]:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.RouteIntent(question=question,context=context,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="RouteIntent", args={
+                "question": question,"context": context,
+            })
+            return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"], __result__.cast_to(types, types, stream_types, False, __runtime__))
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
         baml_options: BamlCallOptions = {},
     ) -> types.FinalSynthesis:
@@ -473,6 +501,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.BPMNInterviewState, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def NarrateResult(self, rows: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[str, str]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="NarrateResult", args={
+            "rows": rows,
+        })
+        return baml_py.BamlSyncStream[str, str](
+          __result__,
+          lambda x: typing.cast(str, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(str, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def RenderAsChart(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.ChartUI, types.ChartUI]:
@@ -531,6 +571,18 @@ class BamlStreamClient:
           __result__,
           lambda x: typing.cast(stream_types.MeshRoutingDecision, x.cast_to(types, types, stream_types, True, __runtime__)),
           lambda x: typing.cast(types.MeshRoutingDecision, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def RouteIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"]]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="RouteIntent", args={
+            "question": question,"context": context,
+        })
+        return baml_py.BamlSyncStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"]](
+          __result__,
+          lambda x: typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"], x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"], x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
@@ -630,6 +682,13 @@ class BamlHttpRequestClient:
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
         }, mode="request")
         return __result__
+    def NarrateResult(self, rows: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="NarrateResult", args={
+            "rows": rows,
+        }, mode="request")
+        return __result__
     def RenderAsChart(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -663,6 +722,13 @@ class BamlHttpRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
             "user_query": user_query,
+        }, mode="request")
+        return __result__
+    def RouteIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteIntent", args={
+            "question": question,"context": context,
         }, mode="request")
         return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
@@ -757,6 +823,13 @@ class BamlHttpStreamRequestClient:
             "chat_history": chat_history,"user_message": user_message,"current_graph_json": current_graph_json,"available_ontology_classes": available_ontology_classes,"available_data_sources": available_data_sources,
         }, mode="stream")
         return __result__
+    def NarrateResult(self, rows: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="NarrateResult", args={
+            "rows": rows,
+        }, mode="stream")
+        return __result__
     def RenderAsChart(self, raw_data: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -790,6 +863,13 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteAndPlan", args={
             "user_query": user_query,
+        }, mode="stream")
+        return __result__
+    def RouteIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="RouteIntent", args={
+            "question": question,"context": context,
         }, mode="stream")
         return __result__
     def SynthesizeReports(self, original_query: str,raw_json_results: str,

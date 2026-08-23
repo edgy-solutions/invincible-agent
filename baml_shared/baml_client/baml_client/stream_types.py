@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (33)
+# Generated classes (50)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -81,6 +81,9 @@ class BPMNNode(BaseModel):
     ontology_class: typing.Optional[str] = Field(default=None, description='IOF-MRO / MIMOSA ontology URI grounding this node. REQUIRED for ServiceTask, null for others. Must come from the available_ontology_classes list.')
     data_source: typing.Optional[str] = Field(default=None, description='DataHub / dbt model name grounding this node. REQUIRED for ServiceTask, null for others. Must come from the available_data_sources list.')
 
+class CapabilityPath(BaseModel):
+    capability: typing.Optional[str] = None
+
 class ChartUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be CHART_WIDGET')
     source_persona: typing.Optional[str] = None
@@ -90,6 +93,13 @@ class ChartUI(BaseModel):
     sql_query: typing.Optional[str] = Field(default=None, description='The raw SQL query used. Required for Superset publication.')
     superset_dataset_name: typing.Optional[str] = None
     is_published: typing.Optional[bool] = None
+
+class CompareScenarios(BaseModel):
+    a: typing.Optional[str] = None
+    b: typing.Optional[str] = None
+
+class CoverageGap(BaseModel):
+    placeholder: typing.Optional[str] = None
 
 class DashboardUI(BaseModel):
     components: typing.List[typing.Union["TopologyUI", "HazardUI", "MetricUI", "DocumentUI", "ChartUI", "DigitalTwinUI"]]
@@ -113,6 +123,10 @@ class DocumentUI(BaseModel):
     source_persona: typing.Optional[str] = Field(default=None, description='The persona that produced this data. Copy from the raw data \'persona\' field.')
     subject_concept: typing.Optional[str] = None
     markdown_content: typing.Optional[str] = None
+
+class DownstreamOf(BaseModel):
+    project: typing.Optional[str] = None
+    direction: typing.Optional[str] = None
 
 class ExtractedIntent(BaseModel):
     mode: typing.Optional[types.Mode] = None
@@ -147,6 +161,9 @@ class LogisticsResponse(BaseModel):
     blocked_procedures: typing.List[str]
     risk_severity: typing.Optional[str] = None
 
+class MaturityGrid(BaseModel):
+    as_of: typing.Optional[str] = None
+
 class MechanicResponse(BaseModel):
     tool_list: typing.List[str]
     safety_warnings: typing.List[str]
@@ -165,6 +182,15 @@ class MetricUI(BaseModel):
     subject_concept: typing.Optional[str] = None
     metrics: typing.List["UIEntity"]
 
+class MoveProject(BaseModel):
+    project: typing.Optional[str] = None
+    when: typing.Optional[str] = None
+
+class NoIntentMatch(BaseModel):
+    nearest_intent_id: typing.Optional[str] = None
+    out_of_model_concept: typing.Optional[str] = None
+    reason: typing.Optional[str] = None
+
 class PlatformScope(BaseModel):
     platforms: typing.List[str] = Field(description='Catalog platform slugs the user wants to restrict to, normalized to the KNOWN list (e.g. \'snowflake\', \'postgres\'). Empty when no platform was asked for. A platform the user named that is NOT in the known list does NOT go here — it goes in `unrecognized`.')
     platform_mentioned: typing.Optional[bool] = Field(default=None, description='True iff the user named or clearly implied a specific platform to filter by (\'snowflake tables\', \'which warehouse feeds X\'). False for platform-agnostic lineage questions (\'what feeds X\', \'upstream of X\').')
@@ -175,6 +201,13 @@ class PredicateClassification(BaseModel):
     resolved_verb_iri: typing.Optional[typing.Union[types.Predicate, str]] = Field(default=None, description='The verb IRI that best matches the user\'s intent given the resolved subject. Must be one of the IRIs provided in the dynamic enum.')
     confidence_score: typing.Optional[float] = Field(default=None, description='0.0 (no fit) to 1.0 (clear fit). The supervisor\'s PREDICATE_FALLBACK_SCORE_THRESHOLD env var thresholds against this.')
     reasoning: typing.Optional[str] = Field(default=None, description='One sentence on why this verb was picked given the query and subject. If subject_uri == \'UNKNOWN\', explain the pick against query alone.')
+
+class ProcessEvolution(BaseModel):
+    process: typing.Optional[str] = None
+
+class ProjectsIn(BaseModel):
+    window: typing.Optional[str] = None
+    scope: typing.Optional[str] = None
 
 class SPOInterviewTurn(BaseModel):
     agent_reply: typing.Optional[str] = Field(default=None, description='Conversational text to the user (2-5 sentences). If you refused a pick or something was out-of-set, explain and offer the closest legal options.')
@@ -203,6 +236,34 @@ class SemanticResolution(BaseModel):
     reasoning: typing.Optional[str] = Field(default=None, description='1-2 sentence explanation of why this class was chosen.')
     instance_identifier: typing.Optional[str] = Field(default=None, description='If the query refers to a SPECIFIC NAMED INDIVIDUAL — a catalog asset, a procedure or work-order code, a data module code (DMC), a tail number, an equipment serial, or a quoted or titled name — copy that exact token here verbatim, INCLUDING any qualifier the user gave it (schema, dataset or path prefix). The phone book normalizes qualifiers and matches on the asset\'s own name, so a qualified token is safer than a guessed bare one. Do NOT extract a word that merely APPEARS NEAR the asset name — a token lifted from the surrounding sentence rather than naming the thing will be refused as non-specific, and that refusal costs the whole answer. Otherwise leave null. This field gates the router\'s instance-resolution pre-step (Recipe v2): when set, the router fans the token out to registered providers and lets the authoritative phone-book class override resolved_uri. Still always resolve resolved_uri as your best guess either way — the phone book may miss.')
 
+class SetCost(BaseModel):
+    project: typing.Optional[str] = None
+    kind: typing.Optional[str] = None
+    period: typing.Optional[str] = None
+    amount: typing.Optional[str] = None
+
+class ShowCostCurve(BaseModel):
+    scope: typing.Optional[str] = None
+    window: typing.Optional[str] = None
+    kind: typing.Optional[str] = None
+    over_cap_only: typing.Optional[bool] = None
+
+class ShowFundingGap(BaseModel):
+    group_by: typing.Optional[str] = None
+    window: typing.Optional[str] = None
+
+class ShowSiteLoad(BaseModel):
+    site: typing.Optional[str] = None
+    window: typing.Optional[str] = None
+    over_threshold_only: typing.Optional[bool] = None
+
+class SiteSchedule(BaseModel):
+    site: typing.Optional[str] = None
+    window: typing.Optional[str] = None
+
+class SummarizeSession(BaseModel):
+    placeholder: typing.Optional[str] = None
+
 class SupervisorTaskPlan(BaseModel):
     tasks: typing.List["AgentTaskDefinition"]
     extracted_concepts: typing.List[str] = Field(description='List of main entities/components the user is asking about (e.g., \'Auxiliary Fuel Pump\', \'C-130\'). This populates the Ontology Map.')
@@ -212,6 +273,9 @@ class TableClassificationResult(BaseModel):
     resolved_uri: typing.Optional[typing.Union[types.OntologyClass, str]] = Field(default=None, description='The exact matching IOF Ontology URI, or null if uncertain/unrelated.')
     confidence_score: typing.Optional[float] = Field(default=None, description='Confidence level from 0.0 to 1.0.')
     reasoning: typing.Optional[str] = Field(default=None, description='A 1-2 sentence explanation of why this mapping was chosen based on the dossier.')
+
+class TechFootprint(BaseModel):
+    technology: typing.Optional[str] = None
 
 class TopologyUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be PROCESS_TOPOLOGY')
@@ -231,6 +295,10 @@ class UIRelation(BaseModel):
     target: typing.Optional[str] = None
     relation: typing.Optional[str] = None
     predicate: typing.Optional[str] = None
+
+class WhatBlocks(BaseModel):
+    project: typing.Optional[str] = None
+    direction: typing.Optional[str] = None
 
 # #########################################################################
 # Generated type aliases (0)

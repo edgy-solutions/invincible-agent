@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","ChartUI","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MechanicResponse","MeshRoutingDecision","MetricUI","PlatformScope","PredicateClassification","SPOInterviewTurn","SPOPick","SemanticResolution","SupervisorTaskPlan","TableClassificationResult","TopologyUI","UIEntity","UIRelation",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","SPOInterviewTurn","SPOPick","SemanticResolution","SetCost","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SPOPickAction","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -83,7 +83,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 33
+    # Generated classes 50
     # #########################################################################
 
     @property
@@ -123,8 +123,20 @@ class TypeBuilder(type_builder.TypeBuilder):
         return BPMNNodeViewer(self)
 
     @property
+    def CapabilityPath(self) -> "CapabilityPathViewer":
+        return CapabilityPathViewer(self)
+
+    @property
     def ChartUI(self) -> "ChartUIViewer":
         return ChartUIViewer(self)
+
+    @property
+    def CompareScenarios(self) -> "CompareScenariosViewer":
+        return CompareScenariosViewer(self)
+
+    @property
+    def CoverageGap(self) -> "CoverageGapViewer":
+        return CoverageGapViewer(self)
 
     @property
     def DashboardUI(self) -> "DashboardUIViewer":
@@ -141,6 +153,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def DocumentUI(self) -> "DocumentUIViewer":
         return DocumentUIViewer(self)
+
+    @property
+    def DownstreamOf(self) -> "DownstreamOfViewer":
+        return DownstreamOfViewer(self)
 
     @property
     def ExtractedIntent(self) -> "ExtractedIntentViewer":
@@ -167,6 +183,10 @@ class TypeBuilder(type_builder.TypeBuilder):
         return LogisticsResponseViewer(self)
 
     @property
+    def MaturityGrid(self) -> "MaturityGridViewer":
+        return MaturityGridViewer(self)
+
+    @property
     def MechanicResponse(self) -> "MechanicResponseViewer":
         return MechanicResponseViewer(self)
 
@@ -179,12 +199,28 @@ class TypeBuilder(type_builder.TypeBuilder):
         return MetricUIViewer(self)
 
     @property
+    def MoveProject(self) -> "MoveProjectViewer":
+        return MoveProjectViewer(self)
+
+    @property
+    def NoIntentMatch(self) -> "NoIntentMatchViewer":
+        return NoIntentMatchViewer(self)
+
+    @property
     def PlatformScope(self) -> "PlatformScopeViewer":
         return PlatformScopeViewer(self)
 
     @property
     def PredicateClassification(self) -> "PredicateClassificationViewer":
         return PredicateClassificationViewer(self)
+
+    @property
+    def ProcessEvolution(self) -> "ProcessEvolutionViewer":
+        return ProcessEvolutionViewer(self)
+
+    @property
+    def ProjectsIn(self) -> "ProjectsInViewer":
+        return ProjectsInViewer(self)
 
     @property
     def SPOInterviewTurn(self) -> "SPOInterviewTurnViewer":
@@ -199,12 +235,40 @@ class TypeBuilder(type_builder.TypeBuilder):
         return SemanticResolutionViewer(self)
 
     @property
+    def SetCost(self) -> "SetCostViewer":
+        return SetCostViewer(self)
+
+    @property
+    def ShowCostCurve(self) -> "ShowCostCurveViewer":
+        return ShowCostCurveViewer(self)
+
+    @property
+    def ShowFundingGap(self) -> "ShowFundingGapViewer":
+        return ShowFundingGapViewer(self)
+
+    @property
+    def ShowSiteLoad(self) -> "ShowSiteLoadViewer":
+        return ShowSiteLoadViewer(self)
+
+    @property
+    def SiteSchedule(self) -> "SiteScheduleViewer":
+        return SiteScheduleViewer(self)
+
+    @property
+    def SummarizeSession(self) -> "SummarizeSessionViewer":
+        return SummarizeSessionViewer(self)
+
+    @property
     def SupervisorTaskPlan(self) -> "SupervisorTaskPlanViewer":
         return SupervisorTaskPlanViewer(self)
 
     @property
     def TableClassificationResult(self) -> "TableClassificationResultViewer":
         return TableClassificationResultViewer(self)
+
+    @property
+    def TechFootprint(self) -> "TechFootprintViewer":
+        return TechFootprintViewer(self)
 
     @property
     def TopologyUI(self) -> "TopologyUIViewer":
@@ -217,6 +281,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def UIRelation(self) -> "UIRelationViewer":
         return UIRelationViewer(self)
+
+    @property
+    def WhatBlocks(self) -> "WhatBlocksViewer":
+        return WhatBlocksViewer(self)
 
 
 
@@ -850,7 +918,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 33
+# Generated classes 50
 # #########################################################################
 
 class AgentResponseAst:
@@ -1296,6 +1364,45 @@ class BPMNNodeProperties:
     
 
 
+class CapabilityPathAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("CapabilityPath")
+        self._properties: typing.Set[str] = set([  "capability",  ])
+        self._props = CapabilityPathProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "CapabilityPathProperties":
+        return self._props
+
+
+class CapabilityPathViewer(CapabilityPathAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class CapabilityPathProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def capability(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("capability"))
+    
+    
+
+
 class ChartUIAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -1359,6 +1466,88 @@ class ChartUIProperties:
     @property
     def is_published(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("is_published"))
+    
+    
+
+
+class CompareScenariosAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("CompareScenarios")
+        self._properties: typing.Set[str] = set([  "a",  "b",  ])
+        self._props = CompareScenariosProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "CompareScenariosProperties":
+        return self._props
+
+
+class CompareScenariosViewer(CompareScenariosAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class CompareScenariosProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def a(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("a"))
+    
+    @property
+    def b(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("b"))
+    
+    
+
+
+class CoverageGapAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("CoverageGap")
+        self._properties: typing.Set[str] = set([  "placeholder",  ])
+        self._props = CoverageGapProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "CoverageGapProperties":
+        return self._props
+
+
+class CoverageGapViewer(CoverageGapAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class CoverageGapProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def placeholder(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("placeholder"))
     
     
 
@@ -1559,6 +1748,49 @@ class DocumentUIProperties:
     @property
     def markdown_content(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("markdown_content"))
+    
+    
+
+
+class DownstreamOfAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("DownstreamOf")
+        self._properties: typing.Set[str] = set([  "project",  "direction",  ])
+        self._props = DownstreamOfProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "DownstreamOfProperties":
+        return self._props
+
+
+class DownstreamOfViewer(DownstreamOfAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class DownstreamOfProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def project(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("project"))
+    
+    @property
+    def direction(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("direction"))
     
     
 
@@ -1857,6 +2089,45 @@ class LogisticsResponseProperties:
     
 
 
+class MaturityGridAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MaturityGrid")
+        self._properties: typing.Set[str] = set([  "as_of",  ])
+        self._props = MaturityGridProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MaturityGridProperties":
+        return self._props
+
+
+class MaturityGridViewer(MaturityGridAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MaturityGridProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def as_of(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("as_of"))
+    
+    
+
+
 class MechanicResponseAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -2010,6 +2281,96 @@ class MetricUIProperties:
     
 
 
+class MoveProjectAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("MoveProject")
+        self._properties: typing.Set[str] = set([  "project",  "when",  ])
+        self._props = MoveProjectProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "MoveProjectProperties":
+        return self._props
+
+
+class MoveProjectViewer(MoveProjectAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class MoveProjectProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def project(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("project"))
+    
+    @property
+    def when(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("when"))
+    
+    
+
+
+class NoIntentMatchAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("NoIntentMatch")
+        self._properties: typing.Set[str] = set([  "nearest_intent_id",  "out_of_model_concept",  "reason",  ])
+        self._props = NoIntentMatchProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "NoIntentMatchProperties":
+        return self._props
+
+
+class NoIntentMatchViewer(NoIntentMatchAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class NoIntentMatchProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def nearest_intent_id(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("nearest_intent_id"))
+    
+    @property
+    def out_of_model_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("out_of_model_concept"))
+    
+    @property
+    def reason(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reason"))
+    
+    
+
+
 class PlatformScopeAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -2104,6 +2465,88 @@ class PredicateClassificationProperties:
     @property
     def reasoning(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
+    
+    
+
+
+class ProcessEvolutionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ProcessEvolution")
+        self._properties: typing.Set[str] = set([  "process",  ])
+        self._props = ProcessEvolutionProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ProcessEvolutionProperties":
+        return self._props
+
+
+class ProcessEvolutionViewer(ProcessEvolutionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ProcessEvolutionProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def process(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("process"))
+    
+    
+
+
+class ProjectsInAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ProjectsIn")
+        self._properties: typing.Set[str] = set([  "window",  "scope",  ])
+        self._props = ProjectsInProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ProjectsInProperties":
+        return self._props
+
+
+class ProjectsInViewer(ProjectsInAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ProjectsInProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def window(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("window"))
+    
+    @property
+    def scope(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("scope"))
     
     
 
@@ -2285,6 +2728,280 @@ class SemanticResolutionProperties:
     
 
 
+class SetCostAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SetCost")
+        self._properties: typing.Set[str] = set([  "project",  "kind",  "period",  "amount",  ])
+        self._props = SetCostProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SetCostProperties":
+        return self._props
+
+
+class SetCostViewer(SetCostAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SetCostProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def project(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("project"))
+    
+    @property
+    def kind(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("kind"))
+    
+    @property
+    def period(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("period"))
+    
+    @property
+    def amount(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("amount"))
+    
+    
+
+
+class ShowCostCurveAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ShowCostCurve")
+        self._properties: typing.Set[str] = set([  "scope",  "window",  "kind",  "over_cap_only",  ])
+        self._props = ShowCostCurveProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ShowCostCurveProperties":
+        return self._props
+
+
+class ShowCostCurveViewer(ShowCostCurveAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ShowCostCurveProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def scope(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("scope"))
+    
+    @property
+    def window(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("window"))
+    
+    @property
+    def kind(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("kind"))
+    
+    @property
+    def over_cap_only(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("over_cap_only"))
+    
+    
+
+
+class ShowFundingGapAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ShowFundingGap")
+        self._properties: typing.Set[str] = set([  "group_by",  "window",  ])
+        self._props = ShowFundingGapProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ShowFundingGapProperties":
+        return self._props
+
+
+class ShowFundingGapViewer(ShowFundingGapAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ShowFundingGapProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def group_by(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("group_by"))
+    
+    @property
+    def window(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("window"))
+    
+    
+
+
+class ShowSiteLoadAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("ShowSiteLoad")
+        self._properties: typing.Set[str] = set([  "site",  "window",  "over_threshold_only",  ])
+        self._props = ShowSiteLoadProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "ShowSiteLoadProperties":
+        return self._props
+
+
+class ShowSiteLoadViewer(ShowSiteLoadAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class ShowSiteLoadProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def site(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("site"))
+    
+    @property
+    def window(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("window"))
+    
+    @property
+    def over_threshold_only(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("over_threshold_only"))
+    
+    
+
+
+class SiteScheduleAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SiteSchedule")
+        self._properties: typing.Set[str] = set([  "site",  "window",  ])
+        self._props = SiteScheduleProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SiteScheduleProperties":
+        return self._props
+
+
+class SiteScheduleViewer(SiteScheduleAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SiteScheduleProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def site(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("site"))
+    
+    @property
+    def window(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("window"))
+    
+    
+
+
+class SummarizeSessionAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SummarizeSession")
+        self._properties: typing.Set[str] = set([  "placeholder",  ])
+        self._props = SummarizeSessionProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SummarizeSessionProperties":
+        return self._props
+
+
+class SummarizeSessionViewer(SummarizeSessionAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SummarizeSessionProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def placeholder(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("placeholder"))
+    
+    
+
+
 class SupervisorTaskPlanAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
@@ -2375,6 +3092,45 @@ class TableClassificationResultProperties:
     @property
     def reasoning(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("reasoning"))
+    
+    
+
+
+class TechFootprintAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("TechFootprint")
+        self._properties: typing.Set[str] = set([  "technology",  ])
+        self._props = TechFootprintProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "TechFootprintProperties":
+        return self._props
+
+
+class TechFootprintViewer(TechFootprintAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class TechFootprintProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def technology(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("technology"))
     
     
 
@@ -2532,6 +3288,49 @@ class UIRelationProperties:
     @property
     def predicate(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("predicate"))
+    
+    
+
+
+class WhatBlocksAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("WhatBlocks")
+        self._properties: typing.Set[str] = set([  "project",  "direction",  ])
+        self._props = WhatBlocksProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "WhatBlocksProperties":
+        return self._props
+
+
+class WhatBlocksViewer(WhatBlocksAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class WhatBlocksProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def project(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("project"))
+    
+    @property
+    def direction(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("direction"))
     
     
 

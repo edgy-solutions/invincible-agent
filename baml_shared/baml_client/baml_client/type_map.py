@@ -43,8 +43,17 @@ type_map = {
     "types.BPMNNode": types.BPMNNode,
     "stream_types.BPMNNode": stream_types.BPMNNode,
 
+    "types.CapabilityPath": types.CapabilityPath,
+    "stream_types.CapabilityPath": stream_types.CapabilityPath,
+
     "types.ChartUI": types.ChartUI,
     "stream_types.ChartUI": stream_types.ChartUI,
+
+    "types.CompareScenarios": types.CompareScenarios,
+    "stream_types.CompareScenarios": stream_types.CompareScenarios,
+
+    "types.CoverageGap": types.CoverageGap,
+    "stream_types.CoverageGap": stream_types.CoverageGap,
 
     "types.DashboardUI": types.DashboardUI,
     "stream_types.DashboardUI": stream_types.DashboardUI,
@@ -57,6 +66,9 @@ type_map = {
 
     "types.DocumentUI": types.DocumentUI,
     "stream_types.DocumentUI": stream_types.DocumentUI,
+
+    "types.DownstreamOf": types.DownstreamOf,
+    "stream_types.DownstreamOf": stream_types.DownstreamOf,
 
     "types.ExtractedIntent": types.ExtractedIntent,
     "stream_types.ExtractedIntent": stream_types.ExtractedIntent,
@@ -76,6 +88,9 @@ type_map = {
     "types.LogisticsResponse": types.LogisticsResponse,
     "stream_types.LogisticsResponse": stream_types.LogisticsResponse,
 
+    "types.MaturityGrid": types.MaturityGrid,
+    "stream_types.MaturityGrid": stream_types.MaturityGrid,
+
     "types.MechanicResponse": types.MechanicResponse,
     "stream_types.MechanicResponse": stream_types.MechanicResponse,
 
@@ -85,11 +100,23 @@ type_map = {
     "types.MetricUI": types.MetricUI,
     "stream_types.MetricUI": stream_types.MetricUI,
 
+    "types.MoveProject": types.MoveProject,
+    "stream_types.MoveProject": stream_types.MoveProject,
+
+    "types.NoIntentMatch": types.NoIntentMatch,
+    "stream_types.NoIntentMatch": stream_types.NoIntentMatch,
+
     "types.PlatformScope": types.PlatformScope,
     "stream_types.PlatformScope": stream_types.PlatformScope,
 
     "types.PredicateClassification": types.PredicateClassification,
     "stream_types.PredicateClassification": stream_types.PredicateClassification,
+
+    "types.ProcessEvolution": types.ProcessEvolution,
+    "stream_types.ProcessEvolution": stream_types.ProcessEvolution,
+
+    "types.ProjectsIn": types.ProjectsIn,
+    "stream_types.ProjectsIn": stream_types.ProjectsIn,
 
     "types.SPOInterviewTurn": types.SPOInterviewTurn,
     "stream_types.SPOInterviewTurn": stream_types.SPOInterviewTurn,
@@ -100,11 +127,32 @@ type_map = {
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
 
+    "types.SetCost": types.SetCost,
+    "stream_types.SetCost": stream_types.SetCost,
+
+    "types.ShowCostCurve": types.ShowCostCurve,
+    "stream_types.ShowCostCurve": stream_types.ShowCostCurve,
+
+    "types.ShowFundingGap": types.ShowFundingGap,
+    "stream_types.ShowFundingGap": stream_types.ShowFundingGap,
+
+    "types.ShowSiteLoad": types.ShowSiteLoad,
+    "stream_types.ShowSiteLoad": stream_types.ShowSiteLoad,
+
+    "types.SiteSchedule": types.SiteSchedule,
+    "stream_types.SiteSchedule": stream_types.SiteSchedule,
+
+    "types.SummarizeSession": types.SummarizeSession,
+    "stream_types.SummarizeSession": stream_types.SummarizeSession,
+
     "types.SupervisorTaskPlan": types.SupervisorTaskPlan,
     "stream_types.SupervisorTaskPlan": stream_types.SupervisorTaskPlan,
 
     "types.TableClassificationResult": types.TableClassificationResult,
     "stream_types.TableClassificationResult": stream_types.TableClassificationResult,
+
+    "types.TechFootprint": types.TechFootprint,
+    "stream_types.TechFootprint": stream_types.TechFootprint,
 
     "types.TopologyUI": types.TopologyUI,
     "stream_types.TopologyUI": stream_types.TopologyUI,
@@ -114,6 +162,9 @@ type_map = {
 
     "types.UIRelation": types.UIRelation,
     "stream_types.UIRelation": stream_types.UIRelation,
+
+    "types.WhatBlocks": types.WhatBlocks,
+    "stream_types.WhatBlocks": stream_types.WhatBlocks,
 
 
     "types.AgentStatus": types.AgentStatus,
