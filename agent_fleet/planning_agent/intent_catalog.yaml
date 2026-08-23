@@ -78,10 +78,16 @@ intents:
     measure_id: null
     output_uri: null
     refusal: true
+    # REFUSAL IS EXPENSIVE (2026-08-23). nearest_intent_id and
+    # nearest_rejected_because are REQUIRED: to refuse, the router must name what
+    # it nearly picked and why that fails. ~20 of 36 eval failures were this
+    # intent chosen for questions that DO route — an always-available escape
+    # hatch is the cheapest answer in a 17-way union, so it now costs something.
     slots:
-      nearest_intent_id:    { type: string, required: false, default: null }
-      out_of_model_concept: { type: string, required: false, default: null }
-      reason:               { type: string, required: true }
+      nearest_intent_id:        { type: string, required: true }
+      nearest_rejected_because: { type: string, required: true }
+      out_of_model_concept:     { type: string, required: false, default: null }
+      reason:                   { type: string, required: true }
     example_phrasings:
       - "what is the roi on this initiative"
       - "who owns the risk for that project"
@@ -210,16 +216,30 @@ intents:
   # ── COVERAGE / SESSION / DIFF ──────────────────────────────────────────────
   # These three route to verbs deployed in Engine P but NOT documented in the
   # plan's §2.3 table (which lists ten of twelve). Read from measures.py.
+  # DESCRIPTION REWORDED 2026-08-23 after the eval measured it stealing funding
+  # questions. The verb is an ABSENCE query about the PLAN'S STRUCTURE: capabilities
+  # no project is maturing (a portfolio problem) and processes with no capability
+  # behind them (a model problem). It has nothing to do with money.
+  #
+  # The old wording — "where the model has gaps in coverage" — paired "gaps" with
+  # "coverage" and read as FUNDING coverage. q14-a ("where is funding short by
+  # initiative") and q14-c ("which initiative is underfunded") both flipped between
+  # this intent and show_funding_gap. That collision was authored here, not by the
+  # model: two intents whose descriptions are near-synonyms cannot be separated by
+  # any amount of prompt tuning.
   - intent_id: coverage_gap
-    description: Where the model has gaps in coverage.
+    description: >-
+      Capabilities that NO project is maturing, and processes with no capability behind
+      them. An absence query about the plan's structure — never about money, funding or
+      budget.
     measure_id: plan_coverage_gap
     output_uri: mesh:CoverageGapSet
     answers: [B4]
     slots: {}
     example_phrasings:
-      - "where are the coverage gaps"
-      - "what is not covered"
-      - "show me what the model is missing"
+      - "which capabilities is nobody working on"
+      - "are there processes with no capability behind them"
+      - "what is in the plan that nothing is advancing"
 
   - intent_id: summarize_session
     description: Operations and diffs accumulated this session.

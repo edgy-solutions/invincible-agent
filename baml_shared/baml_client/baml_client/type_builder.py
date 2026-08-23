@@ -2328,7 +2328,7 @@ class NoIntentMatchAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.class_("NoIntentMatch")
-        self._properties: typing.Set[str] = set([  "nearest_intent_id",  "out_of_model_concept",  "reason",  ])
+        self._properties: typing.Set[str] = set([  "nearest_intent_id",  "nearest_rejected_because",  "out_of_model_concept",  "reason",  ])
         self._props = NoIntentMatchProperties(self._bldr, self._properties)
 
     def type(self) -> baml_py.FieldType:
@@ -2359,6 +2359,10 @@ class NoIntentMatchProperties:
     @property
     def nearest_intent_id(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("nearest_intent_id"))
+    
+    @property
+    def nearest_rejected_because(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("nearest_rejected_because"))
     
     @property
     def out_of_model_concept(self) -> type_builder.ClassPropertyViewer:

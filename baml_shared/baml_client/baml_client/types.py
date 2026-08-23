@@ -275,7 +275,8 @@ class MoveProject(BaseModel):
     when: str
 
 class NoIntentMatch(BaseModel):
-    nearest_intent_id: typing.Optional[str] = None
+    nearest_intent_id: str
+    nearest_rejected_because: str
     out_of_model_concept: typing.Optional[str] = None
     reason: str
 

@@ -183,7 +183,24 @@ class DownstreamOf {
 
 class NoIntentMatch {
   // @@intent_id: no_intent_match
-  nearest_intent_id string?
+  //
+  // REFUSAL IS EXPENSIVE ON PURPOSE (2026-08-23). Measured: ~20 of 36 eval
+  // failures were this class chosen for questions that DO route. In a 17-way
+  // union an always-available escape hatch is the CHEAPEST answer — the model
+  // reaches for it whenever any intent's fit is imperfect, because refusing
+  // costs nothing while committing risks being wrong.
+  //
+  // So it now costs something. `nearest_intent_id` and `nearest_rejected_because`
+  // are REQUIRED: to refuse, the model must name the intent it came closest to
+  // picking and state why that one does not fit. Forced to write "the nearest is
+  // show_funding_gap, and it does not fit because..." for the question "where is
+  // funding short by initiative", it has to produce a sentence that is visibly
+  // false — much harder than silently taking an exit.
+  //
+  // The justification is not for the reader. It is friction priced into the
+  // wrong choice.
+  nearest_intent_id string
+  nearest_rejected_because string
   out_of_model_concept string?
   reason string
 }
@@ -202,11 +219,17 @@ function RouteIntent(question: string, context: string) -> ShowCostCurve | ShowF
     - Fill a slot ONLY from the question or the context. Never invent a value.
     - Leave an optional slot null when the question does not determine it. A
       guessed default is indistinguishable from a stated one downstream.
-    - If nothing matches, or the question needs something the model does not
-      carry (return on investment, risk ownership, headcount/staffing), return
-      NoIntentMatch with the reason and the nearest intent. Choosing the nearest
-      WRONG intent is worse than refusing: it produces a confident answer to a
-      question nobody asked.
+    - REFUSE ONLY AS A LAST RESORT. NoIntentMatch is for questions this system
+      genuinely cannot answer — NOT for questions whose best intent is an
+      imperfect fit. An intent slightly wider or narrower than what was asked is
+      still the RIGHT route if it returns useful rows. Prefer the closest intent.
+    - To refuse you MUST name `nearest_intent_id` — the intent you came closest to
+      picking — and `nearest_rejected_because`, stating why THAT intent does not
+      fit. If you cannot write a sentence there that is actually true, the answer
+      is that intent, not a refusal.
+    - Refuse when the question needs something the model does not carry: return on
+      investment, risk ownership, headcount/staffing. Those have no intent at any
+      distance, and `out_of_model_concept` names which one.
 
     QUESTION:
     {{ question }}

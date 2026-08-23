@@ -188,6 +188,7 @@ class MoveProject(BaseModel):
 
 class NoIntentMatch(BaseModel):
     nearest_intent_id: typing.Optional[str] = None
+    nearest_rejected_because: typing.Optional[str] = None
     out_of_model_concept: typing.Optional[str] = None
     reason: typing.Optional[str] = None
 
