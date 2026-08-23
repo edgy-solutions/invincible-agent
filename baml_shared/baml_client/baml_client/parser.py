@@ -139,9 +139,9 @@ class LlmResponseParser:
 
     def RouteMoneyIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"]:
+    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap", "types.NotComputableInFamily"]:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RouteMoneyIntent", llm_response=llm_response, mode="request")
-        return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"], __result__)
+        return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap", "types.NotComputableInFamily"], __result__)
 
     def SynthesizeReports(
         self, llm_response: str, baml_options: BamlCallOptions = {},
@@ -273,9 +273,9 @@ class LlmStreamParser:
 
     def RouteMoneyIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"]:
+    ) -> typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap", "stream_types.NotComputableInFamily"]:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RouteMoneyIntent", llm_response=llm_response, mode="stream")
-        return typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"], __result__)
+        return typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap", "stream_types.NotComputableInFamily"], __result__)
 
     def SynthesizeReports(
         self, llm_response: str, baml_options: BamlCallOptions = {},

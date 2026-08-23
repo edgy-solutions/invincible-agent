@@ -204,8 +204,10 @@ class NoIntentMatch {
   //
   // The justification is not for the reader. It is friction priced into the
   // wrong choice.
-  nearest_intent_id string
-  nearest_rejected_because string
+  // Optional as of the two-step build: the friction these were added to
+  // create is now supplied structurally. Measured 21 -> 18 when required.
+  nearest_intent_id string?
+  nearest_rejected_because string?
   out_of_model_concept string?
   reason string
 }
@@ -338,7 +340,29 @@ function NarrateResult(rows: string) -> string {
 // Every tiebreaker below came from a MEASURED flip in the eval, not from
 // imagination. The instability map is the specification.
 
-function RouteMoneyIntent(question: string, context: string) -> ShowCostCurve | ShowFundingGap | CoverageGap {
+class NotComputableInFamily {
+  // @@intent_id: no_intent_match
+  //
+  // REFUSAL LIVES HERE, NOT AT THE FAMILY LEVEL (2026-08-23). Three runs had
+  // `oom-roi` ("what is the ROI on ERP Modernization") route rather than refuse,
+  // and the family classifier was NOT wrong: ROI *is* a money question. It is a
+  // money question this system cannot compute.
+  //
+  // Putting NONE in the family enum as a peer of the subjects was a CATEGORY
+  // ERROR: it asks "is this about money or about nothing", when the real
+  // structure is two independent axes — WHAT IS THIS ABOUT (family) and CAN WE
+  // ANSWER IT (coverage). A question can be money-shaped AND unanswerable, and
+  // the taxonomy had no way to say so, which is why a fat-margin step sailed
+  // past it three runs straight.
+  //
+  // Relocated because the discriminating information can only exist here: you
+  // cannot write "which money questions we cannot answer" as a family-level
+  // contrast, but you can write it perfectly among three named computations.
+  out_of_model_concept string
+  reason string
+}
+
+function RouteMoneyIntent(question: string, context: string) -> ShowCostCurve | ShowFundingGap | CoverageGap | NotComputableInFamily {
   client Ollama
   prompt #"
     This is a MONEY-family planning question. Choose which of three it is.
@@ -364,9 +388,20 @@ function RouteMoneyIntent(question: string, context: string) -> ShowCostCurve | 
       money at all, it is one of the two above.
       OWNS these phrasings: "nobody is working on", "no project is advancing".
 
+    NotComputableInFamily — a money question this system does not compute.
+      Answers nothing; it REFUSES, by name.
+      This model carries SPEND, COMMITMENTS and COVERAGE. It does not carry
+      RETURN. So: return on investment, ROI, payback period, NPV, valuation,
+      benefit or business case are money-shaped questions with no computation
+      behind them. Name the concept in `out_of_model_concept`.
+      This is NOT for questions that merely fit one of the three imperfectly —
+      an imperfect fit that returns useful rows is still the right route.
+
     THE SHORT RULE: over-budget is spend-versus-plan. Underfunded is
     commitments-versus-requirements. "Gap" alone never means CoverageGap unless
-    the question is about what is being WORKED ON rather than paid for.
+    the question is about what is being WORKED ON rather than paid for. And a
+    money question about RETURN rather than spend or commitment is not computable
+    here at all.
 
     QUESTION:
     {{ question }}

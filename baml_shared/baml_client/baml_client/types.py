@@ -122,7 +122,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (50)
+# Generated classes (51)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -286,9 +286,13 @@ class MoveProject(BaseModel):
     when: str
 
 class NoIntentMatch(BaseModel):
-    nearest_intent_id: str
-    nearest_rejected_because: str
+    nearest_intent_id: typing.Optional[str] = None
+    nearest_rejected_because: typing.Optional[str] = None
     out_of_model_concept: typing.Optional[str] = None
+    reason: str
+
+class NotComputableInFamily(BaseModel):
+    out_of_model_concept: str
     reason: str
 
 class PlatformScope(BaseModel):

@@ -121,6 +121,19 @@ def _ask_two_step(question: str) -> dict[str, Any]:
                 "error": f"family: {type(exc).__name__}: {exc}"[:200]}
 
     fam_name = getattr(fam, "value", str(fam)).upper().split(".")[-1]
+
+    # NONE IS A VERDICT, NOT A MISS. The family step saying NONE means "this
+    # system cannot answer this" — falling through to the single-shot union
+    # DISCARDS that verdict and re-asks a 17-way question, which duly routes it.
+    #
+    # This is why oom-roi failed FOUR RUNS ACROSS THREE DESIGNS while both steps
+    # answered it correctly in isolation: STEP 1 returned NONE, STEP 2 returned
+    # NotComputableInFamily, and this function threw both away. I diagnosed a
+    # category error in the taxonomy and wrote a fix for it; the taxonomy was
+    # fine and the plumbing was mine.
+    if fam_name == "NONE":
+        return {"intent_id": "no_intent_match", "slots": {}, "family": fam_name}
+
     if fam_name == "MONEY":
         try:
             result = b.RouteMoneyIntent(question=question, context="")
@@ -274,6 +287,7 @@ def run_suite(fixture: dict) -> dict:
             failures.append({
                 "id": case["id"], "arm": "routing",
                 "expected": exp["intent_id"], "got": f"UNSTABLE {sorted(intents)}",
+                "family": observations[0].get("family"),
             })
             continue
 
@@ -282,6 +296,7 @@ def run_suite(fixture: dict) -> dict:
             failures.append({
                 "id": case["id"], "arm": "routing",
                 "expected": exp["intent_id"], "got": got.get("intent_id"),
+                "family": got.get("family"),
             })
             continue
         routing_ok += 1
@@ -290,6 +305,7 @@ def run_suite(fixture: dict) -> dict:
             failures.append({
                 "id": case["id"], "arm": "slot",
                 "expected": exp.get("slots"), "got": got.get("slots"),
+                "family": got.get("family"),
             })
             continue
         slots_ok += 1
@@ -302,6 +318,7 @@ def run_suite(fixture: dict) -> dict:
             failures.append({
                 "id": r["id"], "arm": "refusal",
                 "expected": "no_intent_match", "got": got.get("intent_id"),
+                "family": got.get("family"),
             })
 
     soft_ids = {c["id"] for c in cases if c.get("soft")}

@@ -79,14 +79,22 @@ intents:
     measure_id: null
     output_uri: null
     refusal: true
-    # REFUSAL IS EXPENSIVE (2026-08-23). nearest_intent_id and
-    # nearest_rejected_because are REQUIRED: to refuse, the router must name what
-    # it nearly picked and why that fails. ~20 of 36 eval failures were this
-    # intent chosen for questions that DO route — an always-available escape
-    # hatch is the cheapest answer in a 17-way union, so it now costs something.
+    # THE REFUSAL-ECONOMICS FIELDS WERE RETIRED 2026-08-23, and the reason is a
+    # measurement rather than a preference. `nearest_intent_id` /
+    # `nearest_rejected_because` were made REQUIRED to price refusal — the theory
+    # being that ~20 over-refusals were a cheap escape hatch. Measured: routing
+    # went 21 -> 18. The theory was pre-registered with its falsification branch
+    # and this was it: the refusals were HONEST, so forcing justification only
+    # produced justifications.
+    #
+    # TWO-STEP supplies the friction structurally instead — the family step
+    # commits before the lineup narrows, and the second call chooses among three
+    # options with explicit walls. Keeping the fields would be ceremony from a
+    # superseded design, and a required field nobody reads is the decorative-seal
+    # shape. They stay OPTIONAL so a single-shot caller can still supply them.
     slots:
-      nearest_intent_id:        { type: string, required: true }
-      nearest_rejected_because: { type: string, required: true }
+      nearest_intent_id:        { type: string, required: false, default: null }
+      nearest_rejected_because: { type: string, required: false, default: null }
       out_of_model_concept:     { type: string, required: false, default: null }
       reason:                   { type: string, required: true }
     example_phrasings:

@@ -106,6 +106,9 @@ type_map = {
     "types.NoIntentMatch": types.NoIntentMatch,
     "stream_types.NoIntentMatch": stream_types.NoIntentMatch,
 
+    "types.NotComputableInFamily": types.NotComputableInFamily,
+    "stream_types.NotComputableInFamily": stream_types.NotComputableInFamily,
+
     "types.PlatformScope": types.PlatformScope,
     "stream_types.PlatformScope": stream_types.PlatformScope,
 

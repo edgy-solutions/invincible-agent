@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","SPOInterviewTurn","SPOPick","SemanticResolution","SetCost","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","NotComputableInFamily","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","SPOInterviewTurn","SPOPick","SemanticResolution","SetCost","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","IntentFamily","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SPOPickAction","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -87,7 +87,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 50
+    # Generated classes 51
     # #########################################################################
 
     @property
@@ -209,6 +209,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def NoIntentMatch(self) -> "NoIntentMatchViewer":
         return NoIntentMatchViewer(self)
+
+    @property
+    def NotComputableInFamily(self) -> "NotComputableInFamilyViewer":
+        return NotComputableInFamilyViewer(self)
 
     @property
     def PlatformScope(self) -> "PlatformScopeViewer":
@@ -992,7 +996,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 50
+# Generated classes 51
 # #########################################################################
 
 class AgentResponseAst:
@@ -2437,6 +2441,49 @@ class NoIntentMatchProperties:
     @property
     def nearest_rejected_because(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("nearest_rejected_because"))
+    
+    @property
+    def out_of_model_concept(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("out_of_model_concept"))
+    
+    @property
+    def reason(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("reason"))
+    
+    
+
+
+class NotComputableInFamilyAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("NotComputableInFamily")
+        self._properties: typing.Set[str] = set([  "out_of_model_concept",  "reason",  ])
+        self._props = NotComputableInFamilyProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "NotComputableInFamilyProperties":
+        return self._props
+
+
+class NotComputableInFamilyViewer(NotComputableInFamilyAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class NotComputableInFamilyProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
     
     @property
     def out_of_model_concept(self) -> type_builder.ClassPropertyViewer:

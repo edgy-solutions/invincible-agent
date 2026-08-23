@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (50)
+# Generated classes (51)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -189,6 +189,10 @@ class MoveProject(BaseModel):
 class NoIntentMatch(BaseModel):
     nearest_intent_id: typing.Optional[str] = None
     nearest_rejected_because: typing.Optional[str] = None
+    out_of_model_concept: typing.Optional[str] = None
+    reason: typing.Optional[str] = None
+
+class NotComputableInFamily(BaseModel):
     out_of_model_concept: typing.Optional[str] = None
     reason: typing.Optional[str] = None
 

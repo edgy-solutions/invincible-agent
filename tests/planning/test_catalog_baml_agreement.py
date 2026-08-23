@@ -60,20 +60,32 @@ def _catalog_ids() -> set[str]:
     return {i["intent_id"] for i in _catalog()["intents"]}
 
 
-def _baml_intent_classes() -> dict[str, str]:
-    """Map intent_id -> class body, from the `@@intent_id` marker.
+def _baml_intent_classes() -> dict[str, list[str]]:
+    """Map intent_id -> LIST of class bodies, from the `@@intent_id` marker.
 
     Keyed on an EXPLICIT marker rather than on class-name-to-snake-case guessing:
     a naming convention is a third encoding wearing a convention's clothes, and
     it breaks silently the first time someone names a class reasonably but
     differently.
+
+    ONE INTENT ID MAY HAVE SEVERAL CLASSES (two-step, 2026-08-23).
+    `no_intent_match` is realised by BOTH `NoIntentMatch` — the single-shot
+    union's escape hatch — and `NotComputableInFamily`, the money family's step-2
+    refusal. They are the same ROUTING OUTCOME reached through different lineups,
+    so they share an id.
+
+    The earlier version returned `dict[intent_id -> body]` and silently kept only
+    the LAST class per id, so the slot comparison ran against whichever happened
+    to win. The check was right and MY MODEL OF IT was wrong: I assumed one id
+    maps to one class, and the two-step design broke that assumption without my
+    noticing until this went red.
     """
-    out: dict[str, str] = {}
+    out: dict[str, list[str]] = {}
     for m in re.finditer(r"class\s+(\w+)\s*\{(.*?)\n\}", _baml(), re.S):
         body = m.group(2)
         marker = re.search(r"//\s*@@intent_id:\s*([a-z_]+)", body)
         if marker:
-            out[marker.group(1)] = body
+            out.setdefault(marker.group(1), []).append(body)
     return out
 
 
@@ -104,11 +116,21 @@ def test_required_slots_agree_in_both_directions():
         iid = intent["intent_id"]
         if iid not in classes:
             continue  # covered by the arm above
-        body = classes[iid]
-        declared = set(re.findall(r"^\s*(\w+)\s+\S", body, re.MULTILINE))
-        cat_slots = set((intent.get("slots") or {}).keys())
-        assert cat_slots <= declared, (
-            f"{iid}: catalog slots {sorted(cat_slots - declared)} absent from BAML"
+        declared: set[str] = set()
+        for body in classes[iid]:
+            declared |= set(re.findall(r"^\s*(\w+)\s+\S", body, re.MULTILINE))
+        # REQUIRED slots must exist on SOME realisation of the intent. An OPTIONAL
+        # slot need not appear on every one: `nearest_intent_id` belongs to the
+        # single-shot escape hatch and is meaningless in a three-option lineup,
+        # where the "nearest" is the lineup itself. Demanding it everywhere would
+        # force ceremony onto a class that has no use for it — the decorative-seal
+        # shape, applied to a schema.
+        required = {
+            k for k, v in (intent.get("slots") or {}).items()
+            if isinstance(v, dict) and v.get("required")
+        }
+        assert required <= declared, (
+            f"{iid}: REQUIRED catalog slots {sorted(required - declared)} absent from BAML"
         )
 
 

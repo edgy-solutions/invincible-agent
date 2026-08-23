@@ -362,7 +362,7 @@ class BamlSyncClient:
             return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"], __result__.cast_to(types, types, stream_types, False, __runtime__))
     def RouteMoneyIntent(self, question: str,context: str,
         baml_options: BamlCallOptions = {},
-    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"]:
+    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap", "types.NotComputableInFamily"]:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             __stream__ = self.stream.RouteMoneyIntent(question=question,context=context,
@@ -373,7 +373,7 @@ class BamlSyncClient:
             __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="RouteMoneyIntent", args={
                 "question": question,"context": context,
             })
-            return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"], __result__.cast_to(types, types, stream_types, False, __runtime__))
+            return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap", "types.NotComputableInFamily"], __result__.cast_to(types, types, stream_types, False, __runtime__))
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
         baml_options: BamlCallOptions = {},
     ) -> types.FinalSynthesis:
@@ -627,14 +627,14 @@ class BamlStreamClient:
         )
     def RouteMoneyIntent(self, question: str,context: str,
         baml_options: BamlCallOptions = {},
-    ) -> baml_py.BamlSyncStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"]]:
+    ) -> baml_py.BamlSyncStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap", "stream_types.NotComputableInFamily"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap", "types.NotComputableInFamily"]]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="RouteMoneyIntent", args={
             "question": question,"context": context,
         })
-        return baml_py.BamlSyncStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"]](
+        return baml_py.BamlSyncStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap", "stream_types.NotComputableInFamily"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap", "types.NotComputableInFamily"]](
           __result__,
-          lambda x: typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"], x.cast_to(types, types, stream_types, True, __runtime__)),
-          lambda x: typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"], x.cast_to(types, types, stream_types, False, __runtime__)),
+          lambda x: typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap", "stream_types.NotComputableInFamily"], x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap", "types.NotComputableInFamily"], x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
