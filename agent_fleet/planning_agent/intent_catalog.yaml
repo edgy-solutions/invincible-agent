@@ -66,6 +66,27 @@ out_of_model:
 
 intents:
 
+  # ── THE REFUSAL OUTCOME, FIRST-CLASS ───────────────────────────────────────
+  # Not an error and not an exemption: a routable outcome the model may return.
+  # A union with no escape hatch forces the model to pick the nearest WRONG
+  # intent, which is the confident-wrong answer Gate 2 fails the whole gate for.
+  # It carries no measure_id and no output_uri because it produces no answer —
+  # it produces a statement of what the model does not capture, plus the nearest
+  # intent, so a miss is an agenda item rather than a dead end.
+  - intent_id: no_intent_match
+    description: No declared intent matches, or the question needs a concept the model does not carry.
+    measure_id: null
+    output_uri: null
+    refusal: true
+    slots:
+      nearest_intent_id:    { type: string, required: false, default: null }
+      out_of_model_concept: { type: string, required: false, default: null }
+      reason:               { type: string, required: true }
+    example_phrasings:
+      - "what is the roi on this initiative"
+      - "who owns the risk for that project"
+      - "how many people are on this"
+
   # ── COST ───────────────────────────────────────────────────────────────────
   - intent_id: show_cost_curve
     description: Spend per period for a scope, optionally split by kind or limited to periods over the cap.
