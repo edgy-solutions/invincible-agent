@@ -79,6 +79,26 @@ NOT_QUESTION_DRIVEN = {
     "mesh:planSessionChanges": "INV-4 -- the session's own op log",
 }
 
+# Verbs that DO answer numbered questions, whose numbers are not establishable from this repo.
+#
+# THIS BUCKET EXISTS TO AVOID A COMFORTABLE LIE. `planDependencyNeighborhood` was commissioned
+# because Lane 2 found intents with nowhere to route, and the pre-registered gate risk was
+# "~6 of 51 cases" -- 51 being 17 questions x 3 phrasings, so 6 cases is TWO QUESTIONS. The
+# evidence therefore says this verb serves two numbered questions.
+#
+# Filing it under NOT_QUESTION_DRIVEN would assert the opposite of what the evidence says, and
+# mapping it to Q-numbers I picked would be inventing the answer. The customer's question text
+# never enters this repo (C-series), so WHICH two is not knowable here -- it belongs to whoever
+# holds the source list.
+#
+# Entries here must name who owns the answer, and the seal below keeps the bucket small so it
+# cannot become a parking lot.
+AWAITING_QUESTION_NUMBER = {
+    "mesh:planDependencyNeighborhood":
+        "serves two of the 17 per Lane 2's routing evidence; the numbers are the operator's "
+        "to assign from the source list",
+}
+
 
 def _verbs() -> dict[str, dict]:
     return {v["verb"]: v for v in _main.VERBS}
@@ -113,7 +133,7 @@ def test_every_verb_is_accounted_for():
     a smaller system than the one that ships.
     """
     mapped = {v for v, _ in QUESTION_MAP.values()}
-    accounted = mapped | set(NOT_QUESTION_DRIVEN)
+    accounted = mapped | set(NOT_QUESTION_DRIVEN) | set(AWAITING_QUESTION_NUMBER)
     unplaced = sorted(set(_verbs()) - accounted)
     assert not unplaced, (
         f"verbs neither mapped to a question nor declared not-question-driven: {unplaced}.\n"
@@ -171,3 +191,21 @@ def test_the_semantic_check_is_owed():
     passing without doing the work -- the gate closes deliberately or not at all.
     """
     raise AssertionError("semantic fit unverified -- a human must read the 17 questions against this map")
+
+
+def test_the_awaiting_bucket_stays_small_and_named():
+    """A holding bucket becomes a parking lot the moment nobody counts it.
+
+    Each entry must name who owns the answer, and there must be few of them — if this grows,
+    the map has stopped describing the question list and started excusing itself from it.
+    """
+    known = _verbs()
+    assert len(AWAITING_QUESTION_NUMBER) <= 2, (
+        f"{len(AWAITING_QUESTION_NUMBER)} verbs are awaiting a question number. That is no "
+        f"longer a gap, it is an unmapped catalogue."
+    )
+    for verb, why in AWAITING_QUESTION_NUMBER.items():
+        assert verb in known, f"AWAITING_QUESTION_NUMBER names a verb that does not exist: {verb}"
+        assert "operator" in why or "Lane" in why, (
+            f"{verb}'s entry does not name who owns the answer: {why!r}"
+        )

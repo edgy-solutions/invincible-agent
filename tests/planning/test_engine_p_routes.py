@@ -59,16 +59,25 @@ MINIMUM_PARAMS: dict[str, dict] = {
     "plan_tech_footprint":    {"tech_id": "T1"},
     # plan_diff needs no params: `vs` defaults to baseline, and a scenario
     # diffed against baseline with no ops is legitimately empty.
+    "plan_dependency_neighborhood": {"project_id": "P5", "direction": "upstream"},
 }
 
 
 def test_every_declared_verb_runs_and_declares_a_distinct_output_uri(client):
     """The catalogue and the module must not drift. A verb registered to the mesh that 404s
     here is a routable promise with nothing behind it."""
+    # DERIVED, not hardcoded. This read `== 12` and went stale the day a thirteenth verb
+    # landed — the drift guard carrying the number it is guarding, which is the same defect
+    # test_prime_timeout_bounds_agree had. The property is that the CATALOGUE and the ROUTES
+    # agree, not that either has a particular size.
+    from agent_fleet.planning_agent import main as _main
+    expected = len(_main.VERBS)
+    assert expected >= 12, f"only {expected} verbs declared — the catalogue shrank unexpectedly"
+
     listed = client.get("/verbs").json()["verbs"]
-    assert len(listed) == 12
+    assert len(listed) == expected
     uris = {v["output_uri"] for v in listed}
-    assert len(uris) == 12, "two verbs share an output_uri — the type is meant to be fixed AND distinct"
+    assert len(uris) == expected,         "two verbs share an output_uri — the type is meant to be fixed AND distinct"
     for v in listed:
         body = {"params": MINIMUM_PARAMS.get(v["fn"], {})}
         r = client.post(f"/measure/{v['fn']}", json=body)

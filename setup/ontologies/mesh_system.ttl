@@ -262,6 +262,11 @@ mesh:ConstraintViolationSet a owl:Class ;
   rdfs:label "Constraint Violation Set" ;
   rdfs:comment "Ordering constraints whose successor violates its type and lag, carrying the shortfall in days. A violation with no magnitude sends someone to open a schedule; one with a magnitude is actionable." .
 
+mesh:DependencyNeighborhoodSet a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Dependency Neighborhood Set" ;
+  rdfs:comment "What one item waits on, or what waits on it — every neighbour on the named side, each carrying its own satisfied/violated/unresolvable state. DISTINCT FROM mesh:ConstraintViolationSet on purpose: that reports the SUBSET of edges currently failing, this reports EVERY edge with its answer. The difference is the whole reason this shape exists — when nothing is violated a violation set is empty, and an empty answer to 'what does this wait on' reads as 'nothing', which is a different claim from 'three things, all satisfied'. An item with no neighbours returns an empty set and that IS the answer; an item the model does not contain is refused instead." .
+
 mesh:MaturityMatrix a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Maturity Matrix" ;

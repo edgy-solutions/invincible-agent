@@ -24,9 +24,9 @@ from datetime import date
 from typing import Any, Literal, Optional
 
 try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
-    from entities import FISCAL_PERIODS, PERIOD_ORDER, FiscalPeriod, Interval, PlanState
+    from entities import FISCAL_PERIODS, PERIOD_ORDER, Dependency, FiscalPeriod, Interval, PlanState
 except ImportError:
-    from agent_fleet.planning_agent.entities import FISCAL_PERIODS, PERIOD_ORDER, FiscalPeriod, Interval, PlanState
+    from agent_fleet.planning_agent.entities import FISCAL_PERIODS, PERIOD_ORDER, Dependency, FiscalPeriod, Interval, PlanState
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The output-type contract. Declared, fixed, and the ONLY thing an intent names.
@@ -46,6 +46,7 @@ OUTPUT_URI: dict[str, str] = {
     "plan_session_changes":       MESH + "ChangeLog",
     "plan_diff":                  MESH + "EffectSet",
     "plan_coverage_gap":          MESH + "CoverageGapSet",
+    "plan_dependency_neighborhood": MESH + "DependencyNeighborhoodSet",
 }
 
 
@@ -281,36 +282,146 @@ def plan_dependency_violations(state: PlanState) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     for d in state.dependencies:
-        pred = state.interval_of(d.predecessor_kind, d.predecessor_id)
-        succ = state.interval_of(d.successor_kind, d.successor_id)
-        if pred is None or succ is None:
+        # ONE EVALUATOR, shared with plan_dependency_neighborhood. This verb reports the
+        # subset where the answer is "violated"; that one reports every neighbour with its
+        # answer. Two implementations would disagree about `>=` versus `>` eventually, and
+        # the disagreement would surface as a card saying "satisfied" beside one saying
+        # "13 days short" about the same edge.
+        ev = _dep_evaluation(state, d)
+
+        if ev["status"] == "unresolvable":
             # A dangling dependency is a MODEL defect, surfaced as its own row rather than
             # skipped — a constraint nobody can evaluate must not read as a constraint met.
             out.append({
                 "dependency_id": d.dependency_id, "dep_type": d.dep_type,
                 "unresolvable": True,
-                "reason": f"{d.predecessor_id} or {d.successor_id} has no planned interval",
+                "reason": ev["reason"],
             })
             continue
 
-        pred_anchor, succ_anchor = _DEP_RULES[d.dep_type]
-        pred_date = pred.end if pred_anchor == "end" else pred.start
-        succ_date = succ.end if succ_anchor == "end" else succ.start
-        earliest = _add_days(pred_date, d.lag_days)
-        if succ_date >= earliest:
+        if ev["status"] == "satisfied":
             continue
+
         out.append({
             "dependency_id": d.dependency_id,
             "dep_type": d.dep_type,
             "lag_days": d.lag_days,
             "predecessor_id": d.predecessor_id,
             "successor_id": d.successor_id,
-            "required_earliest_start": earliest,
-            "actual_start": succ_date,
-            "shortfall_days": _days_between(succ_date, earliest),
+            "required_earliest_start": ev["required_earliest_start"],
+            "actual_start": ev["actual_start"],
+            "shortfall_days": ev["shortfall_days"],
             "unresolvable": False,
         })
     return out
+
+
+_DIRECTIONS = ("upstream", "downstream")
+
+
+def _dep_evaluation(state: PlanState, d: Dependency) -> dict[str, Any]:
+    """Is this one dependency satisfied, and by how much is it missed?
+
+    EXTRACTED so there is ONE place that answers it. `plan_dependency_violations` reports the
+    subset where the answer is "no"; `plan_dependency_neighborhood` reports every neighbour
+    WITH its answer. Two implementations would disagree about `>=` versus `>` on the day it
+    mattered — the same two-writers rule the model applies to derived edges.
+    """
+    pred = state.interval_of(d.predecessor_kind, d.predecessor_id)
+    succ = state.interval_of(d.successor_kind, d.successor_id)
+    if pred is None or succ is None:
+        return {
+            "status": "unresolvable",
+            "reason": f"{d.predecessor_id} or {d.successor_id} has no planned interval",
+            "shortfall_days": None,
+        }
+    pred_anchor, succ_anchor = _DEP_RULES[d.dep_type]
+    pred_date = pred.end if pred_anchor == "end" else pred.start
+    succ_date = succ.end if succ_anchor == "end" else succ.start
+    earliest = _add_days(pred_date, d.lag_days)
+    if succ_date >= earliest:
+        return {"status": "satisfied", "shortfall_days": 0,
+                "required_earliest_start": earliest, "actual_start": succ_date}
+    return {"status": "violated", "shortfall_days": _days_between(succ_date, earliest),
+            "required_earliest_start": earliest, "actual_start": succ_date}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 13. plan_dependency_neighborhood  ->  mesh:DependencyNeighborhoodSet
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plan_dependency_neighborhood(
+    state: PlanState,
+    *,
+    project_id: str,
+    direction: str = "upstream",
+    kind: str = "project",
+) -> dict[str, Any]:
+    """What one item waits on, or what waits on it — TRAVERSAL, not constraint evaluation.
+
+    WHY THIS IS NOT A PARAMETER ON plan_dependency_violations. That verb evaluates a
+    constraint and reports the subset that fails; this one walks the edges and reports every
+    neighbour WITH its state. The distinction is not stylistic: measured on the seed, the
+    violations verb returns **[]**, so "what blocks P5?" routed there answers with silence —
+    and silence reads as "nothing depends on P5" rather than "P5's predecessor is satisfied".
+    Those are different facts and only one is true.
+
+    THREE OUTCOMES THAT MUST NOT COLLAPSE INTO EACH OTHER:
+      * neighbours exist          -> rows, each carrying its own satisfied/violated status;
+      * the item is a ROOT/LEAF   -> an empty list, which is the real answer "nothing here";
+      * the item is not modelled  -> NotInModel, RAISED.
+    An empty list for an unknown id would be a false statement about something that does not
+    exist, which is the failure this whole verb was commissioned to remove.
+    """
+    if direction not in _DIRECTIONS:
+        raise NotInModel(
+            f"cannot traverse dependencies {direction!r} — "
+            f"known directions are {', '.join(_DIRECTIONS)}"
+        )
+    if kind not in ("project", "phase"):
+        raise NotInModel(f"cannot traverse from a {kind!r} end")
+
+    subject = state.project(project_id) if kind == "project" else state.phase(project_id)
+    if subject is None:
+        raise NotInModel(f"no {kind} {project_id!r} in the plan")
+
+    neighbors: list[dict[str, Any]] = []
+    for d in state.dependencies:
+        if direction == "upstream":
+            if d.successor_kind != kind or d.successor_id != project_id:
+                continue
+            other_kind, other_id = d.predecessor_kind, d.predecessor_id
+        else:
+            if d.predecessor_kind != kind or d.predecessor_id != project_id:
+                continue
+            other_kind, other_id = d.successor_kind, d.successor_id
+
+        other = (state.project(other_id) if other_kind == "project"
+                 else state.phase(other_id))
+        interval = state.interval_of(other_kind, other_id)
+        row = {
+            "dependency_id": d.dependency_id,
+            "kind": other_kind,
+            "id": other_id,
+            # A dangling end still gets a NAME slot rather than being dropped — a neighbour
+            # nobody can resolve is a model defect worth seeing, not an absence.
+            "name": getattr(other, "name", None) or other_id,
+            "dep_type": d.dep_type,
+            "lag_days": d.lag_days,
+            "planned_start": interval.start if interval else None,
+            "planned_end": interval.end if interval else None,
+        }
+        row.update(_dep_evaluation(state, d))
+        neighbors.append(row)
+
+    neighbors.sort(key=lambda n: (n["planned_start"] or "", n["id"]))
+    return {
+        "project_id": project_id,
+        "project_name": getattr(subject, "name", None) or project_id,
+        "kind": kind,
+        "direction": direction,
+        "neighbors": neighbors,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
