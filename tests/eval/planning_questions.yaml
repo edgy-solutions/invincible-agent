@@ -1,0 +1,281 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 ACCEPTANCE INSTRUMENT — 17 questions x 3 phrasings, + refusals
+#
+# Gate 2's bar: >=90% of the 51 cases route to the correct intent with correct
+# slots, and 100% of out-of-model cases refuse. A WRONG-BUT-CONFIDENT ANSWER
+# FAILS THE WHOLE GATE, NOT A POINT.
+#
+# ── AUTHORED AGAINST THE GENERIC SEED'S OWN NAMES (C4) ───────────────────────
+# Every entity named below is read from agent_fleet/planning_agent/seed.py:
+# "Site A — Aurora", "ERP Modernization", "Core ERP Platform", "FY26-Q3",
+# "Corporate Capital Committee", and so on. No customer vocabulary. Phrasings
+# that name entities the seed does not contain would test the resolver's refusal
+# path by accident rather than the router's routing, which is a different
+# measurement wearing this one's name.
+#
+# ── PER-ARM FAILURE RECORDING (binding) ──────────────────────────────────────
+# A case can fail on THREE different arms and the escalation levers target
+# different ones:
+#   routing   -> wrong intent_id            -> few-shot exemplars help
+#   slot      -> right intent, wrong slots  -> two-step classify-then-fill helps
+#   number    -> narration cites an unsupported figure -> neither; that is the
+#                checker doing its job, and it is reported separately
+# An aggregate pass rate cannot choose between levers, so the runner records
+# which arm each failure died on.
+#
+# ── PHRASING FAMILIES ────────────────────────────────────────────────────────
+# Each question carries three phrasings drawn from different registers:
+#   a) the literal form, close to the question's own words
+#   b) a room form — how someone would actually say it out loud
+#   c) a SOFT form — vocabulary the catalog's soft_language map must carry
+# (c) is deliberately the hardest, and it is where the pre-registration predicts
+# failures: a soft phrase must survive BOTH synonym lookup AND slot preset.
+# ══════════════════════════════════════════════════════════════════════════════
+
+version: 1
+
+# Pre-registered before the run, so the number is measured against a claim rather
+# than described after the fact.
+pre_registration:
+  recorded: "2026-08-22, before any endpoint call"
+  gate: ">=90% of 51 route correctly with correct slots; 100% of out-of-model refuse"
+  predicted_weakest:
+    - "soft-language phrasings (c-forms) — must survive synonym lookup AND slot preset"
+    - "multi-slot funding questions — group_by inferred wrong between org and initiative when the phrasing names neither"
+  notes:
+    - "Q10's three phrasings are ANSWERABLE as of 959be6f (plan_dependency_neighborhood); they were refusal-expected before it landed"
+    - "refusal set is therefore the 3 out-of-model cases only"
+    - "direction is PRESET per intent, so what_blocks/downstream_of should not lose cases to directionality"
+
+cases:
+
+  # ── Q1 / Q2 — process evolution ────────────────────────────────────────────
+  - id: q1-a
+    question: "how does the Financial Close Automation process evolve over time"
+    expect: { intent_id: process_evolution, slots: { process: "Financial Close Automation" } }
+  - id: q1-b
+    question: "walk me through the plateaus for Financial Close Automation"
+    expect: { intent_id: process_evolution, slots: { process: "Financial Close Automation" } }
+  - id: q1-c
+    question: "where is Financial Close Automation headed"
+    expect: { intent_id: process_evolution, slots: { process: "Financial Close Automation" } }
+
+  - id: q2-a
+    question: "which capabilities enable Supply Chain Visibility"
+    expect: { intent_id: process_evolution, slots: { process: "Supply Chain Visibility" } }
+  - id: q2-b
+    question: "what has to be in place for Supply Chain Visibility to work"
+    expect: { intent_id: process_evolution, slots: { process: "Supply Chain Visibility" } }
+  - id: q2-c
+    question: "what feeds Supply Chain Visibility"
+    expect: { intent_id: process_evolution, slots: { process: "Supply Chain Visibility" } }
+
+  # ── Q3 — maturity ──────────────────────────────────────────────────────────
+  - id: q3-a
+    question: "capability maturity by site versus target"
+    expect: { intent_id: maturity_grid, slots: {} }
+  - id: q3-b
+    question: "show me the maturity grid as of FY26-Q4"
+    expect: { intent_id: maturity_grid, slots: { as_of: "FY26-Q4" } }
+  - id: q3-c
+    question: "where are we against where we said we would be"
+    expect: { intent_id: maturity_grid, slots: {} }
+
+  # ── Q4 / Q5 / Q6 — schedule ────────────────────────────────────────────────
+  - id: q4-a
+    question: "what is scheduled by initiative and phase"
+    expect: { intent_id: projects_in, slots: {} }
+  - id: q4-b
+    question: "show me the plan broken out by initiative"
+    expect: { intent_id: projects_in, slots: {} }
+  - id: q4-c
+    question: "what is on the board"
+    expect: { intent_id: projects_in, slots: {} }
+
+  - id: q5-a
+    question: "what is happening in FY26-Q3"
+    expect: { intent_id: projects_in, slots: { window: "FY26-Q3" } }
+  - id: q5-b
+    question: "what runs during FY26-Q3"
+    expect: { intent_id: projects_in, slots: { window: "FY26-Q3" } }
+  - id: q5-c
+    question: "what lands in the third quarter of FY26"
+    expect: { intent_id: projects_in, slots: { window: "FY26-Q3" } }
+
+  - id: q6-a
+    question: "what is happening at Site A — Aurora"
+    expect: { intent_id: site_schedule, slots: { site: "Site A — Aurora" } }
+  - id: q6-b
+    question: "show the schedule for Site A — Aurora"
+    expect: { intent_id: site_schedule, slots: { site: "Site A — Aurora" } }
+  - id: q6-c
+    question: "what is Aurora getting"
+    expect: { intent_id: site_schedule, slots: { site: "Site A — Aurora" } }
+
+  # ── Q7 — capability path ───────────────────────────────────────────────────
+  - id: q7-a
+    question: "which projects mature Straight-through invoicing and by when"
+    expect: { intent_id: capability_path, slots: { capability: "Straight-through invoicing" } }
+  - id: q7-b
+    question: "what gets Straight-through invoicing to target"
+    expect: { intent_id: capability_path, slots: { capability: "Straight-through invoicing" } }
+  - id: q7-c
+    question: "who is doing the work on Straight-through invoicing"
+    expect: { intent_id: capability_path, slots: { capability: "Straight-through invoicing" } }
+
+  # ── Q8 — tech footprint ────────────────────────────────────────────────────
+  - id: q8-a
+    question: "where is the Core ERP Platform used"
+    expect: { intent_id: tech_footprint, slots: { technology: "Core ERP Platform" } }
+  - id: q8-b
+    question: "what depends on the Core ERP Platform"
+    expect: { intent_id: tech_footprint, slots: { technology: "Core ERP Platform" } }
+  - id: q8-c
+    question: "show the footprint of the Core ERP Platform"
+    expect: { intent_id: tech_footprint, slots: { technology: "Core ERP Platform" } }
+
+  # ── Q9 / Q11 — site load ───────────────────────────────────────────────────
+  - id: q9-a
+    question: "which sites are affected and when"
+    expect: { intent_id: show_site_load, slots: {} }
+  - id: q9-b
+    question: "show change load across the sites"
+    expect: { intent_id: show_site_load, slots: {} }
+  - id: q9-c
+    question: "who is taking the hit and when"
+    expect: { intent_id: show_site_load, slots: {} }
+
+  - id: q11-a
+    question: "which sites are over their change-load threshold"
+    expect: { intent_id: show_site_load, slots: { over_threshold_only: true } }
+  - id: q11-b
+    question: "which sites exceed the threshold in FY26-Q4"
+    expect: { intent_id: show_site_load, slots: { over_threshold_only: true, window: "FY26-Q4" } }
+  - id: q11-c
+    question: "which sites are overloaded"
+    expect: { intent_id: show_site_load, slots: { over_threshold_only: true } }
+    soft: true
+
+  # ── Q10 — dependency traversal (ANSWERABLE as of 959be6f) ──────────────────
+  - id: q10-a
+    question: "what blocks Wave 1 Cutover"
+    expect: { intent_id: what_blocks, slots: { project: "Wave 1 Cutover", direction: upstream } }
+  - id: q10-b
+    question: "what is Wave 1 Cutover waiting on"
+    expect: { intent_id: what_blocks, slots: { project: "Wave 1 Cutover", direction: upstream } }
+    soft: true
+  - id: q10-c
+    question: "what slips if Wave 1 Cutover slips"
+    expect: { intent_id: downstream_of, slots: { project: "Wave 1 Cutover", direction: downstream } }
+
+  # ── Q12 / Q16 / Q17 — cost ─────────────────────────────────────────────────
+  - id: q12-a
+    question: "what does spend look like per period"
+    expect: { intent_id: show_cost_curve, slots: {} }
+  - id: q12-b
+    question: "show me the cost curve"
+    expect: { intent_id: show_cost_curve, slots: {} }
+  - id: q12-c
+    question: "how is the money phased"
+    expect: { intent_id: show_cost_curve, slots: {} }
+
+  - id: q16-a
+    question: "where does spend exceed the cap"
+    expect: { intent_id: show_cost_curve, slots: { over_cap_only: true } }
+  - id: q16-b
+    question: "which periods breach the funding cap"
+    expect: { intent_id: show_cost_curve, slots: { over_cap_only: true } }
+  - id: q16-c
+    question: "where are we over budget"
+    expect: { intent_id: show_cost_curve, slots: { over_cap_only: true } }
+    soft: true
+
+  - id: q17-a
+    question: "capex versus expense, time-phased"
+    expect: { intent_id: show_cost_curve, slots: { kind: capex } }
+  - id: q17-b
+    question: "split the spend by capex and expense over time"
+    expect: { intent_id: show_cost_curve, slots: { kind: capex } }
+  - id: q17-c
+    question: "how much of the spend is capital"
+    expect: { intent_id: show_cost_curve, slots: { kind: capex } }
+
+  # ── Q13 / Q14 / Q15 — funding gap (PREDICTED WEAK: group_by) ───────────────
+  - id: q13-a
+    question: "where is funding short by organization"
+    expect: { intent_id: show_funding_gap, slots: { group_by: org } }
+  - id: q13-b
+    question: "show the funding gap per funding org"
+    expect: { intent_id: show_funding_gap, slots: { group_by: org } }
+  - id: q13-c
+    question: "who has not put up their share"
+    expect: { intent_id: show_funding_gap, slots: { group_by: org } }
+    soft: true
+
+  - id: q14-a
+    question: "where is funding short by initiative"
+    expect: { intent_id: show_funding_gap, slots: { group_by: initiative } }
+  - id: q14-b
+    question: "show the funding gap broken out by initiative"
+    expect: { intent_id: show_funding_gap, slots: { group_by: initiative } }
+  - id: q14-c
+    question: "which initiative is underfunded"
+    expect: { intent_id: show_funding_gap, slots: { group_by: initiative } }
+
+  - id: q15-a
+    question: "which organization is under-committed"
+    expect: { intent_id: show_funding_gap, slots: { group_by: org } }
+  - id: q15-b
+    question: "which funding org has committed less than required"
+    expect: { intent_id: show_funding_gap, slots: { group_by: org } }
+  - id: q15-c
+    question: "who is short"
+    expect: { intent_id: show_funding_gap, slots: { group_by: org } }
+    soft: true
+
+# ── OUT OF MODEL — 100% of these must refuse (Gate 2, absolute) ─────────────
+refusals:
+  - id: oom-roi
+    question: "what is the ROI on ERP Modernization"
+    expect: { intent_id: no_intent_match, out_of_model_concept: roi }
+  - id: oom-risk-owner
+    question: "who owns the risk for Wave 1 Cutover"
+    expect: { intent_id: no_intent_match, out_of_model_concept: risk_owner }
+  - id: oom-headcount
+    question: "how many people are working on Site B Rollout"
+    expect: { intent_id: no_intent_match, out_of_model_concept: headcount }
+
+# ── NUMBER-CHECK BOUNDARY CASES ────────────────────────────────────────────
+# The checker is the last gate every demo answer passes through, so the eval
+# exercises it IN SITU rather than only in its unit arms. One case per boundary
+# the equivalence rule draws.
+number_check_cases:
+  - id: nc-display-projection
+    rows: [{ period: "FY26-Q3", amount: 1247332 }]
+    narration: "Spend in FY26-Q3 reaches $1.2M."
+    expect_kept: true
+    why: "display rounds truth — prose may PROJECT a row value"
+
+  - id: nc-precision-from-nowhere
+    rows: [{ period: "FY26-Q3", amount: 1200000 }]
+    narration: "Spend in FY26-Q3 is exactly 1247332."
+    expect_kept: false
+    why: "the row is coarse and the prose is exact — invented precision"
+
+  - id: nc-percent-vs-ratio
+    rows: [{ site: "Site B — Brandon", utilisation: 0.12 }]
+    narration: "Site B — Brandon runs at 12%."
+    expect_kept: false
+    why: "ratio is NOT converted to percent — 0.12 and 12% are different claims"
+
+  - id: nc-year-at-the-edge
+    rows: [{ period: "FY26-Q4", amount: 500000 }]
+    narration: "Spend continues rising through 2027."
+    expect_kept: false
+    why: "a year the rows do not contain is a temporal claim the data cannot support"
+
+  - id: nc-supported-plain
+    rows: [{ site: "Site A — Aurora", load: 7 }]
+    narration: "Site A — Aurora carries a load of 7."
+    expect_kept: true
+    why: "the ordinary case must survive, or the checker is a prose filter"
