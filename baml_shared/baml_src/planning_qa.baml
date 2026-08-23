@@ -148,23 +148,29 @@ class SetCost {
   amount string
 }
 
-// ── BLOCKED: dependency traversal ─────────────────────────────────────────
-// The SHAPES exist so the router can still recognise these questions and the
-// rail can refuse them BY NAME. Engine P's plan_dependency_violations takes no
-// project parameter and reports only breaches, so routing here to it would
-// answer a different question AND go blank when nothing is violated — "nothing
-// blocks it" when the truth is "three predecessors, all satisfied".
-// The catalog carries `blocked:` with the pending verb
-// (plan_dependency_neighborhood); when it registers, only the catalog changes.
+// ── DEPENDENCY TRAVERSAL ──────────────────────────────────────────────────
+// Wired 2026-08-22 to plan_dependency_neighborhood -> mesh:DependencyNeighborhoodSet.
+// The verb's own measurement confirmed why traversal could not be a parameter on
+// the violations verb: violations returns [] on the seed, so "what blocks P5?"
+// routed there answered with SILENCE, which reads as "nothing depends on P5"
+// rather than "P5's predecessor is satisfied".
+//
+// `direction` is OPTIONAL here and PRESET IN THE CATALOG per intent. The two
+// questions differ ONLY by direction, and asking the model to infer it from
+// "what blocks" versus "what does it block" is a coin-flip on a word order the
+// eval phrasings deliberately vary. The model may still supply it when the user
+// is explicit; the catalog default is what makes the common case deterministic.
 
 class WhatBlocks {
   // @@intent_id: what_blocks
   project string
+  direction string?
 }
 
 class DownstreamOf {
   // @@intent_id: downstream_of
   project string
+  direction string?
 }
 
 // ── NO MATCH ──────────────────────────────────────────────────────────────

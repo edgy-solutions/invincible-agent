@@ -274,7 +274,7 @@ intents:
       - "change the expense figure on this one"
       - "make that project's capital spend lower in the final period"
 
-  # ── BLOCKED, TEMPORARILY REFUSAL-ROUTED ────────────────────────────────────
+  # ── DEPENDENCY TRAVERSAL — UNBLOCKED 2026-08-22 (Lane 1: 959be6f) ──────────
   # These two want a dependency TRAVERSAL. Engine P's `plan_dependency_violations`
   # takes NO project parameter and returns only VIOLATIONS — it evaluates a
   # constraint over the data; these intents traverse it. Different question,
@@ -285,22 +285,23 @@ intents:
   # from the violations verb, which reads as "nothing blocks it" when the truthful
   # answer is "three predecessors, all currently satisfied".
   #
-  # RULED: a new verb, `plan_dependency_neighborhood{project, direction}` ->
-  # `mesh:DependencyNeighborhoodSet`, built in Lane 1. When it registers, set
-  # `measure_id` and `output_uri` below and delete `blocked`. Until then these
-  # route to the REFUSAL path with a named reason — honest and demonstrable,
-  # rather than silently dropped or mapped to a verb answering a different
-  # question.
+  # NOW WIRED. `plan_dependency_neighborhood{project, direction}` ->
+  # `mesh:DependencyNeighborhoodSet` landed in 959be6f, and its own measurement
+  # confirmed the diagnosis empirically: the violations verb returns [] on the
+  # seed, so "what blocks P5?" routed there answered with SILENCE — which reads
+  # as "nothing depends on P5" rather than "P5's predecessor is satisfied".
+  # Different facts; only one true. `direction` is preset per intent rather than
+  # left to the router: the two questions differ ONLY by direction, and asking a
+  # model to infer it from "what blocks" versus "what does it block" is a
+  # coin-flip on a word order the phrasings deliberately vary.
   - intent_id: what_blocks
     description: What a project depends on — its predecessors, whether or not any constraint is violated.
-    measure_id: null
-    output_uri: null
-    blocked:
-      reason: "dependency traversal is not yet a deployed verb; the existing violations verb reports only breaches, so it would answer a different question and return blank when nothing is violated"
-      pending_verb: plan_dependency_neighborhood
+    measure_id: plan_dependency_neighborhood
+    output_uri: mesh:DependencyNeighborhoodSet
     answers: [Q10]
     slots:
-      project: { type: string, required: true, resolves: project }
+      project:   { type: string, required: true, resolves: project }
+      direction: { type: enum, values: [upstream, downstream], required: false, default: upstream }
     example_phrasings:
       - "what blocks this project"
       - "what is this one waiting on"
@@ -308,14 +309,12 @@ intents:
 
   - intent_id: downstream_of
     description: What depends on a project — its successors, whether or not any constraint is violated.
-    measure_id: null
-    output_uri: null
-    blocked:
-      reason: "dependency traversal is not yet a deployed verb; the existing violations verb reports only breaches, so it would answer a different question and return blank when nothing is violated"
-      pending_verb: plan_dependency_neighborhood
+    measure_id: plan_dependency_neighborhood
+    output_uri: mesh:DependencyNeighborhoodSet
     answers: [Q10]
     slots:
-      project: { type: string, required: true, resolves: project }
+      project:   { type: string, required: true, resolves: project }
+      direction: { type: enum, values: [upstream, downstream], required: false, default: downstream }
     example_phrasings:
       - "what does this project block"
       - "what is downstream of that one"

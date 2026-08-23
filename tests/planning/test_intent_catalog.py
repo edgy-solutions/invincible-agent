@@ -118,9 +118,18 @@ def test_intent_ids_are_unique():
 # ── BLOCKED INTENTS ARE EXPLICIT ───────────────────────────────────────────
 
 def test_a_blocked_intent_declares_its_reason_and_its_pending_verb():
-    """A gap that is merely absent is indistinguishable from an oversight."""
+    """A gap that is merely absent is indistinguishable from an oversight.
+
+    CONDITIONAL BY DESIGN, and it did not start that way. The first version
+    asserted that SOME intent was blocked — pinning a TRANSITIONAL state — and it
+    went red the moment Lane 1's traversal verb landed and the transition
+    completed. A test that requires a temporary condition becomes a blocker when
+    the condition resolves, which is the opposite of what a guard is for. The
+    well-formedness rule is the durable half and survives here for the next
+    blocked intent; whether any intent is currently blocked is not the test's
+    business.
+    """
     blocked = [i for i in _intents() if i.get("blocked")]
-    assert blocked, "expected the traversal intents to be present-and-blocked, not deleted"
     for i in blocked:
         b = i["blocked"]
         assert b.get("reason"), f"{i['intent_id']} is blocked with no reason"
@@ -195,3 +204,28 @@ def test_the_catalog_carries_no_customer_vocabulary():
     raw = _CATALOG.read_text(encoding="utf-8").lower()
     for banned in ("boeing", "lockheed", "raytheon", "northrop", "airbus"):
         assert banned not in raw, f"customer vocabulary in the catalog: {banned!r}"
+
+
+# ── THE TRAVERSAL INTENTS, NOW WIRED ───────────────────────────────────────
+
+def test_the_traversal_intents_route_to_the_NEIGHBORHOOD_verb():
+    """Unblocked 2026-08-22 (Lane 1, 959be6f). The verb's own measurement
+    confirmed the diagnosis: the violations verb returns [] on the seed, so
+    "what blocks P5?" routed there answered with SILENCE — read as "nothing
+    depends on P5" rather than "P5's predecessor is satisfied"."""
+    by_id = {i["intent_id"]: i for i in _intents()}
+    for iid in ("what_blocks", "downstream_of"):
+        assert by_id[iid]["measure_id"] == "plan_dependency_neighborhood"
+        assert by_id[iid]["output_uri"] == "mesh:DependencyNeighborhoodSet"
+        assert not by_id[iid].get("blocked"), f"{iid} still carries a blocked marker"
+
+
+def test_direction_is_PRESET_per_intent_not_left_to_the_router():
+    """THE COIN-FLIP ARM. The two questions differ ONLY by direction, and asking
+    a model to infer it from "what blocks" versus "what does it block" is a
+    coin-flip on a word order the eval phrasings deliberately vary. Presetting it
+    removes an entire class of routing failure that no prompt tuning would fix
+    reliably."""
+    by_id = {i["intent_id"]: i for i in _intents()}
+    assert by_id["what_blocks"]["slots"]["direction"]["default"] == "upstream"
+    assert by_id["downstream_of"]["slots"]["direction"]["default"] == "downstream"
