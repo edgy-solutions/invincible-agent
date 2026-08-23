@@ -996,6 +996,17 @@ primeSubstrate:
       # every other catalog verb came back (the graph showed 8 of 9 verbs on
       # idp:Dataset). Renders as <release>-data-analyst.
       - data-analyst
+      # Engine P self-registers TWELVE planning verbs on startup and was
+      # omitted here — the SAME defect as data-analyst above, repeated
+      # because that fix was hand-applied and never sealed. Measured
+      # 2026-08-22: prime clean (16 ok / 0 failed / 0 unfinished),
+      # ontologySeed complete, reregister complete, and Engine P's verbs
+      # still absent, because it was never restarted. Every hook reported
+      # success; the only visible evidence was the pod name not changing.
+      # tests/test_reregister_covers_every_registering_engine.py now
+      # derives this list from which agents actually call
+      # register_engine_to_mesh, so a third repeat fails in CI.
+      - engine-p
     # The Neo4j node whose presence signals "the ontology ingest populated
     # the class graph" — restart is deferred until it exists so the
     # re-registering engines don't Contract-D-reject against an empty graph.

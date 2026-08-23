@@ -50,10 +50,14 @@ echo "=== 4. Engine P verbs present BY NAME (expect 12) ==="
 # COUNTING ROWS IS NOT ENOUGH — 64 could be reached by twelve rows from anywhere. Filtering
 # client-side rather than with a GraphQL `where` keeps the quoting sane AND leaves an
 # unexpected verb name visible instead of filtered away.
-wv '{ Get { Predicate(limit:300){ verb } } }' \
-  | grep -o '"verb":"[^"]*"' | grep -i plan | sort | sed 's/^/    /'
-wv '{ Get { Predicate(limit:300){ verb } } }' \
-  | grep -o '"verb":"[^"]*"' | grep -ci plan | sed 's/^/  planning verbs: /'
+# THE FIELD IS `verb_iri`. It was `verb` here first — a property Weaviate does not have, so
+# the query ERRORED, grep counted zero, and this check reported "0 planning verbs" for a
+# query that never ran. It contradicted check 3's correct 64, and that disagreement is the
+# only reason the lie was caught: these two checks exist to disagree.
+wv '{ Get { Predicate(limit:300){ verb_iri } } }' \
+  | grep -o '"verb_iri":"[^"]*"' | grep -i plan | sort | sed 's/^/    /'
+wv '{ Get { Predicate(limit:300){ verb_iri } } }' \
+  | grep -o '"verb_iri":"[^"]*"' | grep -ci plan | sed 's/^/  planning verbs: /'
 
 echo
 echo "=== 5. Registration refusals in the engine log (expect NONE) ==="
@@ -64,3 +68,10 @@ if [ -n "$POD" ]; then
 else
   echo "  NO RUNNING engine-p POD — every number above is about a fleet without it."
 fi
+
+echo
+echo "=== 4b. Rows accepted but never completed (expect 0) ==="
+# registration_complete=false is a row that was ACCEPTED and then not finished. It COUNTS
+# toward the total, so a clean row count can hide it.
+wv '{ Get { Predicate(limit:300){ registration_complete } } }' \
+  | grep -o '"registration_complete":false' | wc -l | sed 's/^/  incomplete rows: /'
