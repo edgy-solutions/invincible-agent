@@ -380,3 +380,8 @@ mesh:ThresholdGrid a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Threshold Grid" ;
   rdfs:comment "Subjects by periods, each cell against a threshold the subject owns. Axes are DERIVED from the cells, so a pair with no activity renders as a gap rather than a zero — a zero in a heat grid reads as measured-and-fine, which is a different claim from nothing-was-happening. A LIVE VIEW." .
+
+mesh:IntervalTimeline a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Interval Timeline" ;
+  rdfs:comment "Nested intervals — group, phase, item — drawn on a shared time axis, where the top level's MEANING is stated by the payload rather than fixed by the renderer. Its row identity is the PAIR (group, item), not the item alone: under a many-to-many pivot one item appears once per thing it contributes to, each with its own weight, and a renderer keyed on the item would draw duplicates or discard real rows. Dragging is arrangement and is client-side; the DROP is a governed write that re-evaluates server-side, so the bars a reader sees after a move are the substrate's answer and not the gesture's. A LIVE VIEW." .

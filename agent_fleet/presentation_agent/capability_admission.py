@@ -55,6 +55,18 @@ KNOWN_ARCHETYPES = frozenset({
     "THRESHOLD_GRID",
     "MATRIX_GRID",
     "DELTA_SET",
+    # Phase 1's anchor timeline, 2026-08-22. Added HERE FIRST, before the frontend registers
+    # it -- the four archetypes above were refused at this door because this was the one
+    # registry nobody enumerated, and the lesson only counts if the next archetype does not
+    # repeat it. test_archetype_registries_agree is the seal; this is its prospective use.
+    "INTERVAL_TIMELINE",
+    # Phase 3's commit-ceremony card. Its CONTRACT exists before any verb emits a
+    # DecisionArtifact, so it is deliberately NOT in DERIVED_BINDINGS yet -- but the admission
+    # vocabulary is a different registry with a different trigger: a declared contract must be
+    # a name the backend knows, bound or not. The four-registry seal caught this gap the same
+    # hour it was created, which is the first time it has caught an AUTHOR rather than
+    # reproduced a production refusal.
+    "DECISION_RECORD",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that
