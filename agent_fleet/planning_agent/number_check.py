@@ -1,5 +1,26 @@
 """THE NARRATION CONTRACT — every number in the prose must come from the rows.
 
+── PLACEMENT: RULED 2026-08-22, AND THE RULING IS "STAY" ──────────────────────
+
+Raised as a possible move to the BFF's tree. Read the consumer to decide, and
+the read settled it: THERE IS NO CONSUMER YET. Nothing imports
+`check_narration`; `/plan/measure/{fn}` exists in the BFF but no narration route
+does, because NarrateResult is not wired.
+
+So the question "does the BFF's build need to find this?" has no answer, and
+moving on a hypothesis about who will eventually call it is choosing a home for
+a caller that does not exist.
+
+It stays HERE, with the planning agent, because that is where its SUBJECT lives:
+the rows it validates against are Engine P's measure output, and the equivalence
+rules it encodes (period labels, capex/expense figures, site loads) are planning
+vocabulary.
+
+TRIGGER FOR REVISITING: when a narration route lands and calls this, whoever
+wires it reads the call site. If the BFF is the SOLE consumer, it moves then —
+a two-line move plus an import fix, made with the consumer visible instead of
+imagined.
+
 Views cannot lie because they are drawn from rows. This holds the prose to the
 same standard: the LLM sees ONLY result rows and writes at most two sentences,
 and any sentence containing a number that is not supported by those rows is

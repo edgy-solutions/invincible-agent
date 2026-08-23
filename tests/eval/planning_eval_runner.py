@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -213,9 +214,15 @@ def run_suite(fixture: dict) -> dict:
     refusal_ok = 0
     failures: list[dict] = []
 
+    latencies: list[float] = []
+
     for case in cases:
         exp = case["expect"]
-        observations = [_ask_baml(case["question"]) for _ in range(_PASSES)]
+        observations = []
+        for _ in range(_PASSES):
+            _t0 = time.time()
+            observations.append(_ask_baml(case["question"]))
+            latencies.append(time.time() - _t0)
 
         # NONDETERMINISM IS A FAILURE, NOT NOISE. A router that answers
         # differently on identical input has no answer; averaging hides exactly
@@ -256,7 +263,17 @@ def run_suite(fixture: dict) -> dict:
             })
 
     soft_ids = {c["id"] for c in cases if c.get("soft")}
+    lat = sorted(latencies)
+    def _pct(p: float) -> float:
+        return round(lat[min(int(len(lat) * p), len(lat) - 1)], 1) if lat else 0.0
+
     return {
+        "latency_s": {
+            "n": len(lat),
+            "median": _pct(0.5),
+            "p90": _pct(0.9),
+            "max": round(lat[-1], 1) if lat else 0.0,
+        },
         "total": len(cases),
         "routing_ok": routing_ok,
         "slots_ok": slots_ok,

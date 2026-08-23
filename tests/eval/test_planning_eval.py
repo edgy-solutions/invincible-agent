@@ -166,6 +166,15 @@ def test_routing_against_the_real_endpoint_with_per_arm_attribution():
     print(f"slots correct   : {result['slots_ok']}/{result['total']}")
     print(f"refusals correct: {result['refusal_ok']}/{result['refusal_total']}")
     print(f"arms            : {dict(arms)}")
+    lat = result.get("latency_s", {})
+    if lat:
+        # INCIDENTAL BUT VALUABLE: the first latency sample through the REBUILT
+        # funnel (preset directions, deterministic slots). Re-running 105 calls
+        # just to measure it later would be waste, and it feeds the demo-latency
+        # decision directly.
+        print(f"latency (s)     : median {lat['median']}  p90 {lat['p90']}  max {lat['max']}  n={lat['n']}")
+    soft_failed = result.get("soft_failures", [])
+    print(f"soft-language failures: {len(soft_failed)} {soft_failed}")
     for f in result["failures"]:
         print(f"  [{f['arm']}] {f['id']}: expected {f['expected']} got {f['got']}")
 
