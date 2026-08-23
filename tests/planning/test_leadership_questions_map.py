@@ -55,7 +55,7 @@ QUESTION_MAP: dict[str, tuple[str, str]] = {
     "Q7":  ("mesh:planCapabilityPath",       "which work advances one ability, ordered and weighted"),
     "Q8":  ("mesh:planTechFootprint",        "what a technical component enables and participates in"),
     "Q9":  ("mesh:planSiteLoad",             "concurrent change-load per location per period"),
-    "Q10": ("mesh:planDependencyViolations", "successors that violate a dependency type and lag"),
+    "Q10": ("mesh:planDependencyNeighborhood", "what determines sequencing — the neighbours on either side, each with its state"),
     "Q11": ("mesh:planSiteLoad",             "which locations exceed their saturation threshold"),
     "Q12": ("mesh:planCostCurve",            "time-phased spend per period"),
     "Q13": ("mesh:planFundingGap",           "required minus committed, per group"),
@@ -77,6 +77,16 @@ NOT_QUESTION_DRIVEN = {
     "mesh:planCoverageGap":    "rev3 B4 absence query -- processes/abilities no initiative touches",
     "mesh:planDiff":           "Phase 3 scenario diffs -- answers about a CHANGE, not the plan",
     "mesh:planSessionChanges": "INV-4 -- the session's own op log",
+    # RE-HOMED 2026-08-22 and the reason is worth keeping: the plan's section 2.3 mapped Q10
+    # to this verb, and the MAPPING was right while the VERB was wrong. Q10 asks what
+    # DETERMINES SEQUENCING -- a traversal. This verb evaluates which constraints are
+    # currently BREACHED, which is a different question and one the seventeen do not ask.
+    # It stays load-bearing: plan_diff never suppresses violations under a materiality floor,
+    # and seeded tension (b) is its trap. Answering no numbered question is not the same as
+    # answering nothing.
+    "mesh:planDependencyViolations":
+        "evaluates breaches, not sequencing -- feeds plan_diff and seeded tension (b); Q10 "
+        "asks what determines sequencing and now routes to the traversal verb",
 }
 
 # Verbs that DO answer numbered questions, whose numbers are not establishable from this repo.
@@ -93,11 +103,16 @@ NOT_QUESTION_DRIVEN = {
 #
 # Entries here must name who owns the answer, and the seal below keeps the bucket small so it
 # cannot become a parking lot.
-AWAITING_QUESTION_NUMBER = {
-    "mesh:planDependencyNeighborhood":
-        "serves two of the 17 per Lane 2's routing evidence; the numbers are the operator's "
-        "to assign from the source list",
-}
+# EMPTIED 2026-08-22, the same day it was created, by the operator answering from the source
+# list: both intents serve Q10. `what_blocks` IS the predecessor traversal section 2.3 already
+# mapped to Q10; `downstream_of` is Q10's inverse reading -- sequencing runs both directions --
+# and no distinct row in the seventeen names it separately.
+#
+# So the gate arithmetic revises DOWN: not "~6 cases, two questions" but Q10's three phrasings
+# plus whatever Lane 2 authors for the downstream reading. Left in place, empty, because the
+# mechanism earned its keep -- the alternative was filing a verb under a bucket asserting the
+# opposite of the evidence.
+AWAITING_QUESTION_NUMBER: dict[str, str] = {}
 
 
 def _verbs() -> dict[str, dict]:

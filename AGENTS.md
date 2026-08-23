@@ -1454,6 +1454,31 @@ of the wrong process. It fails silently and plausibly, which is why it recurs �
 non-zero exit does NOT stop a pipeline already started, so a function that fails and returns 1
 still has its partial output counted downstream.
 
+### A GUARD THAT HARDCODES A COUNT IT COULD ENUMERATE ASSERTS STALENESS ONE ADDITION LATER
+Three instances in one week, which is past this repo's own threshold:
+
+* `test_prime_timeout_bounds_agree` hardcoded `ingests = 15`, and went stale the day a
+  sixteenth ontology landed — **the drift guard carrying the number it was guarding**;
+* `assembleCapabilities.test.ts` hand-maintained the set of components the interpreter
+  dispatches, which its own comment called "a second source for what the interpreter
+  dispatches… adding a row to it should feel slightly wrong, and that feeling is the signal";
+* `test_engine_p_routes` asserted `len(listed) == 12`, and went stale on the thirteenth verb.
+
+None of the three FAILED when they went stale — they kept passing while describing a smaller
+system than the one that shipped, which is the shape that survives review.
+
+**So: if the population is enumerable, derive the count from it.** `len(VERBS)`, one `s3_key`
+per ingest, the switch's own cases. The property worth asserting is almost never "there are N"
+— it is "these two descriptions of one population AGREE", and that phrasing survives the
+addition that breaks the other one.
+
+Two corollaries earned the hard way:
+* **Derived is often STRICTER, not looser.** Replacing the hand-set with a parse of the switch
+  turned a MEMBERSHIP assertion into a MAPPING assertion — the old form would have passed a
+  binding naming `DeltaSet` while the interpreter dispatched `PeriodSeries`.
+* **A derived guard needs a positive control.** A regex that stops matching enumerates nothing
+  and passes over nothing, which is the same silence with a different cause.
+
 ### A BRIEFING is an unreliable source — the board and the suite outrank it
 2026-08-13, and the instance is the useful part: an agent was briefed that two items were open —
 twelve undeclared manifest routes with three red tests, and an unheadered handoff needing
