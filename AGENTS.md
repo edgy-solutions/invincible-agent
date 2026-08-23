@@ -1412,6 +1412,28 @@ which is exactly the profile of a claim that gets acted on. It was caught only b
 — filing the board item — required re-verifying the fact, and the re-verification used a different
 method. **A finding worth filing is worth re-reading by a second method before it is filed.**
 
+### PIPE-MASKING — the exit code you read is the last command's, not the one you care about
+2026-08-22, three times in one session, and the third instance is what promoted it from incident
+to rule: `npx tsc --noEmit 2>&1 | head -8; echo "tsc exit=$?"` printed **exit=0** while tsc was
+failing, because `$?` is `head`'s status. That command WAS the check for a build failure, so the
+masking happened inside the investigation of the thing it hid.
+
+The other two that session: `wsl bash run-tests.sh | tail -6` returned 0 for a run where uv was
+missing and ZERO tests executed; and a probe whose `wv ... | grep -c` printed `0` for a GraphQL
+query that had errored — a count for a query that never ran.
+
+**So: read exit codes BARE, or with `set -o pipefail`, never off the tail of a pipe.**
+
+```bash
+cmd > /tmp/out 2>&1; echo "exit=$?"; head /tmp/out     # right
+cmd 2>&1 | head; echo "exit=$?"                        # WRONG — head's status
+```
+
+This is the proxy-measurement error in shell form: the number is real, it is just a measurement
+of the wrong process. It fails silently and plausibly, which is why it recurs — and note that a
+non-zero exit does NOT stop a pipeline already started, so a function that fails and returns 1
+still has its partial output counted downstream.
+
 ### A BRIEFING is an unreliable source — the board and the suite outrank it
 2026-08-13, and the instance is the useful part: an agent was briefed that two items were open —
 twelve undeclared manifest routes with three red tests, and an unheadered handoff needing
