@@ -285,6 +285,22 @@ vocabulary, demoted but not discarded — with the consequence signals that make
    the client re-requests when the version it holds is stale, which is the form that survives a
    second client and a reconnect, where push does not. Record both in the Phase 0.5 survey doc as
    decided, and amend ADR-0042 to point at that record.
+
+   **HARMONISED 2026-08-22, and ADR-0042 GOVERNS.** ADR-0042's OQ1 answer (dated a day later)
+   reads "event-driven over Electric — the UI holds a subscription and the substrate publishes
+   into it", which looked like it contradicted "pull, on a server-issued state version" above.
+   It does not: the two describe **different halves of one mechanism**, and both phrasings are
+   kept visible rather than overwritten, because the seam is the informative part.
+
+   * *"Pull on a server-issued state version"* describes the **trigger semantics** — the card
+     re-evaluates when the version moves; nobody pushes ROWS at it.
+   * *"Event-driven over Electric"* describes the **transport** — the version bump arrives as a
+     shape diff, not as UI polling.
+
+   Resolved: **Electric carries the invalidation, the card pulls the recomputation.**
+   Pull-triggered-by-push, which is how every other artifact in cortex already hydrates. Where
+   the two texts differ in emphasis, **ADR-0042 is binding** — it is later, more detailed, and
+   the document the build binds to.
 3. **Contracts before components.** Each renderer ships `<X>.contract.ts` — archetype, component,
    layout, typed field map, `rowRequirements`, `refusalReasons` — and a `DERIVED_BINDINGS` row in
    `assembleCapabilities.ts`. The refusal vocabulary is where honest-empty is *enforced*: "no
