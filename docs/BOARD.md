@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **67 of 69 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **68 of 70 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -183,6 +183,10 @@ _Coverage: **67 of 69 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **engine-o-internal-hardening** — Engine-o's internal read/orchestration routes are accepted at current posture. Fires when in-cluster reachability stops being an acceptable gate.
   status: parked · owner: unassigned · trigger: the cluster stops being closed — a SHARED work cluster, any workload you did not author, or a network-policy change
   → [docs/plans/engine-o-internal-hardening.md](plans/engine-o-internal-hardening.md)
+
+- **presentation-trace-in-the-envelope** — RULED in ADR-0043 (2026-08-22), build deferred. select_presentation already RETURNS its full evaluation (refusals with named reasons, candidates_considered/satisfied, selection_basis, frontend_id, registration_version) — render_ui drops it after logging TWO of eight keys. Carry it out as `presentation_trace` on the answer body; HUD renders it beside RoutingDecision in the ABOUT/ACTION idiom. NOT the one-field edit the design conversation assumed: presentation provenance does not cross to the client at all today (zero `presentation_source` in src/; only the coarse X-Presentation-Path header), so this is three hops incl. cortex-bff + cortex-ui. One additive change is MANDATORY per §6 — `_satisfies` only types CHART_WIDGET, so "satisfied" and "never evaluated" must not render alike or the panel's most confident row is its least true one.
+  status: parked · owner: unassigned · trigger: first post-demo capacity, OR the first time someone asks "why did it show me that?" about a card and answering requires reading presentation_agent logs
+  → [docs/plans/presentation-trace-in-the-envelope.md](plans/presentation-trace-in-the-envelope.md)
 
 - **section-reference-phantoms-unsealed** — PARKED, evidence-gated. `§N` references inside ADRs have no reader — ADR-0042 shipped a status-line `§9` pointing at a section that did not exist, caught by deliberate audit rather than by any check. One instance does not yet arm a 42-file heading-normalization sweep during a deadline week. TRIGGER: the next §-reference phantom found in the wild — a second instance proves audit does not scale and arms the sweep. FIRST ATTEMPT MEASURED THE INSTRUMENT, NOT THE SUBJECT (see below); a real seal needs heading normalization first.
   status: parked · owner: unassigned · trigger: the next §-reference phantom found in the wild — one instance caught by deliberate audit proves the defect exists; a SECOND proves the audit does not scale, and that is what arms the 42-file heading-normalization sweep
