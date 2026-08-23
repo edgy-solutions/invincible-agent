@@ -337,6 +337,21 @@ class BamlAsyncClient:
                 "user_query": user_query,
             })
             return typing.cast(types.MeshRoutingDecision, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def RouteFamily(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.IntentFamily:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.RouteFamily(question=question,context=context,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="RouteFamily", args={
+                "question": question,"context": context,
+            })
+            return typing.cast(types.IntentFamily, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def RouteIntent(self, question: str,context: str,
         baml_options: BamlCallOptions = {},
     ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"]:
@@ -352,6 +367,21 @@ class BamlAsyncClient:
                 "question": question,"context": context,
             })
             return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"], __result__.cast_to(types, types, stream_types, False, __runtime__))
+    async def RouteMoneyIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"]:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            # Use streaming internally when on_tick is provided
+            __stream__ = self.stream.RouteMoneyIntent(question=question,context=context,
+                baml_options=baml_options)
+            return await __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="RouteMoneyIntent", args={
+                "question": question,"context": context,
+            })
+            return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"], __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def SynthesizeReports(self, original_query: str,raw_json_results: str,
         baml_options: BamlCallOptions = {},
     ) -> types.FinalSynthesis:
@@ -580,6 +610,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.MeshRoutingDecision, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def RouteFamily(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[types.IntentFamily, types.IntentFamily]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="RouteFamily", args={
+            "question": question,"context": context,
+        })
+        return baml_py.BamlStream[types.IntentFamily, types.IntentFamily](
+          __result__,
+          lambda x: typing.cast(types.IntentFamily, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.IntentFamily, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def RouteIntent(self, question: str,context: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"]]:
@@ -590,6 +632,18 @@ class BamlStreamClient:
           __result__,
           lambda x: typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"], x.cast_to(types, types, stream_types, True, __runtime__)),
           lambda x: typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"], x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
+    def RouteMoneyIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"]]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="RouteMoneyIntent", args={
+            "question": question,"context": context,
+        })
+        return baml_py.BamlStream[typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"], typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"]](
+          __result__,
+          lambda x: typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.CoverageGap"], x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.CoverageGap"], x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
     def SynthesizeReports(self, original_query: str,raw_json_results: str,
@@ -731,10 +785,24 @@ class BamlHttpRequestClient:
             "user_query": user_query,
         }, mode="request")
         return __result__
+    async def RouteFamily(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RouteFamily", args={
+            "question": question,"context": context,
+        }, mode="request")
+        return __result__
     async def RouteIntent(self, question: str,context: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RouteIntent", args={
+            "question": question,"context": context,
+        }, mode="request")
+        return __result__
+    async def RouteMoneyIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RouteMoneyIntent", args={
             "question": question,"context": context,
         }, mode="request")
         return __result__
@@ -872,10 +940,24 @@ class BamlHttpStreamRequestClient:
             "user_query": user_query,
         }, mode="stream")
         return __result__
+    async def RouteFamily(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RouteFamily", args={
+            "question": question,"context": context,
+        }, mode="stream")
+        return __result__
     async def RouteIntent(self, question: str,context: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RouteIntent", args={
+            "question": question,"context": context,
+        }, mode="stream")
+        return __result__
+    async def RouteMoneyIntent(self, question: str,context: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="RouteMoneyIntent", args={
             "question": question,"context": context,
         }, mode="stream")
         return __result__

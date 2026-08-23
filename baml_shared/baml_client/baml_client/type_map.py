@@ -177,6 +177,8 @@ type_map = {
 
     "types.Intent": types.Intent,
 
+    "types.IntentFamily": types.IntentFamily,
+
     "types.Mode": types.Mode,
 
     "types.MoodType": types.MoodType,

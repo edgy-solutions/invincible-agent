@@ -117,7 +117,12 @@ class TechFootprint {
 // ── COVERAGE / SESSION / DIFF ─────────────────────────────────────────────
 
 class CoverageGap {
-  // @@intent_id: coverage_gap
+  // @@intent_id: model_coverage
+  // RENAMED 2026-08-23. The CLASS keeps the name CoverageGap (it mirrors the
+  // verb plan_coverage_gap, which is Engine P's and did not change); the INTENT
+  // id is model_coverage because a name reading as a funding synonym pulls
+  // funding questions in ANY architecture. The explicit marker is what lets the
+  // two differ safely — a snake_case convention would have silently broken here.
   placeholder string?
 }
 
@@ -205,6 +210,66 @@ class NoIntentMatch {
   reason string
 }
 
+
+// ── TWO-STEP ROUTING (2026-08-23) ─────────────────────────────────────────
+// WHY THE SHAPE CHANGED RATHER THAN THE WORDING. Two config fixes aimed at
+// named targets — rewording model_coverage, pricing refusal — moved routing
+// 21/51 -> 18/51. Nothing. The refusal-economics theory was pre-registered with
+// its own falsification branch and this is it: the refusals were HONEST. The
+// model could not tell the money intents apart, so making refusal expensive
+// just made it write justifications.
+//
+// The defect is geometric. A 17-way single-shot decision asks one question with
+// seventeen margins, and three of them (cost_curve / funding_gap /
+// model_coverage) are near-tied for money phrasings. At temperature 0 a near-tie
+// resolves on last-bit floating-point noise — measured: five cases flipping on a
+// QUIET host at n=3.
+//
+// Two-step moves the boundary off the thin walls. "Is this about money" has a
+// FAT margin. "Which of three money intents" is asked SECOND, among three
+// options instead of seventeen, with room for contrastive descriptions that
+// would bloat a single-shot prompt into uselessness if written for all 17.
+//
+// Do not buy better dice. Ask questions with bigger gaps.
+
+enum IntentFamily {
+  MONEY       @description("spend, budgets, funding, commitments, caps")
+  SCHEDULE    @description("what runs when, across the portfolio")
+  SITE        @description("what happens at a location, and site change-load")
+  CAPABILITY  @description("capabilities, processes, technologies and their maturity")
+  DEPENDENCY  @description("what blocks what, and what slips if something slips")
+  STRUCTURE   @description("what NOTHING is working on — absence in the plan itself")
+  SESSION     @description("what changed this session, or comparing scenarios")
+  MUTATION    @description("changing the plan: moving a project, setting a cost")
+  NONE        @description("the system genuinely cannot answer this")
+}
+
+function RouteFamily(question: string, context: string) -> IntentFamily {
+  client Ollama
+  prompt #"
+    Which FAMILY of planning question is this? One word.
+
+    This is deliberately coarse. You are not choosing a specific answer yet —
+    only the neighbourhood. Pick the family whose subject the question is about,
+    even if you are unsure which specific question within it applies.
+
+    MONEY covers anything about spend, budget, funding, commitments or caps.
+    STRUCTURE is about what has NOBODY working on it — an absence in the plan.
+    It is NEVER a money question, even when the word "gap" appears.
+
+    Answer NONE only if the question needs something this system does not carry
+    at all: return on investment, risk ownership, headcount or staffing.
+
+    QUESTION:
+    {{ question }}
+
+    CONTEXT:
+    {{ context }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
 // ── FUNCTIONS ─────────────────────────────────────────────────────────────
 
 function RouteIntent(question: string, context: string) -> ShowCostCurve | ShowFundingGap | ShowSiteLoad | SiteSchedule | ProjectsIn | MaturityGrid | CapabilityPath | ProcessEvolution | TechFootprint | CoverageGap | SummarizeSession | CompareScenarios | MoveProject | SetCost | WhatBlocks | DownstreamOf | NoIntentMatch {
@@ -258,6 +323,56 @@ function NarrateResult(rows: string) -> string {
 
     ROWS:
     {{ rows }}
+
+    {{ ctx.output_format }}
+  "#
+}
+
+// ── STEP 2: within-family disambiguation, where the CONTRASTS live ────────
+// Three options, not seventeen — which is what makes contrastive descriptions
+// affordable. Each says what it computes, what it does NOT answer and who does,
+// and which ambiguous phrasings it OWNS. That third part is the one that does
+// the work: the intersection is a fact about natural language (people will keep
+// saying "gap"), so it is partitioned EXPLICITLY rather than left to a coin flip.
+//
+// Every tiebreaker below came from a MEASURED flip in the eval, not from
+// imagination. The instability map is the specification.
+
+function RouteMoneyIntent(question: string, context: string) -> ShowCostCurve | ShowFundingGap | CoverageGap {
+  client Ollama
+  prompt #"
+    This is a MONEY-family planning question. Choose which of three it is.
+    These three are genuinely different computations. Read the walls carefully —
+    the words people use for them overlap; the computations do not.
+
+    ShowCostCurve — spend per period, against an optional cap.
+      Answers: "are we spending more than planned?"
+      NOT commitments-vs-requirements (that is ShowFundingGap).
+      OWNS these phrasings: "over budget", "overspent", "exceeds the cap",
+      "capex versus expense", "how the money is phased".
+
+    ShowFundingGap — required minus committed, per org or per initiative.
+      Answers: "do commitments cover requirements? who has not put up their share?"
+      NOT spend rate (that is ShowCostCurve).
+      OWNS these phrasings: "underfunded", "funding short", "under-committed",
+      "who owes what they have not committed".
+
+    CoverageGap — capabilities NO project is maturing; processes with no
+    capability behind them.
+      Answers: "what is nobody working on?"
+      NEVER a money question, despite the word "gap". If the question is about
+      money at all, it is one of the two above.
+      OWNS these phrasings: "nobody is working on", "no project is advancing".
+
+    THE SHORT RULE: over-budget is spend-versus-plan. Underfunded is
+    commitments-versus-requirements. "Gap" alone never means CoverageGap unless
+    the question is about what is being WORKED ON rather than paid for.
+
+    QUESTION:
+    {{ question }}
+
+    CONTEXT:
+    {{ context }}
 
     {{ ctx.output_format }}
   "#

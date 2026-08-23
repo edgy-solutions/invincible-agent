@@ -74,6 +74,7 @@ intents:
   # it produces a statement of what the model does not capture, plus the nearest
   # intent, so a miss is an agenda item rather than a dead end.
   - intent_id: no_intent_match
+    family: none
     description: No declared intent matches, or the question needs a concept the model does not carry.
     measure_id: null
     output_uri: null
@@ -95,7 +96,21 @@ intents:
 
   # ── COST ───────────────────────────────────────────────────────────────────
   - intent_id: show_cost_curve
+    family: money
     description: Spend per period for a scope, optionally split by kind or limited to periods over the cap.
+    # CONTRASTIVE (2026-08-23). The is-description above is accurate and does not
+    # DISCRIMINATE — "over budget" plausibly matches every money intent. The wall
+    # and the tiebreakers below are what separate them, and the tiebreakers are
+    # the eval's MEASURED flips, not invented examples.
+    not_this:
+      - "NOT whether commitments cover requirements — that is show_funding_gap"
+      - "NOT site change-load — that is show_site_load, which is about disruption, not money"
+    owns_phrasings:
+      - "over budget"        # q16-c flipped cost_curve <-> site_load
+      - "overspent"
+      - "exceeds the cap"
+      - "capex versus expense"  # q17-b flipped cost_curve <-> funding_gap
+      - "how the money is phased"
     measure_id: plan_cost_curve
     output_uri: mesh:PeriodCostSeries
     answers: [Q12, Q16, Q17]
@@ -110,7 +125,17 @@ intents:
       - "how is money phased over the next four quarters"
 
   - intent_id: show_funding_gap
+    family: money
     description: Required minus committed funding per group, split by kind.
+    not_this:
+      - "NOT spend against a plan or cap — that is show_cost_curve"
+      - "NOT what nothing is working on — that is model_coverage, which is never about money"
+    owns_phrasings:
+      - "underfunded"          # q14-c flipped model_coverage <-> no_intent_match
+      - "funding short"        # q14-a flipped model_coverage <-> funding_gap
+      - "under-committed"
+      - "has not put up their share"
+      - "who owes what they have not committed"
     measure_id: plan_funding_gap
     output_uri: mesh:FundingGapSet
     answers: [Q13, Q14, Q15]
@@ -124,6 +149,7 @@ intents:
 
   # ── SITES ──────────────────────────────────────────────────────────────────
   - intent_id: show_site_load
+    family: site
     description: Change-load per site per period, flagging sites over their threshold.
     measure_id: plan_site_load
     output_uri: mesh:LoadThresholdGrid
@@ -138,6 +164,7 @@ intents:
       - "which sites are overloaded next quarter"
 
   - intent_id: site_schedule
+    family: site
     description: What is scheduled at a given site over a window.
     measure_id: plan_schedule
     output_uri: mesh:IntervalSchedule
@@ -152,6 +179,7 @@ intents:
 
   # ── SCHEDULE ───────────────────────────────────────────────────────────────
   - intent_id: projects_in
+    family: schedule
     description: What is scheduled across the portfolio, by initiative and phase, over a window.
     measure_id: plan_schedule
     output_uri: mesh:IntervalSchedule
@@ -166,7 +194,13 @@ intents:
 
   # ── CAPABILITY / PROCESS / TECH ────────────────────────────────────────────
   - intent_id: maturity_grid
+    family: capability
     description: Capability maturity by site versus target, as of a date.
+    not_this:
+      - "NOT a funding comparison — 'versus target' here means MATURITY LEVEL, not money"
+    owns_phrasings:
+      - "maturity versus target"   # q3-a flipped maturity_grid <-> funding_gap
+      - "where are we against where we said we would be"
     measure_id: plan_maturity_grid
     output_uri: mesh:MaturityMatrix
     answers: [Q3]
@@ -178,6 +212,7 @@ intents:
       - "show the maturity grid as of the end of last quarter"
 
   - intent_id: capability_path
+    family: capability
     description: Which projects mature a capability, ordered by planned end.
     measure_id: plan_capability_path
     output_uri: mesh:ContributionSequence
@@ -190,6 +225,7 @@ intents:
       - "show the path for that capability"
 
   - intent_id: process_evolution
+    family: capability
     description: How a business process evolves over time, with its enabling capabilities.
     measure_id: plan_process_evolution
     output_uri: mesh:PlateauTimeline
@@ -202,6 +238,7 @@ intents:
       - "show the plateaus for that process"
 
   - intent_id: tech_footprint
+    family: capability
     description: Where a technology is used — capabilities enabled and projects participating.
     measure_id: plan_tech_footprint
     output_uri: mesh:FootprintSet
@@ -227,11 +264,19 @@ intents:
   # this intent and show_funding_gap. That collision was authored here, not by the
   # model: two intents whose descriptions are near-synonyms cannot be separated by
   # any amount of prompt tuning.
-  - intent_id: coverage_gap
+  - intent_id: model_coverage
+    family: structure
     description: >-
       Capabilities that NO project is maturing, and processes with no capability behind
       them. An absence query about the plan's structure — never about money, funding or
       budget.
+    not_this:
+      - "NEVER a money question, despite the word 'gap' — funding shortfalls are show_funding_gap"
+      - "NOT spend — that is show_cost_curve"
+    owns_phrasings:
+      - "nobody is working on"
+      - "no project is advancing"
+      - "processes with no capability behind them"
     measure_id: plan_coverage_gap
     output_uri: mesh:CoverageGapSet
     answers: [B4]
@@ -242,6 +287,7 @@ intents:
       - "what is in the plan that nothing is advancing"
 
   - intent_id: summarize_session
+    family: session
     description: Operations and diffs accumulated this session.
     measure_id: plan_session_changes
     output_uri: mesh:ChangeLog
@@ -253,6 +299,7 @@ intents:
       - "show me everything we moved"
 
   - intent_id: compare_scenarios
+    family: session
     description: Effects of one scenario against a baseline.
     measure_id: plan_diff
     output_uri: mesh:EffectSet
@@ -267,6 +314,7 @@ intents:
 
   # ── MUTATIONS (Phase 3 wiring; the verbs are session ops, not measures) ─────
   - intent_id: move_project
+    family: mutation
     description: Move a project to a new start, producing a diff.
     measure_id: null
     mutation: true
@@ -280,6 +328,7 @@ intents:
       - "reschedule it to start in the new year"
 
   - intent_id: set_cost
+    family: mutation
     description: Set a funding figure for a project, kind and period, producing a diff.
     measure_id: null
     mutation: true
@@ -315,6 +364,7 @@ intents:
   # model to infer it from "what blocks" versus "what does it block" is a
   # coin-flip on a word order the phrasings deliberately vary.
   - intent_id: what_blocks
+    family: dependency
     description: What a project depends on — its predecessors, whether or not any constraint is violated.
     measure_id: plan_dependency_neighborhood
     output_uri: mesh:DependencyNeighborhoodSet
@@ -328,6 +378,7 @@ intents:
       - "what is holding that up"
 
   - intent_id: downstream_of
+    family: dependency
     description: What depends on a project — its successors, whether or not any constraint is violated.
     measure_id: plan_dependency_neighborhood
     output_uri: mesh:DependencyNeighborhoodSet

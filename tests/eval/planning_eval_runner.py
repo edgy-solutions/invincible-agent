@@ -99,6 +99,48 @@ def _intent_id_by_class() -> dict[str, str]:
     return out
 
 
+def _ask_two_step(question: str) -> dict[str, Any]:
+    """TWO-STEP: family first (fat margin), then within-family (contrasts).
+
+    Only the MONEY family has a second step today, because it is the only family
+    the eval measured as internally confusable. Adding second steps for families
+    that route fine would be paying prompt cost for margins that are already
+    wide — the contrasts go where the walls are thin, and nowhere else.
+    """
+    import sys as _sys  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[2] / "baml_shared" / "baml_client"
+    if str(root) not in _sys.path:
+        _sys.path.insert(0, str(root))
+    from baml_client.sync_client import b  # noqa: PLC0415
+
+    try:
+        fam = b.RouteFamily(question=question, context="")
+    except Exception as exc:  # noqa: BLE001
+        return {"intent_id": "__parse_failure__", "slots": {},
+                "error": f"family: {type(exc).__name__}: {exc}"[:200]}
+
+    fam_name = getattr(fam, "value", str(fam)).upper().split(".")[-1]
+    if fam_name == "MONEY":
+        try:
+            result = b.RouteMoneyIntent(question=question, context="")
+        except Exception as exc:  # noqa: BLE001
+            return {"intent_id": "__parse_failure__", "slots": {},
+                    "error": f"money: {type(exc).__name__}: {exc}"[:200]}
+        cls = type(result).__name__
+        return {
+            "intent_id": _intent_id_by_class().get(cls, f"__unmapped__{cls}"),
+            "slots": {k: v for k, v in vars(result).items() if not k.startswith("_")},
+            "family": fam_name,
+        }
+
+    # Every other family falls through to the single-shot union, which routes it
+    # fine today. Narrowing those is future work with its own measurement.
+    out = _ask_baml(question)
+    out["family"] = fam_name
+    return out
+
+
 def _ask_baml(question: str) -> dict[str, Any]:
     """Route through the REAL BAML function — typed union, real parse."""
     import sys as _sys  # noqa: PLC0415
@@ -221,7 +263,7 @@ def run_suite(fixture: dict) -> dict:
         observations = []
         for _ in range(_PASSES):
             _t0 = time.time()
-            observations.append(_ask_baml(case["question"]))
+            observations.append(_ask_two_step(case["question"]))
             latencies.append(time.time() - _t0)
 
         # NONDETERMINISM IS A FAILURE, NOT NOISE. A router that answers
@@ -253,7 +295,7 @@ def run_suite(fixture: dict) -> dict:
         slots_ok += 1
 
     for r in refusals:
-        got = _ask_baml(r["question"])
+        got = _ask_two_step(r["question"])
         if got.get("intent_id") == "no_intent_match":
             refusal_ok += 1
         else:

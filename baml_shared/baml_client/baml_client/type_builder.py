@@ -22,11 +22,11 @@ class TypeBuilder(type_builder.TypeBuilder):
         super().__init__(classes=set(
           ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","KnowledgeResponse","LogisticsResponse","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","SPOInterviewTurn","SPOPick","SemanticResolution","SetCost","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
         ), enums=set(
-          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SPOPickAction","SemanticArchetype","SeverityLevel",]
+          ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","IntentFamily","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SPOPickAction","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
 
     # #########################################################################
-    # Generated enums 13
+    # Generated enums 14
     # #########################################################################
 
     @property
@@ -48,6 +48,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def Intent(self) -> "IntentBuilder":
         return IntentBuilder(self)
+
+    @property
+    def IntentFamily(self) -> "IntentFamilyViewer":
+        return IntentFamilyViewer(self)
 
     @property
     def Mode(self) -> "ModeViewer":
@@ -289,7 +293,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
 # #########################################################################
-# Generated enums 13
+# Generated enums 14
 # #########################################################################
 
 class AgentStatusAst:
@@ -522,6 +526,76 @@ class IntentValues:
             raise AttributeError(f"Value {name} not found.")
         return self.__bldr.value(name)
 
+    
+    
+
+
+class IntentFamilyAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.enum("IntentFamily")
+        self._values: typing.Set[str] = set([  "MONEY",  "SCHEDULE",  "SITE",  "CAPABILITY",  "DEPENDENCY",  "STRUCTURE",  "SESSION",  "MUTATION",  "NONE",  ])
+        self._vals = IntentFamilyValues(self._bldr, self._values)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def values(self) -> "IntentFamilyValues":
+        return self._vals
+
+
+class IntentFamilyViewer(IntentFamilyAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_values(self) -> typing.List[typing.Tuple[str, type_builder.EnumValueViewer]]:
+        return [(name, type_builder.EnumValueViewer(self._bldr.value(name))) for name in self._values]
+    
+
+class IntentFamilyValues:
+    def __init__(self, enum_bldr: baml_py.EnumBuilder, values: typing.Set[str]):
+        self.__bldr = enum_bldr
+        self.__values = values # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def MONEY(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("MONEY"))
+    
+    @property
+    def SCHEDULE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("SCHEDULE"))
+    
+    @property
+    def SITE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("SITE"))
+    
+    @property
+    def CAPABILITY(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("CAPABILITY"))
+    
+    @property
+    def DEPENDENCY(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("DEPENDENCY"))
+    
+    @property
+    def STRUCTURE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("STRUCTURE"))
+    
+    @property
+    def SESSION(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("SESSION"))
+    
+    @property
+    def MUTATION(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("MUTATION"))
+    
+    @property
+    def NONE(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("NONE"))
     
     
 
