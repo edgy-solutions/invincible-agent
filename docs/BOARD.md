@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **66 of 68 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **67 of 69 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -161,6 +161,10 @@ _Coverage: **66 of 68 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **supervisor-mint-missing-identity** — Every supervisor dispatch is unauthenticated at work — `mint_supervisor_token()` raises KeyError, so specialists record `caller: none`. Inert under OBSERVE, and it becomes a hard failure the moment REQUIRE_TRANSPORT_AUTH flips.
   status: open · owner: agent · blocked-on: nothing — one read settles it: `printenv` for SUPERVISOR_CLIENT_ID and SUPERVISOR_CLIENT_SECRET in the pod that runs the supervisor. KeyError does not say which.
   → [docs/plans/supervisor-mint-missing-identity.md](plans/supervisor-mint-missing-identity.md)
+
+- **timeline-library-spike** — SPIKE RECORDED 2026-08-22. Phase 1 §4 requires evaluating 2-3 OSS timeline components and recording choice + rejects. CHOICE: `@svar-ui/react-gantt` (MIT) — the only candidate that is React-native rather than a self-wrapped vanilla-JS library, and the only one whose API expresses ADR-0042's drag-optimistic/drop-evaluated rule directly (`api.intercept("move-task")` cancels/defers before application; `api.exec("provide-data")` re-renders from server-returned data). Hierarchical grouping (initiative -> phase -> project) is in the FREE tier — PRO's "grouping" is RESOURCE grouping, a different feature. REJECTS: vis-timeline and frappe-gantt, both vanilla-JS needing a hand-written React wrapper; frappe-gantt's main React wrapper was last published ~5 years ago. SCOPE LIMIT, STATED: this is a DOCUMENTATION evaluation, not a built prototype. The two decisive claims (controlled-component mode, interceptable move) come from SVAR's docs and MUST be confirmed by a throwaway prototype before INTERVAL_TIMELINE's contract is written. Custom bar styling was NOT verified.
+  status: open · owner: unassigned · repo: cortex-ui
+  → [docs/plans/timeline-library-spike.md](plans/timeline-library-spike.md)
 
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
   status: open · owner: agent · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter). Cross-repo enumeration COMPLETE 2026-08-11 (5/5; cortex-ui = structural zero, no server-side origin); ONE CONFIRMED unminted caller stands — doc-tools semantic_linker.py:99 -> engine-o (corrected 2026-08-12 from 2; dag-tools contributes ZERO, see the count correction in the packet). Returns to blocked-on-human when those land; the flip act is the human's.
