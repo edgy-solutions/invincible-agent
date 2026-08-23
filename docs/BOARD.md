@@ -4,9 +4,13 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **65 of 67 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **66 of 68 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
+
+- **disposition-contracts-do-not-export-what-composition-needs** — FOUND 2026-08-22 while executing the ruling that DECISION_RECORD must COMPOSE the disposition/approval contracts rather than parallel them. Read the actual exports first, per instruction, and there is nothing to compose BY IMPORT at the contract layer. The disposition vocabulary is real and complete SERVER-side (`human_tasks`: requested_by / acted_by / acted_at / decision / comment / audience / subject_ref / kind / status). The FRONTEND contracts do not express it — `APPROVAL_TASK_CONTRACT.fields.task` is `{encoding:"object", required:true}` with NO requiredKeys, and `GROUPED_REVIEW_CONTRACT.fields.batch.requiredKeys` names PCN-domain fields (notice_id, notice_type, notice_fingerprint), not generic disposition fields. So composing today means hand-copying field names, which is the lookalike the ruling exists to prevent. NOT REDECLARED — reported, per the ruling's own instruction.
+  status: blocked-on-human · owner: human · repo: cortex-ui · blocked-on: a ruling on whether to extract a shared disposition field block from APPROVAL_TASK / GROUPED_REVIEW — existing review-machinery contracts, not this lane's
+  → [docs/plans/disposition-contracts-do-not-export-what-composition-needs.md](plans/disposition-contracts-do-not-export-what-composition-needs.md)
 
 - **reregister-hook-failure-mode-at-work-unknown** — RE-HOMED 2026-08-22 from `registration-boot-order-race`, which closed on its sandbox witnesses. The owed question survives here with its own board line: at WORK on 2026-08-14, engines booted before the ontology ingest landed, took a Contract-D 422, never retried, and recovery was a hand restart — and nobody established WHICH of three ways the re-register hook failed to fire there. The hook is now characterised on SANDBOX in both directions (refuses on a partial graph, opens on a full one), which makes the work-cluster question narrower but does not answer it: the two clusters differ in timing, image lag and Dagster concurrency. Requires a read against work, which is the human's under clause 3.
   status: blocked-on-human · owner: human · blocked-on: work-cluster read access — AGENTS.md fence clause 3 ("Work-cluster anything is the human's until agents get read credentials there")
