@@ -168,6 +168,16 @@ placement is not.**
 | `planTechFootprint` | `mesh:FootprintSet` | Q8 | capabilities enabled + projects participated, with windows |
 | `planSchedule` | `mesh:IntervalSchedule` | Q4–Q6 | initiative→phase→project rows with intervals |
 | `planSessionChanges` | `mesh:ChangeLog` | INV-4 | ops + diffs accumulated this session |
+| `planDiff` | `mesh:EffectSet` | INV-3 | effects of a scenario against a baseline |
+| `planCoverageGap` | `mesh:CoverageGapSet` | B4 | where the model has coverage gaps |
+
+**DOC DRIFT CORRECTED 2026-08-22 (Lane 2).** This table listed TEN verbs; Engine P
+deploys TWELVE — `plan_diff` and `plan_coverage_gap` were live and undocumented.
+Found by reading `measures.py` rather than this table while sourcing `output_uri`
+values for the intent catalog. The drift ran in the plan's favour (more capability
+than written down), but a catalog author trusting the table would have had no
+route for `compare_scenarios` or `coverage_gap` and might have invented an output
+type for them — which mints an ontology class in another lane's territory.
 
 Note what the `output_uri` column is and is not: it names **what kind of answer this is**, never
 how it draws. `mesh:PeriodCostSeries` may render as `PERIOD_SERIES` today and as something better

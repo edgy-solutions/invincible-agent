@@ -1,0 +1,301 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# INTENT CATALOG — the funnel walls (Phase 2, plan §4.1)
+#
+# The LLM ROUTES and NARRATES; it never answers. This catalog is the wall it
+# routes against: a question either lands on a declared intent or takes the
+# refusal path, and there is no third outcome.
+#
+# ── THERE IS NO `view` FIELD (D1 / ADR-0042 §2, HARD) ─────────────────────────
+# An intent declares WHAT KIND OF ANSWER it produces (`output_uri`) and never
+# how it draws. `mesh:PeriodCostSeries` may render as PERIOD_SERIES today and as
+# something better tomorrow, on a frontend that registers it, with no change
+# here. A `view:` field in this file re-opens a closed packet.
+#
+# ── CANONICAL-SOURCE SPLIT (plan §4.2) ───────────────────────────────────────
+# `.baml` is canonical for intent SHAPES — names, slots, types; enforcement owns
+# the contract. THIS FILE is canonical for what BAML should not know: example
+# phrasings, synonym and soft-language maps, intent→verb→output_uri routing.
+# They meet on `intent_id`, and a build-time agreement check asserts every
+# catalog id has a matching BAML class and vice versa. No third encoding exists.
+#
+# ── GENERIC AT BIRTH (C4) ────────────────────────────────────────────────────
+# Structural names only. No customer vocabulary, no real site or org names, no
+# programme nouns. Scrubbing later is a migration; being generic now is free.
+#
+# ── output_uri PROVENANCE ────────────────────────────────────────────────────
+# Every `output_uri` below was READ from Engine P's deployed measures
+# (agent_fleet/planning_agent/measures.py, twelve verbs) — not from the plan's
+# §2.3 table, which documents only ten and omits `plan_diff` and
+# `plan_coverage_gap`. Inventing an output type here would mint an ontology
+# class in another lane's territory.
+# ══════════════════════════════════════════════════════════════════════════════
+
+version: 1
+
+# ── SOFT LANGUAGE ────────────────────────────────────────────────────────────
+# A room does not say "site_load over threshold"; it says "overloaded". The map
+# lives HERE — not in a component and not in a prompt — because it is vocabulary,
+# and vocabulary changes per customer while the verbs do not. A phrase that maps
+# to nothing takes the refusal path rather than the nearest guess.
+soft_language:
+  overloaded:      { intent_id: show_site_load,   slots: { over_threshold_only: true } }
+  over capacity:   { intent_id: show_site_load,   slots: { over_threshold_only: true } }
+  slammed:         { intent_id: show_site_load,   slots: { over_threshold_only: true } }
+  blocked:         { intent_id: what_blocks }
+  held up:         { intent_id: what_blocks }
+  waiting on:      { intent_id: what_blocks }
+  underwater:      { intent_id: show_cost_curve,  slots: { over_cap_only: true } }
+  over budget:     { intent_id: show_cost_curve,  slots: { over_cap_only: true } }
+  overspent:       { intent_id: show_cost_curve,  slots: { over_cap_only: true } }
+  short:           { intent_id: show_funding_gap }
+  under-committed: { intent_id: show_funding_gap }
+
+# ── OUT-OF-MODEL CONCEPTS ────────────────────────────────────────────────────
+# Named so the refusal can say WHAT THE MODEL DOES NOT CAPTURE rather than "I
+# don't know". A miss is an agenda item, not a failure.
+out_of_model:
+  - concept: roi
+    phrases: ["roi", "return on investment", "payback", "npv"]
+    reason: "the model carries funding requirements and commitments, not benefit estimates, so return cannot be computed from it"
+  - concept: risk_owner
+    phrases: ["risk owner", "who owns the risk", "risk register", "accountable for the risk"]
+    reason: "the model carries dependencies and constraint violations, not a risk register or named accountability"
+  - concept: headcount
+    phrases: ["headcount", "fte", "staffing", "how many people"]
+    reason: "the model carries site change-load weights, not people or staffing levels"
+
+intents:
+
+  # ── COST ───────────────────────────────────────────────────────────────────
+  - intent_id: show_cost_curve
+    description: Spend per period for a scope, optionally split by kind or limited to periods over the cap.
+    measure_id: plan_cost_curve
+    output_uri: mesh:PeriodCostSeries
+    answers: [Q12, Q16, Q17]
+    slots:
+      scope:          { type: string, required: false, default: null, resolves: portfolio_entity }
+      window:         { type: period_range, required: false, default: null }
+      kind:           { type: enum, values: [capex, expense], required: false, default: null }
+      over_cap_only:  { type: bool, required: false, default: false }
+    example_phrasings:
+      - "what does spend look like per period"
+      - "show me the cost curve"
+      - "how is money phased over the next four quarters"
+
+  - intent_id: show_funding_gap
+    description: Required minus committed funding per group, split by kind.
+    measure_id: plan_funding_gap
+    output_uri: mesh:FundingGapSet
+    answers: [Q13, Q14, Q15]
+    slots:
+      group_by: { type: enum, values: [org, initiative], required: true, default: org }
+      window:   { type: period_range, required: false, default: null }
+    example_phrasings:
+      - "where is funding short by organization"
+      - "which organization is under-committed"
+      - "show the funding gap by initiative"
+
+  # ── SITES ──────────────────────────────────────────────────────────────────
+  - intent_id: show_site_load
+    description: Change-load per site per period, flagging sites over their threshold.
+    measure_id: plan_site_load
+    output_uri: mesh:LoadThresholdGrid
+    answers: [Q9, Q11]
+    slots:
+      site:                 { type: string, required: false, default: null, resolves: site }
+      window:               { type: period_range, required: false, default: null }
+      over_threshold_only:  { type: bool, required: false, default: false }
+    example_phrasings:
+      - "which sites are affected and when"
+      - "which sites are over their change-load threshold"
+      - "which sites are overloaded next quarter"
+
+  - intent_id: site_schedule
+    description: What is scheduled at a given site over a window.
+    measure_id: plan_schedule
+    output_uri: mesh:IntervalSchedule
+    answers: [Q6]
+    slots:
+      site:   { type: string, required: true, resolves: site }
+      window: { type: period_range, required: false, default: null }
+    example_phrasings:
+      - "what is happening at this site"
+      - "show the schedule for that location"
+      - "what lands at that site in the second half"
+
+  # ── SCHEDULE ───────────────────────────────────────────────────────────────
+  - intent_id: projects_in
+    description: What is scheduled across the portfolio, by initiative and phase, over a window.
+    measure_id: plan_schedule
+    output_uri: mesh:IntervalSchedule
+    answers: [Q4, Q5]
+    slots:
+      window: { type: period_range, required: false, default: null }
+      scope:  { type: string, required: false, default: null, resolves: portfolio_entity }
+    example_phrasings:
+      - "what is scheduled by initiative and phase"
+      - "what is happening in this window"
+      - "what runs between those two quarters"
+
+  # ── CAPABILITY / PROCESS / TECH ────────────────────────────────────────────
+  - intent_id: maturity_grid
+    description: Capability maturity by site versus target, as of a date.
+    measure_id: plan_maturity_grid
+    output_uri: mesh:MaturityMatrix
+    answers: [Q3]
+    slots:
+      as_of: { type: date, required: false, default: null }
+    example_phrasings:
+      - "capability maturity by site versus target"
+      - "where are we against the target maturity"
+      - "show the maturity grid as of the end of last quarter"
+
+  - intent_id: capability_path
+    description: Which projects mature a capability, ordered by planned end.
+    measure_id: plan_capability_path
+    output_uri: mesh:ContributionSequence
+    answers: [Q7]
+    slots:
+      capability: { type: string, required: true, resolves: capability }
+    example_phrasings:
+      - "which projects mature this capability and by when"
+      - "what gets this capability to target"
+      - "show the path for that capability"
+
+  - intent_id: process_evolution
+    description: How a business process evolves over time, with its enabling capabilities.
+    measure_id: plan_process_evolution
+    output_uri: mesh:PlateauTimeline
+    answers: [Q1, Q2]
+    slots:
+      process: { type: string, required: true, resolves: process }
+    example_phrasings:
+      - "how does this business process evolve over time"
+      - "which capabilities enable this process"
+      - "show the plateaus for that process"
+
+  - intent_id: tech_footprint
+    description: Where a technology is used — capabilities enabled and projects participating.
+    measure_id: plan_tech_footprint
+    output_uri: mesh:FootprintSet
+    answers: [Q8]
+    slots:
+      technology: { type: string, required: true, resolves: technology }
+    example_phrasings:
+      - "where is this technology used"
+      - "what depends on that platform"
+      - "show the footprint for that technology"
+
+  # ── COVERAGE / SESSION / DIFF ──────────────────────────────────────────────
+  # These three route to verbs deployed in Engine P but NOT documented in the
+  # plan's §2.3 table (which lists ten of twelve). Read from measures.py.
+  - intent_id: coverage_gap
+    description: Where the model has gaps in coverage.
+    measure_id: plan_coverage_gap
+    output_uri: mesh:CoverageGapSet
+    answers: [B4]
+    slots: {}
+    example_phrasings:
+      - "where are the coverage gaps"
+      - "what is not covered"
+      - "show me what the model is missing"
+
+  - intent_id: summarize_session
+    description: Operations and diffs accumulated this session.
+    measure_id: plan_session_changes
+    output_uri: mesh:ChangeLog
+    answers: [INV-4]
+    slots: {}
+    example_phrasings:
+      - "what did we change this session"
+      - "summarize the session"
+      - "show me everything we moved"
+
+  - intent_id: compare_scenarios
+    description: Effects of one scenario against a baseline.
+    measure_id: plan_diff
+    output_uri: mesh:EffectSet
+    answers: [INV-3]
+    slots:
+      a: { type: string, required: true, resolves: scenario }
+      b: { type: string, required: true, resolves: scenario }
+    example_phrasings:
+      - "compare these two scenarios"
+      - "what changes between the baseline and that option"
+      - "diff those two"
+
+  # ── MUTATIONS (Phase 3 wiring; the verbs are session ops, not measures) ─────
+  - intent_id: move_project
+    description: Move a project to a new start, producing a diff.
+    measure_id: null
+    mutation: true
+    output_uri: mesh:EffectSet
+    slots:
+      project: { type: string, required: true, resolves: project }
+      when:    { type: date, required: true }
+    example_phrasings:
+      - "move this project to the third quarter"
+      - "drag that one left by a month"
+      - "reschedule it to start in the new year"
+
+  - intent_id: set_cost
+    description: Set a funding figure for a project, kind and period, producing a diff.
+    measure_id: null
+    mutation: true
+    output_uri: mesh:EffectSet
+    slots:
+      project: { type: string, required: true, resolves: project }
+      kind:    { type: enum, values: [capex, expense], required: true }
+      period:  { type: period, required: true }
+      amount:  { type: money, required: true }
+    example_phrasings:
+      - "set the capex for that project next quarter"
+      - "change the expense figure on this one"
+      - "make that project's capital spend lower in the final period"
+
+  # ── BLOCKED, TEMPORARILY REFUSAL-ROUTED ────────────────────────────────────
+  # These two want a dependency TRAVERSAL. Engine P's `plan_dependency_violations`
+  # takes NO project parameter and returns only VIOLATIONS — it evaluates a
+  # constraint over the data; these intents traverse it. Different question,
+  # different output shape, and `mesh:ConstraintViolationSet` is the wrong output
+  # type for "P5's predecessors, satisfied or not".
+  #
+  # THE CONFIDENT-BLANK THIS AVOIDS: a project with no violations returns nothing
+  # from the violations verb, which reads as "nothing blocks it" when the truthful
+  # answer is "three predecessors, all currently satisfied".
+  #
+  # RULED: a new verb, `plan_dependency_neighborhood{project, direction}` ->
+  # `mesh:DependencyNeighborhoodSet`, built in Lane 1. When it registers, set
+  # `measure_id` and `output_uri` below and delete `blocked`. Until then these
+  # route to the REFUSAL path with a named reason — honest and demonstrable,
+  # rather than silently dropped or mapped to a verb answering a different
+  # question.
+  - intent_id: what_blocks
+    description: What a project depends on — its predecessors, whether or not any constraint is violated.
+    measure_id: null
+    output_uri: null
+    blocked:
+      reason: "dependency traversal is not yet a deployed verb; the existing violations verb reports only breaches, so it would answer a different question and return blank when nothing is violated"
+      pending_verb: plan_dependency_neighborhood
+    answers: [Q10]
+    slots:
+      project: { type: string, required: true, resolves: project }
+    example_phrasings:
+      - "what blocks this project"
+      - "what is this one waiting on"
+      - "what is holding that up"
+
+  - intent_id: downstream_of
+    description: What depends on a project — its successors, whether or not any constraint is violated.
+    measure_id: null
+    output_uri: null
+    blocked:
+      reason: "dependency traversal is not yet a deployed verb; the existing violations verb reports only breaches, so it would answer a different question and return blank when nothing is violated"
+      pending_verb: plan_dependency_neighborhood
+    answers: [Q10]
+    slots:
+      project: { type: string, required: true, resolves: project }
+    example_phrasings:
+      - "what does this project block"
+      - "what is downstream of that one"
+      - "what slips if this slips"
