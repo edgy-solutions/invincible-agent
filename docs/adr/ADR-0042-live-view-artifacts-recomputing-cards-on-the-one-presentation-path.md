@@ -453,10 +453,27 @@ carve out.
 
    The constraint that bound either choice still binds this one: whatever fires the evaluation
    must stamp the resulting `valid_as_of`.
-2. **Where the diff lives.** A diff between two states is structurally a `DELTA_SET` payload
+2. **Where the diff lives.** ~~A diff between two states is structurally a `DELTA_SET` payload
    over two evaluations. Whether it is computed by a verb taking two state refs, or by the
-   caller running one verb twice, is open — but the `DELTA_SET` archetype and its contract
+   caller running one verb twice, is open~~ — but the `DELTA_SET` archetype and its contract
    are settled by §6/§7 either way.
+
+   **ANSWERED 2026-08-21 by `abf16fd`: ONE VERB OVER TWO STATE REFS.** Disposed together with
+   OQ1 by the server-owns-plan-state ruling, because both presuppose an answer to *where
+   mutable plan state lives*. Once scenarios are server-addressable, the state-ref form is
+   available, and `plan_diff(state_ref_a, state_ref_b)` is **one governed evaluation with one
+   provenance stamp**.
+
+   **Run-twice-and-subtract puts the subtraction OUTSIDE the verb**, where nothing governs it
+   and nothing stamps it — the client-side-measures defect in miniature, on the one card whose
+   entire job is to say what changed. That is the reason, and it is the same reason §3 gives
+   for measures being verbs at all.
+
+   Recorded here 2026-08-22. **The ruling was three days old and this section still said
+   "open"** — the plan carried it (§Phase 0.5) and asked for this amendment in the same
+   breath; the amendment was not made, so a reader arriving at the ADR would have re-litigated
+   a settled question. Cheap to fix, and worth noting that "is it decided?" is answered by
+   grepping the tree, not by reading the document that asks.
 3. **Anonymous live views.** ~~Whether a live view should **refuse** to render anonymously —
    its recomputation contract being stronger than a one-shot answer's — is a real question this
    ADR does not settle.~~ **ANSWERED 2026-08-20 by Ruling 9: it refuses.** Left recorded rather

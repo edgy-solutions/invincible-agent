@@ -500,8 +500,10 @@ suite is Phase 2's acceptance instrument and the release gate for Phase 7.
 3. **Diff card** renders `Effect[]` grouped improved/degraded, each line "metric · magnitude ·
    affected named things." Archetype `DELTA_SET`, with its own contract. The LLM MAY write a
    one-sentence headline from the effect rows under the same narration contract. The card is a live
-   view and updates as the scenario's ops change. (ADR-0042 open question 2 — whether the diff is
-   one verb over two state refs or one verb run twice — is decided here and recorded.)
+   view and updates as the scenario's ops change. (ADR-0042 open question 2 was **already
+   disposed** by `abf16fd` — **one verb over two state refs** — and this line used to defer it
+   forward as if it were still live. Nothing to decide in Phase 3; build `plan_diff` taking two
+   state refs, one governed evaluation, one provenance stamp.)
 4. **Compare view.** `compare_scenarios{a,b}` — two diff cards side by side, plus a baseline ghost
    line on the period series.
 5. **Commit ceremony — the degenerate single-approver case of the review machinery.** Reuse the
