@@ -210,6 +210,18 @@ class CommitRequest(BaseModel):
     question_trail: Optional[list[dict[str, Any]]] = None
 
 
+class RescheduleRequest(BaseModel):
+    """A drag, as the client can honestly describe it: which bar moved, and to where.
+
+    NOTE WHAT IS ABSENT — anything about site impacts. The client has none: site impacts do
+    not exist in cortex-ui at all, so a UI that tried to send impact ops would be inventing
+    data. The policy derives them server-side, where the state is.
+    """
+    project_id: str
+    start: str
+    end: str
+
+
 class OpRequest(BaseModel):
     op: str
     project_id: Optional[str] = None
@@ -429,3 +441,42 @@ def commit_scenario(scenario_id: str, req: CommitRequest) -> dict[str, Any]:
         question_trail=req.question_trail,
     )
     return {"output_uri": measures.OUTPUT_URI["plan_commit_scenario"], **artifact}
+
+
+@app.post("/scenario/{scenario_id}/reschedule")
+def reschedule(scenario_id: str, req: RescheduleRequest) -> dict[str, Any]:
+    """A drag, applied as WHAT A RESCHEDULE REALLY IS: two ops, not one.
+
+    `MoveProject` alone moves the BAR and not the LOAD, because site-impact windows are
+    deliberately independent of project windows — a rollout's disruptive phase is narrower
+    than the rollout. A UI that emitted only the project move would show a schedule change
+    with no site consequence, which is a demo that lies about its own model.
+
+    So this endpoint derives BOTH and appends them separately. The ops stay ordinary and
+    individually undoable; nothing is fused, and `MoveProject` still never touches an impact.
+    """
+    try:
+        sc = STORE.scenario(scenario_id)
+    except UnknownTarget as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        ops = measures.derive_reschedule(
+            STORE.resolve(scenario_id),
+            project_id=req.project_id,
+            new_planned=Interval(req.start, req.end),
+        )
+    except measures.NotInModel as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    for op in ops:
+        sc = STORE.append_op(scenario_id, op)
+
+    return {
+        "scenario_id": sc.scenario_id,
+        "version": sc.version,
+        "ops_appended": len(ops),
+        # NAMED, so the caller can SEE both ops landed rather than trusting a count. The
+        # pre-flight check for beat 2 is exactly "were there two, and what were they".
+        "ops": [type(o).__name__ for o in ops],
+    }

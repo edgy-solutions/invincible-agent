@@ -28,6 +28,14 @@ try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_
 except ImportError:
     from agent_fleet.planning_agent.entities import FISCAL_PERIODS, PERIOD_ORDER, Dependency, FiscalPeriod, Interval, PlanState
 
+# The op types the reschedule policy CO-EMITS. Imported under the same flat/packaged idiom —
+# see tests/test_agent_modules_survive_flat_layout.py for why a bare packaged import fails in
+# the image.
+try:
+    from state import MoveProject, MoveSiteImpact
+except ImportError:
+    from agent_fleet.planning_agent.state import MoveProject, MoveSiteImpact
+
 # ─────────────────────────────────────────────────────────────────────────────
 # The output-type contract. Declared, fixed, and the ONLY thing an intent names.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1064,3 +1072,61 @@ def _op_row(op: Any) -> dict[str, Any]:
     if isinstance(op, dict):
         return dict(op)
     return {k: v for k, v in vars(op).items()}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The reschedule POLICY — a drag is two ops, and this is their one home.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# `MoveProject` stays innocent: it sets proj.planned and never touches impact windows,
+# because a rollout's DISRUPTIVE PHASE is deliberately narrower than the rollout (P12 runs
+# Apr-Sep; its Site B impact is a Jul-Sep subset). Fusing them would delete the distinction
+# that makes site load a different measure from schedule.
+#
+# So the ops stay SEPARATE and this policy CO-EMITS them. It lives server-side because that is
+# where the state is: site impacts do not exist in cortex-ui at all, so no client can compute
+# an offset for data it does not have.
+
+
+def derive_reschedule(
+    state: PlanState, *, project_id: str, new_planned: Interval
+) -> list[Any]:
+    """The ops a reschedule really is: move the project, then move its disruption with it.
+
+    OFFSET-PRESERVED. Each impact shifts by the SAME DELTA as the project, keeping its
+    position RELATIVE to the rollout intact — a window three months into a six-month project
+    stays three months in. Clamping or recomputing would silently re-author the model's
+    semantics; shifting preserves them.
+
+    Returns ORDINARY ops in order, so the store learns no new shape and the scenario log reads
+    as what happened: the schedule move first, its consequences after.
+    """
+    from datetime import date, timedelta
+
+    proj = state.project(project_id)
+    if proj is None:
+        raise NotInModel(f"no project {project_id!r} in the plan")
+    if not new_planned.is_well_formed():
+        # REFUSE FIRST. Returning ops for an impossible move would push the failure into
+        # apply_ops, after the caller had already been told the reschedule was valid.
+        raise NotInModel(
+            f"reschedule of {project_id}: interval {new_planned.start}..{new_planned.end} "
+            f"is inverted"
+        )
+
+    delta = date.fromisoformat(new_planned.start) - date.fromisoformat(proj.planned.start)
+
+    ops: list[Any] = [MoveProject(project_id=project_id, new_planned=new_planned)]
+    for impact in state.site_impacts:
+        if impact.project_id != project_id:
+            continue
+        shifted = Interval(
+            (date.fromisoformat(impact.window.start) + delta).isoformat(),
+            (date.fromisoformat(impact.window.end) + delta).isoformat(),
+        )
+        # ONE OP PER IMPACT. A project loading three sites produces three ops, never a single
+        # fused "move everything" — each is separately reviewable and separately undoable.
+        ops.append(MoveSiteImpact(
+            project_id=project_id, site_id=impact.site_id, new_window=shifted,
+        ))
+    return ops
