@@ -540,8 +540,58 @@ def health() -> dict:
         "manifest_species": sorted(
             RegistrationManifest.model_fields["tool_kind"].annotation.__args__
         ),
+        # ── VECTOR COVERAGE, EXPOSED SO IT CANNOT HIDE AGAIN ─────────────────
+        # The write path embeds each Predicate row and, ON EMBED FAILURE, writes
+        # the row WITHOUT a vector rather than blocking the saga — a correct
+        # degrade-don't-block decision whose comment says "a backfill can
+        # populate vectors once the gateway is restored".
+        #
+        # Nobody ever ran that backfill, because nobody knew the gateway had
+        # never been up: LLM_BASE_URL was unset, every registration printed a
+        # warning, and the Predicate collection sat at 65 rows and ZERO vectors
+        # while verb nomination silently ran BM25-only for months. A whole
+        # architecture bake-off was measured on the degraded path.
+        #
+        # The fallback worked exactly as designed AND BECAME PERMANENT — the
+        # same shape as ADR-0006's preserved linker. What was missing was not
+        # the embed and not the fallback; it was any surface on which
+        # "rows without vectors" was VISIBLE. This is that surface.
+        **_vector_coverage(),
     }
 
+
+
+
+def _vector_coverage() -> dict:
+    """How many Predicate rows carry a vector, as a health fact.
+
+    Reported rather than asserted: a registrar that refuses to be healthy
+    because an embedding endpoint is down would turn a degraded-but-working
+    nomination path into an outage, which is the trade the write path already
+    correctly declined to make. The number is here so the degradation is
+    COUNTABLE — an unread warning is not a signal, and this defect survived by
+    being representable only in a log line nobody grepped.
+    """
+    try:
+        client = _get_weaviate_client()
+        coll = client.collections.get("Predicate")
+        total = 0
+        vectorized = 0
+        for obj in coll.iterator(include_vector=True):
+            total += 1
+            v = getattr(obj, "vector", None) or {}
+            if v:
+                vectorized += 1
+        return {
+            "predicate_rows": total,
+            "predicate_rows_vectorized": vectorized,
+            "predicate_vector_coverage": (
+                round(vectorized / total, 3) if total else None
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        # A health endpoint must not fail because a diagnostic could not run.
+        return {"predicate_vector_coverage_error": f"{type(exc).__name__}: {exc}"[:120]}
 
 
 def _build_custom_properties(manifest: "RegistrationManifest") -> dict:

@@ -97,11 +97,29 @@ def _resolve_endpoint() -> tuple[str, str, str]:
     """
     base_url = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL")
     if not base_url:
+        # THE REMEDY IS DERIVED, NOT HARDCODED. This message used to name
+        # `http://iagent-litellm:4000/v1` unconditionally — and in a cluster
+        # where no such service is deployed, following it verbatim replaces a
+        # loud, working fallback with a broken endpoint. An error message is
+        # documentation at the moment of failure; a stale one is worse than
+        # none, because it is trusted precisely when nobody has time to check.
+        #
+        # OLLAMA_BASE_URL is the environment's own declaration of where an
+        # OpenAI-compatible endpoint lives, so when it is present it is the
+        # honest suggestion. Otherwise the message names the VARIABLE and
+        # declines to guess an address it cannot verify.
+        _hint = os.getenv("OLLAMA_BASE_URL")
+        suggestion = (
+            f"This environment already declares OLLAMA_BASE_URL={_hint} — if that "
+            f"endpoint serves /embeddings, it is the likely value."
+            if _hint else
+            "Point it at an OpenAI-compatible endpoint that exposes /embeddings "
+            "(an in-cluster LiteLLM proxy or an Ollama server's /v1). No default "
+            "is assumed: sandbox and work use different endpoints, and inheriting "
+            "the wrong one fails worse than not setting it."
+        )
         raise RuntimeError(
-            "embed requires LLM_BASE_URL (or OPENAI_BASE_URL) to be set. "
-            "Point it at an OpenAI-compatible endpoint that exposes "
-            "/embeddings — typically the in-cluster LiteLLM proxy "
-            "(http://iagent-litellm:4000/v1)."
+            "embed requires LLM_BASE_URL (or OPENAI_BASE_URL) to be set. " + suggestion
         )
     api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "any"
     model = os.getenv("LLM_EMBED_MODEL", DEFAULT_EMBED_MODEL)
