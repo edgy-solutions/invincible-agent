@@ -11,5 +11,5 @@ type: application
 # deployment installing "the latest chart" got 0.3.36's contents frozen at the bump
 # commit, with no ENGINE_*_CLIENT_SECRET, so every engine died on `KeyError` at mint
 # and registered zero verbs. See release-helm-charts.yml, which now fails loudly.
-version: 0.3.46
+version: 0.3.47
 appVersion: "2026.07.02"

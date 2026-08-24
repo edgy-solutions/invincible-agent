@@ -132,6 +132,33 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 12
+          # STARTUP PROBE — this container LOSES A RACE WITH ITS OWN LIVENESS
+          # PROBE BY FIVE SECONDS, deterministically.
+          #
+          # It pip-installs at boot, so first-serve takes ~275s. The liveness
+          # budget below is initialDelay 120 + (period 30 x threshold 5) = 270s.
+          # Measured 2026-08-24: container up 14:42:50, first served 14:47:25,
+          # SIGTERM 14:47:28 — killed THREE SECONDS after becoming ready, on a
+          # loop, 32 restarts deep. Exit code 0 / "Completed" the whole time,
+          # because a liveness kill is a graceful shutdown, so nothing in the
+          # logs or the exit status says "I was killed".
+          #
+          # Invisible until a pod is RECREATED: a long-running pod is already
+          # past startup, so the misconfiguration sleeps until the next roll and
+          # then presents as an unrelated failure of whatever caused the roll.
+          #
+          # startupProbe is the correct instrument rather than a bigger
+          # initialDelay: it SUSPENDS liveness until the app answers once, so
+          # slow boots are tolerated without also blinding liveness for the
+          # container's whole life. 10s x 60 = 10 min of headroom for the
+          # install, after which liveness resumes at its normal tightness.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health
