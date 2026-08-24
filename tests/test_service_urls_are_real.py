@@ -100,8 +100,6 @@ def test_no_waiver_outlives_its_defect():
     live = {n for n in _source_urls() if n not in known}
     stale = sorted(set(WAIVED) - live)
     assert not stale, (
-        "these waivers no longer describe a real offender — delete them:
-  "
-        + "
-  ".join(f"{s} ({WAIVED[s]})" for s in stale)
+        "these waivers no longer describe a real offender - delete them:\n  "
+        + "\n  ".join(f"{s} ({WAIVED[s]})" for s in stale)
     )
