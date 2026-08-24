@@ -94,12 +94,64 @@ def _verb_to_intent() -> dict[str, str]:
     return out
 
 
+def _intent_to_verb() -> dict[str, str]:
+    """intent_id -> verb iri. THE LOSSLESS DIRECTION, and the one scoring uses.
+
+    `_verb_to_intent()` is many-to-one and therefore NOT INVERTIBLE. Two pairs
+    of intents share a verb — (site_schedule, projects_in) both measure
+    plan_schedule, and (what_blocks, downstream_of) both measure
+    plan_dependency_neighborhood — so building verb -> intent silently keeps
+    whichever intent is declared LAST and the other becomes UNPRODUCEABLE.
+
+    That is not a reporting nicety. Funnel B answers in VERBS and the fixture
+    grades in INTENTS, so every case expecting a collision-loser was scored
+    wrong no matter what the funnel did. Measured 2026-08-24: q6-a and q6-b
+    resolved mesh:planSchedule — the CORRECT verb — and were recorded as
+    `projects_in`, i.e. as failures of site_schedule. q10-b resolved
+    mesh:planDependencyNeighborhood, also correct, and was recorded as
+    `downstream_of`, a failure of what_blocks. Three correct routings booked
+    as misses, two of them in the nomination arm, which is the arm that was
+    then used to argue about RETRIEVAL.
+
+    Scoring compares verb to verb. intent_id is still reported, because a
+    human reading the table wants the question's name — but it is no longer
+    what decides pass or fail.
+
+    Same family as the BAML agreement check that kept only the last class per
+    intent_id: a dict keyed on the many side of a many-to-one relation.
+    """
+    import yaml  # noqa: PLC0415
+
+    cat = yaml.safe_load(_CATALOG.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+    for i in cat["intents"]:
+        mid = i.get("measure_id")
+        if not mid:
+            continue
+        head, *rest = mid.split("_")
+        out[i["intent_id"]] = f"mesh:{head}" + "".join(p.title() for p in rest)
+    return out
+
+
 #: Which subject each question kind is typed against. B's real deployment takes
 #: this from session context (the workshop scopes a plan); for the bake-off it is
 #: derived from the fixture's expected intent so both funnels see the same
 #: question and neither is handed the answer.
+#
+# EVERY ENTRY HANDS THE SUBJECT ITS ANSWERING VERB IS TYPED ON. Audited
+# 2026-08-24 and exactly one entry did not: `site_schedule` mapped to Site,
+# while the verb that answers it — planSchedule — is typed against Portfolio.
+# The compat-walk from Site therefore COULD NOT NOMINATE the correct verb, so
+# q6-a/b/c were structurally unable to pass and their three failures were
+# scored against the funnel. `site_schedule` is now absent and falls through
+# to the "Portfolio" default below.
+#
+# This is not the union question, which was measured and reverted: walking
+# plan-scope AND topic-entity converted one nomination-miss, left nine, and
+# broke a refusal. This is narrower and it is a HARNESS BUG — a referee that
+# hands the wrong subject and then records the miss as the player's.
 _SUBJECT_BY_INTENT = {
-    "show_site_load": "Site", "site_schedule": "Site",
+    "show_site_load": "Site",
     "capability_path": "Capability", "maturity_grid": "Capability",
     "tech_footprint": "Technology", "process_evolution": "BusinessProcess",
 }
@@ -182,6 +234,7 @@ def run_suite_b(fixture: dict) -> dict:
     cases = fixture["cases"]
     refusals = fixture["refusals"]
     mapping = _verb_to_intent()
+    i2v = _intent_to_verb()
 
     routing_ok = 0
     nomination_miss = 0
@@ -198,15 +251,25 @@ def run_suite_b(fixture: dict) -> dict:
             obs.append(ask_b(case["question"], exp))
             latencies.append(time.time() - t0)
 
-        ids = {o["intent_id"] for o in obs}
+        # Stability on the VERB too: two passes returning the same verb under
+        # two intent names is a STABLE routing, and calling it unstable would
+        # re-import the collision through the instability arm.
+        ids = {o.get("resolved_verb") or o["intent_id"] for o in obs}
         if len(ids) > 1:
             failures.append({"id": case["id"], "arm": "unstable", "expected": exp,
                              "got": sorted(ids), "candidates": obs[0].get("candidates")})
             continue
 
         got = obs[0]
-        if got["intent_id"] == exp:
+        # VERB vs VERB. See _intent_to_verb(): comparing intent_id here books a
+        # correct routing as a miss whenever the expected intent lost a
+        # verb-sharing collision.
+        want_verb = i2v.get(exp)
+        if want_verb is not None and got.get("resolved_verb") == want_verb:
             routing_ok += 1
+            continue
+        if want_verb is None and got["intent_id"] == exp:
+            routing_ok += 1  # refusal-shaped expectations have no verb
             continue
 
         # WAS THE CORRECT VERB EVEN IN THE LINEUP? This is the arm that
@@ -224,7 +287,6 @@ def run_suite_b(fixture: dict) -> dict:
         # `nominated` is the walk's own output, captured before disposal runs, so
         # it answers the question the arm actually asks: did the right verb reach
         # the lineup?
-        want_verb = next((v for v, i in mapping.items() if i == exp), None)
         present = want_verb in (got.get("nominated") or [])
         arm = "disposal-miss" if present else "nomination-miss"
         if present:
