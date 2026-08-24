@@ -1149,13 +1149,31 @@ def _predicate_hybrid_search_sync(
                 wvc.query.Filter.by_property("domains", length=True).equal(0),
             ])
 
-        # Hybrid: compute the query vector via embed_text() (LiteLLM
-        # /embeddings) and hand it to Weaviate explicitly. No text2vec
-        # module on the cluster — code owns the contract. If the embedding
-        # gateway fails OR the Predicate collection has no vectors stored
-        # yet (current state — only re-ingest will backfill them), Weaviate
-        # hybrid() degrades gracefully: BM25 still scores normally; the
-        # vector contribution is just zero / no-op.
+        # Hybrid: compute the query vector via embed_query() and hand it to
+        # Weaviate explicitly. No text2vec module on the cluster — code owns
+        # the contract. If the embedding gateway fails, Weaviate hybrid()
+        # degrades gracefully: BM25 still scores normally; the vector
+        # contribution is just zero / no-op.
+        #
+        # THIS COMMENT USED TO SAY the Predicate collection "has no vectors
+        # stored yet (current state — only re-ingest will backfill them)".
+        # That was TRUE, and it stayed true for months, because LLM_BASE_URL
+        # was never set in sandbox: every embed raised, the registrar's write
+        # path caught it and stored the row without a vector, and this
+        # graceful degradation ran as the ONLY path. Verb nomination was
+        # BM25-only for the entire life of the deployment, and an
+        # architecture bake-off was measured on it.
+        #
+        # The comment is the whole lesson. A KNOWN defect written down as
+        # "current state" reads to every later reader as a description of how
+        # things are rather than a bug with an owner. Prose cannot hold a
+        # temporary condition — it has no expiry and nothing re-reads it. If
+        # a degraded state matters, it needs a COUNTER somewhere a human
+        # looks (the registrar now reports predicate_rows_vectorized on
+        # /health), because that is the only form of the fact that can go
+        # from true to false and have anyone notice.
+        #
+        # Fixed 2026-08-24; coverage verified non-zero on the running pod.
         try:
             query_vector = embed_query(query)
         except Exception as e:

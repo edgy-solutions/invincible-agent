@@ -562,6 +562,22 @@ def health() -> dict:
 
 
 
+
+def row_is_vectorized(vector_field) -> bool:
+    """True only if the row carries at least one NON-EMPTY vector.
+
+    Public and standalone so it can be tested against both shapes without a
+    live Weaviate. The rule is one line; the reason it is a named function is
+    that getting it wrong is silent and self-congratulatory.
+
+    Weaviate returns ``{"default": []}`` for an unvectorized row — a TRUTHY
+    dict holding an EMPTY vector. Testing the dict says "vectorized" for every
+    row in a collection with zero vectors, which is exactly the state this
+    counter exists to detect.
+    """
+    return any(len(v) > 0 for v in (vector_field or {}).values())
+
+
 def _vector_coverage() -> dict:
     """How many Predicate rows carry a vector, as a health fact.
 
@@ -590,8 +606,7 @@ def _vector_coverage() -> dict:
             # Same family as a token-check that matches its own explanatory
             # comment: the test inspected the CONTAINER when the claim was
             # about the CONTENT.
-            vecs = (getattr(obj, "vector", None) or {}).values()
-            if any(len(v) > 0 for v in vecs):
+            if row_is_vectorized(getattr(obj, "vector", None)):
                 vectorized += 1
         return {
             "predicate_rows": total,
