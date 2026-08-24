@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **68 of 70 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **69 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -175,6 +175,10 @@ _Coverage: **68 of 70 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/endpoint-gating-undeclared-routes-recommendation.md](plans/endpoint-gating-undeclared-routes-recommendation.md)
 
 ## parked
+
+- **composing-latency-levers** — PARKED 2026-08-23. The levers for composing's 102.5s (39% of a 262s answer) — measurements live in answer-latency-tier1 and are NOT restated here. Four levers ranked, each with its experiment PRE-REGISTERED before anyone is tempted to freelance it, each landing as one revertible commit, each with a quality gate (51-case fixture / number-check). CORRECTION TO THE ASSIGNMENT: "config, not code" is NOT true as the repo stands — `reasoning_effort` has ZERO occurrences anywhere, and no narration-specific BAML client exists, so levers (a) and (b) are code changes today and this packet's own rule would disqualify them. An ENABLING commit (named BAML client + env-driven model, and/or a distinct litellm alias in values.yaml) lands FIRST and makes them genuinely config. Revert coordinate is a TAG, not a memory — `routing-baseline-v1/v2` are the precedent.
+  status: parked · owner: unassigned · trigger: demo delivered, OR a rehearsal where card-latency is the named blocker
+  → [docs/plans/composing-latency-levers.md](plans/composing-latency-levers.md)
 
 - **engine-a-loop-idempotency** — Non-idempotent Superset write inside the agent loop. FILED NOT FIXED; the packet forbids attaching it to a durability session.
   status: parked · owner: human · blocked-on: design window (reserved)

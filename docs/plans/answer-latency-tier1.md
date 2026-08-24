@@ -179,3 +179,24 @@ where locating's time goes.
   and it may buy nothing.
 
 **No fixes attempted, per the assignment.** The fix list is a morning decision.
+
+## NEXT ACTION 2026-08-23 — the phase re-measurement, and where the fix list went
+
+**The fix list is now a packet:** [`composing-latency-levers`](composing-latency-levers.md) —
+parked, triggered on *demo delivered OR a rehearsal where card-latency is the named blocker*,
+with four levers ranked and each experiment **pre-registered** so a disappointing result cannot
+be retro-fitted into a success. That packet deliberately **does not restate any number from this
+one**; this packet remains the single home for the measurement.
+
+**What stays here, and is NOT parked: the phase re-measurement.** It is read-only, it is roughly
+a harness re-run, and it is what makes the levers' predictions falsifiable rather than
+plausible. It targets exactly the gaps this packet already names:
+
+* the **~24s unattributed inside `locating`** — needs engine-side instrumentation, not probing;
+* **selection cost**, which the levers packet pre-registers a prediction against: **<2s**. If
+  confirmed, the menu-cache lever is **struck rather than deferred**, and the felt
+  SPO-presentation slowness is composing's tax plus honest-path routing — not selection.
+
+**Run it in isolation.** The method note above is the reason: concurrent probing produced a 3.7x
+spread that was self-inflicted queueing and was nearly filed as natural variance. A
+re-measurement contaminated the same way would not merely be noisy — it would look conclusive.
