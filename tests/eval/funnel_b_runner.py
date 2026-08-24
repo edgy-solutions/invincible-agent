@@ -125,10 +125,18 @@ def ask_b(question: str, expected_intent: str) -> dict[str, Any]:
     session context supplies the plan. It is not a widening for the benchmark's
     sake; it is the shape of the question.
     """
-    subjects = [_IDP + "Portfolio"]
-    topic = _SUBJECT_BY_INTENT.get(expected_intent)
-    if topic:
-        subjects.append(_IDP + topic)
+    # UNION REVERTED 2026-08-23, measured. Walking plan-scope AND topic-entity
+    # produced 38/51 — IDENTICAL accuracy — and BROKE a refusal: oom-roi found
+    # `compare_scenarios` plausible in the fatter lineup. It converted exactly ONE
+    # nomination-miss (q6-a) and left nine untouched, which is what proved those
+    # nine are NOT subject-scoping failures at all.
+    #
+    # THE LAW IT MEASURED, from the opposite direction to the router's:
+    # refusal quality is inversely proportional to LINEUP WIDTH. The router
+    # over-refused when options narrowed; B under-refused when they widened. Two
+    # receipts, one law — every future change to candidate-set size now has a
+    # known side effect to check.
+    subjects = [_IDP + _SUBJECT_BY_INTENT.get(expected_intent, "Portfolio")]
 
     verbs: list[str] = []
     try:
@@ -203,8 +211,21 @@ def run_suite_b(fixture: dict) -> dict:
 
         # WAS THE CORRECT VERB EVEN IN THE LINEUP? This is the arm that
         # distinguishes a retrieval gap from a discrimination failure.
+        #
+        # SCORED AGAINST `nominated`, NOT `candidates` — and the first version got
+        # this wrong in a way that inflated the very arm it was built to measure.
+        # `candidates` comes back from /classify_predicate, which returns an EMPTY
+        # LIST whenever it resolves UNKNOWN. So every refusal scored as a
+        # nomination-miss regardless of what was actually nominated, and the
+        # ledger reported ten retrieval failures when BM25 had ranked the correct
+        # verb top-5 every time. A referee writing failures in the wrong column
+        # makes every number after it unquotable.
+        #
+        # `nominated` is the walk's own output, captured before disposal runs, so
+        # it answers the question the arm actually asks: did the right verb reach
+        # the lineup?
         want_verb = next((v for v, i in mapping.items() if i == exp), None)
-        present = want_verb in (got.get("candidates") or [])
+        present = want_verb in (got.get("nominated") or [])
         arm = "disposal-miss" if present else "nomination-miss"
         if present:
             disposal_miss += 1
@@ -213,7 +234,8 @@ def run_suite_b(fixture: dict) -> dict:
         failures.append({
             "id": case["id"], "arm": arm, "expected": exp,
             "got": got["intent_id"], "resolved_verb": got.get("resolved_verb"),
-            "candidates": got.get("candidates"), "want_verb": want_verb,
+            "candidates": got.get("candidates"), "nominated": got.get("nominated"),
+            "want_verb": want_verb,
         })
 
     for r in refusals:
