@@ -21,15 +21,34 @@ phrasings. The gap is narrower and more specific than "unbuilt".
 | `OpRequest` wire shape + `_to_op` translation | **built** | `main.py:195-224` |
 | `POST /scenario/{id}/op`, `POST /baseline/op` | **built + tested** | `test_engine_p_routes.py:166-231` |
 | `plan_diff` → `mesh:EffectSet` renders the effect | **built** | `measures.py:47` |
-| **a mutation VERB registered in the mesh** | **ABSENT** | all 13 Engine P verbs are read-only `/measure/{fn}` |
+| a mutation VERB registered in the mesh | **PRESENT** — see correction below | `mesh:planCommitScenario`, `main.py:67` |
+| **a verb for the FIELD-EDIT mutations (`set_cost`, `move_project`)** | **ABSENT** | no `planSetCost` / `planMoveProject` in the 14 registered verbs |
 | **anything converting a parsed `SetCost` into an `OpRequest` POST** | **ABSENT** | the BAML class has **zero consumers** |
 
 ## Two independent breaks, and they fail differently
 
-**1. Mutations are not in the verb graph.** The shipped funnel (B) routes
-`resolve → compat-walk → classify_predicate` over REGISTERED VERBS. No mutation verb is
-registered, so **B structurally cannot reach a mutation** regardless of parse quality. This is
-not a tuning gap; there is nothing to nominate.
+**1. No verb exists for the FIELD-EDIT mutations.** The shipped funnel (B) routes
+`resolve → compat-walk → classify_predicate` over REGISTERED VERBS. There is no
+`planSetCost` or `planMoveProject`, so **B structurally cannot reach a typed field edit**
+regardless of parse quality. Nothing to nominate.
+
+> ### CORRECTION 2026-08-24, filed within the hour
+>
+> This section first claimed *"mutations are not in the verb graph"* and *"all 13 Engine P
+> verbs are read-only"*. **That is wrong.** `mesh:planCommitScenario` IS registered — *"MUTATES
+> — it is the one verb that writes, and it refuses without a reason"* — reached through its own
+> endpoint `/scenario/{scenario_id}/commit`, guarded so `/measure/{fn}` rejects it. Fourteen
+> verbs, not thirteen.
+>
+> **How the error happened matters more than the error.** The verb extraction was run BEFORE
+> `d7d410a` landed (10:08) and reused in this packet at 10:20 without re-running it — a
+> twelve-minute-stale reading in a shared tree with an active neighbour. The repo already
+> carries the law this breaks: **re-run the generator immediately before you stage.** The
+> reading was stale; the tree was fine.
+>
+> **The D2 verdict is unaffected** — `set_cost` still has no verb and its BAML parse still has
+> zero consumers — but the supporting claim was overbroad, and an overbroad reason for a
+> correct ruling is still a defect in the record.
 
 **2. The parse is declared-but-unwired at the funnel's mouth.** `RouteIntent` returns `SetCost`
 as a union member, so funnel A *can* produce a parsed mutation object — and **nothing consumes
@@ -71,9 +90,16 @@ with no pre-registered number behind it.
 
 ## Work items, with their gates
 
-**(a) The mutation-verb design ruling** — post-demo, human-owned. How do governed writes route
-through the mesh? Entitlement shape, refusal semantics, and whether a write verb belongs in the
-same graph the compat-walk reads at all. **Gate: a ruling, before any registration.**
+**(a) The field-edit verb ruling** — post-demo, human-owned. **Narrower than first written,
+because `planCommitScenario` already answers the general question.** Governed writes DO route
+through the mesh: registered like any verb so the router can find them, reached through their
+own endpoint, refusing without a rationale. That is a working template, not an open design.
+
+What remains open is specific: should FIELD EDITS (`set_cost`, `move_project`) get verbs at
+all, or is committing a scenario the only write the mesh should route — with field edits
+staying a UI gesture against `/scenario/{id}/op`? The commit verb demands a REASON before it
+writes; a field edit has no equivalent ceremony, and that asymmetry is the actual question.
+**Gate: a ruling, before any registration.**
 
 **(b) The slot-filling fixture extension** — `set_cost` / `move_project` cases WITH money
 amounts, across the same phrasing-variation discipline as the existing 51.
