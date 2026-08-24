@@ -62,6 +62,12 @@ appear identically with and without vectors, so that geometry belongs to the mod
 settle the resolver: this fixture reaches the graph walk directly and **never calls `/resolve`**,
 so the 290-probe corpus remains unmeasured in its intended configuration.
 
+**Postscript, same day.** With the dependency-verb synonym collision fixed and deployed, the
+funnel reached **48/51 (94.1%), refusals 3/3, nomination-miss 0** — and the fix that moved it
+was CONTRASTIVE METADATA, not retrieval. The two remaining stable failures are OVER-REFUSALS.
+Every number this defect touched improved by writing better descriptions; none of them moved
+when the vector term came back.
+
 **The uncomfortable part is the honest part.** A defect can be real, longstanding, correctly
 diagnosed, cleanly fixed — and still have cost nothing. Sixty-seven days of a subsystem being
 silently off is worth exactly as much as the measurement says, which here is zero accuracy and
