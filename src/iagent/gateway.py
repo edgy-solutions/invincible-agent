@@ -1006,7 +1006,16 @@ async def instances_by_property_dashboard(
 # default menu and every answer becomes a KNOWLEDGE_DOCUMENT — a regression that reads as
 # completion. Absent stays ABSENT; a plausible substitute would make an anonymous caller
 # indistinguishable from a registered one, which is the distinction ADR-0042 Ruling 9 rests on.
-_ENGINE_P_URL = os.getenv("ENGINE_P_URL", "http://iagent-planning-agent:8095")
+# THE SERVICE IS `iagent-engine-p`. engines.yaml names services by COMPONENT (engine-p),
+# while the IMAGE and the Keycloak client are named planning-agent — they differ for this
+# engine and only for this engine. This default said `iagent-planning-agent`, which is a
+# service that has never existed, so this route could not reach Engine P at all;
+# ENGINE_P_URL is unset in the ConfigMap, so the wrong default was the live value.
+#
+# SECOND OCCURRENCE of one mistake. The same wrong name was fixed in Engine P's own
+# ENGINE_P_PUBLIC_URL on 2026-08-22; that fix was applied where it was found and the other
+# site was never enumerated. tests/test_service_urls_are_real.py now enumerates for us.
+_ENGINE_P_URL = os.getenv("ENGINE_P_URL", "http://iagent-engine-p:8095")
 
 
 class PlanMeasureBody(_BaseModel):
