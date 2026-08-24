@@ -579,8 +579,19 @@ def _vector_coverage() -> dict:
         vectorized = 0
         for obj in coll.iterator(include_vector=True):
             total += 1
-            v = getattr(obj, "vector", None) or {}
-            if v:
+            # MEASURE THE VECTOR, NOT THE DICT THAT HOLDS IT. The first version
+            # of this guard tested `if getattr(obj, "vector", None) or {}` —
+            # and Weaviate returns {"default": []} for an UNVECTORIZED row.
+            # That dict is TRUTHY, so the check reported 65/65 vectorized on a
+            # collection where 51 rows held an empty vector. The guard written
+            # to expose this exact defect would have concealed it, and the
+            # concealment would have looked like a fix.
+            #
+            # Same family as a token-check that matches its own explanatory
+            # comment: the test inspected the CONTAINER when the claim was
+            # about the CONTENT.
+            vecs = (getattr(obj, "vector", None) or {}).values()
+            if any(len(v) > 0 for v in vecs):
                 vectorized += 1
         return {
             "predicate_rows": total,
