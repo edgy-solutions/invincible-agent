@@ -3402,10 +3402,31 @@ async def classify_predicate(request: ClassifyPredicateRequest) -> ClassifyPredi
         tb.Predicate.add_value(verb_iri).description(enum_desc)
     # Always offer UNKNOWN so the LLM can decline without inventing a
     # poor match — same pattern as ClassifyDomainIntent's UNKNOWN.
+    # REFUSAL IS A FIRST-CLASS LINEUP MEMBER, and it needs the same kind of
+    # discriminating text every other option gets. Measured 2026-08-23: "what is
+    # the ROI on ERP Modernization" flipped between UNKNOWN and a plausible-
+    # looking verb (planDiff, "effects of a scenario against a baseline"),
+    # STABLE-refusing on a cold call and STABLE-choosing planDiff across five
+    # rapid ones. A near-tie, and it was near-tied because UNKNOWN said only
+    # "nothing fits" while its rivals described what they compute.
+    #
+    # An option that cannot say what it OWNS loses to any option that can.
+    #
+    # Stated domain-neutrally on purpose: this enum serves every domain, so the
+    # rule is the CLASS of question ("a quantity this system does not compute"),
+    # never one domain's vocabulary list. The examples are illustrative of the
+    # class, not an enumeration to be matched.
     tb.Predicate.add_value("UNKNOWN").description(
         "No registered predicate in the candidate set is a sensible fit "
         "for this query given the resolved subject. Use this when every "
-        "candidate would be the wrong substrate or wrong intent."
+        "candidate would be the wrong substrate or wrong intent. "
+        "USE THIS ESPECIALLY when the question asks for a QUANTITY OR JUDGEMENT "
+        "THIS SYSTEM DOES NOT COMPUTE, even though it names real entities and "
+        "sounds like it belongs — return on investment, payback, NPV, valuation, "
+        "benefit, headcount or staffing, risk ownership. Naming a real subject "
+        "does not make a question answerable: a candidate that merely operates on "
+        "the same subject is the WRONG ANSWER, not the nearest one. Prefer this "
+        "over a verb whose output would not actually answer what was asked."
     )
 
     try:
