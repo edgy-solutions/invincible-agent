@@ -74,9 +74,15 @@ def test_every_seeded_tension_survives_an_overlay(tmp_path):
     assert q3["over_cap"] is True
     # (b) baseline clean
     assert measures.plan_dependency_violations(s) == []
-    # (c) exactly one over-threshold cell
-    over = [(r["site_id"], r["period"]) for r in measures.plan_site_load(s) if r["over_threshold"]]
-    assert over == [("S2", "FY26-Q4")]
+    # (c) REVISED 2026-08-24: the tension is LATENT, not fired. Site B sits just under its
+    # line so the room's own drag causes the crossing; an overlay that renamed sites must
+    # preserve the NEAR-MISS, because a themed dataset that quietly relieved it would take
+    # the consequence beat with it.
+    s2 = [r for r in measures.plan_site_load(s) if r["site_id"] == "S2"]
+    q4 = next(r for r in s2 if r["period"] == "FY26-Q4")
+    assert q4["over_threshold"] is False
+    assert 0.85 <= q4["load"] / q4["threshold"] < 1.0, "Site B lost its near-miss"
+    assert not [r for r in measures.plan_site_load(s) if r["over_threshold"]]
     # (d) a visible funding gap
     assert any(r["gap"] > 0 for r in measures.plan_funding_gap(s, group_by="org"))
     # (e) outstanding contributions past a plateau

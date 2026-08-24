@@ -215,10 +215,24 @@ def build_seed(overlay_path: Optional[str] = None) -> PlanState:  # noqa: C901
         SiteImpact("P4",  "S1", Interval("2026-05-15", "2026-06-30"), 0.8),
         SiteImpact("P7",  "S3", Interval("2026-04-01", "2026-06-30"), 1.2),
         SiteImpact("P9",  "S3", Interval("2026-05-01", "2026-06-30"), 1.0),
-        # TENSION (c): THREE overlapping impacts on Site B in FY26-Q4, summing to 2.7
-        # against a threshold of 2.0. Visible on first load, no interaction required.
+        # TENSION (c), REVISED 2026-08-24: Site B sits UNDER its threshold at baseline and
+        # the room's own drag pushes it over.
+        #
+        # It used to be over at baseline (2.7 against 2.0, all three impacts in FY26-Q4), and
+        # that made the beat narratively incoherent: the room would see Site B already red,
+        # and a drag producing a SECOND red cell reads as "more of the same" rather than
+        # "watch this decision break something". The beat's whole payload is CAUSALITY — the
+        # action crosses the line — and a pre-existing breach anywhere on the site dilutes it.
+        #
+        # So P12's impact moves OUT of Q4 into FY27-Q1. Baseline Q4 becomes 1.2 + 0.6 = 1.8
+        # against 2.0: visibly near the ceiling, honestly foreshadowed, still under. Pulling
+        # P12 back into Q4 restores 2.7 and CROSSES — by 35%, which reads unambiguously.
+        #
+        # THE HEADROOM IS LOAD-BEARING and deliberately small. A site at 0.5/2.0 that flips
+        # reads as the drag doing something enormous, which misrepresents the physics; 1.8/2.0
+        # reads as a site that was always one decision away.
         SiteImpact("P8",  "S2", q4, 1.2),
-        SiteImpact("P12", "S2", Interval("2026-07-15", "2026-09-30"), 0.9),
+        SiteImpact("P12", "S2", Interval("2026-10-01", "2026-12-31"), 0.9),
         SiteImpact("P13", "S2", Interval("2026-07-01", "2026-08-31"), 0.6),
         SiteImpact("P5",  "S4", Interval("2026-10-01", "2026-12-31"), 1.1),
         SiteImpact("P14", "S4", Interval("2026-11-01", "2027-02-28"), 0.9),

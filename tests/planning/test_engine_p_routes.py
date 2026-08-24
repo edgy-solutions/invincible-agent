@@ -156,10 +156,14 @@ def test_the_whole_meeting_loop(client):
     q3 = next(r for r in base["rows"] if r["period"] == "FY26-Q3")
     assert q3["over_cap"] is True and q3["overage"] == pytest.approx(1.05 * M)
 
-    # ...and Site B is over threshold in Q4, likewise unprompted.
+    # ...and Site B is one decision away from its line, likewise unprompted. NOT over —
+    # revised 2026-08-24 so the room's drag CAUSES the crossing rather than finding it
+    # already there. The opening screen carries exactly one red thing: the Q3 overrun.
     load = client.post("/measure/plan_site_load", json={}).json()
-    assert any(r["site_id"] == "S2" and r["period"] == "FY26-Q4" and r["over_threshold"]
-               for r in load["rows"])
+    q4 = next(r for r in load["rows"] if r["site_id"] == "S2" and r["period"] == "FY26-Q4")
+    assert q4["over_threshold"] is False
+    assert 0.85 <= q4["load"] / q4["threshold"] < 1.0
+    assert not any(r["over_threshold"] for r in load["rows"]),         "no site may be over at baseline — the drag is what crosses the line"
 
     # PROPOSAL: fork, then make the natural move — drag Wave 1 Cutover left.
     assert client.post("/scenario", json={"scenario_id": "SC1", "name": "Option A"}).status_code == 200

@@ -94,32 +94,48 @@ def test_the_seeded_TRADE_appears_as_two_effects_in_opposite_directions(store):
     assert directions["plan_dependency_violations"] == "degraded"
 
 
-def test_relieving_an_over_threshold_site_reads_as_IMPROVED_and_names_the_cell(store):
-    """The demo's relief move: pull one of Site B's three overlapping Q4 impacts out, and the
-    cell drops from 2.7 to 1.8 against its 2.0 line.
+def test_the_scripted_drag_pushes_Site_B_OVER_and_reads_as_DEGRADED(store):
+    """The demo's consequence beat: the room's own move crosses the line.
 
-    THIS TEST STARTED AS ITS OPPOSITE and the seed corrected it. The first version tried to
-    push a site OVER its threshold by moving a window, and asserted `degraded`. It failed, and
-    the measure was right: summing every impact a site carries gives S1 1.8/2.0, S3 2.2/2.5,
-    S4 2.0/2.5 — **no site except S2 can be pushed over by moving windows at all**, because
-    moving a window cannot create load that does not exist.
+    THIS TEST GOT THE BEAT IT ORIGINALLY ASKED FOR. Its first version tried exactly this —
+    push a site over by moving a window, assert `degraded` — and FAILED, because the seed then
+    held Site B already over and no site had the headroom to be pushed. The failure was
+    recorded honestly rather than engineered around, with the condition for fixing it stated:
 
-    That is a real property of the seed and it is worth stating rather than engineering around:
-    the seeded tension is a site ALREADY over, and the moves available to the room are
-    RELIEVING ones. A new breach needs a new impact, which is a different op than this cycle
-    has. If a "push a site over" beat is ever wanted, the seed needs the headroom first.
+        "A new breach needs a new impact... If a 'push a site over' beat is ever wanted, the
+         seed needs the headroom first."
+
+    The seed was given that headroom on 2026-08-24 by ruling: Site B now sits at 1.8 against
+    its 2.0 line, visibly near the ceiling, and P12's impact is PARKED in FY27-Q1. Pulling it
+    back into Q4 restores 2.7 and crosses. So this test is the prediction being collected.
     """
     from agent_fleet.planning_agent.state import MoveSiteImpact
-    store.fork("SC1", "relieve Site B")
-    # P12's impact moves out of FY26-Q4 into FY27-Q1.
-    store.append_op("SC1", MoveSiteImpact("P12", "S2", Interval("2026-10-01", "2026-12-31")))
+    store.fork("SC1", "pull the supplier feed forward")
+    store.append_op("SC1", MoveSiteImpact("P12", "S2", Interval("2026-07-15", "2026-09-30")))
     effects = _diff(store, "SC1")["effects"]
 
     load = [e for e in effects if e["metric"] == "plan_site_load"]
-    assert load, "clearing a breached cell must be reported — relief is the point of the move"
-    assert load[0]["direction"] == "improved"
+    assert load, "crossing a threshold must be reported — the consequence IS the beat"
+    assert load[0]["direction"] == "degraded"
     assert load[0]["affected"] == ["S2/FY26-Q4"]
-    assert "back under threshold" in load[0]["magnitude"]
+
+
+def test_the_same_move_REVERSED_reads_as_relief(store):
+    """The other direction, kept because a diff that only ever degrades is a diff nobody
+    trusts. From the crossed state, parking the impact again clears the cell."""
+    from agent_fleet.planning_agent.state import MoveSiteImpact
+    store.fork("SC1", "cross it")
+    store.append_op("SC1", MoveSiteImpact("P12", "S2", Interval("2026-07-15", "2026-09-30")))
+    crossed = store.resolve("SC1")
+
+    store.fork("SC2", "park it again", base="SC1")
+    store.append_op("SC2", MoveSiteImpact("P12", "S2", Interval("2026-10-01", "2026-12-31")))
+    from agent_fleet.planning_agent import measures as _m
+    after = [r for r in _m.plan_site_load(store.resolve("SC2"))
+             if r["site_id"] == "S2" and r["over_threshold"]]
+    before = [r for r in _m.plan_site_load(crossed)
+              if r["site_id"] == "S2" and r["over_threshold"]]
+    assert before and not after
 
 
 # ─────────────────────────────────────────────────────────────────────────────

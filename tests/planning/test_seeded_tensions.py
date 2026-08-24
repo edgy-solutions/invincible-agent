@@ -106,24 +106,48 @@ def test_tension_b_dragging_p5_left_springs_the_trap(state):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TENSION (c) — Site B over threshold in FY26-Q4
+# TENSION (c) — Site B one decision away from its threshold in FY26-Q4
+#
+# REVISED 2026-08-24 by ruling, and the OLD SHAPE IS KEPT VISIBLE because the change is a
+# design decision rather than a correction. It used to assert Site B was ALREADY over
+# (P8 1.2 + P12 0.9 + P13 0.6 = 2.7 against 2.0) — hand-computed and correct for what the
+# seed then held.
+#
+# It changed because the beat's payload is CAUSALITY. A room that sees Site B already red
+# reads a drag producing a second red cell as "more of the same", not "watch this decision
+# break something". So P12's impact moved out of Q4, the baseline sits UNDER at 1.8/2.0 —
+# visibly near the ceiling — and the scripted reschedule pulls it back to cross at 2.7.
+#
+# The crossing itself is pinned in tests/planning/test_demo_seed_beats.py, which owns the
+# beat. This file keeps the SEED's half: the tension is present, and it is latent.
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_tension_c_site_b_is_over_threshold_in_q4(state):
+def test_tension_c_site_b_sits_just_under_its_threshold_in_q4(state):
     rows = measures.plan_site_load(state)
     cell = next(r for r in rows if r["site_id"] == "S2" and r["period"] == "FY26-Q4")
-    # hand-computed: P8 1.2 + P12 0.9 + P13 0.6 = 2.7 against a 2.0 threshold
-    assert cell["load"] == pytest.approx(2.7)
+    # hand-computed: P8 1.2 + P13 0.6 = 1.8 against a 2.0 threshold. P12's impact now falls
+    # in FY27-Q1 and is what the scripted reschedule pulls back.
+    assert cell["load"] == pytest.approx(1.8)
     assert cell["threshold"] == pytest.approx(2.0)
-    assert cell["over_threshold"] is True
-    assert sorted(cell["contributors"]) == ["P12", "P13", "P8"]
+    assert cell["over_threshold"] is False
+    assert sorted(cell["contributors"]) == ["P13", "P8"]
 
 
-def test_no_other_site_period_is_over_threshold(state):
-    """Pins the tension as THE tension. If a second cell goes red, the demo's 'which sites
-    are getting hammered' beat stops having one answer."""
+def test_the_absent_contributor_is_PARKED_not_deleted(state):
+    """P12 still loads S2 — in FY27-Q1. The tension is LATENT, not removed, and the
+    difference matters: a deleted impact could not be dragged back, and the beat would have
+    nothing to move."""
+    rows = measures.plan_site_load(state)
+    parked = next(r for r in rows if r["site_id"] == "S2" and r["period"] == "FY27-Q1")
+    assert parked["contributors"] == ["P12"]
+    assert parked["load"] == pytest.approx(0.9)
+
+
+def test_no_site_period_is_over_threshold_at_baseline(state):
+    """Pins the OPENING SCREEN as having exactly one red thing — Q3's funding overrun. A site
+    already over would compete with it before anyone in the room has done anything."""
     over = [(r["site_id"], r["period"]) for r in measures.plan_site_load(state) if r["over_threshold"]]
-    assert over == [("S2", "FY26-Q4")]
+    assert over == []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
