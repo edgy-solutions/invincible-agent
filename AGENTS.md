@@ -1454,6 +1454,45 @@ of the wrong process. It fails silently and plausibly, which is why it recurs �
 non-zero exit does NOT stop a pipeline already started, so a function that fails and returns 1
 still has its partial output counted downstream.
 
+### WHEN AN INSTRUMENT GROWS A THIRD OUTCOME, RE-READ EVERY CONSUMER
+2026-08-24, and it stings more than pipe-masking because the instrument was RIGHT.
+
+`scripts/run-tests.sh` was hardened two days earlier to distinguish a third state — pytest
+exiting 2/3/4/5/127 is **NO RESULT**, neither a pass nor a failure. It printed exactly that.
+The reader was `grep -E "passed|failed"`, which matches **neither**, so the third outcome the
+runner was specifically built to surface was invisible at the last hop. Chained with `;`
+instead of `&&`, and a file with a syntax error rode to origin.
+
+Pipe-masking reads the WRONG COMMAND's exit. This reads the RIGHT INSTRUMENT through a lens
+ground for the old two-outcome world.
+
+**So: adding an outcome to an instrument is not done until every consumer of it is re-read.**
+And prefer the channel that already carries all the states — `$?` was designed to, `grep` was
+not. Gate on the exit code:
+
+```bash
+cmd > out.txt 2>&1; rc=$?; tail out.txt
+if [ $rc -eq 0 ]; then git commit ...; else echo "NOT COMMITTING"; fi
+```
+
+### AUTHOR TEST FILES WITH A QUOTED HEREDOC OR A FILE TOOL — NEVER AN INTERPOLATING ONE
+Four instances in one session, so it gets a mechanical countermeasure rather than care.
+
+Writing code that CONTAINS escape sequences THROUGH an interpolating heredoc (or a Python
+string built inside one) turns them into literal characters — producing
+`SyntaxError: unterminated string literal`, or worse, an assertion that silently matches
+nothing. It cost a broken commit, two malformed seals, and a regex that ate its own lookahead.
+
+**So: write new test files with the file-writing tool, or with a QUOTED heredoc
+(`<<'EOF'`), which performs no substitution.** Reserve interpolating heredocs for content with
+no backslashes. If a patch must inject escapes, write the literal file first and edit it
+second — never generate escape sequences through a layer that also interprets them.
+
+### AND A PATH NOTE, since it bit the commit that recorded these
+Git Bash's `/tmp` is NOT Windows Python's `\tmp`. A file written by `cat > /tmp/x` and read by
+`pathlib.Path("/tmp/x")` in Windows CPython is two different paths. Use a repo-relative
+scratch file when a shell step and a Python step must share one.
+
 ### A GUARD THAT HARDCODES A COUNT IT COULD ENUMERATE ASSERTS STALENESS ONE ADDITION LATER
 Three instances in one week, which is past this repo's own threshold:
 
