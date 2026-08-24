@@ -22,8 +22,51 @@ right.
 
 The result: **verb nomination and subject resolution ran BM25-only for the entire life of the
 deployment**, and every retrieval-dependent measurement this project has ever published was taken
-on the degraded path — including a two-architecture bake-off decided at 84% and a 290-probe
-resolver corpus.
+on the degraded path — including a two-architecture bake-off and a 290-probe resolver corpus.
+
+## AND IT COST NOTHING MEASURABLE — the A/B, run 2026-08-24
+
+The obvious inference from all of the above is that the numbers are invalid. **Measured, they
+are not.** Same fixture, same corrected scorer, only the vector term removed:
+
+| arm | semantic | BM25-only | delta |
+|---|---|---|---|
+| routing correct | 46/51 | **46/51** | **0** |
+| refusals | 3/3 | 3/3 | 0 |
+| nomination-miss | 0 | **0** | 0 |
+| disposal-miss | 2 | 2 | 0 |
+| unstable | 3 | 3 | 0 |
+| median latency | 7.2s | **6.6s** | −0.6s |
+
+Not approximately identical — **the same five case IDs fail in both**, and no case failed only
+without vectors. The positive control held throughout: 1 BM25-fallback warning per classify call,
+1:1, for the whole run.
+
+**The mechanism is structural and was knowable from the code.** `classify_predicate` retrieves
+with `limit=max(request.candidate_limit, 25)` — commented *"widen so the filter survives"* —
+against a Predicate collection where only **27 rows survive the domain filter**. Retrieval
+therefore returns **93% of the eligible pool no matter how it ranks**; the vector term can only
+change which TWO of twenty-seven fall off the end. The compatible set from the graph walk is
+~8 verbs, so the chance the correct verb is one of those two is small.
+
+That is ADR-0006's *"the vector DB nominates, the graph disposes"* implemented literally, and
+deliberately over-provisioned so the graph stays the authority. **Retrieval ranking cannot bind
+at this corpus size, by construction.** It becomes load-bearing only when the domain-filtered
+pool substantially exceeds the limit — so the fix is insurance that starts paying as the verb
+catalog grows past ~25 per domain, not a lever available today.
+
+**What this does and does not settle.** It settles verb nomination: the banked router numbers
+stand as valid measurements of routing accuracy, and the "near-tied logits on thin intent walls"
+instability map is NOT an artifact of the missing vector term — the same three unstable cases
+appear identically with and without vectors, so that geometry belongs to the model. It does NOT
+settle the resolver: this fixture reaches the graph walk directly and **never calls `/resolve`**,
+so the 290-probe corpus remains unmeasured in its intended configuration.
+
+**The uncomfortable part is the honest part.** A defect can be real, longstanding, correctly
+diagnosed, cleanly fixed — and still have cost nothing. Sixty-seven days of a subsystem being
+silently off is worth exactly as much as the measurement says, which here is zero accuracy and
+0.6 seconds. The counter below is still the right remedy; it is just no longer justified by
+damage done, only by damage possible.
 
 ## The tell nobody could see
 
