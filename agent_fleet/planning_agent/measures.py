@@ -47,6 +47,7 @@ OUTPUT_URI: dict[str, str] = {
     "plan_diff":                  MESH + "EffectSet",
     "plan_coverage_gap":          MESH + "CoverageGapSet",
     "plan_dependency_neighborhood": MESH + "DependencyNeighborhoodSet",
+    "plan_commit_scenario":       MESH + "DecisionArtifact",
 }
 
 
@@ -963,3 +964,103 @@ def plan_diff(state: PlanState, *, baseline_state: PlanState) -> dict[str, Any]:
         "improved": sum(1 for e in effects if e["direction"] == "improved"),
         "degraded": sum(1 for e in effects if e["direction"] == "degraded"),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. plan_commit_scenario  ->  mesh:DecisionArtifact       (Beat 6)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# THE DEGENERATE SINGLE-APPROVER CASE of the review flow. A DecisionArtifact is structurally
+# a DISPOSITION RECORD with a planning payload: ops are the disposed items, the rationale is
+# the override-reason, the alternatives are the considered-set. `requested_by` and `acted_by`
+# are the same person, which is exactly what "degenerate" means — Phase 7 adds AUDIENCES to a
+# flow that already names one rather than translating a lookalike into the real thing.
+#
+# WHY THE MUTATION IS NOT HERE. `PlanStore.commit` applies the ops and archives, and its own
+# docstring says the ceremony's gate "lives at the route, not here, because this class must
+# stay a store". These two functions are pure so the artifact's SHAPE and the rationale GATE
+# are testable with neither a store nor a route in the loop.
+
+
+def check_rationale(rationale: Optional[str]) -> None:
+    """RAISE unless a real reason was given. Called BEFORE the commit, always.
+
+    WHITESPACE IS NOT A REASON. `"   "` satisfies `if rationale:` and says nothing, and it is
+    the exact shape that defeats a naive gate — so the check is on the STRIPPED value.
+
+    ORDERING IS THE POINT. A ceremony that refused AFTER applying ops would move the plan by a
+    decision the system declined to record: no artifact, no actor, no reason, and a changed
+    baseline. That is worse than having no gate at all, because the change would be
+    unattributable rather than merely ungoverned.
+    """
+    if rationale is None or not str(rationale).strip():
+        raise NotInModel(
+            "a commit requires a rationale — the decision record has nowhere to put the "
+            "reason, and a decision with no reason is not reviewable"
+        )
+
+
+def plan_commit_scenario(
+    *,
+    scenario_id: str,
+    scenario_name: str,
+    rationale: str,
+    actor: str,
+    ops: list[Any],
+    baseline_version: int,
+    audience: str = "PORTFOLIO_LEAD",
+    alternatives: Optional[list[dict[str, Any]]] = None,
+    question_trail: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """Build the DecisionArtifact for a commit. PURE — the store has already moved.
+
+    The `decision` block carries the disposition family's vocabulary verbatim, because
+    DECISION_RECORD's contract composes those fields BY REFERENCE and an artifact missing one
+    refuses at the card rather than rendering wrong.
+    """
+    check_rationale(rationale)
+    if not ops:
+        raise NotInModel(
+            f"scenario {scenario_id!r} has no ops — a decision that disposed nothing is not "
+            f"a decision"
+        )
+
+    return {
+        "decision": {
+            # Identity + routing. `subject_ref` names WHAT was decided about, which is the
+            # scenario — the artifact is about a fork, not about a project.
+            "task_id": f"commit:{scenario_id}",
+            "kind": "portfolio_commit",
+            "task_state": "approved",
+            "audience": audience,
+            "requested_by": actor,
+            "subject_ref": scenario_id,
+            # The act. `acted_at` is a FACT and is written exactly once — DECISION_RECORD does
+            # not recompute, so there is no later evaluation to restamp it.
+            "acted_by": actor,
+            "acted_at": _now_iso(),
+            "decision": "approved",
+            # `comment` IS the rationale. The disposition family's override-reason field, and
+            # the one DECISION_RECORD blocks on when empty.
+            "comment": rationale.strip(),
+        },
+        "ops": [_op_row(o) for o in ops],
+        # EMPTY, never absent. "No alternatives were considered" is a real statement about a
+        # decision and must render differently from "this card was not told."
+        "alternatives": list(alternatives or []),
+        "question_trail": list(question_trail or []),
+        "scope_label": scenario_name,
+        "committed_baseline_version": baseline_version,
+    }
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _op_row(op: Any) -> dict[str, Any]:
+    """One op as a plain row. Dataclasses are frozen, so `__dict__` is safe to copy."""
+    if isinstance(op, dict):
+        return dict(op)
+    return {k: v for k, v in vars(op).items()}

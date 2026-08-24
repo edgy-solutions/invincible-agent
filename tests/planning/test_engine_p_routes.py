@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_fleet.planning_agent import main as engine
+from agent_fleet.planning_agent import main as _main
 from agent_fleet.planning_agent.seed import build_seed
 from agent_fleet.planning_agent.state import PlanStore
 
@@ -70,7 +71,6 @@ def test_every_declared_verb_runs_and_declares_a_distinct_output_uri(client):
     # landed — the drift guard carrying the number it is guarding, which is the same defect
     # test_prime_timeout_bounds_agree had. The property is that the CATALOGUE and the ROUTES
     # agree, not that either has a particular size.
-    from agent_fleet.planning_agent import main as _main
     expected = len(_main.VERBS)
     assert expected >= 12, f"only {expected} verbs declared — the catalogue shrank unexpectedly"
 
@@ -79,10 +79,32 @@ def test_every_declared_verb_runs_and_declares_a_distinct_output_uri(client):
     uris = {v["output_uri"] for v in listed}
     assert len(uris) == expected,         "two verbs share an output_uri — the type is meant to be fixed AND distinct"
     for v in listed:
+        if v["fn"] in _main.MUTATING_VERBS:
+            # A MEASURE IS A READ, and this loop runs every verb. Exercising a writer here
+            # would make the catalogue seal a destructive operation — it would commit a
+            # scenario and archive it as a side effect of checking that routes exist.
+            continue
         body = {"params": MINIMUM_PARAMS.get(v["fn"], {})}
         r = client.post(f"/measure/{v['fn']}", json=body)
         assert r.status_code == 200, f"{v['fn']} -> {r.status_code} {r.text[:200]}"
         assert r.json()["output_uri"] == v["output_uri"]
+
+
+def test_a_mutating_verb_is_REFUSED_by_the_measure_route(client):
+    """And the refusal NAMES the alternative. A 400 saying "not here" without saying "there"
+    is a dead end wearing a gate's clothes."""
+    for fn, route in _main.MUTATING_VERBS.items():
+        r = client.post(f"/measure/{fn}", json={"params": {}})
+        assert r.status_code == 400, f"{fn} -> {r.status_code}"
+        assert route in r.text, f"{fn}'s refusal does not name its route: {r.text[:200]}"
+
+
+def test_every_mutating_verb_is_still_REGISTERED(client):
+    """Excluded from the measure loop, NOT from the catalogue. A writer the router cannot find
+    is unreachable by the thing that needs to reach it."""
+    listed = {v["fn"] for v in client.get("/verbs").json()["verbs"]}
+    for fn in _main.MUTATING_VERBS:
+        assert fn in listed, f"{fn} mutates and is also invisible to the router"
 
 
 @pytest.mark.parametrize("fn", sorted(MINIMUM_PARAMS))

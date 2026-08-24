@@ -64,6 +64,9 @@ VERBS: list[dict[str, Any]] = [
     {"fn": "plan_dependency_neighborhood", "verb": "mesh:planDependencyNeighborhood", "input_uri": IDP + "Portfolio",
      "desc": "Every dependency neighbour of one item on the named side (upstream = what it waits on, downstream = what waits on it), each carrying its own satisfied/violated/unresolvable state. TRAVERSAL, not constraint evaluation: it reports every edge with its answer, where planDependencyViolations reports only the subset currently failing. Answers 'what does this wait on' truthfully when nothing is violated.",
      "synonyms": ["what blocks this", "what does this depend on", "predecessors", "successors", "what waits on this", "dependency chain", "upstream", "downstream", "knock-on"]},
+    {"fn": "plan_commit_scenario", "verb": "mesh:planCommitScenario", "input_uri": IDP + "Portfolio",
+     "desc": "Commit a scenario to baseline with a REQUIRED rationale, producing a decision record: the ops as disposed items, the rationale as the override-reason, the alternatives as the considered-set. MUTATES — it is the one verb that writes, and it refuses without a reason.",
+     "synonyms": ["commit this", "approve the scenario", "make it the plan", "adopt this", "sign off", "lock it in", "accept the change"]},
     {"fn": "plan_maturity_grid", "verb": "mesh:planMaturityGrid", "input_uri": IDP + "Capability",
      "desc": "Capability by site maturity level versus target, from the latest append-only assessment at or before an as-of date. The word target here means a MATURITY LEVEL, never a funding target - a question about money versus target is planCostCurve or planFundingGap. OWNS the phrasings: maturity versus target, where are we against where we said we would be.",
      "synonyms": ["maturity", "capability level", "assessment grid", "how mature"]},
@@ -192,6 +195,21 @@ class ForkRequest(BaseModel):
     created_at: str = ""
 
 
+# Verbs that WRITE, and the endpoint each is reached through. Kept as a MAP rather than a set
+# so the refusal can name the alternative — a 400 that says "not here" without saying "there"
+# is a dead end wearing a gate's clothes.
+MUTATING_VERBS = {
+    "plan_commit_scenario": "/scenario/{scenario_id}/commit",
+}
+
+
+class CommitRequest(BaseModel):
+    rationale: str = ""
+    actor: str = ""
+    alternatives: Optional[list[dict[str, Any]]] = None
+    question_trail: Optional[list[dict[str, Any]]] = None
+
+
 class OpRequest(BaseModel):
     op: str
     project_id: Optional[str] = None
@@ -260,6 +278,15 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
     """
     if fn not in measures.OUTPUT_URI:
         raise HTTPException(status_code=404, detail=f"unknown measure {fn!r}")
+    if fn in MUTATING_VERBS:
+        # A MEASURE IS A READ. plan_commit_scenario writes baseline and archives a scenario,
+        # and letting it through here would make "run every verb" — which the route seal does
+        # — a destructive operation. It is registered like every other verb so the router can
+        # find it; it is reached through its own endpoint.
+        raise HTTPException(
+            status_code=400,
+            detail=f"{fn} MUTATES and is not a measure; POST {MUTATING_VERBS[fn]} instead",
+        )
     func = getattr(measures, fn, None)
     if func is None:  # pragma: no cover — OUTPUT_URI and the module agree by construction
         raise HTTPException(status_code=500, detail=f"measure {fn!r} declared but not implemented")
@@ -355,3 +382,50 @@ def baseline_op(req: OpRequest) -> dict[str, Any]:
     except UnknownTarget as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"state_ref": "baseline", "version": version}
+
+
+@app.post("/scenario/{scenario_id}/commit")
+def commit_scenario(scenario_id: str, req: CommitRequest) -> dict[str, Any]:
+    """The commit ceremony. THE ONE ROUTE THAT WRITES BASELINE FROM A SCENARIO.
+
+    ORDER IS THE CONTRACT, and it is the reason this is a route rather than a measure:
+
+        1. refuse a blank rationale   -- BEFORE anything is applied
+        2. resolve the scenario       -- so an unknown id fails before the write too
+        3. commit                     -- ops to baseline, scenario archived
+        4. build the artifact         -- from a commit that has already happened
+
+    A ceremony that refused at step 4 would have moved the plan by a decision the system
+    declined to record: no artifact, no actor, no reason, and a changed baseline. Unattributable
+    is worse than ungoverned, so the gate is first and the write is last.
+    """
+    try:
+        measures.check_rationale(req.rationale)
+    except measures.NotInModel as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        sc = STORE.scenario(scenario_id)
+    except UnknownTarget as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    ops = list(sc.ops)
+    if not ops:
+        raise HTTPException(
+            status_code=422,
+            detail=f"scenario {scenario_id!r} has no ops - a decision that disposed nothing "
+                   f"is not a decision",
+        )
+
+    version = STORE.commit(scenario_id)
+    artifact = measures.plan_commit_scenario(
+        scenario_id=scenario_id,
+        scenario_name=sc.name,
+        rationale=req.rationale,
+        actor=req.actor or "unknown",
+        ops=ops,
+        baseline_version=version,
+        alternatives=req.alternatives,
+        question_trail=req.question_trail,
+    )
+    return {"output_uri": measures.OUTPUT_URI["plan_commit_scenario"], **artifact}

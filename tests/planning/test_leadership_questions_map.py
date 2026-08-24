@@ -84,6 +84,11 @@ NOT_QUESTION_DRIVEN = {
     # It stays load-bearing: plan_diff never suppresses violations under a materiality floor,
     # and seeded tension (b) is its trap. Answering no numbered question is not the same as
     # answering nothing.
+    # Beat 6's ceremony. It does not ANSWER a question — it records a decision, and it is the
+    # one verb that writes. No numbered question asks "commit this".
+    "mesh:planCommitScenario":
+        "Phase 3 commit ceremony -- records a decision, does not answer a question; the only "
+        "verb that mutates",
     "mesh:planDependencyViolations":
         "evaluates breaches, not sequencing -- feeds plan_diff and seeded tension (b); Q10 "
         "asks what determines sequencing and now routes to the traversal verb",

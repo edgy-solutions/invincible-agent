@@ -262,6 +262,11 @@ mesh:ConstraintViolationSet a owl:Class ;
   rdfs:label "Constraint Violation Set" ;
   rdfs:comment "Ordering constraints whose successor violates its type and lag, carrying the shortfall in days. A violation with no magnitude sends someone to open a schedule; one with a magnitude is actionable." .
 
+mesh:DecisionArtifact a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Decision Artifact" ;
+  rdfs:comment "A committed decision: what was disposed, by whom, when, and WHY. Structurally a disposition record with a planning payload — the ops are the disposed items, the rationale is the override-reason, the alternatives are the considered-set. Its timestamp is the moment of the ACT and is written exactly once; unlike every other planning response this one does not recompute, because a record that drifted with the state it was decided against would stop being evidence. Produced by the only verb in the engine that WRITES." .
+
 mesh:DependencyNeighborhoodSet a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Dependency Neighborhood Set" ;
@@ -385,6 +390,11 @@ mesh:ThresholdGrid a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Threshold Grid" ;
   rdfs:comment "Subjects by periods, each cell against a threshold the subject owns. Axes are DERIVED from the cells, so a pair with no activity renders as a gap rather than a zero — a zero in a heat grid reads as measured-and-fine, which is a different claim from nothing-was-happening. A LIVE VIEW." .
+
+mesh:DecisionRecord a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Decision Record" ;
+  rdfs:comment "The card a committed decision draws as. NOT A LIVE VIEW, and it is the only planning archetype that is not: the others describe a plan still moving, this describes an act at a time by a named actor. It refuses a record with no rationale rather than drawing it — a decision presented in the visual language of a governed one, without the reason that governed it, is the one thing this card must never launder. It publishes no pending-approval refusal, because a pending approval is a different archetype and offering to stand in for one is how two shapes become one confused shape." .
 
 mesh:IntervalTimeline a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
