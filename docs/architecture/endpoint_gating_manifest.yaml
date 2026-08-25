@@ -696,6 +696,31 @@ services:
           time — a silently-dropped op would leave the room believing it made a change the
           diff never shows."
       - method: POST
+        path: /scenario/{scenario_id}/commit
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: action
+        consumers: [cortex-bff]
+        class: ungated_by_accident
+        justification: "PROMOTES a scenario's ops onto the BASELINE — the only engine-p route
+          that mutates shared state rather than a caller's own fork. Every other write here is
+          scenario-scoped and discardable; this one is not. Classed ungated_by_accident, NOT
+          releasable_by_design: `gate-class-follows-the-effect` puts a write that changes what
+          everyone else reads in the never-acceptable-on-in-cluster-reachability column, and
+          in-cluster reachability is the only thing standing in front of it today. The gate is
+          owed; recording it as accidental keeps that owed-ness visible instead of laundering
+          the current posture into a decision."
+      - method: POST
+        path: /scenario/{scenario_id}/reschedule
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: action
+        consumers: [cortex-bff]
+        class: releasable_by_design
+        justification: "rewrites dates within ONE scenario and bumps its version. Scenario-scoped
+          like /op — the fork is the caller's own working copy and committing is a separate,
+          gated act above. Discarding the scenario discards this entirely."
+      - method: POST
         path: /baseline/op
         identity: none
         gate: "transport auth (OBSERVE)"

@@ -114,10 +114,10 @@ async def lifespan(app: FastAPI):
     # Getting this backwards cost a full roll: the import failed, the helper became None,
     # and twelve registrations were skipped while the engine reported perfectly healthy.
     try:
-        from utils.mesh_registration import register_engine_to_mesh
+        from utils.mesh_registration import engine_mint, register_engine_to_mesh
     except ImportError:
         try:
-            from agent_fleet.utils.mesh_registration import register_engine_to_mesh
+            from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
         except ImportError:  # pragma: no cover — local runs without the fleet extra
             register_engine_to_mesh = None
 
@@ -133,6 +133,16 @@ async def lifespan(app: FastAPI):
         for v in VERBS:
             try:
                 register_engine_to_mesh(
+                    # REGISTERS AS ITSELF (2026-08-24). Every other engine passes a mint;
+                    # this one did not, so it registered UNAUTHENTICATED — and registration
+                    # IS routing authority: the manifest names the endpoint URL a verb
+                    # resolves to. Unauthenticated, the registrar learns only that SOMETHING
+                    # called, while "which engine" stays a self-asserted payload string.
+                    # Identity is an ARGUMENT here, never derived from the component name —
+                    # deriving it is how mint_service_token() made the supervisor dispatch
+                    # as the review starter.
+                    mint=engine_mint(client_id="iagent-planning-agent",
+                                     secret_env="ENGINE_P_CLIENT_SECRET"),
                     name="engine_p_planning",
                     description=v["desc"],
                     verb=v["verb"],
