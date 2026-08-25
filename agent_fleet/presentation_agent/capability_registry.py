@@ -301,17 +301,54 @@ def select_archetype(
 # about the MENU meeting the DATA, not a decision made in ignorance of the data.
 
 
-def _satisfies(cap: Dict[str, Any], payload: Optional[Dict[str, Any]]) -> Optional[str]:
-    """None when `payload` satisfies this capability's contract, else the refusal reason.
+# ── THE THIRD STATE (ADR-0043 §6) ───────────────────────────────────────────
+#
+# `_satisfies` used to answer a two-valued question — None means satisfied,
+# a string means refused — and it answered SATISFIED for every archetype
+# without a typed contract. That is the migration policy IMPERSONATING
+# EVALUATION: "I checked and it passed" and "I never looked" rendered
+# identically, and the selector could not tell them apart.
+#
+# Witnessed in production 2026-08-24. mesh:FundingGapSet had no registered
+# binding, so output_uri matched nothing, selection widened to the whole menu,
+# every non-CHART archetype passed unconditionally, and a KNOWLEDGE_DOCUMENT
+# won by fallthrough. The card said "No content available." — the document
+# renderer being honest about a payload it never had a contract for. The
+# provenance said `presentation_source: registered`, which was true and
+# useless: three separate broken cards carried that same green field that day.
+#
+# The states are now distinct, and the selector treats them differently:
+#
+#   SATISFIED     evaluated against a typed contract, and it passed
+#   REFUSED       evaluated against a typed contract, and it failed
+#   NOT_EVALUATED no typed contract exists for this archetype
+#
+# NOT_EVALUATED is NOT a failure. Most archetypes have no server-side validator
+# and legitimately render — the planning five are validated by their cortex-ui
+# contracts, not here. What it is NOT is EVIDENCE. So the rule is:
+#
+#   a DECLARED binding (the caller's menu names this archetype for this
+#   output_uri) is authority enough to render unevaluated;
+#   an UNDECLARED candidate reached only by widening must never win on the
+#   strength of a check that never ran.
+#
+# Declared renders deterministically. Undeclared falls back loudly. Nothing in
+# between gets to impersonate either.
 
-    Dispatches by archetype because that is where the shape rules live. An archetype with
-    no typed contract is treated as SATISFIED: migration is row-by-row, and refusing the
-    nine not-yet-converted rows would make slice 4 a regression for every archetype except
-    the one that happens to be finished.
-    """
-    if payload is None:
-        return None
+SATISFIED = "satisfied"
+REFUSED = "refused"
+NOT_EVALUATED = "not_evaluated"
+
+#: Archetypes with a server-side typed contract. Everything else is
+#: NOT_EVALUATED — stated, not silently treated as passing.
+_TYPED_CONTRACTS = ("CHART_WIDGET",)
+
+
+def _evaluate(cap: Dict[str, Any], payload: Optional[Dict[str, Any]]) -> Tuple[str, Optional[str]]:
+    """(verdict, reason). See the third-state note above."""
     archetype = str(cap.get("archetype") or "")
+    if payload is None:
+        return NOT_EVALUATED, "no payload supplied"
     if archetype == "CHART_WIDGET":
         # Imported here rather than at module scope to keep this module importable by the
         # pure unit tests without dragging the validator's json/typing chain into every
@@ -322,12 +359,25 @@ def _satisfies(cap: Dict[str, Any], payload: Optional[Dict[str, Any]]) -> Option
             from agent_fleet.presentation_agent.capability_validator import (
                 validate_chart_payload,
             )
-        return validate_chart_payload(
+        reason = validate_chart_payload(
             payload.get("chart_data"),
             payload.get("chart_type"),
             cap.get("contract"),
         )
-    return None
+        return (REFUSED, reason) if reason else (SATISFIED, None)
+    return NOT_EVALUATED, f"no typed contract for {archetype}"
+
+
+def _satisfies(cap: Dict[str, Any], payload: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Two-valued view, kept for callers that only need pass/fail.
+
+    NOT_EVALUATED reads as passing here, which is the historical behaviour and
+    exactly why the third state exists — anything making a SELECTION decision
+    must call `_evaluate` and branch on the verdict.
+    """
+    verdict, reason = _evaluate(cap, payload)
+    return reason if verdict == REFUSED else None
+
 
 
 def select_presentation(
@@ -402,13 +452,31 @@ def select_presentation(
 
     # 2. KEEP ONLY WHAT THE PAYLOAD SATISFIES. This is the step whose absence produced
     #    CHART_WIDGET for two identifiers.
-    satisfied, refusals = [], []
+    # THE THIRD STATE DECIDES WHAT MAY WIN HERE. `declared` is True when
+    # output_uri matched a capability on this menu — the caller has named this
+    # archetype for this output type, which is authority to render even without
+    # a server-side validator. When it is False we got here by WIDENING, and an
+    # unevaluated candidate must not win on a check that never ran.
+    declared = basis == "output_uri+payload"
+    satisfied, unevaluated, refusals = [], [], []
     for c in candidates:
-        reason = _satisfies(c, payload)
-        if reason is None:
+        verdict, reason = _evaluate(c, payload)
+        if verdict == SATISFIED:
             satisfied.append(c)
+        elif verdict == NOT_EVALUATED:
+            unevaluated.append(c)
+            if not declared:
+                refusals.append({
+                    "archetype": c.get("archetype"),
+                    "reason": f"{reason}; and output_uri matched no capability, so "
+                              f"nothing declared this archetype for this answer",
+                    "verdict": NOT_EVALUATED,
+                })
         else:
-            refusals.append({"archetype": c.get("archetype"), "reason": reason})
+            refusals.append({"archetype": c.get("archetype"), "reason": reason,
+                             "verdict": REFUSED})
+    if declared:
+        satisfied = satisfied + unevaluated
 
     if not satisfied:
         # Nothing on this menu can draw this payload. Honest, and now EXPLAINED: the

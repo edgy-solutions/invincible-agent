@@ -207,9 +207,19 @@ def test_each_registered_planning_verb_reaches_its_own_archetype(verb, binding, 
 
 def test_registering_one_planning_archetype_does_not_capture_the_others_output():
     """The failure this guards: with PERIOD_SERIES registered and THRESHOLD_GRID not, a site
-    load payload must NOT quietly land on PeriodSeries. It will still be absorbed by
-    something — that is the documented widening — but the gate's selection_basis says so, and
-    the absorbed archetype must not be a planning one, because that would look correct."""
+    load payload must NOT quietly land on PeriodSeries.
+
+    STRENGTHENED 2026-08-25 (ADR-0043 §6, the third state). This test used to say the payload
+    "will still be absorbed by something — that is the documented widening" and only required
+    that the absorber not be a planning archetype. That widening is what let mesh:FundingGapSet
+    land on KNOWLEDGE_DOCUMENT and answer "No content available." in production: every
+    non-CHART archetype passed `_satisfies` unconditionally, so a check that never ran looked
+    exactly like a check that passed.
+
+    Now an UNDECLARED candidate — one reached only by widening, with no typed contract — cannot
+    win at all. The intent of this guard is unchanged and its bar is higher: nothing captures
+    another archetype's output, planning or otherwise. The honest outcome is `unrenderable`
+    with a refusal that says the archetype was never evaluated."""
     rows = measures.plan_site_load(build_seed())
     payload = {"rows": rows, "chart_data": json.dumps([{"k": 1}]), "chart_type": "BAR"}
 
@@ -217,7 +227,15 @@ def test_registering_one_planning_archetype_does_not_capture_the_others_output()
     cap, prov = cr.select_presentation(FRONTEND, measures.OUTPUT_URI["plan_site_load"], payload,
                                        persona="PORTFOLIO_LEAD", domain="PORTFOLIO_PLANNING")
     assert prov["selection_basis"].startswith("payload-only"), "the gate must be able to say so"
-    assert cap["archetype"] != "THRESHOLD_GRID", "unregistered archetype cannot win"
+    if cap is not None:
+        # CHART_WIDGET is the one archetype with a real server-side validator, so it can
+        # legitimately be SATISFIED on a chart-shaped payload even under widening — it was
+        # evaluated. What must never happen is an unevaluated archetype winning.
+        assert cap["archetype"] == "CHART_WIDGET", (
+            f"{cap['archetype']} won by widening without being evaluated"
+        )
+    else:
+        assert prov["presentation_source"] == "unrenderable"
 
 
 def test_every_planning_output_uri_is_distinct_so_none_can_shadow_another():
