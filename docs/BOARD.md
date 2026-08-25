@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **70 of 72 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **71 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -173,6 +173,10 @@ _Coverage: **70 of 72 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **transport-flip** — REQUIRE_TRANSPORT_AUTH. Throwaway REQUIRE witness passed; probe exemption live; sandbox rehearsal complete. Genuinely downstream of the work deploy.
   status: open · owner: agent · blocked-on: the 11 are remediated but UNWITNESSED — 2 decode-witnesses outstanding (svc:engine-a, svc:review-starter). Cross-repo enumeration COMPLETE 2026-08-11 (5/5; cortex-ui = structural zero, no server-side origin); ONE CONFIRMED unminted caller stands — doc-tools semantic_linker.py:99 -> engine-o (corrected 2026-08-12 from 2; dag-tools contributes ZERO, see the count correction in the packet). Returns to blocked-on-human when those land; the flip act is the human's.
   → [docs/plans/enable-agentic-auth-flip-packet.md](plans/enable-agentic-auth-flip-packet.md)
+
+- **unbound-output-types-triage** — PHASE C, 2026-08-24. Seven Engine P output types have no archetype binding. Each ruled by READING ITS PAYLOAD and applying the semantic-axis test — what does the colour or position MEAN to a reader — rather than by matching row shapes. THREE bind to existing archetypes (DependencyNeighborhoodSet and ConstraintViolationSet to INSTANCES_BY_PROPERTY, each needing a payload reshape to columns/rows/state-vocabulary), TWO need their own component (ContributionSequence and PlateauTimeline, both because they carry MILESTONE markers no existing contract expresses), and TWO are structured documents (FootprintSet, ChangeLog). CoverageGapSet is the honest list-not-grid. This is the morning's build list, pre-reasoned; nothing here is built.
+  status: open · owner: unassigned · repo: cortex-ui
+  → [docs/plans/unbound-output-types-triage.md](plans/unbound-output-types-triage.md)
 
 - **undeclared-routes** — RULED 2026-08-10 — the four dispositions are given and promoted to the standing rule [[gate-class-follows-the-effect]]. Three dependents unblocked. Residual: /workflow/start is verify-then-disable, and 2 of 5 repos are still unswept.
   status: open · owner: agent · blocked-on: nothing in this packet — the gate is wired and inert until ENABLE_AGENTIC_AUTH flips, which is [[transport-flip]]'s item, not this one. (A 2026-08-13 note claiming TOPAZ_DIRECTORY_URL was unwired was WRONG and is corrected: it is set to http://topaz-svc:9393 on both engines via iagent-config, verified in the running pods.) Everything else is done: dispositions given, /workflow/start retired (410, 2026-08-11), ALL 12 ROWS DECLARED (2026-08-12), and the two engine-o WRITE residuals CLOSED endpoint-side 2026-08-13 (can_invoke on the single decider, discriminating pair sealed, break-on-purpose verified; both rows now class: gated).
