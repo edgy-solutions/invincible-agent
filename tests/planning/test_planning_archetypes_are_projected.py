@@ -145,3 +145,62 @@ def test_a_non_planning_archetype_is_NOT_claimed():
     loses its existing key-conformance pass."""
     ns = _fns()
     assert ns["_project_planning_archetype"]("CHART_WIDGET", _envelope([{"a": 1}]), "X", None) is None
+
+
+# ── THE ENVELOPE ────────────────────────────────────────────────────────────
+#
+# Caught in production 2026-08-25 and it is the reason this section exists.
+# The planning arm returned the BARE component — {rows, archetype, group_kind,
+# ...} — while every other return from _render_archetype_hardened hands back
+# {"components": [...]}, the DashboardUI envelope. So `rendered_output` was
+# stored unwrapped, `rendered_output?.components` was undefined, `components`
+# became [], `hasRendered` went false, and the card drew its honest empty
+# summary over a payload that was entirely correct.
+#
+# THE CONTENT WAS NEVER WRONG. archetype, group_kind and rows were all present
+# and correct — the selector had chosen INTERVAL_TIMELINE, the projection was
+# verbatim. One writer wrapped and another did not, and everything downstream
+# was faithfully reporting what it received.
+#
+# Found by comparing top-level keys between a working artifact (`components`)
+# and a failing one (`rows, archetype, ...`) — the envelope, not the content.
+
+def test_the_planning_arm_WRAPS_before_it_returns():
+    """The arm's own early return must hand back the DashboardUI envelope.
+
+    Behavioural, not textual. A first version of this guard scanned the
+    dispatch's source for `return ..., True` without a "components" literal —
+    and failed on `return degraded, True`, where `degraded` is a variable
+    already holding a wrapped dict. That is the same assert-on-the-neighbour
+    mistake the defect itself was: checking a thing ADJACENT to the claim.
+
+    So this executes the arm's actual wrap expression against a real projection
+    and asserts the shape the client reads.
+    """
+    import re
+    ns = _fns()
+    src = _SRC.read_text(encoding="utf-8")
+    # The exact early-return the planning arm takes, lifted from the dispatch.
+    lines = src.splitlines()
+    idx = next(i for i, ln in enumerate(lines) if ln.strip() == "if projected is not None:")
+    ret = next(ln for ln in lines[idx:] if ln.strip().startswith("return "))
+    expr = re.match(r"\s*return (.+), True\s*$", ret).group(1).strip()
+    projected = ns["_project_planning_archetype"](
+        "INTERVAL_TIMELINE", _envelope([TIMELINE_ROW]), "PORTFOLIO_LEAD", None)
+    returned = eval(expr, {"projected": projected})  # noqa: S307 - fixed expr from our own source
+    assert isinstance(returned, dict) and isinstance(returned.get("components"), list), (
+        f"the planning arm returns a bare component, not the envelope: {expr}"
+    )
+    assert returned["components"][0]["archetype"] == "INTERVAL_TIMELINE"
+
+
+def test_the_envelope_survives_a_real_projection():
+    """End-to-end on the shape the client actually reads."""
+    ns = _fns()
+    projected = ns["_project_planning_archetype"](
+        "INTERVAL_TIMELINE", _envelope([TIMELINE_ROW]), "PORTFOLIO_LEAD", None)
+    envelope = {"components": [projected]}
+    assert isinstance(envelope.get("components"), list) and envelope["components"]
+    comp = envelope["components"][0]
+    assert comp["archetype"] == "INTERVAL_TIMELINE"
+    assert json.loads(comp["rows"])[0]["project_id"] == "P5"

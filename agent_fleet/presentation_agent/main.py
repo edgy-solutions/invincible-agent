@@ -594,7 +594,19 @@ async def _render_archetype_hardened(
             archetype, raw_data, persona, subject_concept=None,
         )
         if projected is not None:
-            return projected, True
+            # WRAP IT. Every other return from this function hands back
+            # {"components": [...]} — the DashboardUI envelope the projection
+            # writer and the client both read. Returning the bare component
+            # here shipped `{rows, archetype, group_kind, ...}` into
+            # rendered_output, so `rendered_output?.components` was undefined,
+            # `components` became [], `hasRendered` went false, and StageCard
+            # drew its honest empty summary over a payload that was completely
+            # correct. The selector had chosen INTERVAL_TIMELINE, the rows were
+            # verbatim and intact — the ENVELOPE was lost, not the content.
+            # Caught 2026-08-25 by comparing a working artifact's top-level
+            # keys (`components`) against a failing one's (`rows, archetype,
+            # group_kind, ...`).
+            return {"components": [projected]}, True
         logger.warning(
             "render_ui: %s carried no rows; degrading. An empty planning card "
             "is a refusal, not an answer.", archetype,
