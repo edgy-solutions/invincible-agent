@@ -1,111 +1,141 @@
-# Demo script — STABLE PHRASINGS
+# Demo phrasings — what actually survives the live path
 
-Generated 2026-08-24 from three full 51-case runs at n=3 (verb-scored funnel B).
+Rewritten 2026-08-25. **This file previously asserted a certification the live path
+does not deliver.** It said 48 of 51 phrasings were stable at n>=3. That number was real
+and measured — and it measured `resolved_verb` in a harness that hardcodes the subject
+and never calls `/resolve`. The live path earns the subject first, then needs a fillable
+slot, then needs a bound archetype, then needs a renderer. Four gates. The old file
+checked one.
 
-**Pick the script's final wordings from this list, not from memory.**
+> A question passes when a CARD RENDERS WITH CONTENT. Anything short of that is
+> inference wearing certification's clothes.
 
-## Tier 1 — GOLD (46 phrasings)
+## The four gates
 
-Passed **stably in all three runs** — semantic retrieval ON, semantic retrieval OFF,
-and post-contrast-fix. That is **9 consecutive correct routings each**, including with
-the vector term removed. These are the safest words in the room.
-
-### `capability_path` (3)
-- [q7-a] "which projects mature Straight-through invoicing and by when"
-- [q7-b] "what gets Straight-through invoicing to target"
-- [q7-c] "who is doing the work on Straight-through invoicing"
-
-### `maturity_grid` (3)
-- [q3-a] "capability maturity by site versus target"
-- [q3-b] "show me the maturity grid as of FY26-Q4"
-- [q3-c] "where are we against where we said we would be"
-
-### `process_evolution` (6)
-- [q1-a] "how does the Financial Close Automation process evolve over time"
-- [q1-b] "walk me through the plateaus for Financial Close Automation"
-- [q1-c] "where is Financial Close Automation headed"
-- [q2-a] "which capabilities enable Supply Chain Visibility"
-- [q2-b] "what has to be in place for Supply Chain Visibility to work"
-- [q2-c] "what feeds Supply Chain Visibility"
-
-### `projects_in` (5)
-- [q4-a] "what is scheduled by initiative and phase"
-- [q4-b] "show me the plan broken out by initiative"
-- [q5-a] "what is happening in FY26-Q3"
-- [q5-b] "what runs during FY26-Q3"
-- [q5-c] "what lands in the third quarter of FY26"
-
-### `show_cost_curve` (9)
-- [q12-a] "what does spend look like per period"
-- [q12-b] "show me the cost curve"
-- [q12-c] "how is the money phased"
-- [q16-a] "where does spend exceed the cap"
-- [q16-b] "which periods breach the funding cap"
-- [q16-c] "where are we over budget" _(soft/colloquial)_
-- [q17-a] "capex versus expense, time-phased"
-- [q17-b] "split the spend by capex and expense over time"
-- [q17-c] "how much of the spend is capital"
-
-### `show_funding_gap` (9)
-- [q13-a] "where is funding short by organization"
-- [q13-b] "show the funding gap per funding org"
-- [q13-c] "who has not put up their share" _(soft/colloquial)_
-- [q14-a] "where is funding short by initiative"
-- [q14-b] "show the funding gap broken out by initiative"
-- [q14-c] "which initiative is underfunded"
-- [q15-a] "which organization is under-committed"
-- [q15-b] "which funding org has committed less than required"
-- [q15-c] "who is short" _(soft/colloquial)_
-
-### `show_site_load` (6)
-- [q9-a] "which sites are affected and when"
-- [q9-b] "show change load across the sites"
-- [q9-c] "who is taking the hit and when"
-- [q11-a] "which sites are over their change-load threshold"
-- [q11-b] "which sites exceed the threshold in FY26-Q4"
-- [q11-c] "which sites are overloaded" _(soft/colloquial)_
-
-### `site_schedule` (2)
-- [q6-a] "what is happening at Site A — Aurora"
-- [q6-b] "show the schedule for Site A — Aurora"
-
-### `tech_footprint` (2)
-- [q8-a] "where is the Core ERP Platform used"
-- [q8-c] "show the footprint of the Core ERP Platform"
-
-### `what_blocks` (1)
-- [q10-b] "what is Wave 1 Cutover waiting on" _(soft/colloquial)_
-
-## Tier 2 — VERIFIED-FIXED (2 phrasings)
-
-Failed before the dependency-verb synonym-collision fix; **pass now**, confirmed twice
-in the deployed config (targeted n=3 re-check + the full final run). Safe to use, but
-they depend on a fix landed 2026-08-24 — **re-verify if engine-p is rebuilt**.
-
-### `downstream_of` (1)
-- [q10-c] "what slips if Wave 1 Cutover slips"
-
-### `what_blocks` (1)
-- [q10-a] "what blocks Wave 1 Cutover"
-
-## EXCLUDED — do not put these in the script (3)
-
-| id | expected | why |
+| gate | what fails it | measured |
 |---|---|---|
-| q4-c | `projects_in` | stable OVER-REFUSAL — returns no_intent_match |
-| q6-c | `site_schedule` | UNSTABLE — flips between two wrong verbs |
-| q8-b | `tech_footprint` | stable OVER-REFUSAL — returns no_intent_match |
+| 1. subject resolves to the class the verb is typed against | "show me the cost curve" -> Site 0.12 | 2026-08-24, `/resolve` |
+| 2. the measure takes no unfillable entity slot | `plan_capability_path` needs `capability_id` | Engine P 400 vs 200 |
+| 3. the output type has a registered archetype | `FundingGapSet` had none -> KNOWLEDGE_DOCUMENT | registry read |
+| 4. a hardened renderer draws it | all five fell to DesignUI | engine-f log |
 
-Their phrasings: "what is on the board"; "what is Aurora getting"; "what depends on the Core ERP Platform"
+Gate 4 closed 2026-08-25 (six deterministic arms). Gate 3 closed for funding gap
+(`SHORTFALL_GRID`). Gates 1 and 2 are honest limits to script around, not bugs.
 
-## Coverage warning for whoever writes the beats
+---
 
-Intents with at least one stable phrasing: **11**.
-Intents with NO stable phrasing (do not build a beat on these): **none**
+## TIER 1 — clears gates 1-4 (22 phrasings)
 
-`site_schedule` has stable phrasings but its third (q6-c) is excluded — the intent is
-usable, that particular wording is not.
+Subject resolves correctly (>=0.86), measure is slot-free, archetype is bound, and the
+render path returns `X-Presentation-Path: archetype-hardened` with rows verbatim.
 
-**Slots are NOT measured.** These phrasings are verified to reach the correct VERB.
-Whether the slots come back right is a separate arm funnel B does not score — see
-`docs/proposals/typed-mutations-parsed-but-unconsumed.md`.
+**NOT end-to-end certified.** Each gate was verified with its own instrument; a full
+`/interview/stream` run at n>=2 has NOT been completed — the attempts were voided by a
+token expiry and a queue deadlock. **The morning owes this tier one end-to-end pass.**
+
+
+### `maturity_grid` -> MATRIX_GRID  (subject: Capability)
+- "capability maturity by site versus target"
+- "show me the maturity grid as of FY26-Q4"
+
+### `projects_in` -> INTERVAL_TIMELINE  (subject: Portfolio)
+- "what is scheduled by initiative and phase"
+- "show me the plan broken out by initiative"
+
+### `show_cost_curve` -> PERIOD_SERIES  (subject: Portfolio)
+- "what does spend look like per period"
+- "where does spend exceed the cap"
+- "which periods breach the funding cap"
+- "where are we over budget"
+- "capex versus expense, time-phased"
+- "split the spend by capex and expense over time"
+- "how much of the spend is capital"
+
+### `show_funding_gap` -> SHORTFALL_GRID  (subject: Portfolio)
+- "where is funding short by organization"
+- "show the funding gap per funding org"
+- "where is funding short by initiative"
+- "show the funding gap broken out by initiative"
+- "which initiative is underfunded"
+- "which funding org has committed less than required"
+
+### `show_site_load` -> THRESHOLD_GRID  (subject: Site)
+- "which sites are over their change-load threshold"
+- "which sites exceed the threshold in FY26-Q4"
+- "which sites are overloaded"
+- "which sites are affected and when"
+- "show change load across the sites"
+
+### The gantt has only two phrasings — no spares
+
+> "what is scheduled by initiative and phase"
+> "show me the plan broken out by initiative"
+
+Nothing else in the fixture reaches `INTERVAL_TIMELINE` through a resolving subject.
+
+---
+
+## TIER 2 — WRONG SUBJECT: the verb is unreachable (12)
+
+These resolve confidently to a class the answering verb is not typed against, so the
+compat-walk never nominates it. **The system is declining honestly** — the fix is this
+file, not the resolver.
+
+| phrasing | wanted | resolved to |
+|---|---|---|
+| "where are we against where we said we would be" | `maturity_grid` | **Portfolio** |
+| "what is happening in FY26-Q3" | `projects_in` | **Capability** |
+| "what runs during FY26-Q3" | `projects_in` | **Capability** |
+| "what lands in the third quarter of FY26" | `projects_in` | **Capability** |
+| "show me the cost curve" | `show_cost_curve` | **Site** |
+| "how is the money phased" | `show_cost_curve` | **Site** |
+| "who has not put up their share" | `show_funding_gap` | **Site** |
+| "which organization is under-committed" | `show_funding_gap` | **Site** |
+| "who is short" | `show_funding_gap` | **Capability** |
+| "who is taking the hit and when" | `show_site_load` | **BusinessProcess** |
+| "what is happening at Site A — Aurora" | `site_schedule` | **Site** |
+| "show the schedule for Site A — Aurora" | `site_schedule` | **Site** |
+
+**The pattern is legible.** Chart-name phrasings lose ("cost curve" is not an ontology
+noun). Bare time-phrases go to Capability. "Who" questions go to Site or BusinessProcess.
+And both `site_schedule` phrasings resolve to `Site` — arguably right — while
+`planSchedule` is typed against `Portfolio`: a modelling mismatch, not a resolver miss.
+
+---
+
+## TIER 3 — NEEDS AN ENTITY SLOT (14)
+
+The measure requires an id that nothing can resolve: plan entities ("Wave 1 Cutover",
+"Straight-through invoicing") live only in Engine P's in-memory `PlanState` and are
+invisible to `/resolve`. **Architecture item, post-demo.** Do not script these.
+
+| phrasing | intent | needs |
+|---|---|---|
+| "which projects mature Straight-through invoicing and by when" | `capability_path` | `capability_id` |
+| "what gets Straight-through invoicing to target" | `capability_path` | `capability_id` |
+| "who is doing the work on Straight-through invoicing" | `capability_path` | `capability_id` |
+| "what slips if Wave 1 Cutover slips" | `downstream_of` | `project_id` |
+| "how does the Financial Close Automation process evolve over time" | `process_evolution` | `process_id` |
+| "walk me through the plateaus for Financial Close Automation" | `process_evolution` | `process_id` |
+| "where is Financial Close Automation headed" | `process_evolution` | `process_id` |
+| "which capabilities enable Supply Chain Visibility" | `process_evolution` | `process_id` |
+| "what has to be in place for Supply Chain Visibility to work" | `process_evolution` | `process_id` |
+| "what feeds Supply Chain Visibility" | `process_evolution` | `process_id` |
+| "where is the Core ERP Platform used" | `tech_footprint` | `tech_id` |
+| "show the footprint of the Core ERP Platform" | `tech_footprint` | `tech_id` |
+| "what blocks Wave 1 Cutover" | `what_blocks` | `project_id` |
+| "what is Wave 1 Cutover waiting on" | `what_blocks` | `project_id` |
+
+---
+
+## Latency, because it belongs beside the phrasings
+
+Measured 2026-08-24/25 on the real UI path: **median 280s execution** (queue wait
+excluded), routing ~12s, DesignUI render 31-59s. The dominant cost is the **`analyst`
+fallback at 79-195s** — which fires precisely when a question misses the planning path.
+
+> **Every routing fix is also a latency fix.** A question that routes cleanly costs
+> ~12s + render; a question that misses costs 79-195 seconds FOR A NON-ANSWER.
+
+Which is the argument for this file: the tiers above are not just correctness
+guidance, they are the difference between a fast answer and a slow apology.
