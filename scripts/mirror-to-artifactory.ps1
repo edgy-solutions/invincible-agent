@@ -163,6 +163,12 @@ $IagentImages = @(
     @{ src='ghcr.io/edgy-solutions/invincible-agent/presentation-agent:latest';    dst='edgy-solutions/invincible-agent/presentation-agent:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/weaviate-expert:latest';       dst='edgy-solutions/invincible-agent/weaviate-expert:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/data-analyst:latest';          dst='edgy-solutions/invincible-agent/data-analyst:latest' },
+    # engine-p (planning). DEFAULT-OFF in the chart (enginePlanning.enabled=false), so a
+    # cluster that turns it on needs the image mirrored FIRST — an air-gapped work cluster
+    # cannot fall back to ghcr. Note the image is `planning-agent` while the SERVICE is
+    # `iagent-engine-p`; those differ for this engine and only for this engine, which is
+    # exactly why it was missed here.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/planning-agent:latest';        dst='edgy-solutions/invincible-agent/planning-agent:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
     # (work overlay) requires this image.

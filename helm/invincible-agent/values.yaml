@@ -355,7 +355,12 @@ enginePlanning:
     limits:
       cpu: 500m
       memory: 512Mi
-  env: {}
+  # DUPLICATE `env: {}` REMOVED 2026-08-24. It sat AFTER the populated `env:` above, and in
+  # YAML the later key wins — so ENGINE_P_PUBLIC_URL was silently discarded and could not be
+  # overridden from values at all. It only appeared to work because main.py's getenv default
+  # is the identical sandbox URL; any cluster needing a different service name or port would
+  # have advertised the sandbox address to the mesh registrar and routed traffic at an
+  # endpoint nothing serves.
 
 engineD:
   enabled: true
