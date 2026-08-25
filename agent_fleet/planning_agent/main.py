@@ -329,6 +329,26 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
             params["baseline_state"] = STORE.resolve(vs)
         except UnknownTarget as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if fn == "plan_cost_curve" and req.state_ref != "baseline":
+        # THE BASELINE SERIES is scenario-dependent by design (the diff machinery reaching the
+        # period payload). Resolved HERE, where the store is, rather than passed by the caller:
+        # a client naming its own baseline could compare against anything and the ghost would
+        # be unattributable.
+        params["baseline_state"] = STORE.resolve("baseline")
+
+    if fn == "plan_schedule" and req.state_ref != "baseline":
+        # "OP-TOUCHED" IS SCENARIO CONTEXT, and a measure is a pure function of what it is
+        # handed — ops live on the Scenario, not in PlanState, so the set is computed here and
+        # passed in. `getattr` because only some ops name a project (a funding commitment names
+        # an org), and a flag for an op that touched no bar would flag nothing.
+        try:
+            sc = STORE.scenario(req.state_ref)
+            params["touched_project_ids"] = {
+                pid for pid in (getattr(o, "project_id", None) for o in sc.ops) if pid
+            }
+        except UnknownTarget:
+            pass  # a state_ref that is not a scenario simply has no ops to touch anything
+
     if fn == "plan_session_changes":
         # The one measure that reads ops rather than state — it is the change log.
         sc = None if req.state_ref == "baseline" else STORE.scenario(req.state_ref)
@@ -353,6 +373,11 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
         # (§4): a client holding an older version knows to re-request, and the card shows the
         # version this evaluation was true against rather than inheriting its mint-time one.
         "state_version": STORE.version_of(req.state_ref),
+        # DECLARED, never inferred. A verb absent from VALUE_UNIT emits no key at all, and the
+        # renderer keeps showing `1.5M` rather than guessing a `$` this payload never sent.
+        # Absent-means-silent is the whole contract: `total` is money here and a count in
+        # plan_site_load, so a generic runner must not read semantics off a field name.
+        **({"value_unit": measures.VALUE_UNIT[fn]} if fn in measures.VALUE_UNIT else {}),
         "rows": rows,
     }
 

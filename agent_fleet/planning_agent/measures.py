@@ -59,6 +59,16 @@ OUTPUT_URI: dict[str, str] = {
 }
 
 
+# The unit a verb's numbers are IN. A DECLARATION, never an inference: `run_measure` is generic
+# and must not read money-ness off a field name, because `total` is dollars here and a count in
+# plan_site_load. ABSENT MEANS SILENT — a verb not listed emits no `value_unit`, and the shipped
+# renderer keeps showing `1.5M` rather than guessing a `$` the payload never sent.
+VALUE_UNIT: dict[str, str] = {
+    "plan_cost_curve":  "USD",
+    "plan_funding_gap": "USD",
+}
+
+
 class NotInModel(LookupError):
     """The question named something the model does not contain.
 
@@ -96,6 +106,7 @@ def plan_cost_curve(
     *,
     window: Optional[list[FiscalPeriod]] = None,
     scope_initiative_id: Optional[str] = None,
+    baseline_state: Optional[PlanState] = None,
 ) -> list[dict[str, Any]]:
     """Per-period requirement sums by kind, against the governed cap line.
 
@@ -131,6 +142,30 @@ def plan_cost_curve(
             "over_cap": cap is not None and total > cap,
             "overage": (total - cap) if (cap is not None and total > cap) else None,
         })
+
+    # THE BASELINE SERIES — the diff machinery reaching this payload, not a bolt-on column.
+    # `plan_diff` already pairs periods this way; this is that same projection, one row deep.
+    #
+    # ABSENT, NOT NULL, when there is no comparison. A `baseline: None` on every row would tell
+    # the renderer a comparison EXISTS and is empty; the key's absence says the card is not a
+    # comparison at all, which is the true statement and the one the ghost keys on.
+    #
+    # NESTED because it is a SERIES. Three sibling columns would have to be added or dropped
+    # together — an invariant that would live in a convention nobody enforces. One object
+    # cannot half-arrive.
+    if baseline_state is not None:
+        base = {
+            r["period"]: {"capex": r["capex"], "expense": r["expense"], "total": r["total"]}
+            for r in plan_cost_curve(
+                baseline_state, window=window, scope_initiative_id=scope_initiative_id
+            )
+        }
+        for row in rows:
+            # A period present in the scenario and absent from baseline is NEW spend; its
+            # baseline is honestly zero rather than missing, so the ghost draws a floor.
+            row["baseline"] = base.get(
+                row["period"], {"capex": 0.0, "expense": 0.0, "total": 0.0}
+            )
     return rows
 
 
@@ -641,6 +676,7 @@ def plan_schedule(
     site_id: Optional[str] = None,
     group_by: str = "initiative",
     color_by: Optional[str] = None,
+    touched_project_ids: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     """Initiative → phase → project rows with intervals. The timeline's data.
 
@@ -676,6 +712,13 @@ def plan_schedule(
         if site_id is not None else None
     )
 
+    # Computed ONCE, not per row. plan_dependency_violations walks every dependency; calling it
+    # inside the loop would make a schedule render quadratic in the plan's size.
+    _violating = {
+        v["successor_id"] for v in plan_dependency_violations(state)
+        if not v.get("unresolvable") and v.get("successor_id")
+    }
+
     rows: list[dict[str, Any]] = []
     for init in state.initiatives:
         if scope_initiative_id is not None and init.initiative_id != scope_initiative_id:
@@ -707,15 +750,42 @@ def plan_schedule(
                     "planned_end": proj.planned.end,
                     "actual_start": proj.actual.start if proj.actual else None,
                     "actual_end": proj.actual.end if proj.actual else None,
-                    "risk_flag": _risk_flag(state, proj.project_id, color_by),
+                    "risk_flag": _risk_flag(state, proj.project_id, color_by,
+                                                     touched_project_ids, _violating),
                 }
                 rows.extend(_pivot(state, proj.project_id, base_row, group_by, init))
     return rows
 
 
-def _risk_flag(state: PlanState, project_id: str, color_by: Optional[str]) -> Optional[str]:
+def _risk_flag(
+    state: PlanState,
+    project_id: str,
+    color_by: Optional[str],
+    touched: Optional[set[str]] = None,
+    violating: Optional[set[str]] = None,
+) -> Optional[str]:
     """A generic styling flag. The VALUE is domain vocabulary and rides the payload; the
-    renderer styles whatever string arrives and knows none of them."""
+    renderer styles whatever string arrives and knows none of them.
+
+    VOCABULARY, NOT NEW FIELDS. The 2026-08-24 declarations add two values to this one key
+    rather than a parallel `violation` field, because a second field would duplicate a seam
+    that is already generic by design.
+
+    LOWERCASE-HYPHENATED, conforming to the incumbent vocabulary (`at-risk`, `unfunded`).
+    Nothing breaks either way — the renderer styles an unknown string and stops — but the
+    styling map that eventually keys these will be written against ONE convention, and two
+    conventions in one field means it silently misses half its vocabulary.
+
+    PRECEDENCE IS A CHOICE, not a discovery: a broken constraint OUTRANKS a moved bar, because
+    a constraint breach is the STATE and the move is the CAUSE, and a status flag reports
+    state. The opposite reading is defensible — "the room moved it, show them their
+    fingerprint" — but that is the DIFF CARD's job. The diff attributes causes; the bar reports
+    conditions.
+    """
+    if violating and project_id in violating:
+        return "constraint-violated"
+    if touched and project_id in touched:
+        return "moved"
     if color_by is None:
         return None
     if color_by == "funding_risk":
