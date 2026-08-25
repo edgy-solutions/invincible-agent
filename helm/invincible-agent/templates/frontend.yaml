@@ -163,6 +163,22 @@ spec:
               path: /health
               port: http
             initialDelaySeconds: 10
+            # THE HALF THE 2026-08-22 SWEEP MISSED, and it was the half that mattered.
+            #
+            # That sweep gave the LIVENESS probe a budget and left this one inheriting
+            # Kubernetes' defaults — timeoutSeconds 1, failureThreshold 3 — which is exactly
+            # what the comment below calls "the one value that asks a single-threaded event
+            # loop to answer inside a tick". Fixing the probe that KILLS and leaving the probe
+            # that DISCONNECTS is a smaller blast radius, not a safe one.
+            #
+            # MEASURED 2026-08-25: a retry storm on /mesh/config saturated the loop, /health
+            # missed its one-second readiness window, the pod was pulled from the service
+            # endpoints, and Traefik — with no healthy backend — answered every browser call
+            # with 404 AND NO CORS HEADERS. The app never saw the request, so it never added
+            # them. Three separate observers spent a night reconciling "the backend is healthy"
+            # against "the browser cannot reach it"; both were true, seconds apart.
+            timeoutSeconds: 5
+            failureThreshold: 5
           livenessProbe:
             httpGet:
               path: /health

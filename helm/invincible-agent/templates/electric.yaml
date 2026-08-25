@@ -130,6 +130,14 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            # PROBE BUDGET, 2026-08-25. Was UNSET, inheriting Kubernetes' defaults
+            # (timeoutSeconds 1, failureThreshold 3). One second asks a busy event loop
+            # to answer inside a tick; a READINESS failure silently removes the pod from
+            # every load balancer while `kubectl get pods` still reads Running, and the
+            # edge then answers 404 with no CORS headers. Found by the seal that
+            # enumerated what the 2026-08-22 liveness sweep missed.
+            timeoutSeconds: 5
+            failureThreshold: 5
           livenessProbe:
             httpGet:
               path: /v1/health
