@@ -563,6 +563,48 @@ enum SemanticArchetype {
 // and that cortex-ui's components consume. They are the contract, in the file
 // where contracts live.
 //
+// ── RULED 2026-08-25: the generative renderer was a FOSSIL, not a design ─────
+//
+// Walk the chain and every decision is already made, and RECORDED IN THE GRAPH,
+// before anything reaches the render hop:
+//
+//     verb declares its output class      planSchedule -> mesh#IntervalSchedule
+//     rendersAs declares the archetype    IntervalSchedule -> INTERVAL_TIMELINE
+//     the contract declares the shape     IntervalRow, typed, refusals named
+//     Engine P emits rows ALREADY conforming, because the payloads were built
+//       contract-first
+//
+// Subject -> verb -> output class -> registered presentation is a COMPLETED
+// DERIVATION. A model at the end of it has nothing left to decide — which is
+// exactly what the contracts say in their own words: "NOT re-derive risk_flag",
+// "NOT infer grouping from the ids", "NOT treat '(none)' as missing data".
+// A renderer forbidden from interpreting is a renderer that should not be a
+// model.
+//
+// So why was it generative? HISTORY. DesignUI predates this arc — it was built
+// when answers arrived as UNTYPED tabular blobs from the analyst path, where
+// guessing a chart shape was the only option because nothing declared one. The
+// whole point of select_presentation, the registered menus, output_uri matching
+// and the archetype contracts was to REPLACE GUESSING WITH DECLARATION. These
+// arms are that replacement finally reaching the last hop. What survived until
+// today was the old world's fallback catching the new world's payloads — which
+// is precisely why it rolled dice: it was improvising answers to questions the
+// graph had already answered.
+//
+// ── WHERE GENERATION LEGITIMATELY REMAINS ───────────────────────────────────
+//
+// The ACTUAL fallback: an answer whose output class has no binding, no
+// contract, no registered anything — the analyst path's untyped results, or a
+// future verb that lands before its component does. There, DesignUI guessing is
+// honest last-resort behaviour.
+//
+// Phase D's `_satisfies` third state is what makes that boundary crisp:
+// REGISTERED-AND-HARDENED renders deterministically, UNREGISTERED falls back
+// loudly, and nothing in between impersonates either. Until it lands,
+// `_satisfies` passes any non-CHART archetype unconditionally, which is how
+// mesh:FundingGapSet won KNOWLEDGE_DOCUMENT by fallthrough and answered
+// "No content available."
+//
 // `rows` / `effects` are JSON-stringified arrays, matching ChartUI.chart_data's
 // existing encoding for array payloads.
 
