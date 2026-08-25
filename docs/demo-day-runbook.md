@@ -164,6 +164,13 @@ is blocked, so it earns its place twice.
   [plans/instance-resolution-nondeterminism.md](plans/instance-resolution-nondeterminism.md)
   lands, a repeat is a coin flip — and the losing side is articulate about why it cannot help.
   This line is the runbook's own admission that item 2 is not yet built; **delete it when it is.**
+- **Read [demo-seed-physics.md](demo-seed-physics.md) before driving the planning beats.** Four
+  properties of the model a sharp person could notice and ask about — only Site B can cross, a
+  drag is two ops, moving a project does not move its money, and a week's overlap lands a full
+  quarter's impact. Each has its answer written, and in three of four the honest answer is a
+  design statement that lands better than the question. It also carries the prepared response
+  to *"what if I pull it further?"* — **do that one live**; the flag changes from `moved` to
+  `constraint-violated` and you are demonstrating the constraint engine rather than improvising.
 
 ---
 
