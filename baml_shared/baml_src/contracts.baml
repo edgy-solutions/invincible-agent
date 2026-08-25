@@ -608,11 +608,81 @@ enum SemanticArchetype {
 // `rows` / `effects` are JSON-stringified arrays, matching ChartUI.chart_data's
 // existing encoding for array payloads.
 
+// Row classes mirror the .contract.ts `export interface` declarations
+// field-for-field. `rows` / `effects` are ARRAYS — every planning contract
+// declares `encoding: array, parsesTo: array-of-objects`. CHART_WIDGET is the
+// ONE exception (its chart_data is a JSON STRING, and its contract calls that
+// "the single most surprising fact in the whole contract"). Generalising from
+// that exception is what made the timeline draw its refusal over 14 good rows.
+
+class IntervalRow {
+  group_kind string
+  group_id string
+  group_name string
+  group_weight float?
+  initiative_id string
+  initiative_name string
+  phase_id string
+  phase_name string
+  phase_sequence int
+  project_id string
+  project_name string
+  planned_start string
+  planned_end string
+  actual_start string?
+  actual_end string?
+  risk_flag string?
+}
+
+class PeriodSeriesRow {
+  period string
+  capex float
+  expense float
+  total float
+  cap float?
+  over_cap bool
+  overage float?
+}
+
+class ThresholdCell {
+  subject_id string
+  period string
+  value float
+  threshold float
+  over_threshold bool
+}
+
+class MatrixCell {
+  row_id string
+  column_id string
+  level float
+  target_level float
+  gap float
+}
+
+class DeltaEffect {
+  metric string
+  direction string
+  magnitude string
+  affected string[]
+}
+
+class ShortfallRow {
+  subject_id string
+  subject_name string
+  period string
+  required float
+  committed float
+  secured float
+  shortfall float
+  state string
+}
+
 class TimelineUI {
   archetype string @description("MUST be INTERVAL_TIMELINE")
   source_persona string?
   subject_concept string?
-  rows string @description("JSON array of IntervalRow. ROW KEY IS (group_id, project_id) — a project fans out to one row per capability contribution under the capability pivot, so project_id alone is NOT unique.")
+  rows IntervalRow[] @description("ROW KEY IS (group_id, project_id) - a project fans out to one row per capability contribution under the capability pivot, so project_id alone is NOT unique.")
   group_kind string? @description("initiative | capability | target. Stated by the verb, NEVER inferred from the ids.")
   scope_label string?
 }
@@ -621,7 +691,7 @@ class PeriodSeriesUI {
   archetype string @description("MUST be PERIOD_SERIES")
   source_persona string?
   subject_concept string?
-  rows string @description("JSON array of PeriodSeriesRow: period, capex, expense, total, cap, over_cap, overage.")
+  rows PeriodSeriesRow[]
   scope_label string?
   value_unit string?
 }
@@ -630,7 +700,7 @@ class ThresholdGridUI {
   archetype string @description("MUST be THRESHOLD_GRID")
   source_persona string?
   subject_concept string?
-  rows string @description("JSON array of ThresholdCell: subject_id, period, value, threshold, over_threshold.")
+  rows ThresholdCell[]
   value_label string?
   scope_label string?
 }
@@ -639,7 +709,7 @@ class MatrixGridUI {
   archetype string @description("MUST be MATRIX_GRID")
   source_persona string?
   subject_concept string?
-  rows string @description("JSON array of MatrixCell: row_id, column_id, level, target_level, gap.")
+  rows MatrixCell[]
   level_label string?
   scope_label string?
   as_of string?
@@ -649,7 +719,7 @@ class ShortfallGridUI {
   archetype string @description("MUST be SHORTFALL_GRID")
   source_persona string?
   subject_concept string?
-  rows string @description("JSON array of ShortfallRow: subject_id, subject_name, period, required, committed, secured, shortfall, state. THREE QUANTITIES, not two — required/committed/secured are distinct and a renderer that collapses them loses the answer.")
+  rows ShortfallRow[] @description("THREE QUANTITIES, not two - required/committed/secured are distinct and a renderer that collapses them loses the answer.")
   value_label string?
   value_unit string?
   scope_label string?
@@ -659,7 +729,7 @@ class DeltaSetUI {
   archetype string @description("MUST be DELTA_SET")
   source_persona string?
   subject_concept string?
-  effects string @description("JSON array of DeltaEffect: metric, direction, magnitude, affected[].")
+  effects DeltaEffect[]
   scope_label string?
   baseline_label string?
   headline string?

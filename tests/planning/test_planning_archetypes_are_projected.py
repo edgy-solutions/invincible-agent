@@ -81,7 +81,7 @@ def test_every_planning_archetype_projects_without_a_model():
         got = ns["_project_planning_archetype"](arch, _envelope([{"a": 1}]), "PORTFOLIO_LEAD", None)
         assert got is not None, f"{arch} did not project"
         assert got["archetype"] == arch
-        assert json.loads(got[key]) == [{"a": 1}], f"{arch} did not carry rows verbatim"
+        assert got[key] == [{"a": 1}], f"{arch} did not carry rows verbatim as an ARRAY"
 
 
 def test_rows_are_VERBATIM_including_the_capability_fan_out():
@@ -96,7 +96,7 @@ def test_rows_are_VERBATIM_including_the_capability_fan_out():
     fan = [dict(TIMELINE_ROW, group_kind="capability", group_id="C1", group_weight=0.6),
            dict(TIMELINE_ROW, group_kind="capability", group_id="C2", group_weight=0.4)]
     got = ns["_project_planning_archetype"]("INTERVAL_TIMELINE", _envelope(fan), "X", None)
-    out = json.loads(got["rows"])
+    out = got["rows"]
     assert len(out) == 2, "the capability fan-out was collapsed — project_id is not unique"
     assert [r["group_id"] for r in out] == ["C1", "C2"]
     assert out == fan, "rows were not verbatim"
@@ -136,7 +136,7 @@ def test_projection_is_DETERMINISTIC_across_repeated_calls():
     ns = _fns()
     env = _envelope([TIMELINE_ROW])
     outs = {json.dumps(ns["_project_planning_archetype"]("INTERVAL_TIMELINE", env, "X", None),
-                       sort_keys=True) for _ in range(8)}
+                       sort_keys=True) for _ in range(8)}  # dumps only to hash the result
     assert len(outs) == 1, "projection varied across identical inputs"
 
 
@@ -203,4 +203,28 @@ def test_the_envelope_survives_a_real_projection():
     assert isinstance(envelope.get("components"), list) and envelope["components"]
     comp = envelope["components"][0]
     assert comp["archetype"] == "INTERVAL_TIMELINE"
-    assert json.loads(comp["rows"])[0]["project_id"] == "P5"
+    assert comp["rows"][0]["project_id"] == "P5"
+
+
+def test_rows_are_an_ARRAY_not_a_json_string():
+    """THE ENCODING. Every planning contract declares `encoding: "array",
+    parsesTo: "array-of-objects"`.
+
+    CHART_WIDGET is the ONE exception — its contract says of chart_data: "NOT an
+    array. A STRING containing JSON... the single most surprising fact in the
+    whole contract." That warning exists so nobody generalises from it, and the
+    first version of this arm generalised from it anyway: it sent
+    json.dumps(rows), the component hit `!Array.isArray(rows)` in
+    validateIntervalTimeline, and drew "nothing to draw — no scheduled work in
+    scope" over fourteen perfectly good rows. The component was right; the
+    payload was wrong.
+    """
+    ns = _fns()
+    for arch, key in [("INTERVAL_TIMELINE", "rows"), ("PERIOD_SERIES", "rows"),
+                      ("THRESHOLD_GRID", "rows"), ("MATRIX_GRID", "rows"),
+                      ("SHORTFALL_GRID", "rows"), ("DELTA_SET", "effects")]:
+        got = ns["_project_planning_archetype"](arch, _envelope([{"a": 1}]), "X", None)
+        assert isinstance(got[key], list), (
+            f"{arch} sent {key} as {type(got[key]).__name__}; the contract declares "
+            f"encoding: array — a JSON string reads as NO ROWS to the component"
+        )

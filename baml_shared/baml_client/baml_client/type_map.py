@@ -61,6 +61,12 @@ type_map = {
     "types.DataStewardResponse": types.DataStewardResponse,
     "stream_types.DataStewardResponse": stream_types.DataStewardResponse,
 
+    "types.DeltaEffect": types.DeltaEffect,
+    "stream_types.DeltaEffect": stream_types.DeltaEffect,
+
+    "types.DeltaSetUI": types.DeltaSetUI,
+    "stream_types.DeltaSetUI": stream_types.DeltaSetUI,
+
     "types.DigitalTwinUI": types.DigitalTwinUI,
     "stream_types.DigitalTwinUI": stream_types.DigitalTwinUI,
 
@@ -82,11 +88,20 @@ type_map = {
     "types.HazardUI": types.HazardUI,
     "stream_types.HazardUI": stream_types.HazardUI,
 
+    "types.IntervalRow": types.IntervalRow,
+    "stream_types.IntervalRow": stream_types.IntervalRow,
+
     "types.KnowledgeResponse": types.KnowledgeResponse,
     "stream_types.KnowledgeResponse": stream_types.KnowledgeResponse,
 
     "types.LogisticsResponse": types.LogisticsResponse,
     "stream_types.LogisticsResponse": stream_types.LogisticsResponse,
+
+    "types.MatrixCell": types.MatrixCell,
+    "stream_types.MatrixCell": stream_types.MatrixCell,
+
+    "types.MatrixGridUI": types.MatrixGridUI,
+    "stream_types.MatrixGridUI": stream_types.MatrixGridUI,
 
     "types.MaturityGrid": types.MaturityGrid,
     "stream_types.MaturityGrid": stream_types.MaturityGrid,
@@ -108,6 +123,12 @@ type_map = {
 
     "types.NotComputableInFamily": types.NotComputableInFamily,
     "stream_types.NotComputableInFamily": stream_types.NotComputableInFamily,
+
+    "types.PeriodSeriesRow": types.PeriodSeriesRow,
+    "stream_types.PeriodSeriesRow": stream_types.PeriodSeriesRow,
+
+    "types.PeriodSeriesUI": types.PeriodSeriesUI,
+    "stream_types.PeriodSeriesUI": stream_types.PeriodSeriesUI,
 
     "types.PlatformScope": types.PlatformScope,
     "stream_types.PlatformScope": stream_types.PlatformScope,
@@ -133,6 +154,12 @@ type_map = {
     "types.SetCost": types.SetCost,
     "stream_types.SetCost": stream_types.SetCost,
 
+    "types.ShortfallGridUI": types.ShortfallGridUI,
+    "stream_types.ShortfallGridUI": stream_types.ShortfallGridUI,
+
+    "types.ShortfallRow": types.ShortfallRow,
+    "stream_types.ShortfallRow": stream_types.ShortfallRow,
+
     "types.ShowCostCurve": types.ShowCostCurve,
     "stream_types.ShowCostCurve": stream_types.ShowCostCurve,
 
@@ -156,6 +183,15 @@ type_map = {
 
     "types.TechFootprint": types.TechFootprint,
     "stream_types.TechFootprint": stream_types.TechFootprint,
+
+    "types.ThresholdCell": types.ThresholdCell,
+    "stream_types.ThresholdCell": stream_types.ThresholdCell,
+
+    "types.ThresholdGridUI": types.ThresholdGridUI,
+    "stream_types.ThresholdGridUI": stream_types.ThresholdGridUI,
+
+    "types.TimelineUI": types.TimelineUI,
+    "stream_types.TimelineUI": stream_types.TimelineUI,
 
     "types.TopologyUI": types.TopologyUI,
     "stream_types.TopologyUI": stream_types.TopologyUI,

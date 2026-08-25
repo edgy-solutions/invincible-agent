@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (51)
+# Generated classes (63)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -109,6 +109,21 @@ class DataStewardResponse(BaseModel):
     safety_warnings: typing.List[str]
     short_answer: typing.Optional[str] = None
 
+class DeltaEffect(BaseModel):
+    metric: typing.Optional[str] = None
+    direction: typing.Optional[str] = None
+    magnitude: typing.Optional[str] = None
+    affected: typing.List[str]
+
+class DeltaSetUI(BaseModel):
+    archetype: typing.Optional[str] = Field(default=None, description='MUST be DELTA_SET')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    effects: typing.List["DeltaEffect"]
+    scope_label: typing.Optional[str] = None
+    baseline_label: typing.Optional[str] = None
+    headline: typing.Optional[str] = None
+
 class DigitalTwinUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be DIGITAL_TWIN_3D')
     source_persona: typing.Optional[str] = None
@@ -150,6 +165,24 @@ class HazardUI(BaseModel):
     severity: typing.Optional[types.SeverityLevel] = None
     hazards: typing.List["UIEntity"]
 
+class IntervalRow(BaseModel):
+    group_kind: typing.Optional[str] = None
+    group_id: typing.Optional[str] = None
+    group_name: typing.Optional[str] = None
+    group_weight: typing.Optional[float] = None
+    initiative_id: typing.Optional[str] = None
+    initiative_name: typing.Optional[str] = None
+    phase_id: typing.Optional[str] = None
+    phase_name: typing.Optional[str] = None
+    phase_sequence: typing.Optional[int] = None
+    project_id: typing.Optional[str] = None
+    project_name: typing.Optional[str] = None
+    planned_start: typing.Optional[str] = None
+    planned_end: typing.Optional[str] = None
+    actual_start: typing.Optional[str] = None
+    actual_end: typing.Optional[str] = None
+    risk_flag: typing.Optional[str] = None
+
 class KnowledgeResponse(BaseModel):
     summary: typing.Optional[str] = Field(default=None, description='A clear, professional summary answering the user\'s knowledge or policy question. Format in Markdown.')
     referenced_documents: typing.List[str] = Field(description='List of manual sections, policies, or documents cited in the summary.')
@@ -160,6 +193,22 @@ class LogisticsResponse(BaseModel):
     impacted_platforms: typing.List[str]
     blocked_procedures: typing.List[str]
     risk_severity: typing.Optional[str] = None
+
+class MatrixCell(BaseModel):
+    row_id: typing.Optional[str] = None
+    column_id: typing.Optional[str] = None
+    level: typing.Optional[float] = None
+    target_level: typing.Optional[float] = None
+    gap: typing.Optional[float] = None
+
+class MatrixGridUI(BaseModel):
+    archetype: typing.Optional[str] = Field(default=None, description='MUST be MATRIX_GRID')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    rows: typing.List["MatrixCell"]
+    level_label: typing.Optional[str] = None
+    scope_label: typing.Optional[str] = None
+    as_of: typing.Optional[str] = None
 
 class MaturityGrid(BaseModel):
     as_of: typing.Optional[str] = None
@@ -195,6 +244,23 @@ class NoIntentMatch(BaseModel):
 class NotComputableInFamily(BaseModel):
     out_of_model_concept: typing.Optional[str] = None
     reason: typing.Optional[str] = None
+
+class PeriodSeriesRow(BaseModel):
+    period: typing.Optional[str] = None
+    capex: typing.Optional[float] = None
+    expense: typing.Optional[float] = None
+    total: typing.Optional[float] = None
+    cap: typing.Optional[float] = None
+    over_cap: typing.Optional[bool] = None
+    overage: typing.Optional[float] = None
+
+class PeriodSeriesUI(BaseModel):
+    archetype: typing.Optional[str] = Field(default=None, description='MUST be PERIOD_SERIES')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    rows: typing.List["PeriodSeriesRow"]
+    scope_label: typing.Optional[str] = None
+    value_unit: typing.Optional[str] = None
 
 class PlatformScope(BaseModel):
     platforms: typing.List[str] = Field(description='Catalog platform slugs the user wants to restrict to, normalized to the KNOWN list (e.g. \'snowflake\', \'postgres\'). Empty when no platform was asked for. A platform the user named that is NOT in the known list does NOT go here — it goes in `unrecognized`.')
@@ -247,6 +313,25 @@ class SetCost(BaseModel):
     period: typing.Optional[str] = None
     amount: typing.Optional[str] = None
 
+class ShortfallGridUI(BaseModel):
+    archetype: typing.Optional[str] = Field(default=None, description='MUST be SHORTFALL_GRID')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    rows: typing.List["ShortfallRow"] = Field(description='THREE QUANTITIES, not two - required/committed/secured are distinct and a renderer that collapses them loses the answer.')
+    value_label: typing.Optional[str] = None
+    value_unit: typing.Optional[str] = None
+    scope_label: typing.Optional[str] = None
+
+class ShortfallRow(BaseModel):
+    subject_id: typing.Optional[str] = None
+    subject_name: typing.Optional[str] = None
+    period: typing.Optional[str] = None
+    required: typing.Optional[float] = None
+    committed: typing.Optional[float] = None
+    secured: typing.Optional[float] = None
+    shortfall: typing.Optional[float] = None
+    state: typing.Optional[str] = None
+
 class ShowCostCurve(BaseModel):
     scope: typing.Optional[str] = None
     window: typing.Optional[str] = None
@@ -281,6 +366,29 @@ class TableClassificationResult(BaseModel):
 
 class TechFootprint(BaseModel):
     technology: typing.Optional[str] = None
+
+class ThresholdCell(BaseModel):
+    subject_id: typing.Optional[str] = None
+    period: typing.Optional[str] = None
+    value: typing.Optional[float] = None
+    threshold: typing.Optional[float] = None
+    over_threshold: typing.Optional[bool] = None
+
+class ThresholdGridUI(BaseModel):
+    archetype: typing.Optional[str] = Field(default=None, description='MUST be THRESHOLD_GRID')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    rows: typing.List["ThresholdCell"]
+    value_label: typing.Optional[str] = None
+    scope_label: typing.Optional[str] = None
+
+class TimelineUI(BaseModel):
+    archetype: typing.Optional[str] = Field(default=None, description='MUST be INTERVAL_TIMELINE')
+    source_persona: typing.Optional[str] = None
+    subject_concept: typing.Optional[str] = None
+    rows: typing.List["IntervalRow"] = Field(description='ROW KEY IS (group_id, project_id) - a project fans out to one row per capability contribution under the capability pivot, so project_id alone is NOT unique.')
+    group_kind: typing.Optional[str] = Field(default=None, description='initiative | capability | target. Stated by the verb, NEVER inferred from the ids.')
+    scope_label: typing.Optional[str] = None
 
 class TopologyUI(BaseModel):
     archetype: typing.Optional[types.SemanticArchetype] = Field(default=None, description='MUST be PROCESS_TOPOLOGY')

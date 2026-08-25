@@ -515,11 +515,25 @@ def _project_planning_archetype(
     if not isinstance(rows, list) or not rows:
         return None
 
+    # ROWS GO OVER AS AN ARRAY, NOT A JSON STRING.
+    #
+    # Every planning contract declares `encoding: "array", parsesTo:
+    # "array-of-objects"`. CHART_WIDGET is the ONE EXCEPTION — its contract says
+    # of chart_data: "NOT an array. A STRING containing JSON that parses to an
+    # array of objects... the single most surprising fact in the whole
+    # contract." That warning exists precisely so nobody generalises from it.
+    #
+    # The first version of this arm did generalise from it, and shipped
+    # json.dumps(rows). The component then hit `!Array.isArray(rows)` in
+    # validateIntervalTimeline and drew its contract refusal — "nothing to draw
+    # / no scheduled work in scope" — over fourteen perfectly good rows. The
+    # component was right and the payload was wrong: a schedule with no rows IS
+    # a refusal, and a JSON string is, to that check, no rows.
     component: Dict[str, Any] = {
         "archetype": archetype,
         "source_persona": persona,
         "subject_concept": subject_concept,
-        payload_key: json.dumps(rows),
+        payload_key: rows,
     }
     for field in passthrough:
         val = resp.get(field)
