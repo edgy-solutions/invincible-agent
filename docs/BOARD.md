@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **69 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **70 of 72 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -137,6 +137,10 @@ _Coverage: **69 of 71 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **presentation-contract-enumeration** — ADR-0017's capability publication carries expected_fields (NAMES) but no types or cardinality, so every consuming contract lives in a React component and the backend mirrors it by hand. Enumerated 2026-08-19 from the components' actual prop types and key handling. THREE FINDINGS OUTRANK THE ENUMERATION - presentation_agent/capabilities.py hand-duplicates the ENTIRE UI capability registry with no seal; chart_normalizer.py (194 lines) mirrors a shape ChartWidget NO LONGER REQUIRES; and the dispatch boundary is typed `any`.
   status: open · owner: agent · trigger: D4 TIGHTENING - capability_admission.KNOWN_ARCHETYPES deliberately encodes the D4 defect: it admits the UNION of BAML's SemanticArchetype and the five archetypes the interpreter dispatches without the enum declaring them (GROUPED_REVIEW, APPROVAL_TASK, TRIAGE_TASK, WORKFLOW_OBSERVATION, INSTANCES_BY_PROPERTY). Enforcing the enum would refuse archetypes the UI genuinely renders, punishing users for a backend inconsistency they did not create. WHEN THE ENUM IS REPAIRED, THE VALIDATOR'S VOCABULARY MUST TIGHTEN TO MATCH - a validator that permanently encodes a defect becomes that defect's guardian.
   → [docs/plans/presentation-contract-enumeration.md](plans/presentation-contract-enumeration.md)
+
+- **producer-declarations-payload-preregistration** — PRE-REGISTRATION for the three producer declarations (cortex-ui e99fd59). Payload shapes written down BEFORE emitting, one sample per changed verb, so the emitted shape can be checked against an intention rather than explained after the fact. Three items: `value_unit: "USD"` top-level on the money family (its frontend half shipped in a03a960 and reads `comp.value_unit`); a `baseline` SERIES on PeriodSeriesRow present only when a comparison is in scope (frontend half NOT built — the ghost renderer is cortex's, flagged); and `risk_flag` VALUES from plan_schedule (mechanism exists, emit vocabulary only). Two design questions are RAISED not answered: risk_flag's case convention collides with the existing lowercase values, and MOVED-vs-violated precedence needs a ruling.
+  status: open · owner: unassigned
+  → [docs/plans/producer-declarations-payload-preregistration.md](plans/producer-declarations-payload-preregistration.md)
 
 - **registrar-models-presentation-triples** — THE LAST ARCHITECTURAL PIECE for rendersAs. Presentations cannot reach Weaviate by ANY automatic path today: the gateway's RegistrationManifest models only verb edges (input_uri/output_uri), so register_presentation_to_mesh bypasses it and emits direct-to-DataHub — and the DataHub→Weaviate materializer (doc-tools' aitool sensor) was RETIRED 2026-06-13 when Gateway v0.2 became sole writer. Those emissions are audit records going nowhere. Teaching the manifest the SPO triple shape makes presentations register the way everything else registers: through the sole writer, Contract-D-checked against the archetype classes, landing in the same Predicate collection the 24 verb rows already occupy.
   status: open · owner: agent
