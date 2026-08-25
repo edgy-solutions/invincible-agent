@@ -131,11 +131,16 @@ def test_every_row_in_a_comparison_carries_the_series(state):
 
 # ── 3. risk_flag vocabulary ──────────────────────────────────────────────────────────────
 
-def test_no_scenario_context_means_NO_flags(state):
-    """Unchanged behaviour with nothing handed in. `risk_flag` stays null exactly as before,
-    so the baseline schedule card is untouched by this declaration."""
+def test_no_scenario_context_means_NO_EVENT_flags(state):
+    """REWRITTEN 2026-08-24 when funding standing became the default tier.
+
+    It used to assert `risk_flag is None` everywhere. That was true when the field carried only
+    EVENTS; it now also carries a CONDITION, so the honest invariant is narrower: with no
+    scenario handed in, no bar claims something HAPPENED to it. Standing may still be present,
+    because standing holds whether or not anyone is looking.
+    """
     for row in measures.plan_schedule(state):
-        assert row["risk_flag"] is None
+        assert row["risk_flag"] not in ("moved", "constraint-violated"),             f"{row['project_id']} claims an event with no scenario context"
 
 
 def test_an_op_touched_project_is_flagged_MOVED(state):
@@ -145,11 +150,13 @@ def test_an_op_touched_project_is_flagged_MOVED(state):
     assert p12 and all(r["risk_flag"] == "moved" for r in p12)
 
 
-def test_untouched_projects_stay_unflagged(state):
-    """The flag must localise. A scenario flagging every bar tells the room nothing."""
+def test_the_MOVED_value_localises(state):
+    """The EVENT must localise — a scenario claiming every bar moved tells the room nothing.
+    Standing on the other bars is not noise; it is the funding story the timeline now carries
+    by default, and it sits below the event precisely so a move stays visible against it."""
     rows = measures.plan_schedule(state, touched_project_ids={"P12"})
-    others = [r for r in rows if r["project_id"] != "P12"]
-    assert others and all(r["risk_flag"] is None for r in others)
+    moved = {r["project_id"] for r in rows if r["risk_flag"] == "moved"}
+    assert moved == {"P12"}, f"the move did not localise: {sorted(moved)}"
 
 
 def test_a_constraint_breaching_project_is_flagged(state):
@@ -227,7 +234,7 @@ def test_baseline_scope_gets_no_ghost_and_scenario_scope_does():
 def test_the_schedule_flags_op_touched_bars_in_scenario_scope_only():
     client, _ = _client()
     base = client.post("/measure/plan_schedule", json={"state_ref": "baseline"}).json()
-    assert all(r["risk_flag"] is None for r in base["rows"])
+    assert all(r["risk_flag"] not in ("moved", "constraint-violated") for r in base["rows"]),         "a baseline-scope bar claims an event"
 
     # A SEVEN-DAY PULL, and the number is measured rather than chosen. P12 must start no
     # earlier than P11 ends (D7, FS lag 0, P11 ends 2026-03-25); 2026-03-25 is exactly that
@@ -241,7 +248,7 @@ def test_the_schedule_flags_op_touched_bars_in_scenario_scope_only():
     p12 = [r for r in sc["rows"] if r["project_id"] == "P12"]
     assert p12 and all(r["risk_flag"] == "moved" for r in p12)
     others = [r for r in sc["rows"] if r["project_id"] != "P12"]
-    assert all(r["risk_flag"] is None for r in others), "the flag did not localise"
+    assert all(r["risk_flag"] != "moved" for r in others), "the move did not localise"
 
 
 def test_the_scripted_pull_stays_inside_D7_and_still_crosses(state):
@@ -285,3 +292,51 @@ def test_a_LARGER_pull_breaches_D7_and_the_flag_changes(state):
     p12 = [r for r in measures.plan_schedule(after, touched_project_ids={"P12"})
            if r["project_id"] == "P12"]
     assert all(r["risk_flag"] == "constraint-violated" for r in p12)
+
+
+# ── funding standing on the schedule payload ─────────────────────────────────────────────
+
+def test_the_timeline_is_funding_legible_with_NO_parameter(state):
+    """The demo's ask: the gantt carries the funding story at a glance. Standing is the DEFAULT
+    tier, so a caller that asks for nothing still gets it."""
+    flags = {r["risk_flag"] for r in measures.plan_schedule(state)}
+    assert flags & {"funded", "at-risk", "unfunded"}, f"no funding standing emitted: {flags}"
+
+
+def test_standing_uses_the_INCUMBENT_vocabulary(state):
+    """`at-risk` and `unfunded` are what the renderer already styles — the mock converged on
+    the renderer's native words. `funded` joins them in the same convention."""
+    for v in {r["risk_flag"] for r in measures.plan_schedule(state) if r["risk_flag"]}:
+        assert v in {"funded", "at-risk", "unfunded"}, f"unexpected default flag {v!r}"
+        assert v == v.lower() and "_" not in v
+
+
+def test_a_project_with_NO_requirements_is_SILENT_not_funded(state):
+    """`0 >= 0` is arithmetically true and says nothing. A project that has had no funding
+    conversation must not assert a state nobody established — the zero-versus-absent
+    distinction this model draws everywhere else."""
+    unbudgeted = [
+        p.project_id for p in state.projects
+        if not [r for r in state.requirements if r.project_id == p.project_id]
+    ]
+    if not unbudgeted:
+        pytest.skip("every seeded project carries a requirement — nothing to discriminate")
+    rows = [r for r in measures.plan_schedule(state) if r["project_id"] in unbudgeted]
+    assert rows and all(r["risk_flag"] is None for r in rows)
+
+
+def test_EVENT_values_outrank_the_standing(state):
+    """`constraint-violated > moved > standing`. A breach and a move are things that HAPPENED;
+    standing is a condition that HOLDS, and the flag shows the most acute."""
+    rows = measures.plan_schedule(state, touched_project_ids={"P12"})
+    p12 = [r for r in rows if r["project_id"] == "P12"]
+    assert p12 and all(r["risk_flag"] == "moved" for r in p12), \
+        "the move did not outrank P12's funding standing"
+
+
+def test_an_explicit_color_by_outranks_the_DEFAULT(state):
+    """A caller who asked for `status` wants status, not the default standing."""
+    rows = measures.plan_schedule(state, color_by="status")
+    flags = {r["risk_flag"] for r in rows if r["risk_flag"]}
+    assert flags and not (flags & {"funded", "unfunded"}), \
+        f"the default leaked past an explicit color_by: {flags}"

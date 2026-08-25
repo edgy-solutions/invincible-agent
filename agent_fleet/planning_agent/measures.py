@@ -757,6 +757,26 @@ def plan_schedule(
     return rows
 
 
+def _funding_standing(state: PlanState, project_id: str) -> Optional[str]:
+    """A project's funding condition, in the renderer's incumbent vocabulary.
+
+    NONE WHEN NOTHING IS RECORDED, and that is not the same as `funded`. A project with no
+    requirement rows has had no funding conversation — `0 >= 0` is arithmetically true and
+    says nothing. Returning "funded" there would assert a state nobody established, which is
+    the zero-versus-absent distinction this model draws everywhere else.
+    """
+    required = sum(r.amount for r in state.requirements if r.project_id == project_id)
+    if required <= 0:
+        return None
+    secured = sum(
+        k.amount for k in state.commitments
+        if k.project_id == project_id and k.status in ("committed", "approved")
+    )
+    if secured >= required:
+        return "funded"
+    return "at-risk" if secured > 0 else "unfunded"
+
+
 def _risk_flag(
     state: PlanState,
     project_id: str,
@@ -787,7 +807,12 @@ def _risk_flag(
     if touched and project_id in touched:
         return "moved"
     if color_by is None:
-        return None
+        # FUNDING STANDING IS THE DEFAULT, so a timeline is funding-legible with no parameter.
+        # It sits BELOW the event values on purpose: a breach and a move are things that
+        # HAPPENED, funding standing is a CONDITION that holds, and the flag shows the most
+        # acute. An explicit `color_by` outranks it — a caller who asked for status wants
+        # status, not the default.
+        return _funding_standing(state, project_id)
     if color_by == "funding_risk":
         req = sum(r.amount for r in state.requirements if r.project_id == project_id)
         secured = sum(k.amount for k in state.commitments
