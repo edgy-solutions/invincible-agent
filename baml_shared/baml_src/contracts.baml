@@ -519,6 +519,110 @@ enum SemanticArchetype {
   DIGITAL_TWIN_3D      // Maps to 3D Digital Twin models
 }
 
+// =============================================================================
+// PLANNING RENDER CONTRACTS (ADR-0042) — mirrors of cortex-ui's .contract.ts
+// =============================================================================
+//
+// MIRROR RULE. Each class below is a FIELD-FOR-FIELD projection of the
+// corresponding `src/components/planning/<X>.contract.ts` in cortex-ui. The
+// TypeScript contract is the source of truth; nothing here is invented. When a
+// contract gains a field, this gains the same field with the same name.
+//
+// WHY `archetype` IS A STRING AND NOT `SemanticArchetype`. That enum holds six
+// members and none of them is a planning archetype. Adding five would widen the
+// option space DesignUI chooses from — the generic renderer would start
+// nominating INTERVAL_TIMELINE for arbitrary payloads, which is the opposite of
+// what this work exists to do. The archetype is FIXED PER CLASS (the class IS
+// the archetype), so a described string carries the same information with no
+// blast radius on a shared enum. Flagged for the morning as a deliberate
+// deviation, not an oversight.
+//
+// WHY THERE ARE NO `RenderAsX` FUNCTIONS BESIDE THESE CLASSES.
+// The four existing renderers (Topology/Hazard/Metric/Chart) call an LLM
+// because their inputs are unstructured — prose, logs, a SQL result whose keys
+// nobody declared. PLANNING ROWS ARE ALREADY STRUCTURED: Engine P returns typed
+// rows against a declared output_uri, and every one of these contracts
+// explicitly FORBIDS interpretation — "NOT re-derive risk_flag", "NOT infer
+// grouping from the ids", "NOT treat '(none)' as missing data". There is
+// nothing left for a model to decide.
+//
+// Putting one there is actively harmful, and it was MEASURED on 2026-08-24:
+// the DesignUI fallback rendered `plan_schedule` (14 rows) as
+// "CHART DATA NOT RENDERABLE — no numeric column" once and drew it cleanly
+// minutes later from the same measure. Same input, opposite output, because the
+// shape was being GUESSED per request. A beat that worked in rehearsal can fail
+// in the room, with no change anywhere.
+//
+// So the dispatch arms in presentation_agent project these shapes
+// DETERMINISTICALLY. The precedent is in-repo and load-bearing: ADR-0030 rule 2
+// already intercepts an edgeless LineageTopology BEFORE RenderAsTopology and
+// returns `(component, handled=True)` with no model call, for the same reason —
+// the model can only invent what the payload already answers.
+//
+// These classes therefore define the SHAPE OF RECORD that the Python arms fill
+// and that cortex-ui's components consume. They are the contract, in the file
+// where contracts live.
+//
+// `rows` / `effects` are JSON-stringified arrays, matching ChartUI.chart_data's
+// existing encoding for array payloads.
+
+class TimelineUI {
+  archetype string @description("MUST be INTERVAL_TIMELINE")
+  source_persona string?
+  subject_concept string?
+  rows string @description("JSON array of IntervalRow. ROW KEY IS (group_id, project_id) — a project fans out to one row per capability contribution under the capability pivot, so project_id alone is NOT unique.")
+  group_kind string? @description("initiative | capability | target. Stated by the verb, NEVER inferred from the ids.")
+  scope_label string?
+}
+
+class PeriodSeriesUI {
+  archetype string @description("MUST be PERIOD_SERIES")
+  source_persona string?
+  subject_concept string?
+  rows string @description("JSON array of PeriodSeriesRow: period, capex, expense, total, cap, over_cap, overage.")
+  scope_label string?
+  value_unit string?
+}
+
+class ThresholdGridUI {
+  archetype string @description("MUST be THRESHOLD_GRID")
+  source_persona string?
+  subject_concept string?
+  rows string @description("JSON array of ThresholdCell: subject_id, period, value, threshold, over_threshold.")
+  value_label string?
+  scope_label string?
+}
+
+class MatrixGridUI {
+  archetype string @description("MUST be MATRIX_GRID")
+  source_persona string?
+  subject_concept string?
+  rows string @description("JSON array of MatrixCell: row_id, column_id, level, target_level, gap.")
+  level_label string?
+  scope_label string?
+  as_of string?
+}
+
+class ShortfallGridUI {
+  archetype string @description("MUST be SHORTFALL_GRID")
+  source_persona string?
+  subject_concept string?
+  rows string @description("JSON array of ShortfallRow: subject_id, subject_name, period, required, committed, secured, shortfall, state. THREE QUANTITIES, not two — required/committed/secured are distinct and a renderer that collapses them loses the answer.")
+  value_label string?
+  value_unit string?
+  scope_label string?
+}
+
+class DeltaSetUI {
+  archetype string @description("MUST be DELTA_SET")
+  source_persona string?
+  subject_concept string?
+  effects string @description("JSON array of DeltaEffect: metric, direction, magnitude, affected[].")
+  scope_label string?
+  baseline_label string?
+  headline string?
+}
+
 enum SeverityLevel {
   INFO
   WARNING

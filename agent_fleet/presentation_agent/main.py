@@ -435,6 +435,104 @@ except ImportError:
     )
 
 
+
+# ── PLANNING ARCHETYPES: DETERMINISTIC HARDENED RENDERERS (ADR-0042) ─────────
+#
+# These five archetypes are projected, NOT generated. The rows arrive from
+# Engine P already typed against a declared output_uri, and every cortex-ui
+# contract for them explicitly forbids interpretation ("NOT re-derive
+# risk_flag", "NOT infer grouping from the ids", "NOT treat '(none)' as missing
+# data"). A model in this path has nothing to decide and one thing to get wrong.
+#
+# MEASURED, 2026-08-24, which is why this is deterministic rather than a fifth
+# RenderAs* call: the DesignUI fallback rendered plan_schedule's 14 rows as
+# "CHART DATA NOT RENDERABLE - no numeric column" on one request and drew them
+# cleanly on the next. Same measure, same rows, opposite outcomes, because the
+# chart shape was being guessed per request. A beat that worked in rehearsal can
+# fail in the room, with no change anywhere -- a nondeterministic component on
+# the demo's critical path, in a project that pre-registers every other number.
+#
+# The precedent for a model-free hardened arm is in-repo: ADR-0030 rule 2
+# intercepts an edgeless LineageTopology BEFORE RenderAsTopology and returns
+# (component, handled=True) with no BAML call, because the model could only
+# invent edges the payload already answered. Same argument, wider blast radius.
+#
+# Free consequences, both measured today: the DesignUI call cost 31-59s per card
+# (~14% of a 280s question), and it sent portfolio funding figures to whatever
+# `client MainAgent` resolved to -- a fallback chain whose FIRST entry is
+# OpenRouter. Projection deletes both.
+#: output_uri -> (archetype, payload key, extra passthrough fields)
+_PLANNING_ARCHETYPES: Dict[str, tuple] = {
+    "INTERVAL_TIMELINE": ("rows", ("group_kind", "scope_label")),
+    "PERIOD_SERIES": ("rows", ("scope_label", "value_unit")),
+    "THRESHOLD_GRID": ("rows", ("value_label", "scope_label")),
+    "MATRIX_GRID": ("rows", ("level_label", "scope_label", "as_of")),
+    "DELTA_SET": ("effects", ("scope_label", "baseline_label", "headline")),
+    # Landed by Lane 1 the same night as this build (SHORTFALL_GRID — "funding
+    # gap needs three quantities, not two"). It is the binding for
+    # mesh:FundingGapSet, whose absence made "where is funding short by
+    # initiative" fall through to KNOWLEDGE_DOCUMENT and answer
+    # "No content available." Picked up here because the arm is mechanical
+    # once the contract exists.
+    "SHORTFALL_GRID": ("rows", ("value_label", "value_unit", "scope_label")),
+}
+
+
+def _project_planning_archetype(
+    archetype: str,
+    raw_data: Any,
+    persona: str,
+    subject_concept: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Project Engine P rows into a planning archetype's declared shape.
+
+    Returns None when the payload carries no rows -- the caller then degrades,
+    because an EMPTY planning card is a refusal, not an answer (the
+    IntervalTimeline contract says so explicitly: "A schedule with no rows is a
+    refusal, not an empty answer -- a plan with nothing in it is a broken scope
+    filter").
+
+    Rows pass through VERBATIM. Every field the contract declares beyond `rows`
+    is carried only if the producer supplied it; nothing is defaulted, inferred
+    or invented, because each of those is a named prohibition in the contracts.
+    """
+    spec = _PLANNING_ARCHETYPES.get(archetype)
+    if spec is None:
+        return None
+    payload_key, passthrough = spec
+
+    resp = _extract_agent_response(raw_data) or {}
+    rows = resp.get("structured_data")
+    if rows is None:
+        rows = resp.get("rows")
+    if isinstance(rows, dict):
+        # Some producers wrap rows beside their framing fields.
+        for k in (payload_key, "rows", "structured_data"):
+            if isinstance(rows.get(k), list):
+                resp = {**resp, **rows}
+                rows = rows[k]
+                break
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    component: Dict[str, Any] = {
+        "archetype": archetype,
+        "source_persona": persona,
+        "subject_concept": subject_concept,
+        payload_key: json.dumps(rows),
+    }
+    for field in passthrough:
+        val = resp.get(field)
+        if val is None and isinstance(rows[0], dict):
+            # `group_kind` rides the ROWS for the timeline (the verb stamps it
+            # per row); the contract says it is stated, never inferred, so we
+            # only lift a value the producer actually wrote.
+            val = rows[0].get(field)
+        if val is not None:
+            component[field] = val
+    return component
+
+
 async def _render_archetype_hardened(
     archetype: str,
     str_raw_data: str,
@@ -486,6 +584,22 @@ async def _render_archetype_hardened(
         degraded = _degrade_edgeless_topology_to_document(raw_data, persona)
         if degraded is not None:
             return degraded, True
+
+    # PLANNING ARCHETYPES ARE PROJECTED, NOT GENERATED. Before any model call:
+    # these five have structured rows and contracts that forbid interpretation,
+    # so a deterministic projection is both correct and the only way the card
+    # renders the same way twice. See _project_planning_archetype.
+    if archetype in _PLANNING_ARCHETYPES:
+        projected = _project_planning_archetype(
+            archetype, raw_data, persona, subject_concept=None,
+        )
+        if projected is not None:
+            return projected, True
+        logger.warning(
+            "render_ui: %s carried no rows; degrading. An empty planning card "
+            "is a refusal, not an answer.", archetype,
+        )
+        return None, False
 
     try:
         if archetype == "PROCESS_TOPOLOGY":
