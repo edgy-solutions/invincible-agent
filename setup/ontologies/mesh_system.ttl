@@ -391,6 +391,11 @@ mesh:ThresholdGrid a owl:Class ;
   rdfs:label "Threshold Grid" ;
   rdfs:comment "Subjects by periods, each cell against a threshold the subject owns. Axes are DERIVED from the cells, so a pair with no activity renders as a gap rather than a zero — a zero in a heat grid reads as measured-and-fine, which is a different claim from nothing-was-happening. A LIVE VIEW." .
 
+mesh:ShortfallGrid a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Shortfall Grid" ;
+  rdfs:comment "Subjects by periods, each cell carrying what is OWED, what is PLEDGED, and how much of that pledge is FIRM. Distinct from mesh:ThresholdGrid and mesh:MatrixGrid on the axis both of those already use to distinguish themselves — what the colour means. A threshold grid reads OVER a line as danger; a matrix grid reads distance from a goal as progress; this reads a DEFICIT as risk, and its bad direction is BELOW rather than above. THREE QUANTITIES, not two: a cell showing only owed-versus-pledged cannot tell a party that is short from one that has pledged enough but not firmly, and those send a reader to different conversations. A cell with nothing owed is ABSENT, never a zero-need cell. A LIVE VIEW." .
+
 mesh:DecisionRecord a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Decision Record" ;

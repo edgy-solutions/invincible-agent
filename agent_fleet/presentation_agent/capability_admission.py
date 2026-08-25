@@ -67,6 +67,11 @@ KNOWN_ARCHETYPES = frozenset({
     # hour it was created, which is the first time it has caught an AUTHOR rather than
     # reproduced a production refusal.
     "DECISION_RECORD",
+    # Phase B, 2026-08-24. Its CONTRACT exists; its component is cortex's morning item, so it
+    # is deliberately absent from DERIVED_BINDINGS — the dispatch seal refuses a binding
+    # advertising a component the interpreter cannot render. Admission is a DIFFERENT registry
+    # with a different trigger: a declared contract must be a name the backend knows.
+    "SHORTFALL_GRID",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that
