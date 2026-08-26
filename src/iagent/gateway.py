@@ -1115,6 +1115,165 @@ class CanvasesBody(_BaseModel):
     canvases: list = []
 
 
+# ── THE SEEDING INTENT, SERVER HALF (ADR-0042) ──────────────────────────────
+#
+# "make me a portfolio canvas" — the demo's opening beat. Five gold-tier
+# questions asked through THE SAME INTERVIEW PATH any typed question takes, in
+# template-slot order, returning the minted artifact ids for cortex's
+# `seedPortfolioCanvas(orderedIds)`.
+#
+# ── RULING (a): IT ASKS QUESTIONS. IT DOES NOT INVOKE VERBS. ────────────────
+# This route calls its own /interview/stream over localhost, once per question,
+# rather than calling engine-p's /measure/* directly. That is not indirection
+# for its own sake: a seeded card must carry a DECISION PATH or it is not an
+# artifact. A browser-invisible measure call produces a picture with no
+# provenance, no routing record and no entitlement check — governance bypass
+# wearing a shortcut's clothes. Reusing the governed path literally is the only
+# way "seeded exactly like a typed question" is a fact rather than a claim.
+#
+# ── RULING (b): SEQUENTIAL, NOT PARALLEL. ──────────────────────────────────
+# Five concurrent runs against `max_concurrent_runs: 2` — with a reaper gap
+# that deadlocked this queue twice in one day — is how the substrate dies at
+# 3am with nobody awake. Sequential costs ~25 minutes for a full seed, which is
+# FINE: seeding is a PRE-WARM operation, not an on-stage one.
+#
+# ── ORDER IS THE DECLARATION ───────────────────────────────────────────────
+# PORTFOLIO_PLANNING_TEMPLATE (cortex-ui/src/lib/stageConstants.ts) declares
+# five slots and names them in comments: an anchor spanning the top, then two
+# pairs. This list is that order, so slot assignment lives HERE — in the
+# seeder — and the receiver only places what it is handed, in the order it is
+# handed. A template that chose which measure went where would be reaching into
+# the seeder's job; a seeder that computed coordinates would be reaching into
+# the template's.
+#
+# Every phrasing is from the resolver-verified set, re-checked against the live
+# substrate. NOTE: subject resolution SHIFTS when the ontology or verb set
+# changes — "where are we over budget" moved Portfolio 0.86 -> Site 0.75 across
+# a single prime. Re-verify after any prime before trusting this list.
+PORTFOLIO_CANVAS_QUESTIONS: list[dict] = [
+    {"slot": 0, "measure": "plan_schedule", "question": "what is scheduled by initiative and phase"},
+    {"slot": 1, "measure": "plan_cost_curve", "question": "what does spend look like per period"},
+    {"slot": 2, "measure": "plan_site_load", "question": "which sites are overloaded"},
+    {"slot": 3, "measure": "plan_funding_gap", "question": "where is funding short by initiative"},
+    {"slot": 4, "measure": "plan_maturity_grid", "question": "capability maturity by site versus target"},
+]
+
+
+class SeedPortfolioCanvasRequest(_BaseModel):
+    """`session_id` groups the five asks into one thread, as a human's five
+    questions would be. `frontend_id` decides WHICH render menu the archetypes
+    are selected against — omit it and every answer resolves to the labelled
+    default menu, which is a different and wrong presentation decision."""
+    session_id: str
+    frontend_id: Optional[str] = "cortex-ui-desktop"
+    active_persona: Optional[str] = "PORTFOLIO_LEAD"
+    active_domains: Optional[list] = None
+
+
+@app.post("/seed/portfolio_canvas")
+async def seed_portfolio_canvas(
+    request: SeedPortfolioCanvasRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Ask the five, in slot order, and return their artifact ids.
+
+    Returns `artifact_ids` ALIGNED TO SLOT INDEX. A question that fails yields
+    a null in its position rather than shifting the others up — a shifted list
+    would silently put the cost curve in the anchor slot and still look like a
+    working canvas.
+
+    THE CANVAS ITSELF IS NOT WRITTEN HERE. cortex's `seedPortfolioCanvas`
+    composes it from these ids using its own template, which is what keeps a
+    seeded canvas and a hand-built one the same object. Writing it server-side
+    would duplicate stageConstants' coordinates into Python, and the first
+    divergence would be invisible.
+    """
+    domains = request.active_domains or ["PORTFOLIO_PLANNING"]
+    auth = http_request.headers.get("Authorization", "")
+    base = "http://localhost:8090"
+
+    results: list = []
+    artifact_ids: list = [None] * len(PORTFOLIO_CANVAS_QUESTIONS)
+
+    for spec in PORTFOLIO_CANVAS_QUESTIONS:
+        slot = spec["slot"]
+        artifact_id = (
+            "urn:li:answerArtifact:"
+            + request.session_id
+            + "-seed"
+            + str(slot)
+            + "-"
+            + uuid.uuid4().hex[:8]
+        )
+        started = time.time()
+        payload = {
+            "message": spec["question"],
+            "session_id": request.session_id + "-seed" + str(slot),
+            "frontend_id": request.frontend_id,
+            "artifact_id": artifact_id,
+            "active_persona": request.active_persona,
+            "active_domains": domains,
+        }
+        status = "failed"
+        detail = None
+        try:
+            # SEQUENTIAL BY CONSTRUCTION: awaited inside the loop. Gathering
+            # these would be one line and would deadlock the run queue.
+            async with httpx.AsyncClient(timeout=900.0) as client:
+                async with client.stream(
+                    "POST",
+                    base + "/interview/stream",
+                    json=payload,
+                    headers={"Authorization": auth} if auth else {},
+                ) as resp:
+                    if resp.status_code != 200:
+                        detail = "HTTP " + str(resp.status_code)
+                    else:
+                        saw_final = False
+                        saw_error = False
+                        async for line in resp.aiter_lines():
+                            if line.startswith("event: final_payload"):
+                                saw_final = True
+                            elif line.startswith("event: pipeline_error"):
+                                saw_error = True
+                        # A non-200 never reaches here; an error EVENT is a
+                        # different failure and must not read as success.
+                        status = "ok" if (saw_final and not saw_error) else "failed"
+                        detail = None if status == "ok" else "pipeline_error"
+        except Exception as exc:  # noqa: BLE001 - one bad ask must not lose the rest
+            detail = (type(exc).__name__ + ": " + str(exc))[:160]
+
+        if status == "ok":
+            artifact_ids[slot] = artifact_id
+        results.append({
+            "slot": slot,
+            "measure": spec["measure"],
+            "question": spec["question"],
+            "artifact_id": artifact_id if status == "ok" else None,
+            "status": status,
+            "detail": detail,
+            "elapsed_s": round(time.time() - started, 1),
+        })
+        logger.info(
+            "seed_portfolio_canvas: slot=%s measure=%s status=%s %.1fs",
+            slot, spec["measure"], status, time.time() - started,
+        )
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    return {
+        "session_id": request.session_id,
+        # Slot-aligned; nulls are HOLES, not omissions. The receiver decides
+        # whether a partial canvas is worth composing — this route does not
+        # decide that for it by quietly shrinking the list.
+        "artifact_ids": artifact_ids,
+        "ordered_artifact_ids": [a for a in artifact_ids if a],
+        "seeded": ok,
+        "total": len(PORTFOLIO_CANVAS_QUESTIONS),
+        "results": results,
+    }
+
+
 @app.get("/me/canvases")
 async def get_my_canvases(current_user: User = Depends(get_current_user)):
     """The caller's stored custom canvases (durable, cross-device). Empty when
