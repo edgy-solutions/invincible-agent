@@ -896,6 +896,79 @@ services:
           payload against the caller's registered menu (ADR-0042 §2). Plan state is portfolio
           read-model, entitlement-scoped where the verb runs; the BFF adds no scoping of its
           own and must not, or there would be two places deciding what a caller may see."
+      # THE PLAN WRITE SEAM. Five MUTATING routes, and not one of them may borrow
+      # /plan/measure's row above. That route is releasable_by_design because "plan state is
+      # portfolio read-model, entitlement-scoped where the verb runs; the BFF adds no scoping
+      # of its own and must not". Neither clause survives contact with a write: reading an
+      # entitled read-model and CHANGING it are different acts, and "the engine will scope it"
+      # is not an authorization story for a mutation. Each row below states its own.
+      - method: POST
+        path: /plan/scenario
+        identity: get_current_user + entitled_domains
+        gate: "auth + PORTFOLIO_PLANNING domain (BFF) + engine-side validation"
+        exposes: mutation
+        consumers: [cortex-ui]
+        class: gated
+        justification: "creates a scenario — the sandbox a drag happens in, so no drag ever
+          edits baseline. Writes no plan CONTENT: a fork is an empty op list against a named
+          base. Gated on PORTFOLIO_PLANNING because an unentitled caller creating scenarios is
+          both a write and a way to learn which base refs resolve. Duplicate id is the engine's
+          409, forwarded."
+      - method: POST
+        path: /plan/scenario/{scenario_id}/op
+        identity: get_current_user + entitled_domains
+        gate: "auth + PORTFOLIO_PLANNING domain (BFF) + engine-side UnknownTarget refusal"
+        exposes: mutation
+        consumers: [cortex-ui]
+        class: gated
+        justification: "appends ONE op to a scenario — the primitive every plan change is made
+          of. Scenario-scoped by construction: it cannot reach baseline, which has its own route
+          with its own narrower rule. An op naming something the model does not contain is the
+          engine's 400 and must stay one — a silently-dropped op is the failure where the room
+          believes it made a change, the diff shows nothing, and the decision artifact records
+          an op that never applied."
+      - method: POST
+        path: /plan/baseline/op
+        identity: get_current_user + entitled_domains
+        gate: "auth + PORTFOLIO_PLANNING domain (BFF) + engine-side funding-ops-only rule"
+        exposes: mutation
+        consumers: [cortex-ui]
+        class: gated
+        justification: "THE NARROWEST ROUTE HERE and the only non-ceremony path that touches
+          baseline. Funding ops ONLY — the 'costs persist' exception; a schedule op is a 400 at
+          the engine, which is the anti-goal 'no editing baseline directly from a drag' with a
+          stack trace. The BFF proxy is deliberately thin: widening it into a generic passthrough
+          would defeat the rule it exists to serve, so the engine's kind-check is load-bearing
+          and must never be duplicated-then-relaxed here."
+      - method: POST
+        path: /plan/scenario/{scenario_id}/reschedule
+        identity: get_current_user + entitled_domains
+        gate: "auth + PORTFOLIO_PLANNING domain (BFF) + engine-side derivation and refusal"
+        exposes: mutation
+        consumers: [cortex-ui]
+        class: gated
+        justification: "the drag. Appends TWO ops — the project move and its derived
+          site-impact move, offset-preserved — because a MoveProject alone moves the bar and not
+          the load. Scenario-scoped. The client sends only which bar moved and where to: it
+          holds no site-impact data, so the derivation happens where the state is and a client
+          cannot inject impact windows it would have had to invent."
+      - method: POST
+        path: /plan/scenario/{scenario_id}/commit
+        identity: get_current_user + entitled_domains (ACTOR forced from token)
+        gate: "auth + PORTFOLIO_PLANNING domain (BFF) + engine-side rationale gate, ordered first"
+        exposes: mutation
+        consumers: [cortex-ui]
+        class: gated
+        justification: "THE ONE PATH THAT WRITES BASELINE FROM A SCENARIO, and the highest-value
+          route in this block. Two properties are load-bearing. (1) ACTOR IS NOT ACCEPTED FROM
+          THE BODY — the BFF supplies it from the token, because Engine P cannot see who is
+          calling and forwarding a client-supplied actor would make the DecisionArtifact, the
+          governance record of who moved the portfolio and why, forgeable by anyone who can post
+          JSON. A field that cannot be sent cannot be spoofed. (2) THE RATIONALE REFUSAL IS THE
+          ENGINE'S AND RUNS FIRST, before the scenario resolves and before any op applies, so a
+          refused commit changes nothing; this hop forwards the 422 and re-implements no part of
+          it, because two places deciding whether a rationale is blank is how they come to
+          disagree."
       - method: GET
         path: /plan/state_version
         identity: get_current_user
@@ -912,6 +985,38 @@ services:
           caller may see is how they diverge. An unknown ref is a 404 rather than a 200 with 0,
           so the endpoint cannot be used to probe which scenarios exist without already being
           able to read them."
+      - method: POST
+        path: /seed/portfolio_canvas
+        identity: get_current_user
+        gate: "auth; delegates:/interview/stream per-ask cell entitlement (ADR-0026 step 4)"
+        exposes: action
+        consumers: [cortex-ui]
+        class: delegates
+        justification: >-
+          The seeding intent's server half. It authenticates at the door, then asks five
+          questions by calling THIS SERVICE'S OWN /interview/stream once each, FORWARDING THE
+          CALLER'S OWN Authorization header. It mints no privilege of its own: every ask is
+          re-authenticated and re-checked against the caller's Topaz entitlement matrix by
+          /interview/stream, and a non-entitled persona/domain cell 403s there exactly as it
+          would for a typed question. Artifacts are minted for the caller. Stripping the
+          header does not escalate — it makes all five asks 401 and the seed returns five
+          holes.
+
+          THIS IS WHY IT ASKS QUESTIONS RATHER THAN INVOKING VERBS. Calling engine-p's
+          /measure/* directly would have been shorter and would have produced cards with no
+          decision path, no routing record and no entitlement check — governance bypass in a
+          convenience's clothing. Delegating to the interview path is what makes "seeded
+          exactly like a typed question" a property rather than a claim, and it is the reason
+          this row is `delegates` rather than `gated`: the authorization decision is not made
+          here, and must not be.
+
+          NAMED HONESTLY — AMPLIFICATION, NOT AUTHZ: one authenticated request launches five
+          sequential Dagster runs (~18 min, ~210s each). That is a resource cost an entitled
+          caller can repeat, not a privilege they can exceed. Sequential execution is
+          deliberate (max_concurrent_runs is 2 and the run-monitoring reaper gap has
+          deadlocked this queue twice), so the ceiling is one in-flight run per seed rather
+          than five. If seeding ever becomes unauthenticated or batched, this row must be
+          re-argued before that ships.
       - method: GET
         path: /me/canvases
         identity: get_current_user
