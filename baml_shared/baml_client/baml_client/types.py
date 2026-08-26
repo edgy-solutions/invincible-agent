@@ -74,6 +74,7 @@ class IntentFamily(str, Enum):
     STRUCTURE = "STRUCTURE"
     SESSION = "SESSION"
     MUTATION = "MUTATION"
+    CANVAS = "CANVAS"
     NONE = "NONE"
 
 class Mode(str, Enum):
@@ -122,7 +123,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (63)
+# Generated classes (64)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -396,6 +397,9 @@ class SPOPick(BaseModel):
     endpoint: typing.Optional[str] = Field(default=None, description='The action endpoint (may contain {placeholders} bound at trigger time).')
     capability: typing.Optional[str] = Field(default=None, description='Topaz-decidable capability for the action, e.g. \'mesh:publishArtifact\'.')
     step_id: typing.Optional[str] = Field(default=None, description='Optional stable id for the step, e.g. \'approve_promotion\'.')
+
+class SeedPortfolioCanvas(BaseModel):
+    confirm: bool = Field(description='true when the ask is for the WHOLE board, not one measure')
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

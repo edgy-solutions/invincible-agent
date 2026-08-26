@@ -23,7 +23,7 @@ class StreamState(BaseModel, typing.Generic[StreamStateValueT]):
     value: StreamStateValueT
     state: typing_extensions.Literal["Pending", "Incomplete", "Complete"]
 # #########################################################################
-# Generated classes (63)
+# Generated classes (64)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -297,6 +297,9 @@ class SPOPick(BaseModel):
     endpoint: typing.Optional[str] = Field(default=None, description='The action endpoint (may contain {placeholders} bound at trigger time).')
     capability: typing.Optional[str] = Field(default=None, description='Topaz-decidable capability for the action, e.g. \'mesh:publishArtifact\'.')
     step_id: typing.Optional[str] = Field(default=None, description='Optional stable id for the step, e.g. \'approve_promotion\'.')
+
+class SeedPortfolioCanvas(BaseModel):
+    confirm: typing.Optional[bool] = Field(default=None, description='true when the ask is for the WHOLE board, not one measure')
 
 class SemanticResolution(BaseModel):
     # Result of mapping free-text input to a canonical sustainment concept.

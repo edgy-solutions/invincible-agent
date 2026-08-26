@@ -145,6 +145,14 @@ class MoveProject {
   when string
 }
 
+
+// The seeding intent. No slots by design: the five questions and their slot
+// order are the seeder's declaration, not a per-request opinion.
+class SeedPortfolioCanvas {
+  // @@intent_id: seed_portfolio_canvas
+  confirm bool @description("true when the ask is for the WHOLE board, not one measure")
+}
+
 class SetCost {
   // @@intent_id: set_cost
   project string
@@ -243,6 +251,7 @@ enum IntentFamily {
   STRUCTURE   @description("what NOTHING is working on — absence in the plan itself")
   SESSION     @description("what changed this session, or comparing scenarios")
   MUTATION    @description("changing the plan: moving a project, setting a cost")
+  CANVAS      @description("composing a whole planning board, not answering one question")
   NONE        @description("the system genuinely cannot answer this")
 }
 
@@ -274,7 +283,7 @@ function RouteFamily(question: string, context: string) -> IntentFamily {
 
 // ── FUNCTIONS ─────────────────────────────────────────────────────────────
 
-function RouteIntent(question: string, context: string) -> ShowCostCurve | ShowFundingGap | ShowSiteLoad | SiteSchedule | ProjectsIn | MaturityGrid | CapabilityPath | ProcessEvolution | TechFootprint | CoverageGap | SummarizeSession | CompareScenarios | MoveProject | SetCost | WhatBlocks | DownstreamOf | NoIntentMatch {
+function RouteIntent(question: string, context: string) -> ShowCostCurve | ShowFundingGap | ShowSiteLoad | SiteSchedule | ProjectsIn | MaturityGrid | CapabilityPath | ProcessEvolution | TechFootprint | CoverageGap | SummarizeSession | CompareScenarios | MoveProject | SetCost | SeedPortfolioCanvas | WhatBlocks | DownstreamOf | NoIntentMatch {
   client Ollama
   prompt #"
     You route a planning question to exactly one intent. You do NOT answer it.

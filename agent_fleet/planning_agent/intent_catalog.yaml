@@ -398,3 +398,42 @@ intents:
       - "what does this project block"
       - "what is downstream of that one"
       - "what slips if this slips"
+
+  # ── THE SEEDING INTENT ────────────────────────────────────────────────────
+  # "make me a portfolio canvas" is a CATALOG ENTRY LIKE ANY OTHER, and that is
+  # a ruling, not a convenience. A seeding phrase wired straight to its endpoint
+  # would bypass routing — the governance bypass in a friendlier costume — and
+  # the demo's whole thesis is that nothing skips the path. So it routes, it is
+  # classified, and it earns its action the same way a question earns an answer.
+  #
+  # It has NO SLOTS: the five questions and their slot order are the seeder's
+  # declaration (see PORTFOLIO_CANVAS_QUESTIONS in gateway.py), not something a
+  # caller fills in. Asking "which measures?" would make the canvas's shape a
+  # per-request opinion instead of a template.
+  #
+  # `action_endpoint` is how this differs from a measure intent: it names a BFF
+  # route rather than an Engine P verb, because the work is ORCHESTRATION (five
+  # governed asks in order) rather than a computation over plan state.
+  - intent_id: seed_portfolio_canvas
+    family: canvas
+    description: >-
+      Compose a portfolio planning canvas by asking the five standing planning
+      questions and placing their answers in template-slot order.
+    measure_id: null
+    action_endpoint: /seed/portfolio_canvas
+    output_uri: null
+    slots: {}
+    example_phrasings:
+      - make me a portfolio canvas
+      - build me a portfolio review canvas
+      - set up the planning canvas
+      - give me the standard portfolio view
+    not_this: >-
+      This BUILDS A CANVAS; it does not answer a planning question. A request for
+      one measure - the schedule, the cost curve, the funding gap - is that
+      measure's intent, not this. Choose this only when the ask is for the whole
+      board rather than a number on it.
+    owns_phrasings:
+      - make me a canvas
+      - build the portfolio canvas
+      - set up my planning board

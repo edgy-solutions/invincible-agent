@@ -133,9 +133,9 @@ class LlmResponseParser:
 
     def RouteIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"]:
+    ) -> typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.SeedPortfolioCanvas", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"]:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RouteIntent", llm_response=llm_response, mode="request")
-        return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"], __result__)
+        return typing.cast(typing.Union["types.ShowCostCurve", "types.ShowFundingGap", "types.ShowSiteLoad", "types.SiteSchedule", "types.ProjectsIn", "types.MaturityGrid", "types.CapabilityPath", "types.ProcessEvolution", "types.TechFootprint", "types.CoverageGap", "types.SummarizeSession", "types.CompareScenarios", "types.MoveProject", "types.SetCost", "types.SeedPortfolioCanvas", "types.WhatBlocks", "types.DownstreamOf", "types.NoIntentMatch"], __result__)
 
     def RouteMoneyIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},
@@ -267,9 +267,9 @@ class LlmStreamParser:
 
     def RouteIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},
-    ) -> typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"]:
+    ) -> typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.SeedPortfolioCanvas", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"]:
         __result__ = self.__options.merge_options(baml_options).parse_response(function_name="RouteIntent", llm_response=llm_response, mode="stream")
-        return typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"], __result__)
+        return typing.cast(typing.Union["stream_types.ShowCostCurve", "stream_types.ShowFundingGap", "stream_types.ShowSiteLoad", "stream_types.SiteSchedule", "stream_types.ProjectsIn", "stream_types.MaturityGrid", "stream_types.CapabilityPath", "stream_types.ProcessEvolution", "stream_types.TechFootprint", "stream_types.CoverageGap", "stream_types.SummarizeSession", "stream_types.CompareScenarios", "stream_types.MoveProject", "stream_types.SetCost", "stream_types.SeedPortfolioCanvas", "stream_types.WhatBlocks", "stream_types.DownstreamOf", "stream_types.NoIntentMatch"], __result__)
 
     def RouteMoneyIntent(
         self, llm_response: str, baml_options: BamlCallOptions = {},

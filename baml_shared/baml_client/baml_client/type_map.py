@@ -148,6 +148,9 @@ type_map = {
     "types.SPOPick": types.SPOPick,
     "stream_types.SPOPick": stream_types.SPOPick,
 
+    "types.SeedPortfolioCanvas": types.SeedPortfolioCanvas,
+    "stream_types.SeedPortfolioCanvas": stream_types.SeedPortfolioCanvas,
+
     "types.SemanticResolution": types.SemanticResolution,
     "stream_types.SemanticResolution": stream_types.SemanticResolution,
 

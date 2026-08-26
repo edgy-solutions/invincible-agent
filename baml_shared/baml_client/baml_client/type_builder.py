@@ -20,7 +20,7 @@ from .globals import DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIM
 class TypeBuilder(type_builder.TypeBuilder):
     def __init__(self):
         super().__init__(classes=set(
-          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DeltaEffect","DeltaSetUI","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","IntervalRow","KnowledgeResponse","LogisticsResponse","MatrixCell","MatrixGridUI","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","NotComputableInFamily","PeriodSeriesRow","PeriodSeriesUI","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","SPOInterviewTurn","SPOPick","SemanticResolution","SetCost","ShortfallGridUI","ShortfallRow","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","ThresholdCell","ThresholdGridUI","TimelineUI","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
+          ["AgentResponse","AgentTask","AgentTaskDefinition","AnomalyNode","AuditResponse","AuthoringResponse","BPMNEdge","BPMNInterviewState","BPMNNode","CapabilityPath","ChartUI","CompareScenarios","CoverageGap","DashboardUI","DataStewardResponse","DeltaEffect","DeltaSetUI","DigitalTwinUI","DocumentUI","DownstreamOf","ExtractedIntent","FinalSynthesis","GraphExpertResponse","HazardUI","IntervalRow","KnowledgeResponse","LogisticsResponse","MatrixCell","MatrixGridUI","MaturityGrid","MechanicResponse","MeshRoutingDecision","MetricUI","MoveProject","NoIntentMatch","NotComputableInFamily","PeriodSeriesRow","PeriodSeriesUI","PlatformScope","PredicateClassification","ProcessEvolution","ProjectsIn","SPOInterviewTurn","SPOPick","SeedPortfolioCanvas","SemanticResolution","SetCost","ShortfallGridUI","ShortfallRow","ShowCostCurve","ShowFundingGap","ShowSiteLoad","SiteSchedule","SummarizeSession","SupervisorTaskPlan","TableClassificationResult","TechFootprint","ThresholdCell","ThresholdGridUI","TimelineUI","TopologyUI","UIEntity","UIRelation","WhatBlocks",]
         ), enums=set(
           ["AgentStatus","BPMNNodeType","ChartType","Domain","Intent","IntentFamily","Mode","MoodType","OntologyClass","PersonaTarget","Predicate","SPOPickAction","SemanticArchetype","SeverityLevel",]
         ), runtime=DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME)
@@ -87,7 +87,7 @@ class TypeBuilder(type_builder.TypeBuilder):
 
 
     # #########################################################################
-    # Generated classes 63
+    # Generated classes 64
     # #########################################################################
 
     @property
@@ -265,6 +265,10 @@ class TypeBuilder(type_builder.TypeBuilder):
     @property
     def SPOPick(self) -> "SPOPickViewer":
         return SPOPickViewer(self)
+
+    @property
+    def SeedPortfolioCanvas(self) -> "SeedPortfolioCanvasViewer":
+        return SeedPortfolioCanvasViewer(self)
 
     @property
     def SemanticResolution(self) -> "SemanticResolutionViewer":
@@ -586,7 +590,7 @@ class IntentFamilyAst:
     def __init__(self, tb: type_builder.TypeBuilder):
         _tb = tb._tb # type: ignore (we know how to use this private attribute)
         self._bldr = _tb.enum("IntentFamily")
-        self._values: typing.Set[str] = set([  "MONEY",  "SCHEDULE",  "SITE",  "CAPABILITY",  "DEPENDENCY",  "STRUCTURE",  "SESSION",  "MUTATION",  "NONE",  ])
+        self._values: typing.Set[str] = set([  "MONEY",  "SCHEDULE",  "SITE",  "CAPABILITY",  "DEPENDENCY",  "STRUCTURE",  "SESSION",  "MUTATION",  "CANVAS",  "NONE",  ])
         self._vals = IntentFamilyValues(self._bldr, self._values)
 
     def type(self) -> baml_py.FieldType:
@@ -644,6 +648,10 @@ class IntentFamilyValues:
     @property
     def MUTATION(self) -> type_builder.EnumValueViewer:
         return type_builder.EnumValueViewer(self.__bldr.value("MUTATION"))
+    
+    @property
+    def CANVAS(self) -> type_builder.EnumValueViewer:
+        return type_builder.EnumValueViewer(self.__bldr.value("CANVAS"))
     
     @property
     def NONE(self) -> type_builder.EnumValueViewer:
@@ -1044,7 +1052,7 @@ class SeverityLevelValues:
 
 
 # #########################################################################
-# Generated classes 63
+# Generated classes 64
 # #########################################################################
 
 class AgentResponseAst:
@@ -3299,6 +3307,45 @@ class SPOPickProperties:
     @property
     def step_id(self) -> type_builder.ClassPropertyViewer:
         return type_builder.ClassPropertyViewer(self.__bldr.property("step_id"))
+    
+    
+
+
+class SeedPortfolioCanvasAst:
+    def __init__(self, tb: type_builder.TypeBuilder):
+        _tb = tb._tb # type: ignore (we know how to use this private attribute)
+        self._bldr = _tb.class_("SeedPortfolioCanvas")
+        self._properties: typing.Set[str] = set([  "confirm",  ])
+        self._props = SeedPortfolioCanvasProperties(self._bldr, self._properties)
+
+    def type(self) -> baml_py.FieldType:
+        return self._bldr.field()
+
+    @property
+    def props(self) -> "SeedPortfolioCanvasProperties":
+        return self._props
+
+
+class SeedPortfolioCanvasViewer(SeedPortfolioCanvasAst):
+    def __init__(self, tb: type_builder.TypeBuilder):
+        super().__init__(tb)
+
+    
+    def list_properties(self) -> typing.List[typing.Tuple[str, type_builder.ClassPropertyViewer]]:
+        return [(name, type_builder.ClassPropertyViewer(self._bldr.property(name))) for name in self._properties]
+    
+
+
+class SeedPortfolioCanvasProperties:
+    def __init__(self, bldr: baml_py.ClassBuilder, properties: typing.Set[str]):
+        self.__bldr = bldr
+        self.__properties = properties # type: ignore (we know how to use this private attribute) # noqa: F821
+
+    
+    
+    @property
+    def confirm(self) -> type_builder.ClassPropertyViewer:
+        return type_builder.ClassPropertyViewer(self.__bldr.property("confirm"))
     
     
 
