@@ -87,6 +87,10 @@ def client(monkeypatch):
     """Auth is bypassed at the dependency, not by disabling it — the route keeps its
     Depends(get_current_user) so a future removal of that dependency is still a visible diff."""
     user = type("U", (), {"authz_id": "tester", "sub": "tester", "persona": "PORTFOLIO_LEAD",
+                          # `entitled_domains` is the field the write gate reads —
+                          # `domains` was this stub's own invention and matches no
+                          # attribute on the real User model.
+                          "entitled_domains": ["PORTFOLIO_PLANNING"],
                           "domains": ["PORTFOLIO_PLANNING"], "is_authenticated": True})()
     gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
     with TestClient(gateway.app) as c:
@@ -213,14 +217,151 @@ def test_an_unknown_ref_is_a_404_not_a_200_with_zero(client, stub_engine):
     assert r.status_code == 404
 
 
-def test_an_unreachable_engine_is_a_502_not_a_stale_zero(client, stub_engine):
+def test_an_unreachable_engine_is_a_502_not_a_stale_zero(client, stub_engine, monkeypatch):
     class _Boom:
         def __init__(self, *a, **k): ...
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
         async def get(self, *a, **k): raise RuntimeError("connection refused")
-    import src.iagent.gateway as gw
-    gw.httpx.AsyncClient = _Boom
+    # monkeypatch, NOT a direct assignment. A bare `gw.httpx.AsyncClient = _Boom` leaks
+    # into whatever test runs next, and pytest-randomly means that is a different test each
+    # run — the stub_engine fixture would then record _Boom as the value to restore.
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", _Boom)
     r = client.get("/plan/state_version")
+    assert r.status_code == 502
+    assert r.json()["detail"]["error"] == "planning_engine_unreachable"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE PLAN WRITE SEAM
+#
+# Engine P's write surface existed from Phase 1 and none of it was reachable from a browser.
+# These test the BFF's TRANSLATION and its GATE — the two things that are genuinely the BFF's
+# and cannot be tested at the engine, which can see neither the caller's identity nor the
+# refusal codes it will be wrapped in.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def unentitled_client(monkeypatch):
+    """A caller with NO entitled domains. `User.entitled_domains` is documented honest-empty —
+    empty means no entitled domains, never 'no filter' — and privileged operations deny on it."""
+    user = type("U", (), {"authz_id": "outsider@example.com", "sub": "outsider",
+                          "persona": None, "entitled_domains": [],
+                          "is_authenticated": True})()
+    gateway.app.dependency_overrides[gateway.get_current_user] = lambda: user
+    with TestClient(gateway.app) as c:
+        yield c
+    gateway.app.dependency_overrides.clear()
+
+
+WRITE_ROUTES = [
+    ("/plan/scenario", {"scenario_id": "S1", "name": "What if"}),
+    ("/plan/scenario/S1/op", {"op": "move_project", "project_id": "P12",
+                              "start": "2026-03-18", "end": "2026-06-16"}),
+    ("/plan/baseline/op", {"op": "set_cost", "project_id": "P12",
+                           "period": "FY26-Q3", "kind": "capex", "amount": 1.0}),
+    ("/plan/scenario/S1/reschedule", {"project_id": "P12", "start": "2026-03-18",
+                                      "end": "2026-06-16"}),
+    ("/plan/scenario/S1/commit", {"rationale": "Pulling Line 3 forward."}),
+]
+
+
+@pytest.mark.parametrize("path,body", WRITE_ROUTES, ids=[r[0] for r in WRITE_ROUTES])
+def test_every_write_route_refuses_a_caller_without_the_domain(unentitled_client, stub_engine,
+                                                               path, body):
+    """AND THE ENGINE IS NEVER CALLED. The gate runs before the proxy, so an unentitled caller
+    cannot use refusal codes to learn which scenario ids resolve — a 404 and a 400 from the
+    engine say different things about a plan they may not read."""
+    r = unentitled_client.post(path, json=body)
+    assert r.status_code == 403, f"{path} let an unentitled caller through"
+    assert r.json()["detail"]["required_domain"] == "PORTFOLIO_PLANNING"
+    assert "url" not in stub_engine, f"{path} reached the engine before gating"
+
+
+@pytest.mark.parametrize("path,body", WRITE_ROUTES, ids=[r[0] for r in WRITE_ROUTES])
+def test_every_write_route_is_reachable_by_an_entitled_caller(client, stub_engine, path, body):
+    """Positive control for the gate above. Without this, a route that 403s EVERYONE would
+    pass the refusal test and be indistinguishable from a working gate."""
+    r = client.post(path, json=body)
+    assert r.status_code == 200, f"{path} refused an entitled caller: {r.text}"
+    assert "url" in stub_engine and stub_engine["url"].startswith("http")
+
+
+def test_the_drag_forwards_to_the_reschedule_route_not_the_raw_op_route(client, stub_engine):
+    """THE DERIVATION LIVES WHERE THE STATE IS. A MoveProject alone moves the bar and not the
+    load; the client holds no site-impact data and would have to INVENT windows to send two
+    ops itself. So the drag hits `/reschedule`, which derives both offset-preserved."""
+    client.post("/plan/scenario/SC-DEMO/reschedule",
+                json={"project_id": "P12", "start": "2026-03-18", "end": "2026-06-16"})
+    assert stub_engine["url"].endswith("/scenario/SC-DEMO/reschedule")
+    assert set(stub_engine["json"]) == {"project_id", "start", "end"}, (
+        "the client sent something about site impacts — it has no such data to send"
+    )
+
+
+def test_the_commit_actor_comes_from_the_TOKEN_and_cannot_be_sent(client, stub_engine):
+    """THE FORGERY THIS CLOSES. Engine P takes `actor` as a field because it cannot see who is
+    calling. If the BFF forwarded a client-supplied one, the DecisionArtifact — the governance
+    record of who moved the portfolio and why — would be forgeable by anyone who can post JSON.
+    The body model carries no `actor` at all: a field that cannot be sent cannot be spoofed."""
+    r = client.post("/plan/scenario/SC-DEMO/commit",
+                    json={"rationale": "Pulling Line 3 forward.",
+                          "actor": "ceo@example.com"})
+    assert r.status_code == 200
+    assert stub_engine["json"]["actor"] == "tester", (
+        "a client-supplied actor reached the engine — the decision record is forgeable"
+    )
+
+
+def test_a_blank_rationale_refusal_SURVIVES_the_hop(client, stub_engine):
+    """The ceremony's gate runs FIRST at the engine — before the scenario resolves and before
+    any op applies — so a refused commit changes nothing. The BFF's only job is to not swallow
+    it. Collapsing this into a 200 would put the BFF exactly where a governance refusal goes
+    to die."""
+    stub_engine["_resp"] = _Resp(422, {"detail": "a commit needs a rationale"})
+    r = client.post("/plan/scenario/SC-DEMO/commit", json={"rationale": "   "})
+    assert r.status_code == 422
+    assert "rationale" in str(r.json()["detail"])
+
+
+def test_an_op_naming_something_unknown_stays_a_400(client, stub_engine):
+    """A silently-dropped op is the failure where the room believes it made a change, the diff
+    shows nothing, and the decision artifact records an op that never applied."""
+    stub_engine["_resp"] = _Resp(400, {"detail": "move_project names unknown project 'P99'"})
+    r = client.post("/plan/scenario/SC-DEMO/op",
+                    json={"op": "move_project", "project_id": "P99",
+                          "start": "2026-01-01", "end": "2026-02-01"})
+    assert r.status_code == 400
+    assert "P99" in str(r.json()["detail"])
+
+
+def test_an_unknown_scenario_stays_a_404(client, stub_engine):
+    stub_engine["_resp"] = _Resp(404, {"detail": "unknown scenario 'SC-GHOST'"})
+    r = client.post("/plan/scenario/SC-GHOST/reschedule",
+                    json={"project_id": "P12", "start": "2026-03-18", "end": "2026-06-16"})
+    assert r.status_code == 404
+
+
+def test_a_duplicate_scenario_id_stays_a_409(client, stub_engine):
+    stub_engine["_resp"] = _Resp(409, {"detail": "scenario 'S1' already exists"})
+    r = client.post("/plan/scenario", json={"scenario_id": "S1", "name": "What if"})
+    assert r.status_code == 409
+
+
+def test_an_unreachable_engine_is_a_502_never_a_silent_success(client, stub_engine, monkeypatch):
+    """A write that reports success without reaching the engine is the worst outcome available:
+    the room believes the plan moved and it did not."""
+    class _Boom:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k): raise RuntimeError("connection refused")
+    # monkeypatch, NOT a direct assignment. A bare `gw.httpx.AsyncClient = _Boom` leaks
+    # into whatever test runs next, and pytest-randomly means that is a different test each
+    # run — the stub_engine fixture would then record _Boom as the value to restore.
+    monkeypatch.setattr(gateway.httpx, "AsyncClient", _Boom)
+    r = client.post("/plan/scenario/SC-DEMO/reschedule",
+                    json={"project_id": "P12", "start": "2026-03-18", "end": "2026-06-16"})
     assert r.status_code == 502
     assert r.json()["detail"]["error"] == "planning_engine_unreachable"

@@ -1108,6 +1108,190 @@ async def plan_state_version(
     return {"state_ref": out.get("state_ref", state_ref), "state_version": out.get("version")}
 
 
+# -- The plan WRITE seam (ADR-0042 section 3) ---------------------------------
+#
+# Engine P has had a complete write surface since Phase 1 -- fork, append op, baseline op,
+# commit ceremony, reschedule -- and NONE of it was reachable from a browser. The BFF had two
+# /plan/ routes, both reads. Both halves built, neither connected; the drag beat's commit
+# callback resolved to `undefined` and would have had nowhere to send it.
+#
+# WHY THESE CANNOT COPY /plan/measure's JUSTIFICATION, which is the load-bearing constraint on
+# this whole block. That route is classified releasable_by_design because "plan state is
+# portfolio read-model, entitlement-scoped where the verb runs; the BFF adds no scoping of its
+# own and must not." A WRITE cannot borrow either clause: reading an entitled read-model and
+# CHANGING it are different acts, and "the engine will scope it" is not an authorization story
+# for a mutation. So each route below carries its own gate, and each gets its own manifest row.
+
+_PLAN_WRITE_DOMAIN = "PORTFOLIO_PLANNING"
+
+
+def _require_plan_write(current_user: User, action: str) -> None:
+    """The write gate. EMPTY ENTITLEMENTS DENY, deliberately.
+
+    `User.entitled_domains` is documented as honest-empty -- "empty list = no entitled domains
+    (honest-empty), not 'no filter'" -- and its own note says downstream gates treat empty as
+    least-privilege: deny privileged, allow generalist. Changing portfolio plan state is
+    privileged, so empty denies here rather than falling through to the engine.
+
+    THIS IS A SECOND GATE, NOT THE ONLY ONE. Engine P still owns the decision about what a
+    caller may touch, and it must -- the BFF cannot see plan contents. What the BFF owns is the
+    IDENTITY, which the engine cannot see. Gating here on a domain the caller demonstrably
+    lacks turns "the engine would have refused" into "this never reached the engine", and keeps
+    an unentitled caller from mapping which scenario ids exist by reading refusal codes.
+    """
+    if _PLAN_WRITE_DOMAIN not in (current_user.entitled_domains or []):
+        raise HTTPException(status_code=403, detail={
+            "error": "not_entitled_to_change_the_plan",
+            "action": action,
+            "required_domain": _PLAN_WRITE_DOMAIN,
+            "message": "Changing plan state requires the PORTFOLIO_PLANNING domain.",
+        })
+
+
+async def _engine_p_write(path: str, payload: dict) -> dict:
+    """POST to Engine P and FORWARD ITS REFUSAL VERBATIM.
+
+    The refusals this hop must not swallow, each built deliberately upstream:
+
+        422  blank rationale, or a scenario with no ops ("a decision that disposed nothing is
+             not a decision") -- the ceremony's gate, which runs BEFORE anything is applied
+        400  an op naming something the model does not contain (never a silent no-op: the room
+             would believe it made a change the diff cannot show)
+        404  an unknown scenario
+        409  a scenario id that already exists
+
+    Collapsing any of these into a 200 would put the BFF exactly where a governance refusal
+    goes to die. The BFF re-validates NONE of them: two places deciding whether a rationale is
+    blank is how they come to disagree, and the engine's copy is the one that runs before the
+    baseline moves.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            rr = await client.post(f"{_ENGINE_P_URL}{path}", json=payload)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail={
+            "error": "planning_engine_unreachable", "message": str(exc)})
+
+    if rr.status_code >= 400:
+        try:
+            body = rr.json()
+            detail = body.get("detail", body) if isinstance(body, dict) else body
+        except Exception:
+            detail = getattr(rr, "text", "engine refused")
+        raise HTTPException(status_code=rr.status_code, detail=detail)
+    return rr.json()
+
+
+class PlanForkBody(_BaseModel):
+    scenario_id: str
+    name: str
+    base: str = "baseline"
+    created_at: str = ""
+
+
+class PlanOpBody(_BaseModel):
+    """The engine's wire shape for an op, passed through unchanged. Deliberately NOT re-typed
+    per op-kind here: the closed union and its refusals live in Engine P, and a second
+    definition would drift from that one silently."""
+    op: str
+    project_id: Optional[str] = None
+    site_id: Optional[str] = None
+    org_id: Optional[str] = None
+    period: Optional[str] = None
+    kind: Optional[str] = None
+    amount: Optional[float] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+
+
+class PlanRescheduleBody(_BaseModel):
+    """A drag, as the client can honestly describe it: which bar moved, and where to.
+
+    NOTE WHAT IS ABSENT -- anything about site impacts. cortex-ui holds no site-impact data at
+    all, so a client sending impact ops would be INVENTING them. The policy derives both ops
+    server-side, where the state is.
+    """
+    project_id: str
+    start: str
+    end: str
+
+
+class PlanCommitBody(_BaseModel):
+    """`actor` is ABSENT ON PURPOSE -- see the route."""
+    rationale: str = ""
+    alternatives: Optional[list] = None
+    question_trail: Optional[list] = None
+
+
+@app.post("/plan/scenario")
+async def plan_fork(body: PlanForkBody, current_user: User = Depends(get_current_user)):
+    """Fork a scenario -- the sandbox a drag happens in, so no drag ever edits baseline."""
+    _require_plan_write(current_user, "fork a scenario")
+    return await _engine_p_write("/scenario", body.model_dump())
+
+
+@app.post("/plan/scenario/{scenario_id}/op")
+async def plan_append_op(
+    scenario_id: str, body: PlanOpBody, current_user: User = Depends(get_current_user),
+):
+    """Append one op to a scenario. Returns the new version -- which is exactly what the
+    refresh loop's poll compares against."""
+    _require_plan_write(current_user, "change a scenario")
+    return await _engine_p_write(f"/scenario/{scenario_id}/op", body.model_dump())
+
+
+@app.post("/plan/baseline/op")
+async def plan_baseline_op(body: PlanOpBody, current_user: User = Depends(get_current_user)):
+    """The "costs persist" exception -- FUNDING OPS ONLY, and the engine enforces that.
+
+    This proxy stays thin for exactly that reason. Widening it into a generic passthrough that
+    accepted a schedule op would defeat the anti-goal it exists to serve: no editing baseline
+    directly from a drag.
+    """
+    _require_plan_write(current_user, "write baseline")
+    return await _engine_p_write("/baseline/op", body.model_dump())
+
+
+@app.post("/plan/scenario/{scenario_id}/reschedule")
+async def plan_reschedule(
+    scenario_id: str, body: PlanRescheduleBody,
+    current_user: User = Depends(get_current_user),
+):
+    """THE DRAG. Two ops, not one -- and the derivation happens where the state is.
+
+    `MoveProject` alone moves the BAR and not the LOAD, because site-impact windows are
+    deliberately independent of project windows: a rollout's disruptive phase is narrower than
+    the rollout. A client emitting only the project move would draw a schedule change with no
+    site consequence -- a demo that lies about its own model. Engine P derives both,
+    offset-preserved, and appends them as ordinary, individually-undoable ops.
+    """
+    _require_plan_write(current_user, "reschedule a project")
+    return await _engine_p_write(f"/scenario/{scenario_id}/reschedule", body.model_dump())
+
+
+@app.post("/plan/scenario/{scenario_id}/commit")
+async def plan_commit(
+    scenario_id: str, body: PlanCommitBody,
+    current_user: User = Depends(get_current_user),
+):
+    """The commit ceremony -- THE ONE PATH THAT WRITES BASELINE.
+
+    THE ACTOR IS THE AUTHENTICATED CALLER, NEVER THE REQUEST BODY. Engine P takes `actor` as a
+    field because it cannot see who is calling; the BFF can, and it is the only layer that can.
+    Forwarding a client-supplied actor would make the DecisionArtifact -- the governance record
+    of who moved the portfolio and why -- FORGEABLE by anyone who can post JSON. So the body
+    carries no `actor` at all and this route supplies it from the token: a field that cannot be
+    sent cannot be spoofed.
+
+    The rationale refusal is NOT re-implemented here. Engine P checks it FIRST, before the
+    scenario resolves and before any op applies, precisely so a refused commit changes nothing.
+    This hop's job is to not swallow the 422 on the way back.
+    """
+    _require_plan_write(current_user, "commit a scenario to baseline")
+    payload = {**body.model_dump(), "actor": current_user.authz_id}
+    return await _engine_p_write(f"/scenario/{scenario_id}/commit", payload)
+
+
 # ── ADR-0028 canvas persistence ──────────────────────────────────────────────
 class CanvasesBody(_BaseModel):
     """The user's full custom-canvas set (CustomCanvas[]), stored verbatim as
