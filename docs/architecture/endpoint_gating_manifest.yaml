@@ -986,6 +986,25 @@ services:
           so the endpoint cannot be used to probe which scenarios exist without already being
           able to read them."
       - method: POST
+        path: /canvas/seed
+        identity: get_current_user
+        gate: "auth; delegates:/seed/portfolio_canvas -> /interview/stream per-ask cell entitlement"
+        exposes: action
+        consumers: [cortex-ui]
+        class: delegates
+        justification: >-
+          The path cortex calls; a thin alias over POST /seed/portfolio_canvas, which carries
+          the full security argument. It adds no identity, no privilege and no bypass: it
+          calls the same in-process handler with the same caller, so every ask is still
+          re-authenticated and re-checked against the caller's Topaz matrix by
+          /interview/stream. Its only work is shaping the response to the receiver's fixed
+          contract - {artifact_ids: [...]}, slot-ordered, nothing else - and rejecting a
+          canvas_type it has no template for.
+
+          Same amplification note as its target: one authenticated request launches five
+          sequential Dagster runs. A caller who can reach this can reach /seed/portfolio_canvas
+          directly, so the alias widens no surface.
+      - method: POST
         path: /seed/portfolio_canvas
         identity: get_current_user
         gate: "auth; delegates:/interview/stream per-ask cell entitlement (ADR-0026 step 4)"

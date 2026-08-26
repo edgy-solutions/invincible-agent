@@ -152,3 +152,54 @@ def test_a_failed_ask_HOLDS_ITS_SLOT_rather_than_shifting_the_others():
         "artifact ids are not assigned BY SLOT — an append would shift on failure"
     )
     assert "artifact_ids.append" not in body
+
+
+# ── THE ALIAS cortex ACTUALLY CALLS ─────────────────────────────────────────
+
+def _alias_body() -> str:
+    src = _src()
+    start = src.index("async def canvas_seed(")
+    return src[start: src.index("@app.", start + 10)]
+
+
+def test_the_alias_returns_ONLY_artifact_ids():
+    """cortex's `requestPortfolioCanvasSeed` reads exactly one field:
+
+        const { data } = await api.post<{ artifact_ids: string[] }>("/canvas/seed", ...)
+
+    The contract is fixed — slot-ordered ids, nothing else. Extra fields are not
+    harmless: they invite a future client to read one, and then the response
+    shape is load-bearing in two places instead of one.
+    """
+    body = _alias_body()
+    ret = body[body.rindex("return {"):]
+    assert '"artifact_ids"' in ret
+    assert ret.count(":") == 1, f"the alias returns more than artifact_ids: {ret[:120]}"
+
+
+def test_the_alias_STRIPS_NULLS_because_the_receiver_cannot_place_one():
+    """cortex does `for (const id of artifactIds) addItemAuto(canvasId, id)`.
+
+    A null becomes a broken item. The underlying route deliberately returns a
+    slot-aligned array WITH holes so a partial seed cannot silently shift; the
+    alias must compact it, and that trade is documented at the call site rather
+    than discovered later.
+    """
+    body = _alias_body()
+    assert "if a]" in body or "if a )" in body, "the alias does not strip null slots"
+
+
+def test_a_partial_seed_is_LOGGED_even_though_the_response_cannot_carry_it():
+    """The response contract has no room for `seeded`/`total`, so the only place
+    a partial can be seen is the record. Compacting reintroduces the shift for
+    partial seeds — a board that looks plausible and is wrong — and silence
+    about that is what makes it invisible."""
+    body = _alias_body()
+    assert "PARTIAL" in body and "logger.warning" in body
+
+
+def test_an_unknown_canvas_type_is_REFUSED_not_seeded_anyway():
+    """Only portfolio_planning has a template. Seeding some other type would
+    compose five planning answers onto a board that never asked for them."""
+    body = _alias_body()
+    assert "canvas_type" in body and "400" in body

@@ -1458,6 +1458,70 @@ async def seed_portfolio_canvas(
     }
 
 
+class CanvasSeedRequest(_BaseModel):
+    """What cortex's `requestPortfolioCanvasSeed()` posts: a canvas TYPE, and
+    nothing else. It supplies no session id and no question list, which is the
+    point — the questions and their slot order are the seeder's declaration."""
+    canvas_type: str = "portfolio_planning"
+
+
+@app.post("/canvas/seed")
+async def canvas_seed(
+    request: CanvasSeedRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """The path cortex calls. A thin alias over /seed/portfolio_canvas.
+
+    RESPONSE CONTRACT IS FIXED: `{"artifact_ids": [...]}`, slot-ordered, and
+    nothing else. cortex reads exactly that field and composes the canvas with
+    its own template; the server does not write the canvas, because copying
+    stageConstants' coordinates into Python is how the first divergence goes
+    silent.
+
+    NULLS ARE STRIPPED HERE, AND THAT IS A REAL TRADE — flagged, not hidden.
+    The underlying route returns a SLOT-ALIGNED array where a failed ask leaves
+    a null hole, so a partial seed cannot silently shift later cards up a slot.
+    But the client does `for (const id of artifactIds) addItemAuto(...)`, so a
+    null would become a broken item. Stripping is therefore required by the
+    receiver's contract, and it reintroduces the shift for PARTIAL seeds only:
+    if the cost curve fails, site load lands in the cost-curve slot, every card
+    is real, and nothing reports it.
+
+    A complete seed (the normal case, and the measured one — 5/5 in 17.7 min)
+    is unaffected. A partial seed produces a board that is wrong in a way only a
+    human notices. Whether a partial seed should compose at all or refuse
+    outright is a PRODUCT ruling, not mine to make silently at this layer: the
+    client already has a no-canvas path for an empty array. `seeded` vs `total`
+    is logged on every run so a partial is visible in the record even though the
+    response cannot carry it.
+    """
+    if request.canvas_type != "portfolio_planning":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "unknown canvas_type "
+                + repr(request.canvas_type)
+                + "; only 'portfolio_planning' has a seeding template"
+            ),
+        )
+
+    inner = SeedPortfolioCanvasRequest(
+        session_id="canvas-seed-" + uuid.uuid4().hex[:8],
+    )
+    result = await seed_portfolio_canvas(inner, http_request, current_user)
+
+    ordered = [a for a in (result.get("artifact_ids") or []) if a]
+    if result.get("seeded") != result.get("total"):
+        logger.warning(
+            "canvas_seed: PARTIAL seed %s/%s — the returned list is compacted, so "
+            "cards after the failed slot shift up one. The board will look "
+            "plausible and be wrong.",
+            result.get("seeded"), result.get("total"),
+        )
+    return {"artifact_ids": ordered}
+
+
 @app.get("/me/canvases")
 async def get_my_canvases(current_user: User = Depends(get_current_user)):
     """The caller's stored custom canvases (durable, cross-device). Empty when
