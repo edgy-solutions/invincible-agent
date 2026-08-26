@@ -549,6 +549,27 @@ def _project_planning_archetype(
             val = rows[0].get(field)
         if val is not None:
             component[field] = val
+
+    # THE FRESHNESS PAIR, CARRIED FOR EVERY ARCHETYPE — deliberately not a per-archetype
+    # passthrough entry. `state_ref`/`state_version` are properties of the EVALUATION, not of
+    # any one card's shape, so putting them in the per-archetype lists would mean remembering
+    # to add them five times and forgetting once. That is the exact mistake this morning's
+    # producer seal was written to stop, twelve hours ago.
+    #
+    # `SemanticInterpreter.tsx` has been reading `comp.state_version` and handing it to six
+    # components this whole time. It was `undefined` for every planning card, because the
+    # producer emitted it on the envelope and this function never carried it across. Same
+    # seam that swallowed the axis keys today.
+    #
+    # `is not None`, NEVER a truthiness test. Baseline's version is legitimately `0`, and
+    # `if val:` would drop it — every baseline card would report no version at all while
+    # scenario cards worked, which reads as "the feature is broken for some cards" rather
+    # than as the one-character bug it is.
+    for field in ("state_ref", "state_version"):
+        val = resp.get(field)
+        if val is not None:
+            component[field] = val
+
     return component
 
 

@@ -1065,6 +1065,49 @@ async def plan_measure(
     }
 
 
+@app.get("/plan/state_version")
+async def plan_state_version(
+    state_ref: str = "baseline",
+    current_user: User = Depends(get_current_user),
+):
+    """The refresh loop's cheap poll (ADR-0042 OQ1) — the server half cortex already calls.
+
+    THE JOIN IS A RENAME, and that is the whole reason this route exists rather than the
+    client calling engine-p's endpoint directly. Engine P answers `{state_ref, version}`;
+    cortex's `fetchPlanStateVersion()` reads `{state_version}`. Two correct halves that do
+    not meet, which is this week's recurring shape — the axis keys, the DashboardUI envelope,
+    and now this.
+
+    `state_ref` ECHOES BACK, and it is not decoration. The client's current signature takes no
+    argument, so it polls `baseline` — whose version NEVER BUMPS, because ops apply to
+    scenarios. A refresh loop polling baseline looks like it works and never fires. Echoing
+    the ref is what lets a caller notice it asked about the wrong plan. Without it the failure
+    is silent, and silent-wrong is the mode this repo keeps paying for.
+
+    A card evaluated against a scenario MUST pass that scenario's ref. The projected component
+    now carries `state_ref` for exactly this call.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            rr = await client.get(f"{_ENGINE_P_URL}/state/{state_ref}/version")
+    except Exception as exc:
+        # 502, never a 200 with version 0. An unreachable engine and a plan that has never
+        # moved are different facts, and one of them would stop the refresh loop forever
+        # while looking exactly like "nothing has changed".
+        raise HTTPException(status_code=502,
+                            detail={"error": "planning_engine_unreachable", "message": str(exc)})
+
+    if rr.status_code == 404:
+        # An unknown ref is a 404, not a 200 with 0 — see above. Same argument as the
+        # not_in_model refusal on the measure route one function up.
+        raise HTTPException(status_code=404, detail=rr.json().get("detail", state_ref))
+    if rr.status_code >= 400:
+        raise HTTPException(status_code=rr.status_code, detail=rr.json())
+
+    out = rr.json()
+    return {"state_ref": out.get("state_ref", state_ref), "state_version": out.get("version")}
+
+
 # ── ADR-0028 canvas persistence ──────────────────────────────────────────────
 class CanvasesBody(_BaseModel):
     """The user's full custom-canvas set (CustomCanvas[]), stored verbatim as

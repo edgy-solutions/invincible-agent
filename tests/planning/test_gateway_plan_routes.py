@@ -42,6 +42,11 @@ ENGINE_OK = {
 }
 
 
+#: Engine P's OWN shape for the version poll. Note the key: `version`, not `state_version`.
+#: The rename IS the join under test.
+ENGINE_VERSION = {"state_ref": "SC-DEMO", "version": 3}
+
+
 class _Resp:
     def __init__(self, status: int, body):
         self.status_code = status
@@ -68,6 +73,10 @@ def stub_engine(monkeypatch):
             sent["url"] = url
             sent["json"] = json
             return sent.get("_resp") or _Resp(200, ENGINE_OK)
+
+        async def get(self, url, **k):
+            sent["url"] = url
+            return sent.get("_get_resp") or _Resp(200, ENGINE_VERSION)
 
     monkeypatch.setattr(gateway.httpx, "AsyncClient", _Client)
     return sent
@@ -154,3 +163,64 @@ def test_an_unreachable_engine_is_502_and_says_so(client, stub_engine):
                     headers={"X-Frontend-Id": "cortex-ui-desktop"})
     assert r.status_code == 502
     assert "unreachable" in str(r.json()["detail"]).lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The refresh loop's poll — ADR-0042 OQ1's pull trigger
+#
+# Cortex wrote this client half before the server half existed, and said so:
+# "when the server half lands the change is here and nowhere else". It calls
+# GET /plan/state_version and reads `{state_version}`. Engine P answers
+# `{state_ref, version}`. TWO CORRECT HALVES THAT DO NOT MEET — the same shape as this
+# week's axis keys and the lost DashboardUI envelope, which is why it is tested at the
+# seam rather than on either side.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_the_poll_renames_engine_version_to_the_key_the_client_reads(client, stub_engine):
+    r = client.get("/plan/state_version?state_ref=SC-DEMO")
+    assert r.status_code == 200, "route missing — every assertion below would pass over nothing"
+    body = r.json()
+    assert body["state_version"] == 3, "the rename did not happen — the client reads undefined"
+    assert "version" not in body, "engine's key leaked through; the client does not read it"
+    assert stub_engine["url"].endswith("/state/SC-DEMO/version")
+
+
+def test_the_poll_ECHOES_the_ref_it_answered_for(client, stub_engine):
+    """The client's signature takes no argument, so it polls `baseline` — whose version NEVER
+    bumps, because ops apply to scenarios. A loop polling baseline looks like it works and
+    never fires. The echo is what lets a caller notice it asked about the wrong plan."""
+    r = client.get("/plan/state_version")
+    assert r.json()["state_ref"] == "SC-DEMO", "the answer does not say which plan it is about"
+    assert stub_engine["url"].endswith("/state/baseline/version"), "default ref is not baseline"
+
+
+def test_a_baseline_version_of_ZERO_survives_the_hop(client, stub_engine):
+    """0 is a real version, not a missing one. Any truthiness test between here and the card
+    turns 'the plan has never moved' into 'this card has no version', and the second reads as
+    a broken feature."""
+    stub_engine["_get_resp"] = _Resp(200, {"state_ref": "baseline", "version": 0})
+    r = client.get("/plan/state_version")
+    assert r.json()["state_version"] == 0
+    assert r.json()["state_version"] is not None
+
+
+def test_an_unknown_ref_is_a_404_not_a_200_with_zero(client, stub_engine):
+    """Same argument as the measure route's not_in_model refusal one function up: a plan that
+    does not exist and a plan that has never moved are different facts, and collapsing them
+    stops the refresh loop forever while looking like 'nothing has changed'."""
+    stub_engine["_get_resp"] = _Resp(404, {"detail": "unknown scenario 'SC-GHOST'"})
+    r = client.get("/plan/state_version?state_ref=SC-GHOST")
+    assert r.status_code == 404
+
+
+def test_an_unreachable_engine_is_a_502_not_a_stale_zero(client, stub_engine):
+    class _Boom:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, *a, **k): raise RuntimeError("connection refused")
+    import src.iagent.gateway as gw
+    gw.httpx.AsyncClient = _Boom
+    r = client.get("/plan/state_version")
+    assert r.status_code == 502
+    assert r.json()["detail"]["error"] == "planning_engine_unreachable"

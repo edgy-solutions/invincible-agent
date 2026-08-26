@@ -228,3 +228,54 @@ def test_rows_are_an_ARRAY_not_a_json_string():
             f"{arch} sent {key} as {type(got[key]).__name__}; the contract declares "
             f"encoding: array — a JSON string reads as NO ROWS to the component"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The freshness pair — carried for EVERY archetype, enumerated not remembered
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _projected_archetypes(ns):
+    """The population, read from the projector's own table."""
+    return sorted(ns["_PLANNING_ARCHETYPES"])
+
+
+def test_every_archetype_carries_the_freshness_pair():
+    """`SemanticInterpreter.tsx` reads `comp.state_version` and hands it to six components.
+    It was `undefined` for every planning card: the producer emits it on the envelope and the
+    projection never carried it across — the SAME seam that swallowed the axis keys today.
+
+    Enumerated from `_PLANNING_ARCHETYPES` rather than listed here, because a remembered list
+    is what let SHORTFALL_GRID ship broken this morning while its seal passed.
+    """
+    ns = _fns()
+    archetypes = _projected_archetypes(ns)
+    assert len(archetypes) >= 5, f"parsed only {archetypes} — the table's shape moved"
+    for arch in archetypes:
+        key = ns["_PLANNING_ARCHETYPES"][arch][0]
+        env = _envelope([{"a": 1}], state_ref="SC-DEMO", state_version=3)
+        got = ns["_project_planning_archetype"](arch, env, "PORTFOLIO_LEAD", None)
+        assert got is not None and got[key] == [{"a": 1}]
+        assert got.get("state_ref") == "SC-DEMO", f"{arch} dropped state_ref"
+        assert got.get("state_version") == 3, f"{arch} dropped state_version"
+
+
+def test_a_state_version_of_ZERO_is_carried_not_dropped():
+    """THE ONE-CHARACTER BUG THIS PINS. Baseline's version is legitimately 0. A truthiness
+    test (`if val:`) drops it, so every baseline card reports no version while scenario cards
+    work — which reads as 'the feature is broken for some cards' rather than as a falsy-zero
+    slip. Absent and zero are different facts here as everywhere else in this model."""
+    ns = _fns()
+    env = _envelope([{"a": 1}], state_ref="baseline", state_version=0)
+    got = ns["_project_planning_archetype"]("INTERVAL_TIMELINE", env, "X", None)
+    assert "state_version" in got, "a zero version was dropped as falsy"
+    assert got["state_version"] == 0
+
+
+def test_a_producer_that_sends_no_version_makes_no_claim():
+    """Absent-means-silent, the same contract `value_unit` follows. A card whose producer
+    never stamped a version must not be given one here — a synthesised version would say the
+    plan is at a state this projection cannot know."""
+    ns = _fns()
+    got = ns["_project_planning_archetype"]("INTERVAL_TIMELINE", _envelope([{"a": 1}]), "X", None)
+    assert "state_version" not in got
+    assert "state_ref" not in got
