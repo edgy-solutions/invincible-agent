@@ -169,6 +169,23 @@ def plan_cost_curve(
     return rows
 
 
+def _shortfall_state(required: float, committed: float, secured: float) -> str:
+    """SHORTFALL_GRID's verdict, stated by the producer because the renderer cannot infer it.
+
+    THE MIDDLE STATE IS THE WHOLE REASON THIS IS A FUNCTION. `pledged-not-firm` is INVISIBLE
+    to any comparison of required against committed — the money is promised, the shortfall is
+    zero, and the risk is real because none of it is firm yet. A renderer looking at
+    `required` and `committed` sees a funded row and colours it green.
+
+    That is also why the archetype exists at all: THRESHOLD_GRID asks "is this over a line"
+    and MATRIX_GRID asks "how far from the goal", and neither can hold a third quantity.
+    """
+    if required - committed > 0:
+        return "short"
+    # Covered on paper. Whether it is covered in FACT depends on the firm subset.
+    return "met" if secured >= required else "pledged-not-firm"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. plan_funding_gap  ->  mesh:FundingGapSet          (Q13, Q14, Q15)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,7 +236,24 @@ def plan_funding_gap(
                               if in_g(k.project_id) and k.status in SECURED_STATUSES)
                 if required == 0 and committed == 0:
                     continue  # deliberate-absent: a group with no activity is not a zero row
+                init = next(
+                    (x for x in state.initiatives if x.initiative_id == gid), None
+                )
                 rows.append({
+                    # STRUCTURAL AXIS KEYS. SHORTFALL_GRID is subject x period and knows
+                    # nothing of initiatives or orgs; without these it mounted and refused,
+                    # "cell is missing its subject". `subject_id` is the cell's POSITION,
+                    # `initiative_id` is what it is ABOUT, and the pivot means the subject is
+                    # a different KIND of thing per call — which is precisely why the
+                    # archetype cannot name it.
+                    "subject_id": gid,
+                    "subject_name": init.name if init else gid,
+                    # The contract's name for this number, floored at zero. `gap` is kept
+                    # beside it and is NOT the same field: gap goes negative when a group is
+                    # over-committed, and a shortfall never does.
+                    "shortfall": max(0.0, required - committed),
+                    "state": _shortfall_state(required, committed, secured),
+                    "value_unit": "USD",
                     "group_by": "initiative", "initiative_id": gid, "period": period,
                     "required": required, "committed": committed,
                     "secured": secured,
@@ -252,7 +286,16 @@ def plan_funding_gap(
 
         for oid in sorted(by_org):
             v = by_org[oid]
+            org = next((o for o in state.organizations if o.org_id == oid), None)
             rows.append({
+                # See the initiative branch. `(uncommitted)` is a REAL subject here, not a
+                # missing one — requirements nobody has claimed are the answer to "where is
+                # funding short", and dropping them would hide the largest gap in the grid.
+                "subject_id": oid,
+                "subject_name": org.name if org else oid,
+                "shortfall": max(0.0, v["required"] - v["committed"]),
+                "state": _shortfall_state(v["required"], v["committed"], v["secured"]),
+                "value_unit": "USD",
                 "group_by": "org", "org_id": oid, "period": period,
                 "required": v["required"], "committed": v["committed"],
                 "secured": v["secured"],
@@ -294,6 +337,24 @@ def plan_site_load(
                 continue
             load = sum(i.load_weight for i in hits)
             rows.append({
+                # THE STRUCTURAL AXIS KEYS, and they are not a duplicate of the domain ids
+                # below even though they carry the same values. THRESHOLD_GRID is
+                # subject × period BY CONSTRUCTION — it draws "these things, over these
+                # periods, against a line each one owns" and must never learn the word
+                # "site". `subject_id` is this cell's POSITION; `site_id` is what the cell
+                # is ABOUT. The precedent is `plan_schedule`, whose rows carry a structural
+                # `group_id` beside a domain `initiative_id` for exactly this reason.
+                #
+                # WITHOUT THESE the grid mounted and refused: "cell is missing its subject
+                # or period". The component was right — a payload speaking only domain
+                # names is, to a generic archetype, a payload with no axes.
+                "subject_id": site.site_id,
+                "subject_name": site.name,
+                "value": load,
+                # What the number MEANS. Rides the ROWS because this verb returns a bare
+                # list with nowhere else to put framing, and the projector lifts a
+                # passthrough field off the first row when the envelope lacks it.
+                "value_label": "concurrent change load",
                 "site_id": site.site_id,
                 "site_name": site.name,
                 "period": period,
@@ -494,7 +555,20 @@ def plan_maturity_grid(
         if not history:
             continue
         latest = history[-1]
+        cap = state.capability(cap_id)
+        site = state.site(site_id)
         rows.append({
+            # STRUCTURAL AXIS KEYS — see the same note in `plan_site_load`. MATRIX_GRID is
+            # rows × columns of a level against a target and knows nothing of capabilities
+            # or sites; without these it mounted and refused, "cell is missing its row or
+            # column". Which axis is which is a CHOICE stated here rather than left to the
+            # renderer: capability down the side, site across the top, matching the way the
+            # question is asked ("capability maturity by site").
+            "row_id": cap_id,
+            "row_name": cap.name if cap else cap_id,
+            "column_id": site_id,
+            "column_name": site.name if site else site_id,
+            "level_label": "maturity level",
             "capability_id": cap_id,
             "site_id": site_id,
             "level": latest.level,
@@ -531,43 +605,98 @@ def plan_capability_path(state: PlanState, *, capability_id: str) -> dict[str, A
     as a verdict and repeated in a room as one. `contributions_outstanding` says only what is
     computed. A per-plateau maturity requirement is a MODEL EXTENSION and belongs in the
     miss-log as a Phase-7 candidate, not in a rename here.
+
+    ── THE SHAPE IS INTERVAL_TIMELINE'S, decided 2026-08-25 ─────────────────────────────────
+    Phase C first ruled this output "needs its own component — milestone markers", then
+    reversed on the instrument that SPLIT the three grids: those were structurally
+    interchangeable and semantically disjoint (breach / distance / deficit — one colour ramp
+    cannot serve three readings). This is the inverse. Structurally it differs from a schedule
+    — two nesting levels, not three — but semantically it is IDENTICAL: position means time,
+    and the reader asks "does this land before the date?" A marker adds a reference mark to
+    that reading; it does not change what the encoding MEANS.
+
+    So this emits `rows` in the timeline's row shape and `plateaus` as `milestones`, and binds
+    to the existing archetype. The confirming evidence is that `PlateauTimeline` needs the same
+    marker field: a property with two consumers is a family property, not a special case — and
+    had this been built as a second timeline archetype, that one would have made it three.
     """
     cap = state.capability(capability_id)
     if cap is None:
         raise NotInModel(f"unknown capability {capability_id!r}")
 
     contribs = [c for c in state.contributions if c.capability_id == capability_id]
-    projects = []
+    rows: list[dict[str, Any]] = []
     for c in contribs:
         proj = state.project(c.project_id)
         if proj is None:
             continue
         init = state.initiative_of_project(c.project_id)
-        projects.append({
+        ph = state.phase(proj.phase_id)
+        rows.append({
+            # THE GROUP IS THE CAPABILITY ITSELF, and this deliberately does NOT call
+            # `_pivot`. That helper fans one project out across EVERY capability it
+            # contributes to, which is right for a schedule and wrong here: this verb was
+            # asked about ONE capability, and rows for its siblings would answer a question
+            # nobody asked while looking like part of the path.
+            "group_kind": "capability",
+            "group_id": capability_id,
+            "group_name": cap.name,
+            "group_weight": c.weight,
+            "initiative_id": init.initiative_id if init else None,
+            "initiative_name": init.name if init else None,
+            # CARRIED EVEN THOUGH THIS VERB HAS NO USE FOR THEM. The row shape is the
+            # archetype's, not this verb's, and a producer that emits a SUBSET renders
+            # correctly right up until a renderer reads a field the other producer always
+            # supplied. Identical keys is a property a test can assert; "close enough" is not.
+            "initiative_status": init.status if init else None,
+            "phase_id": proj.phase_id,
+            "phase_name": ph.name if ph else None,
+            "phase_sequence": ph.sequence_order if ph else None,
+            "phase_start": ph.planned.start if ph else None,
+            "phase_end": ph.planned.end if ph else None,
             "project_id": proj.project_id,
             "project_name": proj.name,
-            "initiative_id": init.initiative_id if init else None,
-            "weight": c.weight,
             "planned_start": proj.planned.start,
             "planned_end": proj.planned.end,
+            "actual_start": proj.actual.start if proj.actual else None,
+            "actual_end": proj.actual.end if proj.actual else None,
+            # NULL, AND NOT BECAUSE NOTHING IS WRONG HERE. Outstanding-ness is a property of
+            # a (capability, plateau) PAIR, never of a project: the comparison is
+            # `last contribution end > target date`, and that end belongs to the SET. Painting
+            # it onto bars would attribute a shared condition to whichever project happens to
+            # finish last, which is a different and unearned claim.
+            "risk_flag": None,
         })
-    projects.sort(key=lambda r: (r["planned_end"], r["project_id"]))
-    last_end = projects[-1]["planned_end"] if projects else None
+    rows.sort(key=lambda r: (r["planned_end"], r["project_id"]))
+    last_end = rows[-1]["planned_end"] if rows else None
 
-    plateaus: list[dict[str, Any]] = []
+    milestones: list[dict[str, Any]] = []
     for proc in state.processes:
         if proc.process_id not in cap.enables_process_ids:
             continue
         for pl in proc.plateaus:
             outstanding = last_end is not None and last_end > pl.target_date
-            plateaus.append({
+            milestones.append({
+                # The three keys INTERVAL_TIMELINE declares for a marker...
+                "milestone_id": pl.plateau_id,
+                "label": pl.name,
+                "date": pl.target_date,
+                # ...plus a GENERIC STYLING KEY on the `risk_flag` pattern: the value is
+                # domain vocabulary riding the payload, and the renderer styles whatever
+                # string arrives while knowing none of them.
+                #
+                # DELIBERATELY NOT THE CONTRACT'S `overdue` BOOLEAN, which I wrote a day
+                # before reading this verb. "Overdue" is the same overclaim this function
+                # already refused when it declined to call the field `missed` — it asserts
+                # the target WAS MISSED, and with no per-plateau maturity requirement in the
+                # model, nothing here can know that. See the docstring; the argument did not
+                # change just because the word did.
+                "flag": "contributions-outstanding" if outstanding else None,
+                # The domain facts, unchanged and still named for what they are. Kept
+                # ALONGSIDE the generic key rather than replaced by it: `flag` is what a
+                # renderer styles, these are what a reader checks.
                 "process_id": proc.process_id,
                 "process_name": proc.name,
-                "plateau_id": pl.plateau_id,
-                "plateau_name": pl.name,
-                "target_date": pl.target_date,
-                # NOT `missed` — see the docstring. This says work is still landing after
-                # the target date, which is all the model can support.
                 "contributions_outstanding": outstanding,
                 "outstanding_days": _days_between(pl.target_date, last_end) if outstanding else None,
             })
@@ -575,9 +704,14 @@ def plan_capability_path(state: PlanState, *, capability_id: str) -> dict[str, A
     return {
         "capability_id": capability_id,
         "capability_name": cap.name,
-        "projects": projects,
+        # THE FRAMING INTERVAL_TIMELINE PASSES THROUGH. Stated by the verb because the
+        # contract says `group_kind` is stated and never inferred — a renderer guessing
+        # "capability" from the shape of an id is exactly how a pivot renders as the wrong one.
+        "group_kind": "capability",
+        "scope_label": f"Path to {cap.name}",
+        "rows": rows,
+        "milestones": milestones,
         "last_contribution_end": last_end,
-        "plateaus": plateaus,
     }
 
 

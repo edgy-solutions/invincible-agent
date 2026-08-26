@@ -463,7 +463,12 @@ except ImportError:
 # OpenRouter. Projection deletes both.
 #: output_uri -> (archetype, payload key, extra passthrough fields)
 _PLANNING_ARCHETYPES: Dict[str, tuple] = {
-    "INTERVAL_TIMELINE": ("rows", ("group_kind", "scope_label")),
+    # `milestones` joined the passthrough on 2026-08-25, when mesh:ContributionSequence
+    # bound to this archetype. WITHOUT IT the projector silently drops the markers and the
+    # capability path renders as a plain schedule — the bars are all correct and the ANSWER
+    # ("does this land before the plateau date?") is simply absent, which is the hardest
+    # shape of failure to notice because nothing looks broken.
+    "INTERVAL_TIMELINE": ("rows", ("group_kind", "scope_label", "milestones")),
     "PERIOD_SERIES": ("rows", ("scope_label", "value_unit")),
     "THRESHOLD_GRID": ("rows", ("value_label", "scope_label")),
     "MATRIX_GRID": ("rows", ("level_label", "scope_label", "as_of")),

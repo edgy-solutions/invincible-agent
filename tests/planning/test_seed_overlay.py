@@ -87,7 +87,7 @@ def test_every_seeded_tension_survives_an_overlay(tmp_path):
     assert any(r["gap"] > 0 for r in measures.plan_funding_gap(s, group_by="org"))
     # (e) outstanding contributions past a plateau
     path = measures.plan_capability_path(s, capability_id="C4")
-    assert any(m["contributions_outstanding"] for m in path["plateaus"])
+    assert any(m["contributions_outstanding"] for m in path["milestones"])
     # (f) a capability nobody covers
     assert measures.plan_coverage_gap(s)["uncovered_capabilities"]
 

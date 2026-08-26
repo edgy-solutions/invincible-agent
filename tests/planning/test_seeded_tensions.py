@@ -186,18 +186,18 @@ def test_tension_e_c4_has_work_outstanding_past_its_process_plateaus(state):
     is true of both.
     """
     path = measures.plan_capability_path(state, capability_id="C4")
-    assert [r["project_id"] for r in path["projects"]] == ["P8", "P10"]
+    assert [r["project_id"] for r in path["rows"]] == ["P8", "P10"]
     assert path["last_contribution_end"] == "2027-06-30"
 
-    outstanding = [m for m in path["plateaus"] if m["contributions_outstanding"]]
-    assert [m["plateau_id"] for m in outstanding] == ["BP2-T1", "BP2-T2"]
+    outstanding = [m for m in path["milestones"] if m["contributions_outstanding"]]
+    assert [m["milestone_id"] for m in outstanding] == ["BP2-T1", "BP2-T2"]
 
-    t2 = next(m for m in outstanding if m["plateau_id"] == "BP2-T2")
-    assert t2["target_date"] == "2026-12-31"
+    t2 = next(m for m in outstanding if m["milestone_id"] == "BP2-T2")
+    assert t2["date"] == "2026-12-31"
     assert t2["outstanding_days"] == 181
 
     # BP2-T3 (2027-09-30) is AFTER the last contribution, so nothing is outstanding for it.
-    t3 = next(m for m in path["plateaus"] if m["plateau_id"] == "BP2-T3")
+    t3 = next(m for m in path["milestones"] if m["milestone_id"] == "BP2-T3")
     assert t3["contributions_outstanding"] is False
     assert t3["outstanding_days"] is None
 
@@ -206,7 +206,7 @@ def test_a_capability_whose_work_lands_early_reports_nothing_outstanding(state):
     """C3's contributors all finish by 2026-09-30, ahead of BP2-T2. Negative control — a
     measure that only ever finds problems is indistinguishable from one broken toward alarm."""
     path = measures.plan_capability_path(state, capability_id="C3")
-    t2 = next(m for m in path["plateaus"] if m["plateau_id"] == "BP2-T2")
+    t2 = next(m for m in path["milestones"] if m["milestone_id"] == "BP2-T2")
     assert t2["contributions_outstanding"] is False
 
 
