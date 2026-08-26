@@ -136,6 +136,42 @@ data read 404s while everything upstream looks healthy.
 Since B1 says you redeploy the day before, this check belongs immediately after that deploy:
 diff the broker's live env against what the chart renders.
 
+### B4a. ⛔ DO NOT ROLL `iagent-engine-p` BETWEEN REHEARSAL AND THE ROOM
+
+**Plan state is IN-MEMORY this cycle.** `PlanStore` says so in its own docstring — it becomes
+Postgres in Phase 4. The consequence is operational, not architectural:
+
+> **A restart of `iagent-engine-p` destroys every scenario, and silently.** Baseline returns to
+> the seed, which looks perfectly healthy — nothing errors, no pod is unready, and the cards all
+> render. What is gone is any drag anyone has already made.
+
+**What this costs you if it happens mid-demo:** the drag beat is performed against a scenario
+forked on the first drag. Roll the pod and that scenario is gone; the next card refresh reads
+baseline again, Site B falls back to 1.8, and the room watches a consequence *un-happen* with no
+explanation available.
+
+**The rule:** once the rehearsal drag is done, `iagent-engine-p` is frozen. That includes
+"harmless" restarts — a `kubectl rollout restart` to pick up an unrelated config change, a node
+drain, an eviction under memory pressure.
+
+**If it does restart** — deliberately or otherwise — say so and re-do the drag rather than
+explaining a number that moved on its own. Re-forking is one drag; recovering the room's trust
+in the numbers is not.
+
+**Check before the room** (should be `0` scenarios and baseline at version `0` before the
+rehearsal, and whatever the rehearsal left after it):
+
+```bash
+kubectl --context edge exec -n sandbox deploy/iagent-engine-p -- \
+  python -c "import urllib.request,json; \
+  print(json.loads(urllib.request.urlopen('http://localhost:8095/scenario').read()))"
+```
+
+**What retires this:** ADR-0042 §3's Phase-4 move of `PlanStore` to Postgres. Until then the
+freeze is the mitigation.
+
+---
+
 ### B5. Engine O image digest — the Tier-3 and grounding prerequisite
 
 Sandbox Engine O has run `ontology-service:latest`, and a `:latest` tag makes the version

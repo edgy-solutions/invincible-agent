@@ -38,6 +38,37 @@ disruption happens.
 
 ---
 
+## 2b. The drag lights up TWO cells, not one — the disruption straddles the quarter
+
+**Expect a second amber cell in FY27-Q1. It is correct.** After the scripted drag Site B reads:
+
+| period | value | threshold | |
+|---|---|---|---|
+| FY26-Q4 | **2.7** | 2.0 | **OVER** — the beat |
+| FY27-Q1 | 0.9 | 2.0 | under, but no longer empty |
+
+**Why.** P12's Site B impact runs **Oct 1 – Dec 31** at baseline. The drag moves it seven days
+earlier, to **Sep 24 – Dec 24** — and that window now overlaps FY26-Q4 *and* FY27-Q1.
+`plan_site_load` sums every impact whose window **overlaps** the period, so both quarters see
+the 0.9. Nothing is double-counted: it is one 0.9-weighted disruption that genuinely spans a
+quarter boundary, reported in both quarters it touches.
+
+**RULED CORRECT, not snapped.** The derivation could have been made to shift a window into the
+nearest single period, and that was rejected: a fiscal boundary is a reporting convention, and a
+disruption does not pause for it. Snapping would make the grid tidier by making it **false** —
+the same "measured-at-zero versus never-measured" collapse this model refuses everywhere else.
+The seed's own `SCRIPTED_DRAG` constant moves the impact wholly inside Q4 (`07-15..09-30`);
+that is a hand-authored op used to pin the physics in tests, **not** what a drag derives.
+
+**If asked "why is the next quarter amber too?"** — because the disruption crosses the
+year-end. It starts in Q4 and finishes in Q1, and the load is reported wherever the work
+actually lands rather than being assigned to whichever quarter holds more of it.
+
+**If asked "is that double counting?"** — no. It is one impact, present in two periods. The
+contributors list on each cell names the same project once.
+
+---
+
 ## 3. Moving a project does NOT move its money
 
 **Funding requirements are period-keyed** and never re-derived from a project's interval. So a

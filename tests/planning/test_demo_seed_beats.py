@@ -211,3 +211,99 @@ def test_a_PROJECT_move_alone_does_NOT_move_site_load(state):
     s2_after = {(r["period"], r["load"]) for r in measures.plan_site_load(moved)
                 if r["site_id"] == "S2"}
     assert s2_before == s2_after, "MoveProject moved site load — the windows are no longer independent"
+
+
+# ── The DERIVED drag, which is not the same op as SCRIPTED_DRAG ───────────────────────────
+#
+# `SCRIPTED_DRAG` above is a hand-authored `MoveSiteImpact` landing wholly inside FY26-Q4. What
+# a real drag produces is different: `derive_reschedule` shifts the impact by the SAME DELTA as
+# the project, offset-preserved, and the resulting window straddles the quarter boundary.
+#
+# These pin the derived behaviour, because the derived one is what the room will see and the
+# scripted one is what the tests above measure. Two facts that looked identical until the drag
+# was actually run against a live engine.
+
+# The scripted PROJECT move: seven days earlier, stopping exactly at D7's boundary. P12 may
+# start no earlier than 2026-03-25, when P11 finishes.
+SCRIPTED_PROJECT_PULL = ("P12", Interval("2026-03-25", "2026-09-23"))
+
+
+def _after_derived_drag(state):
+    ops = measures.derive_reschedule(
+        state, project_id=SCRIPTED_PROJECT_PULL[0], new_planned=SCRIPTED_PROJECT_PULL[1],
+    )
+    return apply_ops(state, ops), ops
+
+
+def test_the_derived_drag_emits_BOTH_ops(state):
+    """A MoveProject alone moves the bar and not the load. If the derivation ever stops
+    co-emitting the impact move, the beat becomes a schedule change with no consequence — and
+    every assertion below would still pass on the project move alone."""
+    _, ops = _after_derived_drag(state)
+    assert [type(o).__name__ for o in ops] == ["MoveProject", "MoveSiteImpact"]
+
+
+def test_the_derived_drag_crosses_S2_and_stays_CLEAN(state):
+    """THE BEAT, as a drag actually performs it — not via the hand-authored op.
+
+    Clean matters as much as the crossing: at this delta the flag is `moved`, not
+    `constraint-violated`. A breach here would put two red things on screen at once and the
+    room would not know which one it caused.
+    """
+    after, _ = _after_derived_drag(state)
+    s2 = [r for r in measures.plan_site_load(after)
+          if r["site_id"] == "S2" and r.get("over_threshold")]
+    assert [r["period"] for r in s2] == ["FY26-Q4"]
+    assert s2[0]["load"] == pytest.approx(2.7)
+    assert not measures.plan_dependency_violations(after), (
+        "the scripted pull breaches a dependency — the beat would show two red things at once"
+    )
+
+
+def test_the_derived_impact_STRADDLES_the_quarter_and_that_is_CORRECT(state):
+    """A SECOND AMBER CELL APPEARS, and it is not a defect.
+
+    P12's Site B impact runs Oct 1 - Dec 31 at baseline. Offset-preserved, the drag moves it to
+    Sep 24 - Dec 24 — a window that overlaps FY26-Q4 AND FY27-Q1. `plan_site_load` sums impacts
+    whose window OVERLAPS a period, so both quarters carry the 0.9.
+
+    RULED CORRECT rather than snapped to one period. A fiscal boundary is a reporting
+    convention; a disruption does not pause for it. Snapping would make the grid tidier by
+    making it false — the same collapse this model refuses everywhere else. Pinned here so a
+    later "tidy-up" has to argue with a test instead of with a comment, and so the presenter is
+    never surprised by a cell the runbook did not predict (docs/demo-seed-physics.md §2b).
+    """
+    after, _ = _after_derived_drag(state)
+    s2 = {r["period"]: r for r in measures.plan_site_load(after) if r["site_id"] == "S2"}
+
+    assert "FY27-Q1" in s2, "the derived impact no longer reaches FY27-Q1 — snapped?"
+    assert s2["FY27-Q1"]["load"] == pytest.approx(0.9)
+    assert not s2["FY27-Q1"]["over_threshold"], "the lingering quarter must not itself breach"
+    assert s2["FY26-Q4"]["load"] == pytest.approx(2.7)
+
+
+def test_the_straddle_is_NOT_double_counting(state):
+    """One impact present in two periods, not one impact counted twice. The contributors list
+    names P12 ONCE per cell — the check that tells a spanning window apart from a duplicated
+    row, which would look identical in the totals."""
+    after, _ = _after_derived_drag(state)
+    for period in ("FY26-Q4", "FY27-Q1"):
+        row = next(r for r in measures.plan_site_load(after)
+                   if r["site_id"] == "S2" and r["period"] == period)
+        assert row["contributors"].count("P12") == 1, (
+            f"{period} counts P12 {row['contributors'].count('P12')} times"
+        )
+
+
+def test_the_scripted_op_and_the_derived_op_are_NOT_the_same_move(state):
+    """The distinction this block exists for, asserted rather than left as a comment.
+
+    `SCRIPTED_DRAG` lands wholly inside Q4; the derived one straddles. Both cross. If a future
+    change makes them identical the tests above become redundant — and if it makes the derived
+    one stop crossing, this is where the difference is visible.
+    """
+    _, ops = _after_derived_drag(state)
+    derived_impact = next(o for o in ops if type(o).__name__ == "MoveSiteImpact")
+    assert derived_impact.new_window.end > SCRIPTED_DRAG.new_window.end, (
+        "the derived window no longer extends past the scripted one — they have converged"
+    )
