@@ -897,6 +897,22 @@ services:
           read-model, entitlement-scoped where the verb runs; the BFF adds no scoping of its
           own and must not, or there would be two places deciding what a caller may see."
       - method: GET
+        path: /plan/state_version
+        identity: get_current_user
+        gate: "auth + engine-side entitlement"
+        exposes: read-model
+        consumers: [cortex-ui]
+        class: releasable_by_design
+        justification: "the refresh loop's pull trigger (ADR-0042 OQ1). Returns ONE INTEGER and
+          the ref it answered for — a monotonic counter that says whether plan state moved, never
+          what moved or what it now says. Reading it reveals only that SOME op was applied to a
+          named scenario, which the caller already had to know the name of to ask. Thin
+          pass-through to Engine P, which owns the entitlement decision; the BFF adds no scoping
+          of its own for the same reason /plan/measure does not — two places deciding what a
+          caller may see is how they diverge. An unknown ref is a 404 rather than a 200 with 0,
+          so the endpoint cannot be used to probe which scenarios exist without already being
+          able to read them."
+      - method: GET
         path: /me/canvases
         identity: get_current_user
         gate: "auth + self-scoped"
