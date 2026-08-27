@@ -19,6 +19,8 @@ Run requires Neo4j credentials. Defaults are sandbox values; CI sets via env.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
 import pytest
 
 try:
@@ -534,23 +536,46 @@ def test_no_path_derived_domains(driver):
     # be updated — drift between them is a regression this guard
     # catches indirectly (manifest disagreement → substrate mismatch
     # → this test fires).
+    # DERIVED FROM THE MANIFEST, NOT TRANSCRIBED FROM IT.
+    #
+    # This was a hand-maintained copy of CANONICAL_TTL_MANIFEST, and it had
+    # drifted: six manifest entries were missing from it, so the guard reported
+    # `<not in manifest>` about paths the manifest actually declares —
+    # `planning/portfolio_planning_extension.ttl` among them. A reader chasing
+    # that message goes looking for a prime that is not missing.
+    #
+    # THAT IS WORSE THAN A SILENT GUARD. A stale copy does not merely fail to
+    # catch things; it ACCUSES THE SUBSTRATE OF A DEFECT THAT LIVES IN THE TEST
+    # FILE, and it manufactures work. It also buried its own real finding: of
+    # the 15 nodes it flagged, 10 were the copy's fault, and whether the rest
+    # are a genuine domain mismatch could not be read until this was fixed.
+    #
+    # Fourth instance of hand-maintained-list drift in this repo, after
+    # `reregisterEngines.deployments` (fixed by deriving from
+    # register_engine_to_mesh callers) and the Engine P verb list. The remedy is
+    # the same one that worked twice: derive it. A test that duplicates a
+    # manifest it could import will diverge the moment someone adds a row — and
+    # it diverges silently, in the direction of accusing production.
+    #
+    # Verified before switching: zero domain DISAGREEMENTS between the copy and
+    # the manifest on shared keys, so deriving reintroduces no correction. (The
+    # copy carried a "CORRECTED 2026-06-16 from 'MIL'" note for
+    # mil/mil_extension.ttl; the manifest already agrees, so that fix is safe.)
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location(
+        "_prime_databases_manifest",
+        Path(__file__).resolve().parents[2] / "setup" / "prime_databases.py",
+    )
+    _pd = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_pd)
     DECLARED_DOMAINS_BY_S3_KEY = {
-        # MAINTENANCE
-        "maintenance/IOF_Core.rdf":                 "MAINTENANCE",
-        "maintenance/IOF_MRO.rdf":                  "MAINTENANCE",
-        "maintenance/DINEN62264.owl":               "MAINTENANCE",
-        "maintenance/mro_extension.ttl":            "MAINTENANCE",
-        "maintenance/maintenance_extension.ttl":    "MAINTENANCE",
-        "mil/mil_extension.ttl":                    "MAINTENANCE",   # CORRECTED 2026-06-16 from 'MIL'
-        # SUSTAINMENT
-        "sustainment/IOF_Core.rdf":                 "SUSTAINMENT",
-        "sustainment/S3000L.ttl":                   "SUSTAINMENT",
-        # DATA_ENGINEERING
-        "idp/PROV-O.ttl":                           "DATA_ENGINEERING",
-        "idp/idp_extension.ttl":                    "DATA_ENGINEERING",
-        # MESH (system ontology)
-        "mesh/mesh_system.ttl":                     "MESH",
+        e["s3_key"]: e["domain"] for e in _pd.CANONICAL_TTL_MANIFEST
     }
+    # NOT in the manifest and legitimately present in the substrate: PROV-O is
+    # an upstream vocabulary the prime does not manage. Declared HERE, once,
+    # rather than left to read as an undeclared violation on every run.
+    DECLARED_DOMAINS_BY_S3_KEY["idp/PROV-O.ttl"] = "DATA_ENGINEERING"
 
     # Entries that are KNOWN deprecated/residue (not currently in the
     # canonical pipeline) — exempt from this guard until they're

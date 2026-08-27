@@ -517,9 +517,48 @@ def test_pool_hold_kind_classes_have_no_verbs_yet(driver, ingest_results):
     HAVE INSTANCES now, but must NOT be in the resolver candidate pool
     (no verbs typed against them). B4 adds verbs on demand; until then
     the kinds stay pool-held.
-
     Tests that no v0.2 saga edge points at any mil:*DataModule
     content-kind class as its input_uri.
+
+    ── RULED 2026-08-27: B4 HAS NOT SHIPPED. THE VERBS LEAKED. ──────────────
+
+    This guard had never run in CI — its whole file skipped on "Neo4j
+    unreachable at localhost:7687" until the port-forward set landed. When it
+    finally ran it failed, and the first reading was that it had expired: a
+    guard whose name ends in `_yet` asserts a temporal precondition, which is
+    the "asserts what happens to hold today" trap this repo has been bitten by
+    before.
+
+    IT HAD NOT EXPIRED. The leaked edges are:
+
+        DescriptiveDataModule       mesh:retrieveKnowledge    -> engine-w
+        FaultIsolationDataModule    mesh:retrieveKnowledge    -> engine-w
+        IllustratedPartsDataModule  mesh:retrieveKnowledge    -> engine-w
+        ProcedureDataModule         mesh:queryKnowledgeGraph  -> engine-e
+
+    Those are the GENERALIST retrieval verbs, typed across four content kinds
+    at once. That is bulk-declare — the exact shape B0 §3 forbids — not "a real
+    user question demanded this verb for this kind". B4 ships verbs ONE AT A
+    TIME against a demonstrated question; nothing here was demanded.
+
+    So the fix is upstream, in whatever registration path types engine-w's and
+    engine-e's verbs against content kinds, not in this assertion.
+
+    ── ITS OBSOLESCENCE CONDITION, DECLARED SO ITS NEXT FAILURE IS A SIGNAL ──
+
+    This guard SHOULD go red when B4 genuinely ships, and at that moment it
+    must be edited rather than deleted. It becomes obsolete when, and only
+    when, ALL of the following hold:
+
+      1. A specific user question is recorded that requires a verb on a
+         specific mil:*DataModule kind (B0 §3's "on demand" test).
+      2. That kind is removed from `kind_iris` below, INDIVIDUALLY — never the
+         whole list, because the other three stay pool-held.
+      3. The verb typed against it is that question's verb, not a generalist
+         sweep.
+
+    Until then a failure here means the pool leaked again, and the list above
+    is what to compare against.
     """
     kind_iris = [DESCRIPTIVE, PROCEDURE, FAULT_ISO, IPD]
     with driver.session() as session:

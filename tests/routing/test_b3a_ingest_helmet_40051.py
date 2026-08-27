@@ -537,7 +537,23 @@ def test_helmet_demo_marker_absent_from_deploy_path_artifacts():
 
 def test_pool_hold_kind_classes_have_no_verbs_yet(driver, ingest_results):
     """Kind classes now have 40051 instances but must NOT be in the
-    resolver candidate pool (no verbs typed against them)."""
+    resolver candidate pool (no verbs typed against them).
+
+    RULED 2026-08-27 — same finding as the sibling guard in
+    test_b2_ingest_sandboxrtx.py, which carries the full write-up. Short form:
+    this had never run (its file skipped on "Neo4j unreachable" until the
+    port-forward set landed), it failed when it finally ran, and B4 has NOT
+    shipped — the generalist verbs leaked. engine-w's mesh:retrieveKnowledge is
+    typed against three content kinds and engine-e's mesh:queryKnowledgeGraph
+    against a fourth, which is bulk-declare rather than B0 §3's one-verb-per-
+    demonstrated-question. The fix is upstream in the registration path, not
+    here.
+
+    Obsolescence condition: red here means the pool leaked again. It becomes
+    obsolete only when a specific question demands a verb on a specific kind,
+    and then that kind leaves `kind_iris` INDIVIDUALLY — never the whole list,
+    because the rest stay pool-held. Note this file holds a fifth kind
+    (ROOT_DM) the sibling does not."""
     kind_iris = [DESCRIPTIVE, PROCEDURE, FAULT_ISO, IPD, ROOT_DM]
     with driver.session() as session:
         rec = session.run(
