@@ -63,9 +63,25 @@ _MIRRORED = [
 
 
 def _archetype_iris() -> list[str]:
+    """The OBJECT ends of cortex-ui's bindings, read from its source.
+
+    COMMENTS ARE STRIPPED FIRST, and that is not defensive tidying — it is the fix for a real
+    false positive. This regex matched `object_uri: "mesh:IntervalSchedule"` inside a COMMENT
+    that existed only to explain why that value was wrong. The bad binding had already been
+    corrected; the prose describing it kept the archetype list poisoned, and this test stayed
+    red pointing at a class nothing binds to any more.
+
+    That red test was then read as evidence that NINE ontology classes were misparented, and
+    very nearly earned a prime to reparent them — a substrate change, in response to a
+    sentence. An instrument that reads another repo's SOURCE must parse what executes, not
+    what is written down beside it.
+    """
     if _SIBLING.is_file():
         import re
-        found = re.findall(r'object_uri:\s*"(mesh:\w+)"', _SIBLING.read_text(encoding="utf-8"))
+        src = _SIBLING.read_text(encoding="utf-8")
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)   # block comments
+        src = re.sub(r"//[^\n]*", "", src)                 # line comments
+        found = re.findall(r'object_uri:\s*"(mesh:\w+)"', src)
         if found:
             return sorted(set(found))
     return sorted(set(_MIRRORED))
