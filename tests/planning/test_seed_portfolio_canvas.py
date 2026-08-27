@@ -174,7 +174,13 @@ def test_the_alias_returns_ONLY_artifact_ids():
     body = _alias_body()
     ret = body[body.rindex("return {"):]
     assert '"artifact_ids"' in ret
-    assert ret.count(":") == 1, f"the alias returns more than artifact_ids: {ret[:120]}"
+    # `seeded`/`total` ride along by RULING (2026-08-26): a partial seed must be
+    # visible to the caller, not only to the log. cortex reads `artifact_ids`
+    # and ignores the rest, so this costs the receiver nothing. Anything BEYOND
+    # those three would be a new field a future client could start depending on.
+    assert set(("artifact_ids", "seeded", "total")) >= {
+        k.strip().strip('"') for k in __import__("re").findall(r'"(\w+)":', ret)
+    }, f"the alias returns an unexpected field: {ret[:160]}"
 
 
 def test_the_alias_STRIPS_NULLS_because_the_receiver_cannot_place_one():
@@ -203,3 +209,33 @@ def test_an_unknown_canvas_type_is_REFUSED_not_seeded_anyway():
     compose five planning answers onto a board that never asked for them."""
     body = _alias_body()
     assert "canvas_type" in body and "400" in body
+
+
+def test_a_PARTIAL_seed_REFUSES_rather_than_composing_a_shifted_board():
+    """RULED 2026-08-26. Three options existed and two of them lie.
+
+    Compacting returns four ids: every card real, every card rendering, nothing
+    erroring, and the cost curve in the anchor slot — wrong in a way only a
+    human notices. Returning holes is honest and unrenderable, because the
+    receiver does `for (const id of ids) addItemAuto(...)` and a null becomes a
+    broken item.
+
+    Refusal keeps ABSENCE REPRESENTATIONALLY DISTINCT, which is the answer this
+    system gives everywhere else: the third state in _satisfies, the rowless
+    planning card that degrades rather than drawing a confident blank,
+    no_intent_match over a plausible guess. A shifted board is the
+    confidently-wrong answer in layout form.
+    """
+    body = _alias_body()
+    assert "REFUSING to compose" in body, "a partial seed does not refuse"
+    assert 'return {"artifact_ids": [], "seeded": seeded, "total": total}' in body, (
+        "the partial branch does not return an empty list with its counts"
+    )
+
+
+def test_the_partial_count_is_CARRIED_not_merely_logged():
+    """A log line is the only witness a future caller cannot consult. seeded and
+    total ride the response so the partial is a fact in the answer, not a fact
+    in a file someone has to know to grep."""
+    body = _alias_body()
+    assert '"seeded": seeded' in body and '"total": total' in body

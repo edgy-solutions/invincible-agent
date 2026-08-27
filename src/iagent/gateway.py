@@ -1511,15 +1511,48 @@ async def canvas_seed(
     )
     result = await seed_portfolio_canvas(inner, http_request, current_user)
 
-    ordered = [a for a in (result.get("artifact_ids") or []) if a]
-    if result.get("seeded") != result.get("total"):
+    seeded, total = result.get("seeded"), result.get("total")
+
+    # ── RULED: A PARTIAL SEED REFUSES. ──────────────────────────────────────
+    # Three options existed and two of them lie.
+    #
+    #   compact  — strip the holes and return four ids. Every card is real,
+    #              every card renders, nothing errors, and the cost curve sits
+    #              in the anchor slot. A board that is wrong in a way only a
+    #              human notices.
+    #   holes    — return [id, null, id, id, id]. The receiver does
+    #              `for (const id of ids) addItemAuto(...)`, so a null becomes a
+    #              broken item. Honest shape, unrenderable.
+    #   refuse   — return []. cortex already has a no-canvas path for an empty
+    #              array, and it leaves NO litter: an empty named board in the
+    #              rail would assert that a seeding ran and legitimately
+    #              produced nothing, which is a different claim from "the
+    #              seeding failed".
+    #
+    # Refusal is the only one that keeps ABSENCE REPRESENTATIONALLY DISTINCT,
+    # which is the answer this system gives everywhere else — the third state
+    # in _satisfies, the rowless planning card that degrades rather than drawing
+    # a confident blank, `no_intent_match` over a plausible guess. A shifted
+    # board is the confidently-wrong answer in layout form.
+    #
+    # `seeded`/`total` ride along so the partial is VISIBLE rather than merely
+    # logged. cortex reads only `artifact_ids` and ignores the rest, so this
+    # costs the receiver nothing and gives the next caller the fact the log
+    # would otherwise be the only witness to.
+    if seeded != total:
         logger.warning(
-            "canvas_seed: PARTIAL seed %s/%s — the returned list is compacted, so "
-            "cards after the failed slot shift up one. The board will look "
-            "plausible and be wrong.",
-            result.get("seeded"), result.get("total"),
+            "canvas_seed: PARTIAL seed %s/%s — REFUSING to compose. Compacting "
+            "would shift every card after the failed slot up one and produce a "
+            "board that looks plausible and is wrong.",
+            seeded, total,
         )
-    return {"artifact_ids": ordered}
+        return {"artifact_ids": [], "seeded": seeded, "total": total}
+
+    return {
+        "artifact_ids": [a for a in (result.get("artifact_ids") or []) if a],
+        "seeded": seeded,
+        "total": total,
+    }
 
 
 @app.get("/me/canvases")
