@@ -341,6 +341,41 @@ credential was exercised on the same two operations:
 The minted credential is demonstrably narrower than the identity it was minted from. That
 is the ADR's acceptance criterion, executed rather than asserted.
 
+### STS ceiling — measured 2026-08-26, and the result is INCONCLUSIVE
+
+`scripts/measure_adr0044_sts_ceiling.py`, same store, via port-forward.
+
+| concurrency | ok | rate/s | p50 ms | p95 ms | errors |
+|---:|---:|---:|---:|---:|---|
+| 1 | 20/20 | 27.1 | 30.1 | 90.3 | none |
+| 4 | 20/20 | 49.6 | 68.8 | 126.8 | none |
+| 8 | 40/40 | 52.8 | 137.3 | 182.6 | none |
+| 16 | 80/80 | 56.8 | 253.1 | 393.5 | none |
+| 32 | 160/160 | 49.0 | 572.6 | 925.5 | none |
+
+- **P1 held** — zero throttle codes at any concurrency; 100% success throughout.
+- **P2 held** — 30.1 ms p50 at concurrency 1, inside the 100 ms prediction.
+- **P4 held** — throughput peaked at concurrency 16 and *fell* at 32 while latency more
+  than doubled, with no errors. That is a saturating proxy, not a store refusing work.
+- **P3 did NOT hold as written.** The prediction was "exceeds a 33/sec target **by a wide
+  margin**." 1.7× is not a wide margin.
+
+**The number is a FLOOR, not a ceiling.** The `kubectl port-forward` is a single userspace
+TCP proxy and it is what saturated. What was measured is "MinIO does *at least* 57 mints/s
+through a bottleneck"; its actual capacity is unknown and higher. **Nothing should be
+designed against 57.**
+
+**A methodological catch worth keeping.** The script's automated verdict printed *"P3 held
+at this scale"* because its check was `rate < target` — cruder than the prediction it was
+checking, which said *wide margin*. A pass/fail coarser than the registered claim will
+report success for a result the claim does not cover. The registered wording governs, not
+the assertion that happened to be coded. Left as-is with this note rather than quietly
+tightened, since the discrepancy is the finding.
+
+**Open:** re-run in-cluster (a pod in `sandbox`, no forward) for a number worth designing
+against, and against `d4-sandbox` for the cluster users are actually on. Until then the
+credential-cache question is **unanswered**, not answered in the negative.
+
 ### Confirmed live: the FQDN defect
 
 `iagent-domain-broker`'s env carries `S3_ENDPOINT_URL=http://iagent-minio:9000` — a bare
