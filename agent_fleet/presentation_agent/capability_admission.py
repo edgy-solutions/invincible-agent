@@ -72,6 +72,15 @@ KNOWN_ARCHETYPES = frozenset({
     # advertising a component the interpreter cannot render. Admission is a DIFFERENT registry
     # with a different trigger: a declared contract must be a name the backend knows.
     "SHORTFALL_GRID",
+    # THE FIRST ARCHETYPE THAT IS ACTED ON RATHER THAN DRAWN, 2026-08-26. "make me a portfolio
+    # canvas" answers with slot-ordered artifact ids and `canvasSeedFromArtifact` arranges them;
+    # no component renders it. Added HERE FIRST, before the binding exists -- the ontology class
+    # is still to land and Contract D refuses a triple whose endpoints do not pre-exist, so the
+    # binding waits. Admission is a DIFFERENT registry with a different trigger: a declared
+    # contract must be a name the backend knows, bound or not. Same sequencing as DECISION_RECORD
+    # and SHORTFALL_GRID, and the reason it is prospective rather than reactive is that the four
+    # archetypes before them were all refused at this door for being remembered last.
+    "CANVAS_SEED",
 })
 
 # Field encodings a registered contract may declare. `json-string` is the one that

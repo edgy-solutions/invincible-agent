@@ -198,7 +198,7 @@ mesh:DispositionReview a owl:Class ;
 mesh:Archetype a owl:Class ;
   rdfs:subClassOf prov:Entity ;
   rdfs:label "Archetype" ;
-  rdfs:comment "Abstract parent of presentation archetypes — a RENDERING KIND a response can be presented as, never a payload shape itself. The object end of a mesh:rendersAs triple." .
+  rdfs:comment "Abstract parent of presentation archetypes — a TREATMENT a response receives, never a payload shape itself. The object end of a mesh:rendersAs triple. Most treatments are RENDERINGS and are drawn by a component. A treatment may instead be ACTED ON by a consumer: mesh:CanvasSeed carries slot-ordered artifact ids that a reader arranges onto a canvas, and nothing draws it. The clause that does NOT relax is `never a payload shape itself` — that is the whole distinction between the two ends of a rendersAs triple, and Contract D cannot see it because it checks that a class EXISTS and never what kind it is." .
 
 mesh:KnowledgeDocument a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
@@ -291,6 +291,11 @@ mesh:FootprintSet a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Footprint Set" ;
   rdfs:comment "Where a thing is used — the capabilities it enables and the work it participates in, with intervals." .
+
+mesh:CanvasSeedResult a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Canvas Seed Result" ;
+  rdfs:comment "The answer to a request for a whole BOARD rather than a number on it: the ids of the artifacts a seeding orchestration minted, IN SLOT ORDER. The order is the producer's declaration of which measure lands where, so it is load-bearing rather than incidental. A RESPONSE, not an archetype — this is what the verb PRODUCES; mesh:CanvasSeed is the treatment it receives. Filing it under mesh:Archetype was proposed and refused: Contract D would have accepted either, because it checks that a class exists and never what kind it is." .
 
 mesh:IntervalSchedule a owl:Class ;
   rdfs:subClassOf mesh:Response ;
@@ -395,6 +400,11 @@ mesh:ShortfallGrid a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Shortfall Grid" ;
   rdfs:comment "Subjects by periods, each cell carrying what is OWED, what is PLEDGED, and how much of that pledge is FIRM. Distinct from mesh:ThresholdGrid and mesh:MatrixGrid on the axis both of those already use to distinguish themselves — what the colour means. A threshold grid reads OVER a line as danger; a matrix grid reads distance from a goal as progress; this reads a DEFICIT as risk, and its bad direction is BELOW rather than above. THREE QUANTITIES, not two: a cell showing only owed-versus-pledged cannot tell a party that is short from one that has pledged enough but not firmly, and those send a reader to different conversations. A cell with nothing owed is ABSENT, never a zero-need cell. A LIVE VIEW." .
+
+mesh:CanvasSeed a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Canvas Seed" ;
+  rdfs:comment "THE FIRST TREATMENT THAT IS ACTED ON RATHER THAN DRAWN. A seed answer carries slot-ordered artifact ids and a consumer arranges them onto a canvas; no component renders it, and no card appears for the answer itself — the five cards it placed are the visible result. Its binding therefore declares a `consumer` where every other declares a `component`, and the dispatch seal checks whichever was declared. Inventing a placeholder component so the component-shaped check would pass would assert that a renderable thing exists when nothing draws it. NOT a live view: a seed answer is a record of an ACT — these artifacts, in this order, at that moment — so re-evaluating it would either mint a duplicate board or return the same ids, and neither is a refresh." .
 
 mesh:DecisionRecord a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
