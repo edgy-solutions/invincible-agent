@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **71 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 0 are unheadered. Closing that gap is the migration._
+_Coverage: **73 of 79 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 4 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -46,6 +46,10 @@ _Coverage: **71 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: unassigned
   → [docs/plans/board-migration.md](plans/board-migration.md)
 
+- **broker-advertises-unminted-credential** — HIGH — the mesh-publishing protocol path advertises the PRODUCER'S WRITING CREDENTIAL verbatim, bypassing the scoped-STS minting the broker's own fallback already performs. An authorized reader of one asset receives a long-lived, write-capable key to the whole store. Sibling finding: the same path relays namespace-local hostnames. Both are one missing constraint. [[jupyter-user-token-data-access]] ships behind this, per backend.
+  status: open · owner: agent · repo: dag-tools
+  → [docs/plans/broker-advertises-unminted-credential.md](plans/broker-advertises-unminted-credential.md)
+
 - **broker-endpoint-env-divergence** — A domain broker re-loads the code location's Definitions in its OWN pod, so every env var that shapes an asset key must match between the two — and three did not, each producing an identical-looking 404. The asset key is assembled from env nobody owns, and identity silently follows any of it.
   status: open · owner: human · blocked-on: the source of the stuck PUBLOG_S3_BUCKET_URL is unfound — absent from `helm template`, absent from the image, present in the live Deployment. Removed by hand to unblock; will recur if a values layer still supplies it.
   → [docs/plans/broker-endpoint-env-divergence.md](plans/broker-endpoint-env-divergence.md)
@@ -69,6 +73,10 @@ _Coverage: **71 of 73 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **da-schema-affordance** — Engine DA is handed a URN and no schema, so it guesses column names and learns them from BinderException text; and `query_datahub_asset` returns a JSON STRING, so the agent then discovers it cannot index it. 3 of 6 steps on a successful two-row read were spent on both.
   status: open · owner: unassigned · blocked-on: nothing — both halves are small and independently shippable.
   → [docs/plans/da-schema-affordance.md](plans/da-schema-affordance.md)
+
+- **da-sends-no-user-token** — COUPLING — Engine DA passes jwt_token=None to CortexDataClient and rides entirely on the X-Originator-Email header. So the obviously-correct fix in [[dag-tools-gateway-unverified-subject]] — stop preferring the header over a verified token — TAKES DA'S DATA ACCESS DOWN. Neither item mentions the other. This exists so nobody does the right thing to the gateway and discovers the coupling in production.
+  status: open · owner: human
+  → [docs/plans/da-sends-no-user-token.md](plans/da-sends-no-user-token.md)
 
 - **dag-tools-broker-register-unauthenticated** — Unauthenticated routing-table write — /api/v1/internal/register takes broker_url from the body and repoints any URN. Integrity write, so NOT acceptable on in-cluster reachability alone. First cross-repo instance of the undeclared-routes pattern.
   status: open · owner: agent · repo: dag-tools · blocked-on: nothing — CLASSIFIED. [[gate-class-follows-the-effect]] puts an integrity write in the never-acceptable-on-in-cluster-reachability column. Remaining work is the build: authenticate /api/v1/internal/register and /resolve.
