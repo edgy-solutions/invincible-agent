@@ -136,6 +136,71 @@ in every deployment and safe by luck.
 is the wrong default for a multi-tenant process: the mistake should be an error, not a
 convenience. Bare construction in a handler that was given a caller should fail closed.
 
+## "But they still have to pass `caller`" — and that is still a hole
+
+Requiring `CortexDataClient(caller=caller)` means an author who **omits** it gets a bare
+constructor, which resolves to the service and **works**. Same failure, reached by forgetting
+rather than by inverted precedence — and forgetting is the more common way.
+
+Making the author type it is not what produces safety. **A request-scoped variable is**, and
+the SDK has none — `grep contextvars iagent_mesh/*.py` returns nothing.
+
+The objection to env vars was never *"implicit is bad"*; it was **scope mismatch** — a
+process-lifetime variable cannot express a per-request value. A `ContextVar` is scoped to the
+request (isolated per asyncio task), so its scope matches the identity's scope exactly. The
+same argument that ruled env vars out rules this in.
+
+The auth dependency already runs per request and already computes the identity. It sets the
+contextvar; the client reads it:
+
+```python
+# notebook, Dagster asset, AND agent handler — IDENTICAL, no variant at all
+client = CortexDataClient()
+```
+
+Revised resolution order:
+
+> 1. **explicit `caller=`** — an override, for tests and for a handler deliberately acting as
+>    someone else. Wins over everything.
+> 2. **the request-scoped contextvar** — set by the SDK. The agent case.
+> 3. **`CORTEX_USER_TOKEN`** — a per-process user identity. The notebook case.
+> 4. **service identity** — **opt-in only.**
+>
+> **And: if rung 2 is populated — i.e. we are inside a request — failure to resolve an
+> identity RAISES. It never falls through to rung 3 or 4.** Being in a handler is precisely
+> when reading as the service is wrong, so that is where the fallback must be refused.
+
+Rung 2 above rung 3 preserves the property that mattered: `CORTEX_USER_TOKEN` set on an agent
+pod stays harmless, because the request's caller outranks it.
+
+`caller=` survives as an override, not as the thing standing between an author and a
+cross-tenant read.
+
+### The threading interaction — a second finding, and it is why FAIL-CLOSED beats the mechanism
+
+`core.py:438` runs synchronous handlers **directly on the event loop**:
+
+```python
+if inspect.iscoroutinefunction(func):
+    return await func(input_data)
+return func(input_data)          # <- no threadpool
+```
+
+The SDK's own quickstart tells authors the opposite: *"Use standard `def` (Recommended): if
+you are crunching Polars DataFrames (`df.collect()`), stick to standard `def`. **We will
+execute it safely in a background thread.**"* **There is no background thread.** A recommended
+sync handler doing `df.collect()` blocks the whole tool server — a live defect independent of
+identity, and worth its own fix.
+
+It also sets a trap for the contextvar design. When sync handlers *do* move onto a thread, the
+mechanism decides whether identity survives: `asyncio.to_thread` copies the context,
+`loop.run_in_executor` does **not**. Get that wrong and the contextvar reads `None` in exactly
+the handler style the guide recommends — and without rung 2's fail-closed rule it would land
+on the service identity, silently, in the most common case.
+
+**Which is the point: the safety comes from refusing to fall back, not from the mechanism.**
+The contextvar removes the boilerplate; fail-closed is what makes omission survivable.
+
 ## The target shape — one line, and only the agent differs
 
 ```python
@@ -172,10 +237,16 @@ handling for free — the same claim the gateway now reads.
 
 | # | step | why this position |
 |---|---|---|
-| 1 | `execute()` passes `CallerIdentity` to handlers whose signature asks for one | the blocker; opt-in by signature, so existing tools are untouched |
-| 2 | `CortexDataClient(caller=...)` with the resolution order above | the API decision, recorded before authors invent it |
-| 3 | bare construction fails closed where a caller was available | the silent-service-read default |
-| 4 | documented snippet pair in the SDK's jupyter guide | see below — **step 4 does not precede step 1** |
+| 1 | auth dependency sets a request-scoped `ContextVar` with the `CallerIdentity` | the blocker; nothing else can work without it |
+| 2 | **fail closed inside a request** — populated contextvar + unresolved identity RAISES, never falls to env or service | the safety. Ships WITH step 1, not after: step 1 alone just relocates the silent fallback |
+| 3 | `CortexDataClient` reads the contextvar; `caller=` becomes an override | the boilerplate removal, safe only once 2 exists |
+| 4 | `execute()` also passes `CallerIdentity` to handlers whose signature asks | explicit access for tools that need the identity itself, not just a client |
+| 5 | run sync handlers in a thread — `asyncio.to_thread`, which COPIES context | makes the guide's promise true; `run_in_executor` would break step 1 |
+| 6 | documented snippet pair in the SDK's jupyter guide | see below — **does not precede step 1** |
+
+**Steps 1 and 2 are one change, deliberately.** Shipping the contextvar without the
+fail-closed rule moves the silent service-read from "author forgot `caller=`" to "contextvar
+was empty for a reason nobody noticed" — the same defect with a longer causal chain.
 
 ## Why the guide is NOT updated yet
 
