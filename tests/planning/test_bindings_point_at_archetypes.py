@@ -26,6 +26,14 @@ Response class in an archetype position and concluding the class is misfiled is 
 reading, and it would have "fixed" a correct ontology to accommodate a broken row.
 
 So the check is on the USE, not on the declaration.
+
+    CLASSIFICATION IS NOT EXISTENCE. Two classes that both exist can still be the wrong pair.
+
+That sentence is the whole gate, and it was nearly walked into from the other side within hours:
+a proposal to declare the canvas-seed output class under `mesh:Archetype` because a neighbouring
+archetype was declared there. A seed result is what a verb PRODUCES — a payload — so it belongs
+under `mesh:Response`, and Contract D would have accepted either, because it checks that the
+class exists and never what kind it is.
 """
 from __future__ import annotations
 
@@ -63,6 +71,15 @@ def _bindings() -> list[tuple[str, str]]:
     if not _BINDINGS.is_file():
         return []
     src = _BINDINGS.read_text(encoding="utf-8")
+    # COMMENTS STRIPPED FIRST — the same law this file exists to enforce, applied to this
+    # file's own instrument. The paired subject/object pattern is unlikely to match prose,
+    # but `_archetype_iris()` in test_planning_classes_are_declared.py used a looser regex,
+    # matched an `object_uri:` string inside a COMMENT explaining a fixed bug, and stayed
+    # red pointing at a class nothing bound. That redness was nearly answered with a prime
+    # reparenting nine ontology classes. Second instance in two days; not leaving a third
+    # latent in the file that documents the rule.
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    src = re.sub(r"//[^\n]*", "", src)
     return re.findall(
         r'subject_uri:\s*"([^"]+)",\s*\n\s*object_uri:\s*"([^"]+)"', src
     )
