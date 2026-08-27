@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **73 of 79 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 4 are unheadered. Closing that gap is the migration._
+_Coverage: **74 of 83 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 7 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -157,6 +157,10 @@ _Coverage: **73 of 79 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **retire-inline-task-loop** — CLEANUP-GRADE (security read done 2026-08-10, outcome: not a fix). BPMNWorkflowRunner accepts a client-supplied definition, but WorkflowStartRequest drops the field and the ingress is ClusterIP — in-cluster only. ADR-0029's retirement condition is met; residual in-cluster risk folded into undeclared-routes.
   status: open · owner: unassigned
   → [docs/plans/retire-inline-task-loop.md](plans/retire-inline-task-loop.md)
+
+- **sdk-discards-caller-identity** — BLOCKER on every agent doing per-user data reads. MeshTool computes a CallerIdentity, logs it, and DISCARDS it — app-level dependency return values are dropped by FastAPI, nothing reaches request.state, and execute() calls func(input_data) only. A tool author cannot learn who invoked them, so their only working option is to read as the SERVICE, entitling every caller to everything that service can reach. Carries the CortexDataClient resolution-order decision (explicit caller WINS over env; service identity opt-in only) — file it before tool authors invent the precedence backwards.
+  status: open · owner: human · repo: iagent-mesh-sdk
+  → [docs/plans/sdk-discards-caller-identity.md](plans/sdk-discards-caller-identity.md)
 
 - **seeder-manufactures-declarations** — The sandbox seeder MERGEs endpoint OntologyClass nodes as a SIDE EFFECT of seeding a predicate, so it manufactures declarations no TTL contains. Sandbox is green forever and no fresh cluster can be — and nothing inside sandbox can detect the difference.
   status: open · owner: agent · blocked-on: nothing — the instance is fixed and the sweep is clean; what remains is making the mechanism unable to recur.
