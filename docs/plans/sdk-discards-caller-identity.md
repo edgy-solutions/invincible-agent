@@ -6,13 +6,38 @@ blocked-on:
 closed-by:  
 code-site:  iagent_mesh/core.py:180, iagent_mesh/core.py:440
 repo:       iagent-mesh-sdk
-summary:    BLOCKER on every agent doing per-user data reads. MeshTool computes a CallerIdentity, logs it, and DISCARDS it — app-level dependency return values are dropped by FastAPI, nothing reaches request.state, and execute() calls func(input_data) only. A tool author cannot learn who invoked them, so their only working option is to read as the SERVICE, entitling every caller to everything that service can reach. Carries the CortexDataClient resolution-order decision (explicit caller WINS over env; service identity opt-in only) — file it before tool authors invent the precedence backwards.
+summary:    THE DESTINATION IS AGENTS, NOT NOTEBOOKS — and per-user reads are impossible there today, INVISIBLY, because reading as the service works. MeshTool computes a CallerIdentity, logs it, and DISCARDS it (app-level dependency return values are dropped by FastAPI; execute() calls func(input_data) only), so a tool author cannot learn who invoked them and their only working option entitles every caller of that agent to everything the service can reach. Would otherwise have been found by an analyst promoting their first notebook to a tool — by which point the wrong pattern is written and copied. Carries the CortexDataClient resolution-order decision (explicit caller WINS over env; service identity opt-in only), recorded before tool authors invent the precedence backwards.
 ---
 
 # A MeshTool cannot learn who invoked it
 
 **Found 2026-08-26**, answering a question about what notebook code looks like once it becomes
 an agent. The answer is that the correct version **cannot currently be written**.
+
+## FIRST — THE DESTINATION IS AGENTS, NOT NOTEBOOKS
+
+[[jupyter-user-token-data-access]] was scoped as though the endpoint of the journey were an
+analyst in a notebook. It is not. **The notebook is where the analysis is prototyped; the
+agent is where it lands** — that is what the SDK's own quickstart tells people to do
+("when you are ready to turn your logic into an enterprise capability, you move out of the
+notebook and into your IDE"). So the per-user property has to hold *there*, and today it
+cannot.
+
+**And it fails invisibly, which is what makes it urgent rather than merely open.** An agent
+that reads as the service **works**. Rows come back. Nothing errors, nothing warns, no test
+fails. The only symptom is that every user of that agent sees data entitled to the service —
+which looks like success to the person who wrote it.
+
+**The counterfactual discovery path is the argument for the reframing.** Absent this item,
+this would have been found by an analyst promoting their first notebook to a tool — at which
+point the wrong pattern is written, working, in the codebase, and probably copied into the
+next three tools, because it is the only pattern the SDK permits. Finding it from *"where is
+this actually going?"* rather than from an incident is the whole return on asking that
+question before shipping the intermediate step.
+
+This does not change [[jupyter-user-token-data-access]]'s value — notebooks are real and the
+hub wiring is correct. It changes what "done" means: **per-user access is not delivered when
+the notebook works. It is delivered when the agent the notebook becomes works.**
 
 ## The evidence
 
