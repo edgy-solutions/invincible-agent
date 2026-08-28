@@ -94,6 +94,31 @@ def render(items):
 
 
 def main():
+    # AN UNRECOGNISED FLAG MUST NEVER FALL THROUGH TO A WRITE.
+    #
+    # This script's only arg test used to be `if "--check" in sys.argv`, so EVERY other
+    # invocation took the write path — including `--help`. `tests/test_board_drift.py`'s
+    # positive control runs exactly that (`generate_board.py --help`) to prove the generator is
+    # runnable, and so REWROTE docs/BOARD.md on every suite run. Two consequences, both silent:
+    #
+    #   1. It destroyed uncommitted board edits in the working tree. Observed 2026-08-27: a
+    #      hand-added entry present at session start was gone after one pytest run.
+    #   2. It made the drift seal VACUOUS as a suite. The positive control regenerates the
+    #      board, so `test_board_matches_the_packet_headers` compares the board against the
+    #      headers its SIBLING just projected it from, and cannot go red however far the
+    #      committed board had drifted.
+    #
+    # (2) is the same "aspirational seal" that file's own docstring was written to diagnose,
+    # reintroduced by the file itself. The write is now reachable ONLY by a bare invocation.
+    argv = sys.argv[1:]
+    if "--help" in argv or "-h" in argv:
+        print(__doc__ or ""); return 0
+    unknown = [a for a in argv if a != "--check"]
+    if unknown:
+        print(f"unknown argument(s): {' '.join(unknown)}\n", file=sys.stderr)
+        print(__doc__ or "", file=sys.stderr)
+        return 1
+
     items = headers()
     # A PARKED item must name what would un-park it. `blocked-on` is a dependency; `trigger`
     # is a firing condition (something becomes true, possibly with nobody working on it).
