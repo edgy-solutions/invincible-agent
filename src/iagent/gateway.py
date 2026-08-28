@@ -103,6 +103,93 @@ async def lifespan(application: FastAPI):
         logger.info("canvas persistence dormant (no PG DSN): %s", exc)
     except Exception as exc:
         logger.warning("user_canvas migration failed (persistence dormant): %s", exc)
+    # ── THE BFF REGISTERS ITS ONE ORCHESTRATION INTENT ──────────────────────
+    #
+    # RULED 2026-08-28: the owner of the behaviour is the only honest source of
+    # its declaration. cortex-ui registers what cortex-ui can render; the BFF
+    # owns /canvas/seed — its auth gate, its sequential orchestration, its
+    # partial-seed refusal, its manifest row — so the BFF declares it. Any other
+    # registrant (Engine P, a manifest job, a hand-seeded row) separates the
+    # declaration from the thing declared, and the first change to the route's
+    # contract silently strands the registration.
+    #
+    # THE PRECEDENT IS NOT NEW. The registry's population was never
+    # "engines only" — cortex-ui registers presentation capabilities on page
+    # load. This is the same pattern with a server-side trigger: register on
+    # startup, idempotent, offered every boot. It inherits the fleet's staleness
+    # properties for free — a stale BFF image advertises the capabilities it
+    # actually has, and "which era is this" stays answerable by the digest.
+    #
+    # SCOPE GUARD, so this does not become a category error. The BFF registers
+    # ORCHESTRATION INTENTS IT OWNS. Today that is exactly one. It does NOT
+    # become a general registrant for things it proxies: /plan/* stays
+    # unregistered because those are a write seam invoked by components, not a
+    # phrase-routable capability. If a second orchestration intent appears it
+    # rides this same startup path; if someone proposes registering a PROXIED
+    # capability here, this paragraph is the refusal.
+    #
+    # COST-OF-GUESSING ENUMERATION (required whenever a registration makes a
+    # verb reachable from natural language — state what becomes reachable and
+    # whether it mutates):
+    #
+    #   reachable : seed_portfolio_canvas, typed against idp:Portfolio, no slots
+    #   mutates   : YES, but ADDITIVELY ONLY — it mints new artifacts and the
+    #               client composes a new canvas. Nothing is modified, nothing
+    #               destroyed, no plan state is touched.
+    #   authority : the caller's own. Each of the five asks re-authenticates and
+    #               re-checks the caller's Topaz entitlement cell via
+    #               /interview/stream; a non-entitled cell 403s there exactly as
+    #               it would for a typed question.
+    #   amplifies : one request -> five sequential Dagster runs (~18 min). A
+    #               resource cost an entitled caller can repeat, not a privilege
+    #               they can exceed. Declared in the manifest row as `delegates`.
+    #
+    # The dispatcher needs nothing: it already reads `endpoint = predicate[
+    # "endpoint"]` and POSTs. Registration is the whole missing hop.
+    try:
+        from utils.mesh_registration import register_engine_to_mesh as _register_verb
+
+        _bff_base = os.getenv("CORTEX_BFF_PUBLIC_URL", "http://iagent-cortex-bff:8090")
+        _register_verb(
+            name="cortex_bff_orchestration",
+            description=(
+                "Compose a portfolio planning canvas by asking the five standing planning "
+                "questions through the governed interview path and returning their artifact "
+                "ids in template-slot order. This BUILDS A BOARD; it does not answer a "
+                "planning question. A request for ONE measure - the schedule, the cost "
+                "curve, the funding gap - is that measure's verb, not this one. Choose this "
+                "only when the ask is for the whole board rather than a number on it."
+            ),
+            verb="mesh:seedPortfolioCanvas",
+            input_uri="http://invincible-agent/idp#Portfolio",
+            output_uri="http://invincible-agent/mesh#CanvasSeedResult",
+            endpoint_url=f"{_bff_base}/canvas/seed",
+            verb_synonyms=[
+                "make me a portfolio canvas",
+                "build me a portfolio review canvas",
+                "set up the planning canvas",
+                "give me the standard portfolio view",
+                "build the portfolio canvas",
+                "set up my planning board",
+            ],
+            owner_persona="PORTFOLIO_LEAD",
+            domains=["PORTFOLIO_PLANNING"],
+            # Not "fast": five sequential governed asks, ~18 minutes. Declaring
+            # it fast would invite a caller to treat it as interactive, which is
+            # the one thing this verb is not.
+            cost_class="slow",
+        )
+    except Exception as _exc:  # pragma: no cover
+        # Best-effort, matching the fleet's posture: a failed registration means
+        # the phrase is not routable yet, NOT that the BFF is down. Every other
+        # route keeps serving.
+        logger.warning(
+            "cortex-bff: seedPortfolioCanvas registration failed (%s: %s). The "
+            "/canvas/seed route still works; the PHRASE will not route until a "
+            "successful registration.",
+            type(_exc).__name__, _exc,
+        )
+
     yield
 
 
