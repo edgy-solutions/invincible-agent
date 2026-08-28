@@ -1,5 +1,17 @@
 # Prime pre-registration — the two canvas-seed classes
 
+> ## THE LAW THIS RUN TAUGHT
+>
+> **Every instrument that failed reported success at the resolution of "I ran", not "I did the thing."**
+>
+> Three of them, in one night, each hiding the next. Three green lights. **One working check:
+> the graph edges themselves.** If you read nothing else here, read §WHAT WENT WRONG, and do
+> not verify a registration by asking the engine about itself.
+
+**RUN 2026-08-27/28. Executed, verified, and CORRECTED BELOW.** The canvas classes landed; the
+run also exposed that this doc's own post-condition 3 was an instrument that passes a completely
+unregistered engine. The corrections are inline and marked.
+
 **Date:** 2026-08-27 · **Lane:** 1 · **Status:** PREPARED, NOT RUN. Deliberately.
 
 > ## ⚠️ THIS DOC IS ONE OF THREE POST-CONDITIONS, NOT THE ACCEPTANCE LIST
@@ -54,9 +66,42 @@ run unattended at 04:00 on a shared cluster.**
 | `mesh:CanvasSeedResult` in the graph | absent | present, `subClassOf mesh:Response` |
 | `mesh:CanvasSeed` in the graph | absent | present, `subClassOf mesh:Archetype` |
 
-**`verbs: 14` staying 14 is a real assertion, not a no-op.** If it drops, `reregister` refused
-the batch and every planning verb went with it — that is the atomic-rejection signature, and it
-is the thing to watch for.
+> ### ⛔ CORRECTED 2026-08-28 — `verbs: 14` IS NOT A VALID POST-CONDITION
+>
+> The line below said this was "the signature that matters most". **It is not a signature at
+> all.** `/health`'s `verbs` counts Engine P's OWN IN-PROCESS TABLE, built from a hardcoded
+> list at startup. It reads 14:
+>
+> * when the mesh holds **bare** endpoints (measured — it did)
+> * when the engine **never re-registered at all** (measured — it had not)
+> * when `reregister` never ran (measured — the job was never created)
+>
+> **It measures the engine's opinion of itself, not the mesh's record of it.** It would
+> green-light exactly the failure it was chosen to detect.
+>
+> **Use this instead — the graph's verb edges, which are the actual record:**
+>
+> ```bash
+> kubectl --context edge exec -n sandbox deploy/iagent-engine-e -- python -c "
+> import os
+> from neo4j import GraphDatabase
+> drv = GraphDatabase.driver(os.environ.get('NEO4J_URI','bolt://iagent-neo4j:7687'),
+>                            auth=(os.environ.get('NEO4J_USER','neo4j'), os.environ['NEO4J_PASSWORD']))
+> q='''MATCH ()-[e]->() WHERE e.endpoint_url IS NOT NULL AND e.endpoint_url CONTAINS 'iagent-'
+> RETURN DISTINCT split(split(e.endpoint_url,'//')[1],'/')[0] AS host, count(*) AS edges ORDER BY host'''
+> with drv.session() as s:
+>     for r in s.run(q): print(' ', r['host'], 'edges=', r['edges'])
+> drv.close()"
+> ```
+>
+> Engine P must show **14 edges at the FQDN host** (`iagent-engine-p.<ns>.svc.cluster.local:8095`).
+> A bare host means it registered pre-fix; a missing host means it did not register.
+>
+> The credentials are the POD'S OWN — read from its env by the code it runs. Do not fetch the
+> secret yourself.
+
+**The atomic-rejection concern is still real** — Contract D refuses a batch whole, so a partial
+verb set is the shape to watch. Just measure it in the GRAPH, not at `/health`.
 
 ## The run
 
@@ -67,6 +112,49 @@ helm upgrade iagent ./helm/invincible-agent \
   --set primeSubstrate.enabled=true \
   --set primeSubstrate.wipe=false
 ```
+
+> ### ⏱ USE `--timeout 40m`, NOT 15m — MEASURED
+>
+> The command above originally carried no timeout guidance and 15m was chosen by guess. **The
+> job took 43 minutes.** Dagster's `QueuedRunCoordinator` is capped at **2 concurrent runs** and
+> the prime launches **16 ingest runs**, so ~25-45 min is the floor, not the tail.
+>
+> Helm timing out is BENIGN for the prime itself — the Kubernetes Job keeps running and finishes
+> — but it **cuts the hook chain**, so `reregister(20)` never fires and the release is left
+> `failed`. That is what happened.
+>
+> **Fast path when the ontology is already ingested and you only need `reregister`:**
+> `--set primeSubstrate.triggerIngest=false`. The prime job then completes in ~40 SECONDS and
+> the reregister hook still fires. Measured.
+
+> ### ⚠️ `--reuse-values` MAKES A CHART-DEFAULT DELETION INERT — helm semantics, not a bug
+>
+> `--reuse-values` reuses the last release's **MERGED** values (chart defaults + overrides as
+> they were THEN) as the base for the new render. So a key you DELETE from `values.yaml` is
+> carried forward from the previous release and re-applied.
+>
+> **Measured cost:** a fix removing three shadowing `ENGINE_*_PUBLIC_URL` literals was
+> committed, built and deployed **three times with zero effect**. The ConfigMap showed the new
+> FQDN; the pod env showed the old bare name; every signal said the fix had landed.
+>
+> **If your change DELETES a chart default, `--reuse-values` cannot deliver it.** Either drop
+> `--reuse-values` and re-supply the values files, or null the key explicitly:
+>
+> ```
+> --set enginePlanning.env.ENGINE_P_PUBLIC_URL=null
+> ```
+>
+> Null the KEY, never the block — `engineE`/`engineW` carry other env (MEM0_*) that nulling
+> `engineE.env` would destroy.
+
+> ### ⚠️ `primeSubstrate.enabled=false` DOES NOT "SKIP THE PRIME AND KEEP THE CHAIN"
+>
+> The reregister hook renders under
+> `{{ if and .Values.primeSubstrate.enabled .Values.primeSubstrate.reregisterEngines.enabled }}`.
+> Turning the prime off removes **the tree the hook hangs from**. Helm then exits **0 having
+> done nothing** — success at the resolution of "I ran".
+>
+> To fire `reregister` you need `primeSubstrate.enabled=TRUE` with `triggerIngest=false`.
 
 `wipe=false` is load-bearing and is the default; the wipe path clears Neo4j `OntologyClass`,
 every Weaviate collection, the Jena graphs and the MinIO TTLs. **This change is additive — two
@@ -132,6 +220,44 @@ while the engine still answers `/health` as healthy.
 
 A blind second run cannot distinguish "transient" from "the thing is wrong", and it destroys the
 first run's evidence — the same argument as the rollback note below.
+
+## WHAT WENT WRONG — three instruments, three green lights, one working check
+
+Recorded because the next runner will meet all three.
+
+| # | instrument | said | truth |
+|---|---|---|---|
+| 1 | `/health` `verbs: 14` | registered | in-process table; engine had not re-registered |
+| 2 | `--reuse-values` + committed fix | deployed | chart-default deletion carried forward; fix inert |
+| 3 | `--set primeSubstrate.enabled=false` | exit 0 | removed the hook's own tree; did nothing |
+
+**The one check that caught anything twice: THE POD NAME CHANGING.** `values.yaml`'s
+`reregisterEngines` comment records the 2026-08-22 run where *"every hook reported success; the
+only visible evidence was the pod name not changing"* — and it caught this again on 2026-08-27.
+**Read that comment before running.** It is the shortest true thing written about this hook.
+
+**Always check the pod name across a reregister**, and verify registration in the GRAPH.
+
+## B4a GATE — before ANY restart
+
+`reregister` restarts the engines it covers, and `PlanStore` is in-memory: a restart destroys
+every scenario **silently**. Verify empty first — `0 scenarios, baseline v0` — because "should be
+empty" and "is empty" are different claims:
+
+```bash
+kubectl --context edge exec -n sandbox deploy/iagent-engine-p -- python -c \
+"import urllib.request,json; print(json.loads(urllib.request.urlopen('http://localhost:8095/scenario').read()))"
+```
+
+## Residue after the 2026-08-27/28 run — named, not left
+
+| host in graph | edges | why it is not a defect |
+|---|---|---|
+| `engine-a:8081` (bare) | 13 | exempted stale-image pin, USER-SUPPLIED in values-sandbox; `--reuse-values` preserves it by design |
+| `engine-o:8084` (bare) | 1 | deliberately excluded from `reregisterEngines` — registry CONSUMER |
+| `engine-e:8086`, `engine-w:8088` (bare) | 1 each | one stale edge apiece; off the planning path. Findable, not urgent |
+| `data-analyst:8089` (bare) | 2 | **SELF-HEALS** — DA registers `analyzeDataset` on startup, so its next natural restart fixes these. Schedule no work for it |
+| `restate:8080` | 2 | not an engine |
 
 ## Rollback
 
