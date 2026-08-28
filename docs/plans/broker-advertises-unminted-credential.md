@@ -376,6 +376,55 @@ tightened, since the discrepancy is the finding.
 against, and against `d4-sandbox` for the cluster users are actually on. Until then the
 credential-cache question is **unanswered**, not answered in the negative.
 
+## mint-role SHIPPED and verified live — 2026-08-27 (steps 4 and 6)
+
+ClickHouse and PostgreSQL 17 now mint short-lived database roles.
+`dag_tools/domain_broker/sql_minting.py`; verified with
+`scripts/verify_adr0044_sql_minting.py` against `iagent-clickhouse` and
+`iagent-postgresql` in the sandbox.
+
+**A protocol change was required first, and it was the real blocker.** The
+gateway called Topaz, resolved the ticket, then **grafted `allowed_columns` /
+`row_filters` on afterwards** — so the broker minted without ever knowing what
+the caller was entitled to, and server-side enforcement was structurally
+impossible. `ResolveRequest` now carries the authorization decision. Both fields
+are optional, so an older gateway still gets a read-only, single-table, expiring
+credential; it just cannot get row/column narrowing.
+
+| prediction | outcome (ClickHouse / PostgreSQL) |
+|---|---|
+| **P1** engines accept the DDL | **CONFIRMED** both |
+| **P2** minted credential reads its own table | **CONFIRMED** both |
+| **P3** cannot write | **CONFIRMED** — `DatabaseError` / `InsufficientPrivilege` |
+| **P4** cannot read a second table | **CONFIRMED** both |
+| **P5** row policy is *enforced*, not merely created | **CONFIRMED** — admin sees 3 rows, minted sees 2, on both |
+
+**P5 is the one that matters.** It is the claim that separates `mint-role` from
+`mint-sts`: the narrowing is in the database, so **a caller who declines to
+apply the client-side filters still sees only their entitled rows.** Topaz's
+filters stop being an advisory convention for these backends. That is what
+ADR-0025 always implied and an object store cannot deliver.
+
+Positive controls passed on both — admin *can* write and *can* read the second
+table — so the refusals are the minting working, not a weak admin.
+
+### Two things worth keeping from the implementation
+
+**PostgreSQL REFUSES to mint when a row filter is required and RLS is off.** A
+policy on a table without RLS is inert: the role would see every row while
+appearing constrained. That is a silently-wider grant, which is the exact defect
+being fixed, so it raises with the `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`
+fix in the message rather than issuing a credential.
+
+**No reaper is needed for safety.** Both engines support `VALID UNTIL`, so the
+database enforces expiry: a leaked credential dies whether or not anything
+cleaned up, and a broker that dies mid-request leaves an already-harmless role.
+Cleanup is hygiene. Putting correctness in a background task that has to keep
+running would have been the weaker design.
+
+**Not gated on PG18.** `SET LOCAL ROLE`-style short-lived roles plus RLS deliver
+the same enforcement on 17 — verified on the sandbox instance.
+
 ### Confirmed live: the FQDN defect
 
 `iagent-domain-broker`'s env carries `S3_ENDPOINT_URL=http://iagent-minio:9000` — a bare
