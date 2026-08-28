@@ -2,6 +2,18 @@
 
 **Date:** 2026-08-27 · **Lane:** 1 · **Status:** PREPARED, NOT RUN. Deliberately.
 
+> ## ⚠️ THIS DOC IS ONE OF THREE POST-CONDITIONS, NOT THE ACCEPTANCE LIST
+>
+> Amended 2026-08-27, after work was folded into the same prime window that this doc predates:
+> an `ingest_ontology_job` taxonomy overlay and four stale `aitool` edge re-registrations.
+> **The ingest set is coherent** — the prime ingests five TTLs together and all the affected
+> files ride — but a reader arriving here with a three-item checklist will find only one of
+> them described below. The full list is in §THE THREE CHECKS, added at the foot.
+>
+> This mismatch was caught before the run, by the doc's own author reading the brief against
+> the doc. It is recorded rather than silently patched, because "the prep doc no longer covers
+> the run it was written for" is a failure mode with no symptom until someone is mid-verify.
+
 Declared in `1e510ca`; the graph does not have them until a prime runs, and Contract D refuses
 the binding until it does. This is the pre-registration the standing rule requires — counts and
 names written down BEFORE the run, so the verification is a comparison rather than an impression.
@@ -37,7 +49,7 @@ run unattended at 04:00 on a shared cluster.**
 
 | measurement | before | expected after |
 |---|---|---|
-| `a owl:Class` in `mesh_system.ttl` | **56 → 58** (already edited) | 58 |
+| `a owl:Class` in `mesh_system.ttl` (**FILE count — see below**) | **56 → 58** (already edited) | 58 |
 | Engine P `/health` `verbs` | **14** | **14** — unchanged; the seed is not an Engine P verb |
 | `mesh:CanvasSeedResult` in the graph | absent | present, `subClassOf mesh:Response` |
 | `mesh:CanvasSeed` in the graph | absent | present, `subClassOf mesh:Archetype` |
@@ -84,6 +96,42 @@ the BFF log carries the admitted/rejected split.
 `mesh:Archetype` would count identically and be wrong — which is exactly the error this pair was
 declared to avoid, and the one Contract D cannot see because it checks existence, not
 classification.
+
+## THE THREE CHECKS — the actual acceptance list
+
+Added 2026-08-27. Items 2 and 3 are not this doc's original subject; they ride the same window.
+
+### 1. The canvas-seed pair, BY NAME AND PARENT
+
+`mesh:CanvasSeedResult` under `mesh:Response`, `mesh:CanvasSeed` under `mesh:Archetype`.
+The pairing is the point and the query is above.
+
+**DO NOT VERIFY "the graph has 58 classes."** That number is `mesh_system.ttl`'s FILE count,
+re-enumerated before the edit. The prime ingests FIVE TTLs together — `idp_extension`,
+`portfolio_planning_extension`, `mro`, `maintenance`, `mesh_system` — so the graph will hold
+far more, and that is correct. (`values.yaml` records a previous run moving the graph's class
+count 29 → 49 as the fifth file cleared.) The file count is a pre-flight check on the EDIT, not
+a post-condition on the GRAPH.
+
+### 2. `idp:Portfolio` carries `rdfs:subClassOf prov:Entity`
+
+**The edge is already in the committed TTL** (`portfolio_planning_extension.ttl`). So if the
+graph lacks it today, the graph is STALE RELATIVE TO THE FILE and the prime is exactly the fix —
+no TTL edit is needed or wanted.
+
+**If it is still missing AFTER the prime, stop.** That is not a taxonomy gap; it is an ingest
+problem with that one file, and a second prime tells you nothing a first one did not.
+
+### 3. Engine P reports `verbs: 14`, unchanged
+
+The signature that matters most, for the reason in §The numbers: Contract D rejects ATOMICALLY.
+A drop means `reregister` refused the batch and every planning verb has silently stopped routing
+while the engine still answers `/health` as healthy.
+
+### On any failure: PASTE, DO NOT RETRY
+
+A blind second run cannot distinguish "transient" from "the thing is wrong", and it destroys the
+first run's evidence — the same argument as the rollback note below.
 
 ## Rollback
 
