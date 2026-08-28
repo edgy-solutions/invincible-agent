@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **79 of 91 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **80 of 92 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -185,6 +185,10 @@ _Coverage: **79 of 91 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **seeder-manufactures-declarations** — The sandbox seeder MERGEs endpoint OntologyClass nodes as a SIDE EFFECT of seeding a predicate, so it manufactures declarations no TTL contains. Sandbox is green forever and no fresh cluster can be — and nothing inside sandbox can detect the difference.
   status: open · owner: agent · blocked-on: nothing — the instance is fixed and the sweep is clean; what remains is making the mechanism unable to recur.
   → [docs/plans/seeder-manufactures-declarations.md](plans/seeder-manufactures-declarations.md)
+
+- **slot-resolution-entities-in-the-resolver-substrate** — PLATFORM, not finance. Three consumers already need one missing capability — entities as resolvable instances in the resolver substrate. Four planning verbs are unreachable from natural language today (Tier 3, "do not script these"); the triage's instance-resolution abstentions are unruled; and Engine F (ADR-0045) is blocked entirely on it. FIRST PLATFORM ITEM AFTER THE CANVAS CHAIN CLOSES — it unblocks four existing verbs, one whole engine, and every future slot-heavy domain, which is the ordering argument and the item's whole justification.
+  status: open · owner: unassigned
+  → [docs/plans/slot-resolution-entities-in-the-resolver-substrate.md](plans/slot-resolution-entities-in-the-resolver-substrate.md)
 
 - **subject-resolution-at-composition** — A resolvable MPN composes as subject_unresolved. Two hypotheses eliminated 2026-08-10; one survives (frozen-at-composition) with a named discriminating read.
   status: open · owner: unassigned
