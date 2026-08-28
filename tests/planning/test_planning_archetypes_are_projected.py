@@ -279,3 +279,64 @@ def test_a_producer_that_sends_no_version_makes_no_claim():
     got = ns["_project_planning_archetype"]("INTERVAL_TIMELINE", _envelope([{"a": 1}]), "X", None)
     assert "state_version" not in got
     assert "state_ref" not in got
+
+
+# ── CANVAS_SEED — the orchestration arm ─────────────────────────────────────
+#
+# Its payload is a list of ARTIFACT IDS (strings), not row objects, and the
+# shape is DECLARED BY THE RECEIVER, not by us. cortex's canvasSeedFromArtifact
+# (src/lib/canvasSeedFromAnswer.ts) reads:
+#
+#     { archetype: "CANVAS_SEED", name?: string, artifact_ids: string[] }
+#
+# The two halves were written in different lanes and a mechanical comparison of
+# literal bytes is what caught the last mismatch before either shipped — a
+# delivery-path disagreement that would have passed both suites while the phrase
+# did nothing. These arms pin our half of that comparison.
+
+def test_CANVAS_SEED_projects_ids_from_the_orchestration_response():
+    """A measure verb answers under `structured_data`; an ORCHESTRATION answers
+    under its own key. The seed returns {"artifact_ids": [...]} at the top
+    level, and a projector looking only for structured_data would read that as
+    an empty answer and degrade a perfectly good seed into "nothing to draw"."""
+    ns = _fns()
+    ids = ["urn:a", "urn:b", "urn:c", "urn:d", "urn:e"]
+    env = [{"persona": "PORTFOLIO_LEAD",
+            "expert_response": {"summary": "s", "artifact_ids": ids,
+                                "name": "Q3 Portfolio Review"}}]
+    got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "PORTFOLIO_LEAD", None)
+    assert got is not None, "the seed response did not project"
+    assert got["archetype"] == "CANVAS_SEED"
+    assert got["artifact_ids"] == ids, "ids were not carried verbatim"
+    assert got["name"] == "Q3 Portfolio Review"
+
+
+def test_CANVAS_SEED_preserves_ORDER_because_order_is_the_declaration():
+    """Position 0 lands in the full-width anchor. The client never sorts, so a
+    projection that reordered would move the schedule out of the anchor and
+    produce a board that renders perfectly and is wrong."""
+    ns = _fns()
+    ids = ["gantt", "cost", "load", "gap", "matrix"]
+    env = [{"persona": "X", "expert_response": {"artifact_ids": list(ids)}}]
+    got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None)
+    assert got["artifact_ids"] == ids, "the seeder's slot order was not preserved"
+
+
+def test_CANVAS_SEED_omits_name_when_the_producer_did_not_send_one():
+    """`name` is optional and the receiver defaults it to "Portfolio Planning".
+    Inventing one here would put a title on a board no verb asserted."""
+    ns = _fns()
+    env = [{"persona": "X", "expert_response": {"artifact_ids": ["urn:a"]}}]
+    got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None)
+    assert "name" not in got
+
+
+def test_an_EMPTY_seed_degrades_rather_than_projecting_a_seed_with_no_ids():
+    """cortex treats an ids-less component as "not a seed answer" and creates
+    nothing. Projecting one anyway would send it a component it must then
+    reject — an empty board's worth of round trip, and a card that claims a
+    seeding produced nothing rather than that it failed."""
+    ns = _fns()
+    for payload in ([], None):
+        env = [{"persona": "X", "expert_response": {"artifact_ids": payload}}]
+        assert ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None) is None

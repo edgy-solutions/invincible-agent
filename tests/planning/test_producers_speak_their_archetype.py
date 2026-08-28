@@ -50,6 +50,26 @@ _CONTRACTS = {
 #: nobody can see.
 _EXEMPT = {
     "DELTA_SET": "produced only by a committed scenario diff, not by a measure over seed state",
+    # CANVAS_SEED is a CONSUMER binding, not a component one, and the distinction is the
+    # ruling that created the category: a binding declares either a component (something
+    # DRAWN, with a row contract this test can conform against) or a consumer (something
+    # ACTED ON), and the seal checks whichever was declared.
+    #
+    # Its payload is a list of ARTIFACT IDS — strings, not rows — so there is no row
+    # interface to conform to and no producer measure that emits it: it is the answer to a
+    # request for a whole board, produced by a BFF orchestration. Its shape is declared by
+    # its receiver in cortex-ui/src/lib/canvasSeedFromAnswer.ts and pinned on this side by
+    # the CANVAS_SEED arms in tests/planning/test_planning_archetypes_are_projected.py,
+    # which is where a shape change would be caught.
+    #
+    # Writing a row contract for it would be classification-is-not-existence committed
+    # deliberately: asserting a renderable row shape for an archetype that renders no rows.
+    "CANVAS_SEED": (
+        "a CONSUMER binding, not a component: its payload is artifact ids (strings), not "
+        "rows, and no measure produces it — a BFF orchestration does. Shape is declared by "
+        "the receiver (canvasSeedFromAnswer.ts) and pinned by the CANVAS_SEED arms in "
+        "test_planning_archetypes_are_projected.py"
+    ),
 }
 
 #: THE MIRROR — used only when the sibling repo is absent, and cross-checked against the

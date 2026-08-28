@@ -473,6 +473,16 @@ _PLANNING_ARCHETYPES: Dict[str, tuple] = {
     "THRESHOLD_GRID": ("rows", ("value_label", "scope_label")),
     "MATRIX_GRID": ("rows", ("level_label", "scope_label", "as_of")),
     "DELTA_SET": ("effects", ("scope_label", "baseline_label", "headline")),
+    # CANVAS_SEED is the odd one and deliberately so: its payload is a list of
+    # ARTIFACT IDS (strings), not a list of row objects. cortex's recogniser —
+    # canvasSeedFromArtifact in src/lib/canvasSeedFromAnswer.ts — declares the
+    # shape and is the single edit point if it ever changes:
+    #
+    #     { archetype: "CANVAS_SEED", name?: string, artifact_ids: string[] }
+    #
+    # ORDER IS THE DECLARATION. Position 0 lands in the full-width anchor and
+    # the client never sorts, so the projection must not reorder or dedupe.
+    "CANVAS_SEED": ("artifact_ids", ("name",)),
     # Landed by Lane 1 the same night as this build (SHORTFALL_GRID — "funding
     # gap needs three quantities, not two"). It is the binding for
     # mesh:FundingGapSet, whose absence made "where is funding short by
@@ -507,7 +517,14 @@ def _project_planning_archetype(
     payload_key, passthrough = spec
 
     resp = _extract_agent_response(raw_data) or {}
-    rows = resp.get("structured_data")
+    # LOOK FOR THE ARCHETYPE'S OWN KEY FIRST. Measure verbs answer under
+    # `structured_data`; an ORCHESTRATION answers under its own name — the seed
+    # returns {"artifact_ids": [...]} at the top level, and looking only for
+    # structured_data would read that as an empty answer and degrade a
+    # perfectly good seed into "nothing to draw".
+    rows = resp.get(payload_key)
+    if rows is None:
+        rows = resp.get("structured_data")
     if rows is None:
         rows = resp.get("rows")
     if isinstance(rows, dict):
