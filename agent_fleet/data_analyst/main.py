@@ -17,6 +17,51 @@ import restate
 #: Tunable per deployment, but note that raising it is a MITIGATION: it buys
 #: headroom and moves the cliff. The removal is aggregating at the source.
 _MAX_SOURCE_CELLS = int(os.getenv("DA_MAX_SOURCE_CELLS", "40000000"))
+
+#: Ceiling on the RETURNED RESULT, counted in BYTES of serialised JSON.
+#:
+#: A DIFFERENT UNIT ON PURPOSE. The gate above counts CELLS because its
+#: constraint is RAM, and memory is a property of a table's width x length.
+#: This result never has to fit in RAM — it is serialised, printed, and becomes
+#: the CodeAgent's OBSERVATION, i.e. part of the next model prompt. Its binding
+#: constraint is the CONTEXT WINDOW, measured in tokens and approximated by
+#: bytes. Those two ceilings DO NOT CONVERT INTO EACH OTHER, and passing one
+#: says nothing about the other:
+#:
+#:     SELECT company, ARRAY_AGG(DISTINCT cage_code) ... GROUP BY company
+#:
+#: over a 500k-row x 2-col source (1M cells, PASSES) returns 200 rows x 2 cols
+#: — 400 CELLS, which passes any cell gate by five orders of magnitude — and
+#: serialises to 4.0 MB, about a million tokens. Measured, not argued:
+#: `test_the_cell_gates_BOTH_pass_while_the_payload_is_megabytes`. The row
+#: COUNT collapses under the GROUP BY; the DATA VOLUME does not. Bounding this
+#: side in cells would be the RAM mistake relocated one stage downstream.
+#:
+#: THE DEFAULT'S DERIVATION: at roughly 4 bytes/token, 256 kB is ~64k tokens —
+#: about half a 128k-token window, leaving the other half for the system
+#: prompt, the task, prior steps and the model's own output. Tunable, but note
+#: that raising it is the same MITIGATION the source gate warns about: it buys
+#: headroom and moves the cliff. The removal is aggregating at the source.
+_MAX_RESULT_BYTES = int(os.getenv("DA_MAX_RESULT_BYTES", "256000"))
+
+#: Ceiling on the AGENT STEP, counted in SECONDS of wall clock.
+#:
+#: The third unit on the same path. `agent.run` had no bound at all: a publog
+#: question that OOMed at 2Gi stopped OOMing at 16Gi and instead ran 12+
+#: minutes, returning an EMPTY card while the run was still going. Raising the
+#: memory limit did not fix the question — it converted a fast, loud failure
+#: into a slow, silent one. A bound here makes the slow case fail as a RESULT
+#: ("I could not analyse that in time") before any infrastructure aborts it,
+#: which is the same side of the line the `except` in `run_agent` already
+#: argues for.
+#:
+#: 300s is comfortably above a normal multi-step run (tens of seconds to a
+#: couple of minutes on a slow Ollama backend) and well under the 12 minutes
+#: observed. NOTE THE INTERACTION with Restate's own inactivity default: if the
+#: framework aborts and retries a long `ctx.run` first, this timeout never
+#: fires. That is why the retry question is filed to be MEASURED rather than
+#: assumed — see docs/proposals/bounding-the-answer-not-just-the-source.md §4.
+_AGENT_TIMEOUT_S = float(os.getenv("DA_AGENT_TIMEOUT_S", "300"))
 from fastapi import FastAPI, Request
 from restate import Context, Service
 from smolagents import CodeAgent, tool
@@ -545,7 +590,80 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
         except Exception:
             row_count = None
         _annotate_query_success(urn, row_count=row_count)
-        return result_df.write_json()
+
+        # ── RESULT GATE, ON THE WAY INTO THE PROMPT ──────────────────────────
+        #
+        # Serialised ONCE and measured, never serialised twice: `write_json` is
+        # the cost, so paying it in the gate and again in the return would
+        # double the very thing being bounded.
+        #
+        # The annotation above stays: the source WAS read and the row count IS
+        # honest. What is refused is handing the payload to the model.
+        #
+        # REFUSE, DO NOT TRUNCATE. A truncated aggregate is not a partial
+        # answer, it is a FALSE one — "the distinct cage codes per company" cut
+        # off at 256 kB is not "some of the codes", it is a list the reader will
+        # believe is complete. Silently changing an answer's meaning is what
+        # this codebase refuses everywhere else (a never-assessed cell is
+        # ABSENT, never level 0). The refusal carries the result's own numbers
+        # so the agent can self-correct into a bounded question, exactly as the
+        # source gate's does. If truncation is ever wanted it must be OPT-IN per
+        # call, with the marker riding IN the payload so no reader can mistake
+        # it for the whole.
+        # CHEAP PRE-CHECK FIRST, so the GUARD DOES NOT PAY FOR WHAT IT REFUSES.
+        #
+        # Measured on the real sandbox p_cage (4.16M rows): `write_json` costs
+        # 5.5s and builds a 251 MB Python string, while `estimated_size()` costs
+        # 45ms and reads frame metadata. Serialising first means a 2Gi container
+        # allocates the entire oversized payload in order to discover that it is
+        # oversized — the guard's own cost reinstating the OOM it exists to
+        # prevent, which is the same species of defect as a bypass.
+        #
+        # THIS IS NOT AN ESTIMATE OF THE JSON SIZE, and must not be read as one.
+        # It is its own sufficient condition: a frame whose PACKED IN-MEMORY
+        # bytes already exceed the prompt budget does not belong in a prompt,
+        # whatever it encodes to. The ratio is deliberately NOT relied on,
+        # because it is not stable — measured 1.34x and 1.46x on the two real
+        # p_cage shapes, 1.24x on a small-int frame and 3.13x on a large-int
+        # one. A gate resting on a multiplier that moves 2.5x across ordinary
+        # shapes would be guessing.
+        #
+        # WHICH IS WHY THE EXACT CHECK BELOW STAYS. This pre-check is
+        # CONSERVATIVE by construction and lets borderline results through:
+        # measured, a fixture packing to 202,000 bytes serialises to 323,701 —
+        # under the pre-check and over the limit. Deleting the exact check on
+        # the theory that this one subsumes it would reopen the gate for
+        # precisely the near-threshold results that are hardest to reason about.
+        est_bytes = result_df.estimated_size()
+        if est_bytes > _MAX_RESULT_BYTES:
+            raise ValueError(
+                f"RESULT_TOO_LARGE from {urn}: the answer is "
+                f"{result_df.height:,} rows x {result_df.width:,} columns and "
+                f"occupies {est_bytes:,} bytes in memory before encoding, over "
+                f"this engine's limit of {_MAX_RESULT_BYTES:,}. It cannot be "
+                f"returned as an observation. Do NOT retry the same query — "
+                f"narrow it first: count or sample instead of listing "
+                f"(COUNT(DISTINCT x) rather than ARRAY_AGG(DISTINCT x)), "
+                f"aggregate on a column with FEWER DISTINCT VALUES, select "
+                f"fewer columns, or filter rows."
+            )
+
+        payload = result_df.write_json()
+        n_bytes = len(payload.encode("utf-8"))
+        if n_bytes > _MAX_RESULT_BYTES:
+            raise ValueError(
+                f"RESULT_TOO_LARGE from {urn}: the answer is "
+                f"{result_df.height:,} rows x {result_df.width:,} columns but "
+                f"serialises to {n_bytes:,} bytes, over this engine's limit of "
+                f"{_MAX_RESULT_BYTES:,}. The row count is small; the DATA "
+                f"VOLUME is not — list-valued or long text columns carry the "
+                f"size the row count hides. It cannot be returned as an "
+                f"observation. Do NOT retry the same query — narrow it first: "
+                f"count or sample instead of listing (COUNT(DISTINCT x) rather "
+                f"than ARRAY_AGG(DISTINCT x)), select fewer columns, or filter "
+                f"rows."
+            )
+        return payload
 
     model = get_smolagent_model()
     # A/B TOGGLE (DA_STRUCTURED_OUTPUTS, default OFF, DA-only, reversible):
@@ -621,7 +739,21 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
             # so running it inline starves the readiness probe and any concurrent
             # invocations. Offload to a worker thread so the event loop stays
             # responsive.
-            result = await asyncio.to_thread(agent.run, augmented_prompt)
+            #
+            # AND BOUNDED IN WALL CLOCK. Unbounded, this step ran 12+ minutes on
+            # one publog question and the card came back empty while it was
+            # still going — a slow silent failure is worse than a fast loud one.
+            #
+            # HONEST LIMIT OF THIS BOUND: `wait_for` cancels the AWAIT, not the
+            # thread. Python cannot kill a running thread, so `agent.run` keeps
+            # burning its worker (and its tokens) until it returns on its own.
+            # What this buys is a bounded RESPONSE — the invocation fails as a
+            # RESULT at a known time instead of hanging until infrastructure
+            # aborts it. Do not read it as a bound on the WORK.
+            result = await asyncio.wait_for(
+                asyncio.to_thread(agent.run, augmented_prompt),
+                timeout=_AGENT_TIMEOUT_S,
+            )
             # STEP 4 — the metric follows the SAME distinction as the envelope. It previously
             # logged `outcome=ok` for a run that grounded nothing, identically to one that
             # returned rows, so the metric inherited the envelope's blindness and could not be
@@ -637,6 +769,24 @@ async def analyze_data(ctx: Context, request: dict) -> dict:
                     # replayed answer ungrounded.
                     "query_successes": list(query_successes),
                     "outcome": _outcome, "reason": _reason}
+        except (asyncio.TimeoutError, TimeoutError) as e:
+            # BEFORE the broad arm on purpose: since 3.11 `asyncio.TimeoutError`
+            # IS the builtin `TimeoutError`, which subclasses OSError and would
+            # be swallowed below as an indistinguishable `agent_raised`. A
+            # timeout is a DIFFERENT outcome from a crash and has a different
+            # remedy (narrow the question / raise the bound), so it gets its own
+            # reason and its own metric value rather than being averaged into
+            # the fumble rate.
+            _emit_fumble_metric("timeout")
+            return {"ok": False,
+                    "error": f"I could not analyse that in time: the analysis "
+                             f"exceeded this engine's limit of "
+                             f"{_AGENT_TIMEOUT_S:g}s and was stopped. Try a "
+                             f"narrower question — fewer columns, a filter, or "
+                             f"an aggregate at the source. ({type(e).__name__})",
+                    "sources": list(sources_collected), "denials": list(access_denials),
+                    "query_successes": list(query_successes),
+                    "outcome": OUTCOME_ERROR, "reason": "agent_timeout"}
         except Exception as e:  # noqa: BLE001
             # Count the fumble even on a TOTAL failure (agent.run raised) — the
             # memory still holds the errored steps; a run that never recovered is
