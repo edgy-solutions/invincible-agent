@@ -103,3 +103,116 @@ def test_no_waiver_outlives_its_defect():
         "these waivers no longer describe a real offender - delete them:\n  "
         + "\n  ".join(f"{s} ({WAIVED[s]})" for s in stale)
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SHADOWING SEAL — a bare `env` literal silently REPLACES the templated FQDN
+#
+# The ConfigMap builds every engine URL through the `svcDomain` helper, whose whole purpose is
+# stated in its own docstring: a BARE service name has no dots, so it does not suffix-match a
+# NO_PROXY entry of ".svc.cluster.local", and under a corporate proxy the in-cluster call is
+# handed to the proxy and dies.
+#
+# A container's `env` OVERRIDES its `envFrom`. So a literal in a values file does not REINFORCE
+# the ConfigMap, it REPLACES it — and the protection is gone with no diff to show for it.
+# MEASURED on the live sandbox, 2026-08-27:
+#
+#     ConfigMap : http://iagent-engine-w.sandbox.svc.cluster.local:8088/query_knowledge
+#     pod env   : http://iagent-engine-w:8088/query_knowledge          <- the literal won
+#
+# Reported from the work cluster as "cannot route to engine-p". Invisible in the sandbox,
+# which has no proxy — the bare name resolves there, so the sandbox CANNOT reproduce this
+# class of failure while these pins exist.
+#
+# THIS IS THE THIRD TIME engine-p's URL has been wrong, and the first two fixes each corrected
+# the instance in front of them: the wrong service name in ENGINE_P_PUBLIC_URL (2026-08-22),
+# then the same wrong name in gateway.py (2026-08-24, whose comment says "the other site was
+# never enumerated"). Both fixed a NAME. Neither asked whether the URL was BUILT like every
+# other engine's — it was not, and ENGINE_P_URL was set by no template at all.
+#
+# Four names for one engine is why: values key `enginePlanning`, image `planning-agent`,
+# service `engine-p`, Keycloak client `planning-agent`. Grepping any one finds a quarter of
+# the wiring.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VALUES_FILES = ("values.yaml", "values-sandbox.yaml")
+_URL_KEY = re.compile(r"^\s*(ENGINE_\w*_URL|ENGINE_\w*_PUBLIC_URL)\s*:\s*(.+?)\s*$", re.M)
+
+# Bare-name pins that remain, each a STALE-IMAGE workaround with its own recorded reason, both
+# SANDBOX-ONLY so neither reaches the work cluster. Exempted rather than removed: they were
+# added because a deployed image baked a wrong default, and deleting them without confirming
+# the image is current would trade a proxy bug for a DNS bug. An exemption is a claim, and this
+# one says "known, scoped, and someone must re-check the image", not "acceptable".
+_SHADOW_EXEMPT = {
+    "ENGINE_A_PUBLIC_URL": "values-sandbox: old engine-a image baked restate-agent-svc.default.svc",
+    "ENGINE_DA_PUBLIC_URL": "values-sandbox: pin so deploy does not depend on an image rebuild",
+}
+
+
+def _configmap_url_keys() -> set[str]:
+    text = (_CHART / "templates" / "configmap.yaml").read_text(encoding="utf-8")
+    return {m.group(1) for m in _URL_KEY.finditer(text)}
+
+
+def _values_url_literals() -> dict[str, list[str]]:
+    """URL keys declared as literals in a values file — these become container `env`."""
+    out: dict[str, list[str]] = {}
+    for name in _VALUES_FILES:
+        path = _CHART / name
+        if not path.is_file():
+            continue
+        for m in _URL_KEY.finditer(path.read_text(encoding="utf-8")):
+            key, value = m.group(1), m.group(2)
+            # A templated value is fine in a TEMPLATE; in a values file it is never rendered
+            # (no `tpl` on engine env), so `{{` here would ship as a literal brace.
+            out.setdefault(key, []).append(f"{name}: {key}: {value}")
+    return out
+
+
+def test_the_shadow_inputs_are_readable():
+    """Positive control — both sides must parse, or the seal passes over nothing."""
+    keys = _configmap_url_keys()
+    assert len(keys) >= 5, f"configmap URL keys did not parse: {sorted(keys)}"
+    assert "ENGINE_P_URL" in keys, "ENGINE_P_URL is not templated in the ConfigMap"
+
+
+def test_every_engine_url_is_templated_through_svcDomain():
+    """A URL the ConfigMap builds must go through the helper, not be a literal."""
+    text = (_CHART / "templates" / "configmap.yaml").read_text(encoding="utf-8")
+    offenders = []
+    for m in _URL_KEY.finditer(text):
+        key, value = m.group(1), m.group(2)
+        if "svcDomain" not in value:
+            offenders.append(f"{key}: {value}")
+    assert not offenders, (
+        "ConfigMap URL(s) not built through invincible-agent.svcDomain:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nA bare service name has no dots and does not suffix-match a NO_PROXY entry of "
+        "'.svc.cluster.local'; under a corporate proxy the call is proxied and dies."
+    )
+
+
+def test_no_values_literal_SHADOWS_a_templated_configmap_url():
+    """THE SEAL. `env` beats `envFrom`, so a literal here silently disables the FQDN."""
+    templated = _configmap_url_keys()
+    offenders = []
+    for key, sites in sorted(_values_url_literals().items()):
+        if key in templated and key not in _SHADOW_EXEMPT:
+            offenders.extend(sites)
+    assert not offenders, (
+        "values-file literal(s) SHADOW a templated ConfigMap URL:\n  "
+        + "\n  ".join(offenders)
+        + "\n\nA container's `env` overrides `envFrom`, so these REPLACE the FQDN with a bare "
+        "service name rather than reinforcing it. Delete the literal; the ConfigMap is the "
+        "single source. Override global.clusterDomain to change the suffix."
+    )
+
+
+def test_no_shadow_exemption_outlives_its_defect():
+    """An exemption that no longer describes a real pin is a hole nobody remembers opening."""
+    live = set(_values_url_literals())
+    stale = sorted(set(_SHADOW_EXEMPT) - live)
+    assert not stale, (
+        "these shadow exemptions no longer describe a real literal - delete them:\n  "
+        + "\n  ".join(f"{s} ({_SHADOW_EXEMPT[s]})" for s in stale)
+    )

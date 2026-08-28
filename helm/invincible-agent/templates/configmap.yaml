@@ -97,6 +97,23 @@ data:
   ENGINE_E_RESOLVE_DMC_URL: "http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineE.port }}/resolve_dmc"
   ENGINE_W_PUBLIC_URL: "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}/query_knowledge"
   ENGINE_DA_PUBLIC_URL: "http://{{ .Release.Name }}-data-analyst{{ include "invincible-agent.svcDomain" . }}:{{ .Values.dataAnalyst.port }}/analyze_data"
+  # ENGINE P, ADDED 2026-08-27 — the only engine whose URLs were never templated.
+  #
+  # Both were hardcoded literals (`http://iagent-engine-p:8095`) in two different places, and
+  # ENGINE_P_URL — the address cortex-bff uses for EVERY /plan/* route — was set by no template
+  # at all, so the source default WAS the live value. A bare service name has no dots, so it
+  # does not suffix-match a NO_PROXY entry of ".svc.cluster.local"; under a corporate proxy the
+  # in-cluster call is handed to the proxy and dies. That is the failure the svcDomain helper
+  # exists to prevent, and this engine was outside it. Reported from the work cluster, where a
+  # proxy exists; invisible in the sandbox, where one does not.
+  #
+  # THE LITERALS ALSO HARDCODED THE RELEASE NAME `iagent-`, so any release named otherwise
+  # pointed at a service that does not exist.
+  #
+  # NO TRAILING PATH, unlike the engines above: both are BASES. cortex-bff appends
+  # /measure/... , /state/... and /scenario/... ; engine-p's registrar appends per-verb paths.
+  ENGINE_P_URL: "http://{{ .Release.Name }}-engine-p{{ include "invincible-agent.svcDomain" . }}:{{ .Values.enginePlanning.port }}"
+  ENGINE_P_PUBLIC_URL: "http://{{ .Release.Name }}-engine-p{{ include "invincible-agent.svcDomain" . }}:{{ .Values.enginePlanning.port }}"
 
   # Dagster Discovery
   # DAGSTER_WEBSERVER_URL: consumed by cortex-bff and src/iagent/gateway.py

@@ -343,11 +343,23 @@ enginePlanning:
     name: planning-agent
     tag: ""
   port: 8095
-  env:
-    # Matches engineW/engineE: the engine advertises the URL it can be reached on, and the
-    # code default must agree with it. The SERVICE is named by component (engine-p), not by
-    # image (planning-agent) — those differ for this engine and only for this engine.
-    ENGINE_P_PUBLIC_URL: "http://iagent-engine-p:8095"
+  # NO `env` URL OVERRIDE HERE — DELIBERATELY, and this is the second half of a real defect.
+  #
+  # A container's `env` OVERRIDES `envFrom` (the ConfigMap). So a literal here does not
+  # reinforce the ConfigMap's templated FQDN, it REPLACES it with a bare service name. Measured
+  # on the live sandbox 2026-08-27:
+  #
+  #     ConfigMap : http://iagent-engine-w.sandbox.svc.cluster.local:8088/query_knowledge
+  #     pod env   : http://iagent-engine-w:8088/query_knowledge          <- the literal won
+  #
+  # The intent was belt-and-suspenders — "make the deployment's intent explicit so drift
+  # surfaces at config-review time". The effect was to silently disable the proxy protection
+  # the svcDomain helper exists to provide, for every engine that had one. The ConfigMap is now
+  # the single source; override `global.clusterDomain` to change the suffix.
+  #
+  # The SERVICE is named by component (engine-p), not by image (planning-agent) — those differ
+  # for this engine and only for this engine, which is why its URL was wrong three times.
+  env: {}
   resources:
     requests:
       cpu: 100m
@@ -384,14 +396,20 @@ engineE:
   image: { name: "neo4j-expert", tag: "latest" }
   port: 8086
   resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { cpu: "1", memory: 1Gi } }
-  # ENGINE_E_PUBLIC_URL pins the endpoint Engine E registers into the mesh
-  # against its actual K8s service (iagent-engine-e). Belt-and-suspenders
-  # with the source default in agent_fleet/neo4j_expert/main.py: the default
-  # is now correct, and this env var makes the deployment's intent explicit
-  # so a future drift between source default and cluster reality surfaces
-  # at config-review time rather than at pod-restart time.
-  env:
-    ENGINE_E_PUBLIC_URL: "http://iagent-engine-e:8086/query_graph"
+  # NO `env` URL OVERRIDE HERE — DELIBERATELY, and this is the second half of a real defect.
+  #
+  # A container's `env` OVERRIDES `envFrom` (the ConfigMap). So a literal here does not
+  # reinforce the ConfigMap's templated FQDN, it REPLACES it with a bare service name. Measured
+  # on the live sandbox 2026-08-27:
+  #
+  #     ConfigMap : http://iagent-engine-w.sandbox.svc.cluster.local:8088/query_knowledge
+  #     pod env   : http://iagent-engine-w:8088/query_knowledge          <- the literal won
+  #
+  # The intent was belt-and-suspenders — "make the deployment's intent explicit so drift
+  # surfaces at config-review time". The effect was to silently disable the proxy protection
+  # the svcDomain helper exists to provide, for every engine that had one. The ConfigMap is now
+  # the single source; override `global.clusterDomain` to change the suffix.
+  env: {}
 
 engineW:
   enabled: true
@@ -399,11 +417,20 @@ engineW:
   image: { name: "weaviate-expert", tag: "latest" }
   port: 8088
   resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-  # ENGINE_W_PUBLIC_URL pins the endpoint Engine W registers into the mesh
-  # against its actual K8s service (iagent-engine-w). See ENGINE_E note above
-  # for the belt-and-suspenders rationale.
-  env:
-    ENGINE_W_PUBLIC_URL: "http://iagent-engine-w:8088/query_knowledge"
+  # NO `env` URL OVERRIDE HERE — DELIBERATELY, and this is the second half of a real defect.
+  #
+  # A container's `env` OVERRIDES `envFrom` (the ConfigMap). So a literal here does not
+  # reinforce the ConfigMap's templated FQDN, it REPLACES it with a bare service name. Measured
+  # on the live sandbox 2026-08-27:
+  #
+  #     ConfigMap : http://iagent-engine-w.sandbox.svc.cluster.local:8088/query_knowledge
+  #     pod env   : http://iagent-engine-w:8088/query_knowledge          <- the literal won
+  #
+  # The intent was belt-and-suspenders — "make the deployment's intent explicit so drift
+  # surfaces at config-review time". The effect was to silently disable the proxy protection
+  # the svcDomain helper exists to provide, for every engine that had one. The ConfigMap is now
+  # the single source; override `global.clusterDomain` to change the suffix.
+  env: {}
 
 engineF:
   enabled: true
