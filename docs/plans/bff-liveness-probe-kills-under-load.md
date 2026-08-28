@@ -133,3 +133,33 @@ that restarts.
 An hour of ordinary sandbox traffic with zero `Unhealthy` events on the deployment, confirmed
 by `kubectl describe`. Restart count stable, checked twice with a gap — a single reading of a
 restart counter says nothing about whether it is still climbing.
+
+---
+
+## SECOND INSTANCE, 2026-08-28 — the startup window, not the storm
+
+Recorded so the next person seeing a 502 burst at pod-age ~30s reads one line instead of
+diagnosing it.
+
+**The probe widening fixed the STORM-INDUCED case** (readiness flapping under load, pod pulled
+from the endpoint list, Traefik answering 404 with no CORS headers). **The startup window
+remains**, and it is a different shape:
+
+> For roughly **25 seconds after every cortex-bff roll**, `/health` answers 200 while the routes
+> that PROXY an upstream do not. Measured 2026-08-28: pod started ~12:10:30, three 502s at
+> 12:10:56 on `/plan/state_version` and two Electric shape subscriptions, then clean —
+> `/plan/state_version` returning 200 repeatedly from 12:12:59 onward.
+
+**Why it is benign and why it is not nothing.** `/health` is deliberately dependency-free — it
+measures the process, not its neighbours (see recommendation 2 above), which is correct and is
+exactly what produces the window: the process is genuinely up before `engine-p`, Electric and the
+rest are reachable through it. Callers that retry (the plan-version poller, Electric's
+subscription logic) recover silently. A caller that does not retry sees a hard 502.
+
+**The tell:** 502s clustered within ~30s of pod start, on PROXY routes only, clearing on their
+own. That is this shape. 502s that persist past a minute, or that appear without a recent roll,
+are NOT this and deserve a real diagnosis.
+
+**Retired by** recommendation 3 above — a `startupProbe` would hold the pod out of the endpoint
+list until its upstreams are reachable, closing the window rather than documenting it. Until then
+this is a known shape, not an open defect.

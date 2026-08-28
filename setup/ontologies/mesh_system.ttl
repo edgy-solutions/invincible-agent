@@ -292,10 +292,24 @@ mesh:FootprintSet a owl:Class ;
   rdfs:label "Footprint Set" ;
   rdfs:comment "Where a thing is used — the capabilities it enables and the work it participates in, with intervals." .
 
+# RATIONALE FOR THE PARENT, kept in a `#` comment ON PURPOSE.
+#
+# rdfs:comment IS RETRIEVAL INPUT. A definition that names other classes competes for their
+# queries — the sibling-name-bleed habit the definitions guard exists to stop. The first draft
+# of this comment named two sibling classes and Contract D while explaining WHY the parent is
+# what it is, and tripped that guard on text written AFTER the triage that identified the
+# habit. Rationale belongs here, where the retriever never looks.
+#
+# WHY Response AND NOT THE ARCHETYPE PARENT: this is what the verb PRODUCES — a payload. The
+# treatment it receives is a separate class, and the pairing is the whole point. Filing it under
+# the archetype parent was proposed and refused, because the existence check accepts either: it
+# asks whether a class EXISTS and never what KIND it is. See
+# tests/planning/test_bindings_point_at_archetypes.py, which checks the USE rather than the
+# declaration for exactly this reason.
 mesh:CanvasSeedResult a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Canvas Seed Result" ;
-  rdfs:comment "The answer to a request for a whole BOARD rather than a number on it: the ids of the artifacts a seeding orchestration minted, IN SLOT ORDER. The order is the producer's declaration of which measure lands where, so it is load-bearing rather than incidental. A RESPONSE, not an archetype — this is what the verb PRODUCES; mesh:CanvasSeed is the treatment it receives. Filing it under mesh:Archetype was proposed and refused: Contract D would have accepted either, because it checks that a class exists and never what kind it is." .
+  rdfs:comment "The answer to a request for a whole board rather than one number on it: the ids of the artifacts a seeding orchestration minted, IN SLOT ORDER. The order is the producer's declaration of which measure lands where, so it is load-bearing rather than incidental. A payload — what the verb produced — carrying no content of its own beyond those ids." .
 
 mesh:IntervalSchedule a owl:Class ;
   rdfs:subClassOf mesh:Response ;
@@ -401,10 +415,18 @@ mesh:ShortfallGrid a owl:Class ;
   rdfs:label "Shortfall Grid" ;
   rdfs:comment "Subjects by periods, each cell carrying what is OWED, what is PLEDGED, and how much of that pledge is FIRM. Distinct from mesh:ThresholdGrid and mesh:MatrixGrid on the axis both of those already use to distinguish themselves — what the colour means. A threshold grid reads OVER a line as danger; a matrix grid reads distance from a goal as progress; this reads a DEFICIT as risk, and its bad direction is BELOW rather than above. THREE QUANTITIES, not two: a cell showing only owed-versus-pledged cannot tell a party that is short from one that has pledged enough but not firmly, and those send a reader to different conversations. A cell with nothing owed is ABSENT, never a zero-need cell. A LIVE VIEW." .
 
+# RATIONALE, in a `#` comment for the same reason as the class above — rdfs:comment is
+# retrieval input and must not carry design argument or sibling names.
+#
+# THE FIRST TREATMENT THAT IS ACTED ON RATHER THAN DRAWN. Its binding declares a `consumer`
+# where every other declares a `component`, and the dispatch seal checks whichever was declared.
+# Inventing a placeholder component so the component-shaped check would pass would assert that a
+# renderable thing exists when nothing draws it — classification-is-not-existence, committed on
+# purpose. See cortex-ui's CanvasSeed.contract.ts and the consumer half of the dispatch seal.
 mesh:CanvasSeed a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Canvas Seed" ;
-  rdfs:comment "THE FIRST TREATMENT THAT IS ACTED ON RATHER THAN DRAWN. A seed answer carries slot-ordered artifact ids and a consumer arranges them onto a canvas; no component renders it, and no card appears for the answer itself — the five cards it placed are the visible result. Its binding therefore declares a `consumer` where every other declares a `component`, and the dispatch seal checks whichever was declared. Inventing a placeholder component so the component-shaped check would pass would assert that a renderable thing exists when nothing draws it. NOT a live view: a seed answer is a record of an ACT — these artifacts, in this order, at that moment — so re-evaluating it would either mint a duplicate board or return the same ids, and neither is a refresh." .
+  rdfs:comment "A treatment that is acted on rather than drawn. The answer carries slot-ordered artifact ids and a reader arranges them onto a canvas; no card appears for the answer itself, and the cards it placed are the visible result. Not a live view: it records an act — these artifacts, in this order, at that moment — so re-evaluating it would either duplicate the board or return the same ids, and neither is a refresh." .
 
 mesh:DecisionRecord a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
