@@ -19,11 +19,32 @@ THE VERSION IS AN EVENT LABEL UNLESS SOMETHING MAKES IT A FACT ABOUT CONTENT. No
 Every other artifact in this repo that carries an identity has a seal keeping the identity
 honest; the chart did not, so the discipline lasted exactly as long as people remembered it.
 
-WHAT THIS DOES NOT CHECK, deliberately: whether the version is HIGHER than the deployed one.
-That is a cluster fact, not a repo fact, and a test that reads a live cluster fails in CI for
-reasons unrelated to the change under review. The convention "bump above the deployed label"
-belongs in the runbook; what belongs here is the half that is checkable from the tree alone —
-the chart changed, so the version moved.
+WHAT THIS DOES NOT CHECK, AND THE CORRECTION THAT EARNED THAT PARAGRAPH A REWRITE.
+
+This file first said the "is the version already taken" half was a CLUSTER fact belonging in a
+runbook. That was wrong, and CI proved it within the hour: the bump this seal demanded went to
+`0.3.49`, which was ALREADY PUBLISHED, and the release workflow refused it —
+
+    helm/** changed but Chart.yaml is still at 0.3.49, which is already published as
+    invincible-agent-0.3.49. Publishing nothing here means a deployment installing 'the latest
+    chart' silently gets the OLD contents — the failure mode that left engines unregistered.
+
+The published INDEX is a registry fact, not a cluster fact, and it is perfectly checkable in CI
+without touching a cluster. I had conflated "deployed in a cluster" with "published in the chart
+repo" and used the former to excuse skipping the latter.
+
+THE TWO GUARDS ARE NOT REDUNDANT, and neither implies the other:
+
+  * CI fires when helm/** changed AND the version is already published. It cannot see a change
+    made in a LATER commit than the last bump if that version happens to be unpublished.
+  * This seal fires when chart content moved after the last Chart.yaml edit, published or not.
+
+The case only this one catches: someone bumps in commit A, then edits a template in commit B and
+never touches Chart.yaml again. The version is unpublished, so CI is content, and the chart drifts
+away from its label inside the tree. That is exactly what 478c866 did.
+
+Keep both. The runbook keeps only the part that IS a cluster fact — "bump above the DEPLOYED
+label" — which neither guard can see.
 """
 from __future__ import annotations
 
