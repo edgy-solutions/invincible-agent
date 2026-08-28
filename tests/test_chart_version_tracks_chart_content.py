@@ -1,0 +1,90 @@
+"""A chart change must bump the chart version. Two contents cannot share one label.
+
+WHY THIS EXISTS. On 2026-08-27 `478c866` changed `templates/configmap.yaml` and `values.yaml`
+— templating engine-p's URLs and removing three shadowing literals — and did NOT bump
+`Chart.yaml`. The chart was then deployed three times from the local tree. The cluster ended up
+running a release LABELLED `invincible-agent-0.3.48` whose content was not `0.3.48`.
+
+That is the same defect the previous bump commit was written to repair, arriving from the other
+direction. Its message records the first direction:
+
+    "The cluster runs invincible-agent-0.3.47 at revision 86, and NOTHING in the repo produces
+     that version — someone bumped and deployed from an unpushed tree."
+
+Then: a label with no content. Now: content with a stale label. **Both make the version useless
+for the only question anyone asks it** — *does this cluster have the fix?* — and both are
+invisible to `helm list`, which shows a plausible version either way.
+
+THE VERSION IS AN EVENT LABEL UNLESS SOMETHING MAKES IT A FACT ABOUT CONTENT. Nothing did.
+Every other artifact in this repo that carries an identity has a seal keeping the identity
+honest; the chart did not, so the discipline lasted exactly as long as people remembered it.
+
+WHAT THIS DOES NOT CHECK, deliberately: whether the version is HIGHER than the deployed one.
+That is a cluster fact, not a repo fact, and a test that reads a live cluster fails in CI for
+reasons unrelated to the change under review. The convention "bump above the deployed label"
+belongs in the runbook; what belongs here is the half that is checkable from the tree alone —
+the chart changed, so the version moved.
+"""
+from __future__ import annotations
+
+import subprocess
+
+import pytest
+
+_CHART = "helm/invincible-agent/Chart.yaml"
+_CHART_DIR = "helm/"
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=False
+    ).stdout.strip()
+
+
+def _have_git_history() -> bool:
+    return bool(_git("rev-parse", "--is-inside-work-tree") == "true" and _git("log", "-1", "--format=%H"))
+
+
+pytestmark = pytest.mark.skipif(
+    not _have_git_history(), reason="no git history available (shallow or exported tree)"
+)
+
+
+def test_the_inputs_are_readable():
+    """Positive control. If neither query returns a commit, every assertion below is vacuous —
+    which is exactly how a seal goes quiet without anyone noticing."""
+    assert _git("log", "-1", "--format=%H", "--", _CHART), "no commit ever touched Chart.yaml"
+    assert _git("log", "-1", "--format=%H", "--", _CHART_DIR), "no commit ever touched helm/"
+
+
+def test_a_chart_change_bumped_the_chart_version():
+    """THE SEAL.
+
+    The newest commit touching ANY chart file other than Chart.yaml must be an ancestor of (or
+    the same as) the newest commit touching Chart.yaml. If a template or values change is NEWER
+    than the last Chart.yaml edit, the chart moved and its version did not.
+    """
+    last_chart_yaml = _git("log", "-1", "--format=%H", "--", _CHART)
+    last_other = _git(
+        "log", "-1", "--format=%H", "--", _CHART_DIR, f":!{_CHART}"
+    )
+    if not last_other:
+        pytest.skip("no non-Chart.yaml chart files in history")
+
+    # is_ancestor(A, B) is true when A is reachable from B — i.e. B is at least as new.
+    same_or_older = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", last_other, last_chart_yaml],
+        capture_output=True, check=False,
+    ).returncode == 0
+
+    if not same_or_older:
+        subject = _git("log", "-1", "--format=%s", last_other)
+        files = _git("show", "--stat", "--format=", last_other)
+        pytest.fail(
+            "Chart content changed AFTER the last Chart.yaml edit — the version did not move.\n"
+            f"  offending commit: {last_other[:9]}  {subject}\n"
+            f"{files}\n"
+            "Two different chart contents now share one version number, and `helm list` shows a\n"
+            "plausible version for both. Bump `version:` in helm/invincible-agent/Chart.yaml —\n"
+            "above the deployed label, per the runbook — in the same commit as the change."
+        )
