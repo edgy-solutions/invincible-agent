@@ -808,8 +808,13 @@ def plan_schedule(
     *,
     scope_initiative_id: Optional[str] = None,
     site_id: Optional[str] = None,
-    group_by: str = "initiative",
-    color_by: Optional[str] = None,
+    # LITERAL, NOT bare `str`, so the vocabulary is IN THE ANNOTATION and slot declarations
+    # derive it rather than restating it. `_GROUP_BY`/`_COLOR_BY` and their runtime refusals
+    # STAY — a Literal is a static claim and callers reach this through an untyped `params`
+    # dict, so the runtime check is what actually refuses a bad value. The two are pinned
+    # against drift by test_slot_declarations_derive_from_signatures.
+    group_by: Literal["initiative", "capability", "target"] = "initiative",
+    color_by: Optional[Literal["funding_risk", "status", "confidence"]] = None,
     touched_project_ids: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
     """Initiative → phase → project rows with intervals. The timeline's data.

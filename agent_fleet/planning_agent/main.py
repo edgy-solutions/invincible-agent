@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
     import measures
+    from slots import slots_for
     from seed import build_seed, check_consistency
     from state import (
         MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
@@ -31,6 +32,7 @@ try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_
     from entities import Interval
 except ImportError:
     from agent_fleet.planning_agent import measures
+    from agent_fleet.planning_agent.slots import slots_for
     from agent_fleet.planning_agent.seed import build_seed, check_consistency
     from agent_fleet.planning_agent.state import (
         MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
@@ -153,6 +155,9 @@ async def lifespan(app: FastAPI):
                     owner_persona="PORTFOLIO_LEAD",
                     domains=["PORTFOLIO_PLANNING"],
                     cost_class="fast",
+                    # DERIVED from the measure's signature, never hand-transcribed — the enum
+                    # values cannot drift from the `Literal` because they are read out of it.
+                    slots=slots_for(v["fn"]),
                 )
             except Exception as exc:  # pragma: no cover
                 # Best-effort, matching the fleet's existing posture: a failed registration

@@ -272,6 +272,7 @@ def register_engine_to_mesh(
     openapi_schema: Optional[dict] = None,
     provider: Optional[str] = None,
     timeout_s: Optional[float] = None,
+    slots: Optional[list] = None,
 ) -> None:
     """Emit a DataHub MCP describing this engine as a predicate edge.
 
@@ -377,7 +378,34 @@ def register_engine_to_mesh(
         "mesh_requires_human_approval": "true" if requires_human_approval else "false",
         # Runtime
         "mesh_endpoint_url":            endpoint_url,
+        # ORPHAN FIELD — projected as a string and read by NOTHING. engine-p, the largest
+        # registrant, passes it ZERO times, so its registrations carry "{}". It is not a
+        # derived artifact of a per-verb Pydantic model either: MeshTool declares only
+        # semantics (verb, input_uri, output_uri, synonyms) and carries no input model, and
+        # engine-p's MeasureRequest types the ENVELOPE (`state_ref`, `params: dict`) rather
+        # than any verb's arguments. Left in place rather than deleted — removing it is a
+        # doc-tools projection change that should not ride the slots work.
+        # DO NOT PUT ROUTING SEMANTICS HERE. See `mesh_slots` below: a passthrough nobody
+        # consumes is the worst possible host for the declaration everything downstream will.
         "mesh_openapi_schema":          json.dumps(openapi_schema or {}),
+        # WHAT THE VERB TAKES — the third thing a registration must say, beside what it is
+        # ABOUT (input_uri) and what it PRODUCES (output_uri). Its absence is why the router
+        # cannot know a slot is missing (it only knows nothing cleared threshold) and why a
+        # spoken parameter is dropped in silence on every verb that has a default for it.
+        #
+        # Each record: {name, kind, type, required, values?, default?}, kind being one of
+        # spoken-mandatory | spoken-optional | handle | ceremony. The KIND is the one fact no
+        # type system carries — `baseline_state: str` and `site_id: str` are the same shape
+        # with opposite provenance.
+        #
+        # ADDITIVE, per the local idiom: absent means [] and means today's behaviour, exactly
+        # as `mesh_domains` absent means domain-agnostic.
+        #
+        # NOT YET PROJECTED. doc-tools' aitool_linker.py builds the Neo4j edge from an
+        # explicit ALLOWLIST, so this key is silently dropped there until that repo adds a row
+        # for it — no error, no warning. Declarations therefore sit dark rather than half-lit,
+        # which is the intended landing order.
+        "mesh_slots":                   json.dumps(slots or []),
         # Versioning; sdk_version=0.0.0 distinguishes engine-helper emits
         # from SDK MeshTool emits at the consume side if anyone wants to
         # branch on it later.
