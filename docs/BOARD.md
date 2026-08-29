@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **87 of 99 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **88 of 100 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -125,6 +125,10 @@ _Coverage: **87 of 99 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **doctools-ci-silent-on-push** — Pushes to doc-tools main produce ZERO CI runs — commits land unbuilt while reading as shipped. Use `gh workflow run`; verify the IMAGE, never the commit.
   status: open · owner: unassigned · repo: doc-tools
   → [docs/plans/doctools-ci-silent-on-push.md](plans/doctools-ci-silent-on-push.md)
+
+- **elicitation-ask-disposition** — THE BUILD PLAN FOR `ask`, scoped and pre-registered before a line of it exists. Trigger is DETERMINISTIC — a spoken-mandatory slot absent after filling — because confidence was tested at n=48 and rejected (correct fills bottom at 0.93, wrong reach 0.96, the one genuine miss scored 0.96). Disposition point is execute_subtask immediately after accept_slots, the one line where the phrase, the verb, the declarations and the accepted slots are all in hand. THE MERGE SEAM IS ALREADY BUILT — `config.slots` already outranks the filler, so a stateless re-route needs no new state and no new lifetime; the card carries the already-accepted slots forward so the re-route is reconstructed, never re-parsed. THREE SCOPING CORRECTIONS FOUND BY READING: (1) `resolveInstance` RESOLVES, it does not ENUMERATE — its contract requires `identifier: str`, and a slot the phrase never filled has no identifier, so the amendment's fourth option source needs a capability capability (2) does not deliver; (2) the corpus's four ask-candidates split across BOTH trigger shapes — H06/E04 are elicitation (zero candidates), E05/H04 are disambiguation (a name WAS spoken) and need the ORIGINAL source #2, not the fourth; (3) period slots declare no permitted values, so `accept_slots` cannot reject a non-period and D05's `window=["this quarter"]` still reaches the engine. Measured reach of the trigger as it stands: 2 of 48. 37 of 48 are structurally immune — the anti-clippy guardrail is a consequence of the declarations, not a tuned threshold.
+  status: open · owner: agent
+  → [docs/plans/elicitation-ask-disposition.md](plans/elicitation-ask-disposition.md)
 
 - **endpoint-table-generation** — Generate the README endpoint table from the live route census instead of asserting it.
   status: open · owner: agent

@@ -158,6 +158,12 @@ ADR-0033's *Scope: decision vs build* already sketched both, and deferred the ch
 
 **Registered lean, offered to be argued against: STATELESS RE-ROUTE for v1.**
 
+> **ARGUED AND UPHELD 2026-08-29** in `[[elicitation-ask-disposition]]`. The census strengthened it:
+> **the maximum spoken-mandatory slots on any one verb is 1**, so held-promise's population is
+> zero. And the merge seam is already built — `config.slots` already outranks the filler, so the
+> re-route needs no new state. The graduation condition is now a **test**, not a memory: assert
+> `max(mandatory_count) == 1` across `slots_for()`, failing when multi-slot elicitation arrives.
+
 The reasoning is that it introduces no new lifetime. A re-route **is** a route: every existing
 guard applies unchanged, nothing persists between turns, and there is no expiry semantics to get
 wrong. The held-promise design adds a suspended state with a lifetime — which is the vault's TTL
@@ -249,6 +255,30 @@ than staleness — there is no registry to go bad.
 | **period** (`window`, `as_of`) | `FISCAL_PERIODS` | **no** |
 | **instance** (`project_id`, `capability_id`, …) | an Engine P provider | yes — capability (2) |
 | **handle** (`baseline_state`, `ops`) | never spoken | n/a |
+
+> ### ⛔ CORRECTION 2026-08-29 — THIS TABLE IS RIGHT FOR THE CARRY AND WRONG FOR THE ASK
+>
+> Retracted in place rather than rewritten. Two rows do not survive a read, and both were found
+> while scoping the `ask` build (`[[elicitation-ask-disposition]]`, which carries the detail):
+>
+> **The instance row.** `mesh:resolveInstance` **resolves; it does not enumerate.** Its contract
+> requires `identifier: str` — it scores candidates against a string the user said. A slot the
+> phrase never filled has no such string, so registering Engine P as a provider unblocks the
+> *name→id* cases and produces **no menu**. The amended #2's fourth option source needs an
+> **enumerate** capability (`{slot, class_uri} → [{id, label}]`) that capability (2) does not
+> deliver. The domain IS enumerable — `PlanState` holds all of it — so free text is still
+> forbidden here; the capability is simply unbuilt.
+>
+> **The period row.** `FISCAL_PERIODS` exists, but the **declaration does not carry it**:
+> `slots_for()` reports `window` as `list[str]` and `as_of` as `str`, with no `values` key, because
+> there is no `Literal` to read them out of. So the period menu is cheap but not free — and the
+> same gap is why `accept_slots` cannot reject `window=["this quarter"]` (`D05`), which passes
+> acceptance cleanly and 422s at the engine.
+>
+> **The sentence below still stands for the CARRY and inverts for the ASK.** All four
+> spoken-mandatory slots in the system (`capability_id`, `project_id`, `process_id`, `tech_id`) are
+> **instance** kind — not one is an enum or a period. So the ask's trigger is free and every menu
+> it can build is blocked, which is the mirror image of the carry's position.
 
 **The dangerous half is the cheap half.** The silent-drop population — the seven verbs whose
 spoken parameters are dropped without any disclosure surface — is dominated by `enum` and

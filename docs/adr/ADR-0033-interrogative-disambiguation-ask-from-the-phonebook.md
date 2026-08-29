@@ -1,9 +1,11 @@
 # ADR-0033 — Interrogative disambiguation: the third behavior between route and abstain (ask from the phone-book)
 
-**Status:** Proposed — deferred (evidence-gated, post-demo). Decision shape recorded; build deferred to a slice.
-See **Amendment 2026-08-28** below — the decision stands unchanged; a **second trigger shape**
-(a slot the phrase never filled) is brought inside two of the five commitments, and a **second
-wake condition** is recorded beside the first rather than folded into it.
+**Status:** **Accepted 2026-08-29 — woken by the REACHABILITY condition (the second), NOT the frequency one.**
+The original gate (*"telemetry shows the ask-eligible rate is material"*) **has not fired and is not
+claimed**. See **Status change 2026-08-29** below for the citation, and **Amendment 2026-08-28** for
+the second trigger shape (a slot the phrase never filled) brought inside two of the five commitments.
+Superseded status line, preserved verbatim: *Proposed — deferred (evidence-gated, post-demo).
+Decision shape recorded; build deferred to a slice.*
 **Date:** 2026-07-28
 **Deciders:** Platform team
 **Related:**
@@ -277,3 +279,92 @@ to Accepted, the status line names the wake condition that woke it.**
 - The build/decision split. The **supervisor's pending-state mechanics** remain deferred to build
   time with both candidates already named (stateless re-route vs. held-promise); the plan item
   starts from that choice rather than from a blank page.
+
+---
+
+## Status change 2026-08-29 — Proposed→Accepted, and WHICH wake condition fired
+
+The amendment ruled that *"a status change must cite WHICH ONE FIRED"*, because recording
+reachability as the frequency gate firing would misstate the evidence — the same care this ADR
+invented `exact-via-learned-alias` to enforce on matches. So, plainly:
+
+> **The REACHABILITY condition fired. The FREQUENCY condition did not, and is not claimed.**
+
+**The frequency gate is still dark, and honestly so.** No ask-eligible rate against real traffic
+has been measured. The only rate-shaped number in the record is the slot-fill battery's, and it is
+a *filler accuracy* rate on a 48-case authored corpus — not traffic, not ask-eligibility. Nothing
+here says the eligible population is large.
+
+**What fired is the other claim: a class of questions cannot be asked at all.** Three citations,
+all measured since the amendment was written:
+
+| # | evidence | measured where |
+|---|---|---|
+| 1 | **`E04` — "what phases feed into P7"**: three slots present in the phrasing, **all three missed**, at confidence **0.96**. The user's question is fully formed and the system produces nothing from it. | `docs/measurements/slot-fill-battery-run2.json` |
+| 2 | **`E05` / `H04`** — an entity spoken by NAME on a **spoken-mandatory** slot (`project_id`, `process_id`). The filler emits the name; the engine takes an opaque id; the user gets a **422**. A miss would have reached an ask; a confident wrong fill reaches the engine. | same run; `[[the-filler-has-no-entity-resolution]]` |
+| 3 | **`400 bad params … missing 1 required keyword-only argument: 'project_id'`** — a Python signature error rendered to a person who asked about phases. | `[[a-missing-mandatory-slot-is-a-400-not-an-ask]]` |
+
+Each is a **question the system cannot answer and cannot honestly decline** — it produces a
+protocol error where the missing thing is one sentence from the user. That is reachability, not
+volume, and it is the condition the amendment recorded precisely so this moment would not have to
+borrow the other one's evidence.
+
+### Confidence was tested as the ask signal and is REJECTED — on evidence, not taste
+
+The obvious cheap trigger was a confidence threshold, and
+`[[a-missing-mandatory-slot-is-a-400-not-an-ask]]` proposed it explicitly (*"a confidence threshold
+is the cheap version of gap (1)"*) on a single observation of `confidence: 0.0` on an incomplete
+fill. The corpus tested it at n=48 and it does not survive:
+
+| class | n | min | median | max |
+|---|---|---|---|---|
+| CORRECT-**filled** | 26 | **0.93** | 0.99 | 1.00 |
+| CORRECT-**empty** | 14 | 0.00 | 0.95 | 0.99 |
+| WRONG | 5 | 0.90 | 0.92 | **0.96** |
+| MISSED | 1 | 0.96 | 0.96 | **0.96** |
+
+Correct fills bottom out at **0.93**; wrong fills reach **0.96**; the one genuine miss scored
+**0.96**; and four *correct* empties scored **0.00**. **No threshold separates them in either
+direction.** The 0.0 that motivated the proposal was a real signal and an unrepresentative one.
+
+The reason is structural and worth stating so it is not re-proposed: **confidence reports how sure
+the model is about the values it DID produce, never whether it produced everything the question
+named.** It is incapable of flagging an omission, and an omission is exactly what `ask` must
+detect. A model-derived number cannot be the gate on a model's silence.
+
+> **Therefore the slot-unfilled trigger is DETERMINISTIC and model-free: a slot declared
+> `spoken-mandatory` that is absent after filling → `ask`.** Read from the declarations
+> (`agent_fleet/planning_agent/slots.py`, derived from signatures), not from the model. This is
+> commitment #4's spirit exactly — *"the trigger is not a new confidence model; it is a policy over
+> existing discriminators"* — and the declarations are now one of those discriminators.
+
+### The trigger's measured reach, recorded before the build so it cannot be overclaimed later
+
+The presence test, applied to the 48-case run **as it stands today**, fires on **2 of 48**: `H06`
+(required slot named nowhere) and `E04` (required slot spoken and missed). It does **not** fire on
+`E05` or `H04`, because those slots *are* filled — with a name instead of an id. **A presence test
+cannot see an unresolvable value.**
+
+So citation 2 above is reachable by `ask` **only after** entity resolution can report failure. That
+is an interface requirement on the resolver join, recorded here because it constrains a component
+this ADR does not own:
+
+> **Resolution must be three-valued — `resolved` / `unresolved` / `not-attempted` — never
+> "substitute an id when you can, pass the name through when you can't."** A silent pass-through
+> converts an askable gap into a 422 and is indistinguishable, at the disposition point, from a
+> successful fill. The vocabulary to express this already exists: `instance_match` in
+> `agent_fleet/ontology_service/instance_resolution.py` is `exact | fuzzy | mixed | not_specific |
+> empty`, and its authors already fought the exact fight (`empty` split from `not_specific` so the
+> gate's actions could not hide inside a not-found).
+
+### What this status change does and does not authorize
+
+**Does:** the build, scoped in `[[elicitation-ask-disposition]]` — pre-registered acceptance,
+mechanism plan, and the disposition point named.
+
+**Does not:** widen any commitment. The one-turn bound, the never-ask-when-certain guardrail, the
+free-text boundary, the archetype-unity constraint and the confirmed-fill-is-not-an-alias clause
+all stand exactly as written. In particular the guardrail is now *measurable* rather than
+aspirational: 37 of the 48 corpus cases are on verbs with **no** spoken-mandatory slot, so the
+trigger is structurally incapable of firing on them — the anti-clippy property is a consequence of
+the declarations, not a tuned threshold.
