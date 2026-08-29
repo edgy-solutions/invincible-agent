@@ -34,6 +34,7 @@ as asked, which is a thing to log loudly and answer honestly — not a crash.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping, NamedTuple, Sequence
 
 #: Slot kinds whose values come from the ROUTE, never from a speaker. `handle` is state the
@@ -45,6 +46,41 @@ ROUTE_SUPPLIED_KINDS = frozenset({"handle", "ceremony"})
 #: rather than imported because this module must not depend on an engine's package — the
 #: agreement is pinned by a test instead, which is the same trade the archetype registries make.
 SLOT_KINDS = ("spoken-mandatory", "spoken-optional", "handle", "ceremony")
+
+
+def decode_declarations(raw: Any) -> list[dict]:
+    """Normalise a verb's declarations to a list of records, whatever shape they arrive in.
+
+    THEY ARRIVE AS A JSON STRING, and that is not an accident of transport. `slots` is a
+    list of MAPS, and a Neo4j property may only be a primitive or an array of primitives —
+    measured against the sandbox graph, in a rolled-back transaction:
+
+        [{"name": "group_by", ...}]    REJECTED  Neo.ClientError.Statement.TypeError
+        '[{"name": "group_by", ...}]'  ACCEPTED
+
+    so doc-tools projects the JSON text, following the `openapi_schema` idiom rather than
+    the `domains` one. Without this decode the caller does `list(raw)` on that string and
+    gets a list of CHARACTERS — every "declaration" a one-character string, `d["name"]`
+    raising on each. That is the same shredding the `window` slot already produced once
+    (`422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4`), and it is the shape this repo
+    keeps meeting: a container silently traded for its elements.
+
+    Accepts a decoded list too, so fixtures and any future projection that can carry
+    structure need no special case. Anything unparseable is `[]` — which the guard treats
+    as "declare nothing, accept nothing", so a corrupt declaration fails CLOSED.
+    """
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", "replace")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [d for d in raw if isinstance(d, Mapping) and d.get("name")]
 
 
 class Refusal(NamedTuple):
@@ -78,7 +114,7 @@ WRONG_SHAPE = "wrong-shape"
 
 def accept_slots(
     spoken: Mapping[str, Any] | None,
-    declared: Sequence[Mapping[str, Any]] | None,
+    declared: Sequence[Mapping[str, Any]] | str | None,
 ) -> Acceptance:
     """Filter `spoken` down to what `declared` permits.
 
@@ -89,7 +125,10 @@ def accept_slots(
     splat into the verb.
     """
     spoken = dict(spoken or {})
-    declared = list(declared or [])
+    # Normalised HERE rather than at each call site, because a caller that forgets gets the
+    # character-shredding described in `decode_declarations` — silently, and looking like
+    # "this verb declared 47 slots, all of them one character long".
+    declared = decode_declarations(declared)
 
     if not spoken:
         return Acceptance({}, [])
@@ -99,7 +138,7 @@ def accept_slots(
         # dark until declarations are actually projected.
         return Acceptance({}, [Refusal(n, NO_DECLARATIONS, v) for n, v in sorted(spoken.items())])
 
-    by_name = {d["name"]: d for d in declared if isinstance(d, Mapping) and d.get("name")}
+    by_name = {d["name"]: d for d in declared}  # decode_declarations already filtered
 
     params: dict[str, Any] = {}
     refusals: list[Refusal] = []

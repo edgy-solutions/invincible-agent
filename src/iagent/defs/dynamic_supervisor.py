@@ -774,7 +774,7 @@ def _classify_route(
                     # projected from the engine's registration (`mesh_slots`). `[]` until
                     # doc-tools' aitool_linker allowlist carries it, and `[]` means every
                     # spoken slot is refused, which is today's behaviour exactly.
-                    "slots": cv.get("slots") or [],
+                    "slots": decode_declarations(cv.get("slots")),
                 }
                 break
 
@@ -834,7 +834,11 @@ def _classify_route(
             # authoritative for `endpoint` makes it authoritative for what the thing at
             # that endpoint accepts. Taking them from Weaviate's predicate dict instead
             # would let a stale copy widen what a verb may be told.
-            predicate["slots"] = list(truth.get("slots") or [])
+            # DECODED, not list()-ed. The graph carries this as a JSON STRING because a
+            # Neo4j property cannot hold a list of maps; `list()` on that string yields one
+            # entry PER CHARACTER, which is the same container-for-elements trade that
+            # produced "unknown fiscal period(s): F, Y, 2, 6, -, Q, 4".
+            predicate["slots"] = decode_declarations(truth.get("slots"))
         else:
             # Neo4j compat-walk doesn't have this verb. That's the
             # conjunctive-read invariant violation — Weaviate picked
@@ -1415,7 +1419,7 @@ from iagent_pure.predicate_routing import (
 )
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
-from iagent_pure.slot_acceptance import accept_slots
+from iagent_pure.slot_acceptance import accept_slots, decode_declarations
 
 
 def _log_subtask_sources_asset(

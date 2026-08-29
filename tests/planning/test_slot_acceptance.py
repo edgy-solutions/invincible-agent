@@ -24,6 +24,7 @@ from iagent_pure.slot_acceptance import (
     SLOT_KINDS,
     UNDECLARED,
     accept_slots,
+    decode_declarations,
 )
 
 #: A verb's declarations, in the shape `slots_for()` derives and `mesh_slots` carries.
@@ -150,3 +151,60 @@ def test_every_argument_the_ROUTE_INJECTS_is_declared_route_supplied():
             )
             seen.add(name)
     assert seen == injected
+
+
+# ── the declarations arrive as a JSON STRING, and that is load-bearing ───────
+
+def test_declarations_arrive_as_a_json_string_and_are_decoded():
+    """WHY A STRING. `slots` is a list of MAPS, and a Neo4j property may only be a primitive
+    or an array of primitives. Measured against the sandbox graph in a rolled-back
+    transaction, one property, two value shapes:
+
+        [{"name": "group_by", ...}]    REJECTED  Neo.ClientError.Statement.TypeError
+        '[{"name": "group_by", ...}]'  ACCEPTED
+        ["A", "B"]                     ACCEPTED  (control — the `domains` idiom)
+
+    So doc-tools projects the JSON text and the consumer decodes it."""
+    raw = ('[{"name": "group_by", "kind": "spoken-optional", "type": "enum", '
+           '"values": ["org", "initiative"]}]')
+    a = accept_slots({"group_by": "initiative"}, raw)
+    assert a.params == {"group_by": "initiative"} and a.clean
+
+
+def test_a_string_declaration_is_never_shredded_into_characters():
+    """THE BUG THIS REPLACED, asserted so it cannot come back.
+
+    `list('[{"name"...')` yields one entry PER CHARACTER. Every "declaration" becomes a
+    one-character string, `d["name"]` raises on each, and the failure — if it were swallowed
+    — looks like a verb that declared 47 nameless slots. Same container-for-elements trade
+    that produced `422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4`.
+
+    Asserted through the OUTCOME rather than the internals: a valid spoken slot is accepted,
+    which is impossible if the declarations were shredded."""
+    raw = '[{"name": "window", "kind": "spoken-optional", "type": "str"}]'
+    assert len(decode_declarations(raw)) == 1, "the JSON string was not decoded"
+    a = accept_slots({"window": "FY26-Q4"}, raw)
+    assert a.params == {"window": "FY26-Q4"}, "shredded declarations would refuse this"
+
+
+def test_a_corrupt_declaration_fails_CLOSED():
+    """Unparseable is `[]`, and `[]` means refuse everything — a corrupt declaration must
+    never be MORE permissive than an honest one."""
+    for corrupt in ("[not valid json", "{}", "null", '"a string"', b"\xff\xfe"):
+        assert decode_declarations(corrupt) == [], f"{corrupt!r} produced declarations"
+        assert accept_slots({"group_by": "initiative"}, corrupt).params == {}
+
+
+def test_nameless_records_are_dropped_rather_than_crashing_the_lookup():
+    """A record with no `name` cannot be looked up by name, so it is not a declaration.
+    Dropped here so `by_name` never raises on the dispatch path."""
+    raw = '[{"kind": "spoken-optional"}, {"name": "window", "kind": "spoken-optional"}]'
+    assert [d["name"] for d in decode_declarations(raw)] == ["window"]
+
+
+def test_an_already_decoded_list_still_works():
+    """Fixtures pass real lists, and a future projection that can carry structure should
+    need no special case at the consumer."""
+    decl = [{"name": "group_by", "kind": "spoken-optional", "type": "str"}]
+    assert decode_declarations(decl) == decl
+    assert accept_slots({"group_by": "x"}, decl).params == {"group_by": "x"}
