@@ -279,6 +279,14 @@ before the registration was written: both were MISSING.** They are now declared 
 > a standing red alarm that trains readers to ignore alarms, which is worse than the missing
 > capability.
 >
+> **CONFIRMED 2026-08-29 — the classes are already in the seed manifest.** No
+> coordination was needed to add them: `setup/prime_databases.py` LAYER 5 already loads
+> `ontologies/mesh_system.ttl`, which is the file they were declared in. The Engine F
+> lane is in that same file adding a separate `finance_extension.ttl` entry for its own
+> Contract D classes — the manifest is additive, so **one prime run lands both lanes'
+> dependencies.** Verified by reading the manifest rather than by asking, which is
+> cheaper and does not interrupt a working lane.
+>
 > **It rides the next coordinated prime window**, not a hand-run Cypher
 > (`[[bootstrap-state-debt]]`). Verification after the seed, by name and parent per the prime
 > playbook: the two classes exist as `:OntologyClass`, then engine-p's registration set is
