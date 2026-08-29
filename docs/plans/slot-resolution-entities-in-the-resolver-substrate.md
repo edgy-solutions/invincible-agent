@@ -129,6 +129,26 @@ Still true and still this item's: a slot failure must be legible as **itself**, 
 `NO_VERB_CLASSIFIED`, which is what the operator sees today and which sends the diagnosis to the
 wrong component.
 
+### A SECOND live consumer for the `ask` disposition — duplicate canvases
+
+Filed 2026-08-28, from the seeding chain's first end-to-end run: seeding the phrase three times
+produced **three Portfolio Planning canvases**. That is `recomputes: false` working as designed —
+a seed answer records an act, so re-asking mints a new board rather than refreshing one.
+
+**The fix is not dedupe.** Silent dedupe guesses that the user meant the existing board; silent
+duplication litters. Both decide something the user could be asked:
+
+> **"You already have a Portfolio Planning canvas — open it, or seed a new one?"**
+
+This is ADR-0033's amended `ask` with a second live consumer, and it is an unusually clean one:
+**the options come from the user's own canvas list** — enumerable, governed, and every option
+routes (opening an existing canvas and seeding a new one are both real actions). Menu-integrity
+holds without any new substrate, which makes it a stronger case for the amended #2's fourth
+option source than the slot picker itself: no provider work is needed to enumerate it.
+
+**Interim, honestly:** duplicates plus manual delete. That is a real cost and it is visible, which
+is the trade this project takes over a silent guess.
+
 ### Pending-state mechanics — a CHOICE between two named designs, not a blank page
 
 ADR-0033's *Scope: decision vs build* already sketched both, and deferred the choice deliberately:
@@ -167,6 +187,73 @@ re-parsed.
 
 Nothing else queued has three consumers waiting on it. Every domain engine after this one either
 needs it or is deliberately entity-free, and the second is a narrow class.
+
+## ACCEPTANCE, PRE-REGISTERED — the test plan precedes the build
+
+Written 2026-08-28, before any implementation exists. **The build is done when this table goes
+green**, and each capability has its own green condition so a partial landing is visible as
+partial rather than reported as done.
+
+### Capability (1) — the three joins, in dependency order
+
+| # | join | green when | measured how |
+|---|---|---|---|
+| 1a | **declare** | `register_engine_to_mesh()` accepts slots, and `planCapabilityPath`'s graph edge carries a slot declaration with its kind | the graph query that found zero — re-run, expect non-zero |
+| 1b | **carry** | the supervisor's dispatch payload contains extracted params, and Engine P's `req.params` arrives non-empty | the payload enumeration in `[[slots-are-extracted-then-dropped-at-dispatch]]`, re-read |
+| 1c | **extract** | already true — BAML classes on the live path | no work; guard against regression |
+
+**Slot kinds, from the census, so the distinction that nearly corrupted it is unexpressible as an
+error in the schema:** `spoken-mandatory | spoken-optional | handle | ceremony`.
+
+### The four-row acceptance table — the baseline, INVERTED
+
+Each row is a measured failure today. Each becomes a passing assertion.
+
+| # | question | today (measured) | green when |
+|---|---|---|---|
+| 1 | "where is funding short **by initiative**" | 11 **organisations** (`group_by=org`) | returns **initiatives** |
+| 2 | "maturity grid **as of FY26-Q4**" | unfiltered, latest per cell | cells assessed **at or before** that date |
+| 3 | "sites exceed threshold **in FY26-Q4**" | **four** quarters | **one** period |
+| 4 | "the plan **broken out by initiative**" | passes — `initiative` **is the default** | passes **because the parameter ARRIVED** |
+
+> ### ROW 4 IS LOAD-BEARING AND IS THE ONLY ONE THAT CAN FAIL SILENTLY
+>
+> Rows 1–3 go green when the carry works. **Row 4 is already green and proves nothing** — it
+> passes today by coincidence of default, and would keep passing if the carry were never built.
+>
+> So row 4's assertion is not on the ANSWER, it is on the ARRIVAL: the test must observe that
+> `group_by` reached the verb, not that the output grouped by initiative. Assert on the delivered
+> parameter — `req.params`, or a recorded `delivered_slots` — never on the rows alone.
+>
+> **This is the certification gap in miniature.** Routes-and-renders certified row 4 and would
+> certify it again; only delivered-versus-spoken tells a working carry from a lucky default. A
+> suite that omits row 4's arrival check is measuring the defaults, exactly as the last one did.
+
+### Capability (2) — instance resolution
+
+| green when | note |
+|---|---|
+| Engine P is a registered `mesh:resolveInstance` provider with `domains: ["PORTFOLIO_PLANNING"]` | the mechanism EXISTS and is federated — four providers precede it (Task 3) |
+| `/resolve` fans out to it and returns plan entities as candidates | provider-agnostic by construction, ~30s cache |
+| "what blocks Wave 1 Cutover" reaches `plan_dependency_neighborhood` with `project_id` filled | one of the four spoken-mandatory verbs |
+
+**No entity registry, and no lifecycle hazard.** Nothing is declared into a store; the provider
+answers live from its own state. `PlanStore` emptying on restart is then correct behaviour rather
+than staleness — there is no registry to go bad.
+
+### Enumerability is NOT one question — three of four kinds are already free
+
+| kind | source of the ask-menu | needs work? |
+|---|---|---|
+| **enum** (`group_by`, `color_by`) | the signature's own `Literal` | **no** |
+| **period** (`window`, `as_of`) | `FISCAL_PERIODS` | **no** |
+| **instance** (`project_id`, `capability_id`, …) | an Engine P provider | yes — capability (2) |
+| **handle** (`baseline_state`, `ops`) | never spoken | n/a |
+
+**The dangerous half is the cheap half.** The silent-drop population — the seven verbs whose
+spoken parameters are dropped without any disclosure surface — is dominated by `enum` and
+`period` slots, both enumerable today with no substrate work. Capability (2) is needed for the
+four *visible* failures; capability (1) alone fixes the seven *invisible* ones.
 
 ## What this item is NOT
 
