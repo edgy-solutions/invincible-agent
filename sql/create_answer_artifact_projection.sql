@@ -106,6 +106,24 @@ CREATE INDEX IF NOT EXISTS idx_aap_produced_for_user_id
 ALTER TABLE answer_artifact_projection
     ADD COLUMN IF NOT EXISTS summary TEXT;
 
+-- 2026-08-24: how long the answer took, in milliseconds, or NULL.
+-- Measured at the ONE site where status flips to 'complete' (gateway.py),
+-- from the bundle's own valid_as_of to that instant — birth-to-complete for
+-- this bundle, which is what the name means and what a refactor must not
+-- quietly redefine by substituting a request or step timestamp.
+--
+-- NULLABLE AND MOSTLY NULL ON DAY ONE. Every row written before this column
+-- existed has no measurement and never will; 0 would be a CLAIM that those
+-- answers returned instantly. The UI renders NULL as nothing, never as 0s.
+-- Zero is a legal value (a cache hit is a real sub-millisecond result), so
+-- NULL and 0 must stay distinct rather than collapsing on falsy.
+--
+-- SUCCESS PATH ONLY. A 'failed' artifact has a wall-clock lifetime, but that
+-- is not an answer's duration — merging them would make any later
+-- "median answer time" silently include 502 deaths. IDEMPOTENT via IF NOT EXISTS.
+ALTER TABLE answer_artifact_projection
+    ADD COLUMN IF NOT EXISTS duration_ms BIGINT;
+
 -- ── Projector cursor (internal resumable state, NOT synced) ──
 --
 -- Decision 4 (Option C revised): the `GET /projector/watermark` HTTP

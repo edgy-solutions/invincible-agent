@@ -153,6 +153,34 @@ class AnswerArtifactBundle:
     # composes it on the production path.
     summary: str = ""
 
+    # ── How long the answer took, or nothing at all ────────────────────────
+    #
+    # Milliseconds from bundle birth (`valid_as_of`) to the single site where
+    # `status` flips to "complete" (gateway.py, the one flip — its comment says
+    # "this is the ONLY site" and that is what keeps this stamp from drifting
+    # away from the status it measures).
+    #
+    # DEFAULT None, AND THAT IS THE POINT. Every artifact written before this
+    # field existed has no duration and never will. `0` would be a CLAIM that
+    # the answer returned instantly; `None` is the honest absence of a
+    # measurement. Zero itself is legal and meaningful — a cache hit is a real
+    # sub-millisecond result — so absence and zero must stay representationally
+    # distinct rather than collapsing into one falsy value.
+    #
+    # ONLY ON THE SUCCESS PATH. A `failed` artifact has a wall-clock lifetime
+    # but that is not AN ANSWER'S duration. Stamping it would put a number
+    # beside rows the UI deliberately shows nothing for, and would make failure
+    # timing and success timing the same field — after which "median answer
+    # time" silently includes every 27-second 502 death.
+    #
+    # NOT `elapsed_ms`, WHICH IS A DIFFERENT FIELD WITH A DIFFERENT LIFETIME.
+    # `gateway.py`'s `elapsed_ms` rides an SSE event and dies with the stream;
+    # this one is persisted on the row. They share a repo, a concept and a unit,
+    # which is exactly what makes wiring this from that the plausible mistake —
+    # and it would make the persisted field start going absent whenever the SSE
+    # path changes. Compute this from `valid_as_of`, never from the wire.
+    duration_ms: Optional[int] = None
+
 
 # ── Result of a write attempt ──
 
@@ -459,6 +487,7 @@ class AnswerArtifactWriter:
               a.routing_inline = $routing_inline,
               a.rendered_output = $rendered_output,
               a.graph_trace_json = $graph_trace_json,
+              a.duration_ms = $duration_ms,
               a.durability_status = $durability_status,
               a.watermark = $watermark
             """,
@@ -469,6 +498,10 @@ class AnswerArtifactWriter:
             valid_until=bundle.valid_until,
             question_text=bundle.question_text,
             summary=bundle.summary,
+            # None stays None all the way to the store — Neo4j simply does not
+            # set the property, so an artifact with no measurement has no
+            # `duration_ms` rather than a zero that would read as "instant".
+            duration_ms=bundle.duration_ms,
             message_id=bundle.message_id,
             # Neo4j properties can't be nested dicts — serialize the
             # sub-objects to JSON strings. The projector (Hop 2) will

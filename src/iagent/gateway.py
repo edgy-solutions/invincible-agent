@@ -4062,6 +4062,19 @@ async def generate_dagster_stream(
             # status becomes 'complete' — there is no default-to-
             # complete elsewhere.
             _artifact_bundle["status"] = "complete"
+            # HOW LONG THE ANSWER TOOK — stamped HERE, adjacent to the flip it
+            # measures, and nowhere else. The operands are fixed on purpose:
+            # this bundle's OWN `valid_as_of` (set once at construction) to now.
+            # A future "simplification" that reads a request timestamp or a
+            # step-start time would change what the number MEANS while keeping
+            # its name — birth-to-complete for THIS bundle is the definition.
+            #
+            # Deliberately NOT set on the `failed` branches above: a failed
+            # artifact has a wall-clock lifetime, but that is not an answer's
+            # duration, and merging the two poisons any later aggregate.
+            _artifact_bundle["duration_ms"] = max(
+                0, int(time.time() * 1000) - _artifact_bundle["valid_as_of"]
+            )
     else:
         yield _perror(
             "Timeout or failed to fetch UI payload.",
