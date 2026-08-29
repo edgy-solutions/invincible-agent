@@ -1,15 +1,20 @@
 ---
 id:         identity-propagation-must-not-cross-run-storage
-status:     delivered — built, rolled and verified live 2026-08-28 (see DELIVERED)
+status:     closed
 owner:      Lane 2
 blocked-on: nothing
-closed-by:  
-code-site:  src/iagent/defs/dynamic_supervisor.py:948, agent_fleet/utils/service_identity.py:54, src/iagent/gateway.py (canvas_seed)
+closed-by:  03586d3
+code-site:  src/iagent/identity_vault.py, src/iagent/gateway.py, src/iagent/defs/dynamic_supervisor.py, agent_fleet/utils/service_identity.py
 repo:       invincible-agent
 summary:    THE OBVIOUS FIX IS A CREDENTIAL DISCLOSURE, and it works on the first try. Dispatch discards the caller's identity, so the seeding phrase ran as svc:supervisor and was correctly refused 403 cell_not_entitled x5 — the first live casualty of sdk-discards-caller-identity. The natural repair is to thread the user's JWT through the Dagster run config; MEASURED, that config is 2306 chars of durable Postgres readable over GraphQL and rendered in the Dagster UI, so the repair writes a live bearer credential into browsable storage for a defense-adjacent customer. A 403 is a contained authorization gap; a credential at rest is a disclosure. What travels must be an ASSERTION, not a CREDENTIAL. RULED 2026-08-28 — THE REFERENCE VAULT: run config carries only the run_id it already carried, and the supervisor redeems alice's own Ping-rooted token from the BFF over a live in-cluster hop at dispatch (reach verified, 200). No new credential, no realm permission, no federation question. Six invariants pinned below; legacy impersonation is RULED OUT PERMANENTLY on the federation argument.
 ---
 
 # Naive identity propagation through Dagster run config is a credential disclosure
+
+> **Code sites in detail** (the frontmatter carries bare paths so the board's
+> closed-by attribution seal can string-match them): the mint that caused the 403 is
+> `dynamic_supervisor.py:948`; the service identity is
+> `service_identity.py:54`; the forwarding route is `gateway.py`'s `canvas_seed`.
 
 **Filed 2026-08-28 by Lane 2, from a live failure.** The obvious fix works, and shipping it
 would write live user credentials into browsable durable storage. **Read this before
