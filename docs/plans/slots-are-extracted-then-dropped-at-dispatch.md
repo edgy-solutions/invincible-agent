@@ -49,7 +49,10 @@ Not a code-read conclusion: the rows below came out of `answer_artifact_projecti
 
 ## The finding
 
-BAML extracts verb slots. The supervisor never forwards them. Every verb runs on its defaults.
+~~BAML extracts verb slots. The supervisor never forwards them.~~ **Retracted — see the
+correction above: nothing extracts them.** What survives unchanged, and was measured rather
+than read: **every verb runs on its defaults**, and the seeded card returned organisations
+for a question that said initiative.
 
 **CORRECTED CHAIN — the original is kept below it, struck, because the error is instructive.**
 
