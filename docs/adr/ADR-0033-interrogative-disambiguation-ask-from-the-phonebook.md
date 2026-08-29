@@ -149,11 +149,66 @@ forbid asking at all.
 **The fourth source, in the same spirit as the three:**
 
 > For a slot the phrase did not fill, the ask names the **slot** from the verb's **registered slot
-> inventory**, and offers **instances enumerated from the substrate** where resolution can
-> enumerate them.
+> inventory — WHICH MUST FIRST EXIST; see the plan item's capability (1)** — and offers
+> **instances enumerated from the substrate** where resolution can enumerate them.
 
 Both halves are governed vocabularies. Nothing is composed. Menu-integrity holds verbatim: every
 offered option must route when chosen.
+
+> ### ⛔ CORRECTION 2026-08-28 — THERE IS NO REGISTERED SLOT INVENTORY TODAY
+>
+> This clause was written naming a source that **does not exist**, and it is retracted in place
+> rather than quietly rewritten.
+>
+> `register_engine_to_mesh()` accepts `mint, name, description, verb, input_uri, output_uri,
+> verb_synonyms, endpoint_url, owner_persona, domains, cost_class`. **There is no parameter for
+> slots.** The authoritative record agrees: `mesh:planCapabilityPath` — the canonical slot-taking
+> verb — carries thirteen edge properties in the graph and not one describes a parameter.
+>
+> Slots exist in three places, **none of them a registration**: `intent_catalog.yaml` (read by
+> tests and eval runners only — a catalog entry is not a registration), BAML classes (the
+> slot-FILLING stage, which runs only after a verb is already classified), and Python function
+> signatures (visible to the engine at call time, invisible to the router).
+>
+> **THE DECISION STANDS; THE SUBSTRATE IS NOT READY FOR IT.** The ask *should* name the slot from
+> a governed inventory — that is still right, and it is still the only formulation that keeps the
+> phone-book rule intact. What was wrong is the assumption that such an inventory could be read
+> today. It must be **built first**, and that is capability (1) of
+> `[[slot-resolution-entities-in-the-resolver-substrate]]`, which is prior to the resolution work
+> the item was originally scoped around.
+>
+> **THE MESH HAS ARITY OF SUBJECTS, NOT ARITY OF PARAMETERS.** This is why the gap feels like it
+> should already be closed — its neighbours are. A registration declares a verb's *type signature
+> at the class level* (`input_uri` / `output_uri`: what it is about, what it produces) and its
+> vocabulary (`verb_synonyms`, `anti_synonyms`). It has never declared what the verb **takes**.
+> The slot inventory is the second arity being born.
+>
+> **CONSEQUENCE FOR THE ROUTER, and it retires a class of proposals.** The router cannot know a
+> slot is missing, because no slot was ever declared — it only knows nothing cleared threshold.
+> So `NO_VERB_CLASSIFIED` on a slot-shaped question is an **information gap, not a threshold
+> problem**, and threshold tuning cannot fix it. (Pre-registered as a prediction for the
+> investigation's baseline; the measurement decides it.)
+>
+> **THIS IS NOT AN EDGE-CASE FEATURE.** The severity was understated when this amendment was
+> written as "four unreachable verbs plus Engine F". Every parameterised question a working
+> session actually asks — *"schedule for Wave 2"*, *"cost curve for FY27 only"*, *"site load at
+> Monterrey"*, *"maturity as of Q4"* — is a verb the system HAS plus a parameter the phrase
+> carries. Nobody asks the bare-verb version twice; narrowing is what analysis IS. The certified
+> corpus routes at high confidence because it is composed of the bare versions, which is a
+> **corpus fact, not a capability fact**.
+>
+> The engines already accept these parameters and the interpretation strip already renders
+> resolved ones. **The ends are built and the middle is missing:** a spoken parameter has no path
+> to a verb's parameter. Slots are therefore not Engine F's prerequisite that planning happens to
+> share — they are **the planning engine's own unfinished half**, and Engine F merely arrives
+> after the fix rather than before it.
+>
+> **Sizing, recorded because this is the cheapest moment it will ever have:** the slots field
+> crosses into the `iagent-mesh` SDK, which has no consumers outside this repo — no migration, no
+> deprecation window, no compatibility shim. ADR-0045's Engine F is the SDK's second consumer and
+> its flagship verb is slot-heavy, so the sequence writes itself: **SDK schema change → planning
+> verbs re-register with declarations → Engine F born declaring.** Additive-schema discipline
+> applies (absent means what it means today).
 
 **THE FREE-TEXT BOUNDARY IS EXPLICIT, because this is where a lazy implementation drifts.**
 Free text is permitted **only** when the substrate genuinely cannot enumerate the slot's domain —
