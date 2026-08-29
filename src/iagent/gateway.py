@@ -51,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
+from .identity_vault import VAULT, RedemptionOutcome, vault_ttl_seconds
 from .answer_artifact_writer import (
     AnswerArtifactBundle,
     DurabilityStatus,
@@ -1640,6 +1641,121 @@ async def canvas_seed(
         "seeded": seeded,
         "total": total,
     }
+
+
+# ══════════════════════════════════════════════════════════
+# The identity vault's redemption surface
+# ══════════════════════════════════════════════════════════
+#
+# A CREDENTIAL-DISPENSING ENDPOINT, named as such. The plan item
+# (docs/plans/identity-propagation-must-not-cross-run-storage.md, 1f4d645) pins six
+# invariants; five of them live here and the sixth is the vault module's in-memory-ness.
+# A build that drops any one of them has reverted to the thing the vault replaced.
+#
+# WHY THIS EXISTS AT ALL: the supervisor is not a proxy in alice's request, it is a job
+# launched by it, and the only channel across that boundary is durable run config. So the
+# credential cannot ride along and must be fetched on the one hop that IS live.
+
+# INVARIANT 1 — LOCKED TO THE SUPERVISOR'S SERVICE IDENTITY, specifically.
+#
+# Not "any authenticated service". A second service redeeming a reference is the vault
+# leaking sideways, and a generic is-authenticated check would permit exactly that. The
+# value is the supervisor client's hardcoded-claim mapper output (`svc:supervisor`), which
+# Keycloak asserts — it is NOT caller-supplied and therefore not spoofable, which is the
+# same property that made the payload-written subject unusable elsewhere in this codebase.
+#
+# Env-overridable ONLY so a differently-named realm can be configured, never to widen it:
+# an empty value denies everyone rather than admitting everyone.
+_VAULT_REDEEMER_AUTHZ_ID = os.getenv("IDENTITY_VAULT_REDEEMER", "svc:supervisor").strip()
+
+
+class RedeemIdentityBody(BaseModel):
+    run_id: str
+    # INVARIANT 4's input: the launcher the redeeming run has recorded in its OWN config.
+    # Checked against the subject of the token that was stashed. Optional so an older
+    # supervisor image degrades to "no cross-check" rather than to a hard failure — but a
+    # supervisor that sends it gets the stronger guarantee.
+    claimed_launcher: Optional[str] = None
+
+
+@app.post("/internal/identity/redeem")
+async def redeem_caller_identity(
+    body: RedeemIdentityBody,
+    current_user: User = Depends(get_current_user),
+):
+    """Hand the supervisor the caller's own token, once, for one run.
+
+    Returns 200 with the token on the single legitimate redemption. Every other outcome is
+    a refusal with a NAMED cause, because "it didn't work" is the answer that cost this
+    project a day of diagnosis more than once.
+    """
+    caller = (current_user.authz_id or "").strip()
+
+    # INVARIANT 1.
+    if not _VAULT_REDEEMER_AUTHZ_ID or caller != _VAULT_REDEEMER_AUTHZ_ID:
+        # INVARIANT 6 — audited, including the refusals. An unlogged dispensing surface is
+        # worse than the exchange it replaced; a refused redemption is the MOST interesting
+        # line this endpoint can write, so it is logged at error.
+        logger.error(
+            "identity_vault: REFUSED redemption for run_id=%s — caller %r is not the "
+            "supervisor identity (%r). A second service redeeming a reference is the vault "
+            "leaking sideways.",
+            body.run_id, caller or "<none>", _VAULT_REDEEMER_AUTHZ_ID,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "not_the_redeemer",
+                "message": (
+                    "The identity vault is redeemable only by the supervisor's service "
+                    "identity."
+                ),
+            },
+        )
+
+    # INVARIANTS 2, 3, 4 are all enforced inside this one call, atomically.
+    result = VAULT.redeem(body.run_id, claimed_launcher=body.claimed_launcher)
+
+    # INVARIANT 6 — one line per redemption: run_id, subject, timestamp, outcome. The
+    # timestamp is the log record's own. The vault's whole legitimacy is that the token's
+    # journey is VISIBLE.
+    logger.info(
+        "identity_vault: redemption run_id=%s caller=%s subject=%s outcome=%s",
+        body.run_id, caller, result.subject or "-", result.outcome,
+    )
+
+    if result.ok:
+        return {"token": result.token, "subject": result.subject}
+
+    # A replay is not a 404. Distinguishing them is the point of the tombstone, and
+    # collapsing them here would throw away the discrimination the vault just made.
+    _status = 409 if result.outcome == RedemptionOutcome.ALREADY_REDEEMED else 404
+    raise HTTPException(
+        status_code=_status,
+        detail={
+            "error": result.outcome,
+            "run_id": body.run_id,
+            "message": {
+                RedemptionOutcome.ALREADY_REDEEMED: (
+                    "This reference was already redeemed. It is single-use by design; a "
+                    "second redemption is the compromise tell and is never re-issued."
+                ),
+                RedemptionOutcome.LAUNCHER_MISMATCH: (
+                    "The run's recorded launcher does not match the stashed token's "
+                    "subject. Refused, and the reference has been consumed."
+                ),
+                RedemptionOutcome.EXPIRED: (
+                    "The reference expired. It is bounded to the dispatch window "
+                    f"({vault_ttl_seconds()}s), not to the token's own lifetime."
+                ),
+            }.get(
+                result.outcome,
+                "No reference is held for this run. It was never stashed, the dispatch "
+                "window elapsed, or cortex-bff restarted (the vault is in-memory by "
+                "design; in-flight seeds do not survive a restart).",
+            ),
+        },
+    )
 
 
 @app.get("/me/canvases")
@@ -3303,6 +3419,13 @@ async def generate_dagster_stream(
     # the honest default per `[[optimistic-defaults-are-dishonest]]` is
     # the failure-revealing value, not "claim".
     entitlement_source: str = "fallback",
+    # THE IDENTITY VAULT (ruled 2026-08-28, see src/iagent/identity_vault.py).
+    # The caller's OWN bearer token, held only for as long as this request runs. It is
+    # stashed against the Dagster run id the moment launchRun returns and is NEVER put
+    # into run config, logged, or echoed. This is the last point at which the run id and
+    # alice's credential exist in the same place; after this the boundary is crossed by a
+    # reference alone.
+    caller_token: str = "",
 ) -> AsyncGenerator[str, None]:
     """
     Trigger Dagster job and stream step status as Holographic Thinking Cards.
@@ -3569,6 +3692,32 @@ async def generate_dagster_stream(
         )
         yield _sse("stream_end", "{}")
         return
+
+    # ── STASH THE REFERENCE ────────────────────────────────────────────────────
+    # The run exists and we still hold alice's request, so this is the one instant at
+    # which `run_id` and her token are both in hand. From here the process boundary is
+    # crossed by the run id ALONE — which run config already carried and which was never
+    # secret. If the supervisor later dispatches a verb that needs the caller's identity,
+    # it redeems this over the live in-cluster hop.
+    #
+    # STASHED FOR EVERY RUN, not only seeding ones: at launch time nothing knows yet
+    # whether this phrase will route to a verb that needs caller identity, and inventing a
+    # guess here would be the optimistic-default shape. The footprint is bounded by TTL
+    # (minutes) and by process lifetime, and it never becomes durable.
+    #
+    # A stash failure must NOT kill the run. Every non-seeding phrase is unaffected by it,
+    # and a seeding phrase fails LOUDLY at redemption with a named cause — which is the
+    # honest place for it to fail, not here where the cause would be guessed at.
+    if caller_token:
+        try:
+            VAULT.stash(run_id, caller_token, subject=user_email)
+        except Exception as _vault_exc:  # noqa: BLE001
+            logger.warning(
+                "identity_vault: could not stash the caller reference for run %s (%s: %s). "
+                "Non-seeding phrases are unaffected; a seeding dispatch will refuse at "
+                "redemption with not_found.",
+                run_id, type(_vault_exc).__name__, _vault_exc,
+            )
 
     # Note: the "Dagster Run Initiated: ..." status emission was
     # operational noise; the user doesn't need to see the run id, and
@@ -4356,6 +4505,16 @@ async def orchestrate(request: InterviewRequest, http_request: Request,
                 user_email=current_user.authz_id,
                 user_persona=effective_persona,
                 entitled_domains=effective_domains,
+                # The caller's own credential, for the vault only. Read from the header
+                # rather than re-minted: the whole point of the ruled design is that what
+                # reaches /canvas/seed is ALICE'S OWN Ping-rooted token — the same one the
+                # browser sends on the button path — never a new one minted on some
+                # broker's authority.
+                caller_token=(
+                    (http_request.headers.get("authorization") or "")
+                    .removeprefix("Bearer ")
+                    .strip()
+                ),
                 # Capture A per ADR-0025: thread the JWT-read-time
                 # origin flag from auth.User down to the produced_for
                 # dict construction inside generate_dagster_stream.

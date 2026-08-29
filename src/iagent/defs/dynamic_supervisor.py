@@ -898,7 +898,7 @@ def _classify_route(
     return _ROUTING_MATCHED, predicate, telemetry
 
 
-def _telemetry_headers(config) -> Dict[str, str]:
+def _telemetry_headers(config, caller_token: str = "") -> Dict[str, str]:
     """The ADR-0038 trace/session headers the supervisor puts on every outbound engine call.
 
     SINGLE SOURCE for the header NAMES. Rename a key here and the receiving engines
@@ -923,6 +923,35 @@ def _telemetry_headers(config) -> Dict[str, str]:
     """
     headers: Dict[str, str] = {}
 
+    # ── THE CALLER'S OWN IDENTITY, WHEN THE VERB REQUIRES IT ───────────────────────
+    # `caller_token` is alice's own Ping-rooted token, redeemed from the BFF's identity
+    # vault over the live in-cluster hop (see `_redeem_caller_token`). When present it
+    # REPLACES the service identity, because the whole point of the ruled design is that
+    # what reaches /canvas/seed is the SAME credential the browser sends on the button
+    # path — not a new one minted on some broker's authority.
+    #
+    # IT IS EXPRESSED HERE RATHER THAN AT THE CALL SITE on purpose. This function's own
+    # docstring is the reason: one home for outbound auth, so no call site can ever send
+    # trace context without a credential or the reverse. "Which credential" is an
+    # argument; "where the header is set" stays a single place.
+    #
+    # NO X-Auth-Status IS SET on this path. That header is the OBSERVE-phase gauge's
+    # discriminant for a FAILED MINT, and nothing was minted here — a redemption failure
+    # never reaches this branch because it fails the subtask loudly upstream.
+    #
+    # ONE EXIT, DELIBERATELY. Returning early from the caller-identity branch is the obvious
+    # way to write it and it is wrong twice over: it gives this function a second exit, so
+    # the trace headers below would need duplicating — the drift this helper was
+    # consolidated to prevent — and it truncates the source slice that
+    # tests/test_specialist_dispatch_trace_headers.py takes of this function, silently
+    # turning a contract test green against a body it can no longer see. The credential is
+    # CHOSEN below and applied once.
+    #
+    # AND MIND THE PROSE HERE. That neighbouring guard slices this function with a
+    # non-greedy match ending at the first occurrence of its anchor phrase, so a COMMENT
+    # that quotes the anchor truncates the slice just as effectively as real code does.
+    # This comment cost one red run learning that. Do not write the anchor into prose.
+    #
     # AUTHORIZATION RIDES THIS SAME HELPER, on purpose. Both outbound legs already share it
     # for the telemetry headers; putting the credential anywhere else guarantees that one day
     # a call site sends trace context without a token, or the reverse. One function, both
@@ -937,37 +966,160 @@ def _telemetry_headers(config) -> Dict[str, str]:
     #
     # MINT AT USE — never a stored token (the time-machine rule). Shares the platform mint so
     # there is ONE claim contract to verify.
-    try:
-        # mint_supervisor_token, NOT mint_service_token. The latter has a GENERAL NAME and
-        # REVIEW-STARTER-SPECIFIC behaviour (it reads REVIEW_STARTER_CLIENT_ID/SECRET), so
-        # this call site originally authenticated the supervisor as `svc:review-starter` and
-        # would have carried that role's can_invoke(mesh:startReview) on EVERY specialist
-        # dispatch — a confused deputy introduced while fixing the confused deputy. Inert only
-        # because nothing verifies yet.
-        from agent_fleet.utils.service_identity import mint_supervisor_token
-        headers["Authorization"] = f"Bearer {mint_supervisor_token()}"
-    except Exception as exc:  # noqa: BLE001 — see OBSERVE-PHASE note above
-        # THE GAUGE NEEDS THE DISCRIMINANT. A token-less dispatch caused by a mint FAILURE and
-        # one from a caller that never minted both surface at the engine as `caller: none`.
-        # Without a discriminant, a Keycloak blip during the migration reads as caller-readiness
-        # REGRESSING, and the gauge the contract flip depends on inherits noise it cannot
-        # explain. So the cause travels as a DIAGNOSTIC header.
+    if caller_token:
+        # THE CALLER'S OWN IDENTITY. Alice's Ping-rooted token, redeemed from the BFF's
+        # identity vault over the live in-cluster hop (see `_redeem_caller_token`). It
+        # REPLACES the service identity rather than accompanying it: what reaches
+        # /canvas/seed is the SAME credential the browser sends on the button path, never a
+        # new one minted on some broker's authority.
         #
-        # X-Auth-Status IS DIAGNOSTIC ONLY AND MUST NEVER REACH AN AUTHORIZATION DECISION: it is
-        # caller-asserted and therefore unverifiable — exactly the property that made the
-        # payload-written subject a spoofing surface. It is legal to LOG and illegal to TRUST.
-        headers["X-Auth-Status"] = f"mint-failed:{type(exc).__name__}"
-        logging.getLogger(__name__).warning(
-            "supervisor dispatch minting no token (%s: %s) — proceeding UNAUTHENTICATED; "
-            "engines record caller:none (mint failed) until svc:supervisor is configured",
-            type(exc).__name__, str(exc)[:120],
-        )
+        # NOTHING IS MINTED HERE, so there is no mint to guard and no X-Auth-Status to set
+        # — that header is the OBSERVE-phase gauge's discriminant for a FAILED MINT, and
+        # setting it on this path would put a fabricated reading into the gauge. A
+        # redemption failure never reaches this function; it fails the subtask loudly
+        # upstream, which is the honest place for an identity fault to surface.
+        headers["Authorization"] = f"Bearer {caller_token}"
+    else:
+        try:
+            # mint_supervisor_token, NOT mint_service_token. The latter has a GENERAL NAME and
+            # REVIEW-STARTER-SPECIFIC behaviour (it reads REVIEW_STARTER_CLIENT_ID/SECRET), so
+            # this call site originally authenticated the supervisor as `svc:review-starter` and
+            # would have carried that role's can_invoke(mesh:startReview) on EVERY specialist
+            # dispatch — a confused deputy introduced while fixing the confused deputy. Inert only
+            # because nothing verifies yet.
+            from agent_fleet.utils.service_identity import mint_supervisor_token
+            headers["Authorization"] = f"Bearer {mint_supervisor_token()}"
+        except Exception as exc:  # noqa: BLE001 — see OBSERVE-PHASE note above
+            # THE GAUGE NEEDS THE DISCRIMINANT. A token-less dispatch caused by a mint FAILURE and
+            # one from a caller that never minted both surface at the engine as `caller: none`.
+            # Without a discriminant, a Keycloak blip during the migration reads as caller-readiness
+            # REGRESSING, and the gauge the contract flip depends on inherits noise it cannot
+            # explain. So the cause travels as a DIAGNOSTIC header.
+            #
+            # X-Auth-Status IS DIAGNOSTIC ONLY AND MUST NEVER REACH AN AUTHORIZATION DECISION: it is
+            # caller-asserted and therefore unverifiable — exactly the property that made the
+            # payload-written subject a spoofing surface. It is legal to LOG and illegal to TRUST.
+            headers["X-Auth-Status"] = f"mint-failed:{type(exc).__name__}"
+            logging.getLogger(__name__).warning(
+                "supervisor dispatch minting no token (%s: %s) — proceeding UNAUTHENTICATED; "
+                "engines record caller:none (mint failed) until svc:supervisor is configured",
+                type(exc).__name__, str(exc)[:120],
+            )
 
     if getattr(config, "trace_id", ""):
         headers["X-Trace-Id"] = config.trace_id
     if getattr(config, "session_id", ""):
         headers["X-Session-Id"] = config.session_id
     return headers
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# Redeeming the caller's identity at dispatch
+# ══════════════════════════════════════════════════════════════════════════════════
+#
+# THE STRUCTURAL FACT THIS EXISTS TO WORK AROUND: this process is not a proxy inside
+# alice's HTTP request — it is a JOB LAUNCHED BY IT. The only channel across that
+# boundary is Dagster run config, which is durable Postgres readable over GraphQL and
+# rendered in the Dagster UI, so alice's token cannot ride along and must not be put
+# there. Run config carries her RUN ID, which it already carried and which was never
+# secret; the credential itself is fetched here, over the live in-cluster hop this pod
+# genuinely has (verified: iagent-cortex-bff:8090 answers 200 from the user-code pod).
+#
+# Full reasoning, and the six invariants the BFF half enforces:
+# docs/plans/identity-propagation-must-not-cross-run-storage.md (1f4d645).
+
+_CORTEX_BFF_URL = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090").rstrip("/")
+
+# WHICH VERBS NEED THE CALLER'S OWN IDENTITY — an ALLOW-LIST, deliberately.
+#
+# Scoped rather than universal because flipping every specialist dispatch from
+# svc:supervisor to alice's token is a behaviour change far beyond the seed: it would
+# move every engine off the service identity at once and take the OBSERVE-phase
+# caller-readiness gauge with it. That may well be the eventual destination, but it is a
+# separate ruling with its own blast radius, not a side effect of shipping the canvas.
+#
+# Stored COMPACT to match the registry. Verified convention (mesh_registrar/main.py, from
+# 24 live rows on 2026-08-21): the verb position is stored compact, subject/object full.
+# The local-name comparison below tolerates either form anyway — a registry that later
+# expands verbs must not silently turn this gate off, and a silently-off gate here means
+# a seed that 403s exactly the way it did before the fix.
+_CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas"})
+
+
+class CallerIdentityUnavailable(Exception):
+    """Redemption failed. The subtask must fail LOUDLY rather than fall back.
+
+    THE FALLBACK IS THE TRAP: dispatching as svc:supervisor when redemption fails would
+    reproduce the original `403 cell_not_entitled x5` — the same symptom, now with a
+    second cause hidden behind it. A named failure here costs one message of diagnosis;
+    the silent fallback costs the afternoon that filed the plan item.
+    """
+
+
+def _verb_local_name(verb_iri: str) -> str:
+    """Local name of a verb IRI in either the compact or expanded form."""
+    v = (verb_iri or "").strip()
+    if not v:
+        return ""
+    for sep in ("#", "/", ":"):
+        if sep in v:
+            v = v.rsplit(sep, 1)[-1]
+    return v
+
+
+def _verb_needs_caller_identity(predicate: Dict[str, Any]) -> bool:
+    return _verb_local_name(str((predicate or {}).get("verb_iri") or "")) in _CALLER_IDENTITY_VERBS
+
+
+def _redeem_caller_token(context, config) -> str:
+    """Exchange this run's id for the caller's own token. Once, or not at all.
+
+    ``context.run_id`` is DAGSTER'S OWN record of which run this is — not a value read
+    back out of run config, which a caller could have written. Asking with the
+    authoritative id is what makes the BFF's launcher cross-check meaningful rather than
+    a comparison of two caller-supplied strings.
+    """
+    run_id = str(getattr(context, "run_id", "") or "")
+    if not run_id:
+        raise CallerIdentityUnavailable(
+            "this op has no run id, so there is no reference to redeem"
+        )
+
+    from agent_fleet.utils.service_identity import mint_supervisor_token
+
+    # The supervisor authenticates AS ITSELF to redeem — invariant 1 at the far end
+    # checks this is svc:supervisor specifically. The service identity is still what
+    # opens the vault; it is simply no longer what dispatches.
+    resp = requests.post(
+        f"{_CORTEX_BFF_URL}/internal/identity/redeem",
+        json={
+            "run_id": run_id,
+            # Invariant 4: the launcher THIS RUN records, cross-checked at the BFF
+            # against the subject of the token that was stashed.
+            "claimed_launcher": getattr(config, "user_email", "") or "",
+        },
+        headers={"Authorization": f"Bearer {mint_supervisor_token()}"},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        # NAME THE CAUSE. The BFF distinguishes not_found / expired / already_redeemed /
+        # launcher_mismatch, and collapsing them into "redemption failed" here would
+        # discard exactly the discrimination the vault was built to make.
+        try:
+            _err = (resp.json() or {}).get("detail") or {}
+            _cause = _err.get("error") or f"http_{resp.status_code}"
+            _msg = _err.get("message") or ""
+        except Exception:  # noqa: BLE001
+            _cause, _msg = f"http_{resp.status_code}", (resp.text or "")[:200]
+        raise CallerIdentityUnavailable(f"{_cause}: {_msg}")
+
+    token = str((resp.json() or {}).get("token") or "")
+    if not token:
+        # A 200 with no token is a contract violation, not an empty answer. Checking the
+        # transport and THEN the payload, in that order, is the standing lesson from an
+        # auth failure that once wore an empty result's clothes.
+        raise CallerIdentityUnavailable("the vault answered 200 with no token")
+    return token
 
 
 def _call_engine_a_fallback(
@@ -1679,11 +1831,65 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # counted. If a run-level red is wanted back, it belongs in a final op that reads the
     # collected results and fails when all of them are `engine_unreachable` — after the payload
     # has been produced, never instead of it.
+    # ── REDEEM THE CALLER'S IDENTITY, for the verbs that require it ────────────────
+    # This runs BEFORE the POST so a redemption failure never reaches the engine as an
+    # under-privileged call. The seed's five inner asks each re-check the caller's Topaz
+    # cell, so dispatching without alice's token does not fail open — it fails as five
+    # 403s and an empty canvas, which is a WORSE failure than not dispatching, because it
+    # looks like an entitlement problem.
+    _caller_token = ""
+    if _verb_needs_caller_identity(predicate):
+        try:
+            _caller_token = _redeem_caller_token(context, config)
+            context.log.info(
+                "execute_subtask: redeemed the caller's identity for %s — dispatching as "
+                "the ORIGINAL caller, exactly as the button path does.",
+                predicate.get("verb_iri"),
+            )
+        except Exception as _ident_exc:  # noqa: BLE001
+            _idetail = f"{type(_ident_exc).__name__}: {_ident_exc}"
+            context.log.error(
+                "execute_subtask: could not redeem the caller's identity for %s (%s). "
+                "REFUSING to dispatch under the service identity — that would reproduce "
+                "the original 403 cell_not_entitled with a second cause hidden behind it.",
+                predicate.get("verb_iri"), _idetail,
+            )
+            try:
+                context.add_output_metadata({
+                    "caller_identity_unavailable": True,
+                    "endpoint": str(endpoint),
+                    "error": _idetail,
+                })
+            except Exception:  # pragma: no cover
+                pass
+            return {
+                "persona": answerer_persona,
+                "user_persona": config.user_persona,
+                "answerer_persona": answerer_persona,
+                "predicate_verb_iri": predicate.get("verb_iri"),
+                "sub_query": sub_query,
+                "expert_response": {
+                    # A DISTINCT status, never `engine_unreachable`: the engine is fine.
+                    # This is an identity fault, and naming it as one is what keeps the
+                    # next diagnosis from starting at the wrong pod.
+                    "status": "caller_identity_unavailable",
+                    "reason": "vault_redemption_failed",
+                    "message": (
+                        "This request needs to run under your own identity, and the "
+                        "credential reference for it could not be redeemed. Nothing was "
+                        "attempted. Asking again will create a fresh reference."
+                    ),
+                    "data": "",
+                    "sources": [],
+                    "error": _idetail,
+                },
+            }
+
     try:
         response = requests.post(
             endpoint,
             json=payload,
-            headers=_telemetry_headers(config) or None,
+            headers=_telemetry_headers(config, caller_token=_caller_token) or None,
             timeout=1800,
         )
         response.raise_for_status()

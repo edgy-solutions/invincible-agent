@@ -83,7 +83,13 @@ def test_specialist_dispatch_sends_the_headers():
     assert m, "specialist dispatch POST not found — did the call shape change?"
     args = m.group("args")
     assert "headers=" in args, "specialist dispatch sends no headers — W/O/F cannot join"
-    assert "_telemetry_headers(config)" in args, "headers must come from the single source"
+    # WIDENED 2026-08-28, NOT WEAKENED. The identity vault gave this call site a second
+    # argument — `_telemetry_headers(config, caller_token=...)` — so the exact-text pin no
+    # longer matches while the CONTRACT it defends is untouched: the headers still come from
+    # the one helper. The prefix is what carries that claim; the closing paren never did.
+    # The thing this must still catch is a call site that builds its own header dict, and
+    # the assertion below still catches exactly that.
+    assert "_telemetry_headers(config" in args, "headers must come from the single source"
 
 
 def test_engine_a_leg_uses_the_same_source():
