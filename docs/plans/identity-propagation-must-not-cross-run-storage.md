@@ -1,8 +1,8 @@
 ---
 id:         identity-propagation-must-not-cross-run-storage
-status:     open
-owner:      supervisor + BFF lanes (no longer a realm decision — see THE RULED DESIGN)
-blocked-on: nothing. Design ruled 2026-08-28; implementation is supervisor-plus-BFF work, sized small.
+status:     delivered — built, rolled and verified live 2026-08-28 (see DELIVERED)
+owner:      Lane 2
+blocked-on: nothing
 closed-by:  
 code-site:  src/iagent/defs/dynamic_supervisor.py:948, agent_fleet/utils/service_identity.py:54, src/iagent/gateway.py (canvas_seed)
 repo:       invincible-agent
@@ -241,6 +241,53 @@ this was one message of work.
 **The security model held.** The escalation was refused by the layer designed to refuse it,
 before it could do anything, and the denial named the subject, the requested cell, and the empty
 entitlement set — enough to diagnose without a second run.
+
+## DELIVERED — built, rolled, and verified live 2026-08-28
+
+Commits `03586d3` (vault + endpoint + supervisor redemption, 44 tests), `d90ab70`
+(single-replica constraint), `5a1bb8e` (the audit line actually arrives).
+
+**The phrase path, end to end as alice — 1328s, zero errors, 5/5.**
+
+| measured | value |
+|---|---|
+| routing | `mesh:seedPortfolioCanvas`, confidence **0.96** |
+| supervisor log | *"redeemed the caller's identity … dispatching as the ORIGINAL caller"* |
+| `POST /internal/identity/redeem` 200 | **exactly one** — single-use honoured |
+| `POST /interview/stream` | **6** = 1 outer phrase + 5 inner asks |
+| `cell_not_entitled` | **0** — the five 403s became 200s |
+| distinct Dagster runs | **6** |
+
+**5/5 is established by contract, not by counting:** `/canvas/seed` returns
+`artifact_ids: []` whenever `seeded != total`, so a NON-EMPTY array is reachable only at
+complete. Checked on the running pod rather than parsed out of a payload.
+
+### Two defects the live run exposed, both now closed
+
+**Pin 6 was satisfied in test and SILENT in production.** The deployed BFF emitted zero
+application log lines — a `logging.basicConfig()` during boot installs a root handler at its
+default **WARNING**, so every `logger.info` was dropped while uvicorn's access log kept
+flowing. The redemption audit line was written, unit-tested, proven by caplog, and reached
+nobody. No existing test could have caught it: **caplog installs its own handler and forces
+its own level, which is exactly the condition production did not have — a test that
+configures the sink it is testing cannot detect an unconfigured sink.** The vault now owns
+its logger level, and a test reproduces production (real handler, root at WARNING, no
+caplog) to assert the line ARRIVES. Verified live: a refusal probe as alice now writes
+`identity_vault: REFUSED redemption for run_id=… caller 'alice@example.com' is not the
+supervisor identity`.
+
+**Invariant 5 silently requires `cortexBff.replicas: 1`** — in-process means the stash and
+its redemption must land on the same pod. Marked at the values key, framed as a design
+decision (session affinity, or a different answer to the hop) rather than a prohibition,
+because the wrong resolution is a durable vault.
+
+### The acceptance that was NOT run, and why
+
+The provenance cross-check — seed both ways, confirm the DecisionArtifacts differ — was
+retired to [[decision-artifacts-record-no-trigger]]. There is **no trigger field at all**:
+not inferred from the token, not read from the run. Run as written it would have gone red
+and its own stated diagnosis would have been false. The discriminator that exists today is
+the redemption audit line and the parent Dagster run, and those are what the chain asserts.
 
 ## Cross-references
 
