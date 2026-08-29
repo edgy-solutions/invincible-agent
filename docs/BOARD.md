@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **91 of 103 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **92 of 104 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -33,6 +33,10 @@ _Coverage: **91 of 103 packets indexed** — 2 carry pre-ADR-0040 legacy frontma
 - **a-registration-property-must-be-enumerated-seven-times** — THE CHECKLIST, written once so the next feature does not rediscover it four hops at a time. A new registration property reaches the router only if it is named at SEVEN sites, each of which enumerates fields BY NAME. An enumeration that omits a key is SILENT BY CONSTRUCTION - no error, no warning, and the symptom is a verb that appears to declare nothing. Adding `mesh_slots` cost a day and two false "this is the single gate" claims, because four of the seven were found only after an earlier one had been declared complete. Carries two laws: a fix is not finished until you have READ the consumer of what you fixed; and walk the path for embedded DSLs - lift the real string, substitute its parameters, execute it against the real engine, BEFORE deploying.
   status: open · owner: unassigned
   → [docs/plans/a-registration-property-must-be-enumerated-seven-times.md](plans/a-registration-property-must-be-enumerated-seven-times.md)
+
+- **a-resolved-relative-period-must-be-disclosed** — THE ANCHOR STEP IS NOT DONE WITHOUT THIS. "what does spend look like this quarter" now resolves to window=["FY26-Q4"] using a fiscal calendar the user never saw and cannot check. That is an assumption the system made on the user's behalf, and an undisclosed assumption is the silent-narrowing failure the carry work removed, reintroduced one layer up. The strip already renders resolved ROUTING (subject, verb, confidence); it must also render resolved PARAMETERS, at minimum any whose value the user did not literally say. Nothing in invincible-agent blocks this — the resolved value is in `params` on the dispatch payload today.
+  status: open · owner: cortex · repo: cortex-ui (strip), invincible-agent (the resolved value is already on the wire)
+  → [docs/plans/a-resolved-relative-period-must-be-disclosed.md](plans/a-resolved-relative-period-must-be-disclosed.md)
 
 - **a-spoken-handle-can-forge-the-change-log** — MEASURED on real bytes. `run_measure` injects route-supplied arguments into the SAME `params` dict a caller's values land in, and for `plan_session_changes` it uses `params.setdefault(...)` — so a CALLER-SUPPLIED value WINS. A spoken `ops: []` makes the change log report ZERO changes for a scenario that has one; a spoken `scenario_name` relabels the artifact anything the speaker likes. This is the DECISION-ARTIFACT verb (INV-4, "why did we move this?"), so the failure mode is forged provenance rather than a wrong number. Reachable today: cortex-bff's /plan/measure forwards `body.params` verbatim. Its two sibling injection sites use ASSIGNMENT and are safe — nobody chose the difference, it fell out of `=` vs `setdefault`. FIX IS ONE WORD, not applied: engine-p is fenced. The new carry path is already guarded (iagent_pure/slot_acceptance.py).
   status: open · owner: unassigned · blocked-on: human approval to touch engine-p (fenced for the night of 2026-08-28)
