@@ -5,10 +5,44 @@ owner:
 blocked-on:
 repo:       invincible-agent
 code-site:  src/iagent/defs/dynamic_supervisor.py (dispatch payload), agent_fleet/planning_agent/main.py (run_measure)
-summary:    MEASURED, on real bytes. BAML extracts verb slots and the supervisor's dispatch payload does not carry them, so every verb runs on DEFAULTS. Seeded canvas slot 3 asks "where is funding short by initiative" and returns 11 ORGANISATIONS (group_by=org, subject O1 Corporate Capital Committee) — rendering cleanly with clean provenance and NO disclosure surface. Three of four certified parameterised phrasings deliver the wrong scope; the fourth passes by COINCIDENCE OF DEFAULT. The slot pipeline is one-third built and the built third is the MIDDLE. Certification gap rides along - routes-and-renders is not answers-the-question.
+summary:    CORRECTED 2026-08-28 — the title is wrong and NOTHING IS EXTRACTED: BAML's RouteIntent has ZERO callers, and /route_intent calls ExtractIntent, which returns mode+entity_refs only. FOUR joins, not three, and the first is 'call the function that fills slots'. Ruled: /route_intent calls BOTH in sequence, and mesh_slots is the extraction's acceptance schema. The measured consequence is unchanged and still on real bytes: every verb runs on DEFAULTS. Seeded canvas slot 3 asks "where is funding short by initiative" and returns 11 ORGANISATIONS (group_by=org, subject O1 Corporate Capital Committee) — rendering cleanly with clean provenance and NO disclosure surface. Three of four certified parameterised phrasings deliver the wrong scope; the fourth passes by COINCIDENCE OF DEFAULT. The slot pipeline is one-third built and the built third is the MIDDLE. Certification gap rides along - routes-and-renders is not answers-the-question.
 ---
 
 # Slots are extracted, then dropped at the dispatch boundary
+
+> ## ⛔ CORRECTION 2026-08-28 — THE TITLE IS WRONG. NOTHING IS EXTRACTED.
+>
+> **The finding's real shape: EXTRACTION IS DECLARED AND NEVER CALLED.**
+>
+> This document claimed extraction "EXISTS — the one join already built". It does not. BAML's
+> `RouteIntent` — the function returning `ShowFundingGap { group_by; window }`, whose prompt says
+> *"fill its slots from what the user actually said"* — **is invoked by nothing:**
+>
+> ```
+> callers of BAML RouteIntent  : 0
+> callers of BAML ExtractIntent: 1   (agent_fleet/ontology_service/main.py:2383)
+> ```
+>
+> `/route_intent` calls `b.ExtractIntent(user_query=...)`, which returns
+> `ExtractedIntent { mode, entity_refs, confidence, reasoning }` — **no slots, no intent, no
+> verb.** It decides CONVERSATIONAL vs ONE_SHOT and pulls entity references. That is all it was
+> ever designed to do.
+>
+> **THE FILENAME AND `id` STAY** even though the title is wrong, because the id is cross-referenced
+> from runbook A6, the slot plan item, `test_seed_portfolio_canvas.py` and `mesh_registration.py`.
+> Renaming would trade one wrong title for four dangling links. The correction lives here instead.
+>
+> **HOW THE WRONG VERSION WAS BUILT, because it is the reusable part:** I read the BAML source,
+> found `RouteIntent` with typed slot classes, confirmed `/route_intent` was on the live path, and
+> concluded the two were the same thing. They share a name-shape and a file. The claim
+> "extraction exists" was the ONE claim in the census that came from a code-read rather than a
+> live artifact — every other number was measured — and it is the one that was wrong.
+>
+> **THE NEAR-MISS THIS AVOIDED.** Building the carry against `RouteIntent` would have produced
+> correct wiring fed by a function that never runs — *carried-then-never-filled*. Every test
+> green: the payload field exists, arrives empty, and **empty is indistinguishable from today's
+> behaviour**. It would have been discovered when someone asked why "by initiative" still returned
+> organisations after the fix shipped.
 
 **Found by the slot-picker investigation's baseline (Task 1), confirmed on stored artifacts.**
 Not a code-read conclusion: the rows below came out of `answer_artifact_projection`.
@@ -17,21 +51,38 @@ Not a code-read conclusion: the rows below came out of `answer_artifact_projecti
 
 BAML extracts verb slots. The supervisor never forwards them. Every verb runs on its defaults.
 
+**CORRECTED CHAIN — the original is kept below it, struck, because the error is instructive.**
+
 ```
-BAML:        class ShowFundingGap { group_by string; window string? }     ← extraction EXISTS
-/route_intent is on the live path (gateway calls it at routing time)      ← extraction RUNS
-supervisor dispatch payload:                                              ← extraction DISCARDED
-    user_query, user_persona, answerer_persona, persona, domain,
-    entitled_domains, entitlement key, user_email, dynamic_schema_map,
-    user_id, predicate_verb_iri, routed_verb_iri
-    ── no `params`. no `slots`. ──
-Engine P: run_measure reads req.params → empty → verb runs on signature defaults
+BAML RouteIntent -> ShowFundingGap{group_by, window}   DECLARED, 0 CALLERS  ← nothing runs
+/route_intent    -> b.ExtractIntent(user_query)
+                    ExtractedIntent{mode, entity_refs, confidence, reasoning}
+                                                       no slots, no intent, no verb
+RouteIntentResponse{mode, entity_refs, confidence,
+                    reasoning, user_persona,
+                    entitled_domains, query, domain}   NO FIELD for slots
+gateway          -> resolved_intent = that response    nothing to carry
+supervisor       -> dispatch payload                   no `params`, no `slots`
+Engine P         -> req.params = {}                    verb runs on signature defaults
 ```
 
-**The slot pipeline is one-third built, and the built third is the MIDDLE.** Extraction working
-while both neighbours are missing is the strangest configuration available, and it explains the
-symptom exactly: slots are computed, forwarded nowhere, logged nowhere, and the routing record
-looks complete.
+**FOUR JOINS, and the first is "call the function that fills slots"** — not "forward what BAML
+extracted", because nothing is extracted today. Every layer downstream faithfully carries nothing,
+which is why the symptom looked like a dispatch problem: the routing record IS complete, and it is
+complete about a question nobody asked.
+
+~~The original diagram claimed extraction ran at `/route_intent` and was discarded at the
+supervisor's payload. The payload enumeration below is still correct and still evidence — the
+supervisor genuinely carries no `params`. What was wrong is the box before it: there was never
+anything for the supervisor to drop.~~
+
+The payload, unchanged and still true:
+
+```
+user_query, user_persona, answerer_persona, persona, domain, entitled_domains,
+entitlement key, user_email, dynamic_schema_map, user_id, predicate_verb_iri,
+routed_verb_iri            ── no `params`. no `slots`. ──
+```
 
 ## Measured — four certified Tier-1 phrasings, read from stored artifacts
 
@@ -97,9 +148,10 @@ upstream of dispatch:
 
 | join | state | where |
 |---|---|---|
-| **declare** | MISSING | `register_engine_to_mesh()` has no slots field; `planCapabilityPath`'s edge carries none. Crosses into `iagent-mesh` — **no external consumers, cheapest moment it will ever have** |
-| **extract** | **EXISTS** | BAML classes, live via `/route_intent` |
-| **carry** | MISSING | the supervisor's dispatch payload |
+| **declare** | **LANDED DARK** (`7f3e225`) | `register_engine_to_mesh(slots=)` → `mesh_slots`, derived from signatures. **In-repo** — `agent_fleet/utils/mesh_registration.py`, NOT the SDK, which was a second wrong premise |
+| **project** | FILED | doc-tools' `aitool_linker.py` builds the edge from an explicit ALLOWLIST, so `mesh_slots` is dropped silently until a row is added (`doc-tools@e6418a2`) |
+| **call the slot-filler** | **MISSING** | `RouteIntent` has zero callers. RULED: `/route_intent` calls BOTH — `ExtractIntent` for mode, then `RouteIntent` for typed slots once a verb candidate exists |
+| **carry** | MISSING | `RouteIntentResponse` grows `slots`; gateway forwards; supervisor payload gains `params` |
 
 **Slot kinds for the declare half** — the census's four classes becoming the registration's type
 vocabulary, so the distinction that nearly corrupted the census is structurally unexpressible as
@@ -118,6 +170,37 @@ code, reversible when the carry lands. Truth now and truth later are not in tens
 
 **The carry is not a pre-demo change.** It touches the supervisor's dispatch payload — the same
 seam another lane is in — and the standing fence applies.
+
+## THE RULING — two functions, two claims, one function per claim
+
+`/route_intent` calls **both, in sequence**. They were never rivals; they answer different
+questions at different stages:
+
+* **`ExtractIntent` decides MODE** — conversational vs one-shot — and pulls entity refs. That is
+  disposition-stage work the funnel needs *before any verb exists*. Its job survives unchanged.
+* **`RouteIntent` fills TYPED SLOTS against a chosen intent**, which is only meaningful once
+  routing has a verb candidate.
+
+So the pipeline is **extract mode → route verb (the existing funnel) → then invoke the typed
+slot-filler for the routed verb's intent class**, with the phrase and the verb both known.
+
+**Both alternatives were refused, and for the same reason.** Growing `ExtractedIntent` slot fields
+would ask the mode-classifier to do slot work against every intent simultaneously — a job it was
+not designed for. Making the typed intents the route's return would collapse two stages into one
+call and put the disposal thresholds and slot-filling in a single prompt, arguing with each other.
+One function per claim.
+
+### The declarations are the extraction's ACCEPTANCE SCHEMA
+
+The rider that makes the chain testable without a live model: **the slot-filler's output is
+validated against `mesh_slots`.**
+
+* a filled slot **not in the declaration** is dropped **LOUDLY** — logged, not honoured;
+* a spoken value for a **`handle`-kind** slot is refused, per the boundary already ruled.
+
+So the declarations landed in `7f3e225` are not merely router-facing metadata — they are the
+contract the extraction must satisfy. That is what lets every deterministic join be proven by
+fixtures, with the model's own behaviour pre-registered and run only when the last join lands.
 
 ## Acceptance, pre-registered
 
