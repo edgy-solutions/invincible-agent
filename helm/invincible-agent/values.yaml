@@ -1215,6 +1215,23 @@ cortexUi:
 
 cortexBff:
   enabled: true
+  # SINGLE REPLICA IS LOAD-BEARING, not a sizing default.
+  #
+  # The identity vault (src/iagent/identity_vault.py, ruled in
+  # docs/plans/identity-propagation-must-not-cross-run-storage.md) holds the caller's
+  # token IN PROCESS by design — invariant 5, "memory, not storage": the moment it is
+  # Redis or Postgres a credential is durable again and the whole design has reverted to
+  # the disclosure it replaced. In-process means a stash and its redemption MUST land on
+  # the same pod.
+  #
+  # Scale this above 1 and the phrase-path canvas seed breaks: the supervisor redeems
+  # against whichever replica the Service picks, misses ~half the time, and refuses with
+  # `not_found`. It fails LOUDLY rather than silently, which is the design working — but
+  # the cause is two hops from the symptom, so it is named here.
+  #
+  # Horizontal scaling therefore needs a design decision, not a values bump: either
+  # session affinity for /internal/identity/redeem, or a different answer to the
+  # launch-to-dispatch hop. Do not resolve it by making the vault durable.
   replicas: 1
   image:
     name: cortex-bff

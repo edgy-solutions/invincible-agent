@@ -1750,9 +1750,12 @@ async def redeem_caller_identity(
                 ),
             }.get(
                 result.outcome,
-                "No reference is held for this run. It was never stashed, the dispatch "
-                "window elapsed, or cortex-bff restarted (the vault is in-memory by "
-                "design; in-flight seeds do not survive a restart).",
+                "No reference is held for this run. Four causes, in the order worth "
+                "checking: cortex-bff RESTARTED (the vault is in-memory by design, so "
+                "in-flight seeds do not survive one); cortex-bff is running MORE THAN "
+                "ONE REPLICA, so the stash and this redemption landed on different "
+                "pods; the dispatch window elapsed; or nothing was ever stashed for "
+                "this run.",
             ),
         },
     )
