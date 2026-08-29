@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **85 of 97 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **86 of 98 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -25,6 +25,10 @@ _Coverage: **85 of 97 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/urn-reconciliation-guard.md](plans/urn-reconciliation-guard.md)
 
 ## open
+
+- **a-missing-mandatory-slot-is-a-400-not-an-ask** — MEASURED on the live filler. Four of eleven planning verbs declare a spoken-MANDATORY slot (capability_id, project_id, process_id, tech_id). If the filler does not produce it, `func(state, **params)` raises TypeError and the caller gets `400 bad params ... missing 1 required keyword-only argument: 'project_id'` — a Python signature error shown to a person who asked a question. The right behaviour is ADR-0033's ASK. Found by a live case where the model filled BOTH enums correctly (direction=upstream, kind=phase) and dropped the mandatory id, reporting confidence 0.0 — a signal nothing currently reads. The positive half of the same finding: those four verbs could ONLY ever 400 before the filler existed, because nothing supplied a mandatory parameter at all.
+  status: open · owner: unassigned
+  → [docs/plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md](plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md)
 
 - **a-registration-property-must-be-enumerated-seven-times** — THE CHECKLIST, written once so the next feature does not rediscover it four hops at a time. A new registration property reaches the router only if it is named at SEVEN sites, each of which enumerates fields BY NAME. An enumeration that omits a key is SILENT BY CONSTRUCTION - no error, no warning, and the symptom is a verb that appears to declare nothing. Adding `mesh_slots` cost a day and two false "this is the single gate" claims, because four of the seven were found only after an earlier one had been declared complete. Carries two laws: a fix is not finished until you have READ the consumer of what you fixed; and walk the path for embedded DSLs - lift the real string, substitute its parameters, execute it against the real engine, BEFORE deploying.
   status: open · owner: unassigned
