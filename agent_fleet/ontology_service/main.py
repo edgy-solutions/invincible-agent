@@ -724,6 +724,22 @@ class RouteIntentResponse(BaseModel):
     reasoning: str
     user_persona: str | None = None
     entitled_domains: list[str] = []
+    # THE SLOTS THE SPEAKER NAMED - {"group_by": "initiative"} for "where is funding short
+    # by initiative". Distinct from `entity_refs`, which are untyped VALUES with no
+    # argument name attached; these are argument NAME -> value, which is what a verb can
+    # actually be called with.
+    #
+    # EMPTY TODAY, ON EVERY REQUEST, AND THAT IS THE POINT. Nothing fills it yet: BAML's
+    # `RouteIntent` - the function that returns typed slot classes - has zero callers, and
+    # this endpoint calls `ExtractIntent`, which decides MODE and pulls entity refs and was
+    # never designed to do slot work. The field lands first so the three deterministic
+    # joins downstream can be built and TESTED against fixtures before a model is put in
+    # the loop, and so the last join becomes a call rather than a refactor.
+    #
+    # Additive and defaulted: a caller that never sets it is unchanged, and a consumer that
+    # never reads it is unchanged.
+    # See docs/plans/slots-are-extracted-then-dropped-at-dispatch.md.
+    slots: dict[str, object] = {}
 
 
 class PlanRequest(BaseModel):

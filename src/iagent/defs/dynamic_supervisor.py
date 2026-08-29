@@ -118,6 +118,17 @@ class SupervisorQueryConfig(Config):
     frontend_id: str = ""
     entitled_domains: List[str] = []
     entity_refs: List[str] = []
+    # THE SPOKEN SLOTS, argument name -> value, forwarded from /route_intent.
+    #
+    # NOT the same thing as `entity_refs` one line up, and the difference is the whole
+    # finding: entity_refs are untyped VALUES ("FY26-Q4", "Northgate") carrying no argument
+    # name, which is why the supervisor can hand them to /resolve but cannot call a verb
+    # with them. These carry the name, so they can be splatted - after the acceptance
+    # filter, never before.
+    #
+    # Empty on every request until the slot-filler is called, and empty is exactly today's
+    # behaviour, which is what makes this landable ahead of the model work.
+    slots: Dict[str, Any] = {}
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
     # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
@@ -759,6 +770,11 @@ def _classify_route(
                     "domains": cv.get("domains") or [],
                     "cost_class": cv.get("cost_class"),
                     "requires_human_approval": cv.get("requires_human_approval", False),
+                    # WHAT THE VERB TAKES - the acceptance schema for spoken slots,
+                    # projected from the engine's registration (`mesh_slots`). `[]` until
+                    # doc-tools' aitool_linker allowlist carries it, and `[]` means every
+                    # spoken slot is refused, which is today's behaviour exactly.
+                    "slots": cv.get("slots") or [],
                 }
                 break
 
@@ -814,6 +830,11 @@ def _classify_route(
             predicate["endpoint"] = neo4j_endpoint
             predicate["domains"] = neo4j_domains
             predicate["owner_persona"] = neo4j_owner
+            # Declarations are a DISPATCH FACT - the same argument that makes Neo4j
+            # authoritative for `endpoint` makes it authoritative for what the thing at
+            # that endpoint accepts. Taking them from Weaviate's predicate dict instead
+            # would let a stale copy widen what a verb may be told.
+            predicate["slots"] = list(truth.get("slots") or [])
         else:
             # Neo4j compat-walk doesn't have this verb. That's the
             # conjunctive-read invariant violation — Weaviate picked
@@ -1392,6 +1413,9 @@ def _log_subtask_route_assets(
 from iagent_pure.predicate_routing import (
     inject_predicate_output_uri as _inject_predicate_output_uri,
 )
+# Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
+# supervisor and the unit tests can each import it without standing up the others.
+from iagent_pure.slot_acceptance import accept_slots
 
 
 def _log_subtask_sources_asset(
@@ -1665,6 +1689,27 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     if "DATA_ENGINEERING" in predicate_domains:
         dynamic_schema_map = get_datahub_context(DATAHUB_WRAPPER_URL)
 
+    # ---------------------------------------------------------------------
+    # THE CARRY. docs/plans/slots-are-extracted-then-dropped-at-dispatch.md
+    #
+    # This is the boundary the finding named: everything above resolves a verb, everything
+    # below calls it, and until now no argument the SPEAKER named crossed. A question
+    # saying "by initiative" reached a verb whose `group_by` defaulted to `org` and came
+    # back with organisations - rendering cleanly, with clean provenance, and with no
+    # surface on which a reader could notice.
+    #
+    # FILTERED against the verb's own declarations before it crosses, because this same
+    # line is what would otherwise let a spoken value land on a ROUTE-SUPPLIED argument
+    # (`ops`, `baseline_state`) - which is not parameterising a question but supplying the
+    # evidence the answer is computed from. See iagent_pure/slot_acceptance.py.
+    accepted = accept_slots(config.slots, predicate.get("slots"))
+    for refusal in accepted.refusals:
+        # LOUD, per the ruling. A dropped slot is a question the system did not answer as
+        # asked, and the whole finding is that this used to happen in total silence.
+        context.log.warning(
+            "slot_refused verb_iri=%s %s", predicate.get("verb_iri"), refusal
+        )
+
     payload = {
         "user_query": sub_query,
         # ADR-0009 persona split: both fields surfaced explicitly.
@@ -1708,6 +1753,10 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         # predicate_verb_iri; surfaced under the name the engine's
         # handler reads. Engines that don't read it ignore it.
         "routed_verb_iri": predicate.get("verb_iri"),
+        # THE SLOTS, accepted. Engine P splats this into the measure
+        # (`func(state, **params)`); engines that do not read it ignore it, which is why
+        # this is additive rather than a version bump on the dispatch contract.
+        "params": accepted.params,
         # Tier-3 fix (2026-06-16): the resolved instance URN from
         # /resolve.provenance.instance_id. Threaded through so
         # execution-layer engines (specifically Engine DA's data

@@ -73,6 +73,7 @@ NO_DECLARATIONS = "no-declarations"
 UNDECLARED = "undeclared"
 ROUTE_SUPPLIED = "route-supplied"
 NOT_A_PERMITTED_VALUE = "not-a-permitted-value"
+WRONG_SHAPE = "wrong-shape"
 
 
 def accept_slots(
@@ -117,13 +118,34 @@ def accept_slots(
             refusals.append(Refusal(name, ROUTE_SUPPLIED, value))
             continue
 
+        declared_type = str(decl.get("type") or "")
+        if declared_type.startswith(("list[", "set[", "tuple[")) and isinstance(value, str):
+            # A COLLECTION SLOT GIVEN A BARE STRING. Refused rather than coerced: wrapping
+            # it as [value] is the router guessing at what was meant, and the guess is
+            # wrong the moment a speaker names two periods.
+            #
+            # Refusing here is what makes the failure legible. Passed through, the measure
+            # iterates the string and the engine answers
+            #   422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4
+            # which names characters, blames the engine, and tells nobody that the
+            # extraction produced the wrong shape.
+            refusals.append(Refusal(name, WRONG_SHAPE, value))
+            continue
+
         values = decl.get("values")
-        if values and value not in values:
+        if values:
             # A closed enum, derived from the signature's `Literal`, so this is the verb's
             # own vocabulary and not a guess. Refusing beats passing it on to be rejected as
             # a TypeError deep in the measure.
-            refusals.append(Refusal(name, NOT_A_PERMITTED_VALUE, value))
-            continue
+            #
+            # Checked ELEMENTWISE for a collection slot: `list[Literal[...]]` is a
+            # multi-select over the same closed vocabulary, and testing the list itself for
+            # membership would refuse every legitimate multi-select.
+            offered = list(value) if isinstance(value, (list, tuple, set)) else [value]
+            bad = [v for v in offered if v not in values]
+            if bad:
+                refusals.append(Refusal(name, NOT_A_PERMITTED_VALUE, value))
+                continue
 
         params[name] = value
 

@@ -3051,6 +3051,12 @@ async def _launch_supervisor_job(
     user_persona: str | None = None,
     entitled_domains: list[str] | None = None,
     entity_refs: list[str] | None = None,
+    # THE SPOKEN SLOTS from /route_intent, argument name -> value. Passed explicitly rather
+    # than read off the caller's `intent_extraction`, which is a local of the streaming
+    # handler and not in scope here - the first draft of this carry did exactly that and
+    # would have raised NameError on every request in the cluster while every test stayed
+    # green, because no test calls this function.
+    slots: dict | None = None,
     trace_id: str = "",
     session_id: str = "",
 ) -> str | None:
@@ -3117,6 +3123,11 @@ async def _launch_supervisor_job(
         "entitled_domains": entitled_domains,
         "candidate_verb": candidate_verb,
         "entity_refs": entity_refs,
+        # THE SPOKEN SLOTS, forwarded rather than dropped. `{}` on every request until the
+        # slot-filler is called - see the finding. Threaded here, beside entity_refs,
+        # because the two come from the same response and are constantly confused: refs are
+        # untyped values, slots are argument name -> value.
+        "slots": dict(slots or {}),
         # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
@@ -3722,6 +3733,8 @@ async def generate_dagster_stream(
         user_persona=user_persona,
         entitled_domains=entitled_domains,
         entity_refs=entity_refs,
+        # Forwarded rather than dropped - the carry. `{}` until the slot-filler is called.
+        slots=dict(intent_extraction.get("slots") or {}),
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )

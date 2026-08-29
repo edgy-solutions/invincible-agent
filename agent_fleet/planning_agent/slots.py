@@ -34,6 +34,7 @@ already imply it.
 from __future__ import annotations
 
 import inspect
+import types
 import typing
 from typing import Any, Dict, List
 
@@ -66,6 +67,16 @@ _NOT_A_SLOT = {"state"}
 SLOT_KINDS = ("spoken-mandatory", "spoken-optional", "handle", "ceremony")
 
 
+def _is_union(origin: Any) -> bool:
+    """`Optional[X]` and `X | None` have DIFFERENT origins (`typing.Union` and
+    `types.UnionType`), and this module must treat both as unwrappable — otherwise the same
+    annotation declares differently depending on which syntax the author used."""
+    if origin is typing.Union:
+        return True
+    UnionType = getattr(types, "UnionType", None)  # 3.10+; absent on older runtimes
+    return UnionType is not None and origin is UnionType
+
+
 def _type_of(annotation: Any) -> tuple[str, List[str] | None]:
     """(type-name, enum-values) read from the annotation — never from a remembered list."""
     if annotation is inspect.Parameter.empty:
@@ -73,11 +84,30 @@ def _type_of(annotation: Any) -> tuple[str, List[str] | None]:
     origin = typing.get_origin(annotation)
     if origin is typing.Literal:
         return "enum", [str(v) for v in typing.get_args(annotation)]
-    # Optional[X] / X | None — unwrap to the first non-None arm.
     if origin is not None:
         args = [a for a in typing.get_args(annotation) if a is not type(None)]
-        if len(args) == 1:
-            return _type_of(args[0])
+        # Optional[X] / X | None — unwrap to the single remaining arm.
+        if _is_union(origin):
+            if len(args) == 1:
+                return _type_of(args[0])
+            return "union", None
+        # A REAL CONTAINER, AND THE CONTAINER IS PART OF THE CONTRACT.
+        #
+        # The unwrap rule above was written for Optional and silently ate this case:
+        # `Optional[list[str]]` unwrapped to `list[str]`, then unwrapped AGAIN to `str`, so
+        # `plan_site_load.window` was declared a scalar. Measured consequence, on real
+        # bytes: a router filling that slot from "in FY26-Q4" sends the STRING, the measure
+        # iterates it, and the engine refuses with
+        #   422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4
+        # — a message that names characters and blames the engine for the declaration's
+        # lie. `window=["FY26-Q4"]` returns the one period that was asked for.
+        #
+        # So the container is reported. Enum values, if any, come from INSIDE it
+        # (`list[Literal[...]]` is a multi-select over a closed vocabulary), because the
+        # values are a fact about what may be said, not about how many may be said.
+        inner_name, inner_values = _type_of(args[0]) if args else ("unknown", None)
+        cname = getattr(origin, "__name__", None) or str(origin)
+        return f"{cname}[{inner_name}]", inner_values
     name = getattr(annotation, "__name__", None)
     return (name or str(annotation)), None
 
