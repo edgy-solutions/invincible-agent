@@ -1236,8 +1236,15 @@ function FillVerbSlots(
        "the speaker did not say", which is correct and safe — the operation has its
        own default. Guessing is not safe: it silently answers a question nobody
        asked. An empty object is a good answer to a question with no parameters.
-    3. If a parameter lists permitted values, use one of those values EXACTLY as
-       written. Do not paraphrase, pluralise, or re-case them.
+    3. A LIST OF PERMITTED VALUES IS A MEMBERSHIP TEST, NOT A MENU TO PICK THE
+       NEAREST FROM. Fill the parameter ONLY if what the speaker said IS one of
+       those values — then use it EXACTLY as written, without paraphrasing,
+       pluralising or re-casing. If what they said is NOT one of them, LEAVE THE
+       PARAMETER OUT, even when one value is obviously the closest. "forwards" is
+       not "downstream". "quarterly" is not "FY26-Q4". Choosing the nearest value
+       produces an answer that is confidently about something the speaker did not
+       ask for, and the system cannot detect it afterwards because the value you
+       chose IS permitted.
     4. Respect the stated type. A parameter typed `list[str]` takes a JSON ARRAY
        even when the speaker named only one thing: ["FY26-Q4"], never "FY26-Q4".
     5. Say what the speaker meant, not what you would ask. "broken out by

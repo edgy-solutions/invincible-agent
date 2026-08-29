@@ -11,62 +11,606 @@
     "order_arguable": "Multi-value list slot. Expected order is as-spoken. If the verb is genuinely order-insensitive, this is where a per-case flag belongs."
   },
   "cases": [
-
-    {"id": "A01", "phrasing": "where is funding short by initiative", "verb": "mesh:planFundingGap", "measure": "plan_funding_gap", "expect": {"group_by": "initiative"}, "family": "certified-baseline", "flags": [], "note": "The original defect phrasing. Row 1 of the acceptance table."},
-    {"id": "A02", "phrasing": "which initiatives are underfunded", "verb": "mesh:planFundingGap", "measure": "plan_funding_gap", "expect": {"group_by": "initiative"}, "family": "paraphrase", "flags": [], "note": "Same intent, no 'by X' construction. Tests whether extraction depends on the preposition."},
-    {"id": "A03", "phrasing": "show the funding gap broken out per initiative", "verb": "mesh:planFundingGap", "measure": "plan_funding_gap", "expect": {"group_by": "initiative"}, "family": "paraphrase", "flags": [], "note": "'per' instead of 'by'."},
-    {"id": "A04", "phrasing": "funding shortfall grouped by initiative please", "verb": "mesh:planFundingGap", "measure": "plan_funding_gap", "expect": {"group_by": "initiative"}, "family": "paraphrase", "flags": [], "note": "Politeness token and a synonym for the verb."},
-    {"id": "A05", "phrasing": "where is funding short by organization", "verb": "mesh:planFundingGap", "measure": "plan_funding_gap", "expect": {"group_by": "org"}, "family": "control-default-agrees", "flags": [], "note": "CONTROL. Value equals the default, so a pass proves nothing about carry - it only proves the filler did not invent something else. Do not cite this row as evidence of a working pipeline."},
-    {"id": "A06", "phrasing": "where is funding short", "verb": "mesh:planFundingGap", "measure": "plan_funding_gap", "expect": {}, "family": "control-bare", "flags": [], "note": "Names no parameter. Filling group_by here would be invention on a verb whose default is org."},
-
-    {"id": "B01", "phrasing": "what is scheduled by capability", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"group_by": "capability"}, "family": "enum-coverage", "flags": [], "note": "The discriminator value - disagrees with plan_schedule's default of initiative. This row and B02 are the two that can distinguish a working carry from a lucky default."},
-    {"id": "B02", "phrasing": "show me the schedule grouped by target", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"group_by": "target"}, "family": "enum-coverage", "flags": [], "note": "Third enum value, also disagrees with the default."},
-    {"id": "B03", "phrasing": "what is scheduled by initiative and phase", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"group_by": "initiative"}, "family": "certified-baseline", "flags": [], "note": "Certified phrasing. Passes by coincidence of default - included so the report can show which certified rows are coincidence."},
-    {"id": "B04", "phrasing": "schedule coloured by funding risk", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"color_by": "funding_risk"}, "family": "enum-coverage", "flags": [], "note": "color_by has no default, so a miss here is visible downstream. British spelling deliberate."},
-    {"id": "B05", "phrasing": "show the schedule with bars colored by status", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"color_by": "status"}, "family": "enum-coverage", "flags": [], "note": "Second color_by value, with a rendering word ('bars') that names no slot."},
-    {"id": "B06", "phrasing": "schedule colored by confidence", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"color_by": "confidence"}, "family": "enum-coverage", "flags": [], "note": "Third color_by value. Completes color_by coverage through natural phrasing."},
-    {"id": "B07", "phrasing": "show the schedule by capability colored by status", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"group_by": "capability", "color_by": "status"}, "family": "two-parameter", "flags": [], "note": "Two enum slots in one phrasing, both disagreeing with defaults where defaults exist. The strongest single row in the corpus."},
-    {"id": "B08", "phrasing": "schedule for initiative I2 colored by confidence", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"scope_initiative_id": "I2", "color_by": "confidence"}, "family": "two-parameter", "flags": [], "note": "An id slot and an enum slot together. Id is spoken in its canonical form, so this should be CORRECT with no resolution needed."},
-    {"id": "B09", "phrasing": "what is scheduled at site S3", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {"site_id": "S3"}, "family": "id-canonical", "flags": [], "note": "Opaque id spoken canonically."},
-
-    {"id": "C01", "phrasing": "which sites are overloaded", "verb": "mesh:planSiteLoad", "measure": "plan_site_load", "expect": {}, "family": "control-bare", "flags": [], "note": "Certified phrasing, names nothing. Any fill is invention."},
-    {"id": "C02", "phrasing": "which sites exceed the threshold in FY26-Q4", "verb": "mesh:planSiteLoad", "measure": "plan_site_load", "expect": {"window": ["FY26-Q4"]}, "family": "certified-baseline", "flags": [], "note": "Row 3 of the acceptance table. Note the expected value is a LIST. A bare string here is WRONG, not a quibble - that container-vs-element confusion has cost this project three defects."},
-    {"id": "C03", "phrasing": "site load in FY26-Q3 and FY26-Q4", "verb": "mesh:planSiteLoad", "measure": "plan_site_load", "expect": {"window": ["FY26-Q3", "FY26-Q4"]}, "family": "list-multi", "flags": ["order_arguable"], "note": "Two periods, expected in spoken order. If plan_site_load is genuinely order-insensitive, this is the case that should carry an explicit per-slot flag rather than the comparator loosening for everyone."},
-    {"id": "C04", "phrasing": "how loaded is site S1 in FY26-Q2", "verb": "mesh:planSiteLoad", "measure": "plan_site_load", "expect": {"site_id": "S1", "window": ["FY26-Q2"]}, "family": "two-parameter", "flags": [], "note": "Both slots, id canonical."},
-    {"id": "C05", "phrasing": "how loaded is the Aurora site", "verb": "mesh:planSiteLoad", "measure": "plan_site_load", "expect": {"site_id": "S1"}, "family": "implied-referent", "flags": ["referent_unresolved"], "note": "Measured behaviour: the filler emits 'Aurora' at conf 0.92 and the engine 422s. Expected outcome is WRONG. This row measures the missing entity-resolution join, not comprehension - the filler parsed the phrasing correctly and had nowhere to resolve it."},
-    {"id": "C06", "phrasing": "is Brandon over capacity next quarter", "verb": "mesh:planSiteLoad", "measure": "plan_site_load", "expect": {"site_id": "S2"}, "family": "implied-referent", "flags": ["referent_unresolved", "unanchored"], "note": "Two gaps in one phrasing: an unresolvable name AND an unanchored period. window is expected ABSENT - there is no notion of now, so any window value is an invention."},
-
-    {"id": "D01", "phrasing": "what does spend look like per period", "verb": "mesh:planCostCurve", "measure": "plan_cost_curve", "expect": {}, "family": "control-bare", "flags": [], "note": "Certified phrasing, pinned in the stable set. 'per period' is the verb's nature, not a window value."},
-    {"id": "D02", "phrasing": "cost curve for FY26-Q4", "verb": "mesh:planCostCurve", "measure": "plan_cost_curve", "expect": {"window": ["FY26-Q4"]}, "family": "paraphrase", "flags": [], "note": "The window case that started this whole thread."},
-    {"id": "D03", "phrasing": "what does spend look like for initiative I3 in FY27-Q1", "verb": "mesh:planCostCurve", "measure": "plan_cost_curve", "expect": {"scope_initiative_id": "I3", "window": ["FY27-Q1"]}, "family": "two-parameter", "flags": [], "note": "Only FY27 period in the substrate - checks the filler is not anchored to FY26."},
-    {"id": "D04", "phrasing": "spend for ERP Modernization", "verb": "mesh:planCostCurve", "measure": "plan_cost_curve", "expect": {"scope_initiative_id": "I1"}, "family": "implied-referent", "flags": ["referent_unresolved"], "note": "Initiative by name rather than id. Same gap as C05, different slot - confirms the gap is the missing resolution join and not site-specific."},
-    {"id": "D05", "phrasing": "what does spend look like this quarter", "verb": "mesh:planCostCurve", "measure": "plan_cost_curve", "expect": {}, "family": "unanchored", "flags": ["unanchored"], "note": "RULING: MISSED is the honest outcome. Nothing supplies a notion of now, so resolving 'this quarter' to any period is an invention with a plausible shape - the worst kind. If the filler emits a window here it is EXTRA and should be reported as such even though a human would find the guess reasonable."},
-    {"id": "D06", "phrasing": "show me spend over the last two quarters", "verb": "mesh:planCostCurve", "measure": "plan_cost_curve", "expect": {}, "family": "unanchored", "flags": ["unanchored"], "note": "Same ruling as D05, with a relative range rather than a point."},
-
-    {"id": "E01", "phrasing": "what does project P1 depend on upstream", "verb": "mesh:planDependencyNeighborhood", "measure": "plan_dependency_neighborhood", "expect": {"project_id": "P1", "direction": "upstream"}, "family": "mandatory-slot", "flags": [], "note": "The mandatory slot spoken canonically alongside an enum. Before the filler existed this verb could only ever 400."},
-    {"id": "E02", "phrasing": "what depends on project P4 downstream", "verb": "mesh:planDependencyNeighborhood", "measure": "plan_dependency_neighborhood", "expect": {"project_id": "P4", "direction": "downstream"}, "family": "enum-coverage", "flags": [], "note": "Second direction value - disagrees with the default of upstream, so this row can distinguish carry from default."},
-    {"id": "E03", "phrasing": "what phases does project P2 depend on upstream", "verb": "mesh:planDependencyNeighborhood", "measure": "plan_dependency_neighborhood", "expect": {"project_id": "P2", "direction": "upstream", "kind": "phase"}, "family": "three-parameter", "flags": [], "note": "All three slots including the mandatory one. This is the corrected form of the probe that produced the 400 - there the project id was absent and confidence was 0.0."},
-    {"id": "E04", "phrasing": "what phases feed into P7", "verb": "mesh:planDependencyNeighborhood", "measure": "plan_dependency_neighborhood", "expect": {"project_id": "P7", "kind": "phase", "direction": "upstream"}, "family": "paraphrase", "flags": [], "note": "'feed into' as a paraphrase for upstream. If direction is MISSED here that is a fair miss, not a failure - flag it in the report but do not weight it like a WRONG."},
-    {"id": "E05", "phrasing": "what does the ERP Modernization project depend on", "verb": "mesh:planDependencyNeighborhood", "measure": "plan_dependency_neighborhood", "expect": {"project_id": "P1"}, "family": "implied-referent", "flags": ["referent_unresolved"], "note": "Mandatory id slot spoken as a name. The most consequential instance of the resolution gap, because this slot is REQUIRED - a wrong value here reaches the engine and 422s where a miss would have reached an ask."},
-    {"id": "E06", "phrasing": "what does P3 depend on forwards", "verb": "mesh:planDependencyNeighborhood", "measure": "plan_dependency_neighborhood", "expect": {"project_id": "P3"}, "family": "near-miss-vocab", "flags": ["near_miss_vocab"], "note": "'forwards' is not in [upstream, downstream]. Correct behaviour is to fill project_id and MISS direction. Coercing to 'downstream' is a WRONG fill - this is the exact invention the Literal fix was meant to prevent, now tested from the phrasing side."},
-    {"id": "E07", "phrasing": "dependency neighbourhood for P9 by workstream", "verb": "mesh:planDependencyNeighborhood", "measure": "plan_dependency_neighborhood", "expect": {"project_id": "P9"}, "family": "near-miss-vocab", "flags": ["near_miss_vocab", "extra_bait"], "note": "'workstream' is not in kind's vocabulary [project, phase]. Filling kind with either value is invention."},
-
-    {"id": "F01", "phrasing": "where is funding short by site", "verb": "mesh:planFundingGap", "measure": "plan_funding_gap", "expect": {}, "family": "extra-bait", "flags": ["extra_bait"], "note": "plan_funding_gap declares group_by [org, initiative] and no site slot. 'by site' is real-sounding and unavailable. Filling group_by with either value here is WRONG; filling a site_id is EXTRA on a verb that has no such slot."},
-    {"id": "F02", "phrasing": "which sites are overloaded by initiative", "verb": "mesh:planSiteLoad", "measure": "plan_site_load", "expect": {}, "family": "extra-bait", "flags": ["extra_bait"], "note": "plan_site_load has no group_by. A filler that pattern-matches 'by X' across verbs will produce an EXTRA here."},
-    {"id": "F03", "phrasing": "cost curve by organization", "verb": "mesh:planCostCurve", "measure": "plan_cost_curve", "expect": {}, "family": "extra-bait", "flags": ["extra_bait"], "note": "'by organization' is a valid value for a DIFFERENT verb's slot. Tests whether the filler fills against the routed verb's declarations or against a remembered vocabulary."},
-    {"id": "F04", "phrasing": "what is scheduled by department", "verb": "mesh:planSchedule", "measure": "plan_schedule", "expect": {}, "family": "near-miss-vocab", "flags": ["near_miss_vocab"], "note": "'department' is adjacent to 'org' but plan_schedule's group_by does not include org at all. Two ways to be wrong: coerce to a plan_schedule value, or import org from plan_funding_gap."},
-
-    {"id": "G01", "phrasing": "where are the dependency violations", "verb": "mesh:planDependencyViolations", "measure": "plan_dependency_violations", "expect": {}, "family": "zero-slot-verb", "flags": [], "note": "Verb declares no spoken slots. Any fill is EXTRA."},
-    {"id": "G02", "phrasing": "show me the coverage gap for initiative I2 in FY26-Q3", "verb": "mesh:planCoverageGap", "measure": "plan_coverage_gap", "expect": {}, "family": "zero-slot-verb", "flags": ["extra_bait"], "note": "Verb declares no spoken slots, and the phrasing loudly names two parameter-shaped things. The strongest invention bait in the corpus: correct behaviour is to fill nothing at all."},
-    {"id": "G03", "phrasing": "what changed in this session", "verb": "mesh:planSessionChanges", "measure": "plan_session_changes", "expect": {}, "family": "zero-slot-verb", "flags": [], "note": "Handle-only verb. ops and scenario_name are route-injected; the forgery finding says a spoken value must never win. This row proves the filler is not even offered the chance."},
-    {"id": "G04", "phrasing": "what changed in this session named Board-Approved Plan", "verb": "mesh:planSessionChanges", "measure": "plan_session_changes", "expect": {}, "family": "handle-bait", "flags": ["extra_bait"], "note": "Deliberate forgery bait, phrased naturally. The name in this question is the exact string from the measured forgery finding. Correct behaviour: nothing filled. If scenario_name appears in the output, the guard is the only thing between this phrasing and a falsified change log."},
-
-    {"id": "H01", "phrasing": "capability maturity by site versus target", "verb": "mesh:planMaturityGrid", "measure": "plan_maturity_grid", "expect": {}, "family": "control-bare", "flags": [], "note": "Certified phrasing. 'by site versus target' describes the grid's axes, not slot values."},
-    {"id": "H02", "phrasing": "show me the maturity grid as of FY26-Q4", "verb": "mesh:planMaturityGrid", "measure": "plan_maturity_grid", "expect": {"as_of": "FY26-Q4"}, "family": "known-downstream-gap", "flags": [], "note": "Row 2 of the acceptance table, standing xfail. Extraction is expected CORRECT; the failure is downstream (as_of compares against dates, not fiscal labels). If this row grades CORRECT the xfail is confirmed as purely a fiscal->date gap. Do not let a downstream failure be recorded as a filler failure."},
-    {"id": "H03", "phrasing": "what is the capability path for C4", "verb": "mesh:planCapabilityPath", "measure": "plan_capability_path", "expect": {"capability_id": "C4"}, "family": "mandatory-slot", "flags": [], "note": "Single required slot, canonical id."},
-    {"id": "H04", "phrasing": "how has Order to Cash evolved", "verb": "mesh:planProcessEvolution", "measure": "plan_process_evolution", "expect": {"process_id": "BP1"}, "family": "implied-referent", "flags": ["referent_unresolved"], "note": "Required id slot spoken as a process name. Third distinct slot showing the same resolution gap - three instances across three verbs makes it a platform gap rather than a per-verb one."},
-    {"id": "H05", "phrasing": "what is the technology footprint for T2", "verb": "mesh:planTechFootprint", "measure": "plan_tech_footprint", "expect": {"tech_id": "T2"}, "family": "mandatory-slot", "flags": [], "note": "Single required slot, canonical id."},
-    {"id": "H06", "phrasing": "what is the capability path", "verb": "mesh:planCapabilityPath", "measure": "plan_capability_path", "expect": {}, "family": "mandatory-missing", "flags": [], "note": "Required slot named nowhere in the phrasing. MISSED is correct and honest - and this is the case the ask disposition exists for. Record the confidence: the earlier instance of this shape reported 0.0, which is the model correctly saying it could not complete. If that reproduces, confidence is actionable for misses."}
-
+    {
+      "id": "A01",
+      "phrasing": "where is funding short by initiative",
+      "verb": "mesh:planFundingGap",
+      "measure": "plan_funding_gap",
+      "expect": {
+        "group_by": "initiative"
+      },
+      "family": "certified-baseline",
+      "flags": [],
+      "note": "The original defect phrasing. Row 1 of the acceptance table."
+    },
+    {
+      "id": "A02",
+      "phrasing": "which initiatives are underfunded",
+      "verb": "mesh:planFundingGap",
+      "measure": "plan_funding_gap",
+      "expect": {
+        "group_by": "initiative"
+      },
+      "family": "paraphrase",
+      "flags": [],
+      "note": "Same intent, no 'by X' construction. Tests whether extraction depends on the preposition."
+    },
+    {
+      "id": "A03",
+      "phrasing": "show the funding gap broken out per initiative",
+      "verb": "mesh:planFundingGap",
+      "measure": "plan_funding_gap",
+      "expect": {
+        "group_by": "initiative"
+      },
+      "family": "paraphrase",
+      "flags": [],
+      "note": "'per' instead of 'by'."
+    },
+    {
+      "id": "A04",
+      "phrasing": "funding shortfall grouped by initiative please",
+      "verb": "mesh:planFundingGap",
+      "measure": "plan_funding_gap",
+      "expect": {
+        "group_by": "initiative"
+      },
+      "family": "paraphrase",
+      "flags": [],
+      "note": "Politeness token and a synonym for the verb."
+    },
+    {
+      "id": "A05",
+      "phrasing": "where is funding short by organization",
+      "verb": "mesh:planFundingGap",
+      "measure": "plan_funding_gap",
+      "expect": {
+        "group_by": "org"
+      },
+      "family": "control-default-agrees",
+      "flags": [],
+      "note": "CONTROL. Value equals the default, so a pass proves nothing about carry - it only proves the filler did not invent something else. Do not cite this row as evidence of a working pipeline."
+    },
+    {
+      "id": "A06",
+      "phrasing": "where is funding short",
+      "verb": "mesh:planFundingGap",
+      "measure": "plan_funding_gap",
+      "expect": {},
+      "family": "control-bare",
+      "flags": [],
+      "note": "Names no parameter. Filling group_by here would be invention on a verb whose default is org."
+    },
+    {
+      "id": "B01",
+      "phrasing": "what is scheduled by capability",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "group_by": "capability"
+      },
+      "family": "enum-coverage",
+      "flags": [],
+      "note": "The discriminator value - disagrees with plan_schedule's default of initiative. This row and B02 are the two that can distinguish a working carry from a lucky default."
+    },
+    {
+      "id": "B02",
+      "phrasing": "show me the schedule grouped by target",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "group_by": "target"
+      },
+      "family": "enum-coverage",
+      "flags": [],
+      "note": "Third enum value, also disagrees with the default."
+    },
+    {
+      "id": "B03",
+      "phrasing": "what is scheduled by initiative and phase",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "group_by": "initiative"
+      },
+      "family": "certified-baseline",
+      "flags": [],
+      "note": "Certified phrasing. Passes by coincidence of default - included so the report can show which certified rows are coincidence."
+    },
+    {
+      "id": "B04",
+      "phrasing": "schedule coloured by funding risk",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "color_by": "funding_risk"
+      },
+      "family": "enum-coverage",
+      "flags": [],
+      "note": "color_by has no default, so a miss here is visible downstream. British spelling deliberate."
+    },
+    {
+      "id": "B05",
+      "phrasing": "show the schedule with bars colored by status",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "color_by": "status"
+      },
+      "family": "enum-coverage",
+      "flags": [],
+      "note": "Second color_by value, with a rendering word ('bars') that names no slot."
+    },
+    {
+      "id": "B06",
+      "phrasing": "schedule colored by confidence",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "color_by": "confidence"
+      },
+      "family": "enum-coverage",
+      "flags": [],
+      "note": "Third color_by value. Completes color_by coverage through natural phrasing."
+    },
+    {
+      "id": "B07",
+      "phrasing": "show the schedule by capability colored by status",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "group_by": "capability",
+        "color_by": "status"
+      },
+      "family": "two-parameter",
+      "flags": [],
+      "note": "Two enum slots in one phrasing, both disagreeing with defaults where defaults exist. The strongest single row in the corpus."
+    },
+    {
+      "id": "B08",
+      "phrasing": "schedule for initiative I2 colored by confidence",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "scope_initiative_id": "I2",
+        "color_by": "confidence"
+      },
+      "family": "two-parameter",
+      "flags": [],
+      "note": "An id slot and an enum slot together. Id is spoken in its canonical form, so this should be CORRECT with no resolution needed."
+    },
+    {
+      "id": "B09",
+      "phrasing": "what is scheduled at site S3",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {
+        "site_id": "S3"
+      },
+      "family": "id-canonical",
+      "flags": [],
+      "note": "Opaque id spoken canonically."
+    },
+    {
+      "id": "C01",
+      "phrasing": "which sites are overloaded",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {},
+      "family": "control-bare",
+      "flags": [],
+      "note": "Certified phrasing, names nothing. Any fill is invention."
+    },
+    {
+      "id": "C02",
+      "phrasing": "which sites exceed the threshold in FY26-Q4",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {
+        "window": [
+          "FY26-Q4"
+        ]
+      },
+      "family": "certified-baseline",
+      "flags": [],
+      "note": "Row 3 of the acceptance table. Note the expected value is a LIST. A bare string here is WRONG, not a quibble - that container-vs-element confusion has cost this project three defects."
+    },
+    {
+      "id": "C03",
+      "phrasing": "site load in FY26-Q3 and FY26-Q4",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {
+        "window": [
+          "FY26-Q3",
+          "FY26-Q4"
+        ]
+      },
+      "family": "list-multi",
+      "flags": [
+        "order_arguable"
+      ],
+      "note": "Two periods, expected in spoken order. If plan_site_load is genuinely order-insensitive, this is the case that should carry an explicit per-slot flag rather than the comparator loosening for everyone."
+    },
+    {
+      "id": "C04",
+      "phrasing": "how loaded is site S1 in FY26-Q2",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {
+        "site_id": "S1",
+        "window": [
+          "FY26-Q2"
+        ]
+      },
+      "family": "two-parameter",
+      "flags": [],
+      "note": "Both slots, id canonical."
+    },
+    {
+      "id": "C05",
+      "phrasing": "how loaded is the Aurora site",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {
+        "site_id": "S1"
+      },
+      "family": "implied-referent",
+      "flags": [
+        "referent_unresolved"
+      ],
+      "note": "Measured behaviour: the filler emits 'Aurora' at conf 0.92 and the engine 422s. Expected outcome is WRONG. This row measures the missing entity-resolution join, not comprehension - the filler parsed the phrasing correctly and had nowhere to resolve it."
+    },
+    {
+      "id": "C06",
+      "phrasing": "is Brandon over capacity next quarter",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {
+        "site_id": "S2"
+      },
+      "family": "implied-referent",
+      "flags": [
+        "referent_unresolved",
+        "unanchored"
+      ],
+      "note": "Two gaps in one phrasing: an unresolvable name AND an unanchored period. window is expected ABSENT - there is no notion of now, so any window value is an invention."
+    },
+    {
+      "id": "D01",
+      "phrasing": "what does spend look like per period",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {},
+      "family": "control-bare",
+      "flags": [],
+      "note": "Certified phrasing, pinned in the stable set. 'per period' is the verb's nature, not a window value."
+    },
+    {
+      "id": "D02",
+      "phrasing": "cost curve for FY26-Q4",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {
+        "window": [
+          "FY26-Q4"
+        ]
+      },
+      "family": "paraphrase",
+      "flags": [],
+      "note": "The window case that started this whole thread."
+    },
+    {
+      "id": "D03",
+      "phrasing": "what does spend look like for initiative I3 in FY27-Q1",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {
+        "scope_initiative_id": "I3",
+        "window": [
+          "FY27-Q1"
+        ]
+      },
+      "family": "two-parameter",
+      "flags": [],
+      "note": "Only FY27 period in the substrate - checks the filler is not anchored to FY26."
+    },
+    {
+      "id": "D04",
+      "phrasing": "spend for ERP Modernization",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {
+        "scope_initiative_id": "I1"
+      },
+      "family": "implied-referent",
+      "flags": [
+        "referent_unresolved"
+      ],
+      "note": "Initiative by name rather than id. Same gap as C05, different slot - confirms the gap is the missing resolution join and not site-specific."
+    },
+    {
+      "id": "D05",
+      "phrasing": "what does spend look like this quarter",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {},
+      "family": "unanchored",
+      "flags": [
+        "unanchored"
+      ],
+      "note": "RULING: MISSED is the honest outcome. Nothing supplies a notion of now, so resolving 'this quarter' to any period is an invention with a plausible shape - the worst kind. If the filler emits a window here it is EXTRA and should be reported as such even though a human would find the guess reasonable."
+    },
+    {
+      "id": "D06",
+      "phrasing": "show me spend over the last two quarters",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {},
+      "family": "unanchored",
+      "flags": [
+        "unanchored"
+      ],
+      "note": "Same ruling as D05, with a relative range rather than a point."
+    },
+    {
+      "id": "E01",
+      "phrasing": "what does project P1 depend on upstream",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "project_id": "P1",
+        "direction": "upstream"
+      },
+      "family": "mandatory-slot",
+      "flags": [],
+      "note": "The mandatory slot spoken canonically alongside an enum. Before the filler existed this verb could only ever 400."
+    },
+    {
+      "id": "E02",
+      "phrasing": "what depends on project P4 downstream",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "project_id": "P4",
+        "direction": "downstream"
+      },
+      "family": "enum-coverage",
+      "flags": [],
+      "note": "Second direction value - disagrees with the default of upstream, so this row can distinguish carry from default."
+    },
+    {
+      "id": "E03",
+      "phrasing": "what phases does project P2 depend on upstream",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "project_id": "P2",
+        "direction": "upstream",
+        "kind": "phase"
+      },
+      "family": "three-parameter",
+      "flags": [],
+      "note": "All three slots including the mandatory one. This is the corrected form of the probe that produced the 400 - there the project id was absent and confidence was 0.0."
+    },
+    {
+      "id": "E04",
+      "phrasing": "what phases feed into P7",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "project_id": "P7",
+        "kind": "phase",
+        "direction": "upstream"
+      },
+      "family": "paraphrase",
+      "flags": [],
+      "note": "'feed into' as a paraphrase for upstream. If direction is MISSED here that is a fair miss, not a failure - flag it in the report but do not weight it like a WRONG."
+    },
+    {
+      "id": "E05",
+      "phrasing": "what does the ERP Modernization project depend on",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "project_id": "P1"
+      },
+      "family": "implied-referent",
+      "flags": [
+        "referent_unresolved"
+      ],
+      "note": "Mandatory id slot spoken as a name. The most consequential instance of the resolution gap, because this slot is REQUIRED - a wrong value here reaches the engine and 422s where a miss would have reached an ask."
+    },
+    {
+      "id": "E06",
+      "phrasing": "what does P3 depend on forwards",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "project_id": "P3"
+      },
+      "family": "near-miss-vocab",
+      "flags": [
+        "near_miss_vocab"
+      ],
+      "note": "'forwards' is not in [upstream, downstream]. Correct behaviour is to fill project_id and MISS direction. Coercing to 'downstream' is a WRONG fill - this is the exact invention the Literal fix was meant to prevent, now tested from the phrasing side. | GRADING TENSION, SEEN AND LEFT (2026-08-29): this note calls coercion to 'downstream' a WRONG fill; the envelope's uniform rule grades a slot filled but absent from 'expect' as EXTRA, and the runner followed the envelope. Left as EXTRA deliberately — both rank above MISSED so the headline is unaffected, and a per-flag override would add a judgment knob to a grader whose whole value is having none."
+    },
+    {
+      "id": "E07",
+      "phrasing": "dependency neighbourhood for P9 by workstream",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "project_id": "P9"
+      },
+      "family": "near-miss-vocab",
+      "flags": [
+        "near_miss_vocab",
+        "extra_bait"
+      ],
+      "note": "'workstream' is not in kind's vocabulary [project, phase]. Filling kind with either value is invention."
+    },
+    {
+      "id": "F01",
+      "phrasing": "where is funding short by site",
+      "verb": "mesh:planFundingGap",
+      "measure": "plan_funding_gap",
+      "expect": {},
+      "family": "extra-bait",
+      "flags": [
+        "extra_bait"
+      ],
+      "note": "plan_funding_gap declares group_by [org, initiative] and no site slot. 'by site' is real-sounding and unavailable. Filling group_by with either value here is WRONG; filling a site_id is EXTRA on a verb that has no such slot."
+    },
+    {
+      "id": "F02",
+      "phrasing": "which sites are overloaded by initiative",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {},
+      "family": "extra-bait",
+      "flags": [
+        "extra_bait"
+      ],
+      "note": "plan_site_load has no group_by. A filler that pattern-matches 'by X' across verbs will produce an EXTRA here."
+    },
+    {
+      "id": "F03",
+      "phrasing": "cost curve by organization",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {},
+      "family": "extra-bait",
+      "flags": [
+        "extra_bait"
+      ],
+      "note": "'by organization' is a valid value for a DIFFERENT verb's slot. Tests whether the filler fills against the routed verb's declarations or against a remembered vocabulary."
+    },
+    {
+      "id": "F04",
+      "phrasing": "what is scheduled by department",
+      "verb": "mesh:planSchedule",
+      "measure": "plan_schedule",
+      "expect": {},
+      "family": "near-miss-vocab",
+      "flags": [
+        "near_miss_vocab"
+      ],
+      "note": "'department' is adjacent to 'org' but plan_schedule's group_by does not include org at all. Two ways to be wrong: coerce to a plan_schedule value, or import org from plan_funding_gap."
+    },
+    {
+      "id": "G01",
+      "phrasing": "where are the dependency violations",
+      "verb": "mesh:planDependencyViolations",
+      "measure": "plan_dependency_violations",
+      "expect": {},
+      "family": "zero-slot-verb",
+      "flags": [],
+      "note": "Verb declares no spoken slots. Any fill is EXTRA."
+    },
+    {
+      "id": "G02",
+      "phrasing": "show me the coverage gap for initiative I2 in FY26-Q3",
+      "verb": "mesh:planCoverageGap",
+      "measure": "plan_coverage_gap",
+      "expect": {},
+      "family": "zero-slot-verb",
+      "flags": [
+        "extra_bait"
+      ],
+      "note": "Verb declares no spoken slots, and the phrasing loudly names two parameter-shaped things. The strongest invention bait in the corpus: correct behaviour is to fill nothing at all."
+    },
+    {
+      "id": "G03",
+      "phrasing": "what changed in this session",
+      "verb": "mesh:planSessionChanges",
+      "measure": "plan_session_changes",
+      "expect": {},
+      "family": "zero-slot-verb",
+      "flags": [],
+      "note": "Handle-only verb. ops and scenario_name are route-injected; the forgery finding says a spoken value must never win. This row proves the filler is not even offered the chance."
+    },
+    {
+      "id": "G04",
+      "phrasing": "what changed in this session named Board-Approved Plan",
+      "verb": "mesh:planSessionChanges",
+      "measure": "plan_session_changes",
+      "expect": {},
+      "family": "handle-bait",
+      "flags": [
+        "extra_bait"
+      ],
+      "note": "Deliberate forgery bait, phrased naturally. The name in this question is the exact string from the measured forgery finding. Correct behaviour: nothing filled. If scenario_name appears in the output, the guard is the only thing between this phrasing and a falsified change log."
+    },
+    {
+      "id": "H01",
+      "phrasing": "capability maturity by site versus target",
+      "verb": "mesh:planMaturityGrid",
+      "measure": "plan_maturity_grid",
+      "expect": {},
+      "family": "control-bare",
+      "flags": [],
+      "note": "Certified phrasing. 'by site versus target' describes the grid's axes, not slot values."
+    },
+    {
+      "id": "H02",
+      "phrasing": "show me the maturity grid as of FY26-Q4",
+      "verb": "mesh:planMaturityGrid",
+      "measure": "plan_maturity_grid",
+      "expect": {
+        "as_of": "FY26-Q4"
+      },
+      "family": "known-downstream-gap",
+      "flags": [],
+      "note": "Row 2 of the acceptance table, standing xfail. Extraction is expected CORRECT; the failure is downstream (as_of compares against dates, not fiscal labels). If this row grades CORRECT the xfail is confirmed as purely a fiscal->date gap. Do not let a downstream failure be recorded as a filler failure."
+    },
+    {
+      "id": "H03",
+      "phrasing": "what is the capability path for C4",
+      "verb": "mesh:planCapabilityPath",
+      "measure": "plan_capability_path",
+      "expect": {
+        "capability_id": "C4"
+      },
+      "family": "mandatory-slot",
+      "flags": [],
+      "note": "Single required slot, canonical id."
+    },
+    {
+      "id": "H04",
+      "phrasing": "how has Order to Cash evolved",
+      "verb": "mesh:planProcessEvolution",
+      "measure": "plan_process_evolution",
+      "expect": {
+        "process_id": "BP1"
+      },
+      "family": "implied-referent",
+      "flags": [
+        "referent_unresolved"
+      ],
+      "note": "Required id slot spoken as a process name. Third distinct slot showing the same resolution gap - three instances across three verbs makes it a platform gap rather than a per-verb one."
+    },
+    {
+      "id": "H05",
+      "phrasing": "what is the technology footprint for T2",
+      "verb": "mesh:planTechFootprint",
+      "measure": "plan_tech_footprint",
+      "expect": {
+        "tech_id": "T2"
+      },
+      "family": "mandatory-slot",
+      "flags": [],
+      "note": "Single required slot, canonical id."
+    },
+    {
+      "id": "H06",
+      "phrasing": "what is the capability path",
+      "verb": "mesh:planCapabilityPath",
+      "measure": "plan_capability_path",
+      "expect": {},
+      "family": "mandatory-missing",
+      "flags": [],
+      "note": "Required slot named nowhere in the phrasing. MISSED is correct and honest - and this is the case the ask disposition exists for. Record the confidence: the earlier instance of this shape reported 0.0, which is the model correctly saying it could not complete. If that reproduces, confidence is actionable for misses."
+    }
   ]
 }
