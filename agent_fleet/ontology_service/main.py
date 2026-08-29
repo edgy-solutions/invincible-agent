@@ -2595,6 +2595,19 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         # elicitation lane with none. The class rides on each candidate, so a consumer that
         # wants only same-class options can filter — a consumer cannot un-discard.
         cands = list(prov.get("instance_top_candidates") or [])
+        # `decide()` only populates `instance_top_candidates` on the `mixed` branch — an
+        # exact or fuzzy match reports the winner in flat provenance fields instead. So the
+        # menu was empty in exactly the case that most needs one: "the ERP Modernization
+        # project" resolves cleanly to I1 and is then type-rejected, and a disambiguation
+        # ask offering nothing is an elicitation with no options. Synthesised from the
+        # winner so every non-empty outcome carries at least the candidate it found.
+        if not cands and prov.get("instance_id"):
+            cands = [{
+                "instance_id": prov.get("instance_id"),
+                "class_uri": _subject or "",
+                "label": prov.get("instance_label", ""),
+                "score": prov.get("instance_score", 0.0),
+            }]
 
         # TYPE-CHECKED AGAINST THE SLOT'S DECLARED CLASS. A name can resolve perfectly and
         # still be the wrong KIND of thing: "the ERP Modernization project" resolves to
