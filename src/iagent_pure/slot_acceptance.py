@@ -35,7 +35,15 @@ as asked, which is a thing to log loudly and answer honestly — not a crash.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping, NamedTuple, Sequence
+
+#: An ISO calendar date, which is what a `period: "date"` slot's measure compares against.
+#: Deliberately a SHAPE check and not a parse: this module is stdlib-only by its package's
+#: rule, and the question here is "is this the kind of thing the measure understands", not
+#: "is this a real date". A shaped-but-impossible date reaches the measure and is its to
+#: judge; a fiscal label or "this quarter" never gets that far.
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 #: Slot kinds whose values come from the ROUTE, never from a speaker. `handle` is state the
 #: dispatcher resolves (a store reference, a session's op list); `ceremony` is an act's own
@@ -169,6 +177,33 @@ def accept_slots(
             # which names characters, blames the engine, and tells nobody that the
             # extraction produced the wrong shape.
             refusals.append(Refusal(name, WRONG_SHAPE, value))
+            continue
+
+        # ── PERIOD RESOLUTION, THREE-VALUED ──────────────────────────────────────
+        # A `period: "date"` slot is compared LEXICALLY against ISO dates by its measure, so
+        # a fiscal label there is not a weak filter — it is a COMPLETE NO-OP. Measured:
+        # `as_of="FY26-Q4"` returns the unfiltered set byte-identical to passing nothing,
+        # because ('9999-12-31' <= 'FY26-Q4') is True.
+        #
+        # The failure being removed is ACCEPTED AND IGNORED. It must not be replaced by
+        # ACCEPTED AND COERCED, so there are three outcomes and no fourth:
+        #
+        #   a known fiscal label  -> resolved to that period's END date
+        #   an ISO date           -> passed through, it is already what the measure wants
+        #   anything else         -> REFUSED, with the vocabulary named
+        #
+        # Resolution is DECLARATION-DRIVEN: the boundaries ride on `period_end`, derived from
+        # FISCAL_PERIODS at declaration time, so this module holds no copy of the fiscal
+        # calendar and cannot drift from it.
+        if decl.get("period") == "date" and isinstance(value, str):
+            boundaries = decl.get("period_end") or {}
+            if value in boundaries:
+                params[name] = boundaries[value]
+                continue
+            if not _ISO_DATE.fullmatch(value):
+                refusals.append(Refusal(name, NOT_A_PERMITTED_VALUE, value))
+                continue
+            params[name] = value
             continue
 
         values = decl.get("values")

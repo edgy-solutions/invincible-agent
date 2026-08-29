@@ -169,29 +169,39 @@ def test_row4_the_declared_enum_is_what_the_verb_actually_accepts(client):
 # Row 2 — pre-registered, and it does NOT pass. Recorded rather than quietly dropped.
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "THE CARRY IS NOT SUFFICIENT FOR THIS ROW, and that is a finding, not a gap in the "
-        "test. `plan_maturity_grid.as_of` is compared against `assessed_at` DATES "
-        "('2025-12-31', '2026-06-30'); the certified phrasing speaks a FISCAL PERIOD. "
-        "'FY26-Q4' string-compares above every date in the seed, so the filter admits "
-        "everything and returns the unfiltered superset with a 200 — the parameter now "
-        "ARRIVES and is silently ignored, which is the same class of silence the finding "
-        "was raised about, one layer further in. Needs a fiscal->date resolution step that "
-        "does not exist. Strict, so it goes red the moment somebody builds it. "
-        "MEASURED 2026-08-29, and it is a COMPLETE NO-OP rather than a weak filter: "
-        "as_of='FY26-Q4' returns 8 rows, byte-identical to passing nothing, while "
-        "as_of='2025-01-01' returns 0. ('9999-12-31' <= 'FY26-Q4') is True because 'F' "
-        "sorts above '9'. SO THIS ROW CANNOT GO GREEN FROM THE CARRY OR THE FILLER, and "
-        "when it fails it will look like a broken supervisor rather than a missing "
-        "fiscal->date step. Read the failure here before blaming the dispatch."
-    ),
-)
 def test_row2_maturity_grid_AS_OF_a_fiscal_period_filters(client):
+    """ROW 2 IS GREEN — the fiscal->date resolution landed and the no-op is gone.
+
+    It was a strict xfail for a real reason: `as_of` is compared LEXICALLY against ISO dates,
+    and `('9999-12-31' <= 'FY26-Q4')` is True, so a fiscal label admitted everything and
+    returned the unfiltered set with a 200. The parameter arrived and was discarded by the
+    measure itself. The router now resolves `FY26-Q4` to that period's END date before the
+    measure sees it.
+
+    ASSERTED ON THE CLAIM, NOT ITS NEIGHBOUR — and the original assertion was the neighbour.
+    It compared ROW COUNTS, which never discriminate here: the grid returns one cell per
+    (capability, site) whatever the date, so the count is 8 for every period including the
+    unfiltered call. What changes is the CONTENT — each cell reports the latest assessment
+    at or before the date. A count-based test would have stayed red against a working system
+    and been read as the fix failing."""
+    resolved_end = "2025-12-31"          # FY26-Q1's end, from FISCAL_PERIODS
+    early, refusals = ask(client, "plan_maturity_grid", {"as_of": "FY26-Q1"})
+    assert not refusals, f"a declared fiscal label was refused: {refusals}"
+
+    assert early, "the scoped grid came back empty — nothing to assert over"
+    late = [r for r in early if r["assessed_at"] > resolved_end]
+    assert not late, (
+        f"cells assessed AFTER the requested date leaked into the answer: "
+        f"{sorted({r['assessed_at'] for r in late})}"
+    )
+
+    # NON-VACUITY: the unfiltered grid DOES contain later assessments, so the assertion above
+    # is excluding something real rather than passing over a seed that has nothing to exclude.
     unfiltered, _ = ask(client, "plan_maturity_grid", {})
-    scoped, _ = ask(client, "plan_maturity_grid", {"as_of": "FY26-Q4"})
-    assert len(scoped) < len(unfiltered)
+    assert any(r["assessed_at"] > resolved_end for r in unfiltered), (
+        "the unfiltered grid has no assessment later than the cut-off, so this test cannot "
+        "tell a working filter from a no-op"
+    )
 
 
 def test_row2_the_filter_itself_works_when_spoken_in_the_units_it_reads(client):

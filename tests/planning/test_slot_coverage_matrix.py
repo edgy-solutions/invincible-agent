@@ -447,7 +447,11 @@ def test_as_of_carries_NO_vocabulary_until_it_can_actually_RESOLVE_one():
 
     as_of = {d["name"]: d for d in slots_for("plan_maturity_grid")}["as_of"]
     resolution_exists = hasattr(slots_mod, "_resolve_period_to_date")
-    has_vocabulary = bool(as_of.get("values"))
+    # The "vocabulary" for a date-taking period slot is `period_end` — the label->date
+    # boundaries the router resolves through — not `values`. `values` would be an acceptance
+    # SET, and an acceptance set is wrong here: the slot also legitimately takes a bare ISO
+    # date, which no fiscal vocabulary contains.
+    has_vocabulary = bool(as_of.get("period_end"))
 
     assert has_vocabulary == resolution_exists, (
         "as_of's vocabulary and its fiscal->date resolution must land together. "

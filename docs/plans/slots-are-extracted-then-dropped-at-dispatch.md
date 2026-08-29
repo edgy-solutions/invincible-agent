@@ -211,7 +211,22 @@ The four-row table above **is** the acceptance test, inverted. The build is done
 
 1. "where is funding short by initiative" returns **initiatives**;
 2. "maturity grid as of FY26-Q4" returns cells assessed **at or before** that date.
-   **⚠ THIS ROW CANNOT GO GREEN FROM THE CARRY OR THE FILLER.** Measured 2026-08-29:
+   **✅ GREEN 2026-08-29 — fiscal→date resolution landed.** The router now resolves
+   `FY26-Q4` to that period's END date (`2026-09-30`, from `FISCAL_PERIODS`) before the
+   measure sees it, and refuses a value that is neither a known label nor an ISO date.
+   Three outcomes, no fourth: the failure being removed was *accepted and ignored*, and
+   it was not replaced by *accepted and coerced*.
+
+   **AND THE ORIGINAL ASSERTION WAS THE NEIGHBOUR.** It compared ROW COUNTS, which never
+   discriminate here — the grid returns one cell per (capability, site) whatever the
+   date, so the count is 8 for every period including the unfiltered call. What changes
+   is the CONTENT: each cell reports the latest assessment at or before the date. A
+   count-based test would have stayed red against a working system and been read as the
+   fix failing. The test now asserts no cell carries an `assessed_at` later than the
+   resolved date, with a non-vacuity check that the unfiltered grid has one to exclude.
+
+   ~~THIS ROW CANNOT GO GREEN FROM THE CARRY OR THE FILLER.~~ That was true and is now
+   spent. It was measured 2026-08-29:
    `as_of="FY26-Q4"` returns **8 rows — byte-identical to passing nothing** — while
    `as_of="2025-01-01"` returns 0. The comparison is lexical and `('9999-12-31' <=
    'FY26-Q4')` is `True`, because `F` sorts above `9`. So a fiscal label is not a weak

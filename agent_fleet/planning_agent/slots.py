@@ -179,8 +179,27 @@ _PERIOD_KIND = {
     "as_of": "date",
 }
 
-#: The subset whose vocabulary is validated today. `as_of` joins when it can resolve.
+#: The subset whose vocabulary is validated as a permitted-value set.
 _PERIOD_SLOTS = {name for name, kind in _PERIOD_KIND.items() if kind == "fiscal-period"}
+
+
+def _resolve_period_to_date() -> dict:
+    """Fiscal label -> the date a `period: "date"` slot should be given for it.
+
+    THE END of the period, because `as_of` means "as things stood at the end of X". A start
+    date would answer a different question and would do it silently.
+
+    Carried ON THE DECLARATION rather than resolved inside the router, for the same reason
+    the enum vocabulary is: the router must not hold a second copy of the fiscal calendar.
+    `FISCAL_PERIODS` stays the one place the convention lives, and the declaration is how it
+    travels to whoever needs it.
+
+    THIS FUNCTION'S EXISTENCE IS THE TRIPWIRE MARKER. The paired test asserts that a
+    `period: "date"` slot carries these boundaries exactly when this resolution exists —
+    boundaries without resolution certify a no-op, resolution without boundaries leaves the
+    silent path open, and both are failures.
+    """
+    return {label: iv.end for label, iv in FISCAL_PERIODS.items()}
 
 
 def slots_for(fn_name: str) -> List[dict]:
@@ -228,6 +247,12 @@ def slots_for(fn_name: str) -> List[dict]:
         # wanted rather than free text; the router needs it to know which values it may check.
         if kind.startswith("spoken") and name in _PERIOD_KIND:
             rec["period"] = _PERIOD_KIND[name]
+            # A date-taking period slot carries the label->date boundaries it can resolve, so
+            # the router can turn "FY26-Q4" into the date the measure actually compares
+            # against. Without it, the label is forwarded and the measure's LEXICAL compare
+            # silently admits everything: ('9999-12-31' <= 'FY26-Q4') is True.
+            if rec["period"] == "date":
+                rec["period_end"] = _resolve_period_to_date()
         if kind.startswith("spoken") and name in _PERIOD_SLOTS and values is None:
             values = list(FISCAL_PERIODS)
         if values is not None:
