@@ -638,18 +638,26 @@ class EnumerateInstancesRequest(BaseModel):
     class_uri: str = ""
 
 
-#: PROVISIONAL, AND EXPLICITLY NOT A RULING. `enumerate-is-not-resolve` open question 1 says
-#: the menu bound is shared with disambiguation and "belongs wherever it is ruled once" —
-#: 9 capabilities is a menu, 19 resolver candidates is not, and the number between them is a
-#: judgment nobody has made yet.
+#: THE MENU BOUND — RULED 2026-08-29 at 8, and it is a HUMAN-ATTENTION bound.
 #:
-#: 15 is chosen to be honest about what it is: above every class this substrate currently
-#: holds (14 projects is the largest), so no real class is truncated by an arbitrary number
-#: while the ruling is pending. THAT REASONING IS ALSO ITS WEAKNESS — a bound picked so
-#: today's data fits is fitted to the data, and it must be replaced by a bound picked from
-#: what a person can choose from in one turn. Env-overridable so the eventual ruling does not
-#: need a code change to test.
-_MENU_BOUND = int(os.getenv("ENUMERATE_MENU_BOUND", "15"))
+#: It is the number of options a person can actually choose from in one turn, which is a
+#: fact about readers and not about this substrate. The previous value (15) was chosen so
+#: that no class the seed happens to hold would be truncated — a bound fitted to the data,
+#: which would have moved every time the seed grew and would have justified itself forever.
+#:
+#: CONSEQUENCE, STATED BECAUSE IT IS NOT OBVIOUS: at 8, `Capability` (9 members) is
+#: `too_many`. The item that ruled this bound used "9 capabilities is a menu" as its example
+#: of a menu, so the ruled number and that example disagree — and `capability_id` is one of
+#: the four spoken-mandatory slots, so its ask falls to free text rather than a list. That
+#: may be intended (nine is genuinely a lot to read back in one turn) or may be an
+#: off-by-one against the example; either way the number is the ruling and this comment is
+#: the flag, not a silent adjustment.
+#:
+#: `Project` (14) is now a real `too_many` case, which retires the previous problem that the
+#: outcome was only reachable by lowering the bound inside a test.
+#:
+#: Env-overridable so the bound can be tuned against real readers without a code change.
+_MENU_BOUND = int(os.getenv("ENUMERATE_MENU_BOUND", "8"))
 
 
 def _enumerable() -> dict[str, tuple[str, str, str]]:

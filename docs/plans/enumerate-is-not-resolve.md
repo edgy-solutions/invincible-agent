@@ -154,3 +154,73 @@ ships first on the interim; this converts the interim into a menu.
 
 **Not a fourth registry.** It is one more verb on the existing federated mesh, registered the way
 every other provider registers.
+
+
+---
+
+## BUILT 2026-08-29 — Engine P provider, and two things deliberately NOT done
+
+`POST /enumerate_instances` on Engine P, three outcomes, live from the store, no filter.
+Measured at the ruled bound of 8:
+
+| class | members | outcome |
+|---|---|---|
+| Site / BusinessProcess / Initiative / Technology | 4 / 2 / 3 / 5 | `members` |
+| **Capability** | 9 | **`too_many`** |
+| **Project** | 14 | **`too_many`** |
+| anything else (e.g. a Dataset class) | — | `unsupported` |
+
+**Open question 4 was already closed** by `[[the-filler-has-no-entity-resolution]]`'s fix: a
+slot's `referent` carries the class URI, which is exactly this endpoint's input, so a caller
+passes the declaration through and needs no vocabulary of its own. Sealed by a test asserting
+every class a slot can *declare* is one this engine can *enumerate*.
+
+### The menu bound is ruled at 8, and it disagrees with this item's own example
+
+8 is a **human-attention** bound — what a person can choose from in one turn — replacing a
+provisional 15 that had been chosen so no class the seed happens to hold would be truncated,
+which is a bound fitted to the data.
+
+> **CONSEQUENCE: `Capability` (9) is now `too_many`.** This item's cardinality section uses
+> *"9 capabilities is a menu"* as its example of a menu, so the ruled number and the example
+> disagree. `capability_id` and `project_id` are two of the four spoken-mandatory slots, so
+> **both of their asks now fall to free text rather than a list.** That may be intended —
+> nine items is genuinely a lot to read back in one turn — or it may be an off-by-one against
+> the example. Flagged rather than silently reconciled; the number is the ruling.
+
+### NOT DONE (1): the DataHub unboundedness case has no proof, by choice
+
+`too_many` is now exercised against real data (Capability, Project) rather than by lowering
+the bound inside a test. What is still unproven is the case this item was written about: a
+substrate that is unbounded *in principle* rather than merely larger than eight.
+
+**No synthetic proof was manufactured.** A fabricated 10,000-member class would demonstrate
+the code path and nothing about the substrate, and this project has a standing rule against
+instruments that agree with whatever they are pointed at.
+
+> **TRIGGER, so the gap is not open-ended: the day an Engine DA (or any DataHub-backed) slot
+> declares an instance-typed `referent`.** At that moment a real unbounded class has a real
+> slot pointing at it, that provider must answer `too_many` or `unsupported` rather than
+> attempting a list, and the free-text boundary gets its first honest test. Until then the
+> claim "enumerate over DataHub is unbounded" is a design premise, not a measurement, and it
+> is recorded as one.
+
+### NOT DONE (2): the registration is HELD, and must not be hand-seeded
+
+`mesh:enumerateInstances` requires `mesh:InstanceClass` and `mesh:InstanceEnumeration` to
+exist as `:OntologyClass` nodes (ADR-0019 Contract D). **Verified against the live graph
+before the registration was written: both were MISSING.** They are now declared in
+`setup/ontologies/mesh_system.ttl` and reach Neo4j only through an ontology seed.
+
+> **The registration code is committed and NOT DEPLOYED.** Engine P in the sandbox is running
+> the previous image, so nothing is attempting this registration and no alarm is firing.
+> **Rolling engine-p before the seed would start a permanent Contract D 422 on every boot** —
+> a standing red alarm that trains readers to ignore alarms, which is worse than the missing
+> capability.
+>
+> **It rides the next coordinated prime window**, not a hand-run Cypher
+> (`[[bootstrap-state-debt]]`). Verification after the seed, by name and parent per the prime
+> playbook: the two classes exist as `:OntologyClass`, then engine-p's registration set is
+> confirmed to be **sixteen** — fourteen verbs, `resolveInstance`, `enumerateInstances` — and
+> not fifteen, because a half-registered engine looks healthy from outside and did exactly
+> that here this morning.

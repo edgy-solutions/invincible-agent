@@ -151,7 +151,8 @@ def main() -> int:
         try:
             r = _call(args.url, c["phrasing"], c["verb"], declarations, args.timeout)
         except Exception as exc:  # noqa: BLE001
-            by_class.setdefault(ERROR, []).append({**c, "detail": [str(exc)[:120]]})
+            by_class.setdefault(ERROR, []).append({**c, "detail": [str(exc)[:120]],
+                                                   "resolution": {}, "refused": []})
             continue
 
         got = r.get("slots") or {}
@@ -165,8 +166,17 @@ def main() -> int:
                     cls = WRONG
                     detail.append(f"NOT REFUSED {name} (expected the endpoint to reject it)")
 
-        by_class.setdefault(cls, []).append({**c, "got": got, "detail": detail,
-                                             "confidence": r.get("confidence")})
+        by_class.setdefault(cls, []).append({
+            **c, "got": got, "detail": detail, "confidence": r.get("confidence"),
+            "refused": r.get("refused") or [],
+            # THE TRI-STATE, recorded per case. Without it H06 and E05 are BOTH `got: {}`
+            # and indistinguishable in the run file — one a slot the phrase never named
+            # (elicitation, no menu), the other a name that resolved to the wrong class
+            # (disambiguation, menu available). An acceptance assertion on WHICH ASK SHAPE
+            # is vacuous against a file that cannot tell them apart, and a vacuous
+            # acceptance passes.
+            "resolution": r.get("resolution") or {},
+        })
         for flag in c.get("flags") or []:
             by_flag.setdefault(flag, []).append((cls, c.get("id"), c["phrasing"]))
         if r.get("confidence") is not None:
@@ -176,7 +186,12 @@ def main() -> int:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump([{"id": r.get("id"), "cls": cl, "conf": r.get("confidence"),
                         "expect": r.get("expect"), "got": r.get("got"),
-                        "flags": r.get("flags"), "phrasing": r.get("phrasing")}
+                        "flags": r.get("flags"), "phrasing": r.get("phrasing"),
+                        # outcome / instance_id / candidates, per slot — the fields an
+                        # acceptance test needs to distinguish an ask WITH a menu from an
+                        # ask WITHOUT one. `got: {}` says nothing about which.
+                        "resolution": r.get("resolution") or {},
+                        "refused": r.get("refused") or []}
                        for cl, rows in by_class.items() for r in rows], fh, indent=1)
 
     # CORRECT MIXES TWO POPULATIONS and reporting it as one hides the shape. A case that

@@ -43,10 +43,9 @@ def _enum(client, class_uri):
 # ── outcome: members ─────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("cls,count", [
-    ("Capability", 9), ("Site", 4), ("Project", 14),
-    ("BusinessProcess", 2), ("Initiative", 3), ("Technology", 5),
+    ("Site", 4), ("BusinessProcess", 2), ("Initiative", 3), ("Technology", 5),
 ])
-def test_a_bounded_class_returns_its_MEMBERS(client, cls, count):
+def test_a_class_within_the_bound_returns_its_MEMBERS(client, cls, count):
     """Asserted on the counts the seed actually holds, per class, rather than "some members
     came back" — which passes when the wrong collection is enumerated."""
     body = _enum(client, IDP + cls)
@@ -55,29 +54,47 @@ def test_a_bounded_class_returns_its_MEMBERS(client, cls, count):
     assert len(body["members"]) == count
 
 
+@pytest.mark.parametrize("cls,count", [("Capability", 9), ("Project", 14)])
+def test_a_class_over_the_RULED_bound_is_too_many_at_the_DEFAULT(client, cls, count):
+    """AT THE RULED BOUND OF 8, and no test-local override — which is the point of ruling it
+    at a human-attention number rather than a substrate fit. `too_many` used to be reachable
+    only by lowering the bound inside a test, and an outcome the suite can only reach by
+    changing the thing under test is an outcome nobody has really checked.
+
+    CONSEQUENCE WORTH SEEING IN A TEST NAME: `capability_id` and `project_id` are two of the
+    four spoken-mandatory slots, so at this bound BOTH of their asks fall to free text rather
+    than a menu. That is the ruled behaviour, not a defect — but it is the opposite of the
+    "9 capabilities is a menu" example the bound was ruled against, and a reader should meet
+    that fact here rather than discover it from an ask with no options."""
+    body = _enum(client, IDP + cls)
+    assert body["outcome"] == "too_many"
+    assert body["count"] == count
+    assert body["bound"] == 8
+    assert body["members"] == [], "too_many must not also return a truncated menu"
+
+
 def test_members_carry_a_LABEL_because_a_menu_of_ids_is_not_a_menu(client):
-    """"Which capability?" answered with C1..C9 is a menu only in shape. The label is the
-    part a person chooses from; the id is what the slot needs afterwards."""
-    members = _enum(client, IDP + "Capability")["members"]
+    """A menu of bare ids is a menu only in shape. The label is the part a person chooses
+    from; the id is what the slot needs afterwards.
+
+    Uses Technology because Capability is `too_many` at the ruled bound and returns no
+    members — the case this test needs is a class that HAS a menu."""
+    members = _enum(client, IDP + "Technology")["members"]
     assert all(m["label"] for m in members), "a member came back with no label"
-    assert {"C1", "C9"} <= {m["instance_id"] for m in members}
+    assert {"T1", "T5"} <= {m["instance_id"] for m in members}
 
 
 # ── outcome: too_many ────────────────────────────────────────────────────────
 
-def test_a_class_larger_than_the_menu_bound_returns_TOO_MANY_with_its_count(client, monkeypatch):
-    """The outcome that makes free text legitimate. Exercised by lowering the bound, because
-    no class in this substrate currently exceeds it — and an outcome that the tests can never
-    reach is an outcome nobody has checked.
+def test_the_bound_is_env_overridable_without_a_code_change(client, monkeypatch):
+    """So the ruled number can be tuned against real readers rather than re-argued in a diff.
 
     The COUNT travels even though the members do not: "there are 14" is a useful thing for an
     ask to say, and it is cheap here because the collection is already in hand."""
     monkeypatch.setattr(engine, "_MENU_BOUND", 3)
-    body = _enum(client, IDP + "Project")
+    body = _enum(client, IDP + "Site")
     assert body["outcome"] == "too_many"
-    assert body["count"] == 14
-    assert body["bound"] == 3
-    assert body["members"] == [], "too_many must not also return a truncated menu"
+    assert body["count"] == 4 and body["bound"] == 3
 
 
 def test_the_bound_is_inclusive_at_its_edge(client, monkeypatch):
