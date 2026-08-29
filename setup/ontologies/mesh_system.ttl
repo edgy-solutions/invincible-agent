@@ -77,6 +77,26 @@ mesh:InstanceIdentifier a owl:Class ;
   rdfs:label "Instance Identifier" ;
   rdfs:comment "A token that names one specific individual rather than a kind of thing. Input shape for the mesh:resolveInstance routing pre-step: providers match it against their own catalogues and the authoritative answer overrides the class guess. Distinguished from a content word that merely appears in an asset's name. The lexical SHAPE of the token never decides the class — only providers do." .
 
+# ENUMERATE IS NOT RESOLVE, and the two need different endpoint classes because they take
+# different things. `mesh:InstanceIdentifier` is a token the SPEAKER said; a slot the phrase
+# never filled has no such token, so `resolveInstance` can score nothing and produces no menu.
+# `mesh:enumerateInstances` takes the CLASS instead and returns its members — which is the
+# option source ADR-0033's amended #2 assumes when it permits a menu.
+mesh:InstanceClass a owl:Class ;
+  rdfs:subClassOf mesh:Request ;
+  rdfs:label "Instance Class" ;
+  rdfs:comment "The URI of a class whose individuals are to be listed. Input shape for mesh:enumerateInstances, the option source an elicitation draws its menu from. Distinguished from mesh:InstanceIdentifier, which names ONE individual the speaker referred to: a slot that was never filled has no identifier to resolve, only a class to enumerate." .
+
+# THE THREE OUTCOMES ARE THE POINT OF THE SHAPE. `resolve` is bounded by the query; `enumerate`
+# is bounded only by the substrate, so a provider must be able to report that it CANNOT list a
+# class as a first-class answer rather than by returning an empty or truncated menu. That is what
+# makes ADR-0033's free-text boundary decidable: free text is permitted where a provider REPORTS
+# unboundedness, never where nobody built the capability.
+mesh:InstanceEnumeration a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Instance Enumeration" ;
+  rdfs:comment "The members of a class, or an honest refusal to list them. Output shape for mesh:enumerateInstances: outcome is one of members (here they are, and a menu is legitimate), too_many (the class is real and larger than a menu, with a count), or unsupported (this provider does not enumerate this class). An ask that falls back to free text must carry the provider's own reason from this field." .
+
 mesh:InstanceResolution a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Instance Resolution" ;

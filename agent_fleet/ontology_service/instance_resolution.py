@@ -43,6 +43,23 @@ from dataclasses import dataclass
 from typing import Optional
 
 
+#: THE `instance_match` VOCABULARY, enumerated here because consumers match on it.
+#:
+#:     exact | fuzzy | mixed | not_specific | empty | no_providers | timeout
+#:
+#: ONE VALUE IS PRODUCED OUTSIDE THIS MODULE. `/fill_slots` adds `wrong_class` when a name
+#: resolves cleanly and the winner's class disagrees with the slot's declared `referent` —
+#: "the ERP Modernization project" resolves to an Initiative against a slot declaring
+#: Project. It is an ADDITION rather than a reuse because none of the values above mean it:
+#: `mixed` is candidates of DIFFERENT classes, `not_specific` is a vague identifier, and that
+#: case was one candidate, specific, real, and of the wrong class. Reusing either would make
+#: this vocabulary lie to keep its size.
+#:
+#: Recorded HERE so an exhaustive match written against this list does not silently fall
+#: through on a value it has never seen. This module does not produce `wrong_class` and does
+#: not need to handle it; a consumer of `/fill_slots` does.
+
+
 @dataclass(frozen=True)
 class InstanceCandidate:
     """One candidate returned by a ``mesh:resolveInstance`` provider."""

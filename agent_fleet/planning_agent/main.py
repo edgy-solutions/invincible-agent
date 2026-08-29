@@ -221,6 +221,49 @@ async def lifespan(app: FastAPI):
             )
         except Exception as exc:  # pragma: no cover
             print(f"[engine-p] resolveInstance provider registration failed: {exc}")
+
+        # THE ENUMERATE PROVIDER — the option source, not the resolver.
+        #
+        # `resolveInstance` scores candidates against something the SPEAKER said. A slot the
+        # phrase never filled has no such string, so no number of resolve providers builds a
+        # menu for it. All four spoken-mandatory slots in this engine are instance-kind, so
+        # the ask trigger fires on them and every menu it could offer was blocked on this.
+        #
+        # CONTRACT D: mesh:InstanceClass and mesh:InstanceEnumeration must already exist as
+        # :OntologyClass nodes or this registration is a PERMANENT 422 — declared in
+        # setup/ontologies/mesh_system.ttl and landed by the ontology seed. Checked before
+        # writing this, because the neighbouring registration failed silently once already
+        # this session and a half-registered engine looks healthy from outside.
+        try:
+            register_engine_to_mesh(
+                mint=_mint,
+                name="engine_p_planning_enumerate_instances",
+                description=(
+                    "Lists the members of a planning class — sites, capabilities, "
+                    "initiatives, projects, business processes, technologies, "
+                    "organizations — so an elicitation can offer a menu for a slot the "
+                    "speaker never filled. Answers with one of three outcomes: members "
+                    "(the list, and a menu is legitimate), too_many (the class is real and "
+                    "larger than a menu, with its count), or unsupported (this provider "
+                    "does not hold that class). The refusal is a first-class answer: free "
+                    "text is permitted where a provider REPORTS unboundedness, never where "
+                    "nobody attempted enumeration."
+                ),
+                verb="mesh:enumerateInstances",
+                input_uri="http://invincible-agent/mesh#InstanceClass",
+                output_uri="http://invincible-agent/mesh#InstanceEnumeration",
+                verb_synonyms=["which sites", "list capabilities", "what projects",
+                               "show me the options", "enumerate"],
+                endpoint_url=base.rstrip("/") + "/enumerate_instances",
+                owner_persona="PORTFOLIO_LEAD",
+                domains=["PORTFOLIO_PLANNING"],
+                cost_class="fast",
+                requires_human_approval=False,
+                provider="engine_p_planning",
+                timeout_s=5.0,
+            )
+        except Exception as exc:  # pragma: no cover
+            print(f"[engine-p] enumerateInstances provider registration failed: {exc}")
     yield
 
 
@@ -548,6 +591,101 @@ def resolve_instance(req: ResolveInstanceRequest) -> dict[str, Any]:
                 })
     out.sort(key=lambda c: c["score"], reverse=True)
     return {"candidates": out[:10]}
+
+
+# ---------------------------------------------------------------------------
+# POST /enumerate_instances — the mesh:enumerateInstances provider
+# ---------------------------------------------------------------------------
+#
+# RESOLVE AND ENUMERATE ARE DIFFERENT VERBS. `resolveInstance` takes an `identifier` and
+# SCORES candidates against something the speaker said. A slot the phrase never filled has
+# no such string, so no number of resolve providers can build a menu for it — which is why
+# ADR-0033's fourth option source needed a capability that did not exist.
+#
+#   resolve   : identifier -> scored candidates
+#   enumerate : class      -> its members
+#
+# THREE OUTCOMES, NOT A LIST, and this is the whole design of the endpoint. `resolve` is
+# naturally bounded because a query bounds it; `enumerate` is bounded only by the substrate.
+# Nine capabilities is a menu; a DataHub dataset class is unbounded and a menu over it is a
+# lie. So a provider must be able to SAY it cannot enumerate, as a first-class answer:
+#
+#   members     here they are, and the menu is real
+#   too_many    the class is real and larger than a menu (count included, it is cheap here)
+#   unsupported this provider does not enumerate this class
+#
+# THAT IS WHAT MAKES ADR-0033'S FREE-TEXT BOUNDARY PRINCIPLED RATHER THAN A FUDGE. Free text
+# becomes permitted where a provider REPORTS unboundedness — never where nobody built the
+# capability, which is the reading the ADR's "never because enumeration was not attempted"
+# clause exists to close. An ask that falls back to free text must carry the provider's own
+# reason.
+#
+# LIVE FROM THE STORE, NO REGISTRY. `[[slot-resolution-entities-in-the-resolver-substrate]]`
+# already ruled this shape for `resolve` and it carries over unchanged: no declaration with
+# side effects, no seeded copy. An emptied store answering with zero members is CORRECT
+# behaviour, not staleness.
+#
+# NO FILTER IN v1, deliberately. A `prefix`/`contains` parameter turns `too_many` into
+# progressive disclosure — which is a search box, which is free text with extra steps, and
+# which turns one turn into two when ADR-0033 bounds the turn at one.
+
+
+class EnumerateInstancesRequest(BaseModel):
+    #: The class to enumerate, as an `idp:` class URI. This is the SAME value a slot
+    #: declaration carries in `referent`, so the caller passes the declaration through and
+    #: needs no vocabulary of its own — the join the enumerate item flagged as "most likely
+    #: to be discovered late" is closed by that field already existing.
+    class_uri: str = ""
+
+
+#: PROVISIONAL, AND EXPLICITLY NOT A RULING. `enumerate-is-not-resolve` open question 1 says
+#: the menu bound is shared with disambiguation and "belongs wherever it is ruled once" —
+#: 9 capabilities is a menu, 19 resolver candidates is not, and the number between them is a
+#: judgment nobody has made yet.
+#:
+#: 15 is chosen to be honest about what it is: above every class this substrate currently
+#: holds (14 projects is the largest), so no real class is truncated by an arbitrary number
+#: while the ruling is pending. THAT REASONING IS ALSO ITS WEAKNESS — a bound picked so
+#: today's data fits is fitted to the data, and it must be replaced by a bound picked from
+#: what a person can choose from in one turn. Env-overridable so the eventual ruling does not
+#: need a code change to test.
+_MENU_BOUND = int(os.getenv("ENUMERATE_MENU_BOUND", "15"))
+
+
+def _enumerable() -> dict[str, tuple[str, str, str]]:
+    """class_uri -> (collection attr, id attr, label attr). Derived from the same table the
+    resolver uses, so a class this engine can resolve is a class it can enumerate."""
+    return {IDP + class_local: (attr, id_attr, "name")
+            for attr, id_attr, class_local in _RESOLVABLE}
+
+
+@app.post("/enumerate_instances")
+def enumerate_instances(req: EnumerateInstancesRequest) -> dict[str, Any]:
+    """The members of a class, or an honest refusal to list them."""
+    spec = _enumerable().get((req.class_uri or "").strip())
+    if spec is None:
+        # NOT an error and NOT an empty menu. "I do not enumerate this" and "this class has
+        # no members" are different facts, and collapsing them is how free text becomes a
+        # default instead of a reported outcome.
+        return {"outcome": "unsupported", "class_uri": req.class_uri,
+                "reason": "engine-p does not hold this class", "members": []}
+
+    attr, id_attr, label_attr = spec
+    state = STORE.resolve("baseline")
+    coll = getattr(state, attr, None) or []
+    items = list(coll.values()) if isinstance(coll, dict) else list(coll)
+    members = [
+        {"instance_id": str(getattr(it, id_attr)), "label": getattr(it, label_attr, "") or ""}
+        for it in items if getattr(it, id_attr, None)
+    ]
+    if len(members) > _MENU_BOUND:
+        # The count travels even though the members do not: "there are 400" is a useful
+        # thing for an ask to say, and it is cheap here because the collection is in hand.
+        return {"outcome": "too_many", "class_uri": req.class_uri,
+                "count": len(members), "bound": _MENU_BOUND, "members": []}
+    members.sort(key=lambda m: m["instance_id"])
+    return {"outcome": "members", "class_uri": req.class_uri,
+            "count": len(members), "members": members}
 
 
 @app.get("/state/{state_ref}/version")

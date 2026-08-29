@@ -62,3 +62,28 @@ what it was written to test.
   fix was held to.
 
 Refutations get reported as prominently as confirmations.
+
+
+---
+
+## OUTCOME 2026-08-29 — 5 of 5, and one anticipated risk RETIRED
+
+All five predictions held (see `slot-fill-accuracy-v1.md`). The named refutation **did not
+occur**, and that is worth recording as a result rather than a non-event.
+
+> **RETIRED: domain-scoped fan-out for referent resolution.** I predicted the fleet-wide
+> `mesh:resolveInstance` fan-out would return `mixed` — another provider matching "Aurora" or
+> "ERP Modernization" in a different class — and force a domain filter before asking. It did
+> not. Outcomes came back `exact` and `fuzzy` cleanly across all five cases. **No domain
+> scoping is needed, and the work it implied is off the roadmap.**
+>
+> **EXPIRY, because a prediction that fails to fire is retired conditionally, not
+> permanently:** this returns the day a second `mesh:resolveInstance` provider registers for
+> a class whose names overlap the planning entities — a DataHub dataset called "ERP
+> Modernization", a graph node called "Aurora". The symptom will be `instance_match: "mixed"`
+> on a slot that resolved cleanly the day before, and the fix is to filter providers by the
+> slot's domain before the fan-out rather than to widen the decision table.
+
+A prediction that fails to fire retires a piece of anticipated work, which is the cheapest
+kind of scope reduction available — but only if the condition that would bring it back is
+written down at the same time.
