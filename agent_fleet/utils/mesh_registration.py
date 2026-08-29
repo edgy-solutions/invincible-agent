@@ -151,6 +151,7 @@ def _emit_to_registrar(
     openapi_schema: Optional[dict],
     provider: Optional[str] = None,
     timeout_s: Optional[float] = None,
+    slots: Optional[list] = None,
 ) -> None:
     """POST a structured manifest to the mesh-registrar gateway.
 
@@ -198,6 +199,13 @@ def _emit_to_registrar(
         "openapi_schema": json.dumps(openapi_schema) if openapi_schema else None,
         "provider": provider,
         "timeout_s": timeout_s,
+        # WHAT THE VERB TAKES. Sent as a typed LIST, not a JSON string: this is an API
+        # boundary and the gateway should be able to validate what it is handed. The
+        # string form is a NEO4J storage constraint (a property may hold primitives or
+        # arrays of primitives, never maps) and belongs at the Neo4j write, not smeared
+        # up into every engine that registers. `openapi_schema` above stringifies at the
+        # client, which is the older habit and the reason nothing can validate it.
+        "slots": list(slots or []),
     }
 
     # v0.2 SDK retry semantics per ADR-0006 §Addendum §SDK side:
@@ -317,6 +325,11 @@ def register_engine_to_mesh(
             requires_human_approval=requires_human_approval,
             version=version, openapi_schema=openapi_schema,
             provider=provider, timeout_s=timeout_s,
+            # THE GATEWAY IS THE LIVE PATH. Omitting this here while setting `mesh_slots`
+            # in the DataHub fallback below is precisely the defect this repo already
+            # measured once: presentations emitted direct-to-DataHub while the
+            # DataHub->substrate materialiser was RETIRED, so 11 URNs reached 0 rows.
+            slots=slots,
         )
         return
 

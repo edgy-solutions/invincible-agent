@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -147,6 +147,17 @@ class RegistrationManifest(BaseModel):
         default=None,
         description="Engine's HTTP endpoint that serves this verb. REQUIRED for "
                     "tool_kind='Engine'; MUST BE ABSENT for 'Presentation'."
+    )
+    slots: List[dict] = Field(
+        default_factory=list,
+        description="What the verb TAKES — one record per parameter, "
+                    "{name, kind, type, required, values?, default?}, kind being one of "
+                    "spoken-mandatory | spoken-optional | handle | ceremony. Derived by "
+                    "the engine from its own function signatures, never hand-written. "
+                    "The router uses it as the acceptance schema for extracted slots: a "
+                    "spoken value for a `handle` kind is refused rather than merged. "
+                    "Absent means [] means the router refuses every spoken slot for this "
+                    "verb, which is the pre-slot behaviour."
     )
 
     # ── SECOND SPECIES: presentations are triples, not verb edges ────────────
@@ -645,6 +656,10 @@ def _build_custom_properties(manifest: "RegistrationManifest") -> dict:
         "mesh_version":                 manifest.version,
         "mesh_registrar_version":       REGISTRAR_VERSION,
         "mesh_provider":                provider,
+        # Audit parity: the DataHub record should say everything the substrate was told.
+        # JSON rather than the comma-join used by the list-of-strings fields next door —
+        # these are records, and ",".join would flatten them into nonsense.
+        "mesh_slots":                   json.dumps([dict(s) for s in (manifest.slots or [])]),
     }
     # THE DISCRIMINATOR RIDES IN THE DATA. `mesh_tool_kind` is written for BOTH
     # species so a consumer never has to infer the shape from which fields
@@ -913,6 +928,27 @@ def _build_rel_props_for_saga(
         "anti_synonyms": list(manifest.verb_anti_synonyms or []),
         "version": manifest.version,
         "provider": provider,
+        # WHAT THE VERB TAKES, AS A JSON STRING — and the string is not laziness.
+        #
+        # A Neo4j property value may only be a primitive or an ARRAY OF PRIMITIVES, and
+        # `slots` is a list of MAPS. Measured against the sandbox graph in a rolled-back
+        # transaction, one property, three value shapes:
+        #
+        #   [{"name": "group_by", ...}]     REJECTED  Neo.ClientError.Statement.TypeError
+        #                                             "Property values can only be of
+        #                                              primitive types or arrays thereof"
+        #   '[{"name": "group_by", ...}]'   ACCEPTED
+        #   ["A", "B"]                      ACCEPTED  (control — the `domains` idiom)
+        #
+        # So the conversion happens HERE, at the Neo4j boundary where the constraint
+        # actually lives, rather than in the manifest — which stays a typed list so the
+        # gateway can validate what engines send it.
+        #
+        # The consumer decodes via iagent_pure.slot_acceptance.decode_declarations. Do NOT
+        # `list()` this on the read side: that yields one entry per CHARACTER, which is the
+        # same container-traded-for-elements defect that produced
+        # "422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4".
+        "slots": json.dumps([dict(s) for s in (manifest.slots or [])]),
         # timeout_s is optional — only set when the engine declared it.
         **(
             {"timeout_s": float(manifest.timeout_s)}
