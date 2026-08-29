@@ -112,6 +112,71 @@ def _type_of(annotation: Any) -> tuple[str, List[str] | None]:
     return (name or str(annotation)), None
 
 
+#: A spoken slot whose value is an OPAQUE ID, mapped to the kind of thing it identifies.
+#:
+#: WHY THIS IS DECLARED RATHER THAN SNIFFED. `site_id` and `window` are both `str` to a type
+#: system, and the difference — one names a thing in the model, the other is a literal the
+#: speaker supplies — is the same fact `kind` carries for route-supplied slots. A consumer
+#: that guessed from the `_id` suffix would be re-deriving a convention downstream, which is
+#: the hand-maintained shape this module exists to remove. Measured cost of not declaring it:
+#: the filler emitted `site_id="Aurora"` at 0.92 confidence and the engine answered
+#: `422 unknown site 'Aurora'` — see docs/plans/the-filler-has-no-entity-resolution.md.
+#:
+#: The map is from the PARAMETER name, so `scope_initiative_id` resolves against initiatives
+#: rather than against a class called "scope initiative" that does not exist.
+#: The value is the CLASS URI, not a bare kind name, so a consumer filtering resolver
+#: candidates compares `class_uri == referent` and needs no second map of its own. A kind
+#: name would have to be translated to a class somewhere, and that somewhere becomes the
+#: second registry this arc keeps paying for.
+_IDP = "http://invincible-agent/idp#"
+_REFERENT_KIND = {
+    "site_id":             _IDP + "Site",
+    "capability_id":       _IDP + "Capability",
+    "project_id":          _IDP + "Project",
+    "process_id":          _IDP + "BusinessProcess",
+    "tech_id":             _IDP + "Technology",
+    "scope_initiative_id": _IDP + "Initiative",
+}
+
+
+#: Slots whose value is a fiscal period. Their vocabulary is DATA, not a `Literal`, so it
+#: cannot be derived from the signature — `window: Optional[list[str]]` says the shape and
+#: nothing about which strings are periods.
+_PERIOD_SLOTS = {"window"}
+
+
+def with_live_vocabularies(records: List[dict], *, periods: List[str]) -> List[dict]:
+    """Attach data-dependent vocabularies to declarations that cannot carry their own.
+
+    WHY THIS IS SEPARATE FROM `slots_for`. Enum values come from a `Literal` and are a fact
+    about the CODE; fiscal periods come from the loaded plan and are a fact about the DATA.
+    Folding the second into the first would make `slots_for` depend on a store, and a pure
+    signature-derivation is worth keeping pure. Registration calls both, because
+    registration is the moment both are in hand.
+
+    MEASURED CONSEQUENCE OF NOT DOING THIS: the filler answered "what does spend look like
+    this quarter" with `window: ["this quarter"]` — not an invented period, the raw words —
+    which reaches the measure and raises `unknown fiscal period(s)`. With the vocabulary
+    attached, `accept_slots` refuses it at the router, using the enum check it already has
+    rather than a new mechanism.
+
+    NOT APPLIED TO `as_of`, and that is deliberate. It takes a DATE, not a fiscal period,
+    and its comparison is lexical — measured, `as_of="FY26-Q4"` returns the unfiltered set
+    byte-identical to passing nothing, because `('9999-12-31' <= 'FY26-Q4')` is True. Giving
+    it the period vocabulary would make the router accept exactly the values the measure
+    silently ignores. Its real vocabulary is a date format, and that is its own item —
+    see `[[period-slots-declare-no-vocabulary]]`.
+    """
+    if not periods:
+        return records
+    out = []
+    for r in records:
+        if r["name"] in _PERIOD_SLOTS and not r.get("values"):
+            r = {**r, "values": list(periods)}
+        out.append(r)
+    return out
+
+
 def slots_for(fn_name: str) -> List[dict]:
     """The slot declarations for one measure, derived from its signature."""
     fn = getattr(measures, fn_name, None)
@@ -144,6 +209,12 @@ def slots_for(fn_name: str) -> List[dict]:
         else:
             kind = "spoken-optional"
         rec: dict = {"name": name, "kind": kind, "type": type_name, "required": required}
+        # WHAT KIND OF THING THIS SLOT NAMES, when it names one. Present only on spoken
+        # slots: a route-supplied handle is resolved by the dispatcher and needs no
+        # referent hint. Absent means "a literal the speaker supplies", which is the
+        # common case and needs no resolution.
+        if kind.startswith("spoken") and name in _REFERENT_KIND:
+            rec["referent"] = _REFERENT_KIND[name]
         if values is not None:
             rec["values"] = values
         if not required and prm.default is not None:

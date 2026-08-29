@@ -210,7 +210,16 @@ fixtures, with the model's own behaviour pre-registered and run only when the la
 The four-row table above **is** the acceptance test, inverted. The build is done when:
 
 1. "where is funding short by initiative" returns **initiatives**;
-2. "maturity grid as of FY26-Q4" returns cells assessed **at or before** that date;
+2. "maturity grid as of FY26-Q4" returns cells assessed **at or before** that date.
+   **⚠ THIS ROW CANNOT GO GREEN FROM THE CARRY OR THE FILLER.** Measured 2026-08-29:
+   `as_of="FY26-Q4"` returns **8 rows — byte-identical to passing nothing** — while
+   `as_of="2025-01-01"` returns 0. The comparison is lexical and `('9999-12-31' <=
+   'FY26-Q4')` is `True`, because `F` sorts above `9`. So a fiscal label is not a weak
+   filter here, it is a **complete no-op**, and the parameter now arrives, is accepted,
+   and is discarded by the measure itself. **When this fails it will look like a broken
+   supervisor**; it is a missing fiscal→date step, one layer past everything the slot
+   pipeline touches. Two period vocabularies (`window` takes fiscal labels, `as_of`
+   takes dates) are both declared as bare `str` — the `direction: str` species again;
 3. "which sites exceed the threshold in FY26-Q4" returns **one** period;
 4. "the plan broken out by initiative" still returns initiatives — and a test proves it does so
    because the parameter **arrived**, not because the default agreed.

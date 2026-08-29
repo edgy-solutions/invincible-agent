@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
     import measures
-    from slots import slots_for
+    from slots import slots_for, with_live_vocabularies
     from seed import build_seed, check_consistency
     from state import (
         MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
@@ -157,12 +157,60 @@ async def lifespan(app: FastAPI):
                     cost_class="fast",
                     # DERIVED from the measure's signature, never hand-transcribed — the enum
                     # values cannot drift from the `Literal` because they are read out of it.
-                    slots=slots_for(v["fn"]),
+                    # Enriched with the LIVE period vocabulary: `window` takes fiscal
+                    # periods, which are data rather than a `Literal`, so the signature
+                    # cannot carry them. Registration is the moment both the signature and
+                    # the loaded plan are in hand.
+                    slots=with_live_vocabularies(
+                        slots_for(v["fn"]),
+                        periods=sorted(getattr(STORE.resolve("baseline"), "period_caps", {}) or {}),
+                    ),
                 )
             except Exception as exc:  # pragma: no cover
                 # Best-effort, matching the fleet's existing posture: a failed registration
                 # means this verb is not routable yet, NOT that the engine is down.
                 print(f"[engine-p] registration failed for {v['verb']}: {exc}")
+
+        # THE PROVIDER REGISTRATION, and it is what makes the resolver reachable.
+        #
+        # Engine P owns the only copy of the planning entities and was not a
+        # `mesh:resolveInstance` provider, so "the Aurora site" had nowhere to resolve and
+        # the filler emitted the NAME into an id slot — 5 of 48 corpus cases, the single
+        # largest failure class. The mechanism was never missing, only the participant.
+        #
+        # Self-registered every boot rather than hand-seeded, per the same rule the other
+        # providers follow: reproducible, survives a re-prime, and is not a Cypher someone
+        # ran once (`bootstrap-state-debt`).
+        try:
+            register_engine_to_mesh(
+                mint=engine_mint(client_id="iagent-engine-p",
+                                 secret_env="ENGINE_P_CLIENT_SECRET"),
+                name="engine_p_planning_resolve_instance",
+                description=(
+                    "Resolves a spoken planning name — a site, capability, initiative, "
+                    "project, business process, technology or organization — to its "
+                    "instance id in the portfolio model, by exact match then "
+                    "contained-phrase then token overlap. Returns candidates with class "
+                    "URI, label and score, highest first. An empty list is a first-class "
+                    "answer: the provider abstains below its floor rather than offering a "
+                    "least-bad match, because a least-bad id is how a confidently wrong "
+                    "answer reaches a verb."
+                ),
+                verb="mesh:resolveInstance",
+                input_uri="http://invincible-agent/mesh#InstanceIdentifier",
+                output_uri="http://invincible-agent/mesh#InstanceResolution",
+                verb_synonyms=["which site", "which initiative", "which project",
+                               "resolve name", "look up by name"],
+                endpoint_url=base.rstrip("/") + "/resolve_instance",
+                owner_persona="PORTFOLIO_LEAD",
+                domains=["PORTFOLIO_PLANNING"],
+                cost_class="fast",
+                requires_human_approval=False,
+                provider="engine_p_planning",
+                timeout_s=5.0,
+            )
+        except Exception as exc:  # pragma: no cover
+            print(f"[engine-p] resolveInstance provider registration failed: {exc}")
     yield
 
 
@@ -385,6 +433,111 @@ def run_measure(fn: str, req: MeasureRequest) -> dict[str, Any]:
         **({"value_unit": measures.VALUE_UNIT[fn]} if fn in measures.VALUE_UNIT else {}),
         "rows": rows,
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /resolve_instance — the mesh:resolveInstance provider for PORTFOLIO_PLANNING
+# ---------------------------------------------------------------------------
+#
+# WHY THIS EXISTS. Six spoken slots are opaque ids (`site_id`, `capability_id`,
+# `project_id`, `process_id`, `tech_id`, `scope_initiative_id`) and a speaker says
+# "the Aurora site", not "S1". Measured before this endpoint: the slot-filler emitted
+# `site_id="Aurora"` at 0.92 confidence and the engine answered `422 unknown site
+# 'Aurora'` — an honest refusal to a perfectly answerable question, and the single
+# largest failure class in the corpus (5 of 48).
+#
+# THE MECHANISM WAS NEVER MISSING, ONLY THE PARTICIPANT. `mesh:resolveInstance` is a
+# federated verb with a fan-out, a scoring gate and four registered providers. Engine P
+# owned the only copy of the planning entities and was not one of them. This makes it one.
+#
+# DETERMINISTIC, NO MODEL. Exact, then case-insensitive, then a contained-phrase match,
+# each with a distinct score so the caller's gate can tell them apart. Nothing here
+# guesses: below the floor it returns NOTHING, because an empty candidate list is a
+# first-class answer and "least-bad match" is how a confidently wrong id gets produced.
+
+
+class ResolveInstanceRequest(BaseModel):
+    identifier: str = ""
+    query: str = ""
+
+
+#: (collection attr, id attr, class local name). The class URI is what the router's
+#: decision table groups candidates by, so two entities of different kinds scoring alike
+#: come back as `mixed` rather than one silently winning.
+_RESOLVABLE = [
+    ("sites",         "site_id",       "Site"),
+    ("capabilities",  "capability_id", "Capability"),
+    ("initiatives",   "initiative_id", "Initiative"),
+    ("projects",      "project_id",    "Project"),
+    ("processes",     "process_id",    "BusinessProcess"),
+    ("technologies",  "tech_id",       "Technology"),
+    ("organizations", "org_id",        "Organization"),
+]
+
+#: Below this, return nothing. The provider abstains rather than offering its least-bad
+#: match, per the contract the other providers already follow.
+_RESOLVE_FLOOR = 0.6
+
+
+def _score_name(identifier: str, label: str, entity_id: str) -> float:
+    """How well a spoken phrase names this entity. Deterministic and explainable.
+
+    The id itself matches exactly — a caller who says "S1" is naming S1 — because the
+    filler legitimately produces ids when the speaker used one, and a resolver that only
+    understood labels would reject its own correct answers.
+    """
+    ident = (identifier or "").strip().lower()
+    if not ident:
+        return 0.0
+    lab = (label or "").strip().lower()
+    eid = (entity_id or "").strip().lower()
+
+    if ident == eid or ident == lab:
+        return 1.0
+    # "Site A - Aurora" contains "aurora"; "the ERP Modernization project" contains
+    # "erp modernization". Both directions, because a speaker adds words ("the ... site")
+    # and a label adds words ("Site A - ...").
+    if ident in lab or lab in ident:
+        # Longer overlap is stronger: a two-character token inside a long label is noise.
+        ratio = min(len(ident), len(lab)) / max(len(ident), len(lab), 1)
+        return 0.75 + 0.2 * ratio
+    ident_tokens = {w for w in ident.replace("-", " ").split() if len(w) > 2}
+    lab_tokens = {w for w in lab.replace("-", " ").split() if len(w) > 2}
+    if ident_tokens and lab_tokens:
+        overlap = len(ident_tokens & lab_tokens) / len(ident_tokens | lab_tokens)
+        if overlap:
+            return 0.5 + 0.3 * overlap
+    return 0.0
+
+
+@app.post("/resolve_instance")
+def resolve_instance(req: ResolveInstanceRequest) -> dict[str, Any]:
+    """Candidates for a spoken name, highest score first.
+
+    An EMPTY list is a first-class answer, not a failure: it means the planning model does
+    not contain anything by that name, which is exactly what the caller needs to know in
+    order to ask the speaker rather than dispatch a guess.
+    """
+    state = STORE.resolve("baseline")
+    out: list[dict[str, Any]] = []
+    for attr, id_attr, class_local in _RESOLVABLE:
+        coll = getattr(state, attr, None) or []
+        items = list(coll.values()) if isinstance(coll, dict) else list(coll)
+        for it in items:
+            eid = getattr(it, id_attr, None)
+            if not eid:
+                continue
+            label = getattr(it, "name", "") or ""
+            score = _score_name(req.identifier, label, str(eid))
+            if score >= _RESOLVE_FLOOR:
+                out.append({
+                    "instance_id": str(eid),
+                    "class_uri": IDP + class_local,
+                    "label": label,
+                    "score": round(score, 4),
+                })
+    out.sort(key=lambda c: c["score"], reverse=True)
+    return {"candidates": out[:10]}
 
 
 @app.get("/state/{state_ref}/version")

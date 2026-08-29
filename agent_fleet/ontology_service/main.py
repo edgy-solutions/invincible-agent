@@ -2425,6 +2425,23 @@ class FillSlotsResponse(BaseModel):
     #: than swallowed: a dropped slot is a question the system did not answer as asked,
     #: and the whole finding this endpoint closes was about that happening in silence.
     refused: list[str] = []
+    #: PER-SLOT RESOLUTION OUTCOME for slots that name a referent, keyed by slot name:
+    #: `{"outcome": exact|fuzzy|mixed|not_specific|empty|not-attempted,
+    #:   "spoken": "Aurora", "instance_id": "S1", "candidates": [...]}`.
+    #:
+    #: THREE-VALUED, NEVER PASS-THROUGH-ON-FAILURE. An unresolvable name left in `slots`
+    #: as the raw string is INDISTINGUISHABLE at the dispatch point from a successful
+    #: fill: the supervisor sees a value, dispatches, and the engine 422s. The `ask`
+    #: disposition — whose trigger is a spoken-mandatory slot ABSENT after filling —
+    #: cannot fire on a slot that is present and wrong. So an unresolved referent is
+    #: removed from `slots` and reported here instead.
+    #:
+    #: CANDIDATES ARE KEPT even though nothing consumes them yet. A `fuzzy` or `mixed`
+    #: outcome is holding exactly the options a disambiguation ask would offer, and
+    #: `resolveInstance` is the only source of such a menu that exists today (enumeration
+    #: does not). Discarding them at this boundary would leave the elicitation lane with
+    #: no option source for the one case it can otherwise answer.
+    resolution: dict = {}
 
 
 #: Kinds the ROUTE supplies. Never shown to the model — see `_slot_spec`.
@@ -2552,11 +2569,77 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
     if refused:
         _slots_logger.warning("fill_slots: %s refused %s", request.verb_iri, "; ".join(refused))
 
+    # ── RESOLVE REFERENTS ────────────────────────────────────────────────────────
+    # A slot declaring `referent` holds an opaque id, and a speaker says "the Aurora
+    # site". The model has no way to know that is `S1`; `mesh:resolveInstance` does, and
+    # has since before this endpoint existed — four providers, a fan-out and a scoring
+    # gate. Engine P was simply not one of the providers until now.
+    resolution: dict[str, Any] = {}
+    for name in list(accepted):
+        decl = by_name.get(name) or {}
+        referent = decl.get("referent")
+        if not referent:
+            continue
+        spoken_value = accepted[name]
+        if not isinstance(spoken_value, str):
+            continue
+
+        _subject, prov = await _resolve_instance(spoken_value, request.query)
+        outcome = str(prov.get("instance_match") or "empty")
+        # ALL candidates, UNFILTERED, and deliberately so. The first draft filtered them
+        # by the slot's referent class — which would have emptied the list for exactly the
+        # case that most needs a menu: "the ERP Modernization project" resolves to an
+        # Initiative, so a Project-filtered list is empty and the disambiguation ask has
+        # nothing to offer. `resolveInstance` resolves but does not enumerate, so these
+        # are the ONLY menu source that exists today; discarding them here would leave the
+        # elicitation lane with none. The class rides on each candidate, so a consumer that
+        # wants only same-class options can filter — a consumer cannot un-discard.
+        cands = list(prov.get("instance_top_candidates") or [])
+
+        # TYPE-CHECKED AGAINST THE SLOT'S DECLARED CLASS. A name can resolve perfectly and
+        # still be the wrong KIND of thing: "the ERP Modernization project" resolves to
+        # initiative I1, and `project_id` wants a Project. Filling it would be a resolution
+        # success and a dispatch failure — the worst combination, because everything
+        # upstream looks healthy.
+        resolved_id = prov.get("instance_id") if prov.get("instance_resolved") else None
+        resolved_class = prov.get("instance_class_uri") or _subject
+        if resolved_id and referent and resolved_class and resolved_class != referent:
+            _slots_logger.warning(
+                "fill_slots: %s.%s resolved %r to %s, which is a %s and not a %s",
+                request.verb_iri, name, spoken_value, resolved_id, resolved_class, referent,
+            )
+            resolved_id = None
+            # EXTENDS the instance_match vocabulary rather than reusing a value that does
+            # not mean this. `mixed` means candidates of DIFFERENT classes; here there is
+            # one class and it is the wrong one. `not_specific` means the identifier was
+            # too vague; this one was perfectly specific and named something real. Calling
+            # either of those "wrong class" would make the vocabulary lie to keep its size.
+            # Flagged to the elicitation lane as an addition, not smuggled in.
+            outcome = "wrong_class"
+
+        if resolved_id:
+            accepted[name] = resolved_id
+            resolution[name] = {"outcome": outcome, "spoken": spoken_value,
+                                "instance_id": resolved_id,
+                                "instance_label": prov.get("instance_label", ""),
+                                "candidates": cands}
+        else:
+            # REMOVED, not left as the raw string. See FillSlotsResponse.resolution.
+            accepted.pop(name, None)
+            resolution[name] = {"outcome": outcome, "spoken": spoken_value,
+                                "instance_id": None, "candidates": cands}
+            refused.append(f"{name}={spoken_value!r} (unresolved: {outcome})")
+            _slots_logger.warning(
+                "fill_slots: %s.%s could not resolve %r (%s), %d candidate(s)",
+                request.verb_iri, name, spoken_value, outcome, len(cands),
+            )
+
     return FillSlotsResponse(
         slots=accepted,
         confidence=filled.confidence,
         reasoning=filled.reasoning,
         refused=refused,
+        resolution=resolution,
     )
 
 

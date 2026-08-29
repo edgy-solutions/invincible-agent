@@ -179,7 +179,13 @@ def test_row4_the_declared_enum_is_what_the_verb_actually_accepts(client):
         "everything and returns the unfiltered superset with a 200 — the parameter now "
         "ARRIVES and is silently ignored, which is the same class of silence the finding "
         "was raised about, one layer further in. Needs a fiscal->date resolution step that "
-        "does not exist. Strict, so it goes red the moment somebody builds it."
+        "does not exist. Strict, so it goes red the moment somebody builds it. "
+        "MEASURED 2026-08-29, and it is a COMPLETE NO-OP rather than a weak filter: "
+        "as_of='FY26-Q4' returns 8 rows, byte-identical to passing nothing, while "
+        "as_of='2025-01-01' returns 0. ('9999-12-31' <= 'FY26-Q4') is True because 'F' "
+        "sorts above '9'. SO THIS ROW CANNOT GO GREEN FROM THE CARRY OR THE FILLER, and "
+        "when it fails it will look like a broken supervisor rather than a missing "
+        "fiscal->date step. Read the failure here before blaming the dispatch."
     ),
 )
 def test_row2_maturity_grid_AS_OF_a_fiscal_period_filters(client):
