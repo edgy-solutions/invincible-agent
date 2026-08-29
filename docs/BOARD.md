@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **81 of 93 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **82 of 94 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -186,9 +186,13 @@ _Coverage: **81 of 93 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   status: open · owner: agent · blocked-on: nothing — the instance is fixed and the sweep is clean; what remains is making the mechanism unable to recur.
   → [docs/plans/seeder-manufactures-declarations.md](plans/seeder-manufactures-declarations.md)
 
-- **slot-resolution-entities-in-the-resolver-substrate** — PLATFORM, not finance. Elicitation is ALREADY RULED (ADR-0033 + Amendment 2026-08-28) — this item is the RESOLUTION capability plus build. Three consumers already need one missing capability — entities as resolvable instances in the resolver substrate. Four planning verbs are unreachable from natural language today (Tier 3, "do not script these"); the triage's instance-resolution abstentions are unruled; and Engine F (ADR-0045) is blocked entirely on it. FIRST PLATFORM ITEM AFTER THE CANVAS CHAIN CLOSES — it unblocks four existing verbs, one whole engine, and every future slot-heavy domain, which is the ordering argument and the item's whole justification.
+- **slot-resolution-entities-in-the-resolver-substrate** — THE USERS' QUESTIONS ARE THE SPEC — the system meets it when the spoken parameter reaches the verb. PLATFORM, not finance. Capability (1) is THREE JOINS: declare (missing, crosses into iagent-mesh), extract (EXISTS in BAML), carry (missing — the supervisor drops what BAML extracted). Measured: 12 of 14 planning verbs take parameters, 0 declare them, and 3 of 4 certified parameterised phrasings deliver the wrong scope today — one on the seeded board. Elicitation is ALREADY RULED (ADR-0033 + Amendment 2026-08-28). Three consumers already need one missing capability — entities as resolvable instances in the resolver substrate. Four planning verbs are unreachable from natural language today (Tier 3, "do not script these"); the triage's instance-resolution abstentions are unruled; and Engine F (ADR-0045) is blocked entirely on it. FIRST PLATFORM ITEM AFTER THE CANVAS CHAIN CLOSES — it unblocks four existing verbs, one whole engine, and every future slot-heavy domain, which is the ordering argument and the item's whole justification.
   status: open · owner: unassigned
   → [docs/plans/slot-resolution-entities-in-the-resolver-substrate.md](plans/slot-resolution-entities-in-the-resolver-substrate.md)
+
+- **slots-are-extracted-then-dropped-at-dispatch** — MEASURED, on real bytes. BAML extracts verb slots and the supervisor's dispatch payload does not carry them, so every verb runs on DEFAULTS. Seeded canvas slot 3 asks "where is funding short by initiative" and returns 11 ORGANISATIONS (group_by=org, subject O1 Corporate Capital Committee) — rendering cleanly with clean provenance and NO disclosure surface. Three of four certified parameterised phrasings deliver the wrong scope; the fourth passes by COINCIDENCE OF DEFAULT. The slot pipeline is one-third built and the built third is the MIDDLE. Certification gap rides along - routes-and-renders is not answers-the-question.
+  status: open · owner: unassigned
+  → [docs/plans/slots-are-extracted-then-dropped-at-dispatch.md](plans/slots-are-extracted-then-dropped-at-dispatch.md)
 
 - **subject-resolution-at-composition** — A resolvable MPN composes as subject_unresolved. Two hypotheses eliminated 2026-08-10; one survives (frozen-at-composition) with a named discriminating read.
   status: open · owner: unassigned

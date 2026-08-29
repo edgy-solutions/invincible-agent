@@ -172,6 +172,42 @@ freeze is the mitigation.
 
 ---
 
+### A6. ⚠️ SPOKEN PARAMETERS ARE DROPPED — three certified questions answer wider than they ask
+
+**Measured 2026-08-28 on stored artifacts.** BAML extracts a question's parameters and the
+supervisor's dispatch payload does not carry them, so **every verb runs on its defaults**. Full
+finding: `[[slots-are-extracted-then-dropped-at-dispatch]]`.
+
+**Two certified questions return a SUPERSET of what they ask. Both are safe to speak; know what
+you are looking at:**
+
+| if you say | you will get |
+|---|---|
+| "show me the maturity grid **as of FY26-Q4**" | the grid with **no as-of filter** — latest assessment per cell |
+| "which sites exceed the threshold **in FY26-Q4**" | **all four quarters**, not one |
+
+Right kind of thing, unfiltered. If someone asks "is that just Q4?", the honest answer is **no,
+that is every period** — and the parameter is not reaching the verb yet.
+
+**ONE question returns the WRONG KIND of thing, and it is on the seeded board:**
+
+> **"where is funding short by initiative"** — seeded canvas **slot 3** — returns **eleven
+> ORGANISATIONS** (`group_by=org`; first row `O1 | Corporate Capital Committee`). The card is a
+> correct org-grouped funding view answering a question that said *initiative*.
+
+**Say "by organization" instead.** It matches the default, and the card becomes true. A reword of
+the seeded question is queued and not yet applied — until it lands, **do not speak the
+by-initiative form in a room.**
+
+**There is no disclosure surface.** The strip renders resolved ROUTING, not verb parameters, and
+no archetype contract carries them — so nothing on screen reveals a dropped parameter. That is
+why this is a runbook line and not a "watch the strip" mitigation.
+
+**Retired by** the carry (the supervisor forwarding extracted slots), which is queued as the next
+build and is deliberately NOT a pre-demo change.
+
+---
+
 ### B5. Engine O image digest — the Tier-3 and grounding prerequisite
 
 Sandbox Engine O has run `ontology-service:latest`, and a `:latest` tag makes the version

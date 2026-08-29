@@ -6,10 +6,24 @@ blocked-on:
 repo:       invincible-agent
 code-site:  agent_fleet/ontology_service/instance_resolution.py, agent_fleet/planning_agent/entity_resolution.py
 ruled-by:   ADR-0033 (interrogative disambiguation) + its Amendment 2026-08-28; ADR-0031 (resolution ladder)
-summary:    PLATFORM, not finance. Elicitation is ALREADY RULED (ADR-0033 + Amendment 2026-08-28) — this item is the RESOLUTION capability plus build. Three consumers already need one missing capability — entities as resolvable instances in the resolver substrate. Four planning verbs are unreachable from natural language today (Tier 3, "do not script these"); the triage's instance-resolution abstentions are unruled; and Engine F (ADR-0045) is blocked entirely on it. FIRST PLATFORM ITEM AFTER THE CANVAS CHAIN CLOSES — it unblocks four existing verbs, one whole engine, and every future slot-heavy domain, which is the ordering argument and the item's whole justification.
+summary:    THE USERS' QUESTIONS ARE THE SPEC — the system meets it when the spoken parameter reaches the verb. PLATFORM, not finance. Capability (1) is THREE JOINS: declare (missing, crosses into iagent-mesh), extract (EXISTS in BAML), carry (missing — the supervisor drops what BAML extracted). Measured: 12 of 14 planning verbs take parameters, 0 declare them, and 3 of 4 certified parameterised phrasings deliver the wrong scope today — one on the seeded board. Elicitation is ALREADY RULED (ADR-0033 + Amendment 2026-08-28). Three consumers already need one missing capability — entities as resolvable instances in the resolver substrate. Four planning verbs are unreachable from natural language today (Tier 3, "do not script these"); the triage's instance-resolution abstentions are unruled; and Engine F (ADR-0045) is blocked entirely on it. FIRST PLATFORM ITEM AFTER THE CANVAS CHAIN CLOSES — it unblocks four existing verbs, one whole engine, and every future slot-heavy domain, which is the ordering argument and the item's whole justification.
 ---
 
-# Entities are not resolvable instances, and three consumers are waiting
+# The users' questions are the spec; the system meets it when the spoken parameter reaches the verb
+
+**Headline updated 2026-08-28**, after the census and baseline. The original framing —
+"entities are not resolvable instances, and three consumers are waiting" — undersold this by
+scoping it to four unreachable verbs plus Engine F. That was a **corpus fact wearing a capability
+fact's clothes**: the certified questions route because they are the versions whose defaults
+happen to be right.
+
+**Measured since:** twelve of fourteen planning verbs accept parameters; **zero** can declare them;
+and BAML extracts them while the dispatch payload drops them
+(`[[slots-are-extracted-then-dropped-at-dispatch]]`). Three of four certified parameterised
+phrasings deliver the wrong scope today, one of them on the seeded board.
+
+So this is not a prerequisite Engine F happens to share. **It is the planning engine's own
+unfinished half** — and the ends are built while the middle is missing.
 
 **This is platform work that finance happens to need first.** It is written as its own item, not
 folded into ADR-0045, precisely because two of its three consumers are not finance — and an item
