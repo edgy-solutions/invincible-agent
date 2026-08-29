@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0033 Amendment 2026-08-28 (#2's fourth option source) — this item is the SCOPING of the capability that clause assumes
 code-site:  agent_fleet/datahub_wrapper/main.py (the mesh:resolveInstance registration, as the shape to copy), agent_fleet/ontology_service/instance_resolution.py, agent_fleet/utils/mesh_registration.py
-summary:    THE MESH CAN RESOLVE AND CANNOT ENUMERATE, and ADR-0033's fourth option source needs the second. `ResolveInstanceRequest` requires `identifier: str` — it SCORES candidates against a string the user said. A slot the phrase never filled has no such string, so registering another resolveInstance provider unblocks name→id and produces NO MENU. The two are different verbs: resolve is `identifier → scored candidates`, enumerate is `class → the members`. CONSEQUENCE THAT ORDERS THE WORK: all four spoken-mandatory slots in the system are instance-kind (capability_id, project_id, process_id, tech_id) — not one enum, not one period — so the ask TRIGGER is free and every menu it could build is blocked. The ask ships before its options can. THE DESIGN QUESTION THIS ITEM OWNS IS CARDINALITY, not plumbing: enumerate over Engine P is 4 sites and 9 capabilities; enumerate over DataHub is unbounded. A provider must be able to answer "not enumerable" — and THAT is what makes ADR-0033's free-text boundary principled rather than a fudge, because free text becomes permitted where a provider REPORTS unboundedness, never where nobody built the capability.
+summary:    PROVIDER DONE (3516103), CALLER MISSING — now the single item gating both live ask cases. Engine P is a registered `mesh:enumerateInstances` provider: minted, ontology-classed, three-outcome (members | too_many | unsupported), correct. NOTHING IN ENGINE O DISPATCHES AN ENUMERATE the way /resolve fans out a resolve, so the supervisor cannot reach it — A REGISTRATION IS NOT A REACHABLE CALL ([[a-registration-is-not-a-reachable-call]], instance 2). The disposition ships wired to `ENUMERATE_INSTANCES_URL`, unset, reporting free_text_reason `no_provider` rather than silence, so the gap is visible in logs and assertable in tests and ONE ENV VAR CLOSES IT. REMAINING DELTA IS THE FAN-OUT ONLY — cardinality is ruled (three outcomes, bound 8), the class-vocabulary join is closed (`referent` carries the class URI), lifetime is settled (live from the store, no registry). What is left is a provider-agnostic dispatch in Engine O, copying /resolve. Routed to the option-source lane. MEASURED CONSEQUENCE, stated before the work rather than after: at bound 8 the fan-out gives NEITHER live ask case a menu — Capability is 9 and Project is 14, both `too_many` — but it DOES give two of the four spoken-mandatory slots real menus (process_id n=2, tech_id n=5), and it converts `no_provider` into a provider-reported reason, which is the difference between a boundary and a fudge.
 ---
 
 # `enumerate` is not `resolve` — the fourth option source needs a verb the mesh does not have
@@ -72,11 +72,18 @@ and should not be mistaken for it.
 
 **The hard part is that `enumerate` has no natural bound.**
 
-| substrate | enumerate `capability_id` | enumerate a DataHub dataset class |
+| substrate | count | enumerate a DataHub dataset class |
 |---|---|---|
-| Engine P `PlanState` | 9 | — |
-| Engine P projects / processes / tech / sites | 3 / 2 / 5 / 4 | — |
+| Engine P `Capability` | 9 | — |
+| Engine P `Project` | **14** | — |
+| Engine P `Initiative` / `BusinessProcess` / `Technology` / `Site` / `Organization` | 3 / 2 / 5 / 4 / 3 | — |
 | DataHub | — | **unbounded** |
+
+> **CORRECTED 2026-08-29, measured against the live store rather than recalled.** The first
+> draft of this table read *"projects / processes / tech / sites = 3 / 2 / 5 / 4"*. **`Project`
+> is 14**; the 3 was `Initiative`. The error mattered: at menu bound 8 it is the difference
+> between `project_id` having a menu and answering `too_many`, which is exactly the fact the
+> ask disposition depends on.
 
 `resolve` is naturally bounded because a query bounds it; `enumerate` is bounded only by the
 substrate. A provider that cannot enumerate its class must be able to **say so**, as a first-class
@@ -102,6 +109,60 @@ attempted."* Today that clause cannot be evaluated, because there is no attempt 
 That is the difference between a boundary and a fudge. **A slot asked as free text must carry the
 provider's own reason** — never a default, never a silence.
 
+## ⚠ REMAINING DELTA 2026-08-29 — the provider is DONE; the CALLER is the whole item now
+
+The disposition shipped (`f6c066a`) and tried to consume this. It could not, and the reason is
+narrow enough to be a punch list rather than a design.
+
+**Finished, needing no further thought:**
+
+| question this item raised | answered |
+|---|---|
+| cardinality — can a provider refuse? | **yes** — `members` / `too_many` / `unsupported`, count on `too_many` |
+| menu length bound | **ruled at 8**, a human-attention bound |
+| filter in v1? | **no** — `too_many` → free text, not a search box smuggled into a bounded turn |
+| lifetime | **live from the store, no registry** — an emptied store answering zero is correct, not stale |
+| open question 4, "whose class vocabulary?" | **closed** — `referent` carries the class URI |
+
+**Missing is one hop.** The supervisor deliberately does **not** construct Engine P's URL: that is
+the phantom-service-URL shape, and a guessed address fails as a *timeout* rather than as *nobody
+built this*.
+
+### The punch list — a copy of the neighbour
+
+1. **A fan-out in Engine O**, provider-agnostic by construction, exactly as `/resolve` fans out
+   `mesh:resolveInstance`: look up providers for the verb, call them, per-provider `timeout_s`.
+2. **Pass the three outcomes through unflattened.** `unsupported` from one provider and `members`
+   from another are different facts; a fan-out returning "no members" for both re-creates the
+   collapse this item's design exists to prevent.
+3. **Set `ENUMERATE_INSTANCES_URL`** on the supervisor. That is the whole consumer side —
+   `_make_enumerator` is written and already logs each call's outcome.
+
+### What actually goes green — measured, and it is not what one would assume
+
+Counts read from the live store, not recalled:
+
+| slot | class | n | at bound 8 |
+|---|---|---|---|
+| `capability_id` | `Capability` | 9 | **`too_many`** — free text, legitimately |
+| `project_id` | `Project` | 14 | **`too_many`** — free text, legitimately |
+| `process_id` | `BusinessProcess` | **2** | **a real menu** |
+| `tech_id` | `Technology` | **5** | **a real menu** |
+
+> **STATED BEFORE THE WORK RATHER THAN AFTER: the fan-out gives NEITHER live ask case a menu.**
+> `H06` (`capability_id`, 9) and `E05` (`project_id`, 14) both exceed the bound and stay free
+> text. What changes is that their reason becomes `too_many` **from the provider** instead of
+> `no_provider` from an unbuilt hop — which is the entire difference between a decidable boundary
+> and a fudge.
+>
+> **What it does buy: two of the four spoken-mandatory slots get real menus** (`process_id`,
+> `tech_id`), and every future slot over a small class gets one for free. Neither has a live
+> corpus case today — `H04` and `H05` both resolve cleanly now — so this is capability, not yet
+> measured behaviour, and it should be reported that way.
+
+The honest summary of the fan-out's value: **it makes the free-text boundary decidable. It does
+not make free text go away.** Anyone expecting menus for the two cases in the record will
+otherwise read a correct outcome as a failure.
 ## OWNERSHIP 2026-08-29 — this item is the FILLER lane's, by the disposition split
 
 Two lanes arrived at the `ask` build at once. Settled: the elicitation lane owns the **disposition**,
