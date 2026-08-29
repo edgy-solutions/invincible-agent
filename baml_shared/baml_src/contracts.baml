@@ -1211,6 +1211,7 @@ function FillVerbSlots(
   question: string,
   verb: string,
   slot_spec: string,
+  today: string,
 ) -> FilledSlots {
   // Same client rationale as ClassifyPredicate: MainAgent falls back to Ollama, so
   // this works on sandbox without an OpenRouter/OpenAI key.
@@ -1258,7 +1259,24 @@ function FillVerbSlots(
        chose IS permitted.
     4. Respect the stated type. A parameter typed `list[str]` takes a JSON ARRAY
        even when the speaker named only one thing: ["FY26-Q4"], never "FY26-Q4".
-    5. Say what the speaker meant, not what you would ask. "broken out by
+    5. WHEN THE SPEAKER NAMES A PERIOD RELATIVE TO NOW, resolve it against the
+       anchor. TODAY IS: {{ today }}
+
+       "this quarter" is the anchor period. "last quarter" / "the previous
+       quarter" is the one before it. "next quarter" is the one after. "the last
+       two quarters" is the previous one AND the anchor, in chronological order,
+       because a person asking that wants the period they are in.
+
+       THE ANCHOR GIVES YOU A NOW. IT DOES NOT GIVE YOU A HOW LONG. "recently",
+       "soon", "lately", "in a while" name no span — one quarter, two, six
+       months, all arguable and none of them said. LEAVE THE PARAMETER OUT for
+       those. Filling one is an invention with a plausible shape, which is worse
+       than leaving it empty because the answer looks scoped and is not.
+
+       If the anchor line above is empty or says unknown, treat every relative
+       period as unresolvable and leave it out.
+
+    6. Say what the speaker meant, not what you would ask. "broken out by
        initiative" and "per initiative" both mean group_by=initiative; "which sites
        are overloaded" names no parameter at all.
 

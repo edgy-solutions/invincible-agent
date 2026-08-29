@@ -251,8 +251,11 @@ def slots_for(fn_name: str) -> List[dict]:
             # the router can turn "FY26-Q4" into the date the measure actually compares
             # against. Without it, the label is forwarded and the measure's LEXICAL compare
             # silently admits everything: ('9999-12-31' <= 'FY26-Q4') is True.
-            if rec["period"] == "date":
-                rec["period_end"] = _resolve_period_to_date()
+            # BOTH period kinds carry the calendar, for different reasons. A `date` slot
+            # needs it to RESOLVE a label to a date. A `fiscal-period` slot needs it so the
+            # router can work out which period contains today — the ANCHOR that makes "this
+            # quarter" answerable — without holding a second copy of the calendar.
+            rec["period_end"] = _resolve_period_to_date()
         if kind.startswith("spoken") and name in _PERIOD_SLOTS and values is None:
             values = list(FISCAL_PERIODS)
         if values is not None:

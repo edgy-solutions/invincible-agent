@@ -187,19 +187,19 @@ class BamlAsyncClient:
                 "user_query": user_query,"known_platforms": known_platforms,
             })
             return typing.cast(types.PlatformScope, __result__.cast_to(types, types, stream_types, False, __runtime__))
-    async def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+    async def FillVerbSlots(self, question: str,verb: str,slot_spec: str,today: str,
         baml_options: BamlCallOptions = {},
     ) -> types.FilledSlots:
         # Check if on_tick is provided
         if 'on_tick' in baml_options:
             # Use streaming internally when on_tick is provided
-            __stream__ = self.stream.FillVerbSlots(question=question,verb=verb,slot_spec=slot_spec,
+            __stream__ = self.stream.FillVerbSlots(question=question,verb=verb,slot_spec=slot_spec,today=today,
                 baml_options=baml_options)
             return await __stream__.get_final_response()
         else:
             # Original non-streaming code
             __result__ = await self.__options.merge_options(baml_options).call_function_async(function_name="FillVerbSlots", args={
-                "question": question,"verb": verb,"slot_spec": slot_spec,
+                "question": question,"verb": verb,"slot_spec": slot_spec,"today": today,
             })
             return typing.cast(types.FilledSlots, __result__.cast_to(types, types, stream_types, False, __runtime__))
     async def FormatGraphResponse(self, raw_text: str,persona: str,
@@ -505,11 +505,11 @@ class BamlStreamClient:
           lambda x: typing.cast(types.PlatformScope, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
-    def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+    def FillVerbSlots(self, question: str,verb: str,slot_spec: str,today: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlStream[stream_types.FilledSlots, types.FilledSlots]:
         __ctx__, __result__ = self.__options.merge_options(baml_options).create_async_stream(function_name="FillVerbSlots", args={
-            "question": question,"verb": verb,"slot_spec": slot_spec,
+            "question": question,"verb": verb,"slot_spec": slot_spec,"today": today,
         })
         return baml_py.BamlStream[stream_types.FilledSlots, types.FilledSlots](
           __result__,
@@ -742,11 +742,11 @@ class BamlHttpRequestClient:
             "user_query": user_query,"known_platforms": known_platforms,
         }, mode="request")
         return __result__
-    async def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+    async def FillVerbSlots(self, question: str,verb: str,slot_spec: str,today: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="FillVerbSlots", args={
-            "question": question,"verb": verb,"slot_spec": slot_spec,
+            "question": question,"verb": verb,"slot_spec": slot_spec,"today": today,
         }, mode="request")
         return __result__
     async def FormatGraphResponse(self, raw_text: str,persona: str,
@@ -904,11 +904,11 @@ class BamlHttpStreamRequestClient:
             "user_query": user_query,"known_platforms": known_platforms,
         }, mode="stream")
         return __result__
-    async def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+    async def FillVerbSlots(self, question: str,verb: str,slot_spec: str,today: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = await self.__options.merge_options(baml_options).create_http_request_async(function_name="FillVerbSlots", args={
-            "question": question,"verb": verb,"slot_spec": slot_spec,
+            "question": question,"verb": verb,"slot_spec": slot_spec,"today": today,
         }, mode="stream")
         return __result__
     async def FormatGraphResponse(self, raw_text: str,persona: str,

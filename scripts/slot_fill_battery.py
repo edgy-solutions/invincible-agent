@@ -102,12 +102,84 @@ def classify(expected: dict, got: dict) -> tuple[str, list[str]]:
     return min(classes, key=_SEVERITY.index), detail
 
 
+SKIPPED_OOR = "skipped-out-of-range"
+
+
+def _calendar(decls: dict) -> list[str]:
+    """The router's own period table, chronological. NOT a copy.
+
+    Read out of the declarations the runner already ships — `period_end` rides on every
+    period slot precisely so nobody downstream needs a second fiscal calendar. If this
+    function ever grows a literal period list, that list is the defect the amendment names.
+    """
+    for records in decls.values():
+        for d in records:
+            if d.get("period_end"):
+                return sorted(d["period_end"].items(), key=lambda kv: kv[1])
+    return []
+
+
+def resolve_anchor_symbols(expected, calendar: list[str], today: str):
+    """Turn ANCHOR / ANCHOR-1 / ANCHOR+1 into real periods, or report out-of-range.
+
+    Returns (expected, None) or (None, reason). WRITTEN SYMBOLICALLY IN THE CORPUS ON
+    PURPOSE: a hardcoded "FY26-Q4" becomes wrong the day the wall clock crosses a quarter
+    boundary, and that failure would read as a filler regression rather than as a stale
+    expectation.
+
+    OUT OF RANGE IS A SKIP, NEVER A FAILURE. If ANCHOR-1 falls before the calendar starts,
+    the case is measuring the seed's extent rather than the filler's behaviour.
+    """
+    labels = [lab for lab, _ in calendar]
+    if today not in labels:
+        return None, f"{SKIPPED_OOR}: today ({today}) is outside the declared calendar"
+    i = labels.index(today)
+    out = {}
+    for name, want in (expected or {}).items():
+        if not isinstance(want, list):
+            out[name] = want
+            continue
+        vals = []
+        for v in want:
+            if not (isinstance(v, str) and v.startswith("ANCHOR")):
+                vals.append(v)
+                continue
+            offset = 0
+            if len(v) > len("ANCHOR"):
+                try:
+                    offset = int(v[len("ANCHOR"):])
+                except ValueError:
+                    return None, f"{SKIPPED_OOR}: unparseable symbol {v!r}"
+            j = i + offset
+            if j < 0 or j >= len(labels):
+                return None, f"{SKIPPED_OOR}: {v} falls outside the declared calendar"
+            vals.append(labels[j])
+        out[name] = vals
+    return out, None
+
+
 def _call(url: str, phrasing: str, verb: str, declarations: str, timeout: float):
     body = json.dumps({"query": phrasing, "verb_iri": verb,
                        "declarations": declarations}).encode()
     req = urllib.request.Request(f"{url}/fill_slots", data=body,
                                  headers={"Content-Type": "application/json"})
     return json.load(urllib.request.urlopen(req, timeout=timeout))
+
+
+def _anchor_from_clock(calendar: list[dict] | list[str]) -> str:
+    """Today's period, by the SAME rule the router uses: the earliest period whose end date
+    is not before today.
+
+    Duplicating the rule is acceptable here and copying the CALENDAR would not be — the rule
+    is three lines and stable, the calendar is data that moves. The amendment's constraint is
+    about the table, not the arithmetic."""
+    import datetime as _dt
+
+    today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    for label, end in calendar:
+        if end >= today:
+            return label
+    return ""
 
 
 def _dist(values: list[float]) -> str:
@@ -124,6 +196,9 @@ def main() -> int:
     ap.add_argument("--url", default="http://iagent-engine-o:8084")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--json", default="", help="write per-case results here")
+    ap.add_argument("--anchor", default="",
+                    help="override the current fiscal period; default is derived from the "
+                         "wall clock against the router's own calendar")
     ap.add_argument("--declarations", default="",
                     help="JSON map measure->declarations. Omit to derive from the local "
                          "planning package (only possible where it is importable).")
@@ -145,9 +220,19 @@ def main() -> int:
     by_class: dict[str, list[dict]] = {}
     by_flag: dict[str, list[tuple]] = {}
     conf: dict[str, list[float]] = {}
+    skipped: list[tuple] = []
+    calendar = _calendar(decls)
+    anchor = args.anchor or _anchor_from_clock(calendar)
+    if calendar:
+        print("")
+        print(f"  calendar: {calendar[0][0]}..{calendar[-1][0]}   ANCHOR={anchor or '(none)'}")
 
     for c in cases:
         declarations = json.dumps(decls[c["measure"]])
+        expected, skip = resolve_anchor_symbols(c.get("expect"), calendar, anchor)
+        if skip:
+            skipped.append((c.get("id"), skip))
+            continue
         try:
             r = _call(args.url, c["phrasing"], c["verb"], declarations, args.timeout)
         except Exception as exc:  # noqa: BLE001
@@ -156,7 +241,7 @@ def main() -> int:
             continue
 
         got = r.get("slots") or {}
-        cls, detail = classify(c.get("expect") or {}, got)
+        cls, detail = classify(expected or {}, got)
 
         want_refused = c.get("expect_refused") or []
         if want_refused:
@@ -203,6 +288,16 @@ def main() -> int:
                  if r.get("expect") and r.get("confidence") is not None]
     empty_ok = [r["confidence"] for r in by_class.get(CORRECT, [])
                 if not r.get("expect") and r.get("confidence") is not None]
+
+    if skipped:
+        # SKIPS ARE REPORTED, NEVER SILENT. A case dropped because ANCHOR-1 falls off the
+        # start of the calendar is measuring the seed's extent, not the filler — but a
+        # silently smaller denominator is how a corpus quietly stops testing what it claims.
+        print()
+        print("SKIPPED — out of range, not failures")
+        print("=" * 70)
+        for cid, why in skipped:
+            print(f"  {cid}: {why}")
 
     total = sum(len(v) for v in by_class.values())
     print()

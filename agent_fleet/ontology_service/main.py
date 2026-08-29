@@ -2476,6 +2476,32 @@ def _decode_declarations(raw: Any) -> list[dict]:
     return [d for d in raw if isinstance(d, dict) and d.get("name")]
 
 
+def _anchor_period(declarations: list[dict], today: str = "") -> str:
+    """Which fiscal period contains today — the ANCHOR that makes "this quarter" answerable.
+
+    DERIVED FROM THE DECLARATION'S OWN CALENDAR, never from a copy. `period_end` rides on
+    every period slot precisely so this can be computed without a second fiscal table, which
+    would be the two-registries shape and would drift the first time a fiscal year moved.
+
+    The anchor is the EARLIEST period whose end date is not before today. Returns "" when no
+    period slot is declared, when the calendar is absent, or when today falls outside it —
+    and "" is an honest answer that the prompt is told to treat as "resolve nothing", rather
+    than a nearest-period guess. A wrong anchor silently rescopes every relative question.
+    """
+    today = today or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    boundaries: dict[str, str] = {}
+    for d in declarations:
+        if d.get("period_end"):
+            boundaries = dict(d["period_end"])
+            break
+    if not boundaries:
+        return ""
+    for label, end in sorted(boundaries.items(), key=lambda kv: kv[1]):
+        if end >= today:
+            return label
+    return ""
+
+
 def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
     """Render the SPOKEN slots as a prompt spec, and return the lookup for validation.
 
@@ -2520,10 +2546,15 @@ async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
         return FillSlotsResponse(reasoning="verb declares no spoken parameters")
 
     try:
+        # THE ANCHOR. Empty when nothing declares a calendar, and the prompt treats empty as
+        # "resolve no relative period" — so a verb with no period slot is unaffected and a
+        # missing calendar degrades to the pre-anchor behaviour rather than to a guess.
+        anchor = _anchor_period(declarations)
         filled = await b.FillVerbSlots(
             question=request.query,
             verb=request.verb_iri,
             slot_spec=spec,
+            today=anchor or "unknown",
         )
     except Exception as exc:  # noqa: BLE001 — degrade to defaults, never 500 the route
         _slots_logger.warning("fill_slots: model call failed for %s: %s", request.verb_iri, exc)

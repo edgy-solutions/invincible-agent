@@ -1,0 +1,111 @@
+{
+  "amendment": "anchor-step",
+  "amends": "slot_corpus_v1.json",
+  "authored_by": "architect",
+  "applies_when": "the filler receives a current-period anchor in its context; until then D05/D06 keep their v1 expectations (expect {}) and D07-D09 are skipped",
+  "anchor_semantics": {
+    "why_symbolic": "Expected values are written as ANCHOR / ANCHOR-1 / ANCHOR+1, never as literal period labels. A corpus that hardcodes FY26-Q4 becomes wrong the day the wall clock crosses a quarter boundary, and the failure would read as a filler regression. The runner resolves these symbols against the same calendar the router uses.",
+    "ANCHOR": "the fiscal period containing the run's wall-clock date",
+    "ANCHOR-1": "the period immediately preceding it",
+    "ANCHOR+1": "the period immediately following it",
+    "at_authoring_time": "2026-08-29 falls in FY26-Q4, so ANCHOR=FY26-Q4, ANCHOR-1=FY26-Q3, ANCHOR+1=FY27-Q1. Recorded for reference only; do not assert against these literals.",
+    "calendar_source": "the router's period table, not a copy. If the runner needs its own copy to resolve symbols, that copy is the defect - read period_end.",
+    "out_of_range": "If ANCHOR-1 or ANCHOR+1 falls outside the declared vocabulary, the case is SKIPPED and reported as skipped-out-of-range, never failed. A corpus that fails because the substrate has no FY25 is measuring the seed."
+  },
+  "acceptance_note": "Four positives and two negatives. The amendment is satisfied only when all six behave: an implementation passing the four and filling either negative has widened rather than resolved, and should be reported as such rather than as 4/6. The negatives are the point.",
+  "disclosure_requirement": "A resolved relative period is an assumption the system made on the user's behalf. It must appear in the interpretation strip as a resolved parameter, so the user can see FY26-Q4 and correct it if their fiscal boundaries differ. Anchoring without disclosure is a silent narrowing wearing a helpful face - the same failure the carry work removed, reintroduced one layer up. This is a cortex item and is not graded by the battery, but the anchor step is not done without it.",
+  "cases": [
+    {
+      "id": "D05",
+      "phrasing": "what does spend look like this quarter",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {
+        "window": [
+          "ANCHOR"
+        ]
+      },
+      "family": "anchored",
+      "flags": [
+        "anchor_dependent"
+      ],
+      "supersedes": "v1 D05 (expect {}, family unanchored)",
+      "note": "FLIPPED. In v1 this was must-MISS because nothing supplied a notion of now, and the measured behaviour was window: ['this quarter'] verbatim - raw words that 422. With an anchor threaded, resolving is correct and passing the raw words is WRONG, not MISSED. The v1 ruling is not retracted: it was right for the system that existed, and this case's history is why the anchor is threaded rather than guessed."
+    },
+    {
+      "id": "D06",
+      "phrasing": "show me spend over the last two quarters",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {
+        "window": [
+          "ANCHOR-1",
+          "ANCHOR"
+        ]
+      },
+      "family": "anchored-range",
+      "flags": [
+        "anchor_dependent",
+        "order_arguable"
+      ],
+      "supersedes": "v1 D06 (expect {}, family unanchored)",
+      "note": "FLIPPED. 'The last two quarters' includes the current one - a program manager asking this wants the period they are in. If the engine's convention is the two COMPLETED quarters, that is a legitimate reading and the fix is to change this expectation once, with the convention written down, not to loosen the comparator. Order is chronological, which differs from spoken order; flagged accordingly."
+    },
+    {
+      "id": "D07",
+      "phrasing": "which sites exceed the threshold this quarter",
+      "verb": "mesh:planSiteLoad",
+      "measure": "plan_site_load",
+      "expect": {
+        "window": [
+          "ANCHOR"
+        ]
+      },
+      "family": "anchored",
+      "flags": [
+        "anchor_dependent"
+      ],
+      "note": "NEW. Second verb, same relative phrase. Guards against the anchor being wired into one verb's path rather than into the filler's context - a fix that passes D05 and fails here is plumbing, not capability."
+    },
+    {
+      "id": "D08",
+      "phrasing": "what does spend look like next quarter",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {
+        "window": [
+          "ANCHOR+1"
+        ]
+      },
+      "family": "anchored",
+      "flags": [
+        "anchor_dependent"
+      ],
+      "note": "NEW. Forward direction. Included because an implementation that resolves 'this' and 'last' by looking backward through a period list can silently have no forward case at all, and a plan engine is asked about the future more often than the past."
+    },
+    {
+      "id": "D09",
+      "phrasing": "what does spend look like recently",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {},
+      "family": "unanchored-residual",
+      "flags": [
+        "unanchored"
+      ],
+      "note": "NEW, and it is the load-bearing negative of this amendment. 'Recently' has no defensible mapping - one quarter, two, six months, all arguable, none named. An anchor supplies a notion of NOW; it does not supply a notion of HOW LONG. Any window filled here is an invention with a plausible shape, which is the failure class this whole arc exists to eliminate. If a fix makes D05-D08 pass and this one fill, it has not learned to resolve relative periods - it has learned to guess when a phrase sounds temporal, and the corpus must catch that."
+    },
+    {
+      "id": "D10",
+      "phrasing": "what does spend look like soon",
+      "verb": "mesh:planCostCurve",
+      "measure": "plan_cost_curve",
+      "expect": {},
+      "family": "unanchored-residual",
+      "flags": [
+        "unanchored"
+      ],
+      "note": "NEW. The forward twin of D09, because a guesser is more likely to invent a future window than a past one - the next period is a single obvious candidate in a way that 'recently' is not. Two negatives, one in each direction, so the boundary is tested symmetrically."
+    }
+  ]
+}
