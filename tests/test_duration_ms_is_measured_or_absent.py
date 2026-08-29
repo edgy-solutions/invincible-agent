@@ -14,6 +14,21 @@ sub-millisecond result — so absence and zero must not collapse onto one falsy 
 SCOPE. IN: the model default, the success-only rule, and the SUBTRACTION'S OPERANDS.
 OUT: that a live gateway run produces a plausible number — that needs a live stream, and
 this file cannot see it. Stated per [[a-green-check-proves-only-its-scope]].
+
+WHICH ASSERTION FIRED IS PART OF THE COVERAGE, AND ONE PATH IS UNEXERCISED. Six mutations
+were run against this file and all six went red, but the pass count is not a coverage map.
+Stamping the FAILED branch went red on `test_only_the_complete_flip_is_stamped`'s sibling —
+the exactly-ONE-stamp assertion in `_stamp_assignment` — which fires first because the
+mutation ADDS a second stamp.
+
+So a "six for six" count would have implied the block-adjacency check was exercised when it
+was not. THE MISSING SPECIMEN was therefore run separately: **MOVE** the stamp to the failed
+branch rather than adding one — the count stays at one, `_stamp_assignment` passes, and only
+adjacency stands between that and a duration on every 502. It goes red on
+`test_only_the_complete_flip_is_stamped`, which is the assertion that path exists for.
+
+Seven mutations, and the seventh is the one the count would have hidden. Recorded because
+which assertion fires is part of the coverage, not a footnote to it.
 """
 from __future__ import annotations
 
