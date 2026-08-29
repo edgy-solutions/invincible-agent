@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import re
 
 import pytest
 
@@ -125,11 +126,60 @@ def test_the_battery_file_contains_no_phrasings():
     questions and the system under test would be grading its own homework, so the corpus is
     a human's and arrives as data. This asserts the runner stays a vehicle.
 
-    Heuristic but pointed: a question mark inside a string literal in the runner is either a
-    phrasing that has crept in or a docstring that should be reworded."""
+    A phrasing is a QUESTION-SHAPED string literal: a question mark with several words in
+    front of it. Read with AST rather than by splitting on quotes.
+
+    TWO EARLIER VERSIONS OF THIS GUARD WERE WRONG, and both in the direction that matters —
+    firing on things that are not phrasings:
+
+      * the first flagged ANY "?" and went red on `meta.get("authored_by", "?")`;
+      * the second counted words by splitting the source on quote characters, so an f-string
+        containing a nested `'?'` arrived as one chunk of ten words.
+
+    A guard that fires on punctuation, or on its own failure to parse Python, gets loosened
+    by the next person who trips it — and then guards nothing. AST sees actual string
+    constants, including the pieces of an f-string separately, so the placeholder is a
+    zero-word constant and a phrasing is not."""
+    import ast
+
     src = (pathlib.Path(__file__).resolve().parents[2]
            / "scripts" / "slot_fill_battery.py").read_text(encoding="utf-8")
-    body = src.split('"""', 2)[-1]          # past the module docstring
-    for quote in ('"', "'"):
-        for chunk in body.split(quote)[1::2]:
-            assert "?" not in chunk, f"a question-shaped string literal in the runner: {chunk[:60]!r}"
+    tree = ast.parse(src)
+
+    # The module docstring is prose about phrasings and is exempt by position, not by content.
+    docstring_node = tree.body[0] if (tree.body and isinstance(tree.body[0], ast.Expr)
+                                      and isinstance(tree.body[0].value, ast.Constant)) else None
+
+    def _question_shaped(text):
+        if "?" not in text:
+            return False
+        return len(re.findall(r"[A-Za-z']+", text.split("?")[0])) >= 3
+
+    offenders = []
+    seen_in_fstring = set()
+    # An f-string's literal pieces arrive as separate Constants, so a phrasing written as
+    # f"how loaded is the {site} site?" would slip past a per-Constant check — the piece
+    # holding the "?" has one word in front of it. Reassemble each JoinedStr first, with
+    # interpolations standing in as a token.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.JoinedStr):
+            continue
+        joined = "".join(
+            v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else " X "
+            for v in node.values
+        )
+        for v in node.values:
+            seen_in_fstring.add(id(v))
+        if _question_shaped(joined):
+            offenders.append(joined[:70])
+
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        if docstring_node is not None and node is docstring_node.value:
+            continue
+        if id(node) in seen_in_fstring:
+            continue
+        if _question_shaped(node.value):
+            offenders.append(node.value[:70])
+    assert not offenders, f"question-shaped string literal(s) in the runner: {offenders}"

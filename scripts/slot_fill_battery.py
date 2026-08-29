@@ -123,12 +123,18 @@ def main() -> int:
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--url", default="http://iagent-engine-o:8084")
     ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument("--json", default="", help="write per-case results here")
     ap.add_argument("--declarations", default="",
                     help="JSON map measure->declarations. Omit to derive from the local "
                          "planning package (only possible where it is importable).")
     args = ap.parse_args()
 
-    cases = json.loads(open(args.corpus, encoding="utf-8").read())
+    doc = json.loads(open(args.corpus, encoding="utf-8").read())
+    # A corpus may arrive bare or in an envelope carrying its own grading contract and flag
+    # meanings. The envelope is preferred: it makes the author's rulings travel WITH the
+    # cases, so a report cannot be read against a different set of rules than it was graded by.
+    cases = doc["cases"] if isinstance(doc, dict) else doc
+    meta = doc if isinstance(doc, dict) else {}
 
     if args.declarations:
         decls = json.loads(open(args.declarations, encoding="utf-8").read())
@@ -137,6 +143,7 @@ def main() -> int:
         decls = {c["measure"]: slots_for(c["measure"]) for c in cases}
 
     by_class: dict[str, list[dict]] = {}
+    by_flag: dict[str, list[tuple]] = {}
     conf: dict[str, list[float]] = {}
 
     for c in cases:
@@ -160,13 +167,36 @@ def main() -> int:
 
         by_class.setdefault(cls, []).append({**c, "got": got, "detail": detail,
                                              "confidence": r.get("confidence")})
+        for flag in c.get("flags") or []:
+            by_flag.setdefault(flag, []).append((cls, c.get("id"), c["phrasing"]))
         if r.get("confidence") is not None:
             conf.setdefault(cls, []).append(float(r["confidence"]))
+
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump([{"id": r.get("id"), "cls": cl, "conf": r.get("confidence"),
+                        "expect": r.get("expect"), "got": r.get("got"),
+                        "flags": r.get("flags"), "phrasing": r.get("phrasing")}
+                       for cl, rows in by_class.items() for r in rows], fh, indent=1)
+
+    # CORRECT MIXES TWO POPULATIONS and reporting it as one hides the shape. A case that
+    # correctly fills a slot and a case that correctly fills NOTHING are both correct, but
+    # the second has no value to be confident about — its honest confidence is near zero.
+    # Blending them makes the CORRECT distribution bimodal and makes the separation question
+    # unanswerable, which is exactly what the first run showed (min=0.00, median=0.97).
+    filled_ok = [r["confidence"] for r in by_class.get(CORRECT, [])
+                 if r.get("expect") and r.get("confidence") is not None]
+    empty_ok = [r["confidence"] for r in by_class.get(CORRECT, [])
+                if not r.get("expect") and r.get("confidence") is not None]
 
     total = sum(len(v) for v in by_class.values())
     print()
     print("SLOT-FILL BATTERY".ljust(70, " "))
     print("=" * 70)
+    if meta.get("corpus_version"):
+        print(f"  corpus {meta['corpus_version']} by {meta.get('authored_by', '?')}")
+        print(f"  against: {meta.get('authored_against', '')[:70]}")
+        print("-" * 70)
     for cls in _SEVERITY:
         n = len(by_class.get(cls, []))
         if n:
@@ -182,7 +212,11 @@ def main() -> int:
     for cls in _SEVERITY:
         if cls in conf:
             print(f"  {cls.upper():8s} {_dist(conf[cls])}")
-    good = conf.get(CORRECT, [])
+    print(f"    of which CORRECT-FILLED  {_dist(filled_ok)}")
+    print(f"    of which CORRECT-EMPTY   {_dist(empty_ok)}")
+    print("    (a case that correctly fills NOTHING has no value to be confident about;")
+    print("     blending the two makes CORRECT bimodal and the question unanswerable)")
+    good = filled_ok
     bad = [v for cls in (WRONG, EXTRA, MISSED) for v in conf.get(cls, [])]
     print("-" * 70)
     if good and bad:
@@ -199,10 +233,25 @@ def main() -> int:
     else:
         print("  too few cases in one class to say whether confidence separates them")
 
+    if by_flag:
+        print()
+        print("BY FLAG — the author's slices, so a platform gap is not read as comprehension")
+        print("=" * 70)
+        for flag, rows in sorted(by_flag.items()):
+            counts: dict[str, int] = {}
+            for cl, _, _ in rows:
+                counts[cl] = counts.get(cl, 0) + 1
+            summary = "  ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+            print(f"  {flag:22s} n={len(rows):3d}   {summary}")
+            expected = (meta.get("flag_meanings") or {}).get(flag, "")
+            if expected:
+                print(f"    {expected[:100]}")
+
     print()
     for cls in (ERROR, WRONG, EXTRA, MISSED):
         for row in by_class.get(cls, []):
-            print(f"  [{cls}] {row['phrasing']}")
+            flags = f" {row.get('flags')}" if row.get("flags") else ""
+            print(f"  [{cls}] {row.get('id', '')} {row['phrasing']}{flags}")
             for d in row["detail"]:
                 print(f"           {d}")
     return 1 if by_class.get(WRONG) or by_class.get(ERROR) else 0
