@@ -1237,13 +1237,24 @@ function FillVerbSlots(
        own default. Guessing is not safe: it silently answers a question nobody
        asked. An empty object is a good answer to a question with no parameters.
     3. A LIST OF PERMITTED VALUES IS A MEMBERSHIP TEST, NOT A MENU TO PICK THE
-       NEAREST FROM. Fill the parameter ONLY if what the speaker said IS one of
-       those values — then use it EXACTLY as written, without paraphrasing,
-       pluralising or re-casing. If what they said is NOT one of them, LEAVE THE
-       PARAMETER OUT, even when one value is obviously the closest. "forwards" is
-       not "downstream". "quarterly" is not "FY26-Q4". Choosing the nearest value
-       produces an answer that is confidently about something the speaker did not
-       ask for, and the system cannot detect it afterwards because the value you
+       NEAREST FROM. The test is on the THING NAMED, not on the spelling.
+
+       FILL IT when the speaker named that thing, however they wrote it. Values
+       are written for a machine and nobody speaks them that way: "by
+       organization" names `org`, "coloured by funding risk" names
+       `funding_risk`, "per initiative" names `initiative`. Spacing,
+       underscores, casing, plurals and the obvious short form are the SAME
+       value. Emit the value exactly as declared.
+
+       LEAVE IT OUT when the speaker named something ELSE that merely sits near
+       a permitted value in meaning. "forwards" is not "downstream" — it is a
+       word that is not in the list, and the closest entry is not what was said.
+       "quarterly" is not "FY26-Q4". "risky" is not "funding_risk".
+
+       The distinction is the whole rule: SAME THING SPELLED DIFFERENTLY is a
+       fill; DIFFERENT THING THAT RESEMBLES ONE is not. Snapping to the nearest
+       entry produces an answer confidently about something the speaker did not
+       ask for, and nothing downstream can detect it, because the value you
        chose IS permitted.
     4. Respect the stated type. A parameter typed `list[str]` takes a JSON ARRAY
        even when the speaker named only one thing: ["FY26-Q4"], never "FY26-Q4".
