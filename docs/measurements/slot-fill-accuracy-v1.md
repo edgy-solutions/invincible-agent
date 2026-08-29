@@ -4,13 +4,13 @@ status:     open
 owner:
 blocked-on:
 repo:       invincible-agent
-code-site:  scripts/slot_fill_battery.py, slot_corpus_v1.json, docs/measurements/slot-fill-battery-run2.json
+code-site:  scripts/slot_fill_battery.py, docs/measurements/slot_corpus_v1.json, docs/measurements/slot-fill-battery-run2.json
 summary:    THE FIRST MEASURED ACCURACY NUMBER. 48 human-authored cases, live filler. 40 CORRECT (83.3%), 5 WRONG (10.4%), 2 EXTRA (4.2%), 1 MISSED (2.1%). ALL FIVE WRONG FILLS ARE THE ENTITY-RESOLUTION GAP — excluding it, 43 cases, 40 correct (93.0%) and ZERO comprehension-driven wrong fills. THE THRESHOLD QUESTION IS ANSWERED AND IT IS THE HARD BRANCH: correct-filled confidence runs 0.93-1.00, wrong runs 0.90-0.96, and a genuine miss scored 0.96. No threshold separates them; confidence is not actionable in EITHER direction. Two other findings: declaring a closed vocabulary did not prevent coercion into it ("forwards" -> direction=downstream), and an unanchored period was passed through as the literal phrase ("this quarter" -> window=["this quarter"]).
 ---
 
 # Slot-fill accuracy, v1 — the first honest number
 
-**Corpus:** `slot_corpus_v1.json`, 48 cases, authored by the architect against the live
+**Corpus:** `docs/measurements/slot_corpus_v1.json`, 48 cases, authored by the architect against the live
 `slots_for()` inventory, validated case-by-case against the declarations before running (no
 case named an undeclared slot or an out-of-vocabulary value). **Runner:**
 `scripts/slot_fill_battery.py`, which contains no phrasings — a test enforces that. Raw
