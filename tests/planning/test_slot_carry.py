@@ -21,6 +21,7 @@ only a value that DISAGREES with the default can tell the two apart.
 from __future__ import annotations
 
 import ast
+import json
 import pathlib
 
 import pytest
@@ -30,7 +31,12 @@ from agent_fleet.planning_agent import main as engine
 from agent_fleet.planning_agent.seed import build_seed
 from agent_fleet.planning_agent.slots import slots_for
 from agent_fleet.planning_agent.state import PlanStore
-from iagent_pure.slot_acceptance import WRONG_SHAPE, accept_slots
+from iagent_pure.slot_acceptance import (
+    NO_DECLARATIONS,
+    ROUTE_SUPPLIED,
+    WRONG_SHAPE,
+    accept_slots,
+)
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -337,3 +343,58 @@ def test_the_supervisors_dispatch_payload_CARRIES_params():
                 and isinstance(value.value, ast.Name) and value.value.id == "accepted"), (
             "`params` is fed by something other than the acceptance filter's output"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE TRANSITION — dark to lit, both states asserted in one place
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_the_dark_to_lit_transition_is_the_PRESENCE_of_declarations(client):
+    """The light switch, tested rather than assumed.
+
+    The whole slot pipeline was landed dark: declarations were not projected, so the guard
+    saw `[]`, failed closed, and refused every spoken slot — behaviour identical to before
+    any of it existed. The moment doc-tools projects `mesh_slots`, declarations arrive and
+    the same spoken value is honoured.
+
+    Both states are asserted HERE, against the same query and the same verb, because the
+    interesting claim is the DIFFERENCE. Asserting only the lit state would pass on a system
+    that always accepted; asserting only the dark state would pass on one that never does.
+
+    The lit declarations are supplied in the shape the graph actually delivers — a JSON
+    STRING, verified round-tripping through the sandbox Neo4j byte-identically — not a
+    convenient Python list, so this exercises the decode too."""
+    spoken = {"group_by": "initiative"}
+    lit_declarations = json.dumps(slots_for("plan_funding_gap"))
+
+    # DARK — nothing projected. Refused, and the answer is the default's.
+    dark = accept_slots(spoken, [])
+    assert dark.params == {}
+    assert [r.reason for r in dark.refusals] == [NO_DECLARATIONS]
+    dark_rows = client.post("/measure/plan_funding_gap",
+                            json={"params": dark.params}).json()["rows"]
+    assert {r["group_by"] for r in dark_rows} == {"org"}, "dark must be today's behaviour exactly"
+
+    # LIT — declarations present, as a JSON string off the graph. Honoured.
+    lit = accept_slots(spoken, lit_declarations)
+    assert lit.params == spoken and lit.clean, "declarations arrived and the slot was still refused"
+    lit_rows = client.post("/measure/plan_funding_gap",
+                           json={"params": lit.params}).json()["rows"]
+    assert {r["group_by"] for r in lit_rows} == {"initiative"}
+
+    # The difference is the feature.
+    assert dark_rows != lit_rows, (
+        "dark and lit produced the same answer — the switch does not switch anything"
+    )
+
+
+def test_lighting_up_does_NOT_open_the_handle_boundary(client):
+    """The transition must move exactly one thing. Declarations arriving makes SPOKEN slots
+    honourable; it must not make route-supplied ones honourable, or the light switch would
+    also be the forgery switch."""
+    declarations = json.dumps(slots_for("plan_session_changes"))
+    assert declarations != "[]", "no declarations derived — this test would pass over nothing"
+
+    lit = accept_slots({"ops": [], "scenario_name": "Board-Approved Plan"}, declarations)
+    assert lit.params == {}, "lighting up honoured a route-supplied argument"
+    assert {r.reason for r in lit.refusals} == {ROUTE_SUPPLIED}
