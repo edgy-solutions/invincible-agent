@@ -1,0 +1,634 @@
+[
+ {
+  "id": "A01",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "group_by": "initiative"
+  },
+  "got": {
+   "group_by": "initiative"
+  },
+  "flags": [],
+  "phrasing": "where is funding short by initiative"
+ },
+ {
+  "id": "A02",
+  "cls": "correct",
+  "conf": 0.98,
+  "expect": {
+   "group_by": "initiative"
+  },
+  "got": {
+   "group_by": "initiative"
+  },
+  "flags": [],
+  "phrasing": "which initiatives are underfunded"
+ },
+ {
+  "id": "A03",
+  "cls": "correct",
+  "conf": 0.96,
+  "expect": {
+   "group_by": "initiative"
+  },
+  "got": {
+   "group_by": "initiative"
+  },
+  "flags": [],
+  "phrasing": "show the funding gap broken out per initiative"
+ },
+ {
+  "id": "A04",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "group_by": "initiative"
+  },
+  "got": {
+   "group_by": "initiative"
+  },
+  "flags": [],
+  "phrasing": "funding shortfall grouped by initiative please"
+ },
+ {
+  "id": "A05",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "group_by": "org"
+  },
+  "got": {
+   "group_by": "org"
+  },
+  "flags": [],
+  "phrasing": "where is funding short by organization"
+ },
+ {
+  "id": "A06",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [],
+  "phrasing": "where is funding short"
+ },
+ {
+  "id": "B01",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "group_by": "capability"
+  },
+  "got": {
+   "group_by": "capability"
+  },
+  "flags": [],
+  "phrasing": "what is scheduled by capability"
+ },
+ {
+  "id": "B02",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "group_by": "target"
+  },
+  "got": {
+   "group_by": "target"
+  },
+  "flags": [],
+  "phrasing": "show me the schedule grouped by target"
+ },
+ {
+  "id": "B03",
+  "cls": "correct",
+  "conf": 0.95,
+  "expect": {
+   "group_by": "initiative"
+  },
+  "got": {
+   "group_by": "initiative"
+  },
+  "flags": [],
+  "phrasing": "what is scheduled by initiative and phase"
+ },
+ {
+  "id": "B04",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "color_by": "funding_risk"
+  },
+  "got": {
+   "color_by": "funding_risk"
+  },
+  "flags": [],
+  "phrasing": "schedule coloured by funding risk"
+ },
+ {
+  "id": "B05",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "color_by": "status"
+  },
+  "got": {
+   "color_by": "status"
+  },
+  "flags": [],
+  "phrasing": "show the schedule with bars colored by status"
+ },
+ {
+  "id": "B06",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "color_by": "confidence"
+  },
+  "got": {
+   "color_by": "confidence"
+  },
+  "flags": [],
+  "phrasing": "schedule colored by confidence"
+ },
+ {
+  "id": "B07",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "group_by": "capability",
+   "color_by": "status"
+  },
+  "got": {
+   "group_by": "capability",
+   "color_by": "status"
+  },
+  "flags": [],
+  "phrasing": "show the schedule by capability colored by status"
+ },
+ {
+  "id": "B08",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "scope_initiative_id": "I2",
+   "color_by": "confidence"
+  },
+  "got": {
+   "scope_initiative_id": "I2",
+   "color_by": "confidence"
+  },
+  "flags": [],
+  "phrasing": "schedule for initiative I2 colored by confidence"
+ },
+ {
+  "id": "B09",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "site_id": "S3"
+  },
+  "got": {
+   "site_id": "S3"
+  },
+  "flags": [],
+  "phrasing": "what is scheduled at site S3"
+ },
+ {
+  "id": "C01",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [],
+  "phrasing": "which sites are overloaded"
+ },
+ {
+  "id": "C02",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "window": [
+    "FY26-Q4"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY26-Q4"
+   ]
+  },
+  "flags": [],
+  "phrasing": "which sites exceed the threshold in FY26-Q4"
+ },
+ {
+  "id": "C03",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "window": [
+    "FY26-Q3",
+    "FY26-Q4"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY26-Q3",
+    "FY26-Q4"
+   ]
+  },
+  "flags": [
+   "order_arguable"
+  ],
+  "phrasing": "site load in FY26-Q3 and FY26-Q4"
+ },
+ {
+  "id": "C05",
+  "cls": "correct",
+  "conf": 0.93,
+  "expect": {
+   "site_id": "S1"
+  },
+  "got": {
+   "site_id": "S1"
+  },
+  "flags": [
+   "referent_unresolved"
+  ],
+  "phrasing": "how loaded is the Aurora site"
+ },
+ {
+  "id": "C06",
+  "cls": "correct",
+  "conf": 0.9,
+  "expect": {
+   "site_id": "S2"
+  },
+  "got": {
+   "site_id": "S2"
+  },
+  "flags": [
+   "referent_unresolved",
+   "unanchored"
+  ],
+  "phrasing": "is Brandon over capacity next quarter"
+ },
+ {
+  "id": "D01",
+  "cls": "correct",
+  "conf": 0.92,
+  "expect": {},
+  "got": {},
+  "flags": [],
+  "phrasing": "what does spend look like per period"
+ },
+ {
+  "id": "D02",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "window": [
+    "FY26-Q4"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY26-Q4"
+   ]
+  },
+  "flags": [],
+  "phrasing": "cost curve for FY26-Q4"
+ },
+ {
+  "id": "D03",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "scope_initiative_id": "I3",
+   "window": [
+    "FY27-Q1"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY27-Q1"
+   ],
+   "scope_initiative_id": "I3"
+  },
+  "flags": [],
+  "phrasing": "what does spend look like for initiative I3 in FY27-Q1"
+ },
+ {
+  "id": "D04",
+  "cls": "correct",
+  "conf": 0.9,
+  "expect": {
+   "scope_initiative_id": "I1"
+  },
+  "got": {
+   "scope_initiative_id": "I1"
+  },
+  "flags": [
+   "referent_unresolved"
+  ],
+  "phrasing": "spend for ERP Modernization"
+ },
+ {
+  "id": "D05",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "unanchored"
+  ],
+  "phrasing": "what does spend look like this quarter"
+ },
+ {
+  "id": "D06",
+  "cls": "correct",
+  "conf": 0.96,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "unanchored"
+  ],
+  "phrasing": "show me spend over the last two quarters"
+ },
+ {
+  "id": "E01",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "project_id": "P1",
+   "direction": "upstream"
+  },
+  "got": {
+   "project_id": "P1",
+   "direction": "upstream"
+  },
+  "flags": [],
+  "phrasing": "what does project P1 depend on upstream"
+ },
+ {
+  "id": "E02",
+  "cls": "correct",
+  "conf": 1.0,
+  "expect": {
+   "project_id": "P4",
+   "direction": "downstream"
+  },
+  "got": {
+   "project_id": "P4",
+   "direction": "downstream"
+  },
+  "flags": [],
+  "phrasing": "what depends on project P4 downstream"
+ },
+ {
+  "id": "E03",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "project_id": "P2",
+   "direction": "upstream",
+   "kind": "phase"
+  },
+  "got": {
+   "project_id": "P2",
+   "direction": "upstream",
+   "kind": "phase"
+  },
+  "flags": [],
+  "phrasing": "what phases does project P2 depend on upstream"
+ },
+ {
+  "id": "E06",
+  "cls": "correct",
+  "conf": 0.9,
+  "expect": {
+   "project_id": "P3"
+  },
+  "got": {
+   "project_id": "P3"
+  },
+  "flags": [
+   "near_miss_vocab"
+  ],
+  "phrasing": "what does P3 depend on forwards"
+ },
+ {
+  "id": "E07",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "project_id": "P9"
+  },
+  "got": {
+   "project_id": "P9"
+  },
+  "flags": [
+   "near_miss_vocab",
+   "extra_bait"
+  ],
+  "phrasing": "dependency neighbourhood for P9 by workstream"
+ },
+ {
+  "id": "F01",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "extra_bait"
+  ],
+  "phrasing": "where is funding short by site"
+ },
+ {
+  "id": "F02",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "extra_bait"
+  ],
+  "phrasing": "which sites are overloaded by initiative"
+ },
+ {
+  "id": "F03",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "extra_bait"
+  ],
+  "phrasing": "cost curve by organization"
+ },
+ {
+  "id": "F04",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "near_miss_vocab"
+  ],
+  "phrasing": "what is scheduled by department"
+ },
+ {
+  "id": "G01",
+  "cls": "correct",
+  "conf": 0.0,
+  "expect": {},
+  "got": {},
+  "flags": [],
+  "phrasing": "where are the dependency violations"
+ },
+ {
+  "id": "G02",
+  "cls": "correct",
+  "conf": 0.0,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "extra_bait"
+  ],
+  "phrasing": "show me the coverage gap for initiative I2 in FY26-Q3"
+ },
+ {
+  "id": "G03",
+  "cls": "correct",
+  "conf": 0.0,
+  "expect": {},
+  "got": {},
+  "flags": [],
+  "phrasing": "what changed in this session"
+ },
+ {
+  "id": "G04",
+  "cls": "correct",
+  "conf": 0.0,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "extra_bait"
+  ],
+  "phrasing": "what changed in this session named Board-Approved Plan"
+ },
+ {
+  "id": "H01",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {},
+  "got": {},
+  "flags": [],
+  "phrasing": "capability maturity by site versus target"
+ },
+ {
+  "id": "H02",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "as_of": "FY26-Q4"
+  },
+  "got": {
+   "as_of": "FY26-Q4"
+  },
+  "flags": [],
+  "phrasing": "show me the maturity grid as of FY26-Q4"
+ },
+ {
+  "id": "H03",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "capability_id": "C4"
+  },
+  "got": {
+   "capability_id": "C4"
+  },
+  "flags": [],
+  "phrasing": "what is the capability path for C4"
+ },
+ {
+  "id": "H04",
+  "cls": "correct",
+  "conf": 0.92,
+  "expect": {
+   "process_id": "BP1"
+  },
+  "got": {
+   "process_id": "BP1"
+  },
+  "flags": [
+   "referent_unresolved"
+  ],
+  "phrasing": "how has Order to Cash evolved"
+ },
+ {
+  "id": "H05",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "tech_id": "T2"
+  },
+  "got": {
+   "tech_id": "T2"
+  },
+  "flags": [],
+  "phrasing": "what is the technology footprint for T2"
+ },
+ {
+  "id": "H06",
+  "cls": "correct",
+  "conf": 0.9,
+  "expect": {},
+  "got": {},
+  "flags": [],
+  "phrasing": "what is the capability path"
+ },
+ {
+  "id": "C04",
+  "cls": "missed",
+  "conf": 1.0,
+  "expect": {
+   "site_id": "S1",
+   "window": [
+    "FY26-Q2"
+   ]
+  },
+  "got": {},
+  "flags": [],
+  "phrasing": "how loaded is site S1 in FY26-Q2"
+ },
+ {
+  "id": "E04",
+  "cls": "missed",
+  "conf": 0.9,
+  "expect": {
+   "project_id": "P7",
+   "kind": "phase",
+   "direction": "upstream"
+  },
+  "got": {
+   "project_id": "P7",
+   "kind": "phase"
+  },
+  "flags": [],
+  "phrasing": "what phases feed into P7"
+ },
+ {
+  "id": "E05",
+  "cls": "missed",
+  "conf": 0.96,
+  "expect": {
+   "project_id": "P1"
+  },
+  "got": {},
+  "flags": [
+   "referent_unresolved"
+  ],
+  "phrasing": "what does the ERP Modernization project depend on"
+ }
+]

@@ -153,3 +153,65 @@ run NAMED. Neither was iterated toward green, and both runs stay in the record.
 reports **0.00**. A correct fill at zero confidence, alongside a genuine miss at 0.96 in the
 previous run. Every reading so far says the same thing — this signal is not measuring
 correctness.
+
+
+---
+
+## UPDATE 2026-08-29 — fix (1), referent resolution, measured
+
+Raw: `slot-fill-battery-run5.json`. Pre-registration: `fix-1-pre-registration.md`, committed
+**before** the run.
+
+| | CORRECT | WRONG | EXTRA | MISSED |
+|---|---|---|---|---|
+| baseline | 40 (83.3%) | 5 | 2 | 1 |
+| after fix (2) | 42 (87.5%) | 5 | 0 | 1 |
+| **after fix (1)** | **45 (93.8%)** | **0** | 0 | 3 |
+
+### THE WRONG CLASS IS ELIMINATED
+
+**Zero wrong fills, from five.** Every silent-wrong-answer case in the corpus is gone, and the
+residue sits entirely in the recoverable class. That is the axis this whole arc has been
+about: a missed fill degrades to a default or an ask; a wrong fill renders cleanly and lies.
+
+### The pre-registration was 5 for 5
+
+| id | predicted | actual |
+|---|---|---|
+| C05 "the Aurora site" | CORRECT | **CORRECT** — `site_id: S1`, outcome `fuzzy` |
+| C06 "Brandon" | CORRECT | **CORRECT** — `site_id: S2` |
+| D04 "ERP Modernization" | CORRECT | **CORRECT** — `scope_initiative_id: I1`, `exact` |
+| H04 "Order to Cash" | CORRECT | **CORRECT** — `process_id: BP1`, `exact` |
+| **E05** "the ERP Modernization **project**" | **MISSED** | **MISSED** — `wrong_class`, slot removed |
+
+E05 resolved to `I1`, an `Initiative`, against a slot declaring `#Project`. Refused,
+**removed from `slots` rather than passed through**, reported with its outcome and its
+candidate. The corpus expectation (`project_id: P1`) remains unsatisfiable by any correct
+resolver — no project bears that name — and is flagged as a probable authoring error.
+
+**The refutation I pre-registered did NOT occur.** I predicted the fleet-wide fan-out would
+produce `mixed` from another provider matching the same name in a different class. It did
+not: outcomes came back `exact` and `fuzzy` cleanly. Domain-scoped fan-out is therefore not
+needed yet — but the reasoning stands for the day another provider learns these names.
+
+### One deviation, investigated rather than absorbed
+
+`C04` *"how loaded is site S1 in FY26-Q2"* went **CORRECT → MISSED**, which I had not
+predicted. Re-probed three times against the same deployment: **3/3 correct**, returning
+`{"site_id": "S1", "window": ["FY26-Q2"]}` with `outcome: exact`. It is the known
+non-determinism, not a regression from this fix.
+
+**The reported number stays 45.** A case that passes on re-probe does not retroactively pass
+in the run that measured it, and upgrading the headline on the strength of a follow-up would
+be exactly the kind of adjustment the pre-registration exists to prevent. The underlying
+value is probably 46; the measurement says 45.
+
+### Where the residue is now
+
+Three MISSED, all recoverable, none silent:
+
+* `E05` — resolved to the wrong kind of thing. **The disambiguation ask has a menu**
+  (the candidate is retained) — see `[[elicitation-ask-disposition]]`.
+* `E04` *"what phases feed into P7"* — fills `project_id` and `kind`, misses `direction`
+  (*"feed into"* as a paraphrase for upstream). A fair miss, per its own corpus note.
+* `C04` — the flaky one above.
