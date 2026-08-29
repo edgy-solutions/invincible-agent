@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **82 of 94 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **83 of 95 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -25,6 +25,10 @@ _Coverage: **82 of 94 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
   → [docs/plans/urn-reconciliation-guard.md](plans/urn-reconciliation-guard.md)
 
 ## open
+
+- **a-spoken-handle-can-forge-the-change-log** — MEASURED on real bytes. `run_measure` injects route-supplied arguments into the SAME `params` dict a caller's values land in, and for `plan_session_changes` it uses `params.setdefault(...)` — so a CALLER-SUPPLIED value WINS. A spoken `ops: []` makes the change log report ZERO changes for a scenario that has one; a spoken `scenario_name` relabels the artifact anything the speaker likes. This is the DECISION-ARTIFACT verb (INV-4, "why did we move this?"), so the failure mode is forged provenance rather than a wrong number. Reachable today: cortex-bff's /plan/measure forwards `body.params` verbatim. Its two sibling injection sites use ASSIGNMENT and are safe — nobody chose the difference, it fell out of `=` vs `setdefault`. FIX IS ONE WORD, not applied: engine-p is fenced. The new carry path is already guarded (iagent_pure/slot_acceptance.py).
+  status: open · owner: unassigned · blocked-on: human approval to touch engine-p (fenced for the night of 2026-08-28)
+  → [docs/plans/a-spoken-handle-can-forge-the-change-log.md](plans/a-spoken-handle-can-forge-the-change-log.md)
 
 - **adr0039-deliverables** — ADR-0039's three artifacts — schema generated from the executor models, authoring scaffold, BPMN exporter.
   status: open · owner: unassigned
