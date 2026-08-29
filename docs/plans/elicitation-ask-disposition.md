@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0033 (Accepted 2026-08-29, reachability) + its Amendment 2026-08-28; ADR-0032 (menu integrity, one archetype)
 code-site:  src/iagent/defs/dynamic_supervisor.py (execute_subtask, after accept_slots), agent_fleet/planning_agent/slots.py, src/iagent_pure/slot_acceptance.py
-summary:    THE BUILD PLAN FOR `ask`, scoped and pre-registered before a line of it exists. Trigger is DETERMINISTIC — a spoken-mandatory slot absent after filling — because confidence was tested at n=48 and rejected (correct fills bottom at 0.93, wrong reach 0.96, the one genuine miss scored 0.96). Disposition point is execute_subtask immediately after accept_slots, the one line where the phrase, the verb, the declarations and the accepted slots are all in hand. THE MERGE SEAM IS ALREADY BUILT — `config.slots` already outranks the filler, so a stateless re-route needs no new state and no new lifetime; the card carries the already-accepted slots forward so the re-route is reconstructed, never re-parsed. THREE SCOPING CORRECTIONS FOUND BY READING: (1) `resolveInstance` RESOLVES, it does not ENUMERATE — its contract requires `identifier: str`, and a slot the phrase never filled has no identifier, so the amendment's fourth option source needs a capability capability (2) does not deliver; (2) the corpus's four ask-candidates split across BOTH trigger shapes — H06/E04 are elicitation (zero candidates), E05/H04 are disambiguation (a name WAS spoken) and need the ORIGINAL source #2, not the fourth; (3) period slots declare no permitted values, so `accept_slots` cannot reject a non-period and D05's `window=["this quarter"]` still reaches the engine. RULED 2026-08-29: free text is the honest INTERIM for instance slots — no enumeration surface exists, so enumeration is genuinely impossible today — carried with the attempt recorded (`option_source: none`, reason `no_enumerate_provider`) and a TRIPWIRE expiry: the day an enumerate provider registers for a slot's class, free text for that slot must FAIL. Corrections 1 and 3 filed as their own items ([[enumerate-is-not-resolve]], [[period-slots-declare-no-vocabulary]]); the three-valued requirement is now an acceptance item on [[the-filler-has-no-entity-resolution]]. THE ASK SHIPS BEFORE ITS OPTIONS CAN, and that ordering is the finding. Measured reach of the trigger, re-run against run 3 after 622f3c8: 3 of 48 (was 2) — and the +1 is NOT an improvement, it is the arity collapse observed: H04 went WRONG->MISSED, so it now asks as elicitation (no menu) instead of disambiguation (menu exists). E05 still passes its name through. Two identical situations, two different behaviours. 37 of 48 are structurally immune — the anti-clippy guardrail is a consequence of the declarations, not a tuned threshold.
+summary:    THE BUILD PLAN FOR `ask`, scoped and pre-registered before a line of it exists. Trigger is DETERMINISTIC — a spoken-mandatory slot absent after filling — because confidence was tested at n=48 and rejected (correct fills bottom at 0.93, wrong reach 0.96, the one genuine miss scored 0.96). Disposition point is execute_subtask immediately after accept_slots, the one line where the phrase, the verb, the declarations and the accepted slots are all in hand. THE MERGE SEAM IS ALREADY BUILT — `config.slots` already outranks the filler, so a stateless re-route needs no new state and no new lifetime; the card carries the already-accepted slots forward so the re-route is reconstructed, never re-parsed. THREE SCOPING CORRECTIONS FOUND BY READING: (1) `resolveInstance` RESOLVES, it does not ENUMERATE — its contract requires `identifier: str`, and a slot the phrase never filled has no identifier, so the amendment's fourth option source needs a capability capability (2) does not deliver; (2) the corpus's four ask-candidates split across BOTH trigger shapes — H06/E04 are elicitation (zero candidates), E05/H04 are disambiguation (a name WAS spoken) and need the ORIGINAL source #2, not the fourth; (3) period slots declare no permitted values, so `accept_slots` cannot reject a non-period and D05's `window=["this quarter"]` still reaches the engine. RULED 2026-08-29: free text is the honest INTERIM for instance slots — no enumeration surface exists, so enumeration is genuinely impossible today — carried with the attempt recorded (`option_source: none`, reason `no_enumerate_provider`) and a TRIPWIRE expiry: the day an enumerate provider registers for a slot's class, free text for that slot must FAIL. Corrections 1 and 3 filed as their own items ([[enumerate-is-not-resolve]], [[period-slots-declare-no-vocabulary]]); the three-valued requirement is now an acceptance item on [[the-filler-has-no-entity-resolution]]. THE ASK SHIPS BEFORE ITS OPTIONS CAN, and that ordering is the finding. RE-PARTITIONED AGAINST RUN 5 (fix 1 landed): ASK 2, ROUTE 9, IMMUNE 37. The residue is 3 MISSED / 0 WRONG / 0 EXTRA and the trigger catches EXACTLY ONE of the three — E05 (mandatory) asks; E04 and C04 miss only OPTIONAL slots and must route, which is the sharpest statement of the guardrail available. E04 LEFT the ask population because the filler fixed it, the success mode. The two remaining cases are a MINIMAL PAIR — H06 elicitation (no candidates, free-text interim) and E05 disambiguation (candidate I1 retained, a real menu, UNBLOCKED TODAY). AND THE INSTRUMENT CANNOT CHECK ITS OWN ASSERTION: the battery records only id/cls/conf/expect/got/flags/phrasing, so H06 and E05 are both `got: {}` and indistinguishable in the file — the tri-state never reaches the artifact a test would read. OWNERSHIP SETTLED: this lane owns the disposition, the filler lane owns the option source (enumerate) and the harness gap. 37 of 48 are structurally immune — the anti-clippy guardrail is a consequence of the declarations, not a tuned threshold.
 ---
 
 # The `ask` disposition — the build plan, written before the build
@@ -21,6 +21,26 @@ here has started from.
 **ADR-0033 is Accepted as of 2026-08-29** (reachability, not frequency — see its *Status change*
 section). Everything in this packet is build, not ruling. Where the read contradicts a ruling,
 that is flagged as a correction, not exercised as discretion.
+
+## OWNERSHIP, settled 2026-08-29 — two lanes were pointed at one build
+
+The filler lane's "fix (3)" and this packet's disposition are **the same build**, and both lanes
+arrived at it at the same moment. Split, so neither starts it twice:
+
+| | owns | why |
+|---|---|---|
+| **this lane** | the **`ask` disposition** — trigger, disposition point, card contract, re-route, the two non-slot consumers | it holds the ADR (Accepted, wake condition cited), the mechanism plan, the pre-registered acceptance and the trigger design |
+| **the filler lane** | the **option source** — `[[enumerate-is-not-resolve]]`, plus the harness gap in §2b | the filler, resolver and battery are the surface this disposition *consumes*; the enumerate provider is squarely that territory |
+
+> **The split keeps the producer and the consumer of the tri-state in different hands**, which is
+> what caught the arity collapse in the first place — one lane shipped a change that silently
+> removed the other's menu, and it was visible only because a second reader was holding the
+> consumer's requirements. Merging the lanes would remove that check exactly when the contract
+> between them is newest.
+
+**Handoff, concretely:** fix (3) transfers here with its current state; `[[enumerate-is-not-resolve]]`
+and the battery's `outcome`/`candidates` recording transfer there. Neither lane is blocked on the
+other for its first step.
 
 ---
 
@@ -67,44 +87,89 @@ and an omission is what `ask` detects. Recorded in the ADR so the next reader fi
 
 ### Measured reach, stated now so it cannot be overclaimed later
 
-Applying the trigger to the battery, **re-run against run 3 after the coercion fix landed
-(`622f3c8`) so the figure is not stale**:
+Applying the trigger to the battery. **RE-RUN AGAINST RUN 5** — fix (1) landed, so the earlier
+figures are superseded rather than merely aged:
 
-| | run 2 | run 3 | note |
+| | run 2 | run 3 | **run 5** | note |
+|---|---|---|---|---|
+| would **ask** | 2 | 3 | **2** | now `H06`, **`E05`** — `E04` has left the population |
+| would **route** (mandatory slot filled) | 9 | 8 | **9** | |
+| **structurally immune** (no spoken-mandatory slot) | 37 | 37 | **37** | invariant, as designed |
+
+### The residue is characterised, and `ask` catches exactly the right third of it
+
+Run 5's residue is **3 MISSED, 0 WRONG, 0 EXTRA**. Partitioned by the kind of slot missed:
+
+| case | misses | kind | disposition |
 |---|---|---|---|
-| would **ask** | **2** | **3** | `H06`, `E04`, **+`H04`** |
-| would **route** (mandatory slot filled) | 9 | 8 | still includes `E05` — filled with a **name** |
-| **structurally immune** (no spoken-mandatory slot) | **37** | **37** | the trigger cannot fire |
+| **`E05`** "the ERP Modernization **project**" | `project_id` | **spoken-mandatory** | **ASK** |
+| `E04` "what phases feed into P7" | `direction` | spoken-optional | **route** — a default is the answer |
+| `C04` "site S1 in FY26-Q2" | `site_id`, `window` | spoken-optional | **route** — and it is the flaky one |
 
-> ### ⚠ THE +1 IS NOT AN IMPROVEMENT — IT IS THE COLLAPSE, ALREADY OBSERVED
->
-> `H04` moved into the ask population by going **WRONG → MISSED**: the filler stopped emitting
-> `process_id: "Order to Cash"` and now emits nothing. So the trigger fires — **as elicitation
-> (zero candidates), which has no menu**, instead of as disambiguation (a name was spoken, which
-> `resolveInstance` could have scored). A menu that already exists was thrown away.
->
-> This is exactly the arity collapse flagged as an acceptance item on
-> `[[the-filler-has-no-entity-resolution]]`, and it is **observed, not predicted** — one commit
-> ahead of the lane it was written for.
->
-> **And the two halves of the same shape now disagree**, which is the clearest possible argument
-> for the three-valued contract:
->
-> | case | phrasing | run 2 | run 3 |
-> |---|---|---|---|
-> | `E05` | "the ERP Modernization project" | `project_id: "ERP Modernization"` | `project_id: "ERP Modernization project"` — **still passed through, and now worse** |
-> | `H04` | "Order to Cash" | `process_id: "Order to Cash"` | **dropped entirely** |
->
-> Two structurally identical situations — an entity spoken by name on a mandatory id slot — now
-> produce a **pass-through** and a **drop**. The disposition would see one as a route and the other
-> as an elicitation, and **neither is right**: both are `unresolved`, and both have candidates.
-> Prompt-level rules cannot make this consistent, because the model is being asked to decide
-> something only the resolver knows.
+**The trigger fires on one of the three and correctly declines the other two.** That is the
+guardrail behaving, not a coverage gap: an absent optional is a *default*, which is an answer, and
+asking about it is the chatty failure ADR-0033 #4 exists to prevent.
 
-**37 of 48 immune by construction** is the anti-clippy guardrail becoming measurable. ADR-0033 #4's
-*"a system that asks when it knows is worse than one that guesses when it doesn't"* is not a
-threshold to tune here — it is a consequence of only four of fourteen verbs declaring a mandatory
-slot at all.
+> ### `E04` LEFT THE ASK POPULATION, AND IT LEFT FOR THE RIGHT REASON
+>
+> In run 2 `E04` missed all three slots including mandatory `project_id`, and was the strongest
+> reachability citation in the ADR's status change. In run 5 it fills `project_id: P7` and
+> `kind: phase`, missing only `direction`. **The filler fixed it, which is what should have
+> happened** — the ask was a safety net for a miss that should not have occurred, and the net is
+> now unneeded for that case.
+>
+> The `ask_on_present_in_phrase` counter (below) is exactly the instrument that would have shown
+> this, and it validates keeping it: a shrinking ask population *because the filler improved* is
+> the success mode, and it must be distinguishable from a shrinking one because the trigger broke.
+>
+> **The ADR's citation is unaffected.** `E04` was cited as measured evidence that the class was
+> unreachable at the time of the status change, and it was. A fix landing afterwards does not
+> un-fire a wake condition — and `E05` and `H06` still stand under it.
+
+### THE TWO REMAINING CASES ARE A MINIMAL PAIR — one of each shape
+
+| | `H06` "what is the capability path" | `E05` "the ERP Modernization **project**" |
+|---|---|---|
+| shape | **elicitation** — nothing was said | **disambiguation** — a name was said |
+| candidates | none | **retained** (resolved `I1`, an `Initiative`, against a `#Project` slot) |
+| option source | free-text interim (§3) | the candidate — a **real menu**, for the first time |
+| blocked on | `[[enumerate-is-not-resolve]]` | **nothing** |
+
+One case per shape, and one of them is fully unblocked. That is a better starting position than
+this packet was parked with, and it is the tri-state contract paying for itself immediately.
+
+> **`E05`'s corpus expectation is unsatisfiable and is not this build's problem.** No project bears
+> that name, so `project_id: P1` cannot be produced by any correct resolver; the accuracy packet
+> already flags it as a probable authoring error. The *disposition* assertion is unaffected — it
+> asks about `project_id` and offers `I1`, and whether the corpus's `expect` is right is a corpus
+> question.
+
+## ⛔ 2b. THE INSTRUMENT CANNOT CHECK THE ASSERTION IT WAS GIVEN — found by re-running
+
+The pre-registered acceptance says, for `E05`-shaped cases: *"assert on the reported
+`instance_match`, not on the absence of a value — the neighbour-assertion trap."*
+
+**The battery cannot do that today.** Every record in `slot-fill-battery-run5.json` carries exactly
+`id, cls, conf, expect, got, flags, phrasing`. **No outcome. No candidates.** So from the run data
+alone:
+
+```
+H06  got: {}      <- elicitation, no candidates
+E05  got: {}      <- disambiguation, candidate I1 retained
+```
+
+**The two are indistinguishable in the file.** The tri-state exists on the `/fill_slots` wire and in
+the measurement's prose; it does not reach the artifact any test would read. A partition computed
+from this file has to *guess* which shape each empty is, which is precisely the neighbour-assertion
+trap arriving in the instrument instead of in a test.
+
+> **Prerequisite, and it is small: the battery must record `outcome` and `candidates` per slot.**
+> Until it does, the pre-registered A3/A4 assertions are unverifiable and any green they report is
+> vacuous. This is the same failure the four-row table's row 4 was written against — *only
+> delivered-versus-spoken tells a working carry from a lucky default* — one layer up.
+
+**Filed against the harness, which is Lane 1's** (`scripts/slot_fill_battery.py`), and named here
+because this lane is its consumer and would otherwise discover it mid-build.
 
 ### The guard against `ask` becoming a crutch
 
@@ -339,22 +404,29 @@ the one that keeps the feature from becoming chatty** — it is not a footnote.
 
 ### 5a. MUST ASK
 
+**Re-registered against run 5.** The rows are fewer and better: fix (1) resolved `H04`, `C05`,
+`C06` and `D04` outright, and fix (2) resolved `E04`'s mandatory slot — so the table now names only
+cases that are *still* residue, plus the structural one.
+
 | # | case | phrasing | slot | shape | option source | gated on |
 |---|---|---|---|---|---|---|
-| A1 | `H06` | "what is the capability path" | `capability_id` | elicitation | enumerate (correction 1) | the enumerate capability |
-| A2 | `E04` | "what phases feed into P7" | `project_id` | elicitation | enumerate | same; **also** counted as `ask_on_present_in_phrase` |
-| A3 | `E05` | "what does the ERP Modernization project depend on" | `project_id` | disambiguation | `resolveInstance` top-k | three-valued resolution |
-| A4 | `H04` | "how has Order to Cash evolved" | `process_id` | disambiguation | `resolveInstance` top-k | three-valued resolution |
-| A5 | — | "what phases does I1-P1 depend on upstream" (the live 400) | `project_id` | either | whichever fires | **must not 400** — assert on the disposition, not the text |
+| A1 | `H06` | "what is the capability path" | `capability_id` | **elicitation** | free-text interim → enumerate | nothing (interim ships); `[[enumerate-is-not-resolve]]` for the menu |
+| A2 | `E05` | "what does the ERP Modernization **project** depend on" | `project_id` | **disambiguation** | **the retained candidate (`I1`)** | **nothing — unblocked today** |
+| A3 | — | "what phases does I1-P1 depend on upstream" (the live 400) | `project_id` | either | whichever fires | **must not 400** — assert on the disposition, not the text |
 
-**A5's assertion is on the disposition**, because a 400 whose *message* improved is still a 400.
+**A3's assertion is on the disposition**, because a 400 whose *message* improved is still a 400.
 Green when the response is an ask card, never when the error string reads better.
 
-**A3/A4 have a second assertion, and it is the one that can rot:** the ask must fire **because
-resolution reported `not_specific`/`fuzzy`**, not because the slot was absent. If the resolver
-passes the name through and something downstream notices the id is unknown, the ask fires for the
-wrong reason and would stop firing the moment the id shape changes. **Assert on the reported
-`instance_match`, not on the absence of a value** — the neighbour-assertion trap.
+**A2 carries the assertion the instrument cannot yet check** (§2b): the ask must fire **because the
+fill reported `wrong_class` with a candidate**, not because the value happens to be absent. Assert
+on the reported outcome — `H06` and `E05` are both `got: {}`, and a test that keys on emptiness
+passes for both while meaning neither. **A2 is blocked on the harness recording `outcome`, not on
+any substrate.**
+
+> **Retired rows, recorded rather than deleted, because a shrinking acceptance table is a claim.**
+> `E04` (mandatory slot now filled — the filler fixed it) and `H04` (now resolves `BP1` cleanly) are
+> **no longer ask cases**. They move to §5b as must-route-silently, which is a stronger assertion
+> than they carried before: they must now *stay* fixed.
 
 ### 5b. MUST STILL ROUTE SILENTLY — the #4 guardrail, and the correction the dispatch needs
 
@@ -369,17 +441,23 @@ wrong reason and would stop firing the moment the id shape changes. **Assert on 
 > empty fill and the unanswerable dispatch are both true at once. Neither component is wrong; the
 > behaviour between them was missing. The corrected rule:
 
-| assertion | n |
+| assertion | n (run 5) |
 |---|---|
-| every CORRECT case **except `H06`** routes with no card | **39 of 40** |
+| every CORRECT case **except `H06`** routes with no card | **44 of 45** |
 | every case on a verb with no spoken-mandatory slot routes | **37 of 48**, structurally |
 | no ask fires on a **spoken-optional** slot, ever, at any confidence | all — an absent optional is a *default*, which is the answer, not a gap |
-| `E06` ("forwards" → `direction: downstream`) still routes | it is a **coercion** defect; the disposition must not paper over it |
-| `D05` ("this quarter" → `window: ["this quarter"]`) still routes | `window` is optional; correction 3 is its fix, not this |
+| **`E04`** (misses `direction` only) routes | **spoken-optional** — a default IS the answer. The strongest negative in the table: `E04` was an ask case two runs ago and must not be one now |
+| **`C04`** (misses `site_id`, `window`) routes | both optional — **and it is the known flaky case**, so an ask here would make non-determinism user-visible as a question |
+| `E06` ("forwards") and `D05` ("this quarter") still route | both **fixed** by fix (2) and both on optional slots; recorded so the disposition is never credited with them |
 
-`E06` and `D05` are load-bearing negatives. Both are wrong answers the ask disposition **must not
-catch**, because catching them would mean asking about optional slots — the chatty failure the
-guardrail exists to prevent. **A feature that fixes bugs outside its remit has the wrong trigger.**
+**`E04` and `C04` are the load-bearing negatives now**, and they are stronger than the pair they
+replace. Both are *genuine misses* — real information the user supplied that the filler did not
+capture — and the disposition **must still not ask**, because both misses are on optional slots
+where a default is a legitimate answer. A trigger that reached them would be asking about things
+the system can proceed without.
+
+> **This is the sharpest statement of the guardrail available: `ask` must decline two of the three
+> remaining misses in the corpus.** A feature that catches all the residue has the wrong trigger.
 
 ### 5c. MUST STILL ABSTAIN — and this row is UNMEASURED, stated rather than assumed
 
@@ -492,13 +570,17 @@ failure. An ask rendered as an abstain card would be that same bug, second editi
    needing any option source at all.
 2. **The duplicate-canvas consumer** — zero substrate work, a **real** menu, end-to-end proof of
    the whole shape while the enumerate capability is still being built.
-3. **Three-valued resolution** (`[[the-filler-has-no-entity-resolution]]`, now an acceptance item
-   there) → A3/A4 go green on the **original** #2 option source. **No new substrate.**
+3. ~~**Three-valued resolution**~~ — **DONE** (fix (1), run 5). The contract is live, WRONG is
+   eliminated 5 → 0, and `E05` arrives as `wrong_class` **with its candidate retained**. This step
+   moved from a dependency to an asset while the packet was parked, which is why **A2 is unblocked
+   today** and why the disambiguation half no longer waits on anything.
 4. **The enumerate capability** (`[[enumerate-is-not-resolve]]`) → A1/A2 go green, the fourth
    option source becomes real, and **the free-text tripwire fires**, closing the interim.
 
-Steps 1 and 2 need nothing that does not exist. Step 3 is Lane 1's, already written into its
-packet. Step 4 is this lane's own next scoping question.
+Steps 1, 2 and 3 need nothing that does not exist — **step 3 already landed.** Step 4 is the
+filler lane's, per the ownership split above. The only true prerequisite left for the
+pre-registered acceptance to be *checkable* is the harness recording `outcome` (§2b), which is
+small and also theirs.
 
 > **The ask ships before its options can, and that ordering is the finding — not a compromise.**
 > The trigger reads declarations; the menu needs a substrate capability nobody has built. Those are

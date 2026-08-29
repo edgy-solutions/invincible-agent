@@ -102,6 +102,21 @@ attempted."* Today that clause cannot be evaluated, because there is no attempt 
 That is the difference between a boundary and a fudge. **A slot asked as free text must carry the
 provider's own reason** — never a default, never a silence.
 
+## OWNERSHIP 2026-08-29 — this item is the FILLER lane's, by the disposition split
+
+Two lanes arrived at the `ask` build at once. Settled: the elicitation lane owns the **disposition**,
+this lane owns the **option source it consumes** — see `[[elicitation-ask-disposition]]`'s ownership
+section. The filler, resolver and battery are already this lane's surface, and an enumerate provider
+is the same territory.
+
+**A second, smaller item travels with it, and it blocks the other lane's acceptance rather than its
+build:** `scripts/slot_fill_battery.py` records only `id, cls, conf, expect, got, flags, phrasing`.
+The tri-state landed on the `/fill_slots` wire in fix (1) and **does not reach the run artifact**, so
+`H06` (elicitation, no candidates) and `E05` (disambiguation, candidate `I1` retained) are both
+`got: {}` and **indistinguishable in the file**. The disposition's pre-registered assertion is
+*"assert on the reported outcome, not on the absence of a value"* — which no test can do until the
+battery records `outcome` and `candidates` per slot. Small, and the acceptance is vacuous without it.
+
 ## Open questions this item must answer
 
 **1. Menu length bound.** 9 capabilities is a menu; the triage's **19** resolver candidates is not.

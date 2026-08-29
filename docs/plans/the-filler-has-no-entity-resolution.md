@@ -84,6 +84,21 @@ Two cheaper interim options, both worth weighing against it rather than instead 
    `ask` path can then handle. Cheapest, and it converts the WRONG class into the
    recoverable one.
 
+## ✅ CLOSED BY FIX (1), run 5 — and "fix (3)" HANDS OFF
+
+**The acceptance item below is met.** Run 5: **WRONG 5 → 0**, the tri-state is live, and `E05` is
+refused with its outcome (`wrong_class`) and its candidate **retained rather than passed through** —
+which is the contract, built as specified. The arity collapse observed in run 3 did not survive into
+the shipped fix.
+
+> **"Fix (3)" — the ask disposition — transfers to the elicitation lane** with its current state.
+> Two lanes were pointed at one build; the split is recorded in
+> `[[elicitation-ask-disposition]]`'s ownership section. This lane keeps the filler, the resolver
+> and the harness, and picks up `[[enumerate-is-not-resolve]]` — the option source the disposition
+> will consume — plus one small prerequisite: **the battery must record `outcome` and `candidates`
+> per slot.** Without it `H06` and `E05` are both `got: {}` in the run file and the disposition's
+> pre-registered assertion cannot be checked by any test.
+
 ## ⛔ ACCEPTANCE ITEM ADDED 2026-08-29 — RESOLUTION MUST BE THREE-VALUED
 
 Added by the elicitation lane (`[[elicitation-ask-disposition]]`) as an **acceptance item, not a
