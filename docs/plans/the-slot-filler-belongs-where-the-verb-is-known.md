@@ -107,3 +107,54 @@ model join is the only one left, and it is the only one that needed a model.
 3. Two-pass `/route_intent`, called again after routing with the verb — smallest diff,
    but it makes an endpoint documented as *"stateless and side-effect-free… the gateway can
    call this on every request"* mean two different things depending on when it is called.
+
+---
+
+## BUILT 2026-08-29 — and one deviation from this plan, recorded
+
+`POST /fill_slots` on Engine O, called by `execute_subtask` immediately before the acceptance
+guard. Deployed: engine-o, dagster-user-code.
+
+**THE DEVIATION: not TypeBuilder.** This plan called for a per-verb dynamic output class.
+baml-py 0.219's `ClassBuilder` exposes `property` / `remove_property` (only runtime-created
+classes get `add_property`), and **no `@@dynamic` CLASS exists in this repo to pattern-match
+against — all five are enums.** The deciding argument was not the API friction: the
+constraint a dynamic class would buy **already exists downstream and is proven**.
+`iagent_pure.slot_acceptance` validates the model's output against the same declarations,
+refusing undeclared names, values outside a declared enum, wrong shapes, and any value for a
+route-supplied slot. Two enforcement points would be one more registry to keep in agreement.
+
+The properties this plan actually wanted are all preserved: the model is offered **the verb's
+own vocabulary** read out of its `Literal`, and `handle`/`ceremony` slots are **never shown to
+it**. The upgrade path — declare `class FilledSlots { @@dynamic }` and build per-verb
+properties — is recorded in `contracts.baml` if the model proves sloppy.
+
+### Measured live, expectations written down BEFORE the reads — 7 of 7
+
+| case | expected | got |
+|---|---|---|
+| "where is funding short **by initiative**" | `{"group_by": "initiative"}` | ✅ |
+| control: "**by organization**" | `{"group_by": "org"}` | ✅ |
+| "which sites exceed the threshold **in FY26-Q4**" | `{"window": ["FY26-Q4"]}` | ✅ **a list, not a bare string** |
+| "the plan **broken out by initiative**" | `{"group_by": "initiative"}` | ✅ |
+| discriminator: "**by capability**" | `{"group_by": "capability"}` | ✅ |
+| **NEGATIVE** — "where is funding short" | `{}` | ✅ **invented nothing** |
+| **BOUNDARY** — a question naming the `ops` handle | `{}` | ✅ |
+
+The last two carry the most weight. A slot-filler that invents a plausible value when the
+speaker named none is *worse* than no filler at all — it answers a question nobody asked, with
+confidence. And the boundary case was phrased to name a route-supplied slot on purpose.
+
+**Row 2 of the acceptance table extracts correctly** — `{"as_of": "FY26-Q4"}`, reasoning *"the
+phrase 'as of FY26-Q4' directly specifies the as_of parameter"* — which **confirms its strict
+xfail is purely the downstream fiscal→date translation gap**, exactly as pre-registered. The
+extraction was never the problem there.
+
+**Supervisor → Engine O verified over service DNS** from inside the dagster-user-code pod:
+`{"group_by": "initiative"}`, confidence 0.98.
+
+### What is NOT proven
+
+A full user question travelling gateway → supervisor → engine-p → rendered card. Every link is
+proven individually and the seam between them is verified live, but the whole path end to end
+in one run has not been exercised. That is the demo, and it is the next thing to watch.
