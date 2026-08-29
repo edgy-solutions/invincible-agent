@@ -2998,14 +2998,19 @@ RETURN DISTINCT
     coalesce(r.requires_human_approval, false) AS requires_human_approval,
     r.arity                       AS arity,
     r.required_args               AS required_args,
-    -- WHAT THE VERB TAKES. A JSON STRING (a Neo4j property cannot hold a list of maps),
-    -- decoded by the supervisor via iagent_pure.slot_acceptance.decode_declarations.
-    --
-    -- THE FIFTH ENUMERATION IN THIS CHAIN, and every earlier one dropped a key in
-    -- silence: the doc-tools allowlist (retired), the registrar's rel_props builder,
-    -- the registration manifest, the DataHub custom props, and now this RETURN. A
-    -- property that exists on the relationship still reaches nobody unless it is named
-    -- HERE, and the failure looks exactly like "the verb declared nothing".
+    // WHAT THE VERB TAKES. A JSON STRING (a Neo4j property cannot hold a list of maps),
+    // decoded by the supervisor via iagent_pure.slot_acceptance.decode_declarations.
+    //
+    // COMMENT SYNTAX IS `//`, NOT `--`. The first version of this block used SQL-style
+    // `--`; Neo4j rejected the ENTIRE query with a SyntaxError and /find_compatible_verbs
+    // returned 500 — routing down, from a comment. Verified on the live graph:
+    // `RETURN 1 -- c` raises CypherSyntaxError, `RETURN 1 // c` returns normally.
+    //
+    // THE FIFTH ENUMERATION IN THIS CHAIN, and every earlier one dropped a key in
+    // silence: the doc-tools allowlist (retired), the registrar's rel_props builder,
+    // the registration manifest, the DataHub custom props, and now this RETURN. A
+    // property that exists on the relationship still reaches nobody unless it is named
+    // HERE, and the failure looks exactly like "the verb declared nothing".
     coalesce(r.slots, '[]')       AS slots,
     length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops
 ORDER BY hops ASC, verb_iri ASC

@@ -181,3 +181,36 @@ def test_the_response_model_default_is_the_dark_state():
     cv = CompatibleVerb(verb_iri="mesh:x", verb_local="x", input_uri="a", output_uri="b")
     assert cv.slots == "[]"
     assert accept_slots({"group_by": "initiative"}, cv.slots).params == {}
+
+
+def test_no_cypher_literal_uses_SQL_COMMENT_SYNTAX():
+    """A COMMENT TOOK ROUTING DOWN, so the comment style is now asserted.
+
+    Cypher's line comment is `//`. `--` is SQL. A `--` line inside a Cypher literal makes
+    Neo4j reject the ENTIRE query with a SyntaxError, and the first version of the slots
+    RETURN did exactly that: `/find_compatible_verbs` answered 500 for every caller until
+    it was fixed. Verified against the live graph — `RETURN 1 -- c` raises
+    CypherSyntaxError, `RETURN 1 // c` returns normally.
+
+    Nothing in Python's syntax objects to it, no test covered it, and the endpoint's own
+    error log showed only the 500. Scanned across the Cypher-bearing modules rather than
+    the one that broke, because the next one will be somewhere else."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    offenders = []
+    for rel in ("agent_fleet/ontology_service/main.py",
+                "agent_fleet/mesh_registrar/v2_substrate.py",
+                "src/iagent/defs/dynamic_supervisor.py"):
+        text = (root / rel).read_text(encoding="utf-8")
+        for lit in re.findall(r'"""(.*?)"""', text, re.S):
+            if not re.search(r"\b(MATCH|MERGE|RETURN|CALL)\b", lit):
+                continue  # a docstring, not a query
+            for line in lit.split("\n"):
+                if line.lstrip().startswith("--"):
+                    offenders.append(f"{rel}: {line.strip()[:60]}")
+    assert not offenders, (
+        "SQL-style `--` comment inside a Cypher literal; Neo4j rejects the whole query:\n  "
+        + "\n  ".join(offenders)
+    )
