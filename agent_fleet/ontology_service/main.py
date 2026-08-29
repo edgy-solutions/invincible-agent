@@ -2938,6 +2938,18 @@ class CompatibleVerb(BaseModel):
     cost_class: str | None = None
     requires_human_approval: bool = False
     hops: int = 0
+    # WHAT THE VERB TAKES — the same family as `arity` and `required_args` below: a
+    # DECLARED fact asserted at registration and never inferred. Carried as the JSON
+    # STRING the graph holds, because a Neo4j property cannot hold a list of maps;
+    # decoded by the supervisor through slot_acceptance.decode_declarations.
+    #
+    # DEFAULTED so an unregistered or older verb is unchanged, and "[]" is what the
+    # guard reads as declare-nothing-accept-nothing.
+    #
+    # This model is the SIXTH place in the chain that enumerates properties by name, and
+    # every earlier one dropped the key in silence when it was not listed. A field
+    # missing here is indistinguishable from a verb that declares nothing.
+    slots: str = "[]"
     # ARITY (query-shape eligibility, ADR-0008 follow-up). A DECLARED fact
     # about the verb's input cardinality: "set" (operates on the collection
     # — enumerateCatalog), "single" (operates on one asset — describeAsset),
@@ -2986,6 +2998,15 @@ RETURN DISTINCT
     coalesce(r.requires_human_approval, false) AS requires_human_approval,
     r.arity                       AS arity,
     r.required_args               AS required_args,
+    -- WHAT THE VERB TAKES. A JSON STRING (a Neo4j property cannot hold a list of maps),
+    -- decoded by the supervisor via iagent_pure.slot_acceptance.decode_declarations.
+    --
+    -- THE FIFTH ENUMERATION IN THIS CHAIN, and every earlier one dropped a key in
+    -- silence: the doc-tools allowlist (retired), the registrar's rel_props builder,
+    -- the registration manifest, the DataHub custom props, and now this RETURN. A
+    -- property that exists on the relationship still reaches nobody unless it is named
+    -- HERE, and the failure looks exactly like "the verb declared nothing".
+    coalesce(r.slots, '[]')       AS slots,
     length(shortestPath((start)-[:subClassOf*0..$MAXHOPS$]->(scope))) AS hops
 ORDER BY hops ASC, verb_iri ASC
 """
@@ -3065,6 +3086,10 @@ async def find_compatible_verbs(
             requires_human_approval=bool(row.get("requires_human_approval", False)),
             arity=row.get("arity"),
             required_args=verb_required_args,
+            # THE SEVENTH AND LAST ENUMERATION on this key's journey. The Cypher must
+            # RETURN it, the model must declare it, and this constructor must pass it —
+            # miss any one and the verb reports declaring nothing, with no error anywhere.
+            slots=str(row.get("slots") or "[]"),
             hops=int(row.get("hops") or 0),
         ))
 

@@ -129,3 +129,55 @@ def test_the_retired_path_is_not_what_anyone_should_be_pinning():
         "the live builder no longer records that it MIRRORS the retired doc-tools "
         "allowlist — that note is the only thing connecting the two for a reader"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SEVEN ENUMERATIONS — every hop that names properties one at a time
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_every_hop_that_enumerates_properties_names_slots():
+    """A property reaches the router only if EVERY hop that lists field names lists this
+    one, and a miss at any hop is indistinguishable from a verb that declares nothing.
+
+    Seven hops were found by tracing the key, and four of them were discovered only after
+    an earlier one had already been declared "the gate":
+
+        1. doc-tools `_build_relationship_properties`      RETIRED, fixed anyway
+        2. `RegistrationManifest`                          the engine->gateway body
+        3. `_build_rel_props_for_saga`                     onto the Neo4j relationship
+        4. the DataHub audit custom_props                  parity for the audit record
+        5. `_FIND_COMPAT_VERBS_CYPHER` RETURN              the compat walk
+        6. `CompatibleVerb`                                the response model
+        7. the `CompatibleVerb(...)` constructor           row -> model
+
+    Structural by necessity — 5-7 need a live Neo4j to exercise end to end, and the graph
+    read that DID exercise them is a probe, not a test. What this pins is the property no
+    unit test can: that no hop silently omits the key."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+
+    eo = (root / "agent_fleet/ontology_service/main.py").read_text(encoding="utf-8")
+    assert "AS slots" in eo, "hop 5: the compat-walk Cypher does not RETURN slots"
+    assert "slots: str" in eo, "hop 6: CompatibleVerb does not declare slots"
+    assert "slots=str(row.get(" in eo, "hop 7: the CompatibleVerb constructor drops slots"
+
+    reg = (root / "agent_fleet/mesh_registrar/main.py").read_text(encoding="utf-8")
+    assert "slots: List[dict]" in reg, "hop 2: RegistrationManifest does not accept slots"
+    assert '"slots": json.dumps' in reg, "hop 3: rel_props does not carry slots to Neo4j"
+    assert '"mesh_slots":' in reg, "hop 4: the DataHub audit record omits slots"
+
+    mr = (root / "agent_fleet/utils/mesh_registration.py").read_text(encoding="utf-8")
+    assert "slots=slots" in mr, "the engine does not forward slots to the LIVE gateway"
+
+
+def test_the_response_model_default_is_the_dark_state():
+    """An older engine that registers without declaring must produce `"[]"`, which the
+    guard reads as declare-nothing-accept-nothing — never `None`, which would crash the
+    decode, and never a missing attribute, which would crash the read."""
+    # Engine O imports rdflib at module scope; present in its image, not every dev env.
+    pytest.importorskip("rdflib")
+    from agent_fleet.ontology_service.main import CompatibleVerb
+
+    cv = CompatibleVerb(verb_iri="mesh:x", verb_local="x", input_uri="a", output_uri="b")
+    assert cv.slots == "[]"
+    assert accept_slots({"group_by": "initiative"}, cv.slots).params == {}
