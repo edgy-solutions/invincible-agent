@@ -1151,3 +1151,99 @@ function DesignUI(raw_data: string, persona: string) -> DashboardUI {
     {{ ctx.output_format }}
   "#
 }
+
+// =============================================================================
+// Slot filling — what the SPEAKER named, per the routed verb's own declarations
+// =============================================================================
+//
+// The last join of the slot pipeline (see, in invincible-agent,
+// docs/plans/slots-are-extracted-then-dropped-at-dispatch.md). Routing decides WHICH
+// verb; this decides what that verb was asked to be called WITH. Before it existed,
+// every verb ran on its signature defaults and a question saying "by initiative"
+// came back with organisations, rendering cleanly and with clean provenance.
+//
+// WHY THIS IS SEPARATE FROM ExtractIntent AND FROM RouteIntent.
+//   * ExtractIntent decides MODE (conversational vs one-shot) and pulls entity refs.
+//     That is disposition work the funnel needs BEFORE any verb exists.
+//   * RouteIntent (planning_qa.baml) returns 18 hand-maintained typed intent classes
+//     and RE-ROUTES as a side effect. Adopting it would put a second router in the
+//     pipeline arguing with the graph walk that ADR-0009 Step F'.6 made
+//     authoritative, and would add a fifth hand-maintained registry beside
+//     signatures, mesh_slots, DERIVED_BINDINGS and KNOWN_ARCHETYPES.
+//   * This function is called AFTER routing, with the verb known, and does exactly
+//     one thing. One function per claim.
+//
+// WHY A JSON STRING RATHER THAN A DYNAMIC CLASS. The plan called for TypeBuilder to
+// build a per-verb output class. baml-py 0.219's ClassBuilder exposes `property` /
+// `remove_property` (runtime-created classes get `add_property`), and no @@dynamic
+// CLASS exists in this repo to pattern-match against — all five are enums. The
+// deciding argument is that the constraint a dynamic class would buy ALREADY EXISTS
+// downstream and is proven: iagent_pure.slot_acceptance validates the output against
+// the same declarations, refusing undeclared names, values outside a declared enum,
+// wrong shapes, and any value for a route-supplied slot. Two enforcement points would
+// be one more registry to keep in agreement.
+//
+// Upgrade path if the model proves sloppy: declare `class FilledSlots { @@dynamic }`
+// and build per-verb properties. The guard stays either way — a declaration can be
+// wrong, and `_type_of` already was once.
+//
+// SLOTS THE ROUTE SUPPLIES ARE NEVER SHOWN HERE. The caller filters `handle` and
+// `ceremony` kinds out of the spec before this runs, so the model cannot name
+// `baseline_state` or `ops`. The guard refuses them anyway; not offering them means
+// they cannot be offered back.
+
+class FilledSlots {
+  slots_json string @description(#"
+    A JSON OBJECT mapping parameter name to the value the user actually said.
+    Example: {"group_by": "initiative", "window": ["FY26-Q4"]}
+    Use {} when the question names no parameter — that is the COMMON case and an
+    honest one. NEVER invent a value to fill a slot the speaker did not mention.
+  "#)
+  confidence float @description(#"
+    0.0-1.0, how confident you are that these values are what the speaker asked for.
+  "#)
+  reasoning string @description(#"
+    One sentence: which words in the question produced which values.
+  "#)
+}
+
+function FillVerbSlots(
+  question: string,
+  verb: string,
+  slot_spec: string,
+) -> FilledSlots {
+  // Same client rationale as ClassifyPredicate: MainAgent falls back to Ollama, so
+  // this works on sandbox without an OpenRouter/OpenAI key.
+  client MainAgent
+  prompt #"
+    You extract PARAMETERS from a question. The routing layer has already decided
+    which operation answers it; you decide what that operation was asked to be
+    called WITH.
+
+    THE QUESTION:
+    "{{ question }}"
+
+    THE OPERATION ALREADY CHOSEN: {{ verb }}
+
+    THE PARAMETERS IT ACCEPTS — this is the complete and only permitted set:
+    {{ slot_spec }}
+
+    RULES, in order of importance:
+
+    1. ONLY name parameters from the list above. A parameter not on that list is
+       dropped by the caller and logged as an error against you.
+    2. ONLY fill a parameter the speaker ACTUALLY NAMED. Omitting a parameter means
+       "the speaker did not say", which is correct and safe — the operation has its
+       own default. Guessing is not safe: it silently answers a question nobody
+       asked. An empty object is a good answer to a question with no parameters.
+    3. If a parameter lists permitted values, use one of those values EXACTLY as
+       written. Do not paraphrase, pluralise, or re-case them.
+    4. Respect the stated type. A parameter typed `list[str]` takes a JSON ARRAY
+       even when the speaker named only one thing: ["FY26-Q4"], never "FY26-Q4".
+    5. Say what the speaker meant, not what you would ask. "broken out by
+       initiative" and "per initiative" both mean group_by=initiative; "which sites
+       are overloaded" names no parameter at all.
+
+    {{ ctx.output_format }}
+  "#
+}

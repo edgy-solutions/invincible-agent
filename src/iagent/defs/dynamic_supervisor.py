@@ -1421,6 +1421,65 @@ from iagent_pure.predicate_routing import (
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.slot_acceptance import accept_slots, decode_declarations
 
+#: One model call's budget. Short on purpose: a slot REFINES a question that will still be
+#: answered without it, so a slow extractor must cost the user a default, never a timeout.
+_FILL_SLOTS_TIMEOUT_S = float(os.getenv("FILL_SLOTS_TIMEOUT_S", "20"))
+
+
+def _fill_slots_from_query(
+    context,
+    *,
+    query: str,
+    verb_iri: str,
+    declarations,
+) -> Dict[str, Any]:
+    """Ask Engine O which parameters the speaker named, for the verb already routed.
+
+    HONEST-EMPTY ON EVERY FAILURE — unreachable, slow, non-200, or a malformed body all
+    return `{}`, which is exactly the pre-slot behaviour: the verb runs on its signature
+    defaults. This call must not be able to make routing worse than it was before slot
+    filling existed, so every failure degrades to the old answer instead of raising.
+
+    Deliberately NOT retried. A slot is a refinement of a question that will still be
+    answered without it; spending a second model call and another few seconds of a user's
+    wait to maybe refine it is the wrong trade. The generalist fallback next door retries
+    because its failure means NO answer at all.
+    """
+    try:
+        resp = requests.post(
+            f"{ONTOLOGY_SVC_URL}/fill_slots",
+            json={"query": query, "verb_iri": verb_iri, "declarations": declarations},
+            timeout=_FILL_SLOTS_TIMEOUT_S,
+        )
+        if resp.status_code != 200:
+            context.log.warning(
+                "fill_slots non-200 verb_iri=%s status=%s — running on defaults",
+                verb_iri, resp.status_code,
+            )
+            return {}
+        body = resp.json() or {}
+    except Exception as exc:  # noqa: BLE001
+        context.log.warning(
+            "fill_slots unavailable verb_iri=%s (%s) — running on defaults", verb_iri, exc
+        )
+        return {}
+
+    slots = body.get("slots") or {}
+    if not isinstance(slots, dict):
+        context.log.warning("fill_slots returned a non-object for %s", verb_iri)
+        return {}
+
+    # LOUD BOTH WAYS. The finding this closes was a parameter vanishing in silence, so
+    # what was extracted is logged as prominently as what was refused.
+    if slots:
+        context.log.info(
+            "slots_filled verb_iri=%s %s (confidence=%s) %s",
+            verb_iri, slots, body.get("confidence"), body.get("reasoning", "")[:160],
+        )
+    for r in body.get("refused") or []:
+        context.log.warning("slot_refused_at_extraction verb_iri=%s %s", verb_iri, r)
+    return slots
+
 
 def _log_subtask_sources_asset(
     context,
@@ -1706,7 +1765,24 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # line is what would otherwise let a spoken value land on a ROUTE-SUPPLIED argument
     # (`ops`, `baseline_state`) - which is not parameterising a question but supplying the
     # evidence the answer is computed from. See iagent_pure/slot_acceptance.py.
-    accepted = accept_slots(config.slots, predicate.get("slots"))
+    # THE SLOT-FILLER, called HERE because this is the first moment the phrase and the
+    # verb are both known. /route_intent receives only the query (ADR-0009 Step F'.6
+    # removed candidate_verb on purpose), so there is nothing to fill against at that hop.
+    # See docs/plans/the-slot-filler-belongs-where-the-verb-is-known.md.
+    #
+    # `config.slots` still wins when present: a caller that supplies slots explicitly is
+    # not overridden by a model. Extraction fills the gap, it does not take the wheel.
+    spoken = dict(config.slots or {})
+    declared = predicate.get("slots")
+    if not spoken and declared:
+        spoken = _fill_slots_from_query(
+            context,
+            query=sub_query,
+            verb_iri=predicate.get("verb_iri") or "",
+            declarations=declared,
+        )
+
+    accepted = accept_slots(spoken, declared)
     for refusal in accepted.refusals:
         # LOUD, per the ruling. A dropped slot is a question the system did not answer as
         # asked, and the whole finding is that this used to happen in total silence.

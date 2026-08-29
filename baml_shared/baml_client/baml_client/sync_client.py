@@ -192,6 +192,20 @@ class BamlSyncClient:
                 "user_query": user_query,"known_platforms": known_platforms,
             })
             return typing.cast(types.PlatformScope, __result__.cast_to(types, types, stream_types, False, __runtime__))
+    def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+        baml_options: BamlCallOptions = {},
+    ) -> types.FilledSlots:
+        # Check if on_tick is provided
+        if 'on_tick' in baml_options:
+            __stream__ = self.stream.FillVerbSlots(question=question,verb=verb,slot_spec=slot_spec,
+                baml_options=baml_options)
+            return __stream__.get_final_response()
+        else:
+            # Original non-streaming code
+            __result__ = self.__options.merge_options(baml_options).call_function_sync(function_name="FillVerbSlots", args={
+                "question": question,"verb": verb,"slot_spec": slot_spec,
+            })
+            return typing.cast(types.FilledSlots, __result__.cast_to(types, types, stream_types, False, __runtime__))
     def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> types.GraphExpertResponse:
@@ -481,6 +495,18 @@ class BamlStreamClient:
           lambda x: typing.cast(types.PlatformScope, x.cast_to(types, types, stream_types, False, __runtime__)),
           __ctx__,
         )
+    def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.BamlSyncStream[stream_types.FilledSlots, types.FilledSlots]:
+        __ctx__, __result__ = self.__options.merge_options(baml_options).create_sync_stream(function_name="FillVerbSlots", args={
+            "question": question,"verb": verb,"slot_spec": slot_spec,
+        })
+        return baml_py.BamlSyncStream[stream_types.FilledSlots, types.FilledSlots](
+          __result__,
+          lambda x: typing.cast(stream_types.FilledSlots, x.cast_to(types, types, stream_types, True, __runtime__)),
+          lambda x: typing.cast(types.FilledSlots, x.cast_to(types, types, stream_types, False, __runtime__)),
+          __ctx__,
+        )
     def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.BamlSyncStream[stream_types.GraphExpertResponse, types.GraphExpertResponse]:
@@ -706,6 +732,13 @@ class BamlHttpRequestClient:
             "user_query": user_query,"known_platforms": known_platforms,
         }, mode="request")
         return __result__
+    def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FillVerbSlots", args={
+            "question": question,"verb": verb,"slot_spec": slot_spec,
+        }, mode="request")
+        return __result__
     def FormatGraphResponse(self, raw_text: str,persona: str,
         baml_options: BamlCallOptions = {},
     ) -> baml_py.baml_py.HTTPRequest:
@@ -859,6 +892,13 @@ class BamlHttpStreamRequestClient:
     ) -> baml_py.baml_py.HTTPRequest:
         __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="ExtractPlatformScope", args={
             "user_query": user_query,"known_platforms": known_platforms,
+        }, mode="stream")
+        return __result__
+    def FillVerbSlots(self, question: str,verb: str,slot_spec: str,
+        baml_options: BamlCallOptions = {},
+    ) -> baml_py.baml_py.HTTPRequest:
+        __result__ = self.__options.merge_options(baml_options).create_http_request_sync(function_name="FillVerbSlots", args={
+            "question": question,"verb": verb,"slot_spec": slot_spec,
         }, mode="stream")
         return __result__
     def FormatGraphResponse(self, raw_text: str,persona: str,

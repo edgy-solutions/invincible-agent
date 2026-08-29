@@ -123,7 +123,7 @@ class SeverityLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 # #########################################################################
-# Generated classes (64)
+# Generated classes (65)
 # #########################################################################
 
 class AgentResponse(BaseModel):
@@ -248,6 +248,11 @@ class ExtractedIntent(BaseModel):
     entity_refs: typing.List[str] = Field(description='Concrete entities, parts, systems, datasets the user mentioned (e.g., \'Auxiliary Fuel Pump\', \'C-130 hydraulic system\'). Empty if the query has no specific referents.')
     confidence: float = Field(description='Confidence in the mode choice.')
     reasoning: str = Field(description='Why this mode — for observability and debugging.')
+
+class FilledSlots(BaseModel):
+    slots_json: str = Field(description='A JSON OBJECT mapping parameter name to the value the user actually said.\nExample: {"group_by": "initiative", "window": ["FY26-Q4"]}\nUse {} when the question names no parameter — that is the COMMON case and an\nhonest one. NEVER invent a value to fill a slot the speaker did not mention.')
+    confidence: float = Field(description='0.0-1.0, how confident you are that these values are what the speaker asked for.')
+    reasoning: str = Field(description='One sentence: which words in the question produced which values.')
 
 class FinalSynthesis(BaseModel):
     markdown_report: str

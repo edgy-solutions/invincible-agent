@@ -2381,6 +2381,186 @@ async def plan_query(request: PlanRequest) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# POST /fill_slots — what the SPEAKER named, once the verb is known
+# ---------------------------------------------------------------------------
+#
+# THE LAST JOIN of the slot pipeline. Routing decides WHICH verb; this decides what
+# that verb was asked to be called WITH. Before it existed every verb ran on its
+# signature defaults, and the seeded question "where is funding short by initiative"
+# returned eleven ORGANISATIONS — rendering cleanly, with clean provenance, and with no
+# surface on which a reader could notice.
+# See docs/plans/slots-are-extracted-then-dropped-at-dispatch.md.
+#
+# WHY HERE AND NOT IN /route_intent, which is where the original ruling put it: that
+# endpoint receives ONLY the query. ADR-0009 Step F'.6 deliberately removed
+# `candidate_verb` — an LLM-extracted verb is a lossy intermediate when
+# /search_predicates runs hybrid over the raw query — so at /route_intent time there is
+# no verb, no declarations, and nothing to fill against. The supervisor calls this AFTER
+# it has resolved a predicate, which is the first moment the phrase and the verb are
+# both in hand. See docs/plans/the-slot-filler-belongs-where-the-verb-is-known.md.
+
+
+class FillSlotsRequest(BaseModel):
+    query: str
+    verb_iri: str
+    #: The verb's own declarations, as `mesh_slots` carries them: either the JSON string
+    #: the graph holds or an already-decoded list. The CALLER supplies them rather than
+    #: this service re-reading the graph, because the supervisor already holds the
+    #: predicate it resolved and a second read could disagree with the first.
+    #: `object`, not `Any`: this module uses `from __future__ import annotations` and
+    #: imports nothing from `typing`, because Pydantic v2 cannot resolve those names as
+    #: forward refs — the same reason the model further down documents using `str = ""`
+    #: over `Optional[str]`. The first draft used `Any` and every request raised
+    #: PydanticUserError at model-build time. Builtin generics (`list[str]`, `dict`) are
+    #: fine; names imported from `typing` are not.
+    declarations: object = None
+
+
+class FillSlotsResponse(BaseModel):
+    #: Parameter name -> value. `{}` is the common and honest case.
+    slots: dict = {}
+    confidence: float = 0.0
+    reasoning: str = ""
+    #: Names the model offered that were NOT accepted, with the reason. Surfaced rather
+    #: than swallowed: a dropped slot is a question the system did not answer as asked,
+    #: and the whole finding this endpoint closes was about that happening in silence.
+    refused: list[str] = []
+
+
+#: Kinds the ROUTE supplies. Never shown to the model — see `_slot_spec`.
+_ROUTE_SUPPLIED_KINDS = frozenset({"handle", "ceremony"})
+
+#: This module has no module-level `logger`; the first draft of /fill_slots used one and
+#: would have raised NameError inside its own failure branches — the ones that exist so a
+#: bad model reply degrades to defaults rather than 500-ing the route. Caught by AST scope
+#: check, not by a test, because no test enters those branches.
+_slots_logger = logging.getLogger("iagent.slots")
+
+
+def _decode_declarations(raw: Any) -> list[dict]:
+    """Mirror of iagent_pure.slot_acceptance.decode_declarations.
+
+    Mirrored rather than imported because this service does not ship `iagent_pure`, and
+    it is stdlib-only by that package's rule anyway. `list()` on the JSON string the
+    graph holds would yield one entry PER CHARACTER — the same container-traded-for-
+    elements defect that produced "422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4".
+    """
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", "replace")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [d for d in raw if isinstance(d, dict) and d.get("name")]
+
+
+def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
+    """Render the SPOKEN slots as a prompt spec, and return the lookup for validation.
+
+    ROUTE-SUPPLIED SLOTS ARE NOT SHOWN. `baseline_state`, `ops`, `scenario_name` and
+    friends are resolved by the dispatcher from the store; a caller who can name them is
+    not parameterising a question, they are supplying the evidence the answer is computed
+    from. The guard downstream refuses them regardless — not offering them means they
+    cannot be offered back, which is defence in depth rather than a substitute for it.
+    """
+    spoken = [d for d in declarations if d.get("kind") not in _ROUTE_SUPPLIED_KINDS]
+    lines = []
+    for d in spoken:
+        bits = [f"- {d['name']} ({d.get('type') or 'str'})"]
+        if d.get("required"):
+            bits.append("REQUIRED")
+        if d.get("values"):
+            # The verb's OWN vocabulary, read out of its signature's Literal — so the
+            # model is choosing from what the code accepts, not from what it can imagine.
+            bits.append("one of: " + ", ".join(str(v) for v in d["values"]))
+        if d.get("default") is not None:
+            bits.append(f"defaults to {d['default']!r} if the speaker says nothing")
+        lines.append("  ".join(bits))
+    return ("\n".join(lines) or "(this operation takes no parameters)"), {
+        d["name"]: d for d in spoken
+    }
+
+
+@app.post("/fill_slots", response_model=FillSlotsResponse)
+async def fill_slots(request: FillSlotsRequest) -> FillSlotsResponse:
+    """Extract the parameters the speaker named, for an already-routed verb.
+
+    HONEST-EMPTY ON EVERY FAILURE. No declarations, an unparseable model reply, or a
+    model error all return `{}` — which is exactly the pre-slot behaviour (the verb runs
+    on its defaults). This endpoint must never be able to make routing worse than it was
+    before it existed, so it degrades to the old behaviour rather than to an exception.
+    """
+    declarations = _decode_declarations(request.declarations)
+    spec, by_name = _slot_spec(declarations)
+    if not by_name:
+        # Nothing spoken is fillable — every declared slot is route-supplied, or the verb
+        # was never projected. Do not spend a model call to be told nothing.
+        return FillSlotsResponse(reasoning="verb declares no spoken parameters")
+
+    try:
+        filled = await b.FillVerbSlots(
+            question=request.query,
+            verb=request.verb_iri,
+            slot_spec=spec,
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade to defaults, never 500 the route
+        _slots_logger.warning("fill_slots: model call failed for %s: %s", request.verb_iri, exc)
+        return FillSlotsResponse(reasoning=f"slot extraction unavailable: {exc}")
+
+    try:
+        raw = json.loads(filled.slots_json or "{}")
+    except (ValueError, TypeError):
+        _slots_logger.warning(
+            "fill_slots: %s returned unparseable slots_json %r",
+            request.verb_iri, (filled.slots_json or "")[:200],
+        )
+        return FillSlotsResponse(confidence=filled.confidence,
+                                 reasoning="model returned unparseable slots")
+    if not isinstance(raw, dict):
+        return FillSlotsResponse(confidence=filled.confidence,
+                                 reasoning="model returned a non-object")
+
+    # ACCEPTANCE, here as well as at the supervisor. Not redundant: this is the layer
+    # that can say WHICH name the model invented, and saying so is the point — the
+    # finding this endpoint closes was a parameter vanishing without a word anywhere.
+    accepted: dict[str, Any] = {}
+    refused: list[str] = []
+    for name, value in raw.items():
+        decl = by_name.get(name)
+        if decl is None:
+            refused.append(f"{name} (not declared by {request.verb_iri})")
+            continue
+        values = decl.get("values")
+        if values:
+            offered = value if isinstance(value, list) else [value]
+            if any(v not in values for v in offered):
+                refused.append(f"{name}={value!r} (not one of {values})")
+                continue
+        declared_type = str(decl.get("type") or "")
+        if declared_type.startswith(("list[", "set[", "tuple[")) and isinstance(value, str):
+            # Refused, not coerced: wrapping as [value] is a guess, and the guess is
+            # wrong the moment a speaker names two periods.
+            refused.append(f"{name}={value!r} (needs {declared_type}, got a bare string)")
+            continue
+        accepted[name] = value
+
+    if refused:
+        _slots_logger.warning("fill_slots: %s refused %s", request.verb_iri, "; ".join(refused))
+
+    return FillSlotsResponse(
+        slots=accepted,
+        confidence=filled.confidence,
+        reasoning=filled.reasoning,
+        refused=refused,
+    )
+
+
+# ---------------------------------------------------------------------------
 # POST /route_and_plan
 # ---------------------------------------------------------------------------
 @app.post("/route_intent", response_model=RouteIntentResponse)

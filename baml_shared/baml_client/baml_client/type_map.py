@@ -79,6 +79,9 @@ type_map = {
     "types.ExtractedIntent": types.ExtractedIntent,
     "stream_types.ExtractedIntent": stream_types.ExtractedIntent,
 
+    "types.FilledSlots": types.FilledSlots,
+    "stream_types.FilledSlots": stream_types.FilledSlots,
+
     "types.FinalSynthesis": types.FinalSynthesis,
     "stream_types.FinalSynthesis": stream_types.FinalSynthesis,
 
