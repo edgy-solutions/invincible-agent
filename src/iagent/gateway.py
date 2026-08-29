@@ -51,7 +51,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
-from .identity_vault import VAULT, RedemptionOutcome, vault_ttl_seconds
+from .identity_vault import (
+    VAULT,
+    RedemptionOutcome,
+    vault_ttl_seconds,
+    logger as _vault_audit_log,   # the ONE logger whose level the vault owns
+)
 from .answer_artifact_writer import (
     AnswerArtifactBundle,
     DurabilityStatus,
@@ -1696,7 +1701,7 @@ async def redeem_caller_identity(
         # INVARIANT 6 — audited, including the refusals. An unlogged dispensing surface is
         # worse than the exchange it replaced; a refused redemption is the MOST interesting
         # line this endpoint can write, so it is logged at error.
-        logger.error(
+        _vault_audit_log.error(
             "identity_vault: REFUSED redemption for run_id=%s — caller %r is not the "
             "supervisor identity (%r). A second service redeeming a reference is the vault "
             "leaking sideways.",
@@ -1719,7 +1724,7 @@ async def redeem_caller_identity(
     # INVARIANT 6 — one line per redemption: run_id, subject, timestamp, outcome. The
     # timestamp is the log record's own. The vault's whole legitimacy is that the token's
     # journey is VISIBLE.
-    logger.info(
+    _vault_audit_log.info(
         "identity_vault: redemption run_id=%s caller=%s subject=%s outcome=%s",
         body.run_id, caller, result.subject or "-", result.outcome,
     )

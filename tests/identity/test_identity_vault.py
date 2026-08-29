@@ -327,3 +327,53 @@ def test_no_audit_line_contains_the_credential(caplog):
     assert TOKEN not in caplog.text
     # Not even a prefix: a truncated JWT still leaks the header and often the payload.
     assert TOKEN[:24] not in caplog.text
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# INVARIANT 6, THE DEPLOYMENT HALF — the line must ARRIVE, not merely be written
+# ══════════════════════════════════════════════════════════════════════════════════
+
+def test_the_audit_line_survives_a_root_logger_at_WARNING():
+    """THE REGRESSION THIS PINS, measured in the cluster on 2026-08-28.
+
+    The deployed cortex-bff emitted ZERO application log lines: something calls
+    `logging.basicConfig()` during boot, installing a root handler at its DEFAULT LEVEL OF
+    WARNING, so every `logger.info` was dropped while uvicorn's access log kept flowing. The
+    vault's audit line was written, unit-tested, and proven by caplog — and reached nobody.
+
+    Every other test in this file asserts the line is WRITTEN. None of them could have caught
+    this, because caplog installs its own handler and forces its own level, which is exactly
+    the condition production did not have. **A test that configures the sink it is testing
+    cannot detect an unconfigured sink.**
+
+    So this one asserts on the arrival: a real handler, a root at WARNING, no caplog.
+    """
+    import io as _io
+    import logging as _logging
+
+    from src.iagent.identity_vault import logger as vault_logger
+
+    root = _logging.getLogger()
+    old_level, old_handlers = root.level, list(root.handlers)
+    sink = _io.StringIO()
+    handler = _logging.StreamHandler(sink)
+    try:
+        # Reproduce production exactly: a root handler, at WARNING.
+        root.handlers = [handler]
+        root.setLevel(_logging.WARNING)
+
+        v = IdentityVault(clock=_FakeClock())
+        v.stash("run-arrives", TOKEN, subject=ALICE)
+        v.redeem("run-arrives")
+        handler.flush()
+
+        out = sink.getvalue()
+        assert "run-arrives" in out, (
+            "the audit line did not ARRIVE with root at WARNING — this is the production "
+            "condition, and pin 6 is not satisfied by writing a line nobody receives"
+        )
+        assert TOKEN not in out
+    finally:
+        root.handlers = old_handlers
+        root.setLevel(old_level)
+        vault_logger.setLevel(_logging.INFO)

@@ -48,12 +48,40 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_the_audit_line_actually_ARRIVES(lg: logging.Logger) -> None:
+    """INVARIANT 6 IS NOT SATISFIED BY CALLING A LOGGER. It is satisfied by the line
+    ARRIVING somewhere a human can read it.
+
+    MEASURED IN THE CLUSTER, 2026-08-28, and it is why this function exists: the deployed
+    cortex-bff emitted ZERO application log lines. Something calls `logging.basicConfig()`
+    during boot, which installs a root handler at its default level of **WARNING**, so every
+    `logger.info` in the BFF was dropped while uvicorn's own access log kept flowing. The
+    vault's audit line was written, tested, proven by caplog — and would have reached nobody.
+    A dispensing surface whose audit is silent is precisely what pin 6 forbids, so the vault
+    owns its own level rather than inheriting whatever the process happens to be configured
+    with.
+
+    This is the same shape as the presentation agent's silent logger: a component that logs
+    correctly into a sink that was never wired. Test-green is not deployment-observable.
+    """
+    lg.setLevel(logging.INFO)          # beat an inherited WARNING
+    if lg.handlers or logging.getLogger().handlers:
+        return                          # a handler exists downstream; propagate to it
+    h = logging.StreamHandler(sys.stdout)
+    h.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    lg.addHandler(h)
+
+
+_ensure_the_audit_line_actually_ARRIVES(logger)
 
 __all__ = [
     "IdentityVault",
