@@ -264,3 +264,55 @@ The guard flips from fail-closed to enforcing on its own — no code change, bec
 transition IS the presence of declarations, and that is already tested from both sides. The
 remaining work is `[[the-slot-filler-belongs-where-the-verb-is-known]]`: one endpoint, and
 the feature's last unknown.
+
+### RESULT — the light is on (2026-08-29)
+
+**And the gate was never doc-tools.** The request was filed against
+`aitool_linker._build_relationship_properties`, which ADR-0006 §Addendum **retired on
+2026-06-13**; `agent_fleet/mesh_registrar` has been sole writer since. The live edges prove
+it — they carry `_tool_urn` / `_input_uri` / `_output_uri`, which only
+`v2_substrate.merge_neo4j_predicate_edge` sets, and their property set matches
+`_build_rel_props_for_saga` exactly, **including its omissions**.
+
+**SEVEN hops enumerate this key by name. Four were found only after an earlier one had been
+announced as "the single gate":**
+
+| # | hop | found |
+|---|---|---|
+| 1 | doc-tools `_build_relationship_properties` | **retired** — fixed anyway (manual re-sync path) |
+| 2 | `RegistrationManifest` | after (1) was called the gate |
+| 3 | `_build_rel_props_for_saga` | ← **the actual Neo4j write** |
+| 4 | DataHub audit `custom_props` | parity |
+| 5 | `_FIND_COMPAT_VERBS_CYPHER` RETURN | after (3) was called the gate |
+| 6 | `CompatibleVerb` model | after (5) |
+| 7 | the `CompatibleVerb(...)` constructor | after (6) |
+
+An enumeration that omits a key is **silent by construction**: no error, no warning, and the
+symptom is a verb that appears to declare nothing.
+
+**Verified by name against signatures, on the live graph** — five verbs, `0` disagreements:
+
+```
+plan_funding_gap      group_by:spoken-optional, window:spoken-optional
+plan_diff             baseline_state:handle
+plan_site_load        site_id:spoken-optional, window:spoken-optional
+plan_session_changes  ops:handle, scenario_name:handle
+plan_schedule         scope_initiative_id, site_id, group_by, color_by, touched_project_ids:handle
+```
+
+**And through Engine O's HTTP surface**: `/find_compatible_verbs` returns 200 with 7 of 10
+verbs carrying declarations, `planCostCurve` showing its `baseline_state:handle` and
+`planSessionChanges` both of its handles.
+
+**A comment took routing down on the way.** The slots RETURN was first written with SQL-style
+`--` comments inside the Cypher literal; Neo4j rejects the whole query, so
+`/find_compatible_verbs` returned **500 to every caller** until it was fixed. Python is happy
+(it is a string), no test executes the literal, and the endpoint logged only `500` with no
+traceback. The instrument that catches it — lift the real query from source, substitute
+`$MAXHOPS$`, run it against the graph — is now the standard check before deploying a Cypher
+change, and a test scans all Cypher-bearing literals for `--`.
+
+**Deployed:** doc-tools, mesh-registrar, engine-p, engine-o, dagster-user-code. The guard is
+now **enforcing rather than fail-closed**, and the only remaining unknown is the one that was
+always last: `[[the-slot-filler-belongs-where-the-verb-is-known]]` — does the filler fill as
+declared.
