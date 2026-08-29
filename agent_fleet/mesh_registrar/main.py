@@ -111,6 +111,11 @@ def _get_neo4j_driver():
 class RegistrationManifest(BaseModel):
     """The body engines POST to ``/v1/register``.
 
+    ADDING A FIELD HERE IS ONE OF SEVEN EDITS. See
+    docs/plans/a-registration-property-must-be-enumerated-seven-times.md — the manifest
+    accepting a value does not make it reach the router, and every hop that drops it does
+    so in silence.
+
     Mirrors the doc-tools sensor's `mlModel.customProperties` shape so the
     gateway can emit the DataHub MCP without the engine knowing DataHub
     exists.
@@ -907,6 +912,14 @@ def _build_rel_props_for_saga(
     *, manifest: RegistrationManifest, provider: str, tool_urn: str
 ) -> dict:
     """Build the property bag that lands on the Neo4j relationship.
+
+    THE LIVE WRITE. doc-tools' `_build_relationship_properties` is RETIRED (ADR-0006
+    §Addendum, 2026-06-13) and reaches no live edge; this function is what a reader
+    looking for "where does the property get written" actually wants.
+
+    NEO4J TAKES PRIMITIVES OR ARRAYS OF PRIMITIVES — never maps. Anything structured is
+    stored as its JSON string and decoded on the read side. One of seven sites; see
+    docs/plans/a-registration-property-must-be-enumerated-seven-times.md.
 
     Mirrors what ``aitool_linker._build_relationship_properties`` produced
     from the customProperties — but constructed directly from the

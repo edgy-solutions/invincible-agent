@@ -214,3 +214,30 @@ def test_no_cypher_literal_uses_SQL_COMMENT_SYNTAX():
         "SQL-style `--` comment inside a Cypher literal; Neo4j rejects the whole query:\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_the_seven_site_checklist_is_reachable_from_the_code():
+    """The checklist only works if a reader finds it FROM WHERE THEY LAND.
+
+    That is the whole lesson of the retired doc-tools path: the retirement was recorded in
+    an ADR addendum and a comment one file over, and two agents built against a corpse
+    anyway. A document nobody is pointed to is a document nobody reads, so the pointers are
+    asserted rather than trusted to survive the next refactor."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    doc = root / "docs/plans/a-registration-property-must-be-enumerated-seven-times.md"
+    assert doc.exists(), "the seven-site checklist was deleted; the pointers now dangle"
+
+    body = doc.read_text(encoding="utf-8")
+    for site in ("_emit_to_registrar", "RegistrationManifest", "_build_rel_props_for_saga",
+                 "custom_props", "_FIND_COMPAT_VERBS_CYPHER", "CompatibleVerb"):
+        assert site in body, f"the checklist no longer names {site}"
+
+    for rel in ("agent_fleet/mesh_registrar/main.py",
+                "agent_fleet/ontology_service/main.py"):
+        assert "a-registration-property-must-be-enumerated-seven-times" in (
+            root / rel).read_text(encoding="utf-8"), (
+            f"{rel} no longer points at the checklist — a reader landing there is back to "
+            f"discovering the seven hops one silent drop at a time"
+        )

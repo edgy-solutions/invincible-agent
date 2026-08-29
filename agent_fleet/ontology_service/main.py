@@ -2928,6 +2928,13 @@ class FindCompatibleVerbsRequest(BaseModel):
 
 
 class CompatibleVerb(BaseModel):
+    """One candidate verb from the compat walk.
+
+    A FIELD HERE IS THE SIXTH OF SEVEN SITES a registration property must be named at,
+    and the Cypher RETURN (5) and the constructor below (7) are the neighbours most often
+    forgotten with it. See
+    docs/plans/a-registration-property-must-be-enumerated-seven-times.md.
+    """
     verb_iri: str
     verb_local: str
     input_uri: str
