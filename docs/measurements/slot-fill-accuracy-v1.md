@@ -107,3 +107,49 @@ The envelope's `grading_note` says a slot filled but absent from `expect` is **E
 envelope. Both classes rank above MISSED and the headline is unaffected, but if the author
 intends near-miss coercion to grade WRONG, the case needs `expect: {"project_id": "P3",
 "direction": <something>}` or the contract needs a per-flag override.
+
+
+---
+
+## UPDATE 2026-08-29 — fix (2), the coercion fix, measured
+
+One prompt change, then the full 48 re-run **as a gate**, twice. Raw:
+`slot-fill-battery-run3.json` (v1), `slot-fill-battery-run4.json` (v2).
+
+| | CORRECT | WRONG | EXTRA | MISSED |
+|---|---|---|---|---|
+| before | 40 (83.3%) | 5 | 2 | 1 |
+| v1 — *"fill only if what they said IS one of those values"* | 40 | 3 | **0** | 5 |
+| **v2 — the test is on the THING NAMED, not the spelling** | **42 (87.5%)** | 5 | **0** | 1 |
+
+**The gate caught a regression I introduced, which is what it is for.** v1 closed the coercion
+trap and broke two cases that were passing: `"by organization"` and `"coloured by funding
+risk"` stopped filling, because *organization* is not the string `org` and *funding risk* is
+not `funding_risk`. I had collapsed **same thing spelled differently** into **different thing
+that resembles one** and told the model to refuse both. Enum values are written for a machine
+and nobody speaks them that way, so a string-identity test refuses every real phrasing.
+
+v2 states both halves with the measured examples on each side. Every case in v2 is at least as
+good as before, and the two traps stay closed:
+
+* `D05` *"this quarter"* — **EXTRA → CORRECT**, no longer passes the raw words through
+* `E06` *"forwards"* — **EXTRA → CORRECT**, no longer snaps to `downstream`
+* `A05`, `B04` — recovered
+* `C06`, `H04` — still WRONG, and correctly so: they are the entity-resolution gap, which is
+  fix (1)'s territory and not a prompt's to solve
+
+**Headline: 83.3% → 87.5%. The invention class is gone (EXTRA 2 → 0).** Excluding the
+platform gap: **43 cases, 42 correct (97.7%), zero wrong fills.**
+
+**Read with the noise band.** Run-to-run variance is ±1–2 cases, so +2 is at the edge of it —
+but `EXTRA 2 → 0` held across BOTH v1 and v2, which is the part that is not noise. The
+comprehension-side claim is that the coercion class was eliminated, not that the headline
+moved 4.2 points.
+
+**Not tuned.** Two versions, both principled, the second written against a mechanism the first
+run NAMED. Neither was iterated toward green, and both runs stay in the record.
+
+**One more confidence oddity, banked not chased:** `E06` now fills `project_id` correctly and
+reports **0.00**. A correct fill at zero confidence, alongside a genuine miss at 0.96 in the
+previous run. Every reading so far says the same thing — this signal is not measuring
+correctness.
