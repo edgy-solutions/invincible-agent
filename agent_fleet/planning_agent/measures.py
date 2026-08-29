@@ -21,7 +21,7 @@ state refs.
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, get_args
 
 try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
     from entities import FISCAL_PERIODS, PERIOD_ORDER, Dependency, FiscalPeriod, Interval, PlanState
@@ -421,7 +421,26 @@ def plan_dependency_violations(state: PlanState) -> list[dict[str, Any]]:
     return out
 
 
-_DIRECTIONS = ("upstream", "downstream")
+# THE CLOSED VOCABULARIES, DECLARED WHERE THE ROUTER CAN SEE THEM.
+#
+# These were bare `str` annotations with the permitted values written out THREE times —
+# `_DIRECTIONS` here, a literal `("project", "phase")` at the kind check, and the prose in
+# each NotInModel message. `slots_for` derives a slot's `values` from a `Literal` and can
+# derive nothing from a `str`, so the router advertised these as free text and the model was
+# free to invent `"forwards"` or `"task"`. The engine then refused with a 422 — an honest
+# refusal to a question the system had told the model it could ask.
+#
+# Same shape as the `Optional[list[str]]` defect: THE DECLARATION WAS LESS PRECISE THAN THE
+# CODE, and the gap is invisible until something downstream trusts the declaration. Found by
+# building the slot-coverage matrix, which is what a coverage matrix is for.
+#
+# The runtime checks stay — they are the honest-refusal path for a caller that bypasses the
+# router — but they now read their vocabulary FROM the annotation rather than repeating it.
+Direction = Literal["upstream", "downstream"]
+NeighborKind = Literal["project", "phase"]
+
+_DIRECTIONS = get_args(Direction)
+_NEIGHBOR_KINDS = get_args(NeighborKind)
 
 
 def _dep_evaluation(state: PlanState, d: Dependency) -> dict[str, Any]:
@@ -459,8 +478,8 @@ def plan_dependency_neighborhood(
     state: PlanState,
     *,
     project_id: str,
-    direction: str = "upstream",
-    kind: str = "project",
+    direction: Direction = "upstream",
+    kind: NeighborKind = "project",
 ) -> dict[str, Any]:
     """What one item waits on, or what waits on it — TRAVERSAL, not constraint evaluation.
 
@@ -483,7 +502,7 @@ def plan_dependency_neighborhood(
             f"cannot traverse dependencies {direction!r} — "
             f"known directions are {', '.join(_DIRECTIONS)}"
         )
-    if kind not in ("project", "phase"):
+    if kind not in _NEIGHBOR_KINDS:
         raise NotInModel(f"cannot traverse from a {kind!r} end")
 
     subject = state.project(project_id) if kind == "project" else state.phase(project_id)
