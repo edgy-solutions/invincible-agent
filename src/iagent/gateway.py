@@ -1431,7 +1431,17 @@ PORTFOLIO_CANVAS_QUESTIONS: list[dict] = [
     {"slot": 0, "measure": "plan_schedule", "question": "what is scheduled by initiative and phase"},
     {"slot": 1, "measure": "plan_cost_curve", "question": "what does spend look like per period"},
     {"slot": 2, "measure": "plan_site_load", "question": "which sites are overloaded"},
-    {"slot": 3, "measure": "plan_funding_gap", "question": "where is funding short by initiative"},
+    # "BY ORGANIZATION", NOT "by initiative" — and the reason is a live defect, not taste.
+    # Measured 2026-08-28 on the stored artifact: the by-initiative form returned ELEVEN
+    # ORGANISATIONS (group_by=org, first row `O1 | Corporate Capital Committee`), because BAML
+    # extracts the slot and the supervisor's dispatch payload does not carry it, so the verb ran
+    # on its default. The card was a correct org-grouped view answering a question that said
+    # something else, with NO disclosure surface — the strip renders routing, not verb params.
+    # `org` IS the default, so this phrasing makes the seeded card TRUE.
+    # Revert to the by-initiative form when the carry lands; the acceptance test for that build
+    # is literally this question returning initiatives.
+    # See [[slots-are-extracted-then-dropped-at-dispatch]] and runbook A6.
+    {"slot": 3, "measure": "plan_funding_gap", "question": "where is funding short by organization"},
     {"slot": 4, "measure": "plan_maturity_grid", "question": "capability maturity by site versus target"},
 ]
 

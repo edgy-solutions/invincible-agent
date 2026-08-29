@@ -93,7 +93,23 @@ def test_every_phrasing_is_from_the_resolver_verified_set():
         "what is scheduled by initiative and phase",
         "what does spend look like per period",
         "which sites are overloaded",
-        "where is funding short by initiative",
+        # SWAPPED 2026-08-28 from "where is funding short by initiative", and the reason is a
+        # live defect rather than drift. That phrasing returned ELEVEN ORGANISATIONS
+        # (group_by=org, first row `O1 | Corporate Capital Committee`): BAML extracts the slot,
+        # the supervisor's dispatch payload does not carry it, so the verb ran on its default.
+        # `org` IS the default, so this phrasing makes the seeded card TRUE.
+        #
+        # RE-VERIFIED AGAINST THE LIVE SUBSTRATE before the swap, as this list requires —
+        # /resolve threaded with the caller's user_email and PORTFOLIO_PLANNING, which is what
+        # the live path sends (the candidate pool is can_view-filtered BEFORE BAML classifies,
+        # so a bare probe measures a different pool and is not this test's population):
+        #
+        #     "where is funding short by organization"  -> Portfolio 0.95
+        #     "what does spend look like per period"    -> Portfolio 0.97   (control, pinned)
+        #
+        # Revert when the carry lands; that build's acceptance test is the by-initiative form
+        # returning initiatives. See [[slots-are-extracted-then-dropped-at-dispatch]], runbook A6.
+        "where is funding short by organization",
         "capability maturity by site versus target",
     }
     asked = {q["question"] for q in _questions()}
