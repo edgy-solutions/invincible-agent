@@ -132,6 +132,18 @@ async def lifespan(app: FastAPI):
         # The SERVICE is iagent-engine-p (templates/engines.yaml names it by component,
         # not by image). The image is called planning-agent; the service is not.
         base = os.getenv("ENGINE_P_PUBLIC_URL", "http://iagent-engine-p:8095")
+        # ONE STATEMENT OF THIS ENGINE'S IDENTITY, used by every registration below.
+        #
+        # The client id is `iagent-planning-agent` — the SERVICE name, which is not the
+        # deployment name (`iagent-engine-p`) and not the image name (`planning-agent`).
+        # The provider registration below was first written with the deployment name,
+        # copied from engine-o's block, and minting failed 401 while the fourteen verb
+        # registrations beside it succeeded — a half-registered engine whose verbs route
+        # and whose resolver does not. The warning against exactly that is three lines
+        # down: identity is an ARGUMENT, never derived from the component name. Hoisted so
+        # there is one place to be wrong rather than two.
+        _mint = engine_mint(client_id="iagent-planning-agent",
+                            secret_env="ENGINE_P_CLIENT_SECRET")
         for v in VERBS:
             try:
                 register_engine_to_mesh(
@@ -143,8 +155,7 @@ async def lifespan(app: FastAPI):
                     # Identity is an ARGUMENT here, never derived from the component name —
                     # deriving it is how mint_service_token() made the supervisor dispatch
                     # as the review starter.
-                    mint=engine_mint(client_id="iagent-planning-agent",
-                                     secret_env="ENGINE_P_CLIENT_SECRET"),
+                    mint=_mint,
                     name="engine_p_planning",
                     description=v["desc"],
                     verb=v["verb"],
@@ -183,8 +194,7 @@ async def lifespan(app: FastAPI):
         # ran once (`bootstrap-state-debt`).
         try:
             register_engine_to_mesh(
-                mint=engine_mint(client_id="iagent-engine-p",
-                                 secret_env="ENGINE_P_CLIENT_SECRET"),
+                mint=_mint,
                 name="engine_p_planning_resolve_instance",
                 description=(
                     "Resolves a spoken planning name — a site, capability, initiative, "

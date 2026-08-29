@@ -115,3 +115,35 @@ def test_every_referent_slot_in_the_declarations_is_in_the_map():
         f"id-shaped spoken slot(s) with no referent class: {unmapped} — these will be "
         f"filled with whatever the speaker said and reach the engine as a 422"
     )
+
+
+def test_engine_p_states_its_identity_ONCE():
+    """A HALF-REGISTERED ENGINE IS THE FAILURE THIS PREVENTS.
+
+    engine-p makes fifteen registrations: fourteen verbs and one resolveInstance provider.
+    The provider block was first written with `client_id="iagent-engine-p"` — the DEPLOYMENT
+    name — copied from engine-o's equivalent. Minting failed 401 while the fourteen beside it
+    succeeded, so the engine came up with its verbs routable and its resolver invisible, and
+    the symptom was `instance_match: "empty"` at the router: providers answered, none knew
+    "Aurora". Nothing anywhere said "one of my registrations did not happen".
+
+    The service name is `iagent-planning-agent` — not the deployment (`iagent-engine-p`), not
+    the image (`planning-agent`). Identity is an argument, never derived from a component
+    name, and this engine's own comment says so three lines above the code that got it wrong.
+
+    So: exactly one `engine_mint(` call. Two would be two places to be wrong, and the second
+    fails silently relative to the first."""
+    import pathlib
+    import re
+
+    src = (pathlib.Path(__file__).resolve().parents[2]
+           / "agent_fleet/planning_agent/main.py").read_text(encoding="utf-8")
+    mints = re.findall(r"engine_mint\s*\(", src)
+    assert len(mints) == 1, (
+        f"{len(mints)} engine_mint() calls — this engine states its identity more than once, "
+        f"and a registration that mints differently from its siblings fails 401 while they "
+        f"succeed, producing a half-registered engine that looks healthy"
+    )
+    assert 'client_id="iagent-planning-agent"' in src, (
+        "the mint no longer names the SERVICE — a deployment or image name here mints 401"
+    )
