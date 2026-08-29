@@ -2521,6 +2521,15 @@ def _slot_spec(declarations: list[dict]) -> tuple[str, dict[str, dict]]:
             # The verb's OWN vocabulary, read out of its signature's Literal — so the
             # model is choosing from what the code accepts, not from what it can imagine.
             bits.append("one of: " + ", ".join(str(v) for v in d["values"]))
+        if d.get("referent"):
+            # NAME IT AS THE SPEAKER SAID IT. This slot holds an opaque id and the model has
+            # no way to know which id; a separate resolver does. Left unsaid, the model
+            # renders an id-SHAPE from the name — `order_to_cash` for "Order to Cash" — which
+            # is neither the id nor the words anyone said, and which cost a live regression:
+            # the resolver scored it 0.0 against its own label and the slot came back
+            # unresolved. Passing the words through is what lets the resolver do its job.
+            bits.append("give the NAME exactly as the speaker said it, not an id or an "
+                        "id-like rendering of it; the system resolves names to ids")
         if d.get("default") is not None:
             bits.append(f"defaults to {d['default']!r} if the speaker says nothing")
         lines.append("  ".join(bits))

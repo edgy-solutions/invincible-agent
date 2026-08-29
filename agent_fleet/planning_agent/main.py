@@ -532,11 +532,23 @@ def _score_name(identifier: str, label: str, entity_id: str) -> float:
     filler legitimately produces ids when the speaker used one, and a resolver that only
     understood labels would reject its own correct answers.
     """
-    ident = (identifier or "").strip().lower()
+    def _norm(s: str) -> str:
+        """Lower-case and flatten separators.
+
+        UNDERSCORES WERE NOT NORMALISED AND HYPHENS WERE, which is an inconsistency that
+        cost a live regression: the filler began emitting `order_to_cash` for "Order to
+        Cash" — an id-shaped rendering of the right name — and scored 0.0 against its own
+        label while `ORDER-TO-CASH` scored 0.8. Same thing spelled differently is the case
+        this resolver exists to absorb; which separator a caller happened to use is not a
+        fact about the entity.
+        """
+        return " ".join(str(s or "").replace("_", " ").replace("-", " ").lower().split())
+
+    ident = _norm(identifier)
     if not ident:
         return 0.0
-    lab = (label or "").strip().lower()
-    eid = (entity_id or "").strip().lower()
+    lab = _norm(label)
+    eid = _norm(entity_id)
 
     if ident == eid or ident == lab:
         return 1.0
@@ -547,8 +559,8 @@ def _score_name(identifier: str, label: str, entity_id: str) -> float:
         # Longer overlap is stronger: a two-character token inside a long label is noise.
         ratio = min(len(ident), len(lab)) / max(len(ident), len(lab), 1)
         return 0.75 + 0.2 * ratio
-    ident_tokens = {w for w in ident.replace("-", " ").split() if len(w) > 2}
-    lab_tokens = {w for w in lab.replace("-", " ").split() if len(w) > 2}
+    ident_tokens = {w for w in ident.split() if len(w) > 2}
+    lab_tokens = {w for w in lab.split() if len(w) > 2}
     if ident_tokens and lab_tokens:
         overlap = len(ident_tokens & lab_tokens) / len(ident_tokens | lab_tokens)
         if overlap:
