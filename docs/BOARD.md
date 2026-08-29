@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **80 of 92 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **81 of 93 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -101,6 +101,10 @@ _Coverage: **80 of 92 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **dagster-loader-call** — build_dynamic_jobs() runs unconditionally on every Dagster load; whether its catalog is empty is unconfirmed.
   status: open · owner: unassigned · blocked-on: an owner for the Dagster plane
   → [docs/plans/dagster-loader-call.md](plans/dagster-loader-call.md)
+
+- **decision-artifacts-record-no-trigger** — THE THIRD STATE, not either of the two anticipated. Investigating whether the DecisionArtifact INFERS its trigger from the JWT subject found that it does not infer it — and does not read it either. There is NO trigger field. `produced_by` records which ENGINE answered; `produced_for` records the AUDIENCE; neither records HOW the answer was asked for. So every DecisionArtifact ever written carries no phrase-vs-button provenance, and the acceptance test written to catch inference ("seed both ways, confirm the artifacts differ") would go red for a reason its own diagnosis names wrongly. The identity vault does not cause this, but it removes the last accidental discriminator: before the vault a phrase-path seed arrived as svc:supervisor and was distinguishable BECAUSE IT WAS BROKEN; after it, both paths are correctly identical.
+  status: open · owner: unassigned — the artifact-minting seam, not the vault lane · blocked-on: a ruling on whether trigger provenance belongs on the artifact, and who owns the field
+  → [docs/plans/decision-artifacts-record-no-trigger.md](plans/decision-artifacts-record-no-trigger.md)
 
 - **deterministic-decisions-made-by-llm** — ARCHITECTURAL — the parts of routing that should be mechanical are model judgments. Subject selection is an LLM picking from scored candidates (it chose a 0.477 candidate over a 1.0 one); archetype selection is made from output_uri before anyone looks at the rows. Not three bugs — one gap with three symptoms, and the reason the system feels non-deterministic.
   status: open · owner: human · blocked-on: a design session. The READ is done and the answer is known — subject selection IS a BAML call over scored candidates. What is owed is the ruling on which decisions become rules, and that is the ADR's SPO determinism work.
