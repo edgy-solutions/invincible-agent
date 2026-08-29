@@ -1,6 +1,9 @@
 # ADR-0033 — Interrogative disambiguation: the third behavior between route and abstain (ask from the phone-book)
 
 **Status:** Proposed — deferred (evidence-gated, post-demo). Decision shape recorded; build deferred to a slice.
+See **Amendment 2026-08-28** below — the decision stands unchanged; a **second trigger shape**
+(a slot the phrase never filled) is brought inside two of the five commitments, and a **second
+wake condition** is recorded beside the first rather than folded into it.
 **Date:** 2026-07-28
 **Deciders:** Platform team
 **Related:**
@@ -105,3 +108,117 @@ The goal-shape abstain card (ADR-0032 immediate step) and this feature will meet
 3. **Pending resolution in v1** — stateless re-route (clarified subject substituted) vs. held-promise.
 
 *(Resolved during review, folded into commitment #5: the precedence of `user-confirmed` vs `exact` — they are different orderings, `user-confirmed` is not a matching tier, and ratified-alias matches carry `exact-via-learned-alias` lineage rather than laundering into plain `exact`.)*
+
+---
+
+## Amendment 2026-08-28 — the zero-candidate trigger, and a second wake condition
+
+**The decision stands.** `route | ask | abstain`, one bounded turn, and options drawn from a
+governed vocabulary are unchanged. What this amendment adds is a **second trigger shape** the five
+commitments were not written against, and a **second wake condition** recorded as its own reason.
+
+Raised by the slot-resolution work (`[[slot-resolution-entities-in-the-resolver-substrate]]`),
+which found this ADR already ruling most of what it needed — and two places where it does not.
+
+### The shape the commitments assume, and the one they do not
+
+The ADR is written throughout against **disambiguation**: a resolution attempt produced *too many*
+candidates, and the user narrows them. *"Did you mean the `Customer 360` dashboard or the
+`Sales Performance` dashboard?"*
+
+The slot picker's case is the **cousin, not the twin**: a resolution attempt produced *none*,
+because the phrase never carried the value at all. *"Variance analysis for Q3"* names no project.
+
+| | disambiguation | elicitation |
+|---|---|---|
+| candidates | many | **zero** |
+| the user does | narrows a set the resolver produced | **supplies a value the phrase never carried** |
+| `resolved_via` | `llm-alone` / multi-hit / capped-0.50 | **none — nothing was resolved** |
+
+Same disposition (`ask`), same one-turn bound, same menu-integrity rule. Different trigger, and two
+commitments key on the trigger.
+
+### Commitment #2 gains a FOURTH option source — the rule is preserved, not bent
+
+#2 names three sources, and **all three are outputs of a resolution attempt**: the containment
+ladder's multi-hit set, the top-k from `resolveInstance`, verb candidates from the capability
+graph. A missing slot produced none of them, so #2 as written has nothing to offer from — and its
+own prohibition (*"never an open question… that is abstention wearing a question mark"*) would
+forbid asking at all.
+
+**The fourth source, in the same spirit as the three:**
+
+> For a slot the phrase did not fill, the ask names the **slot** from the verb's **registered slot
+> inventory**, and offers **instances enumerated from the substrate** where resolution can
+> enumerate them.
+
+Both halves are governed vocabularies. Nothing is composed. Menu-integrity holds verbatim: every
+offered option must route when chosen.
+
+**THE FREE-TEXT BOUNDARY IS EXPLICIT, because this is where a lazy implementation drifts.**
+Free text is permitted **only** when the substrate genuinely cannot enumerate the slot's domain —
+never as a default, never as a convenience, and never because enumeration was not attempted. An
+enumerable slot asked as free text is the open question this ADR retired, wearing a slot's name.
+
+### Commitment #4 must DECLARE a `slot-unfilled` disposition
+
+#4's gate is keyed entirely on `resolved_via` — `llm-alone` → ask, multi-hit → ask, capped-0.50 →
+ask, exact/containment-unique → never. **A missing slot has no `resolved_via` at all.**
+
+**The ADR's own tripwire caught this before it could fire.** #4 mandates that the gate *"declares a
+disposition per tier and fails loudly on an undeclared tier at policy load, never silently
+defaulting an unknown tier to `route`."* Without this amendment the slot case would have surfaced
+as a **policy-load failure**, not a silent misroute — which is the fail-loud discipline working as
+designed, and worth recording as evidence that it does.
+
+> **Declared:** `slot-unfilled` → **ask**, subject to the same guardrail as every other tier.
+
+The guardrail is unchanged and cuts against a naive picker: *"a system that asks when it knows is
+worse than one that guesses when it doesn't."* The picker asks **below the same thresholds that
+gate disambiguation**, never as a default. A slot that filled cleanly is never asked about.
+
+### Commitment #5 — one sentence, so nothing empty enters a guarded substrate
+
+#5's growth loop is defined as *"their original phrasing → the resolved entity."*
+
+> **A supplied slot value is a confirmed FILL, not an alias.** When the phrase carried no phrasing
+> for the slot, there is no mapping to learn, and **nothing enters the alias-growth loop.**
+> `resolved_via: user-confirmed` still applies to the answer's provenance; the alias ratification
+> path does not.
+
+Without this sentence the loop would ratify empty-keyed aliases into the phone-book — a guarded
+substrate accepting entries with no left-hand side.
+
+### A SECOND wake condition, recorded beside the first — not folded into it
+
+The original gate is a **frequency** argument:
+
+> *build when telemetry shows the ask-eligible rate is material, measured against real traffic.*
+
+The slot picker is a **reachability** argument, and it is a different claim:
+
+> **A whole class of questions is unreachable without `ask`** — not "the eligible population is
+> now large enough to be worth it," but "these questions cannot be asked at all."
+
+Three consumers, already in the record: four planning verbs built and unreachable (Tier 3, *"do not
+script these"*), the triage's instance-resolution abstentions firing on 19 candidates **and** on
+exactly 1, and Engine F (ADR-0045), whose flagship question carries an instance slot and four of
+whose six verbs take an entity.
+
+**Both are legitimate. They are not the same, and a status change must cite WHICH ONE FIRED.**
+
+Recording reachability as the frequency gate firing would misstate the evidence — and this is the
+ADR that invented `resolved_via: exact-via-learned-alias` precisely so a dialogue-born match could
+never launder itself into a native one. The same care applies to its own status: **when this moves
+to Accepted, the status line names the wake condition that woke it.**
+
+### What this amendment does NOT change
+
+- The three existing option sources, the one-turn bound, the never-ask-when-certain guardrail.
+- The **archetype-unity constraint**: this and ADR-0032's goal-shape card are **one elicitation
+  card, not two**. The ADR already predicted the failure — *"absent this sentence, two agents build
+  them separately and the citizenship grammar forks at its first extension"* — and a slot picker is
+  exactly the third agent that would fork it.
+- The build/decision split. The **supervisor's pending-state mechanics** remain deferred to build
+  time with both candidates already named (stateless re-route vs. held-promise); the plan item
+  starts from that choice rather than from a blank page.

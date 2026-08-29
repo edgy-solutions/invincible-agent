@@ -5,7 +5,8 @@ owner:
 blocked-on:
 repo:       invincible-agent
 code-site:  agent_fleet/ontology_service/instance_resolution.py, agent_fleet/planning_agent/entity_resolution.py
-summary:    PLATFORM, not finance. Three consumers already need one missing capability — entities as resolvable instances in the resolver substrate. Four planning verbs are unreachable from natural language today (Tier 3, "do not script these"); the triage's instance-resolution abstentions are unruled; and Engine F (ADR-0045) is blocked entirely on it. FIRST PLATFORM ITEM AFTER THE CANVAS CHAIN CLOSES — it unblocks four existing verbs, one whole engine, and every future slot-heavy domain, which is the ordering argument and the item's whole justification.
+ruled-by:   ADR-0033 (interrogative disambiguation) + its Amendment 2026-08-28; ADR-0031 (resolution ladder)
+summary:    PLATFORM, not finance. Elicitation is ALREADY RULED (ADR-0033 + Amendment 2026-08-28) — this item is the RESOLUTION capability plus build. Three consumers already need one missing capability — entities as resolvable instances in the resolver substrate. Four planning verbs are unreachable from natural language today (Tier 3, "do not script these"); the triage's instance-resolution abstentions are unruled; and Engine F (ADR-0045) is blocked entirely on it. FIRST PLATFORM ITEM AFTER THE CANVAS CHAIN CLOSES — it unblocks four existing verbs, one whole engine, and every future slot-heavy domain, which is the ordering argument and the item's whole justification.
 ---
 
 # Entities are not resolvable instances, and three consumers are waiting
@@ -83,15 +84,63 @@ Per the triage's evidence that they are simultaneously too strict and too loose.
 question is **what abstention is for**: refusing to guess, or refusing to ask? Those imply
 different thresholds, and only one of them is compatible with a picker.
 
-### How do slot-filling failures surface honestly?
+### How do slot-filling failures surface? — ALREADY RULED. Do not re-decide it.
 
-> **`[[the-cost-of-guessing-is-a-mutation]]` applies one layer down.** A slot picker that guesses
-> an entity id is a router that guesses a verb. The cost is the same shape: an answer about the
-> wrong thing, delivered with the same confidence as an answer about the right one.
+**ADR-0033 governs this**, and the search that found it is the reason this section is short: a
+second elicitation ruling was nearly written before anyone checked. `route | ask | abstain` is
+decided, options come from a governed vocabulary and never from the model, one bounded turn, and
+best-effort-at-low-confidence is retired as policy.
 
-A failure to fill a slot must be legible as *that* — not as "no verb matched", which is what the
-operator sees today and which sends the diagnosis to the wrong place. The HUD already proved it
-can carry a legible refusal; this needs its own reason code, not a reuse of the verb-classification one.
+Its **Amendment 2026-08-28** brings the zero-candidate case inside two commitments that were
+written against disambiguation:
+
+* **#2 gains a fourth option source** — the verb's **registered slot inventory** plus substrate
+  enumeration. Free text **only** where the substrate genuinely cannot enumerate; never as a
+  default, and never because enumeration was not attempted.
+* **#4 declares `slot-unfilled` → ask** — a missing slot has no `resolved_via`, so the gate had no
+  disposition for it and would have failed at policy load.
+
+**What is left for this item is BUILD, not ruling.** Two inherited constraints, both binding:
+
+> **Ask only below the same thresholds that gate disambiguation.** ADR-0033 #4: *"a system that
+> asks when it knows is worse than one that guesses when it doesn't."* A slot that filled cleanly
+> is never asked about.
+
+> **ONE elicitation archetype, not two.** ADR-0033 and ADR-0032's goal-shape card share the
+> surface and the menu-integrity rule. The ADR predicted the failure in as many words — *"absent
+> this sentence, two agents build them separately and the citizenship grammar forks at its first
+> extension"* — and a slot picker is exactly the third agent that would fork it.
+
+Still true and still this item's: a slot failure must be legible as **itself**, not as
+`NO_VERB_CLASSIFIED`, which is what the operator sees today and which sends the diagnosis to the
+wrong component.
+
+### Pending-state mechanics — a CHOICE between two named designs, not a blank page
+
+ADR-0033's *Scope: decision vs build* already sketched both, and deferred the choice deliberately:
+
+> the **supervisor's pending-state mechanics** — stateless re-route with the clarified subject
+> substituted (simplest v1) vs. a held-promise the way grouped reviews hold suspended promises.
+
+**Registered lean, offered to be argued against: STATELESS RE-ROUTE for v1.**
+
+The reasoning is that it introduces no new lifetime. A re-route **is** a route: every existing
+guard applies unchanged, nothing persists between turns, and there is no expiry semantics to get
+wrong. The held-promise design adds a suspended state with a lifetime — which is the vault's TTL
+questions arriving in a new costume, and this repo has spent a week learning what an unowned
+lifetime costs.
+
+**The graduation condition, named now so the choice is revisited on evidence rather than taste:**
+
+> **Held-promise earns its place when MULTI-SLOT elicitation arrives.** One ask per missing slot
+> makes stateless re-routing chatty — three missing slots become three full round trips, and
+> ADR-0033 bounds a single exchange at one turn (two for goal-shaped). At that point the promise
+> is holding a partially-filled parse across several asks, which is what it is for.
+
+Until then the open build questions are narrow: **where the clarified value is substituted** (the
+supervisor re-issues the original phrase with the slot bound, or the funnel accepts a pre-bound
+slot), and **what the ask card carries back** so the re-route is reconstructable rather than
+re-parsed.
 
 ## Why this is first after the canvas chain
 
