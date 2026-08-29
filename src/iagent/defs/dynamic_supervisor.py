@@ -12,7 +12,7 @@ import requests
 import sys
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, NamedTuple, Optional
 
 logger = logging.getLogger("iagent.supervisor")
 
@@ -1420,10 +1420,60 @@ from iagent_pure.predicate_routing import (
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.slot_acceptance import accept_slots, decode_declarations
+from iagent_pure.slot_disposition import ask_card, decide_disposition
 
 #: One model call's budget. Short on purpose: a slot REFINES a question that will still be
 #: answered without it, so a slow extractor must cost the user a default, never a timeout.
 _FILL_SLOTS_TIMEOUT_S = float(os.getenv("FILL_SLOTS_TIMEOUT_S", "20"))
+
+#: THE OPTION SOURCE FOR AN ELICITATION, AND IT IS NOT WIRED YET - deliberately, and the
+#: gap is named rather than papered over.
+#:
+#: Engine P registered as a `mesh:enumerateInstances` provider (3516103), but there is no
+#: ROUTER-SIDE FAN-OUT: nothing in Engine O dispatches an enumerate the way `/resolve` fans
+#: out a resolve. A registration is not a reachable call, and the supervisor must not invent
+#: a provider's URL - that is the phantom-service-URL shape this repo has already paid for.
+#:
+#: So the disposition runs with no enumerator and reports `free_text_reason: no_provider`,
+#: which is the honest interim ADR-0033 permits WITH ITS ATTEMPT RECORDED. The day the
+#: fan-out lands (the option-source lane's, per the ownership split), setting this env var
+#: is the whole wiring - and `test_free_text_must_carry_a_provider_reason` fails the moment
+#: an ask goes out with no menu and no reason.
+_ENUMERATE_URL = os.getenv("ENUMERATE_INSTANCES_URL", "")
+_ENUMERATE_TIMEOUT_S = float(os.getenv("ENUMERATE_TIMEOUT_S", "5"))
+
+
+def _make_enumerator(context):
+    """`class_uri -> {outcome, members, count}`, or None when no provider is reachable.
+
+    None is NOT the same as an empty menu, and the disposition treats them differently:
+    None becomes `no_provider` (nobody was asked), an empty `members` list becomes an
+    abstain (the class is enumerable and holds nothing). Collapsing those is exactly how
+    free text becomes a default instead of a reported outcome."""
+    if not _ENUMERATE_URL:
+        return None
+
+    def _enumerate(class_uri: str) -> Dict[str, Any]:
+        resp = requests.post(
+            _ENUMERATE_URL, json={"class_uri": class_uri}, timeout=_ENUMERATE_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        body = resp.json() or {}
+        context.log.info(
+            "enumerate_instances class_uri=%s outcome=%s count=%s",
+            class_uri, body.get("outcome"), body.get("count"),
+        )
+        return body
+
+    return _enumerate
+
+
+class _FillResult(NamedTuple):
+    """What the filler produced, and what it could not resolve. Two fields because the
+    disposition needs both: `slots` is what reaches the verb, `resolution` is why a slot
+    that names a referent is missing from it."""
+    slots: Dict[str, Any]
+    resolution: Dict[str, Any]
 
 
 def _fill_slots_from_query(
@@ -1432,7 +1482,7 @@ def _fill_slots_from_query(
     query: str,
     verb_iri: str,
     declarations,
-) -> Dict[str, Any]:
+) -> "_FillResult":
     """Ask Engine O which parameters the speaker named, for the verb already routed.
 
     HONEST-EMPTY ON EVERY FAILURE — unreachable, slow, non-200, or a malformed body all
@@ -1456,18 +1506,27 @@ def _fill_slots_from_query(
                 "fill_slots non-200 verb_iri=%s status=%s — running on defaults",
                 verb_iri, resp.status_code,
             )
-            return {}
+            return _FillResult({}, {})
         body = resp.json() or {}
     except Exception as exc:  # noqa: BLE001
         context.log.warning(
             "fill_slots unavailable verb_iri=%s (%s) — running on defaults", verb_iri, exc
         )
-        return {}
+        return _FillResult({}, {})
 
     slots = body.get("slots") or {}
     if not isinstance(slots, dict):
         context.log.warning("fill_slots returned a non-object for %s", verb_iri)
-        return {}
+        return _FillResult({}, {})
+
+    # THE TRI-STATE, CARRIED. Fix (1) made `/fill_slots` report per-slot resolution and
+    # REMOVE an unresolved referent from `slots` rather than passing the spoken name
+    # through. Reading only `slots` here would throw that away at the boundary — and it is
+    # the difference between an ask that can offer `I1` and one that only knows something
+    # is missing. `E05` is exactly this case.
+    resolution = body.get("resolution") or {}
+    if not isinstance(resolution, dict):
+        resolution = {}
 
     # LOUD BOTH WAYS. The finding this closes was a parameter vanishing in silence, so
     # what was extracted is logged as prominently as what was refused.
@@ -1478,7 +1537,14 @@ def _fill_slots_from_query(
         )
     for r in body.get("refused") or []:
         context.log.warning("slot_refused_at_extraction verb_iri=%s %s", verb_iri, r)
-    return slots
+    for name, rec in sorted(resolution.items()):
+        if isinstance(rec, dict) and rec.get("outcome") not in (None, "", "exact"):
+            context.log.info(
+                "slot_resolution verb_iri=%s slot=%s outcome=%s spoken=%r candidates=%d",
+                verb_iri, name, rec.get("outcome"), rec.get("spoken", ""),
+                len(rec.get("candidates") or []),
+            )
+    return _FillResult(slots, resolution)
 
 
 def _log_subtask_sources_asset(
@@ -1774,13 +1840,15 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # not overridden by a model. Extraction fills the gap, it does not take the wheel.
     spoken = dict(config.slots or {})
     declared = predicate.get("slots")
+    resolution: Dict[str, Any] = {}
     if not spoken and declared:
-        spoken = _fill_slots_from_query(
+        filled = _fill_slots_from_query(
             context,
             query=sub_query,
             verb_iri=predicate.get("verb_iri") or "",
             declarations=declared,
         )
+        spoken, resolution = filled.slots, filled.resolution
 
     accepted = accept_slots(spoken, declared)
     for refusal in accepted.refusals:
@@ -1789,6 +1857,72 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         context.log.warning(
             "slot_refused verb_iri=%s %s", predicate.get("verb_iri"), refusal
         )
+
+    # -----------------------------------------------------------------------------------
+    # THE DISPOSITION POINT - ADR-0033's `route | ask | abstain`, decided here because this
+    # is the only line where the phrase, the routed verb, the declarations and the accepted
+    # slots are all in hand. Everything above resolves; everything below dispatches.
+    #
+    # WHAT THIS REPLACES, measured: `plan_dependency_neighborhood` without `project_id`
+    # raised TypeError and the caller got
+    #   400 bad params ... missing 1 required keyword-only argument: 'project_id'
+    # - a Python signature error rendered to a person who asked about phases. The missing
+    # thing was one sentence away from them and the system had no way to ask for it.
+    #
+    # THE TRIGGER CANNOT REACH AN OPTIONAL SLOT. `decide_disposition` walks only
+    # spoken-mandatory declarations, so `E04` (misses `direction`) and `C04` (misses
+    # `site_id`, `window`) still route on their defaults - both are genuine misses of
+    # information the user supplied, and both MUST still route. ADR-0033 #4: a system that
+    # asks when it knows is worse than one that guesses when it doesn't.
+    # -----------------------------------------------------------------------------------
+    disposition = decide_disposition(
+        accepted=accepted.params,
+        declared=declared,
+        resolution=resolution,
+        enumerate_class=_make_enumerator(context),
+    )
+    if disposition.action != "route":
+        context.log.info(
+            "slot_disposition=%s verb_iri=%s slot=%s reason=%s option_source=%s "
+            "options=%d free_text_reason=%s",
+            disposition.action, predicate.get("verb_iri"), disposition.slot,
+            disposition.reason, disposition.option_source, len(disposition.options),
+            disposition.free_text_reason,
+        )
+        # SEPARATE COUNTERS, because a shrinking ask population must be readable. An ask on
+        # a slot the phrase DID carry is a filler regression surfacing as a question; folded
+        # into one counter, a degrading filler looks like a feature getting more use. `E04`
+        # was such a case two runs ago and is not one now, which is the success mode.
+        try:
+            context.add_output_metadata({
+                "slot_disposition": disposition.action,
+                "slot_disposition_slot": disposition.slot or "",
+                "slot_disposition_reason": disposition.reason,
+                "ask_on_present_in_phrase": bool(disposition.spoken),
+                "ask_on_absent_from_phrase": not disposition.spoken,
+            })
+        except Exception:  # pragma: no cover - metadata must never break a dispatch
+            pass
+        return {
+            "persona": answerer_persona,
+            "user_persona": config.user_persona,
+            "answerer_persona": answerer_persona,
+            "predicate_verb_iri": predicate.get("verb_iri"),
+            "sub_query": sub_query,
+            # A DISTINCT typed status, never borrowed. The surface for this is deferred by
+            # ADR-0033's archetype-unity constraint - it and ADR-0032's goal-shape card are
+            # ONE card, designed once with cortex in the room - so until that lands the UI
+            # renders `message`, which is written to stand on its own. Per the
+            # registered-or-honest-fallback rule an unregistered kind must degrade VISIBLY
+            # rather than borrow another species' affordances; that is how the triage card
+            # came to offer Approve/Reject on a failure.
+            "expert_response": ask_card(
+                disposition,
+                verb_iri=predicate.get("verb_iri") or "",
+                sub_query=sub_query,
+                accepted=accepted.params,
+            ),
+        }
 
     payload = {
         "user_query": sub_query,

@@ -169,12 +169,32 @@ def test_the_supervisor_degrades_to_defaults_on_every_failure_path():
               if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
               and f.name == "_fill_slots_from_query")
 
-    empties = [r for r in ast.walk(fn)
-               if isinstance(r, ast.Return) and isinstance(r.value, ast.Dict)
-               and not r.value.keys]
+    # UPDATED 2026-08-29 WHEN THE RETURN TYPE WIDENED, and deliberately not weakened. The
+    # helper used to `return {}`; it now returns `_FillResult(slots, resolution)` so the
+    # disposition can see WHY a referent slot is missing rather than only THAT it is. The
+    # property being sealed is unchanged — every failure path degrades to "run on defaults"
+    # — so the instrument follows the type instead of the literal.
+    #
+    # An empty `_FillResult({}, {})` is the honest-empty of the new shape: no slots, and no
+    # claim about resolution either. A failure that returned `_FillResult({}, something)`
+    # would be asserting knowledge it does not have, so BOTH args must be empty.
+    def _is_honest_empty(node):
+        if not isinstance(node, ast.Return):
+            return False
+        v = node.value
+        if isinstance(v, ast.Dict) and not v.keys:
+            return True          # the pre-widening form, still accepted
+        return (
+            isinstance(v, ast.Call)
+            and getattr(v.func, "id", "") == "_FillResult"
+            and len(v.args) == 2
+            and all(isinstance(a, ast.Dict) and not a.keys for a in v.args)
+        )
+
+    empties = [r for r in ast.walk(fn) if _is_honest_empty(r)]
     assert len(empties) >= 3, (
-        "fewer than three `return {}` paths — a failure mode raises instead of degrading, "
-        "and a slot extractor must never be able to break routing"
+        "fewer than three honest-empty return paths — a failure mode raises instead of "
+        "degrading, and a slot extractor must never be able to break routing"
     )
     assert any(isinstance(n, ast.Try) for n in ast.walk(fn)), "the network call is unguarded"
     assert not [n for n in ast.walk(fn) if isinstance(n, ast.Raise)], (

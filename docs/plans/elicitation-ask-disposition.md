@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0033 (Accepted 2026-08-29, reachability) + its Amendment 2026-08-28; ADR-0032 (menu integrity, one archetype)
 code-site:  src/iagent/defs/dynamic_supervisor.py (execute_subtask, after accept_slots), agent_fleet/planning_agent/slots.py, src/iagent_pure/slot_acceptance.py
-summary:    THE BUILD PLAN FOR `ask`, scoped and pre-registered before a line of it exists. Trigger is DETERMINISTIC — a spoken-mandatory slot absent after filling — because confidence was tested at n=48 and rejected (correct fills bottom at 0.93, wrong reach 0.96, the one genuine miss scored 0.96). Disposition point is execute_subtask immediately after accept_slots, the one line where the phrase, the verb, the declarations and the accepted slots are all in hand. THE MERGE SEAM IS ALREADY BUILT — `config.slots` already outranks the filler, so a stateless re-route needs no new state and no new lifetime; the card carries the already-accepted slots forward so the re-route is reconstructed, never re-parsed. THREE SCOPING CORRECTIONS FOUND BY READING: (1) `resolveInstance` RESOLVES, it does not ENUMERATE — its contract requires `identifier: str`, and a slot the phrase never filled has no identifier, so the amendment's fourth option source needs a capability capability (2) does not deliver; (2) the corpus's four ask-candidates split across BOTH trigger shapes — H06/E04 are elicitation (zero candidates), E05/H04 are disambiguation (a name WAS spoken) and need the ORIGINAL source #2, not the fourth; (3) period slots declare no permitted values, so `accept_slots` cannot reject a non-period and D05's `window=["this quarter"]` still reaches the engine. RULED 2026-08-29: free text is the honest INTERIM for instance slots — no enumeration surface exists, so enumeration is genuinely impossible today — carried with the attempt recorded (`option_source: none`, reason `no_enumerate_provider`) and a TRIPWIRE expiry: the day an enumerate provider registers for a slot's class, free text for that slot must FAIL. Corrections 1 and 3 filed as their own items ([[enumerate-is-not-resolve]], [[period-slots-declare-no-vocabulary]]); the three-valued requirement is now an acceptance item on [[the-filler-has-no-entity-resolution]]. THE ASK SHIPS BEFORE ITS OPTIONS CAN, and that ordering is the finding. RE-PARTITIONED AGAINST RUN 5 (fix 1 landed): ASK 2, ROUTE 9, IMMUNE 37. The residue is 3 MISSED / 0 WRONG / 0 EXTRA and the trigger catches EXACTLY ONE of the three — E05 (mandatory) asks; E04 and C04 miss only OPTIONAL slots and must route, which is the sharpest statement of the guardrail available. E04 LEFT the ask population because the filler fixed it, the success mode. The two remaining cases are a MINIMAL PAIR — H06 elicitation (no candidates, free-text interim) and E05 disambiguation (candidate I1 retained, a real menu, UNBLOCKED TODAY). AND THE INSTRUMENT CANNOT CHECK ITS OWN ASSERTION: the battery records only id/cls/conf/expect/got/flags/phrasing, so H06 and E05 are both `got: {}` and indistinguishable in the file — the tri-state never reaches the artifact a test would read. OWNERSHIP SETTLED: this lane owns the disposition, the filler lane owns the option source (enumerate) and the harness gap. 37 of 48 are structurally immune — the anti-clippy guardrail is a consequence of the declarations, not a tuned threshold.
+summary:    BUILT 2026-08-29 — src/iagent_pure/slot_disposition.py wired at the disposition point, 28 acceptance tests green. THE BUILD FOUND ONE THING THE PLAN HAD WRONG: a retained cross-class candidate is EVIDENCE, not an OPTION. `wrong_class` is BY DEFINITION a candidate whose class is not the slot's referent, so the filter that keeps menu integrity removes exactly the candidate that was kept — offering I1 for project_id would 422 with the user's own click behind it. So E05 has NO menu either, and both live ask cases fall to free text today; the disambiguation path is built and correct with no live corpus case reaching it (fixture-tested, and said so). THE CRITICAL PATH IS THE ROUTER-SIDE ENUMERATE FAN-OUT — Engine P registered as a provider but nothing in Engine O dispatches an enumerate, and a registration is not a reachable call. Wired as ENUMERATE_INSTANCES_URL, unset, reporting `no_provider` rather than silence. THE FREE-TEXT TRIPWIRE WAS ALSO WRONG AS WRITTEN and is corrected: it is on SILENCE, not on absence of a provider, because at bound 8 a registered provider legitimately answers `too_many` for Capability's 9 members. ORIGINAL PLAN: THE BUILD PLAN FOR `ask`, scoped and pre-registered before a line of it exists. Trigger is DETERMINISTIC — a spoken-mandatory slot absent after filling — because confidence was tested at n=48 and rejected (correct fills bottom at 0.93, wrong reach 0.96, the one genuine miss scored 0.96). Disposition point is execute_subtask immediately after accept_slots, the one line where the phrase, the verb, the declarations and the accepted slots are all in hand. THE MERGE SEAM IS ALREADY BUILT — `config.slots` already outranks the filler, so a stateless re-route needs no new state and no new lifetime; the card carries the already-accepted slots forward so the re-route is reconstructed, never re-parsed. THREE SCOPING CORRECTIONS FOUND BY READING: (1) `resolveInstance` RESOLVES, it does not ENUMERATE — its contract requires `identifier: str`, and a slot the phrase never filled has no identifier, so the amendment's fourth option source needs a capability capability (2) does not deliver; (2) the corpus's four ask-candidates split across BOTH trigger shapes — H06/E04 are elicitation (zero candidates), E05/H04 are disambiguation (a name WAS spoken) and need the ORIGINAL source #2, not the fourth; (3) period slots declare no permitted values, so `accept_slots` cannot reject a non-period and D05's `window=["this quarter"]` still reaches the engine. RULED 2026-08-29: free text is the honest INTERIM for instance slots — no enumeration surface exists, so enumeration is genuinely impossible today — carried with the attempt recorded (`option_source: none`, reason `no_enumerate_provider`) and a TRIPWIRE expiry: the day an enumerate provider registers for a slot's class, free text for that slot must FAIL. Corrections 1 and 3 filed as their own items ([[enumerate-is-not-resolve]], [[period-slots-declare-no-vocabulary]]); the three-valued requirement is now an acceptance item on [[the-filler-has-no-entity-resolution]]. THE ASK SHIPS BEFORE ITS OPTIONS CAN, and that ordering is the finding. RE-PARTITIONED AGAINST RUN 5 (fix 1 landed): ASK 2, ROUTE 9, IMMUNE 37. The residue is 3 MISSED / 0 WRONG / 0 EXTRA and the trigger catches EXACTLY ONE of the three — E05 (mandatory) asks; E04 and C04 miss only OPTIONAL slots and must route, which is the sharpest statement of the guardrail available. E04 LEFT the ask population because the filler fixed it, the success mode. The two remaining cases are a MINIMAL PAIR — H06 elicitation (no candidates, free-text interim) and E05 disambiguation (candidate I1 retained, a real menu, UNBLOCKED TODAY). AND THE INSTRUMENT CANNOT CHECK ITS OWN ASSERTION: the battery records only id/cls/conf/expect/got/flags/phrasing, so H06 and E05 are both `got: {}` and indistinguishable in the file — the tri-state never reaches the artifact a test would read. OWNERSHIP SETTLED: this lane owns the disposition, the filler lane owns the option source (enumerate) and the harness gap. 37 of 48 are structurally immune — the anti-clippy guardrail is a consequence of the declarations, not a tuned threshold.
 ---
 
 # The `ask` disposition — the build plan, written before the build
@@ -21,6 +21,98 @@ here has started from.
 **ADR-0033 is Accepted as of 2026-08-29** (reachability, not frequency — see its *Status change*
 section). Everything in this packet is build, not ruling. Where the read contradicts a ruling,
 that is flagged as a correction, not exercised as discretion.
+
+## ✅ BUILT 2026-08-29 — and the build found one thing the plan had wrong
+
+`src/iagent_pure/slot_disposition.py` (pure, injected enumerator), wired at the disposition
+point in `execute_subtask`, with the pre-registered acceptance as
+`tests/routing/test_slot_disposition.py` — **28 tests, green.** The trigger, the guardrail,
+the abstain row, both tripwires and the card contract are all asserted.
+
+### ⛔ THE CORRECTION: a retained cross-class candidate is EVIDENCE, not an OPTION
+
+This packet said `E05` was *"disambiguation, candidate `I1` retained, a real menu, unblocked
+today."* **It is not a menu, and the reason is structural rather than incidental.**
+
+`wrong_class` is *by definition* an outcome whose candidate's class is **not** the slot's
+referent — that is what the word means. So the class filter that keeps ADR-0033 #2's
+menu-integrity rule intact removes **exactly the candidate that was kept**:
+
+    E05  project_id (declares #Project)  <-  candidate I1, class #Initiative
+         offering I1 => plan_dependency_neighborhood(project_id="I1") => 422
+
+That is the same 422 the entire tri-state exists to prevent, now with the user's own click
+behind it. **A `wrong_class` outcome can never supply a menu for its own slot.**
+
+`/fill_slots` synthesises that candidate deliberately — *"so every non-empty outcome carries
+at least the candidate it found"* — and the synthesis is right; only the assumption about
+what it is for was wrong. It is **context**, and the disposition now says it out loud:
+
+> *"Which project? I found 'ERP Modernization', but that is not one. There are 14 to choose
+> from. Too many to list — name it and I will run this."*
+
+The user was understood, and they named another species. Saying so is strictly better than
+either a 422 or a bare "which project?".
+
+### What this changes about the picture, honestly
+
+**Both** live ask cases fall to free text today, not one:
+
+| | shape | menu | why |
+|---|---|---|---|
+| `H06` `capability_id` | elicitation | **no** | `no_provider` — no router-side fan-out exists |
+| `E05` `project_id` | disambiguation | **no** | candidate is cross-class; `Project` is 14 > bound 8 → `too_many` |
+
+So the disambiguation path is **built and correct with no live corpus case reaching it**. It
+is exercised by fixture (`test_same_class_candidates_ARE_a_menu`) and that is stated in the
+test rather than hidden — coverage of a built path, not evidence of a measured one.
+
+**And the critical path is now unambiguous: the router-side enumerate fan-out.** Engine P
+registered as a `mesh:enumerateInstances` provider, but **nothing in Engine O dispatches an
+enumerate** the way `/resolve` fans out a resolve. A registration is not a reachable call, and
+the supervisor must not invent a provider's URL — the phantom-service-URL shape. So the wiring
+is `ENUMERATE_INSTANCES_URL`, unset, and the disposition reports `no_provider` rather than
+staying silent. **One env var is the whole connection when the fan-out lands.**
+
+### The free-text tripwire, corrected as it was written
+
+The packet's expiry read *"the day an enumerate provider registers for a slot's class, free
+text for that slot must FAIL."* **That is wrong as stated**, and the landed capability is what
+showed it: at menu bound 8, `Capability` (9 members) legitimately answers `too_many`, so a
+registered provider can correctly produce a menuless ask.
+
+> **The tripwire is on SILENCE, not on absence of a provider.** An ask with no menu must name
+> its reason from a closed set — `too_many | unsupported | no_provider | no_referent`. A
+> menuless ask that cannot say why is the open question ADR-0033 retired, wearing a slot's
+> name. `test_TRIPWIRE_free_text_must_carry_a_provider_reason` asserts exactly that, across
+> all four enumerator behaviours including an outcome nobody has declared yet.
+
+### Two things deliberately not built
+
+**The surface.** ADR-0033's archetype-unity constraint holds: this ships a typed
+`status: "slot_elicitation"` result plus honest prose that stands on its own, not a card
+component. The card is one archetype with ADR-0032's, designed once with cortex in the room.
+
+**The re-route's second turn.** The card carries `accepted_slots` so `{**accepted, slot:
+chosen}` reconstructs rather than re-parses — the mechanism is asserted by test — but nothing
+consumes the answer yet, because the surface that would collect it is deferred.
+
+### A seal updated rather than weakened
+
+`test_the_supervisor_degrades_to_defaults_on_every_failure_path` counted bare `return {}`
+statements; the helper now returns `_FillResult(slots, resolution)` so the disposition can see
+*why* a referent slot is missing. The seal follows the type: it accepts
+`_FillResult({}, {})` — **both** args empty, since a failure returning a non-empty resolution
+would be asserting knowledge it does not have.
+
+### Pre-existing failures, checked and not adopted
+
+The full suite has 6 failures, none from this change and none touching its surface: two
+dangling `docs/` citations (`cortex-data-client.md`, `jupyter_guide.md`) from three unrelated
+SDK/broker packets, three endpoint-gating manifest rows (`/internal/identity/redeem`,
+`/fill_slots`, `/enumerate_instances` + `/resolve_instance`), and a helm chart-version drift.
+**`/enumerate_instances` and `/fill_slots` are the option-source lane's routes** — filed here,
+not fixed, per the split.
 
 ## OWNERSHIP, settled 2026-08-29 — two lanes were pointed at one build
 
