@@ -49,6 +49,28 @@ _NAMED_COMPONENTS = {
     "data-analyst": "Engine DA",
 }
 
+# NOT ENGINES AT ALL — and that is the point of a separate map.
+#
+# The seeding answer is produced by a BFF ORCHESTRATION, not by an engine. Asked for its
+# handler, the HUD rendered "Unknown engine" — a captured fact that was not a true one. The
+# handler was known; it simply was not the KIND of thing this module could name.
+#
+# The tempting fix was an entry in `_NAMED_COMPONENTS` above, which would have made the BFF
+# impersonate an engine so an existing lookup would succeed. That is the same
+# classification-is-not-existence shortcut cortex refused when it declined to invent a
+# placeholder COMPONENT for an archetype that is acted on rather than drawn — and it refused
+# it for the better reason: the model gains the category instead. A handler declares one of:
+#
+#     engine        answers a typed question          -> "Engine W"
+#     orchestration composes several governed asks    -> "BFF orchestration"
+#
+# Both are enumerable and neither impersonates the other. Keyed on the release-invariant
+# chart component, per this module's standing rule — `iagent-` in sandbox,
+# `invincible-agent-` at work, and the endpoint may be bare or FQDN.
+_NON_ENGINE_HANDLERS = {
+    "cortex-bff": "BFF orchestration",
+}
+
 _ENGINE_LETTER_RE = re.compile(r"engine-([a-z]{1,2})\b")
 
 
@@ -75,3 +97,24 @@ def engine_name_from_endpoint(endpoint: str | None) -> str:
         return ""
     letter = m.group(1)
     return "Engine DA" if letter == "da" else f"Engine {letter.upper()}"
+
+
+def handler_name_from_endpoint(endpoint: str | None) -> str:
+    """The HUD's "Handled by" label for ANY handler — engine or not.
+
+    Checks the non-engine handlers first, then defers to
+    :func:`engine_name_from_endpoint`. Separate from that function on purpose: its name
+    promises an ENGINE, and a caller reading `engine_name_from_endpoint` and receiving
+    "BFF orchestration" would reasonably conclude the mesh had grown an engine by that
+    name. One function per claim.
+
+    Empty string when nothing matches — the caller keeps whatever it already had, so an
+    unrecognised handler still degrades to "Unknown engine" rather than to a blank label.
+    """
+    if not endpoint:
+        return ""
+    e = endpoint.lower()
+    for component, label in _NON_ENGINE_HANDLERS.items():
+        if component in e:
+            return label
+    return engine_name_from_endpoint(endpoint)

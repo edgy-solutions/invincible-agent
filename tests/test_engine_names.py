@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from iagent.engine_names import engine_name_from_endpoint, engine_name_from_provider
+from iagent.engine_names import handler_name_from_endpoint
 
 
 @pytest.mark.parametrize("endpoint,expected", [
@@ -48,3 +49,38 @@ def test_engine_name_from_endpoint_is_release_agnostic(endpoint, expected):
 ])
 def test_engine_name_from_provider(provider, expected):
     assert engine_name_from_provider(provider) == expected
+
+
+# ── THE HANDLER CATEGORY — an orchestration is not an unknown engine ───────────────
+#
+# The seeding answer is produced by a BFF ORCHESTRATION. Asked for its handler, the HUD
+# rendered "Unknown engine" — a captured fact that was not a true one. The handler was
+# known; it was not the KIND of thing this module could name.
+
+@pytest.mark.parametrize("endpoint,expected", [
+    ("http://iagent-cortex-bff:8090/canvas/seed", "BFF orchestration"),
+    # RELEASE-AGNOSTIC, the standing rule of this module and the one it has already been
+    # bitten by: `iagent-` in sandbox, `invincible-agent-` at work, bare host or FQDN.
+    ("http://invincible-agent-cortex-bff.sandbox.svc.cluster.local:8090/canvas/seed",
+     "BFF orchestration"),
+    # engines still resolve through the same door
+    ("http://iagent-engine-w:8088/query_knowledge", "Engine W"),
+    ("http://iagent-data-analyst:8086/analyze", "Engine DA"),
+    ("http://some-other-service:9000/x", ""),
+    ("", ""),
+    (None, ""),
+])
+def test_handler_name_names_orchestrations_AND_engines(endpoint, expected):
+    assert handler_name_from_endpoint(endpoint) == expected
+
+
+def test_engine_name_from_endpoint_does_NOT_claim_the_orchestration():
+    """ONE FUNCTION PER CLAIM, and this is the assertion that keeps them apart.
+
+    Teaching `engine_name_from_endpoint` to answer "BFF orchestration" would have been one
+    line fewer. It would also mean a caller reading that function's NAME and receiving that
+    value could only conclude the mesh had grown an engine called "BFF orchestration" — the
+    same impersonation cortex refused when it declined to invent a placeholder component for
+    an archetype that is acted on rather than drawn.
+    """
+    assert engine_name_from_endpoint("http://iagent-cortex-bff:8090/canvas/seed") == ""

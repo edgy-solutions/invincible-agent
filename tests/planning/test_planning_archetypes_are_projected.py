@@ -287,7 +287,8 @@ def test_a_producer_that_sends_no_version_makes_no_claim():
 # shape is DECLARED BY THE RECEIVER, not by us. cortex's canvasSeedFromArtifact
 # (src/lib/canvasSeedFromAnswer.ts) reads:
 #
-#     { archetype: "CANVAS_SEED", name?: string, artifact_ids: string[] }
+#     { archetype: "CANVAS_SEED", canvas_type?: string, name?: string,
+#       artifact_ids: string[] }
 #
 # The two halves were written in different lanes and a mechanical comparison of
 # literal bytes is what caught the last mismatch before either shipped — a
@@ -340,3 +341,45 @@ def test_an_EMPTY_seed_degrades_rather_than_projecting_a_seed_with_no_ids():
     for payload in ([], None):
         env = [{"persona": "X", "expert_response": {"artifact_ids": payload}}]
         assert ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None) is None
+
+
+def test_CANVAS_SEED_carries_canvas_type_when_the_producer_states_it():
+    """A CARRIER, NOT AN ASSERTION — and the distinction is why nothing emits this today.
+
+    `canvas_type` is declared `required: false` in cortex's CanvasSeed.contract.ts and is
+    NOT READ by anything: canvasSeedFromArtifact's return type is literally
+    `{ ids: string[]; name?: string }` (checked 2026-08-29). So the producer deliberately
+    does not send it — a producer-side write with no consumer is the same orphan species as
+    a consumer-side read with no producer, just pointing the other way.
+
+    The passthrough exists anyway because it costs nothing and asserts nothing: it carries
+    what a producer wrote, and there is no producer. The day cortex reads the field, the
+    server side is one line away instead of a change to this table."""
+    ns = _fns()
+    env = [{"persona": "PORTFOLIO_LEAD",
+            "expert_response": {"artifact_ids": ["urn:a", "urn:b"],
+                                "canvas_type": "portfolio_planning"}}]
+    got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "PORTFOLIO_LEAD", None)
+    assert got["canvas_type"] == "portfolio_planning"
+
+
+def test_CANVAS_SEED_omits_canvas_type_when_the_producer_did_not_state_it():
+    """Carrying what the producer wrote, and nothing else. A default invented here would be
+    a fabricated fact wearing a producer's clothes — the same prohibition that keeps `name`
+    absent on the phrase path today."""
+    ns = _fns()
+    env = [{"persona": "X", "expert_response": {"artifact_ids": ["urn:a"]}}]
+    got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None)
+    assert "canvas_type" not in got
+    assert "name" not in got, "the two optional fields must degrade the same way"
+
+
+def test_CANVAS_SEED_ids_are_strings_so_no_field_is_lifted_off_a_ROW():
+    """The passthrough loop lifts a missing field off `rows[0]` when the rows are dicts —
+    correct for `group_kind` on a timeline. CANVAS_SEED's payload is a list of STRINGS, so
+    that branch must never fire; a string has no `.get`, and reaching for one would turn an
+    absent optional field into a crash on the demo's opening beat."""
+    ns = _fns()
+    env = [{"persona": "X", "expert_response": {"artifact_ids": ["urn:a", "urn:b"]}}]
+    got = ns["_project_planning_archetype"]("CANVAS_SEED", env, "X", None)
+    assert got["artifact_ids"] == ["urn:a", "urn:b"]

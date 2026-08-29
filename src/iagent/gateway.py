@@ -1651,6 +1651,23 @@ async def canvas_seed(
         )
         return {"artifact_ids": [], "seeded": seeded, "total": total}
 
+    # NEITHER OPTIONAL FIELD IS SENT, AND THAT IS THE CORRECT STATE TODAY.
+    #
+    # `canvas_type` was dispatched for emission on the premise that the receiver reads
+    # it. IT DOES NOT — checked, 2026-08-29: cortex's CanvasSeed.contract.ts declares
+    # it `required: false`, and canvasSeedFromArtifact's return type is literally
+    # `{ ids: string[]; name?: string }`. No reader exists anywhere in that repo.
+    # Sending it would be a PRODUCER-side write with no consumer — the exact mirror of
+    # the orphan species the dispatch set out to remove — and it would cost breaking
+    # the seal directly above, whose stated purpose is keeping fields a future client
+    # might start depending on OFF this response. The honest order is: cortex reads it
+    # first (it matters only when a second canvas_type exists), then the producer
+    # states it. The arm's passthrough already carries it the day that happens.
+    #
+    # `name` has a real reader, and still must not be sent: the phrase path has no
+    # spoken name, so any value here would be invented. The receiver already defaults
+    # honestly. When elicitation can ask "what should I call it?", that ask becomes
+    # the name's producer.
     return {
         "artifact_ids": [a for a in (result.get("artifact_ids") or []) if a],
         "seeded": seeded,
@@ -2391,6 +2408,7 @@ def _metadata_dict(mat: dict) -> dict[str, Any]:
 from .engine_names import (  # noqa: E402
     engine_name_from_endpoint as _engine_name_from_endpoint,
     engine_name_from_provider as _engine_name_from_provider,
+    handler_name_from_endpoint as _handler_name_from_endpoint,
 )
 
 
@@ -2550,7 +2568,13 @@ def _project_route_decision(mat: dict) -> dict | None:
         # predicate-storage path, which doesn't include provider).
         engine_name = _engine_name_from_provider(md.get("handler_provider"))
         if engine_name == "Unknown engine":
-            ep_name = _engine_name_from_endpoint(handler_endpoint)
+            # HANDLER, not engine. A BFF orchestration answers the seeding verb and
+            # is not an engine at all; asking only for an engine name rendered
+            # "Unknown engine" in the HUD for a handler that was perfectly well
+            # known. The label the user reads is a captured fact, so it has to be a
+            # true one — see engine_names._NON_ENGINE_HANDLERS for why this is a
+            # category rather than an entry in the engine map.
+            ep_name = _handler_name_from_endpoint(handler_endpoint)
             if ep_name:
                 engine_name = ep_name
         return {
