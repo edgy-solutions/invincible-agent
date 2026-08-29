@@ -20,8 +20,24 @@ into the real measure over HTTP.
 NO MODEL. This half is deterministic and exhaustive by construction; the model's ability to
 PRODUCE these values from natural phrasings is the other half, measured live against a corpus
 whose fairness is a human judgment.
+
+READING A RED CELL? CHECK THIS HARNESS BEFORE THE ENGINE. The first run of this matrix
+produced three failures and ALL THREE WERE THE INSTRUMENT: `period_caps` is a dict keyed BY
+period and the sampler iterated its values (floats), reporting three `window` slots as
+UNPROVEN; a verb with a spoken-MANDATORY slot cannot be exercised one slot at a time, so
+every case measured its own omission; and `project_id` is OVERLOADED, carrying a phase id
+when `kind="phase"`. A coverage report is unusually prone to this — it is an instrument whose
+output is a list of accusations, and an accusation costs nothing to make. Confirm the case
+against the engine by hand before believing the cell.
+
+WHAT THIS MATRIX CANNOT SEE, stated so nobody assumes otherwise: a slot declared `str` over a
+vocabulary that is CLOSED at runtime samples fine with one valid value and passes every
+arrival case here. `direction` and `kind` were exactly that and were found by reading. The
+seal at the bottom of this file closes that gap; the matrix does not.
 """
 from __future__ import annotations
+
+import pathlib
 
 import pytest
 from fastapi.testclient import TestClient
@@ -227,3 +243,123 @@ def test_the_matrix_is_not_vacuous():
         f"router is now advertising free text over a closed vocabulary"
     )
     assert len(COVERABLE) >= enum_values, "enum values are not all being exercised"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The seal the matrix itself CANNOT provide
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _closed_vocabulary_violations():
+    """Spoken slots declared OPEN (`str`) whose body validates them against a CLOSED,
+    literal vocabulary.
+
+    Returns (verb, slot, rhs_source) triples. Separated from the test so the positive
+    control can drive the same logic over deliberately-broken source."""
+    import ast
+
+    src = pathlib.Path(measures.__file__).read_text(encoding="utf-8")
+    return _violations_in(src, ast.parse(src))
+
+
+def _violations_in(src, tree):
+    import ast
+
+    # Module-level names bound to a literal tuple/list/set of constants, or to get_args(...)
+    # of a Literal — both are closed vocabularies written down somewhere other than the
+    # annotation.
+    const_names = set()
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        val = node.value
+        literal_seq = (isinstance(val, (ast.Tuple, ast.List, ast.Set))
+                       and val.elts and all(isinstance(e, ast.Constant) for e in val.elts))
+        for t in node.targets:
+            if isinstance(t, ast.Name) and literal_seq:
+                const_names.add(t.id)
+
+    out = []
+    fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    for verb, fn in fns.items():
+        if not verb.startswith("plan_"):
+            continue
+        # Annotations read from THIS source, not from the live module. The first version
+        # called `slots_for(verb)` — so the positive control, which supplies synthetic
+        # source, was scored against the REAL module's annotations and reported the defect
+        # as absent. The harness was grading the wrong system, which is this file's own
+        # recurring failure mode and is why the control exists at all.
+        declared_open = set()
+        for a in list(fn.args.args) + list(fn.args.kwonlyargs):
+            ann = ast.get_source_segment(src, a.annotation) if a.annotation else ""
+            if ann and "Literal" not in ann:
+                declared_open.add(a.arg)
+        for node in ast.walk(fn):
+            if not (isinstance(node, ast.Compare) and isinstance(node.left, ast.Name)):
+                continue
+            if not any(isinstance(o, (ast.In, ast.NotIn)) for o in node.ops):
+                continue
+            if node.left.id not in declared_open:
+                continue  # annotated with a Literal — declared honestly
+            rhs = node.comparators[0]
+            closed = (
+                (isinstance(rhs, (ast.Tuple, ast.List, ast.Set)) and rhs.elts
+                 and all(isinstance(e, ast.Constant) for e in rhs.elts))
+                or (isinstance(rhs, ast.Name) and rhs.id in const_names)
+            )
+            # An ATTRIBUTE or CALL on the right is a data lookup, not a vocabulary:
+            # `process_id in c.enables_process_ids` asks whether a capability enables a
+            # process. Flagging it would be the instrument manufacturing work.
+            if closed:
+                out.append((verb, node.left.id, ast.get_source_segment(src, rhs)))
+    return out
+
+
+def test_no_runtime_closed_vocabulary_is_declared_as_open_text():
+    """A DECLARATION DERIVED FROM AN IMPRECISE ANNOTATION IS IMPRECISE IN THE DIRECTION OF
+    PERMISSIVENESS — and permissive declarations do not fail closed, they INVITE.
+
+    `slots_for` derives `values` from a `Literal` and nothing from a bare `str`. So a
+    parameter whose body validates it against a closed set, but whose annotation is `str`,
+    is advertised to the router as free text: the model may invent `"forwards"`, and the
+    engine answers 422 to a question the system told it it could ask.
+
+    THE COVERAGE MATRIX CANNOT SEE THIS. A closed-vocabulary `str` samples fine with one
+    valid value and passes every arrival case. `direction` and `kind` were exactly that, and
+    they were found by reading, not by the matrix. This is the seal that closes the gap the
+    matrix leaves.
+
+    The rule distinguishes a VOCABULARY from a LOOKUP: a literal sequence (or a module
+    constant bound to one) is a vocabulary and must be a `Literal`; an attribute or call on
+    the right — `process_id in c.enables_process_ids` — is a data lookup and is left alone."""
+    violations = _closed_vocabulary_violations()
+    assert not violations, (
+        "declared as open text but validated against a closed set — make the annotation a "
+        f"Literal so the router can advertise the vocabulary: {violations}"
+    )
+
+
+def test_that_seal_has_teeth():
+    """Shown RED before being trusted, on source that reintroduces the exact defect.
+
+    Also pins the LOOKUP exclusion: the same source contains a data-lookup membership test,
+    and a seal that flagged it would manufacture work by pointing at the wrong system —
+    which is the failure mode this file's own harness bugs already demonstrated once."""
+    import ast
+
+    broken = '''
+_DIRECTIONS = ("upstream", "downstream")
+
+def plan_dependency_neighborhood(state, *, project_id: str, direction: str = "upstream"):
+    if direction not in _DIRECTIONS:
+        raise NotInModel("nope")
+    if project_id in state.enables_process_ids:
+        pass
+'''
+    found = _violations_in(broken, ast.parse(broken))
+    names = {(v, s) for v, s, _ in found}
+    assert ("plan_dependency_neighborhood", "direction") in names, (
+        "the seal did not flag a closed vocabulary declared as `str` — it is vacuous"
+    )
+    assert ("plan_dependency_neighborhood", "project_id") not in names, (
+        "the seal flagged a DATA LOOKUP as a vocabulary; it would manufacture work"
+    )
