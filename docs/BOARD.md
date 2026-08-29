@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **86 of 98 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **87 of 99 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -217,6 +217,10 @@ _Coverage: **86 of 98 packets indexed** — 2 carry pre-ADR-0040 legacy frontmat
 - **supervisor-mint-missing-identity** — Every supervisor dispatch is unauthenticated at work — `mint_supervisor_token()` raises KeyError, so specialists record `caller: none`. Inert under OBSERVE, and it becomes a hard failure the moment REQUIRE_TRANSPORT_AUTH flips.
   status: open · owner: agent · blocked-on: nothing — one read settles it: `printenv` for SUPERVISOR_CLIENT_ID and SUPERVISOR_CLIENT_SECRET in the pod that runs the supervisor. KeyError does not say which.
   → [docs/plans/supervisor-mint-missing-identity.md](plans/supervisor-mint-missing-identity.md)
+
+- **the-filler-has-no-entity-resolution** — MEASURED. Six spoken slots are OPAQUE IDS (site_id, capability_id, project_id, tech_id, process_id, scope_initiative_id) and the filler has no entity resolution, so it confidently emits the spoken NAME. "how loaded is the Aurora site" -> {"site_id": "Aurora"} at confidence 0.92 -> 422 unknown site 'Aurora'. That is a WRONG fill, not a miss: an honest refusal to a perfectly answerable question. The system ALREADY has the component for this — /resolve and entity_refs, ADR-0031's instance-resolution ladder — so the filler is doing a job another part owns. Also the first evidence on the threshold question, and it points at the harder branch: the wrong fill scored 0.92 where the correct one scored 0.98. Suggestive, n=3, and pre-registers a hypothesis the corpus will settle.
+  status: open · owner: unassigned
+  → [docs/plans/the-filler-has-no-entity-resolution.md](plans/the-filler-has-no-entity-resolution.md)
 
 - **the-slot-filler-belongs-where-the-verb-is-known** — BUILT AND MEASURED 2026-08-29 (7 of 7 against pre-registered expectations; see the tail of this doc). Deviation recorded: NOT TypeBuilder — the constraint a dynamic class would buy already exists downstream in slot_acceptance, and two enforcement points would be one more registry to keep in agreement. THE RECORDED RULING COULD NOT BE BUILT AS STATED, and this says so rather than quietly redesigning. The ruling was "/route_intent calls BOTH ExtractIntent and RouteIntent in sequence". /route_intent receives ONLY the query — ADR-0009 Step F'.6 removed candidate_verb, and verb resolution now happens in the SUPERVISOR via /search_predicates + /classify_predicate. At /route_intent time there is no verb, so no intent class, so no declarations to fill against or validate with. The ruling's own reasoning survives intact and points one hop later: fill slots WHERE THE VERB IS KNOWN, which is execute_subtask, immediately before the carry. Recommended: a new /fill_slots(query, verb_iri, declarations) endpoint, generic over declarations via TypeBuilder — the pattern this repo already uses for the predicate dynamic enum — so every engine that declares slots gets filling for free rather than planning getting a bespoke path. BAML's existing RouteIntent (18 hand-maintained typed intents, 0 callers) is NOT the vehicle: it re-routes, which would put a second router in disagreement with the graph. Blocked on the projection either way, because a filler with no declarations has nothing to fill.
   status: open · owner: unassigned
