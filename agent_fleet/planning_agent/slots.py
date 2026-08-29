@@ -42,8 +42,10 @@ try:  # flat in the image (/app), packaged in the repo — see
     # tests/test_agent_modules_survive_flat_layout.py, which seals this dual form. A bare
     # `from . import measures` imports fine here and dies at container start.
     import measures
+    from entities import FISCAL_PERIODS
 except ImportError:
     from agent_fleet.planning_agent import measures
+    from agent_fleet.planning_agent.entities import FISCAL_PERIODS
 
 #: Injected by the route, never spoken. MIRRORS the `params[...] = ...` sites in main.py's
 #: run_measure, and `test_slot_handles_match_the_routes_injection_sites` fails if the two
@@ -139,42 +141,25 @@ _REFERENT_KIND = {
 }
 
 
-#: Slots whose value is a fiscal period. Their vocabulary is DATA, not a `Literal`, so it
-#: cannot be derived from the signature — `window: Optional[list[str]]` says the shape and
-#: nothing about which strings are periods.
+#: Slots whose value is a fiscal period, and the vocabulary they take.
+#:
+#: SOURCED FROM `FISCAL_PERIODS`, THE CODE'S OWN TABLE — not from a loaded plan's
+#: `period_caps`. The first version took it from the data and was WRONG IN THE RESTRICTIVE
+#: DIRECTION: the seed funds five periods while the calendar declares eight, so the router
+#: refused `FY27-Q2` as not-a-permitted-value while the measure accepted it and returned a
+#: row. A legitimate question, refused before it reached the thing that could answer it.
+#:
+#: It is the same defect this arc keeps meeting — a declaration disagreeing with the code it
+#: describes — inverted. The earlier instances (`direction: str`, `Optional[list[str]]`) were
+#: too PERMISSIVE and invited a wrong answer; this one was too RESTRICTIVE and refused a right
+#: one. Both come from deriving a contract from something other than the contract: there, from
+#: a type that had lost information; here, from data that was never the vocabulary.
+#:
+#: `_periods()` in measures.py validates against `FISCAL_PERIODS`, so that is the authority and
+#: this reads the same constant. No registration-time enrichment is needed, because the
+#: vocabulary is not data-dependent at all — which is why `with_live_vocabularies` is gone
+#: rather than corrected.
 _PERIOD_SLOTS = {"window"}
-
-
-def with_live_vocabularies(records: List[dict], *, periods: List[str]) -> List[dict]:
-    """Attach data-dependent vocabularies to declarations that cannot carry their own.
-
-    WHY THIS IS SEPARATE FROM `slots_for`. Enum values come from a `Literal` and are a fact
-    about the CODE; fiscal periods come from the loaded plan and are a fact about the DATA.
-    Folding the second into the first would make `slots_for` depend on a store, and a pure
-    signature-derivation is worth keeping pure. Registration calls both, because
-    registration is the moment both are in hand.
-
-    MEASURED CONSEQUENCE OF NOT DOING THIS: the filler answered "what does spend look like
-    this quarter" with `window: ["this quarter"]` — not an invented period, the raw words —
-    which reaches the measure and raises `unknown fiscal period(s)`. With the vocabulary
-    attached, `accept_slots` refuses it at the router, using the enum check it already has
-    rather than a new mechanism.
-
-    NOT APPLIED TO `as_of`, and that is deliberate. It takes a DATE, not a fiscal period,
-    and its comparison is lexical — measured, `as_of="FY26-Q4"` returns the unfiltered set
-    byte-identical to passing nothing, because `('9999-12-31' <= 'FY26-Q4')` is True. Giving
-    it the period vocabulary would make the router accept exactly the values the measure
-    silently ignores. Its real vocabulary is a date format, and that is its own item —
-    see `[[period-slots-declare-no-vocabulary]]`.
-    """
-    if not periods:
-        return records
-    out = []
-    for r in records:
-        if r["name"] in _PERIOD_SLOTS and not r.get("values"):
-            r = {**r, "values": list(periods)}
-        out.append(r)
-    return out
 
 
 def slots_for(fn_name: str) -> List[dict]:
@@ -215,6 +200,10 @@ def slots_for(fn_name: str) -> List[dict]:
         # common case and needs no resolution.
         if kind.startswith("spoken") and name in _REFERENT_KIND:
             rec["referent"] = _REFERENT_KIND[name]
+        # A period slot's vocabulary is a fact about the calendar, not about the signature —
+        # `Optional[list[str]]` says the shape and nothing about which strings are periods.
+        if kind.startswith("spoken") and name in _PERIOD_SLOTS and values is None:
+            values = list(FISCAL_PERIODS)
         if values is not None:
             rec["values"] = values
         if not required and prm.default is not None:

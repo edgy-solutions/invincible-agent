@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
     import measures
-    from slots import slots_for, with_live_vocabularies
+    from slots import slots_for
     from seed import build_seed, check_consistency
     from state import (
         MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
@@ -168,14 +168,7 @@ async def lifespan(app: FastAPI):
                     cost_class="fast",
                     # DERIVED from the measure's signature, never hand-transcribed — the enum
                     # values cannot drift from the `Literal` because they are read out of it.
-                    # Enriched with the LIVE period vocabulary: `window` takes fiscal
-                    # periods, which are data rather than a `Literal`, so the signature
-                    # cannot carry them. Registration is the moment both the signature and
-                    # the loaded plan are in hand.
-                    slots=with_live_vocabularies(
-                        slots_for(v["fn"]),
-                        periods=sorted(getattr(STORE.resolve("baseline"), "period_caps", {}) or {}),
-                    ),
+                    slots=slots_for(v["fn"]),
                 )
             except Exception as exc:  # pragma: no cover
                 # Best-effort, matching the fleet's existing posture: a failed registration

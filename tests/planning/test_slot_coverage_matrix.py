@@ -131,8 +131,15 @@ def _cases():
             if not d["kind"].startswith("spoken"):
                 continue
             if d.get("values"):
+                # A slot can be BOTH enum-valued and container-typed: `window` declares the
+                # fiscal calendar as its vocabulary and takes `list[str]`. Generating the bare
+                # value there produces `window="FY27-Q3"`, which the guard correctly refuses as
+                # a wrong shape — so the matrix would report the engine broken for obeying its
+                # own declaration. The container comes from the declared TYPE, not from a guess
+                # about the slot.
+                container = str(d.get("type") or "").startswith(("list[", "set[", "tuple["))
                 for v in d["values"]:
-                    out.append((verb, d["name"], v))
+                    out.append((verb, d["name"], [v] if container else v))
             else:
                 sampler = _SAMPLERS.get(d["name"])
                 out.append((verb, d["name"], sampler() if sampler else None))
@@ -155,7 +162,8 @@ def client(monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("verb,slot,value", COVERABLE,
-                         ids=[f"{v}.{s}={val}" for v, s, val in COVERABLE])
+                         ids=[f"{v}.{s}={val if not isinstance(val, list) else '+'.join(map(str, val))}"
+                              for v, s, val in COVERABLE])
 def test_a_declared_slot_value_ARRIVES_at_the_verb(client, verb, slot, value):
     """Accepted by the guard AND honoured by the measure.
 
@@ -363,3 +371,43 @@ def plan_dependency_neighborhood(state, *, project_id: str, direction: str = "up
     assert ("plan_dependency_neighborhood", "project_id") not in names, (
         "the seal flagged a DATA LOOKUP as a vocabulary; it would manufacture work"
     )
+
+
+def test_the_period_vocabulary_IS_the_one_the_measure_validates_against():
+    """A DECLARATION THAT DISAGREES WITH THE CODE, IN THE RESTRICTIVE DIRECTION.
+
+    `_periods()` in measures.py rejects anything not in `FISCAL_PERIODS`, so that table is the
+    authority on what a period slot accepts. The first version of this vocabulary was sourced
+    from a loaded plan's `period_caps` instead — the seed funds five periods while the calendar
+    declares eight — so the router refused `FY27-Q2` as not-a-permitted-value while the measure
+    accepted it and returned a row. A legitimate question, refused before it reached the thing
+    that could answer it.
+
+    Every earlier instance of this species was too PERMISSIVE and invited a wrong answer
+    (`direction: str` over a closed set, `Optional[list[str]]` reported as `str`). This one was
+    too RESTRICTIVE and refused a right one. Both come from deriving a contract from something
+    that was never the contract.
+
+    Asserted as SET EQUALITY, not containment: a superset would accept values the measure
+    rejects, and a subset is the defect above."""
+    from agent_fleet.planning_agent.entities import FISCAL_PERIODS
+
+    declared = {d["name"]: d for d in slots_for("plan_site_load")}["window"].get("values")
+    assert declared, "the window slot declares no vocabulary — 'this quarter' reaches the engine"
+    assert set(declared) == set(FISCAL_PERIODS), (
+        "the declared period vocabulary and the one the measure validates against disagree; "
+        f"declared-only={sorted(set(declared) - set(FISCAL_PERIODS))} "
+        f"measure-only={sorted(set(FISCAL_PERIODS) - set(declared))}"
+    )
+
+
+def test_every_period_slot_carries_the_vocabulary():
+    """Keyed by parameter name, so a second period slot added without an entry silently goes
+    back to accepting free text and reaching the engine as `unknown fiscal period(s)`."""
+    from agent_fleet.planning_agent.slots import _PERIOD_SLOTS
+
+    assert _PERIOD_SLOTS, "no period slots declared — this seal would pass over nothing"
+    for verb in _VERBS:
+        for d in slots_for(verb):
+            if d["name"] in _PERIOD_SLOTS and d["kind"].startswith("spoken"):
+                assert d.get("values"), f"{verb}.{d['name']} is a period slot with no vocabulary"
