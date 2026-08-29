@@ -215,3 +215,82 @@ Three MISSED, all recoverable, none silent:
 * `E04` *"what phases feed into P7"* — fills `project_id` and `kind`, misses `direction`
   (*"feed into"* as a paraphrase for upstream). A fair miss, per its own corpus note.
 * `C04` — the flaky one above.
+
+---
+
+## UPDATE 2026-08-29 — the ANCHOR AMENDMENT, measured. All six behave.
+
+Corpus: `slot_corpus_v1_anchor_amendment.json` (architect-authored, 6 cases). Raw:
+`slot-fill-battery-anchor-run1.json`, `-run2.json`, and the seal
+`slot-fill-battery-anchor-falsification.json`. Run against the live sandbox filler
+(`iagent-engine-o`, image `ontology-service:latest`, pod rolled 18m before the run).
+
+**`applies_when` was verified before running, not assumed.** The amendment applies only *"when the
+filler receives a current-period anchor in its context; until then D05/D06 keep their v1
+expectations and D07-D09 are skipped."* A single probe first: *"what does spend look like this
+quarter"* → `window: ["FY26-Q4"]`. The anchor is deployed, so the amendment's expectations are the
+ones in force. Running it against a non-anchored filler would have reported four failures that
+were not failures.
+
+### The result, reported as the amendment requires
+
+> **Four positives filled correctly. Both negatives stayed empty. All six behave.**
+
+| id | phrasing | expected | got | |
+|---|---|---|---|---|
+| D05 | "this quarter" | `ANCHOR` | `["FY26-Q4"]` | ✅ |
+| D06 | "the last two quarters" | `ANCHOR-1, ANCHOR` | `["FY26-Q3", "FY26-Q4"]` | ✅ order as-spoken |
+| D07 | "this quarter" (site load) | `ANCHOR` | `["FY26-Q4"]` | ✅ |
+| D08 | "next quarter" | `ANCHOR+1` | `["FY27-Q1"]` | ✅ |
+| **D09** | **"recently"** | **`{}`** | **`{}`** | ✅ **held** |
+| **D10** | **"soon"** | **`{}`** | **`{}`** | ✅ **held** |
+
+**Reported as six-must-behave rather than as a fraction**, per the envelope's own instruction: *"an
+implementation passing the four and filling either negative has widened rather than resolved."*
+The negatives are the point — an anchor that also resolves *"recently"* has not learned the
+calendar, it has learned to guess — and **`recently` and `soon` both returned nothing.**
+
+**Two runs, byte-identical on every case.** The 48-case corpus carries ±1–2 cases of run-to-run
+noise, so a single run of six would have been thin. Both runs agree case-by-case on class and
+value.
+
+**Zero skipped.** All of `ANCHOR-1`, `ANCHOR`, `ANCHOR+1` fall inside the declared vocabulary
+today, so no case was dropped `skipped-out-of-range` — which mattered, because a skip landing on a
+negative would have shrunk the denominator to four and made "all six behave" unverifiable exactly
+where the amendment says the negatives are the point.
+
+### THE SEAL: the filler's anchor is its own, not an echo of the runner's
+
+A 6/6 where the runner derives `ANCHOR` from the wall clock and the filler independently resolves
+*"this quarter"* proves agreement — it does **not**, on its own, distinguish *"the filler anchors
+correctly"* from *"both happen to share today's answer."* That is the same shape as the four-row
+table's row 4, which passes by coincidence of default.
+
+So the run was **falsified deliberately**: re-run with `--anchor FY27-Q2`, forcing the runner's
+expectation off the real clock.
+
+```
+  --anchor FY27-Q2   ->   WRONG 4,  CORRECT 2
+  D05  expected ANCHOR(=FY27-Q2)      got ["FY26-Q4"]
+  D08  expected ANCHOR+1(=FY27-Q3)    got ["FY27-Q1"]
+  D09/D10  still {}   (anchor-independent by construction)
+```
+
+**The filler ignored the runner entirely and kept answering from its own clock.** The four
+positives fail, and failing is the correct outcome — it proves the two derivations are independent
+and that the clean run is agreement rather than an echo. The two negatives stay green because
+nothing about them depends on an anchor, which is itself a check on the seal.
+
+### One reading NOT claimed
+
+Confidence in this run is tidy — filled cases at **0.99**, empty at **0.96** — and that is **not**
+evidence against the 48-case finding that confidence is not actionable. **There is no WRONG
+population here to overlap with.** Six cases, all correct, is precisely the condition under which a
+useless signal looks clean. The threshold question was answered at n=48 and stays answered.
+
+### What this does and does not close
+
+**Closes:** the anchor step's *correctness*. `[[a-resolved-relative-period-must-be-disclosed]]`
+remains open and is the other half — the corpus grades what the filler resolved and has no opinion
+about whether a person could see it. A battery asserting on `/fill_slots` output cannot measure
+disclosure, which is why that acceptance lives in the cortex item and not here.

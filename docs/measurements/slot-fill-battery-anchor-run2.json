@@ -1,0 +1,115 @@
+[
+ {
+  "id": "D05",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "window": [
+    "ANCHOR"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY26-Q4"
+   ]
+  },
+  "flags": [
+   "anchor_dependent"
+  ],
+  "phrasing": "what does spend look like this quarter",
+  "resolution": {},
+  "refused": []
+ },
+ {
+  "id": "D06",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "window": [
+    "ANCHOR-1",
+    "ANCHOR"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY26-Q3",
+    "FY26-Q4"
+   ]
+  },
+  "flags": [
+   "anchor_dependent",
+   "order_arguable"
+  ],
+  "phrasing": "show me spend over the last two quarters",
+  "resolution": {},
+  "refused": []
+ },
+ {
+  "id": "D07",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "window": [
+    "ANCHOR"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY26-Q4"
+   ]
+  },
+  "flags": [
+   "anchor_dependent"
+  ],
+  "phrasing": "which sites exceed the threshold this quarter",
+  "resolution": {},
+  "refused": []
+ },
+ {
+  "id": "D08",
+  "cls": "correct",
+  "conf": 0.99,
+  "expect": {
+   "window": [
+    "ANCHOR+1"
+   ]
+  },
+  "got": {
+   "window": [
+    "FY27-Q1"
+   ]
+  },
+  "flags": [
+   "anchor_dependent"
+  ],
+  "phrasing": "what does spend look like next quarter",
+  "resolution": {},
+  "refused": []
+ },
+ {
+  "id": "D09",
+  "cls": "correct",
+  "conf": 0.96,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "unanchored"
+  ],
+  "phrasing": "what does spend look like recently",
+  "resolution": {},
+  "refused": []
+ },
+ {
+  "id": "D10",
+  "cls": "correct",
+  "conf": 0.96,
+  "expect": {},
+  "got": {},
+  "flags": [
+   "unanchored"
+  ],
+  "phrasing": "what does spend look like soon",
+  "resolution": {},
+  "refused": []
+ }
+]
