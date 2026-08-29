@@ -84,6 +84,64 @@ Two cheaper interim options, both worth weighing against it rather than instead 
    `ask` path can then handle. Cheapest, and it converts the WRONG class into the
    recoverable one.
 
+## ⛔ ACCEPTANCE ITEM ADDED 2026-08-29 — RESOLUTION MUST BE THREE-VALUED
+
+Added by the elicitation lane (`[[elicitation-ask-disposition]]`) as an **acceptance item, not a
+suggestion**, because the natural implementation of this fix — *resolve, and fall back to the raw
+string when resolution fails* — is precisely the pass-through that recreates the defect one layer
+down, where nothing can see it.
+
+> **The join must report `resolved` / `unresolved` / `not-attempted`. Never pass-through-on-failure.**
+
+**Why it is an acceptance item.** A silent pass-through is **indistinguishable at the disposition
+point from a successful fill.** `execute_subtask` sees a slot with a value in it and dispatches;
+the engine 422s. That is today's behaviour with an extra hop, and the `ask` disposition — whose
+trigger is a *spoken-mandatory slot absent after filling* — **cannot fire on it**, because a
+presence test cannot see an unresolvable value. Measured on the corpus: `E05` and `H04` both have
+their mandatory slot **filled**, with a name, and both route straight to a 422 under a presence
+trigger.
+
+**Reuse the vocabulary that exists; do not mint a second one.** `instance_match` in
+`agent_fleet/ontology_service/instance_resolution.py` is already
+`exact | fuzzy | mixed | not_specific | empty`, and its authors already fought this exact fight —
+`empty` was split out of `not_specific` so the gate's actions could not hide inside a not-found.
+A second outcome vocabulary beside it is the two-registries shape.
+
+### ⚠ AND THIS IS WHY OPTION 2 ABOVE IS NOT SUFFICIENT ON ITS OWN — NOW OBSERVED, NOT PREDICTED
+
+> **Confirmed by `622f3c8` (run 3), which landed while this item was being written.** The coercion
+> fix moved `H04` and `C06` from **WRONG → MISSED** — the filler stopped emitting the spoken name
+> and now emits nothing. That is option 2's behaviour arriving as a side effect, and it produced
+> exactly the loss described below: `H04` is now an *elicitation* (no menu) where it was an
+> answerable *disambiguation* (a name was spoken, candidates exist).
+>
+> **`E05` did not move** — it still emits `project_id: "ERP Modernization project"` (run 2:
+> `"ERP Modernization"`). So the two halves of one shape now disagree: **`H04` drops the name,
+> `E05` passes it through, and neither reports that resolution failed.** No prompt rule can make
+> this consistent, because whether a string resolves is not a fact the model has.
+
+
+Interim option 2 — *"refuse it at `/fill_slots` … turning a 422 from the engine into a miss, which
+the `ask` path can then handle"* — is **the right instinct and the wrong arity.** It collapses
+*unresolvable* into *absent*, and those two take **different option sources**:
+
+| what happened | shape | menu comes from | reachable today? |
+|---|---|---|---|
+| slot **absent** — the phrase never carried it | elicitation | enumeration from the substrate | **no** — no enumerate capability exists (`[[enumerate-is-not-resolve]]`) |
+| slot **unresolvable** — a name WAS spoken | disambiguation | `resolveInstance` candidates for that name | **yes** — the mechanism is built and federated |
+
+So collapsing them **throws away a menu that already exists.** Under option 2 as written, `E05`
+("the ERP Modernization project") and `H04` ("Order to Cash") stop being answerable-by-asking and
+become blocked on the enumerate capability alongside `H06` — a self-inflicted dependency. Keeping
+the distinction lets those two ship with the **original** ADR-0033 #2 option source and no new
+substrate at all.
+
+**Green when:** a fill on an id-typed slot whose value does not resolve returns the slot marked
+with its `instance_match` outcome **and the candidate list**, rather than the raw string and
+rather than nothing. Assert on the reported outcome, never on the absence of a value — the
+neighbour-assertion trap, and here the neighbour is the very thing that cannot distinguish the
+two cases.
+
 ## The threshold question, first evidence — and it points the harder way
 
 The wrong fill scored **0.92**; the correct one **0.98**. The `project_id` omission scored

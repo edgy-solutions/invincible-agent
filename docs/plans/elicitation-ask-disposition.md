@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0033 (Accepted 2026-08-29, reachability) + its Amendment 2026-08-28; ADR-0032 (menu integrity, one archetype)
 code-site:  src/iagent/defs/dynamic_supervisor.py (execute_subtask, after accept_slots), agent_fleet/planning_agent/slots.py, src/iagent_pure/slot_acceptance.py
-summary:    THE BUILD PLAN FOR `ask`, scoped and pre-registered before a line of it exists. Trigger is DETERMINISTIC — a spoken-mandatory slot absent after filling — because confidence was tested at n=48 and rejected (correct fills bottom at 0.93, wrong reach 0.96, the one genuine miss scored 0.96). Disposition point is execute_subtask immediately after accept_slots, the one line where the phrase, the verb, the declarations and the accepted slots are all in hand. THE MERGE SEAM IS ALREADY BUILT — `config.slots` already outranks the filler, so a stateless re-route needs no new state and no new lifetime; the card carries the already-accepted slots forward so the re-route is reconstructed, never re-parsed. THREE SCOPING CORRECTIONS FOUND BY READING: (1) `resolveInstance` RESOLVES, it does not ENUMERATE — its contract requires `identifier: str`, and a slot the phrase never filled has no identifier, so the amendment's fourth option source needs a capability capability (2) does not deliver; (2) the corpus's four ask-candidates split across BOTH trigger shapes — H06/E04 are elicitation (zero candidates), E05/H04 are disambiguation (a name WAS spoken) and need the ORIGINAL source #2, not the fourth; (3) period slots declare no permitted values, so `accept_slots` cannot reject a non-period and D05's `window=["this quarter"]` still reaches the engine. Measured reach of the trigger as it stands: 2 of 48. 37 of 48 are structurally immune — the anti-clippy guardrail is a consequence of the declarations, not a tuned threshold.
+summary:    THE BUILD PLAN FOR `ask`, scoped and pre-registered before a line of it exists. Trigger is DETERMINISTIC — a spoken-mandatory slot absent after filling — because confidence was tested at n=48 and rejected (correct fills bottom at 0.93, wrong reach 0.96, the one genuine miss scored 0.96). Disposition point is execute_subtask immediately after accept_slots, the one line where the phrase, the verb, the declarations and the accepted slots are all in hand. THE MERGE SEAM IS ALREADY BUILT — `config.slots` already outranks the filler, so a stateless re-route needs no new state and no new lifetime; the card carries the already-accepted slots forward so the re-route is reconstructed, never re-parsed. THREE SCOPING CORRECTIONS FOUND BY READING: (1) `resolveInstance` RESOLVES, it does not ENUMERATE — its contract requires `identifier: str`, and a slot the phrase never filled has no identifier, so the amendment's fourth option source needs a capability capability (2) does not deliver; (2) the corpus's four ask-candidates split across BOTH trigger shapes — H06/E04 are elicitation (zero candidates), E05/H04 are disambiguation (a name WAS spoken) and need the ORIGINAL source #2, not the fourth; (3) period slots declare no permitted values, so `accept_slots` cannot reject a non-period and D05's `window=["this quarter"]` still reaches the engine. RULED 2026-08-29: free text is the honest INTERIM for instance slots — no enumeration surface exists, so enumeration is genuinely impossible today — carried with the attempt recorded (`option_source: none`, reason `no_enumerate_provider`) and a TRIPWIRE expiry: the day an enumerate provider registers for a slot's class, free text for that slot must FAIL. Corrections 1 and 3 filed as their own items ([[enumerate-is-not-resolve]], [[period-slots-declare-no-vocabulary]]); the three-valued requirement is now an acceptance item on [[the-filler-has-no-entity-resolution]]. THE ASK SHIPS BEFORE ITS OPTIONS CAN, and that ordering is the finding. Measured reach of the trigger, re-run against run 3 after 622f3c8: 3 of 48 (was 2) — and the +1 is NOT an improvement, it is the arity collapse observed: H04 went WRONG->MISSED, so it now asks as elicitation (no menu) instead of disambiguation (menu exists). E05 still passes its name through. Two identical situations, two different behaviours. 37 of 48 are structurally immune — the anti-clippy guardrail is a consequence of the declarations, not a tuned threshold.
 ---
 
 # The `ask` disposition — the build plan, written before the build
@@ -67,13 +67,39 @@ and an omission is what `ask` detects. Recorded in the ADR so the next reader fi
 
 ### Measured reach, stated now so it cannot be overclaimed later
 
-Applying the trigger to `docs/measurements/slot-fill-battery-run2.json` **as it stands**:
+Applying the trigger to the battery, **re-run against run 3 after the coercion fix landed
+(`622f3c8`) so the figure is not stale**:
 
-| | n | note |
-|---|---|---|
-| would **ask** | **2** | `H06`, `E04` |
-| would **route** (mandatory slot filled) | 9 | includes `E05`, `H04` — filled with a **name** |
-| **structurally immune** (verb has no spoken-mandatory slot) | **37** | the trigger cannot fire |
+| | run 2 | run 3 | note |
+|---|---|---|---|
+| would **ask** | **2** | **3** | `H06`, `E04`, **+`H04`** |
+| would **route** (mandatory slot filled) | 9 | 8 | still includes `E05` — filled with a **name** |
+| **structurally immune** (no spoken-mandatory slot) | **37** | **37** | the trigger cannot fire |
+
+> ### ⚠ THE +1 IS NOT AN IMPROVEMENT — IT IS THE COLLAPSE, ALREADY OBSERVED
+>
+> `H04` moved into the ask population by going **WRONG → MISSED**: the filler stopped emitting
+> `process_id: "Order to Cash"` and now emits nothing. So the trigger fires — **as elicitation
+> (zero candidates), which has no menu**, instead of as disambiguation (a name was spoken, which
+> `resolveInstance` could have scored). A menu that already exists was thrown away.
+>
+> This is exactly the arity collapse flagged as an acceptance item on
+> `[[the-filler-has-no-entity-resolution]]`, and it is **observed, not predicted** — one commit
+> ahead of the lane it was written for.
+>
+> **And the two halves of the same shape now disagree**, which is the clearest possible argument
+> for the three-valued contract:
+>
+> | case | phrasing | run 2 | run 3 |
+> |---|---|---|---|
+> | `E05` | "the ERP Modernization project" | `project_id: "ERP Modernization"` | `project_id: "ERP Modernization project"` — **still passed through, and now worse** |
+> | `H04` | "Order to Cash" | `process_id: "Order to Cash"` | **dropped entirely** |
+>
+> Two structurally identical situations — an entity spoken by name on a mandatory id slot — now
+> produce a **pass-through** and a **drop**. The disposition would see one as a route and the other
+> as an elicitation, and **neither is right**: both are `unresolved`, and both have candidates.
+> Prompt-level rules cannot make this consistent, because the model is being asked to decide
+> something only the resolver knows.
 
 **37 of 48 immune by construction** is the anti-clippy guardrail becoming measurable. ADR-0033 #4's
 *"a system that asks when it knows is worse than one that guesses when it doesn't"* is not a
@@ -98,8 +124,8 @@ ADR-0033 #2, amended, gives four sources. Their real cost, read rather than assu
 | slot kind | source | reachable today? |
 |---|---|---|
 | **enum** (`group_by`, `color_by`, `direction`, `kind`) | the declaration's own `values`, read out of the `Literal` | **yes, free** — present in `slots_for()` output now |
-| **period** (`window`, `as_of`) | `FISCAL_PERIODS` (8 entries, `agent_fleet/planning_agent/entities.py`) | **the vocabulary exists; the DECLARATION does not carry it** — see correction 3 |
-| **instance** (`capability_id`, `project_id`, `process_id`, `tech_id`) | enumeration from Engine P | **no** — see correction 1 |
+| **period** (`window`, `as_of`) | `FISCAL_PERIODS` (8 entries, `agent_fleet/planning_agent/entities.py`) | **the vocabulary exists; the DECLARATION does not carry it** — correction 3, filed as `[[period-slots-declare-no-vocabulary]]` |
+| **instance** (`capability_id`, `project_id`, `process_id`, `tech_id`) | enumeration from Engine P | **no** — see correction 1; scoped in `[[enumerate-is-not-resolve]]`. **Free text is the ruled interim**, with the attempt recorded and a tripwire expiry |
 | **handle / ceremony** | never spoken, never asked | n/a |
 
 ### ⛔ CORRECTION 1 — `resolveInstance` RESOLVES; it does not ENUMERATE
@@ -129,11 +155,39 @@ from resolution, and the mesh has no such verb.** So:
 > menu needs an **enumerate** capability (`{slot, class_uri} → [{id, label}]`) that is additive to
 > the mesh and is not what registering a `resolveInstance` provider gives you.
 
-**The free-text boundary is NOT opened by this.** ADR-0033 is explicit: free text only where the
-substrate *genuinely cannot* enumerate, "never because enumeration was not attempted." Engine P's
-`PlanState` holds every project, capability, process and technology — the domain is enumerable and
-the capability to expose it is simply unbuilt. **An enumerable slot asked as free text is the open
-question this ADR retired, wearing a slot's name.**
+### The free-text interim — RULED 2026-08-29, with an expiry that is a test rather than an intention
+
+The first draft of this section read *"the domain is enumerable and the capability to expose it is
+simply unbuilt, therefore free text stays forbidden"* — which would have blocked the whole
+disposition behind `[[enumerate-is-not-resolve]]`.
+
+> **RULED: free text is the honest interim for instance slots, with the attempt recorded.**
+> No enumeration surface exists, so enumeration is genuinely impossible **today** — which is the
+> condition amended #2's boundary clause names.
+
+**The concern, recorded in one sentence because the clause was written defensively:** ADR-0033 says
+free text is permitted *"never because enumeration was not attempted"*, and "nobody has built the
+capability yet" is very close to the reading that clause exists to close — every unbuilt capability
+can be described as an impossibility if you stand near enough to it.
+
+**So the interim ships with the guardrail that makes it safe, and the guardrail is mechanical:**
+
+1. **The attempt is recorded.** A free-text ask carries `option_source: "none"` plus the reason —
+   `no_enumerate_provider` — never a silence. An ask that cannot say why it has no menu is
+   indistinguishable from an ask nobody thought about.
+2. **THE EXPIRY IS A TRIPWIRE, not a roadmap line.** The same shape as the held-promise graduation
+   condition, and for the same reason — a premise that expires should fail a test, not wait on
+   someone's memory:
+   > **The day an `enumerate` provider registers for a slot's class, free text for that slot must
+   > FAIL.** A test asserts it: for every spoken-mandatory slot, if a provider can enumerate its
+   > class then `option_source != "none"`.
+
+Without (2) the interim is permanent the moment it works well enough, which is how every temporary
+measure in this repo that lacked one became permanent. With it, the boundary re-closes on its own.
+
+`[[enumerate-is-not-resolve]]` carries the converse and completes the argument: once `enumerate`
+exists, a provider answering `too_many` / `unsupported` makes the boundary **mechanically
+decidable** rather than a judgement call — which is the difference between a boundary and a fudge.
 
 > **Consequence for sequencing, and it is the sharpest fact in this packet:** all four
 > spoken-mandatory slots in the system are **instance** kind (`capability_id`, `project_id`,
@@ -307,7 +361,13 @@ wrong reason and would stop firing the moment the id shape changes. **Assert on 
 > The dispatch framed this as *"every CORRECT case in the corpus must still route silently."*
 > **That is off by one, and the exception is instructive.** `H06` grades **CORRECT** in the filler's
 > corpus (`expect: {}`, `got: {}` — the filler was right not to invent a capability) **and must
-> ask.** Filler-correct and disposition-complete are different predicates. The corrected rule:
+> ask.** Filler-correct and disposition-complete are different predicates.
+>
+> **Worth keeping, because it names the seam `ask` occupies: the filler's job is to NOT INVENT;
+> the disposition's job is to NOTICE WHAT IS ABSENT.** A case can pass one and fail the other, and
+> `H06` is that case — the phrasing named no capability and the verb requires one, so the honest
+> empty fill and the unanswerable dispatch are both true at once. Neither component is wrong; the
+> behaviour between them was missing. The corrected rule:
 
 | assertion | n |
 |---|---|
@@ -427,12 +487,20 @@ failure. An ask rendered as an abstain card would be that same bug, second editi
 
 ## 9. Build order, once the fences lift
 
-1. **The trigger** — deterministic, no menu yet, ask degrades to the honest fallback. Green: A5
-   stops being a 400. Proves the disposition point without needing any option source.
-2. **The duplicate-canvas consumer** — zero substrate work, real menu, end-to-end proof of the
-   whole shape.
-3. **Three-valued resolution** (owned by the resolver lane) → A3/A4 go green with the *original*
-   option source.
-4. **The enumerate capability** → A1/A2 go green; the fourth option source becomes real.
+1. **The trigger** — deterministic, `option_source: "none"` with the reason recorded, free text as
+   the ruled interim (§3). Green: **A5 stops being a 400.** Proves the disposition point without
+   needing any option source at all.
+2. **The duplicate-canvas consumer** — zero substrate work, a **real** menu, end-to-end proof of
+   the whole shape while the enumerate capability is still being built.
+3. **Three-valued resolution** (`[[the-filler-has-no-entity-resolution]]`, now an acceptance item
+   there) → A3/A4 go green on the **original** #2 option source. **No new substrate.**
+4. **The enumerate capability** (`[[enumerate-is-not-resolve]]`) → A1/A2 go green, the fourth
+   option source becomes real, and **the free-text tripwire fires**, closing the interim.
 
-Steps 1 and 2 need nothing that does not exist. Steps 3 and 4 are where this lane joins the others.
+Steps 1 and 2 need nothing that does not exist. Step 3 is Lane 1's, already written into its
+packet. Step 4 is this lane's own next scoping question.
+
+> **The ask ships before its options can, and that ordering is the finding — not a compromise.**
+> The trigger reads declarations; the menu needs a substrate capability nobody has built. Those are
+> independent, and discovering it now is what lets step 1 ship on its own instead of waiting behind
+> step 4.
