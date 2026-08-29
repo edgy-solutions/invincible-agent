@@ -217,3 +217,50 @@ The four-row table above **is** the acceptance test, inverted. The build is done
 
 (4) is the one that matters for the method: it is the pass-by-coincidence case, and only a
 delivered-vs-spoken comparison can tell the two apart.
+
+## VERIFYING THE LIGHT — after doc-tools deploys (2026-08-29)
+
+The projection is **built and pushed** (`doc-tools@ac35dbd`) but **not deployed**. The
+`doc-tools` pod runs an image; until it is rebuilt and rolled, the graph carries no
+`slots` property and the guard keeps failing closed. **The deploy is a cluster write and a
+cross-repo boundary — a human's to trigger.**
+
+Everything either side of that one hop is already proven:
+
+| link | state | how |
+|---|---|---|
+| producer derives declarations | ✅ | `test_slot_declarations_derive_from_signatures` |
+| Neo4j stores + returns the string | ✅ | live probe, real declarations, byte-identical, 0 residue |
+| doc-tools projects it | ⛔ **needs deploy** | 11 assertions green against the shipped source |
+| consumer decodes | ✅ | `decode_declarations`, 6 tests |
+| guard accepts/refuses | ✅ | `test_slot_acceptance` (11), incl. two red-proven seals |
+| engine honours `params` | ✅ | acceptance table, rows 1/3/4 |
+| dark → lit transition | ✅ | `test_the_dark_to_lit_transition_is_the_PRESENCE_of_declarations` |
+
+### Pre-registered expectations, to be written down before the reads, not after
+
+1. `plan_funding_gap`'s edge carries a `slots` property that is a **string**, not a list.
+2. Decoded, it holds **exactly two** records — `group_by` and `window`.
+3. `group_by`: `kind=spoken-optional`, `type=enum`, `values=["org","initiative"]`,
+   `default="org"`. `window`: `type=list[str]`.
+4. `plan_diff` carries `baseline_state` with `kind=handle`.
+5. `plan_session_changes` carries `ops` **and** `scenario_name`, both `kind=handle`.
+
+### The instruments, corrected per the prime playbook
+
+* **Read the graph by NAME, never a count.** "12 verbs have slots" passes when all twelve
+  carry `"[]"`. Query the property, decode it, and compare each record against the
+  signature it was derived from.
+* **Never the engine's in-process view.** `/verbs` reads engine-p's own table and would
+  report declarations that never left the process — the exact defect that made `verbs: 14`
+  pass for a completely unregistered engine.
+* **Compare against signatures, not against memory.** `slots_for(fn)` is the producer; a
+  graph record that disagrees with it means the derivation is still lossy somewhere, which
+  is the `Optional`-unwrap defect's sibling. **If any shape disagrees, stop.**
+
+### Then, and only then
+
+The guard flips from fail-closed to enforcing on its own — no code change, because the
+transition IS the presence of declarations, and that is already tested from both sides. The
+remaining work is `[[the-slot-filler-belongs-where-the-verb-is-known]]`: one endpoint, and
+the feature's last unknown.
