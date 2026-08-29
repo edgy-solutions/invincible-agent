@@ -159,7 +159,28 @@ _REFERENT_KIND = {
 #: this reads the same constant. No registration-time enrichment is needed, because the
 #: vocabulary is not data-dependent at all — which is why `with_live_vocabularies` is gone
 #: rather than corrected.
-_PERIOD_SLOTS = {"window"}
+#: PERIOD SLOTS AND WHAT EACH ACTUALLY TAKES. Both are annotated `str` in the signature and
+#: they are NOT the same vocabulary — which is the third instance of a declaration less
+#: precise than the code it describes, and the one that survived past the carry.
+#:
+#:   "fiscal-period"  a label from FISCAL_PERIODS ("FY26-Q4"). `window` — validated, because
+#:                    `_periods()` rejects anything outside that table.
+#:   "date"           an ISO date ("2026-09-30"). `as_of` — compared LEXICALLY against
+#:                    `assessed_at`, so a fiscal label is not a weak filter but a COMPLETE
+#:                    NO-OP: ('9999-12-31' <= 'FY26-Q4') is True, and as_of="FY26-Q4" returns
+#:                    the unfiltered set byte-identical to passing nothing.
+#:
+#: `as_of` DELIBERATELY CARRIES NO `values` YET. Giving it the fiscal vocabulary would make
+#: the router accept exactly the values the measure silently ignores — a guard certifying a
+#: no-op, which is worse than no guard because it looks like coverage. The vocabulary and the
+#: acceptance move together, when fiscal->date resolution lands.
+_PERIOD_KIND = {
+    "window": "fiscal-period",
+    "as_of": "date",
+}
+
+#: The subset whose vocabulary is validated today. `as_of` joins when it can resolve.
+_PERIOD_SLOTS = {name for name, kind in _PERIOD_KIND.items() if kind == "fiscal-period"}
 
 
 def slots_for(fn_name: str) -> List[dict]:
@@ -202,6 +223,11 @@ def slots_for(fn_name: str) -> List[dict]:
             rec["referent"] = _REFERENT_KIND[name]
         # A period slot's vocabulary is a fact about the calendar, not about the signature —
         # `Optional[list[str]]` says the shape and nothing about which strings are periods.
+        # WHAT KIND OF PERIOD THIS SLOT TAKES — declared, because `str` does not say, and the
+        # two vocabularies are different. The filler needs it to offer a date where a date is
+        # wanted rather than free text; the router needs it to know which values it may check.
+        if kind.startswith("spoken") and name in _PERIOD_KIND:
+            rec["period"] = _PERIOD_KIND[name]
         if kind.startswith("spoken") and name in _PERIOD_SLOTS and values is None:
             values = list(FISCAL_PERIODS)
         if values is not None:

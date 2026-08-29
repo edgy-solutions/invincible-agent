@@ -411,3 +411,48 @@ def test_every_period_slot_carries_the_vocabulary():
         for d in slots_for(verb):
             if d["name"] in _PERIOD_SLOTS and d["kind"].startswith("spoken"):
                 assert d.get("values"), f"{verb}.{d['name']} is a period slot with no vocabulary"
+
+
+def test_a_period_slot_declares_WHICH_period_vocabulary_it_takes():
+    """`window` and `as_of` are both `str` in the signature and are NOT the same vocabulary.
+    One takes a fiscal label; the other takes an ISO date and compares it LEXICALLY, so a
+    fiscal label there is a complete no-op rather than a weak filter."""
+    from agent_fleet.planning_agent.slots import _PERIOD_KIND
+
+    assert _PERIOD_KIND, "no period kinds declared — this seal would pass over nothing"
+    window = {d["name"]: d for d in slots_for("plan_site_load")}["window"]
+    as_of = {d["name"]: d for d in slots_for("plan_maturity_grid")}["as_of"]
+    assert window.get("period") == "fiscal-period"
+    assert as_of.get("period") == "date"
+
+
+def test_as_of_carries_NO_vocabulary_until_it_can_actually_RESOLVE_one():
+    """THE TRIPWIRE, and it fails in BOTH directions on purpose.
+
+    Giving `as_of` the fiscal vocabulary today would make the router accept exactly the values
+    the measure silently ignores — a guard certifying a no-op, which is worse than no guard
+    because it reads as coverage. Measured: `as_of="FY26-Q4"` returns 8 rows, byte-identical
+    to passing nothing, while `as_of="2025-01-01"` returns 0.
+
+    So the vocabulary and the resolution must arrive TOGETHER:
+
+      * vocabulary present, resolution absent -> the router certifies a no-op;
+      * resolution present, vocabulary absent -> the router forwards a fiscal label the
+        resolver could have handled, and the silent path stays open.
+
+    `_resolve_period_to_date` is the marker for "resolution exists". When fiscal->date
+    resolution lands, this test tells whoever built it to attach the vocabulary in the same
+    change — which is the point of a tripwire over a comment."""
+    from agent_fleet.planning_agent import slots as slots_mod
+
+    as_of = {d["name"]: d for d in slots_for("plan_maturity_grid")}["as_of"]
+    resolution_exists = hasattr(slots_mod, "_resolve_period_to_date")
+    has_vocabulary = bool(as_of.get("values"))
+
+    assert has_vocabulary == resolution_exists, (
+        "as_of's vocabulary and its fiscal->date resolution must land together. "
+        f"vocabulary={'present' if has_vocabulary else 'absent'}, "
+        f"resolution={'present' if resolution_exists else 'absent'}. "
+        "A vocabulary without resolution certifies a no-op; resolution without a vocabulary "
+        "leaves the silent path open."
+    )
