@@ -69,6 +69,37 @@ the case ADR-0033's fourth consumer was scoped around. **It is unreachable throu
 until the contract mismatch is fixed**, so the disambiguation work is blocked on this, not on
 the disposition.
 
+## AND `enumerate_instances` HAS THE SAME DEFECT, SILENTLY — probed 2026-08-29 night
+
+The first version of this finding said enumerate "was not probed, and it has a contract too."
+It was probed. **Its envelope is correct and its members are not:**
+
+```
+POST /enumerate_instances {"class_uri": "fin#ControlAccount"}  -> 200
+  outcome=members  count=5  members=5
+  member keys: ['identity', 'label', 'class_uri']
+```
+
+Request shape ✅, `outcome`/`members`/`count` ✅ — and the members carry **`identity`**, the
+same wrong key.
+
+**This one fails SILENTLY, which makes it worse than the resolver's 422.** The consumer
+(`iagent_pure/slot_disposition.py:291-293`) builds menu options from `m.get("instance_id")`
+**and filters out any member lacking it**:
+
+```python
+Option(str(m.get("instance_id") or ""), str(m.get("label") or ""))
+...
+if m.get("instance_id")
+```
+
+So engine-fin answers *"here are 5 members"* and the disposition builds **zero options**, with
+no error anywhere. An ask on a fin instance slot would fall to free text while a perfectly
+good five-item menu sat one field-name away.
+
+> The resolver's mismatch announces itself with a 422. The enumerator's produces an empty menu
+> that looks like a substrate with nothing in it. **The louder half is the lucky half.**
+
 ## The fix is the engine-f lane's
 
 Two renames on engine-fin's side, or an adapter — but **the direction matters and is not
@@ -81,5 +112,6 @@ obvious**, so it is worth stating rather than leaving to whoever picks it up:
   which is the "fix the majority to match the exception" move this codebase has a rule about.
 
 **Not fixed here.** `agent_fleet/finance_agent/` is the engine-f lane's, and the night sweep
-is measurement-only. `enumerate_instances` on engine-fin should be checked for the same class
-of mismatch at the same time — it was not probed, and it has a contract too.
+is measurement-only. **Both providers need the same one-word change** — `identity` -> 
+`instance_id` — plus `text` -> `identifier` on the resolver. Three renames, two files' worth
+of consumers already correct.
