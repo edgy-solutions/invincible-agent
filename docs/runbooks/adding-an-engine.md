@@ -723,6 +723,7 @@ Recorded because the next engine will meet most of them.
 | 8 | **`#` is not a comment inside a Go template action.** A per-entry note inside `{{- $engines := list ... }}` breaks the parse. | Notes go in a `{{/* */}}` block above the action. |
 | 9 | **`helm template` against bare `values.yaml` fails** on an unrelated pre-existing nil (`dagster.daemon.image.registry`). | Always render with `-f values-sandbox.yaml`. Not your bug; don't chase it. |
 | 10 | **A test assertion compared a string to a list and asserted nothing** while passing as "checked". | **Assert on the claim, not its neighbour.** The fix was to hoist `DOMAINS` to a constant so the test compares the registration's own value against the prime manifest, instead of a literal typed twice. |
+| 12 | **The engine image failed to build: no `uv.lock`.** `Dockerfile.agent` runs `uv sync --locked`, which refuses to generate one. Every other matrix job — including `dagster-control-plane`, the prime's image — went green, so the prime could have run against a correct ontology while the engine image did not exist. | **A new engine directory needs the lockfile, not just the manifest.** And note the shape: ONE red job in a 16-job matrix, with the workflow's overall status the only summary. Read WHICH job failed, not whether the run did. |
 | 11 | **Pushed a `helm/**` change without bumping `Chart.yaml`.** `Release Helm Charts` failed in 10 seconds; the container build was unaffected and green, so a reader watching only the build would have proceeded. | **A chart change that does not move the version publishes NOTHING and reports success at the resolution of "I ran".** The seal exists because this exact omission once shipped engines with no client secret. Watch BOTH workflows on a push, not just the image build. |
 
 ---
@@ -741,6 +742,17 @@ engine's own directory are the ones that get forgotten.
 5. `agent_fleet/finance_agent/slots.py` — declarations + the declaration-built refusal
 6. `agent_fleet/finance_agent/main.py` — app, catalogue, registration, 2 providers
 7. `agent_fleet/finance_agent/{Procfile,pyproject.toml,project.toml}` — port 8096 in all three
+7b. **`agent_fleet/<engine>_agent/uv.lock` — GENERATE IT, or the image will not build.**
+    `Dockerfile.agent` runs `uv sync --locked`, which **requires** a lockfile and refuses to
+    create one: *"Unable to find lockfile at `uv.lock`, but `--locked` was provided."* Copying
+    a neighbour's `pyproject.toml` does not copy its lock. Run `uv lock` in the engine
+    directory, and check the resolved SDK commit matches the other engines' — the pin exists
+    so one SDK commit cannot change every engine's auth behaviour at rebuild, and
+    `tests/test_lock_coherence.py` polices the drift:
+    ```bash
+    cd agent_fleet/<engine>_agent && uv lock
+    grep -A2 '^name = "iagent-mesh"' agent_fleet/*/uv.lock | grep source   # all must match
+    ```
 8. `tests/finance/test_engine_f_contracts.py` — the seals
 9. `docs/runbooks/adding-an-engine.md` — this file
 
