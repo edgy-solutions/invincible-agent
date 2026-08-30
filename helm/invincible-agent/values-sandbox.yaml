@@ -324,6 +324,13 @@ engineF:
   image:
     tag: "latest"
 
+# Engine F, the FINANCE engine — a DIFFERENT service from engineF above (which is the
+# presentation agent). Component engine-fin, image finance-agent, port 8096. ADR-0045.
+engineFinance:
+  enabled: true
+  image:
+    tag: "latest"
+
 # --------------------------------------------------------------------------
 # Infrastructure — sandbox-sized storage
 # --------------------------------------------------------------------------

@@ -368,3 +368,97 @@ all stand exactly as written. In particular the guardrail is now *measurable* ra
 aspirational: 37 of the 48 corpus cases are on verbs with **no** spoken-mandatory slot, so the
 trigger is structurally incapable of firing on them — the anti-clippy property is a consequence of
 the declarations, not a tuned threshold.
+
+---
+
+## Addendum 2026-08-29 — a THIRD trigger shape: ambiguous subject CLASS
+
+**Ruled by the architect, 2026-08-29, on a finding from the Engine F lane.** This adds a
+trigger shape to `ask`; it widens no commitment. See the closing subsection for what it does
+*not* authorize.
+
+### The finding
+
+Engine F's resolver, run rather than read, answered a spoken finance name with **two exact
+matches at score 1.0 in different classes** — `fin:ControlAccount 3.1` and `fin:WBSElement 3`,
+both labelled *"Integration and Test"*. `mesh:InstanceResolution`'s decision table abstains on
+mixed class, and *"only the class is used to set the routing subject"* — so two classes tied at
+the top set no subject and **the question is unroutable while every component reports healthy.**
+
+The immediate cause was a notional seed giving one name to three objects, and is fixed. **The
+general cause is not fixable**: IPMDAR reuses names across its hierarchies *by design* — a real
+program's control account is named after the WBS branch it sits in — so this recurs every time a
+real program system is mapped. Full packet: `[[ipmdar-reuses-names-across-hierarchies]]`.
+
+### Why this is a THIRD shape and not an instance of the second
+
+The tempting read is "candidates exist, therefore disambiguation, therefore the built path." It
+is wrong, and the elicitation lane's own build already drew the neighbouring line the harder way
+— *a retained cross-class candidate is EVIDENCE, not an OPTION*, because the filter preserving
+menu integrity removes exactly the candidate that was kept. This case is that same shape **one
+level up**:
+
+| | **#1 missing slot** | **#2 ambiguous instance** | **#3 ambiguous subject class** |
+|---|---|---|---|
+| what is ambiguous | nothing was said | which **instance**, referent class **known** | which **class** the subject is |
+| the options are | members of the slot's class | members of one class | **classes**, not members |
+| each option implies | the same verb | the same verb | **a different verb** |
+| fires at | after verb selection | after verb selection | **subject resolution, BEFORE verb selection** |
+
+In Engine F the two tied classes route to different verbs — `fin:ControlAccount` is
+`finVarianceDrivers`' input, `fin:Program` is `finVarianceAnalysis`'. So *"the variance on
+Integration and Test"* is **not an under-specified slot**; it is a question whose **verb is
+undetermined**. The abstain happens upstream of anything a slot menu can serve, which is why
+this is a separate build rather than a case the disposition already covers.
+
+The honest surface is therefore a clarifying question about **what kind of thing was meant** —
+*"the work, the product branch, or the organization?"* — never a list of members.
+
+### Decision #2 holds VERBATIM — this is still asking from the phone-book
+
+The phone-book rule is not bent to admit this, and it does not need to be:
+
+* **the options are resolvable** — classes are enumerable from the graph, and
+  `mesh:enumerateInstances` already exists as the option-source verb;
+* **menu integrity holds** — every offered class routes successfully when chosen, because each
+  one *is* a registered verb's `input_uri`;
+* **it is not an open question** — *"what did you mean?"* remains abstention wearing a question
+  mark; *"the work or the product branch?"* is a closed set drawn from the graph.
+
+The one-turn bound, the never-ask-when-certain guardrail and the archetype-unity constraint all
+apply unchanged. **This is one more trigger into the same disposition and the same card**, not a
+fourth elicitation surface — the fork the ADR predicted at its first extension is exactly what
+sharing the disposition prevents.
+
+### Sequencing, and the honest state of its evidence
+
+**It belongs to this ADR. It does NOT belong to fix 3.** The elicitation lane picks it up after
+fix 3 ships, or when a live case arrives, whichever comes first. Nothing is built for it, and
+nothing should be until then — the two candidate designs (clarify the class, versus filter
+candidates to the slot's referent) are not refinements of each other, and choosing between them
+without a live case is the blank-page start this ADR's own build posture refuses.
+
+**Its evidence is weaker than #1's and must not be overstated.** #2's disambiguation path is
+built, correct, and has **no live corpus case** — fixture-tested, and its packet says so. #3 has
+**no built path and no live case**: one witnessed occurrence, in a notional seed, on an engine
+that is not yet deployed. What raises it above a curiosity is a **structural** argument rather
+than a frequency one, the same distinction this ADR drew between its two wake conditions:
+
+> IPMDAR's name reuse is a **property of the standard**, so a faithful mapping of any real
+> program system reproduces it. ADR-0045 Decision 2 chose that standard precisely so future
+> interchange would be *"a mapping rather than a migration"* — which means this arrives with
+> the first real read, not eventually.
+
+**Engine F is its only source today.** Recorded as such, so that "one consumer" is a visible
+fact rather than a discovery waiting on a lucky question — the enumerate-your-consumers law this
+project has already paid for twice.
+
+### What this addendum does and does not authorize
+
+**Does:** record the third trigger shape, its funnel position, and its assignment to this ADR's
+disposition. Nothing more.
+
+**Does not:** authorize a build; widen the one-turn bound, the never-ask-when-certain guardrail,
+the free-text boundary or the archetype-unity constraint; or promote #3's evidence to the
+reachability standing that woke #1. It is a **fourth consumer in the record**, listed beside the
+three the amendment names, and the weakest of the four on evidence.

@@ -96,6 +96,18 @@ generates prose; each returns rows an existing archetype draws.
 | `fin_variance_drivers` | ranked contributors to a variance | `INSTANCES_BY_PROPERTY` |
 | `fin_funding_status` | authorized / obligated / expended | **`SHORTFALL_GRID`** |
 
+> ### ⛔ THE ARCHETYPE COLUMN ABOVE IS SUPERSEDED — see the Amendment 2026-08-29
+>
+> It was written before any payload existed, and the payload read found **three of the six
+> assignments wrong**. `fin_variance_drivers` → `INSTANCES_BY_PROPERTY` is **refused**;
+> `fin_eac_calculation` fits neither of its two suggestions; `fin_variance_analysis`'s deferral
+> is confirmed. **Two rows survive as binding rows** (`fin_burn_rate`, `fin_funding_status`) and
+> one carries an open question. The governing fact — *only seven archetypes have a projection
+> arm, so anything else is not a binding row whatever the vocabulary says* — is at the head of
+> the amendment. **Do not act on this column.**
+>
+> The shape/verb columns stand. Only the archetype column moved.
+
 **`fin_variance_analysis` is ONE verb, not a chain.** The recursive playbook — decompose the
 variance, drill into drivers, recurse until explained — is many SQL steps and one *question*. It
 stays one verb because the caller asks one thing; the recursion is the verb's implementation, not
@@ -195,3 +207,159 @@ first, per the discipline that decided every other binding in this fleet.
 - A finance verb needs to write plan state — which would mean the two-planes boundary was drawn in
   the wrong place.
 - A fourth grid archetype appears whose colour means *deficit*.
+
+---
+
+## Amendment 2026-08-29 — the payload read is done, and Decision 3's archetype column was optimistic
+
+**Ruled by the architect 2026-08-29**, on the binding table produced before cortex was
+dispatched (`[[engine-f-archetype-bindings]]`). **Decisions 1–7 stand unchanged.** What changes
+is the *archetype* column of Decision 3's table, which was written before any payload existed
+and turns out to have been three-sixths wrong.
+
+### THE STRUCTURAL FACT THAT GOVERNS ALL THREE RULINGS
+
+**Only seven archetypes have a projection arm** — `INTERVAL_TIMELINE`, `PERIOD_SERIES`,
+`THRESHOLD_GRID`, `MATRIX_GRID`, `DELTA_SET`, `CANVAS_SEED`, `SHORTFALL_GRID`
+(`_PLANNING_ARCHETYPES`, `agent_fleet/presentation_agent/main.py`). **Anything else is not a
+binding row, whatever the archetype vocabulary says.**
+
+That collapses a vocabulary question into a code question, and it is the same shape as
+`canvas_type needs a reader before a producer`: **an archetype name existing somewhere is not
+an archetype existing.** `KNOWN_ARCHETYPES` is an admission vocabulary; the projection arm is
+the thing that draws.
+
+### What the read actually found
+
+| verb | Decision 3 said | the read says |
+|---|---|---|
+| `fin_burn_rate` | `PERIOD_SERIES` | ✅ **binding row**, clean |
+| `fin_funding_status` | `SHORTFALL_GRID` | ✅ **binding row**, via a dual-vocabulary accommodation |
+| `fin_performance_indices` | `PERIOD_SERIES` | ✅ **binding row + one open question** to cortex |
+| `fin_variance_drivers` | `INSTANCES_BY_PROPERTY` | ❌ **refused** — build |
+| `fin_eac_calculation` | "period series or single measure" | ❌ **neither** — build |
+| `fin_variance_analysis` | "(to be typed; likely a nested set)" | ❌ **deferral confirmed** — build or flatten |
+
+**`SHORTFALL_GRID` got its second consumer and it held**, which was the stated test of whether
+it was genuinely generic. Recorded as a success, because the other half of this amendment is
+three failures and the reuse ruling should not be read as discredited by them.
+
+---
+
+### Ruling 1 — `fin_eac_calculation`: a small deterministic archetype. NOT `ASSET_STATE_METRIC`.
+
+**Build this first. It is the smallest and the need is the clearest.**
+
+`ASSET_STATE_METRIC` is refused on two independent grounds:
+
+1. **It is outside the projection arm** and dispatches to `b.RenderAsMetric` — **an LLM
+   renderer**, the exact path the deterministic arm exists to bypass. Measured costs of that
+   path: *31–59s per card* and *portfolio funding figures sent to a fallback chain whose first
+   entry is OpenRouter.* Sending program cost forecasts down it is the wrong default for the
+   real data Decision 5 contemplates this engine eventually reading.
+2. **The stronger argument:** a card drawing `14,152,381` without *"CPI-based, EAC = BAC / CPI"*
+   beside it **undoes at the card the refusal the router just enforced.** The whole point of the
+   mandatory method slot is that the number is meaningless without its method; a renderer that
+   drops the method re-creates the ambiguity one layer later, and does it *after* the user has
+   been made to choose. That is worse than never having asked.
+
+**The build:** a deterministic single-measure archetype carrying **value + method + formula**.
+The method field is non-negotiable — it is what distinguishes this from every existing metric
+card, and it is the reason a generic one cannot be reused.
+
+`PERIOD_SERIES` is separately wrong: one row, and **no `period` field at all** (`as_of_period`
+is a stamp, not an axis). A series component drawing a single point with no axis is a chart of
+nothing.
+
+### Ruling 2 — `fin_variance_drivers`: `INSTANCES_BY_PROPERTY` is REFUSED. A ranked-set archetype is the build.
+
+Two reasons, **and the second is the disqualifying one**:
+
+1. **Schema mismatch.** `INSTANCES_BY_PROPERTY` is *"a table of INSTANCES of class C in domain
+   D, FILTERED by property P"* and requires `target.filter_property`, `state_vocabulary`, and
+   `columns[].from` pointing at ontology properties. A ranking has **no filter property**, **no
+   enumerable value set** (contribution is continuous), and its magnitudes are **computed**
+   rather than properties of the instance.
+2. **It is hand-fed by a BFF feeder that hard-sets its own archetype**
+   (`src/iagent/gateway.py`, `instances_by_property_dashboard`), and the comment beside it
+   already names copying that as *re-opening `archetype-chosen-before-data` at the BFF, one hop
+   from where it was closed*. **A precedent whose own code warns against being copied is a
+   precedent to leave alone.**
+
+And the fit fails at the semantic level rather than the field level: **`rows[]` order is not
+meaningful there, and order IS the answer here.**
+
+#### `DELTA_SET` was checked before minting, per the ruling. It does NOT generalize.
+
+| | `DELTA_SET` (`plan_diff`) | a driver ranking |
+|---|---|---|
+| axis | **N metrics**, one comparison | **one metric**, N entities |
+| ordering | unordered — a set, "the price beside the benefit" | **ordering is the answer** |
+| share of a whole | none | `share_of_total`, and the tail must be visible |
+| magnitude | a **producer-formatted display STRING** (`"-$1.2M in FY26-Q1"`) | a raw signed number + `value_unit` |
+
+**The axis is inverted**, which is not a field that can be added. But the *cell grammar* is
+genuinely close — `delta` (signed), `direction` (improved/degraded), `affected` (named things)
+map onto `contribution`, `favourable`, `entity_name`. **Reuse the cell vocabulary, not the
+archetype**, so the two read as one system without pretending one is the other.
+
+> **Caution carried into that build:** `DELTA_SET`'s `magnitude` is a display string the
+> *producer* formats. Engine F emits raw numbers plus `value_unit` and leaves formatting to the
+> renderer. A ranked-set archetype should not copy the string habit — a producer formatting
+> display text is a presentation decision at the producer, which is the boundary ADR-0042 §2
+> draws.
+
+**Owed on this ruling landing:** `fin_variance_drivers` currently emits `instance_id`,
+`instance_label`, `property_label` and `value` on every row. Those were written against an
+*assumption* of `INSTANCES_BY_PROPERTY`'s shape rather than its schema, they are harmless
+duplicates of `entity_id` / `entity_name` / `contribution`, and **they are removed when the
+ranked-set decision lands.** They are not evidence of a fit and the packet says so.
+
+### Ruling 3 — `fin_variance_analysis`: deferral CONFIRMED, and the open question is stated
+
+The deferral in Decision 3 (*"needs a payload read first"*) was correct and this **is** that
+read. The finding: it emits **one row containing a tree** (nested `contributors`, plus
+`stop_reason` per node and a `residual` for the sub-materiality tail), and **every archetype in
+the arm is flat** — `rows` is an array the projector passes through verbatim. Nothing consumes
+nesting. A grid or series component handed this draws one row with an unreadable nested cell:
+the shape of failure that looks like it worked.
+
+**Two candidate designs, and they are not refinements of each other:**
+
+* **(a) A recursive/hierarchical archetype** — a real component build with its own contract.
+  Renders the nesting, the per-node `stop_reason`, and the residual.
+* **(b) Flatten at the engine** — the verb returns its top level plus a **drill-down
+  affordance**, and *"drill into CA 3.1"* becomes a follow-on question.
+
+**The architect's lean is (b)**, on two grounds: it is closer to how the analysis is actually
+consumed in a meeting, and **it composes with the elicitation surface instead of requiring a new
+one** — which is the archetype-unity constraint ADR-0033 defends, arriving from the other side.
+
+**This is a design call for this ADR, not a binding decision, and it is deliberately left
+open here.** Choosing (b) changes what the verb RETURNS, which is a change to Decision 3's
+"one verb, not a chain" ruling and must be argued as such rather than slipped in as a
+rendering convenience. **Nothing is built for either until that is settled.**
+
+---
+
+### Consequence, stated plainly so nobody reads this as a blocker
+
+**Nothing here blocks the finance engine's routing.** All six verbs route, refuse and return
+rows correctly today. What is blocked is **three of six cards DRAWING** — and until the builds
+land, those three answers reach the user through the degraded path rather than as their
+intended cards. That is a known state with a named cause, not a regression.
+
+**Two binding rows go to cortex now**, with the page-load step and the
+`KNOWN_ARCHETYPES`-before-advertisement ordering trap
+(`docs/runbooks/adding-an-engine.md` §9 step 6). **The three builds are sequenced above**: EAC
+metric, then ranked-set, then the variance tree behind its design question.
+
+### Indicators this amendment got it wrong
+
+- A ranked-set archetype is minted that `DELTA_SET` could have served after all — meaning the
+  axis-inversion argument above was wrong and should have been tested by building rather than
+  by reading.
+- The EAC card ships without its method, for convenience, on the grounds that the router
+  already asked.
+- `fin_variance_analysis` is flattened at the engine **and** a hierarchical archetype is built
+  anyway — which would mean (a) and (b) were treated as refinements after all.

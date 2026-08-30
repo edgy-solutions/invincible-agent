@@ -69,6 +69,12 @@ jobs:
           - service: planning-agent
             path: agent_fleet/planning_agent
             port: "8095"
+          # Engine F, the finance engine (ADR-0045). Image name is finance-agent; the
+          # SERVICE it runs as is engine-fin. Port must match project.toml's PORT launch env
+          # and the chart's engineFinance.port, or the readiness probe hits a closed port.
+          - service: finance-agent
+            path: agent_fleet/finance_agent
+            port: "8096"
           - service: cortex-bff
             path: .
             # Port aligned with the helm chart's cortexBff.port (8090).

@@ -114,6 +114,13 @@ data:
   # /measure/... , /state/... and /scenario/... ; engine-p's registrar appends per-verb paths.
   ENGINE_P_URL: "http://{{ .Release.Name }}-engine-p{{ include "invincible-agent.svcDomain" . }}:{{ .Values.enginePlanning.port }}"
   ENGINE_P_PUBLIC_URL: "http://{{ .Release.Name }}-engine-p{{ include "invincible-agent.svcDomain" . }}:{{ .Values.enginePlanning.port }}"
+  # Engine F, the FINANCE engine (ADR-0045). Component `engine-fin` — NOT `engine-f`, which
+  # is PRESENTATION_AGENT_SVC_URL above. The registration BAKES this value into the mesh as
+  # the endpoint a verb resolves to, so a change here is INERT until the engine
+  # re-registers. FQDN via the svcDomain helper, never a bare service name: a bare name
+  # resolves differently depending on where the reader stands, and a ticket or an endpoint
+  # is consumed somewhere else.
+  ENGINE_FIN_PUBLIC_URL: "http://{{ .Release.Name }}-engine-fin{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineFinance.port }}"
 
   # Dagster Discovery
   # DAGSTER_WEBSERVER_URL: consumed by cortex-bff and src/iagent/gateway.py

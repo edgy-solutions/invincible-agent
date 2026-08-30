@@ -52,6 +52,9 @@ Your release "{{ .Release.Name }}" has been deployed.
 {{- if .Values.engineF.enabled }}
     Engine F (UX Proxy):   {{ .Release.Name }}-engine-f:{{ .Values.engineF.port }}
 {{- end }}
+{{- if .Values.engineFinance.enabled }}
+    Engine F (Finance):    {{ .Release.Name }}-engine-fin:{{ .Values.engineFinance.port }}
+{{- end }}
 {{- if .Values.engineW.enabled }}
     Engine W (Weaviate):   {{ .Release.Name }}-engine-w:{{ .Values.engineW.port }}
 {{- end }}

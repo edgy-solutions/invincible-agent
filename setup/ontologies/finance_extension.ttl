@@ -1,0 +1,155 @@
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix mesh:  <http://invincible-agent/mesh#> .
+@prefix fin:   <http://invincible-agent/fin#> .
+
+<http://internal/program_finance> a owl:Ontology ;
+    rdfs:label "Program finance domain extension" ;
+    rdfs:comment "The subject nouns Engine F's six finance verbs operate ON, and the response shapes they produce. Contract D (ADR-0019) requires BOTH ends of a verb edge to pre-exist as owl:Class; unlike the planning extension - which authored only the input end and collected twelve 422s for it - this file carries both, because the split is what made that failure hard to see. Declared 2026-08-29 per ADR-0045." .
+
+# CONVENTIONS INHERITED FROM idp_extension.ttl AND portfolio_planning_extension.ttl,
+# and they are not stylistic:
+#
+#   * rdfs:comment ONLY. The Jena->Weaviate sync UNIONs skos:definition with rdfs:comment
+#     and the last row wins, so a skos:definition silently clobbers. rdfs:comment is what
+#     lands in Weaviate.OntologyClass.definition.
+#   * The definition IS the recall signal. It is written for the CLASS, never for a query.
+#   * No sibling-name bleed. A definition that names a neighbouring class competes for that
+#     class's traffic - measured on idp:Pipeline, which ranked top for a question squarely
+#     about idp:Dataset purely because it said "datasets" twice. This file is the hardest
+#     case yet for that rule: control account, work package and WBS element are defined in
+#     the standard BY REFERENCE TO EACH OTHER. Each definition below therefore names its own
+#     class's DISTINGUISHING QUESTION rather than its position in the hierarchy.
+#
+# -- WHY IPMDAR VOCABULARY AND NOT LOCAL SYNONYMS (ADR-0045 Decision 2) ----------------
+# "What's the variance on control account 3.1.2" is already how the question is asked. A
+# locally-invented synonym set would need a translation layer whose only job is to undo an
+# avoidable choice, and any future read of a real program system becomes a migration rather
+# than a mapping.
+#
+# -- FLAT IS EXPECTED HERE (ADR-0045, implementer's note) ------------------------------
+# The ingest does NOT materialise a subClassOf edge to a prov: target - no such edge exists
+# anywhere in the graph today. These classes will be FLAT in Neo4j exactly as the planning
+# classes are. That is the current design, not a defect to fix here.
+#
+# -- GENERIC AT BIRTH, AND NOTIONAL BY RULE (ADR-0045 Decision 4) ----------------------
+# Structural finance nouns carrying no organisation, program or customer vocabulary. Every
+# formula referenced below is public EVM methodology. Nothing from the finance group's
+# actual work appears in this file, in the seed, or in any docstring.
+
+# =============================================================================
+# Subject nouns - the INPUT end of Contract D
+# =============================================================================
+
+fin:Program a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Program" ;
+    rdfs:comment "The whole scope of effort under one contract or one authorization, measured as a single performance whole. Questions asking how the effort as a whole is performing, how much of the authorized money remains, what the total forecast at completion is, or where the effort stands against its time-phased plan target this class. It is the widest finance subject: an answer scoped to it rolls up everything reported beneath it." .
+
+fin:ControlAccount a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Control Account" ;
+    rdfs:comment "The management point where scope, schedule and budget meet a single accountable manager, and the level at which performance is formally measured and reported. Questions naming an account identifier and asking how it is performing, who owns the number, or where a reported variance was incurred target this class. It is the lowest level at which a manager is answerable for a number." .
+
+fin:WorkPackage a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Work Package" ;
+    rdfs:comment "A discrete, schedulable piece of authorized effort with its own budget, its own start and finish, and its own rule for how progress converts into claimed value. Questions about which specific piece of effort is running late or over its budget, or how progress on a named piece of effort is being claimed, target this class. It is the smallest unit that carries a measurement method of its own." .
+
+fin:WBSElement a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "WBS Element" ;
+    rdfs:comment "A node in the product-oriented decomposition of the deliverable end item, identified by a hierarchical number such as 1.2.3 and summing everything beneath it. Questions that navigate by such a number, ask what rolls up into a level, or ask which branch of the decomposition a problem sits in target this class. It organises the effort by WHAT IS BEING BUILT." .
+
+fin:OBSElement a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "OBS Element" ;
+    rdfs:comment "A node in the organizational decomposition - the reporting unit, department or functional group accountable for effort. Questions about which organization is carrying a problem, how a functional group is performing across everything it owns, or who answers for a number target this class. It organises the effort by WHO IS DOING IT, and it is the axis a question about departments or teams means." .
+
+fin:EarnedValueTechnique a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Earned Value Technique" ;
+    rdfs:comment "The declared rule by which physical progress is converted into claimed value - milestone weights, fixed start and finish splits, percent complete, apportioned effort, or level of effort. Questions about how progress is being claimed, whether claimed progress is measurable or merely accrued with the passage of time, or why a reported figure moves without any physical work occurring target this class. It is the METHOD OF CLAIM, and it is what makes two identical-looking figures mean different things." .
+
+fin:PerformanceMeasurementBaseline a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Performance Measurement Baseline" ;
+    rdfs:comment "The time-phased plan against which performance is measured: budgeted cost for work scheduled spread over periods, together with the claimed and actual figures reported against it period by period. Questions about the planned spread of budget over time, how much was planned versus claimed versus paid in a period, or how the phasing has shifted target this class. It is the SERIES, not a single figure - anything asked over time or by month means this." .
+
+fin:FundingLine a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Funding Line" ;
+    rdfs:comment "An appropriation of money with its own authorization ceiling, the portion of it placed under obligation, and the portion actually expended. Questions about how much money is left to obligate, whether authorization covers what has been committed, or where the effort will run out of money before it runs out of work target this class. Its three quantities are a LADDER - each is a subset of the one above it - which is what distinguishes it from a requirement compared against a supply." .
+
+# =============================================================================
+# Response shapes - the OUTPUT end of Contract D
+# =============================================================================
+#
+# THESE ARE fin:, NOT mesh:, AND THAT IS A DECISION.
+#
+# Engine P's outputs are mesh:* because they were authored into mesh_system.ttl, the
+# platform's own file. A domain extension writing into the platform namespace would be a
+# domain file claiming platform terms - and, practically, a second lane's edit to a shared
+# file inside a contested prime window. Engine F declares its outputs in its own namespace
+# in its own file. Contract D checks that the URI RESOLVES to an :OntologyClass node; it
+# does not care which namespace supplied it.
+#
+# They still hang off mesh:Response, because the root is a platform fact and re-rooting
+# would make the response taxonomy two trees. See the flat-graph note above for what that
+# parent edge does and does not materialise into.
+
+fin:VarianceDecomposition a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Variance Decomposition" ;
+    rdfs:comment "A variance broken into the contributing parts that sum to it, each part carrying its own further breakdown where one was needed to explain it, down to the level at which the explanation stops. Output shape of a recursive drill: the nesting is the answer rather than a presentation choice, because a variance stated without what produced it is a number nobody can act on." .
+
+fin:EstimateAtCompletion a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Estimate At Completion" ;
+    rdfs:comment "A forecast of total cost at the finish, stated together with the named formula that produced it and the inputs that formula consumed. The method is never implicit in this shape: two forecasts for the same effort differ materially by method alone, so a figure that does not carry its method is not this shape." .
+
+fin:PerformanceIndexSeries a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Performance Index Series" ;
+    rdfs:comment "Efficiency ratios reported period by period - value claimed against money spent, and value claimed against value planned - with the raw quantities each ratio was computed from carried alongside it. A series rather than a point, because the direction of travel is the question and a single ratio cannot show it." .
+
+fin:BurnRateSeries a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Burn Rate Series" ;
+    rdfs:comment "Money leaving per period beside the money the plan phased for that period, with the cumulative position and the runway that the observed rate implies. Answers how fast money is going out and when it runs out at this rate; it counts CASH LEAVING rather than value claimed, which is why it can look healthy while performance is poor." .
+
+fin:VarianceDriverRanking a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Variance Driver Ranking" ;
+    rdfs:comment "The contributors to a variance ordered by how much of it each one accounts for, each with its signed magnitude and its share of the total. A ranking, so the tail is visible as a tail: an answer naming only the largest contributor hides whether it is the cause or merely the biggest of many." .
+
+fin:FundingStatusGrid a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Funding Status Grid" ;
+    rdfs:comment "Cells of three nested quantities - what was made available, what has been placed under obligation, and what has actually been paid out - with the producer's own verdict on each cell. The verdict is stated rather than inferred, because a cell whose obligations are covered on paper and whose payments have not started is not the same condition as one that is genuinely spent down, and no comparison of two of the three quantities can tell them apart." .
+
+# =============================================================================
+# Money primitives - FIBO, referenced rather than reinvented (ADR-0045 Decision 2)
+# =============================================================================
+#
+# THE UNITS LAW: a number without a declared unit is not an amount. `value_unit` already
+# carries this on the planning side, and every row Engine F emits carries it too.
+#
+# FIBO's classes are REFERENCED, NOT REDECLARED HERE. Copying them in would put
+# W3C-quality generic definitions into the routable OntologyClass pool, where they
+# vector-outcompete domain classes with weaker definitions - the exact reason PROV-O's own
+# classes are dropped by the meta-ontology filter in doc_tools/assets/ontology_assets.py
+# rather than ingested. So the binding is a property range pointing OUT of this file, which
+# costs nothing at routing time and states the mapping for anyone reading the model.
+
+fin:hasMonetaryAmount a owl:ObjectProperty ;
+    rdfs:label "has monetary amount" ;
+    rdfs:comment "Binds a finance figure to its amount-with-currency. The range is FIBO's monetary amount rather than a locally-minted class, so the question of dollars versus thousands of dollars is answered by the model instead of by convention." ;
+    rdfs:range <https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount> .
+
+fin:hasCurrency a owl:ObjectProperty ;
+    rdfs:label "has currency" ;
+    rdfs:comment "Binds a monetary amount to the currency it is denominated in." ;
+    rdfs:range <https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/Currency> .

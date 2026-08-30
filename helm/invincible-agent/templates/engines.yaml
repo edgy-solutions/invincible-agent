@@ -1,6 +1,17 @@
 {{/*
-  Agent Fleet — all 5 engines as Deployment + Service pairs.
+  Agent Fleet — every engine as a Deployment + Service pair.
   Each engine is conditionally deployed via .enabled.
+
+  ⚠ TWO ENTRIES LOOK LIKE "ENGINE F" AND THEY ARE DIFFERENT SERVICES:
+    * `engineFinance` -> component `engine-fin`, image finance-agent, port 8096.
+      The FINANCE engine (ADR-0045).
+    * `engineF`       -> component `engine-f`,   image presentation-agent, port 8087.
+      The PRESENTATION agent, and the target of PRESENTATION_AGENT_SVC_URL.
+  ADR-0045 names the finance engine "Engine F" in prose; the component name was already
+  taken. Prose names and component names are different registries — runbook §0.
+
+  NOTE ON SYNTAX: the list below is ONE Go template action. `#` is not a comment inside
+  `{{ }}`, so per-entry notes go here rather than between the entries.
 */}}
 
 {{- $engines := list
@@ -10,6 +21,7 @@
   (dict "key" "engineC" "component" "engine-c" "values" .Values.engineC)
   (dict "key" "engineD" "component" "engine-d" "values" .Values.engineD)
   (dict "key" "enginePlanning" "component" "engine-p" "values" .Values.enginePlanning)
+  (dict "key" "engineFinance" "component" "engine-fin" "values" .Values.engineFinance)
   (dict "key" "engineE" "component" "engine-e" "values" .Values.engineE)
   (dict "key" "engineF" "component" "engine-f" "values" .Values.engineF)
   (dict "key" "engineW" "component" "engine-w" "values" .Values.engineW)

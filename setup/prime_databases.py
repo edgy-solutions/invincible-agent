@@ -309,6 +309,25 @@ CANONICAL_TTL_MANIFEST = [
         "path": "ontologies/portfolio_planning_extension.ttl",
     },
 
+    # ----- LAYER 3c: PROGRAM_FINANCE (Engine F's subject nouns AND its outputs) -----
+    # BOTH ENDS OF CONTRACT D IN ONE FILE, deliberately. The planning entry above authored
+    # only the INPUT end — the mesh:Plan* output types ride in mesh_system.ttl — and that
+    # split is exactly why the input half went missing unnoticed: twelve registrations, twelve
+    # 422s, engine healthy throughout. finance_extension.ttl carries its eight fin: subject
+    # nouns and its six fin: response shapes together, so there is one file to seed and one
+    # file to verify.
+    #
+    # DOMAIN IS PROGRAM_FINANCE, matching what Engine F registers its verbs under
+    # (agent_fleet/finance_agent/main.py). Same warning as the planning entry: the resolver
+    # queries by semantic domain name, and a class whose domain does not match what the
+    # resolver asks for gives a silent UNKNOWN cascade.
+    {
+        "domain": "PROGRAM_FINANCE",
+        "name": "finance_extension",
+        "s3_key": "finance/finance_extension.ttl",
+        "path": "ontologies/finance_extension.ttl",
+    },
+
     # ----- LAYER 4: MANUFACTURING (the manufacturing content-kind axis) -----
     # General mfg:WorkInstruction kind only — the routing-visible class the
     # ManufacturingPlugin's INSTANCE_OF stamping (ADR-0021) targets. Single

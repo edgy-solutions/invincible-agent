@@ -374,6 +374,46 @@ enginePlanning:
   # have advertised the sandbox address to the mesh registrar and routed traffic at an
   # endpoint nothing serves.
 
+# Engine F — the finance engine (ADR-0045). Six deterministic verbs over program financial
+# data: variance analysis, EAC, performance indices, burn rate, variance drivers, funding
+# status.
+#
+# ⚠ THE COMPONENT IS `engine-fin`, NOT `engine-f`. ADR-0045 names this engine "Engine F" in
+# prose; the component name `engine-f` was ALREADY TAKEN by the presentation agent (see
+# `engineF` below — image presentation-agent, port 8087, and the target of
+# PRESENTATION_AGENT_SVC_URL). Reusing the key would have pointed the fleet's presentation
+# URL at a finance engine and taken /render_ui down everywhere. An ADR names an engine; it
+# does not allocate a component name. See docs/runbooks/adding-an-engine.md §0.
+#
+# FOUR NAMES, AND THEY DIFFER ON PURPOSE — values key `engineFinance`, component/service
+# `engine-fin`, image `finance-agent`, Keycloak client `iagent-finance-agent`. That is normal
+# in this chart (Engine P has the same split) and it is exactly why one engine's wiring gets
+# missed: grepping any single name finds only part of it.
+#
+# DEFAULT-OFF, for the same reason Engine P is: it serves the finance surface and nothing
+# else. values-sandbox.yaml turns it on.
+#
+# NO `env` URL OVERRIDE HERE — DELIBERATELY, and this is the second half of a real defect a
+# neighbouring engine already paid for. A container's `env` OVERRIDES `envFrom` (the
+# ConfigMap), so a literal here does not reinforce the ConfigMap's templated FQDN, it
+# REPLACES it with a bare service name. The ConfigMap is the single source; override
+# `global.clusterDomain` to change the suffix.
+engineFinance:
+  enabled: false
+  replicas: 1
+  image:
+    name: finance-agent
+    tag: ""
+  port: 8096
+  env: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 engineD:
   enabled: true
   replicas: 1
@@ -1039,6 +1079,16 @@ primeSubstrate:
       # derives this list from which agents actually call
       # register_engine_to_mesh, so a third repeat fails in CI.
       - engine-p
+      # Engine F self-registers SIX verbs plus a resolveInstance and an
+      # enumerateInstances provider on startup. Added HERE, in the same
+      # change that adds the engine — the omissions above were both
+      # discovered after a wipe+reprime left the engine present and
+      # unrouted, and the seal that catches a third repeat
+      # (tests/test_reregister_covers_every_registering_engine.py)
+      # derives this list from who calls register_engine_to_mesh, so
+      # leaving it out fails CI rather than a demo. Renders as
+      # <release>-engine-fin; a disabled engine is a harmless skip.
+      - engine-fin
     # The Neo4j node whose presence signals "the ontology ingest populated
     # the class graph" — restart is deferred until it exists so the
     # re-registering engines don't Contract-D-reject against an empty graph.
@@ -1596,6 +1646,24 @@ keycloak:
     - clientId: "iagent-planning-agent"
       authzId: "svc:planning-agent"
       secretRef: "planningAgentClientSecret"
+    # Engine F's transport + registration identity (2026-08-29). TENTH identity, scaffolded
+    # through the same reconcile path as the nine above rather than minted by hand.
+    #
+    # NAMED AFTER THE IMAGE (`finance-agent`), matching the planning engine's convention,
+    # while the env var it reaches the pod as is named after the SERVICE
+    # (ENGINE_FIN_CLIENT_SECRET). That split is the reason Engine P's secret was missed three
+    # times, so it is written down in both places rather than left to be rediscovered.
+    #
+    # REGISTRATION IS ROUTING AUTHORITY, which is why this is per-engine and not a shared
+    # mesh credential: the manifest names the endpoint URL a verb resolves to, and under a
+    # shared credential the registrar would learn only that SOME legitimate component called
+    # while "which engine" stayed a self-asserted payload string.
+    #
+    # Given an identity even though the engine is DEFAULT-OFF, because a service that appears
+    # later without one is a service that flips REQUIRE_TRANSPORT_AUTH from working to broken.
+    - clientId: "iagent-finance-agent"
+      authzId: "svc:finance-agent"
+      secretRef: "financeAgentClientSecret"
 
   # Registration identity for engine-d (see serviceClients above).
   engineDClientSecret: "sandbox-engine-d-secret"
@@ -1609,6 +1677,11 @@ keycloak:
   # Engine P's service-account client secret (iagent-planning-agent). Same contract as the
   # engines above: a PLACEHOLDER in the tracked file, overridden by values-sandbox.secret.yaml.
   planningAgentClientSecret: "sandbox-planning-agent-secret"
+  # Engine F's service-account client secret (iagent-finance-agent). Same contract as the
+  # engines above: a PLACEHOLDER in the tracked file, overridden per deployment. This ONE
+  # value feeds BOTH the realm import's `secret` and ENGINE_FIN_CLIENT_SECRET in the Secret,
+  # so the two cannot drift.
+  financeAgentClientSecret: "sandbox-finance-agent-secret"
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
   # review starter's above — this value AND the realm import's `secret` come from here, so
   # they cannot drift. Override per deployment (a real secret at work); the sandbox default
