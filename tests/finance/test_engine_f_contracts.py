@@ -181,6 +181,39 @@ def test_every_registered_input_class_can_be_resolved_or_enumerated():
     assert engine._unroutable_classes() == []
 
 
+def test_every_resolvable_class_leads_somewhere_or_says_why_not():
+    """The REVERSE of test_every_registered_input_class_can_be_resolved_or_enumerated.
+
+    FOUND 2026-08-30 by measuring the live resolver, not by reading the code: three classes
+    (`OBSElement`, `WBSElement`, `WorkPackage`, 19 members between them) resolve and enumerate
+    while NO verb takes them as `input_uri`. A spoken name landing on one sets a routing
+    subject nothing serves — the resolver reports success and the question dies a hop later.
+
+    Here it is deliberate (they are drill-down referents inside the variance tree), so they
+    are declared in `_NO_VERB_BY_DESIGN`. This seal is that the NEXT one has to be declared
+    too, rather than discovered by a measurement somebody happened to run.
+    """
+    assert engine._dead_end_classes() == []
+
+
+def test_the_two_direction_checks_are_not_the_same_check():
+    """Both directions must be sealed, and a negative control proves they are distinct.
+
+    Removing a class from `_NO_VERB_BY_DESIGN` must trip the REVERSE check while the FORWARD
+    check stays clean — otherwise one of them is redundant and a reader will delete the wrong
+    one.
+    """
+    original = set(engine._NO_VERB_BY_DESIGN)
+    try:
+        engine._NO_VERB_BY_DESIGN.discard(FIN + "WorkPackage")
+        assert engine._dead_end_classes() == [FIN + "WorkPackage"]
+        assert engine._unroutable_classes() == []
+    finally:
+        engine._NO_VERB_BY_DESIGN.clear()
+        engine._NO_VERB_BY_DESIGN.update(original)
+    assert engine._dead_end_classes() == []
+
+
 def test_the_two_provider_verbs_target_classes_lane_1_declared():
     """Contract D again, on the provider registrations. `mesh:InstanceClass` and
     `mesh:InstanceEnumeration` are Lane 1's, and Engine F's seed queues behind them — a

@@ -221,6 +221,17 @@ async def lifespan(app: FastAPI):
         # mode with no symptom. Engine P's rule, and the reason is identical.
         raise RuntimeError("finance seed is inconsistent: " + "; ".join(problems[:5]))
 
+    dead_ends = _dead_end_classes()
+    if dead_ends:
+        # A FINDABLE SUBJECT THAT LEADS NOWHERE. The resolver reports success, the router
+        # sets the subject, and the question dies a hop later with nothing to blame. Raised
+        # beside the forward check so the two directions fail the same way.
+        raise RuntimeError(
+            "engine-fin resolves classes that no verb routes on, and they are not declared: "
+            + ", ".join(dead_ends)
+            + " — register a verb on them, or add them to _NO_VERB_BY_DESIGN with the reason"
+        )
+
     unroutable = _unroutable_classes()
     if unroutable:
         # AN INPUT CLASS NOBODY CAN ENUMERATE IS A VERB NOBODY CAN BE ASKED FOR. The verb
@@ -599,6 +610,44 @@ def _members_of(class_uri: str) -> list[dict[str, Any]]:
                 "class_uri": class_uri,
             }
     return [seen[k] for k in sorted(seen)]
+
+
+#: Classes this engine RESOLVES but no verb ROUTES ON, declared as deliberate.
+#:
+#: FOUND 2026-08-30 by measuring the resolver across the whole finance name surface, not by
+#: reading the code. `OBSElement`, `WBSElement` and `WorkPackage` are resolvable and
+#: enumerable — 19 members between them — and **no verb takes any of them as `input_uri`**.
+#: A spoken name landing on one of them sets a routing subject that nothing serves.
+#:
+#: THAT IS INTENTIONAL HERE, and the reason is the variance tree: a work package is a
+#: DRILL-DOWN REFERENT inside `fin_variance_analysis`'s decomposition, addressable in an
+#: answer without being a top-level question. "What is WP-3101" is a follow-up, not an
+#: opening. Same for the two axes: they organise the effort, they are not asked about alone.
+#:
+#: DECLARED RATHER THAN LEFT UNNOTICED, which is the whole point. `_unroutable_classes()`
+#: below seals the FORWARD direction — a verb whose input class nothing can enumerate. This
+#: is the REVERSE direction, and it was unsealed: a class that resolves and goes nowhere is
+#: invisible to that check, and would have stayed invisible. Absence-by-decision and
+#: absence-by-oversight look identical unless one of them is written down.
+_NO_VERB_BY_DESIGN = {
+    FIN + "OBSElement",
+    FIN + "WBSElement",
+    FIN + "WorkPackage",
+}
+
+
+def _dead_end_classes() -> list[str]:
+    """Classes that resolve to a subject no verb serves, and were not declared as such.
+
+    THE REVERSE OF `_unroutable_classes()`. That one asks "can every verb's subject be
+    found?"; this asks "does every findable subject lead somewhere?" Both failures are
+    silent, and neither is visible from the other direction.
+
+    A name resolving to an undeclared dead end is worse than an unresolvable one: the
+    resolver reports success, the router sets a subject, and the question dies one hop later
+    with nothing to blame.
+    """
+    return sorted(set(_RESOLVABLE) - {v["input_uri"] for v in VERBS} - _NO_VERB_BY_DESIGN)
 
 
 def _unroutable_classes() -> list[str]:
