@@ -113,16 +113,50 @@ helm upgrade iagent ./helm/invincible-agent \
   --set primeSubstrate.wipe=false
 ```
 
-> ### ⏱ USE `--timeout 40m`, NOT 15m — MEASURED
+> ### ⏱ USE `--timeout 90m`. NOT 40m — AND 40m WAS THIS PLAYBOOK'S OWN TRAP
 >
-> The command above originally carried no timeout guidance and 15m was chosen by guess. **The
-> job took 43 minutes.** Dagster's `QueuedRunCoordinator` is capped at **2 concurrent runs** and
-> the prime launches **16 ingest runs**, so ~25-45 min is the floor, not the tail.
+> **CORRECTED 2026-08-29, and the correction is more instructive than the number.** This
+> section said `--timeout 40m` while the paragraph directly beneath it said **the job took 43
+> minutes**. A recommendation that contradicts the measurement printed beside it, and it
+> survived because nobody re-read the paragraph — including me, who wrote both halves.
+>
+> The next prime took **44 minutes** over 17 ingests. `40m` would have cut the hook chain
+> again, for the second time, from advice written to prevent exactly that.
+>
+> **Under-waiting splits the substrate; over-waiting costs nothing.** Helm timing out is benign
+> for the prime itself — the Kubernetes Job keeps running and finishes — but it cuts the hook
+> chain, so `reregister(20)` never fires: no re-registration, engines stuck at their old
+> counts, and helm reporting `failed` while the Job quietly succeeds. Everything looks healthy
+> from outside.
+>
+> Dagster's `QueuedRunCoordinator` is capped at **2 concurrent runs** and the prime launches
+> **16-17 ingest runs**, so ~25-45 min is the floor, not the tail. 90m is slack, deliberately.
 >
 > Helm timing out is BENIGN for the prime itself — the Kubernetes Job keeps running and finishes
 > — but it **cuts the hook chain**, so `reregister(20)` never fires and the release is left
 > `failed`. That is what happened.
 >
+> ### 🔎 A BY-NAME CHECK MUST ASSERT THE NAMES ARE NON-NULL
+>
+> **Measured on this run**, and it is the by-count defect wearing a by-name coat. A
+> verification query used `e.verb` and returned **count = 8 with eight `None`s**: the property
+> does not exist — the verb is the RELATIONSHIP TYPE, `type(r)`, not a property on it.
+>
+> The count was RIGHT, so the check read as passing. It was a by-count check with blank names,
+> which is precisely the thing the by-name rule exists to replace.
+>
+> **The assertion shape:** returning rows is not the claim. Assert the names came back
+> non-null, and compare them to an expected set:
+>
+> ```python
+> rows  = list(session.run("MATCH ()-[r]->() WHERE ... RETURN r.iri AS iri, type(r) AS rel"))
+> named = [x for x in rows if x["iri"]]
+> assert len(named) == len(rows), "a row came back with a NULL name — by-count in disguise"
+> assert {x["iri"] for x in named} == EXPECTED
+> ```
+>
+> A check that cannot fail on a wrong property name is not checking the property.
+
 > **Fast path when the ontology is already ingested and you only need `reregister`:**
 > `--set primeSubstrate.triggerIngest=false`. The prime job then completes in ~40 SECONDS and
 > the reregister hook still fires. Measured.
