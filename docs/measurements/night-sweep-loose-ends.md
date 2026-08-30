@@ -63,8 +63,36 @@ the key. The 10 without are registrations that predate it. Harmless (absent mean
 today's behaviour) and worth knowing, because a consumer that assumes the key is present on
 every edge will meet ten that lack it.
 
+## The two stale E/W edges — found, and they are FQDN twins
+
+They are duplicate registrations of the same verb at the same service, differing only by
+hostname form:
+
+| verb | endpoints |
+|---|---|
+| `mesh:queryKnowledgeGraph` | `iagent-engine-e.sandbox.svc.cluster.local:8086/query_graph` **and** `iagent-engine-e:8086/query_graph` |
+| `mesh:retrieveKnowledge` | `iagent-engine-w.sandbox.svc.cluster.local:8088/query_knowledge` **and** `iagent-engine-w:8088/query_knowledge` |
+
+Leftovers from before the `svcDomain` templating landed. **Both forms resolve in-cluster**, so
+neither edge is dead — which is exactly why they survived. The cost is that the compat walk
+sees two records for one verb and the supervisor's `predicate_endpoint_skew` path exists to
+arbitrate precisely this; a verb with two endpoints is one re-registration away from the
+authority question being decided by ordering.
+
+**A third short-form is registered and was not in the loose-end:** `mesh:resolveInstance` at
+`http://iagent-engine-o:8084/resolve_instance` — engine-o self-registers using
+`ONTOLOGY_SVC_SELF_URL`, whose default is the bare name, while engine-d, engine-e, engine-fin
+and engine-p all register FQDNs. Not a duplicate (engine-o is a distinct provider), but the
+same drift, and it will become a twin the day anyone templates that default.
+
+**And one duplicate that is NOT a hostname twin**, surfaced by the same query and worth a
+different look: `mesh:proposeDisposition` is registered at two *different* Restate handlers —
+`PcnReviewStarter/start_review` and `ReviewStarter/start_review`. Two implementations of one
+verb, not two names for one implementation. Unowned by this sweep; recorded because the query
+that found the FQDN twins found it too.
+
 ## Not chased
 
-The **two single stale E/W edges** named in the loose-ends list were not reached tonight. The
-sweep's time went to the phrasing corpus, the suite attribution, and the engine-fin contract
-finding, which were the dispatch's higher-priority items.
+Nothing from the loose-ends list remains unreached. What the sweep did NOT do is decide which
+of each twin should survive — that is a registration-authority call, and deleting a graph edge
+is a mutation the night dispatch excludes.
