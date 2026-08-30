@@ -290,10 +290,28 @@ useless signal looks clean. The threshold question was answered at n=48 and stay
 
 ### What this does and does not close
 
-**Closes:** the anchor step's *correctness*. `[[a-resolved-relative-period-must-be-disclosed]]`
-remains open and is the other half — the corpus grades what the filler resolved and has no opinion
-about whether a person could see it. A battery asserting on `/fill_slots` output cannot measure
-disclosure, which is why that acceptance lives in the cortex item and not here.
+> #### ⛔ NARROWED IN PLACE 2026-08-29 — this section first read *"closes the anchor step's
+> correctness"*, and that was an over-claim by exactly one word.
+>
+> **Six cases close THE AMENDMENT. They do not close THE ANCHOR STEP.** The prompt change these
+> six were written to measure also regressed `H04` on the *full* corpus — `process_id` emitted as
+> `"order_to_cash"`, scored 0.00, outcome `empty` — which the six could not see because `H04` is
+> not among them. See **THE PROBE-SCOPE LAW** immediately below, and `9b0332d` for the fix.
+>
+> The green above is accurate and stays. What was wrong is the scope claimed for it: a probe
+> answers the question it is pointed at, and the blast radius of the change was larger than the
+> set of cases the amendment named. My own report is the instance the law was learned from, so
+> the correction belongs here rather than only there.
+
+**Closes:** the **amendment's six cases** — the anchor resolves the four positives and, crucially,
+declines both negatives.
+
+**Does NOT close:** the anchor step. That needed the full 52, which is the run that found `H04`.
+
+**Also open:** `[[a-resolved-relative-period-must-be-disclosed]]`, the other half — the corpus
+grades what the filler resolved and has no opinion about whether a person could see it. A battery
+asserting on `/fill_slots` output cannot measure disclosure, which is why that acceptance lives in
+the cortex item and not here.
 
 
 ---
