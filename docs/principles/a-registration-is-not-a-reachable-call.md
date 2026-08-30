@@ -5,7 +5,8 @@
 > silence — and the hop can be missing on *either* side of the registration.
 
 Filed 2026-08-29 on two verified instances; **promoted to three the same day** when the third was
-named and checked. The title names the commonest direction, not the whole family — see *the two
+named and checked; **a fourth arrived 2026-08-30**, found by the detection move in *Instance 4 adds
+the DETECTION move* below. The title names the commonest direction, not the whole family — see *the two
 directions* below, because an instance nobody recognises as this law is an instance that gets met
 as a novelty.
 
@@ -36,6 +37,7 @@ Same reader's error in both: **treating the artifact as the capability.**
 | 1 | **`intent_catalog.yaml`** — slots for every verb | nothing **projects** it onto the graph the router reads. It is consumed by tests and eval runners only — *a catalog entry is not a registration* | upstream |
 | 2 | **`mesh:enumerateInstances`** on Engine P — minted, ontology-classed, three-outcome, correct | **nothing in Engine O dispatches an enumerate** the way `/resolve` fans out a resolve. No caller exists | downstream |
 | 3 | **`CANVAS_SEED`** in `assembleCapabilities(CORTEX_UI_CAPABILITIES)` — shipped in the bundle | the POST to `/register_frontend_capabilities` runs from a `useEffect` **gated on `auth.isAuthenticated`** (`cortex-ui` `src/App.tsx:103`, via `src/api/client.ts:635`). **Nobody had loaded the page**, so it sat registered-in-source and unregistered-in-fact for days | upstream |
+| 4 | **`ProcessInterviewerV2`** — the SPO interview (ADR-0029 Slice 2), with the authorized-set menu and server-side `validate_pick`. Defined `restate_analyst/main.py:2384`, mounted `:3259` | **zero callers** in `src/`, `agent_fleet/`, `tests/` or the `cortex-ui` sibling. The gateway's only two interview calls both target **V1** — the BPMN-era interview V2's own docstring says it *supersedes*. **The supersession happened in the code and not on the wire** | downstream |
 
 Instance 1 was caught by a correction inside ADR-0033, which retracted a clause naming a source
 that did not exist. Instance 2 was caught by wiring the consumer and finding nothing to wire *to*.
@@ -53,7 +55,7 @@ than taken on recollection.
 > cron that has not fired, a pod that has not restarted — is a registration that does not exist
 > yet, and nothing in the code review will say so.
 
-### And it explains why the search for it failed, which is itself a property of the species
+### Instance 3 also explains why searching for it failed — itself a property of the species
 
 Instance 3 did not surface in a repo-wide grep **because it is in `cortex-ui`, not here.** The
 declaration and the consumer sit in different repositories, which is exactly the boundary a
@@ -64,6 +66,51 @@ rather than a restatement: that law is about *who the defect lands on*; this one
 declaration does not buy you*. Both are found by standing somewhere other than where the code was
 written — and **both hide best at a repo boundary**, where "somewhere else" is also "not in my
 `git grep`".
+
+### Instance 4 adds the DETECTION move, which the first three only gestured at
+
+Instances 1–3 were each found by accident of adjacency — someone happened to need the thing.
+Instance 4 was found by a **question**, and the question generalises:
+
+> **"Can I reuse this?"**
+>
+> It is the only ordinary engineering question that *forces* you to trace an actual call path.
+> You cannot answer it from the module: you have to find who calls it, in order to copy them.
+> **From the producer's side V2 looks complete — because it IS complete.** Nothing about reading
+> the implementation reveals that nothing reaches it.
+
+That is the operational tell for the whole family, and it is sharper than *"read from the
+consumer's side"* — which is a posture, and easy to believe you are already in. The reuse question
+is an **action** that puts you there involuntarily, and it has a definite answer.
+
+Cheap mechanical form, and it is what turned up instance 4 in about a minute:
+
+```
+grep -rn "<TheThing>" src/ agent_fleet/ tests/ <sibling-repos>/src | grep -v vendored
+```
+
+Zero non-definition hits **is the finding**. Note `tests/` is listed to be *excluded from the
+count*, not to be searched for reassurance: instance 1 was consumed by tests and eval runners
+only, and *a catalog entry is not a registration.*
+
+### AND THE CLAIM PROPAGATES THROUGH DOCUMENTATION, WHICH IS HOW IT SURVIVES REVIEW
+
+Instance 4's most instructive property is not that it happened — it is how long it stood.
+
+ADR-0033's Context reasons from *"widget interrogation **already shipped once** — the SPO
+interview asks 'which subject did you mean' from a menu."* True of the module. **False of the
+path.** That sentence was then repeated, in good faith, as an argument for why elicitation should
+reuse the interview — and would have been built on.
+
+> **A citation is not a call either.** Once a document asserts a capability, every later reader
+> inherits the claim without the cost of checking it, and the assertion is *more* durable than the
+> code because nothing recompiles it. **The unreachable thing in instance 4 is an ADR's own
+> prior-art claim** — which means this law caught a document, an author, and a reader in one
+> sentence.
+>
+> Practical consequence: when an ADR reasons from *"we already have X"*, that phrase is a
+> **load-bearing factual claim** and deserves the same treatment as a measured number — verified at
+> the wire, or written as *"X exists in the codebase; reachability unverified."*
 
 ## The guard, and it is not "remember to wire the caller"
 
