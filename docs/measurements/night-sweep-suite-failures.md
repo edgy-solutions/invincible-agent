@@ -76,3 +76,32 @@ manifest row, a TTL class, a `SERVICE_FILES` entry — and every one is a *decla
 posture or classification, which is a judgment its owning lane should make rather than one a
 sweep should guess at. Three of the nine are Lane 1's and will be taken in the morning; the
 rest are routed above.
+
+
+---
+
+## POSTSCRIPT — three instrument failures in this sweep, and the third had no tell
+
+Recorded here because the sweep's *credibility* rests on them being caught, and because the
+third is a genuinely new lesson rather than another instance of an old one.
+
+| # | the defect | what caught it |
+|---|---|---|
+| 1 | read `subject_uri`/`confidence`; the model is `resolved_uri`/`confidence_score` | **uniform extreme** — all 34 phrasings `None` at `0.00` |
+| 2 | queried Neo4j for `frontend_id`/`archetype`, which do not exist | the DBMS warned `property key does not exist` |
+| 3 | sent `entitled_domains`; the field is `domains`, so `domain` fell back to `"MAINTENANCE"` | **nothing. Read the real caller's payload.** |
+
+**(3) is the one to learn from.** It returned 22 of 22 planning phrasings resolving to MRO/IOF
+maintenance classes, with *varied* class names and *varied* confidences from 0.10 to 0.86.
+That is exactly the shape of a real post-prime subject-drift regression — which is precisely
+what this sweep was hunting — so it carried its own corroboration.
+
+> **A plausible result has no tell.** The uniform-extreme rule catches an instrument that
+> fails loudly. An instrument pointed at the wrong *scope* returns a believable wrong answer,
+> and staring at the numbers will never reveal it.
+
+The only thing that caught it was diffing the harness's request against
+`dynamic_supervisor.py`'s actual `/resolve` payload, field for field. **Before trusting any
+probe of a live endpoint, read the production call site and match the payload** — especially
+scoping and auth fields, whose absence changes *which* answer you get rather than *whether*
+you get one.
