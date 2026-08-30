@@ -488,6 +488,25 @@ helm upgrade iagent ./helm/invincible-agent \
   --timeout 40m
 ```
 
+> ### PRECONDITION — the chart AND the image must both carry your change
+>
+> The prime job runs from the **`dagster-control-plane` image, which bakes the repo**, so your
+> TTL and its `ONTOLOGIES` manifest entry ride the IMAGE. Your deployment, secret and
+> reregister entry ride the **CHART**. They are two different artifacts on two different
+> workflows and **they fail independently**:
+>
+> ```bash
+> gh run list --limit 5   # BOTH must read `completed success` for your commit:
+>                         #   Build & Push Container Images   -> the image the prime runs from
+>                         #   Release Helm Charts             -> the chart the upgrade installs
+> ```
+>
+> **Engine F's first push had a green image build and a RED chart release** (no `Chart.yaml`
+> bump, §10 row 11). Priming on that state would have ingested the finance classes from the
+> image while the engine itself was never deployed — the ontology half landing and the runtime
+> half silently absent, which is the same split that cost the planning engine twelve 422s,
+> arriving from the other direction.
+
 Five things about this command, every one of which has bitten someone:
 
 1. **`--timeout 40m`, not 15m — MEASURED.** Dagster's `QueuedRunCoordinator` caps at **2
@@ -704,6 +723,7 @@ Recorded because the next engine will meet most of them.
 | 8 | **`#` is not a comment inside a Go template action.** A per-entry note inside `{{- $engines := list ... }}` breaks the parse. | Notes go in a `{{/* */}}` block above the action. |
 | 9 | **`helm template` against bare `values.yaml` fails** on an unrelated pre-existing nil (`dagster.daemon.image.registry`). | Always render with `-f values-sandbox.yaml`. Not your bug; don't chase it. |
 | 10 | **A test assertion compared a string to a list and asserted nothing** while passing as "checked". | **Assert on the claim, not its neighbour.** The fix was to hoist `DOMAINS` to a constant so the test compares the registration's own value against the prime manifest, instead of a literal typed twice. |
+| 11 | **Pushed a `helm/**` change without bumping `Chart.yaml`.** `Release Helm Charts` failed in 10 seconds; the container build was unaffected and green, so a reader watching only the build would have proceeded. | **A chart change that does not move the version publishes NOTHING and reports success at the resolution of "I ran".** The seal exists because this exact omission once shipped engines with no client secret. Watch BOTH workflows on a push, not just the image build. |
 
 ---
 
@@ -734,6 +754,16 @@ engine's own directory are the ones that get forgotten.
 15. `helm/.../templates/configmap.yaml` — `ENGINE_FIN_PUBLIC_URL` (FQDN via `svcDomain`)
 16. `helm/.../templates/secrets.yaml` — `ENGINE_FIN_CLIENT_SECRET` projection
 17. `helm/.../templates/NOTES.txt`, `values-sandbox.yaml`, `.github/workflows/build-containers.yml`
+18. **`helm/invincible-agent/Chart.yaml` — BUMP THE VERSION.** Missed on Engine F's first
+    push and caught by the release workflow, which fails loudly on exactly this. **Any change
+    under `helm/**` needs it**, and the reason is in Chart.yaml's own comment: eight
+    chart-changing commits once landed on 0.3.36 without a bump, `skip_existing: true`
+    published none of them **while reporting green**, and a deployment installing "the latest
+    chart" got frozen contents with **no `ENGINE_*_CLIENT_SECRET` — so every engine died on
+    `KeyError` at mint and registered zero verbs.** An engine addition adds exactly that kind
+    of secret, so this is the same failure mode, not a neighbouring one. Check the tag is free
+    (`git tag -l "invincible-agent-0.3.*"`) — a bump to an already-published version fails the
+    same gate.
 
 **Known gap, FILED not fixed:** the `output_uri → archetype` bindings (`DERIVED_BINDINGS`)
 live in the **cortex-ui** repo, outside this one, and land on an authenticated page load (§9
