@@ -155,10 +155,28 @@ inherits the argument unchanged.
 `route | ask | abstain` becomes a decision made **here**, on data already computed, and the ask
 path returns instead of building `payload`.
 
-> **Not the router.** The router cannot know a slot is missing — no slot was ever declared to it,
-> which is why a slot-shaped question surfaces as `NO_VERB_CLASSIFIED` (an information gap, not a
-> threshold problem). Placing the disposition at the router would require re-deriving what this
-> line already has.
+> **Not the router** — *for this trigger.* The router cannot know a slot is missing, because no
+> slot was ever declared to it, which is why a slot-shaped question surfaces as
+> `NO_VERB_CLASSIFIED` (an information gap, not a threshold problem). Placing **slot** elicitation
+> at the router would require re-deriving what this line already has.
+
+> ### ⛔ BOUNDED 2026-08-29 — "the only place" is true of THIS TRIGGER, not of the disposition
+>
+> The paragraph above claims this line is *"the only place where the phrase, the routed verb, the
+> declarations and the accepted slots are all simultaneously in hand."* That is correct, and it is
+> an argument about **trigger #1 (missing slot)** and **#2 (ambiguous instance)** — both of which
+> fire **after** verb selection.
+>
+> **ADR-0033's Addendum adds a #3 that fires BEFORE it.** An ambiguous subject *class*
+> (`[[ipmdar-reuses-names-across-hierarchies]]`) is undetermined at subject resolution — upstream
+> of `/classify_predicate`, where **there is no verb yet**. Its options are classes, not members,
+> and each implies a *different verb*. So it cannot be served from this line: `predicate` does not
+> exist here in the sense #3 needs, and a build that tries will discover that the hard way.
+>
+> **One disposition, one card, TWO TRIGGER SITES.** The vocabulary, the menu-integrity rule, the
+> one-turn bound and the card contract are shared; the *point of decision* is not. Recording it
+> here because §1's argument reads, unbounded, as a claim about the whole disposition — and the
+> next reader would take it as one.
 
 ---
 
@@ -570,16 +588,35 @@ correction 2). The phone book answered cleanly; there is nothing to offer.
 
 ---
 
-## 6. The two non-slot consumers — scoped, not built
+## 6. The non-slot consumers — scoped, not built
 
-Three consumers, three trigger shapes, **one disposition**. That the disposition is shared is the
-argument for building it once at the funnel rather than three times at three call sites.
+**Updated 2026-08-29: FOUR consumers, not three.** ADR-0033's Addendum adds an ambiguous-subject-
+class trigger, and it is the first one that does **not** share this build's disposition point —
+see the bound on §1. That the *disposition* is shared is still the argument for building it once
+rather than four times; that the *trigger site* is not shared is the thing a reader must not
+assume.
 
-| consumer | trigger | options come from | menu integrity | new substrate? |
-|---|---|---|---|---|
-| **slot elicitation** | `spoken-mandatory` absent after filling | declarations + enumeration | every option is a legal value | **yes** — the enumerate capability |
-| **duplicate canvas** | a seed phrase matches an existing canvas | **the user's own canvas list** | *open existing* and *seed new* are both real actions | **none** |
-| **instance disambiguation** | `instance_match ∈ {fuzzy, mixed, not_specific}` | `resolveInstance` candidates | candidates are routable by construction | **none** — needs a per-case threshold ruling |
+| consumer | fires | trigger | options come from | menu integrity | new substrate? |
+|---|---|---|---|---|---|
+| **slot elicitation** (#1) | **after** verb selection | `spoken-mandatory` absent after filling | declarations + enumeration | every option is a legal value | the enumerate fan-out |
+| **instance disambiguation** (#2) | **after** verb selection | `instance_match ∈ {fuzzy, mixed, not_specific}` | `resolveInstance` candidates | candidates routable by construction | **none** — needs a per-case threshold ruling |
+| **subject-class ambiguity** (#3) | **BEFORE** verb selection | two classes tied at 1.0 on one name | **classes** from the graph | each class **is** a registered verb's `input_uri` | **none** — but a **second trigger site** |
+| **duplicate canvas** | outside the slot path entirely | a seed phrase matches an existing canvas | the user's own canvas list | *open existing* / *seed new* are both real actions | **none** |
+
+> **#3 is the one that breaks the pattern the other three share.** Its options are *classes*, each
+> implying a **different verb** — so it is not an under-specified slot, it is a question whose verb
+> is undetermined. *"The variance on Integration and Test"* ties `fin:ControlAccount`
+> (`finVarianceDrivers`) against `fin:WBSElement`, and the honest card asks **what kind of thing
+> was meant**, never a list of members.
+>
+> **Evidence-wise it is the weakest of the four and its own packet says so** — one witnessed
+> occurrence, notional seed, undeployed engine. What raises it is **structural, not frequency**:
+> IPMDAR reuses names across hierarchies *by design*, so it arrives with the first real-system
+> read rather than accumulating. Recorded that way rather than counted with the measured ones.
+>
+> **Not this build's, and deliberately not started.** Its two candidate designs — clarify the class
+> vs. filter candidates to the slot's referent — are not refinements of each other, so picking one
+> before a live case is a guess with a document. It waits for fix (3) to settle.
 
 ### Duplicate canvas — the cheapest of the three, and the best first proof
 
