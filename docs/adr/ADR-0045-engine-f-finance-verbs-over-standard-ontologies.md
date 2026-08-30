@@ -336,9 +336,53 @@ consumed in a meeting, and **it composes with the elicitation surface instead of
 one** — which is the archetype-unity constraint ADR-0033 defends, arriving from the other side.
 
 **This is a design call for this ADR, not a binding decision, and it is deliberately left
-open here.** Choosing (b) changes what the verb RETURNS, which is a change to Decision 3's
-"one verb, not a chain" ruling and must be argued as such rather than slipped in as a
-rendering convenience. **Nothing is built for either until that is settled.**
+open here.** **RULED 2026-08-30 — see the addendum immediately below.**
+
+#### ⚖️ RULED 2026-08-30 — THE VERB RETURNS THE TREE. Build the hierarchical archetype.
+
+**The candidate labelled (a) above is the ruling: a recursive/hierarchical archetype, a real
+component build with its own contract.** `fin_variance_analysis` keeps returning its nested
+`contributors`, its per-node `stop_reason` and its `residual`. **Flattening is refused.**
+
+> ##### ⛔ DO NOT CITE THIS RULING BY LETTER
+>
+> It arrived worded as *"Option B — build the hierarchical archetype."* **In this document
+> (a) is the hierarchical archetype and (b) is flattening**, so the letter and the words point
+> opposite ways, and a reader following the letter alone would implement precisely what was
+> refused. **The words are the ruling; the letters are retired.** Recorded rather than quietly
+> renumbered, because a numbering collision that inverts a decision is worth one paragraph.
+
+**AND THIS IS A CLARIFICATION OF DECISION 3, NOT AN AMENDMENT TO IT. My framing above was
+over-cautious and is corrected here.** I wrote that returning the tree "changes what the verb
+RETURNS, which is a change to Decision 3's *one verb, not a chain* ruling and must be argued as
+such." **It is not a change, and Decision 3 already says so in its own words:**
+
+> *"The recursive playbook — decompose the variance, drill into drivers, recurse until
+> explained — is many SQL steps and one question. It stays one verb because the caller asks
+> one thing; **the recursion is the verb's implementation, not the caller's problem.**"*
+
+**"One verb, not a chain" means one INVOCATION, not one STEP.** What Decision 3 refuses is a
+**conversational** chain — ask, get a partial answer, ask again — which pushes a traversal
+policy onto a caller with no basis to choose one. Internal recursion inside a single invocation
+was never in tension with it; the sentence above anticipates exactly this verb and permits it.
+So no amendment is owed, and reading one as necessary is what made this look harder than it was.
+
+*(A neighbouring justification was offered and is NOT recorded, because it does not hold on
+inspection: `plan_site_load` is nested ITERATION — sites × periods, filtered and summed — and
+its output is FLAT. It is precedent for "many internal steps, one invocation" and not for a
+verb returning a nested payload. Decision 3's own sentence is the stronger citation and needs
+no help.)*
+
+**The domain argument, which is what makes flattening actively wrong rather than merely
+different:** the finance group performs the recursion themselves. A flattened verb would
+**discard analysis the engine had already done** and hand back less than its inputs contained,
+and it would break what analysts expect a variance analysis to be. The composition argument for
+flattening — that a drill-down follow-on reuses the elicitation surface — is real but buys a
+surface at the cost of an answer.
+
+**Consequence for cortex:** the nested-decomposition archetype is a genuine build and stays
+third in the sequence, behind the EAC metric and the ranked set. `fin_variance_analysis`'s
+payload does not change; nothing in Engine F is edited by this ruling.
 
 ---
 
@@ -361,5 +405,6 @@ metric, then ranked-set, then the variance tree behind its design question.
   by reading.
 - The EAC card ships without its method, for convenience, on the grounds that the router
   already asked.
-- `fin_variance_analysis` is flattened at the engine **and** a hierarchical archetype is built
-  anyway — which would mean (a) and (b) were treated as refinements after all.
+- A hierarchical archetype is built **and** the verb is flattened anyway — which would mean the
+  two candidates were treated as refinements after all.
+- Someone cites this ruling by its letter, implements flattening, and is right to be confused.

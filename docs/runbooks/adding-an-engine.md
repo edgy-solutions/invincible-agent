@@ -485,7 +485,8 @@ helm upgrade iagent ./helm/invincible-agent \
   -f helm/invincible-agent/values-sandbox.yaml \
   --set primeSubstrate.enabled=true \
   --set primeSubstrate.wipe=false \
-  --timeout 40m
+  --set primeSubstrate.triggerIngest=true \
+  --timeout 90m
 ```
 
 > ### PRECONDITION — the chart AND the image must both carry your change
@@ -509,10 +510,27 @@ helm upgrade iagent ./helm/invincible-agent \
 
 Five things about this command, every one of which has bitten someone:
 
-1. **`--timeout 40m`, not 15m — MEASURED.** Dagster's `QueuedRunCoordinator` caps at **2
-   concurrent runs** and the prime launches **16 ingests**, so 25–45 min is the floor. Helm
-   timing out is benign for the prime (the Job finishes) but it **CUTS THE HOOK CHAIN**, so
-   `reregister(20)` never fires and the release is left `failed`.
+1. **`--timeout 90m`. NOT 40m — AND 40m IS THE TRAP, not 15m.**
+
+   Dagster's `QueuedRunCoordinator` caps at **2 concurrent runs**, so the wall-clock scales
+   with the manifest. **Engine F's run: 17 ingests, Job duration 44 MINUTES.**
+
+   > ⛔ **The inherited advice was "use `--timeout 40m`" — and its own measurement in the
+   > same paragraph was 43 minutes.** The recommendation contradicted its evidence and sat
+   > uncorrected in the prime playbook and in the first draft of this runbook. **40m sits
+   > INSIDE the range that times out.** Adding one TTL to the manifest made it worse: 16
+   > ingests → 17.
+
+   **What under-waiting costs:** helm times out, the Kubernetes Job **keeps running and
+   finishes**, and the release is left `failed` with the **hook chain CUT** — so
+   `reregister(20)` never fires. Concretely, on this run that would have meant: engine-fin
+   never registered, engine-p stuck at 15 with its `enumerateInstances` still refused, and
+   **helm reporting failure over a prime that had actually succeeded.** Two lanes blocked by a
+   timeout, with the substrate half-applied and every component healthy.
+
+   **Over-waiting costs nothing** — helm simply returns when the chain completes. Set it high.
+   `90m` leaves headroom for a manifest that grows again, which it will: every new engine adds
+   an ingest.
 2. **Fast path when the ontology is already ingested:**
    `--set primeSubstrate.triggerIngest=false` → the prime completes in ~40 **seconds** and
    reregister still fires.
@@ -610,10 +628,56 @@ with drv.session() as s:
 drv.close()"
 ```
 
-Expect exactly: `mesh:finVarianceAnalysis`, `mesh:finEacCalculation`,
-`mesh:finPerformanceIndices`, `mesh:finBurnRate`, `mesh:finVarianceDrivers`,
-`mesh:finFundingStatus`, `mesh:resolveInstance`, `mesh:enumerateInstances`.
-**Fewer than eight means the batch was refused; go read the registrar's 422.**
+> ### ⛔ THE VERB IS THE RELATIONSHIP **TYPE**, NOT A PROPERTY — and getting this wrong
+> ### produces a by-COUNT check wearing a by-NAME check's clothes
+>
+> **Measured on this run.** The first version of this query selected `e.verb`. There is no such
+> property; the verb name is `type(e)`. Neo4j returned a warning and **eight rows of `None`**:
+>
+> ```
+> count = 8
+>   None   None   None   None   None   None   None   None
+> ```
+>
+> **The count was right.** A check that asserted only "eight rows returned" would have passed
+> — while verifying nothing about which verbs those were, which is the entire thing the
+> by-name rule exists to establish. It was caught only because the `None`s printed; a summary
+> line would have hidden it completely.
+>
+> **THE ASSERTION SHAPE, and it generalises past this query:** a by-name check must assert the
+> **names are non-null and match an expected set**, never that rows came back. Rows returning
+> is liveness; names matching is identity, and the whole discipline in this section is that
+> the two are different claims.
+>
+> ```cypher
+> MATCH (a)-[e]->(b) WHERE e.endpoint_url CONTAINS 'engine-fin'
+> RETURN type(e) AS verb, e._input_uri AS input, e._output_uri AS output, e.slots AS slots
+> ORDER BY verb
+> ```
+>
+> `_input_uri` / `_output_uri` are underscore-prefixed; `slots` is a JSON string (a Neo4j
+> property holds primitives or arrays of primitives, never maps).
+
+**Verified live 2026-08-30** — Engine F's eight, each with both Contract D ends and its
+declared slot count:
+
+```
+enumerateInstances     InstanceClass                  -> InstanceEnumeration     slots=0
+finBurnRate            PerformanceMeasurementBaseline -> BurnRateSeries          slots=2
+finEacCalculation      Program                        -> EstimateAtCompletion    slots=3
+finFundingStatus       FundingLine                    -> FundingStatusGrid       slots=2
+finPerformanceIndices  PerformanceMeasurementBaseline -> PerformanceIndexSeries  slots=3
+finVarianceAnalysis    Program                        -> VarianceDecomposition   slots=5
+finVarianceDrivers     ControlAccount                 -> VarianceDriverRanking   slots=5
+resolveInstance        InstanceIdentifier             -> InstanceResolution      slots=0
+```
+
+**Fewer than eight means the batch was refused; go read the registrar's 422.** A `slots=0` on
+a *finance* verb would mean the declarations never reached the mesh — the engine would route
+and never elicit.
+
+**The providers' `slots=0` is CORRECT and not a gap:** they take a typed request body rather
+than declared slots.
 
 ### 3. The classes BY NAME AND PARENT — never by count
 
@@ -723,6 +787,8 @@ Recorded because the next engine will meet most of them.
 | 8 | **`#` is not a comment inside a Go template action.** A per-entry note inside `{{- $engines := list ... }}` breaks the parse. | Notes go in a `{{/* */}}` block above the action. |
 | 9 | **`helm template` against bare `values.yaml` fails** on an unrelated pre-existing nil (`dagster.daemon.image.registry`). | Always render with `-f values-sandbox.yaml`. Not your bug; don't chase it. |
 | 10 | **A test assertion compared a string to a list and asserted nothing** while passing as "checked". | **Assert on the claim, not its neighbour.** The fix was to hoist `DOMAINS` to a constant so the test compares the registration's own value against the prime manifest, instead of a literal typed twice. |
+| 13 | **The inherited `--timeout 40m` was below the measured runtime it cited.** Its own paragraph said the job took 43 minutes. This run took **44** over 17 ingests. | **A recommendation that contradicts the measurement printed beside it survives because nobody re-reads the paragraph.** Under-waiting cuts the hook chain and leaves the substrate half-applied with everything reporting healthy; over-waiting costs nothing. Now 90m. |
+| 14 | **A verification query selected `e.verb`, which does not exist** — the verb is `type(e)`. It returned **8 rows of `None`**, and the COUNT was right. | **A by-name check must assert the names are non-null and match an expected set**, not that rows returned. Otherwise it is a by-count check wearing a by-name check's clothes — the exact instrument class this whole runbook is written against, produced by the person writing the section that warns about it. |
 | 12 | **The engine image failed to build: no `uv.lock`.** `Dockerfile.agent` runs `uv sync --locked`, which refuses to generate one. Every other matrix job — including `dagster-control-plane`, the prime's image — went green, so the prime could have run against a correct ontology while the engine image did not exist. | **A new engine directory needs the lockfile, not just the manifest.** And note the shape: ONE red job in a 16-job matrix, with the workflow's overall status the only summary. Read WHICH job failed, not whether the run did. |
 | 11 | **Pushed a `helm/**` change without bumping `Chart.yaml`.** `Release Helm Charts` failed in 10 seconds; the container build was unaffected and green, so a reader watching only the build would have proceeded. | **A chart change that does not move the version publishes NOTHING and reports success at the resolution of "I ran".** The seal exists because this exact omission once shipped engines with no client secret. Watch BOTH workflows on a push, not just the image build. |
 
