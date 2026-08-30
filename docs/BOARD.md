@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **94 of 106 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **95 of 107 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -233,6 +233,10 @@ _Coverage: **94 of 106 packets indexed** — 2 carry pre-ADR-0040 legacy frontma
 - **slots-are-extracted-then-dropped-at-dispatch** — CORRECTED 2026-08-28 — the title is wrong and NOTHING IS EXTRACTED: BAML's RouteIntent has ZERO callers, and /route_intent calls ExtractIntent, which returns mode+entity_refs only. FOUR joins, not three, and the first is 'call the function that fills slots'. Ruled: /route_intent calls BOTH in sequence, and mesh_slots is the extraction's acceptance schema. The measured consequence is unchanged and still on real bytes: every verb runs on DEFAULTS. Seeded canvas slot 3 asks "where is funding short by initiative" and returns 11 ORGANISATIONS (group_by=org, subject O1 Corporate Capital Committee) — rendering cleanly with clean provenance and NO disclosure surface. Three of four certified parameterised phrasings deliver the wrong scope; the fourth passes by COINCIDENCE OF DEFAULT. The slot pipeline is one-third built and the built third is the MIDDLE. Certification gap rides along - routes-and-renders is not answers-the-question.
   status: open · owner: unassigned
   → [docs/plans/slots-are-extracted-then-dropped-at-dispatch.md](plans/slots-are-extracted-then-dropped-at-dispatch.md)
+
+- **spo-interview-reuse-for-elicitation** — A READ, NOT A BUILD — dispatched because "does the SPO interview's turn generalize?" decides whether elicitation's remaining work is hours or days. ANSWER IS THREE-PART AND ONE PART IS A SURPRISE. (1) ADR-0033 cites the SPO interview as prior art that "already shipped once". IT SHIPPED AS CODE AND NEVER AS A REACHABLE CALL: ProcessInterviewerV2 — the SPO interview with the authorized-set menu and server-side validate_pick — is registered and mounted with ZERO callers in src/, agent_fleet/, tests/ or cortex-ui. The gateway's only two interview calls both go to V1 (ProcessInterviewer, the BPMN-era LLM one). Instance #4 of [[a-registration-is-not-a-reachable-call]], and the most pointed: the ADR's own prior-art claim is the unreachable thing. (2) THE PURE CORE PARTLY GENERALISES AND THE TRANSPORT MUST NOT BE REUSED. `validate_pick(pick, authorized_set, key)` is entirely generic — it knows nothing of subjects or verbs — and is the server-side select-from-authorized-set enforcement this lane lacks. But InterviewState/apply_pick/try_finalize are welded to WorkflowDefinition authoring (termination = the definition validates), and the gateway transport is a SESSION-LEVEL MODAL LOCK: is_interview_active forces mode=CONVERSATIONAL so "every subsequent message goes back to the interview regardless of NL content". That is a held lifetime — precisely what ADR-0033's stateless-re-route lean was chosen to avoid on measured grounds. (3) AND THE READ FOUND A LATENT GAP IN THE SHIPPED DISPOSITION: menu integrity is enforced at CONSTRUCTION and not at ACCEPTANCE. Verified empirically — accept_slots({'project_id': 'TOTALLY-MADE-UP'}) returns it ACCEPTED with zero refusals, because an instance slot declares `type: str` and no `values`. Latent today (no re-route path exists to return a pick) and live the day the surface lands.
+  status: open · owner: agent
+  → [docs/plans/spo-interview-reuse-for-elicitation.md](plans/spo-interview-reuse-for-elicitation.md)
 
 - **subject-resolution-at-composition** — A resolvable MPN composes as subject_unresolved. Two hypotheses eliminated 2026-08-10; one survives (frozen-at-composition) with a named discriminating read.
   status: open · owner: unassigned
