@@ -294,3 +294,46 @@ useless signal looks clean. The threshold question was answered at n=48 and stay
 remains open and is the other half — the corpus grades what the filler resolved and has no opinion
 about whether a person could see it. A battery asserting on `/fill_slots` output cannot measure
 disclosure, which is why that acceptance lives in the cortex item and not here.
+
+
+---
+
+## UPDATE 2026-08-29 — the anchor step, corpus v1.1 (52 cases)
+
+| | CORRECT | WRONG | EXTRA | MISSED |
+|---|---|---|---|---|
+| **after the anchor** | **48 (92.3%)** | **0** | 1 | 3 |
+
+Anchor cases **4/4** (`ANCHOR=FY26-Q4`), and both `unanchored` negatives held — *"recently"*
+and *"soon"* filled nothing. An anchor supplies a NOW; it does not supply a HOW LONG.
+
+**The residue is fully accounted:** `E05` (`wrong_class`, an unsatisfiable corpus
+expectation), `E04` (a fair miss on *"feed into"* per its own note), and `C06` — which is
+**failing for behaving properly** and is the subject of a pending corpus addendum.
+
+### THE PROBE-SCOPE LAW, learned the expensive way
+
+> **A targeted probe answers the question it is pointed at and is silent about everything
+> else. The blast radius of a change and the scope of its test are different sets, and the
+> second is almost always smaller.**
+
+I changed a prompt *for* the amendment, measured the six cases the amendment was *about*,
+read 6/6, and called the step sound. The full run found `H04` had gone CORRECT → MISSED —
+reproducible 4/4 — in a case the amendment never touched, caused by that same prompt change.
+The filler had begun emitting `order_to_cash` for *"Order to Cash"*, and the resolver
+normalised hyphens but not underscores, so `"ORDER-TO-CASH"` scored 0.80 while
+`"order_to_cash"` scored **0.00**. **A six-case run would have shipped it.**
+
+After any change to a shared input — a prompt, a declaration, a vocabulary — run the full
+suite that consumes it, not the subset that motivated the change.
+
+### AND THE AUTHORING RULE C06 REVEALED
+
+> **A case is fixed by its purpose and broken by its flags.** When a ruling retires a premise,
+> sweep by the FLAG that encodes the premise, not by the family that names the case's intent.
+
+The amendment retired *"there is no notion of now"* and flipped `D05`/`D06`, whose family is
+`unanchored`. `C06` also carries the `unanchored` flag but its family and primary purpose are
+the referent gap, so the sweep missed it — and `FY27-Q1` is now the correct resolution of
+*"next quarter"* in that phrasing. **A false red, which discredits a correct system**, and the
+third time this week that has been the more dangerous direction.
