@@ -355,3 +355,29 @@ The amendment retired *"there is no notion of now"* and flipped `D05`/`D06`, who
 the referent gap, so the sweep missed it — and `FY27-Q1` is now the correct resolution of
 *"next quarter"* in that phrasing. **A false red, which discredits a correct system**, and the
 third time this week that has been the more dangerous direction.
+
+
+---
+
+## UPDATE 2026-08-29 night — POST-PRIME re-run, corpus v1.2
+
+The substrate moved underneath everything: a prime ran, engine-p re-registered at 16,
+engine-fin appeared, presentation bindings went 23 → 43. Re-measured against that.
+
+| | CORRECT | WRONG | EXTRA | MISSED |
+|---|---|---|---|---|
+| baseline | 40 (83.3%) | 5 | 2 | 1 |
+| after coercion fix | 42 (87.5%) | 5 | 0 | 1 |
+| after referent resolution | 45 (93.8%) | 0 | 0 | 3 |
+| after the anchor (52 cases) | 48 (92.3%) | 0 | 1 | 3 |
+| **post-prime, v1.2** | **50 (96.2%)** | **0** | **0** | **2** |
+
+**Zero WRONG and zero EXTRA.** The two remaining misses are both previously accounted:
+
+* `E04` *"what phases feed into P7"* — the fair miss on *"feed into"* as a paraphrase for
+  upstream, per its own corpus note.
+* `E05` — `wrong_class`, whose corpus expectation (`project_id: P1`) no correct resolver can
+  satisfy because no project bears that name.
+
+The gain over the 48 is the C06 addendum retiring its false red, plus `C04`'s known flake not
+recurring. **No post-prime regression in the slot pipeline.**
