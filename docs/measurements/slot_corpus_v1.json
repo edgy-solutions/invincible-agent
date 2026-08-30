@@ -1,5 +1,5 @@
 {
-  "corpus_version": "1.1",
+  "corpus_version": "1.2",
   "authored_by": "architect",
   "authored_against": "slots_for() inventory as reported by Lane 1, post direction/kind Literal fix (enum values 8 -> 12)",
   "grading_note": "Expected sets are exhaustive. A slot filled that does not appear in 'expect' is EXTRA. A slot in 'expect' that is absent is MISSED. A slot in 'expect' with a different value is WRONG. Flags do not change grading; they slice the report.",
@@ -268,14 +268,18 @@
       "verb": "mesh:planSiteLoad",
       "measure": "plan_site_load",
       "expect": {
-        "site_id": "S2"
+        "site_id": "S2",
+        "window": [
+          "ANCHOR+1"
+        ]
       },
       "family": "implied-referent",
       "flags": [
         "referent_unresolved",
-        "unanchored"
+        "anchor_dependent"
       ],
-      "note": "Two gaps in one phrasing: an unresolvable name AND an unanchored period. window is expected ABSENT - there is no notion of now, so any window value is an invention."
+      "note": "AMENDED 2026-08-29 (architect). Was failing for BEHAVING PROPERLY: with the anchor threaded, 'next quarter' resolves to ANCHOR+1 and the fill is correct, while the v1 expectation still said window must be absent because 'there is no notion of now'. That premise was retired by the anchor amendment. A false red, which discredits a correct system. | KEEPS BOTH ITS JOBS: the referent gap (Brandon -> S2, which the resolver now handles) and the anchored period. | THE AUTHORING RULE THIS REVEALED: a case is fixed by its PURPOSE and broken by its FLAGS. The amendment swept by FAMILY and C06's family is the referent gap, so its incidental `unanchored` flag was missed. When a ruling retires a premise, sweep by the FLAG that encodes the premise, not the family that names the case's intent.",
+      "supersedes": "v1.1 C06 (window expected ABSENT, flag unanchored)"
     },
     {
       "id": "D01",
@@ -683,7 +687,8 @@
     }
   ],
   "amended_by": [
-    "slot_corpus_v1_anchor_amendment.json (anchor-step, architect)"
+    "slot_corpus_v1_anchor_amendment.json (anchor-step, architect)",
+    "C06 addendum (anchor-step sweep-by-flag correction, architect)"
   ],
   "anchor_semantics": {
     "why_symbolic": "Expected values are written as ANCHOR / ANCHOR-1 / ANCHOR+1, never as literal period labels. A corpus that hardcodes FY26-Q4 becomes wrong the day the wall clock crosses a quarter boundary, and the failure would read as a filler regression. The runner resolves these symbols against the same calendar the router uses.",
@@ -693,5 +698,8 @@
     "at_authoring_time": "2026-08-29 falls in FY26-Q4, so ANCHOR=FY26-Q4, ANCHOR-1=FY26-Q3, ANCHOR+1=FY27-Q1. Recorded for reference only; do not assert against these literals.",
     "calendar_source": "the router's period table, not a copy. If the runner needs its own copy to resolve symbols, that copy is the defect - read period_end.",
     "out_of_range": "If ANCHOR-1 or ANCHOR+1 falls outside the declared vocabulary, the case is SKIPPED and reported as skipped-out-of-range, never failed. A corpus that fails because the substrate has no FY25 is measuring the seed."
+  },
+  "authoring_rules": {
+    "sweep_by_flag_not_family": "A case is fixed by its PURPOSE and broken by its FLAGS. When a ruling retires a premise, sweep every case carrying the FLAG that encodes that premise — not the cases whose family names the intent. The anchor amendment retired 'there is no notion of now', swept the `unanchored` FAMILY, and missed C06, whose family is the referent gap and whose `unanchored` flag was incidental. The result was a case failing for behaving properly."
   }
 }

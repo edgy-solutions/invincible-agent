@@ -74,6 +74,22 @@ data:
   PRESENTATION_AGENT_SVC_URL: "http://{{ .Release.Name }}-engine-f{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineF.port }}"
   WEAVIATE_EXPERT_SVC_URL: "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}"
 
+  # THE ENUMERATE OPTION SOURCE, read by the supervisor's ask disposition.
+  #
+  # `resolveInstance` scores candidates against something the SPEAKER said; a slot the phrase
+  # never filled has no such string, so no resolve provider can build a menu for it. This
+  # points at the one provider that answers `class -> members | too_many | unsupported`.
+  #
+  # WHAT IT BUYS, stated because it is NOT more menus: both live ask cases stay menu-less —
+  # Capability (9) and Project (14) each exceed the menu bound of 8, so both answer
+  # `too_many` and fall to free text. What changes is WHY: the disposition stops reporting
+  # `no_provider` (an unbuilt hop) and starts reporting a provider's own refusal, which is
+  # what makes ADR-0033's free-text boundary decidable rather than a fudge.
+  #
+  # Points at engine-p directly rather than through a fan-out: the graph-discovered fan-out
+  # is the option-source lane's next step, and one provider is the honest state today.
+  ENUMERATE_INSTANCES_URL: "http://{{ .Release.Name }}-engine-p{{ include "invincible-agent.svcDomain" . }}:{{ .Values.enginePlanning.port }}/enumerate_instances"
+
   # ------------------------------------------------------------------
   # Engine SELF-ADVERTISEMENT URLs — the endpoint each engine bakes into
   # its OWN verb registration ("here is where to reach me"). These are a
