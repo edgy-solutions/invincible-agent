@@ -30,6 +30,29 @@ deciders: Platform team
 > beyond tidiness and V1's production evidence can be weighed against V2's better model with
 > something at stake.
 >
+> ### ⚡ CONDITION FIRED 2026-08-30 — from ADR-0039, which nobody was watching for it
+>
+> **[ADR-0039](ADR-0039-workflow-definition-authoring-schema-and-bpmn-export.md) rejects BPMN
+> import** and rules that drawing, if it ever matters, is *"an **input method** — draw, compile
+> through a strict front end, commit the YAML it produces — never a storage format."*
+> **It supplies no such front end**, and names the gap it leaves: authoring today means reading
+> Python, and schema-plus-scaffold is the minimum rather than the good version.
+>
+> A `service_task` step needs `(subject, verb)` — and the verb question is precisely what V1
+> cannot ask. **So the strict front end ADR-0039 requires is the interview that is registered
+> and unreachable.**
+>
+> **The cutover is still NOT taken here**, because firing the condition is not the same as
+> making the decision: it hands the question back to this ADR's owner with a concrete case
+> attached instead of a hypothetical. What changed is that *"wait for a live case"* is
+> answered.
+>
+> **And the read that followed says the front end is THIS slice, not an extension of
+> ADR-0033's disposition** — dependent menus, unbounded turns, and termination on
+> `model_validates` are a different control structure, and V2's durable VirtualObject already
+> holds the state elicitation would otherwise have had to invent. See
+> `[[elicitation-machinery-vs-step-authoring]]`.
+>
 > **Reusable in the meantime, and already reused:** `validate_pick` — server-side
 > select-from-authorized-set — was mirrored into `iagent_pure.slot_disposition` for ADR-0033's
 > elicitation, with a test pinning the two against each other. Mirrored rather than imported
