@@ -52,6 +52,36 @@ A single small TTL (a `mesh_docs` vocabulary, sibling of `mesh_system.ttl`):
 - **`mesh:DocPage`** — the class.
 - **`mesh:explains`** — doc → any graph IRI (a verb, an `owl:Class`, a workflow definition, an archetype). The sibling of `mesh:derivedFrom`.
 - **`mesh:audience_hint`** — persona (`data-engineer` | `reviewer` | `leader`) — **display routing, not authz.**
+
+  > #### ⛔ CORRECTED 2026-08-30 — THIS LIST IS SUPERSEDED BY `policy/personas.yaml`
+  >
+  > The three values above were written before the canonical persona vocabulary existed, and
+  > **two of them are not personas in this system.** Verified against `policy/personas.yaml`,
+  > which is the live vocabulary the Topaz sync tool refuses to apply a grant against:
+  >
+  > ```
+  > PORTFOLIO_LEAD  DATA_STEWARD  DATA_ENGINEER  ARCHITECT  MECHANIC  ANALYST
+  > ```
+  >
+  > `reviewer` and `leader` do not appear; `data-engineer` is a different spelling of
+  > `DATA_ENGINEER`. **`audience_hint` takes a value from `policy/personas.yaml`, and the
+  > list in this bullet is an example that predates it.**
+  >
+  > Left in place with the correction attached rather than rewritten, because this ADR is the
+  > document a `mesh_docs` author would implement from, and a silently-swapped list would not
+  > tell them the earlier one was wrong.
+  >
+  > **Why this matters more than a spelling fix:** that file's own header says the vocabulary
+  > exists so the sync tool *"refuses to apply a group grant referencing a persona not listed
+  > here, giving a topaz-side positive control against typos."* An `audience_hint` carrying
+  > `reviewer` would be display-routing on a persona no group can grant — a value that looks
+  > like an entitlement and matches nothing. `audience_hint` is explicitly **not authz**, so
+  > it would fail silently rather than loudly, which is the worse direction.
+  >
+  > Recorded, not fixed further: whoever authors the `mesh_docs` vocabulary should source the
+  > enum from `policy/personas.yaml` rather than restating it, for the reason that file gives
+  > about ADR-0009 — *"they must stay in sync"* — and a third copy is the shape this repo has
+  > paid for repeatedly.
 - **`mesh:doc_kind`** — `concept` | `how-to` | `reference` | `rationale` (the Diátaxis split — "what is a disposition review" and "how do I override a part" are different answers and route differently).
 
 Each doc's frontmatter declares its own IRI + its `explains` targets; ingest converts frontmatter → triples. **Two validation gates, both loud:**
