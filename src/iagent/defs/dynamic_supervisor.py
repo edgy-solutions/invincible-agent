@@ -1053,7 +1053,13 @@ def _telemetry_headers(config, caller_token: str = "") -> Dict[str, str]:
 # Full reasoning, and the six invariants the BFF half enforces:
 # docs/plans/identity-propagation-must-not-cross-run-storage.md (1f4d645).
 
-_CORTEX_BFF_URL = os.getenv("CORTEX_BFF_URL", "http://iagent-cortex-bff:8090").rstrip("/")
+# ONE RESOLVER FOR BOTH LEGS. The registration (in cortex-bff) and this redemption call
+# both need the BFF's base URL, and when they were two literals in two repos-worth of
+# code they disagreed — the registration used an env name no chart sets. Sharing the
+# resolver is what makes "they cannot drift" a property rather than a hope.
+from iagent.service_urls import cortex_bff_base_url as _cortex_bff_base_url
+
+_CORTEX_BFF_URL = _cortex_bff_base_url()
 
 # WHICH VERBS NEED THE CALLER'S OWN IDENTITY — an ALLOW-LIST, deliberately.
 #

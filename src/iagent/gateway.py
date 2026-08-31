@@ -155,7 +155,18 @@ async def lifespan(application: FastAPI):
     try:
         from utils.mesh_registration import register_engine_to_mesh as _register_verb
 
-        _bff_base = os.getenv("CORTEX_BFF_PUBLIC_URL", "http://iagent-cortex-bff:8090")
+        # THE URL BAKED HERE IS THE ONE THE SUPERVISOR WILL POST TO, FOREVER —
+        # `endpoint_url` is written into the verb edge at registration and the
+        # dispatcher reads it from the GRAPH, never from its own environment. So a
+        # wrong value here is not a config bug the next restart fixes; it is a wrong
+        # fact in the substrate until a re-registration overwrites it.
+        #
+        # This line previously read an INVENTED env name with a BARE, SANDBOX-PREFIXED
+        # default, which under a corporate proxy produced a ProxyError against a host
+        # nobody had configured. See src/iagent/service_urls.py for the full account.
+        from .service_urls import cortex_bff_base_url
+
+        _bff_base = cortex_bff_base_url()
         _register_verb(
             name="cortex_bff_orchestration",
             description=(
