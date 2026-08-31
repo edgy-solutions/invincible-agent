@@ -136,6 +136,31 @@ helm upgrade iagent ./helm/invincible-agent \
 > — but it **cuts the hook chain**, so `reregister(20)` never fires and the release is left
 > `failed`. That is what happened.
 >
+> ### 📡 READ THE PRODUCTION CALL SITE BEFORE TRUSTING ANY PROBE
+>
+> **Match the payload field for field — especially scoping and auth fields, whose absence
+> changes WHICH answer you get rather than WHETHER you get one.**
+>
+> Measured 2026-08-29. A sweep of the stable-phrasing corpus posted `entitled_domains` to
+> `/resolve`. `ResolveRequest` has no such field, so it was ignored and `domain` fell back to
+> its default `"MAINTENANCE"` — scoping the candidate pool to the maintenance ontology. Every
+> planning phrasing then resolved to an MRO/IOF class, **22 of 22 "MOVED"**, at varied
+> confidences from 0.10 to 0.86.
+>
+> That is exactly the shape of the post-prime subject drift the sweep existed to find, so it
+> **carried its own corroboration** and would have been reported as *"the entire planning demo
+> corpus broke post-prime."* Corrected payload: 22 of 22 HOLD at 0.95–0.99.
+>
+> **A PLAUSIBLE RESULT HAS NO TELL.** The other two instrument failures that night announced
+> themselves — a uniform `None`/`0.00`, and a DBMS `property key does not exist` warning. This
+> one produced varied names and varied numbers, and staring at them would never have revealed
+> it. The only thing that caught it was diffing the harness's request against
+> `dynamic_supervisor.py`'s actual `/resolve` payload.
+>
+> **And its sibling:** measure the store the CONSUMER reads. The same night, `frontend_id` and
+> archetype counts were read from Neo4j because the claim said "edges"; the menu source reads
+> Weaviate, where every row carries both. Wrong store, clean numbers, wrong conclusion.
+
 > ### 🔎 A BY-NAME CHECK MUST ASSERT THE NAMES ARE NON-NULL
 >
 > **Measured on this run**, and it is the by-count defect wearing a by-name coat. A

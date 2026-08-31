@@ -63,6 +63,57 @@ the key. The 10 without are registrations that predate it. Harmless (absent mean
 today's behaviour) and worth knowing, because a consumer that assumes the key is present on
 every edge will meet ten that lack it.
 
+## ⛔ CORRECTED — BOTH NUMBERS ABOVE WERE MEASURED AGAINST THE WRONG STORE
+
+`frontend_id` and the archetype counts were read from **Neo4j**. The consumer reads
+**Weaviate**. `presentation_agent/graph_menu_source.py` builds the menu from Weaviate's
+`Predicate` collection — `_weaviate_http()`, not the graph driver — so the Neo4j edge is not
+the menu's source and its properties are not the menu's data.
+
+Re-measured in the store that is actually read:
+
+| | Neo4j (what I measured) | **Weaviate (what the menu reads)** |
+|---|---|---|
+| rendersAs rows | 43 | **25** |
+| carrying `frontend_id` | **0** | **25 of 25** |
+| carrying `archetype` | 0 | 25 of 25 |
+| `KNOWLEDGE_DOCUMENT` | 18 (42%) | **8 (32%)** |
+
+**So `frontend_id` is not missing.** It reaches DataHub (`mesh_frontend_id`), reaches Weaviate
+— where it is part of the deterministic row UUID — and is simply not projected onto the Neo4j
+edge, which nothing reads it from. The registrar is not dropping a key the menu needs; the
+menu was never looking there.
+
+The finding that survives is smaller and honest: `_build_rel_props_for_saga` omits
+`frontend_id` and `archetype` while three other sinks carry them. That is a **consistency**
+observation about the Neo4j projection, not a broken menu, and it should be ruled on its own
+merits — a property nobody reads may be right to omit.
+
+### And the KnowledgeDocument concern dissolves under the same correction
+
+In the store the menu reads it is **8 of 25**, and they split evenly by menu:
+
+```
+__system_default__   4   CatalogListing, SchemaDescription, OwnershipFact, AssetProfile
+cortex-ui-desktop    4   ImpactSet, SchemaDescription, KnowledgeRetrievalResponse, CatalogListing
+```
+
+The `__system_default__` four are **the fallback menu doing its job** — that menu exists so a
+caller with no `frontend_id` still gets something, and a document is the correct shape for a
+catalog listing or a schema description. The `cortex-ui-desktop` four are subjects that are
+plausibly documents on their merits: a catalog listing, a schema description, a knowledge
+retrieval response, an impact set.
+
+**Nothing is falling through.** The "42% of the presentation surface" figure was Neo4j's row
+count, which includes registrations the menu never consults.
+
+### The lesson, and it is the same one three times this arc
+
+I read Neo4j because the standing claim said *"rendersAs edges"*, and edges live in Neo4j.
+**The consumer reads Weaviate.** Read the consumer of the thing you are measuring, not the
+store whose vocabulary the question happens to use — the same law that found the seven-hop
+enumeration and the engine-fin contract, applied to me twice more tonight.
+
 ## The two stale E/W edges — found, and they are FQDN twins
 
 They are duplicate registrations of the same verb at the same service, differing only by
