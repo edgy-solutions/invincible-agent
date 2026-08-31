@@ -388,3 +388,168 @@ def test_unreadable_declarations_fail_SAFE_toward_route():
         assert decide_disposition(
             accepted={}, declared=bad, resolution={}, enumerate_class=None,
         ).action == ROUTE
+
+
+# ---------------------------------------------------------------------------------------
+# THE ANSWER SIDE — pick validation and the re-route
+#
+# Added 2026-08-30 after the SPO-interview read (`[[spo-interview-reuse-for-elicitation]]`)
+# found that menu integrity was enforced at CONSTRUCTION and not at ACCEPTANCE.
+# ---------------------------------------------------------------------------------------
+
+from iagent_pure.slot_disposition import (  # noqa: E402
+    BIND,
+    RESPEAK,
+    PickRefused,
+    resolve_ask,
+    validate_pick,
+)
+
+
+def _card(slots_for, measure, **over):
+    d = decide_disposition(
+        accepted=over.pop("accepted", {}), declared=slots_for(measure),
+        resolution=over.pop("resolution", {}), enumerate_class=over.pop("enumerate_class", None),
+    )
+    return ask_card(d, verb_iri="v", sub_query=over.pop("sub_query", "q"),
+                    accepted=over.pop("card_accepted", {}))
+
+
+def test_THE_GAP_a_fabricated_pick_is_refused(slots_for):
+    """THE MEASURED HOLE THIS CLOSES. Before this existed:
+
+        accept_slots({"project_id": "TOTALLY-MADE-UP"}, ...) -> ACCEPTED, zero refusals
+
+    because an instance slot declares `type: str` with no `values`, so the declaration-side
+    guard has no vocabulary to test membership against. A menu was offered and nothing
+    checked that the answer came from it."""
+    card = _card(slots_for, "plan_capability_path",
+                 enumerate_class=_members(("C1", "Billing"), ("C2", "Invoicing")))
+    assert card["options"]
+    with pytest.raises(PickRefused):
+        resolve_ask(card, "TOTALLY-MADE-UP")
+
+
+def test_a_pick_from_the_menu_BINDS_and_merges(slots_for):
+    """The happy path, and the merge is the part that matters: `execute_subtask` reads
+    `spoken = dict(config.slots or {})` and only fills when that is EMPTY, so a re-route
+    pre-binding only the answered slot would suppress filling of every slot the first turn
+    already got right. The card carries them; the re-route re-issues all of them."""
+    card = _card(slots_for, "plan_dependency_neighborhood",
+                 accepted={"direction": "upstream", "kind": "phase"},
+                 card_accepted={"direction": "upstream", "kind": "phase"},
+                 enumerate_class=_members(("P1", "Wave 1"), ("P2", "Wave 2")))
+    r = resolve_ask(card, "P2")
+    assert r.action == BIND
+    assert r.slots == {"direction": "upstream", "kind": "phase", "project_id": "P2"}
+
+
+def test_a_FREE_TEXT_answer_is_RESPOKEN_and_never_bound(slots_for):
+    """THE DISTINCTION THAT KEEPS THE HOLE CLOSED WHERE THERE IS NO MENU.
+
+    Both live ask cases fall to free text today (`too_many` on Capability's 9 and Project's
+    14 against bound 8). A free-text answer is WORDS, not an identifier — binding
+    `project_id="Wave 1 Cutover"` directly is the same fabricated-pick hole with a human's
+    typing in it, and it reaches the engine as a 422.
+
+    So it re-enters as a PHRASE and the filler and resolver run on it exactly as they would
+    on any question. Nothing enters a verb unresolved."""
+    card = _card(slots_for, "plan_dependency_neighborhood",
+                 sub_query="what does it depend on", enumerate_class=_too_many(14))
+    assert card["options"] == []
+    r = resolve_ask(card, "Wave 1 Cutover")
+    assert r.action == RESPEAK
+    assert "project_id" not in r.slots          # NOT bound
+    assert "Wave 1 Cutover" in r.query          # goes back through resolution
+
+
+def test_an_empty_answer_is_not_a_pick(slots_for):
+    card = _card(slots_for, "plan_capability_path", enumerate_class=_members(("C1", "Billing")))
+    for bad in ("", "   ", None):
+        with pytest.raises(PickRefused):
+            resolve_ask(card, bad)
+
+
+def test_validate_pick_refuses_hard_but_suggests_closest(slots_for):
+    """Suggest-closest-but-refuse-hard, verbatim from the SPO interview's behaviour: naming
+    near misses helps a caller correct itself, and refusing anyway is what stops a model
+    smuggling a fabricated pick past the gate."""
+    opts = [{"value": "BP1", "label": "Order to Cash"}]
+    assert validate_pick("BP1", opts) == "BP1"
+    with pytest.raises(PickRefused) as e:
+        validate_pick("BP", opts)
+    assert "BP1" in str(e.value)
+
+
+def test_MIRROR_agrees_with_the_spo_interview_it_was_copied_from():
+    """PINNED, NOT IMPORTED, and the reason is packaging rather than preference: engine
+    images do not ship `iagent_pure` — `ontology_service` mirrors `decode_declarations` for
+    exactly this reason and says so — so an import in either direction breaks an image.
+
+    The same trade `SLOT_KINDS` already makes with the planning package. This test is what
+    makes the copy honest: both must accept an exact match and both must REFUSE anything
+    else, so the two cannot silently diverge on the property that matters."""
+    si = pytest.importorskip("agent_fleet.restate_analyst.spo_interview")
+
+    theirs = [{"uri": "idp:Alpha", "label": "Alpha"}, {"uri": "idp:Beta", "label": "Beta"}]
+    mine = [{"value": "idp:Alpha", "label": "Alpha"}, {"value": "idp:Beta", "label": "Beta"}]
+
+    assert si.validate_pick("idp:Alpha", theirs) == validate_pick("idp:Alpha", mine)
+
+    with pytest.raises(si.PickRefused):
+        si.validate_pick("idp:Gamma", theirs)
+    with pytest.raises(PickRefused):
+        validate_pick("idp:Gamma", mine)
+
+
+def test_END_TO_END_a_real_menu_a_validated_pick_and_a_reroute(slots_for):
+    """THE WHOLE SERVER-SIDE PATH, on substrate-verified data.
+
+    `process_id` and `tech_id` are the two spoken-mandatory slots whose classes fall UNDER
+    the menu bound, so they are the only ones that produce a real menu today — and until
+    2026-08-30 nobody had ever asked. Probed live against engine-p's `/enumerate_instances`
+    on that date, recorded in `docs/measurements/enumerate-probe-2026-08-30.md`:
+
+        BusinessProcess  -> members, count=2   BP1 "Order to Cash", BP2 "Plan to Produce"
+        Technology       -> members, count=5   T1..T5
+        Capability       -> too_many, count=9   (bound 8)
+        Project          -> too_many, count=14  (bound 8)
+
+    The members below are that response. If the seed changes this test goes stale rather
+    than wrong — the assertion is on the PATH, and the provenance is stated so a future
+    reader knows which half is measured and which half is composed.
+
+    No corpus case exercises `plan_process_evolution` with an absent slot, so this is
+    coverage of a built path rather than evidence of a measured one — the same distinction
+    the disambiguation test carries."""
+    enumerate_bp = _members(("BP1", "Order to Cash"), ("BP2", "Plan to Produce"))
+
+    # 1. the ask — a real menu, from the substrate
+    d = decide_disposition(
+        accepted={}, declared=slots_for("plan_process_evolution"),
+        resolution={}, enumerate_class=enumerate_bp,
+    )
+    assert d.action == ASK and d.slot == "process_id"
+    assert d.option_source == SRC_ENUMERATION
+    assert d.free_text_reason is None            # a menu exists, so free text is FORBIDDEN
+    assert [o.value for o in d.options] == ["BP1", "BP2"]
+
+    # 2. the card the surface will render — and the prose that stands in until it exists
+    card = ask_card(d, verb_iri="mesh:planProcessEvolution",
+                    sub_query="how has it evolved", accepted={})
+    assert "Order to Cash" in card["message"]
+
+    # 3. a fabricated answer is REFUSED — the hole this section closed
+    with pytest.raises(PickRefused):
+        resolve_ask(card, "BP99")
+
+    # 4. a real pick BINDS, and the result is dispatchable as-is
+    r = resolve_ask(card, "BP1")
+    assert r.action == BIND
+    assert r.slots == {"process_id": "BP1"}
+
+    # 5. and the merged slots survive the declaration guard they will actually meet —
+    #    `config.slots` outranks the filler, so THIS is what reaches the verb.
+    from iagent_pure.slot_acceptance import accept_slots
+    acc = accept_slots(r.slots, slots_for("plan_process_evolution"))
+    assert acc.params == {"process_id": "BP1"} and not acc.refusals

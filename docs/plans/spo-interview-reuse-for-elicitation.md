@@ -154,3 +154,92 @@ next reader will cite it as shipped — as ADR-0033 already did.
 **No code changed.** It answers a question and names two follow-ups (the acceptance-side pick
 check; V2's reachability). Building either before the surface exists would be building against an
 interface nobody has agreed.
+
+---
+
+## ✅ BUILT 2026-08-30 — the answer side, from the read's own findings
+
+`src/iagent_pure/slot_disposition.py` gains the half the read said was missing.
+**35 tests green** (`tests/routing/test_slot_disposition.py`).
+
+**`validate_pick` — MIRRORED, not imported, and the reason is packaging.** Engine images do not
+ship `iagent_pure`: `agent_fleet/ontology_service/main.py` mirrors `decode_declarations` and says
+so in as many words — *"Mirrored rather than imported because this service does not ship
+`iagent_pure`."* So an import in **either** direction breaks an image, and moving the function out
+of `spo_interview.py` would touch a live engine's package for a module with no callers. The house
+precedent is `SLOT_KINDS`: mirror, and pin the agreement with a test.
+`test_MIRROR_agrees_with_the_spo_interview_it_was_copied_from` imports the real
+`spo_interview` and asserts both accept an exact match and both refuse anything else — the copy
+cannot silently diverge on the property that matters.
+
+**The transport was refused, as ruled.** Nothing here touches `gateway.py`'s
+`is_interview_active`.
+
+### THE DESIGN THE BUILD ADDED: a free-text answer is RE-SPOKEN, never BOUND
+
+The dispatch said *"close the menu-integrity gap"*, and doing it surfaced a case the gap's
+statement did not cover. **Both live ask cases have no menu** (`too_many`), so "validate the pick
+against the options" has nothing to validate against — and the tempting readings are both wrong:
+
+* refuse every menuless answer → the feature is useless exactly where it fires today;
+* accept it → `project_id="Wave 1 Cutover"` binds a *phrase* to an id slot. **That is the
+  `TOTALLY-MADE-UP` hole with a human's typing in it**, and it reaches the engine as a 422.
+
+> **So `resolve_ask` returns one of two actions, and the distinction is the whole point:**
+>
+> | | when | what happens |
+> |---|---|---|
+> | **`BIND`** | a menu was offered | the pick is validated against it and merged — the value came from a provider, so it is already routable, which *is* menu integrity |
+> | **`RESPEAK`** | no menu (`too_many` / `unsupported` / `no_provider` / `no_referent`) | the answer re-enters as **words**, appended to the original phrase, and the filler and resolver run on it exactly as on any question |
+>
+> **Nothing enters a verb unresolved.** And this is ADR-0033's *"stateless re-route with the
+> clarified subject substituted"* read literally: for a pick the clarified **value** substitutes
+> into the slots; for free text the clarified **wording** substitutes into the query. Neither holds
+> state between turns, so the stateless lean survives contact with the case that looked like it
+> needed an exception.
+
+### End-to-end, on substrate-verified data
+
+`test_END_TO_END_a_real_menu_a_validated_pick_and_a_reroute` walks the full server-side path —
+real menu → card → **fabricated answer refused** → real pick bound → merged slots surviving
+`accept_slots`. Its member list is the live probe in
+`[[enumerate-probe-2026-08-30]]`, not invented.
+
+**Still not built, and correctly so:** the HTTP entry point that hands an answer back. That is
+surface work, and the surface is joint design with cortex. What exists now is everything beneath
+it, so the card lands on a working pick-enforcement-and-re-route path instead of inventing one.
+
+---
+
+## Item 4 — V2's reachability: a PROPOSED disposition, since ADR-0029 has no owner in the lane set
+
+Filed rather than fixed on 2026-08-30, then asked for a proposal. Here is one, with the reasoning
+exposed so it can be overruled cheaply.
+
+> ### Proposed: **record why V1 stays, and mark V2 not-live.** Do not switch the gateway.
+
+**Why not wire V2 now**, which is the tempting option and the one I would resist:
+
+* **V2 has never run against a user.** Its pure core is unit-tested; the *path* — a turn arriving,
+  a pick validated, a definition finalising — has zero production evidence. Switching a live
+  conversational surface to it is not a wiring change, it is a cutover.
+* **The harm that was actually done is a citation, not an outage.** ADR-0033 reasoned from
+  *"already shipped once"* and would have built on it. A note on the ADR and on ADR-0029 closes
+  that harm completely, today, at no risk.
+* **This lane has no standing to retire V1.** V1 serves process-creation, which is not this lane's
+  surface, and *a seal outranks its authorization*: finding a defect in another lane's path is a
+  thing to report, never to widen into a change.
+
+**What the note must say**, because the point is to stop the next reader repeating the mistake:
+
+> `ProcessInterviewerV2` (ADR-0029 Slice 2) is **implemented and not reachable** — registered and
+> mounted, with no caller; the gateway drives V1. Its authorized-set menu and `validate_pick` are
+> real code and **must not be cited as shipped behaviour**.
+
+**The condition that would change this:** a live case needing the SPO interview's *verb* question —
+which is the thing V1 genuinely cannot do. Then the cutover has a reason beyond tidiness, and
+whoever owns it can weigh V1's production evidence against V2's better model with something at
+stake.
+
+**Escalated, not decided:** naming an owner for ADR-0029 is outside this lane. The proposal above
+is what I would do; the choice belongs to whoever holds that ADR.

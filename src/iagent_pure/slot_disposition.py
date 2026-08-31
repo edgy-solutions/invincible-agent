@@ -411,3 +411,128 @@ def ask_message(disp: Disposition) -> str:
         extra = f" There are {disp.detail}." if disp.detail else ""
         return f"Which {slot}?{heard}{extra} Too many to list — name it and I will run this."
     return f"Which {slot}?{heard} Name it and I will run this."
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# THE ANSWER SIDE — validating a pick and reconstructing the re-route
+# ═══════════════════════════════════════════════════════════════════════════════════════
+#
+# The half above asks. This half receives, and it exists because MENU INTEGRITY WAS
+# ENFORCED AT CONSTRUCTION AND NOT AT ACCEPTANCE. Measured, before this was written:
+#
+#     accept_slots({"project_id": "TOTALLY-MADE-UP"}, slots_for("plan_dependency_neighborhood"))
+#       ->  accepted: {"project_id": "TOTALLY-MADE-UP"}   refusals: []
+#
+# It passes because an instance slot declares `type: "str"` with NO `values` — there is no
+# closed vocabulary for that guard to test membership against. Latent while no re-route
+# path exists to return a pick; live the day the surface lands.
+#
+# AND IT DOES NOT BELONG IN `accept_slots`. That module's contract is "THE DECLARATIONS
+# ARE THE ACCEPTANCE SCHEMA", and an offered menu is a PER-TURN ARTIFACT, not a
+# declaration. Putting it there would make a deliberately pure, conversation-free module
+# depend on conversation state. Two different acceptance questions, kept apart:
+#
+#     accept_slots   : may this verb take this parameter at all?      (declarations)
+#     validate_pick  : was this value one of the options WE offered?  (this turn)
+
+
+class PickRefused(ValueError):
+    """A pick was not in the set that was offered. Select-from-authorized-set ENFORCED,
+    not merely prompted — the same refusal `spo_interview.PickRefused` raises."""
+
+
+def validate_pick(pick: str, options: Sequence[Any], *, key: str = "value") -> str:
+    """Server-side select-from-authorized-set enforcement.
+
+    MIRRORED FROM `agent_fleet/restate_analyst/spo_interview.validate_pick`, NOT IMPORTED,
+    and the reason is packaging rather than preference: engine images do not ship
+    `iagent_pure` (`ontology_service` mirrors `decode_declarations` for exactly this
+    reason and says so), so an import in either direction breaks an image. The agreement
+    is pinned by a test instead — the same trade `SLOT_KINDS` already makes with the
+    planning package.
+
+    The behaviour is deliberately identical, including *suggest-closest-but-refuse-hard*:
+    naming the near misses helps a caller correct itself, and refusing anyway is what
+    stops a model smuggling a fabricated pick past the gate.
+
+    Accepts `Option` tuples or plain dicts, so a card that has been through JSON round-trips
+    validates the same as one held in memory — the surface will hand back the latter.
+    """
+    allowed: list[str] = []
+    for o in options or ():
+        if isinstance(o, Option):
+            allowed.append(o.value)
+        elif isinstance(o, Mapping):
+            allowed.append(str(o.get(key) or ""))
+        else:
+            allowed.append(str(o))
+    if pick in allowed:
+        return pick
+    close = [a for a in allowed if pick and (pick.lower() in a.lower() or a.lower() in pick.lower())]
+    raise PickRefused(
+        f"{pick!r} was not one of the options offered. "
+        + (f"Closest: {', '.join(close[:3])}." if close else "No close match.")
+    )
+
+
+#: What a re-route should DO with the answer. Not a formality — the two are dispatched
+#: completely differently, and conflating them reopens the hole this section closes.
+BIND = "bind"            # the answer is an id we offered; it is already routable
+RESPEAK = "respeak"      # there was no menu; the answer is WORDS and must be resolved
+
+
+class Reroute(NamedTuple):
+    action: str                    # bind | respeak
+    slots: dict                    # for BIND: the merged, ready-to-dispatch parameters
+    query: str = ""                # for RESPEAK: the phrase to re-issue
+    slot: str = ""
+
+
+def resolve_ask(card: Mapping[str, Any], answer: str) -> Reroute:
+    """Turn a user's answer to an ask into the next route.
+
+    TWO SHAPES, AND THE DISTINCTION IS THE WHOLE POINT.
+
+    **A menu pick BINDS.** Its value came from a provider enumeration or a resolver
+    candidate, so it is an id the verb accepts — that IS menu integrity, and validating it
+    against the offered set is what makes trusting it safe. It rides back on
+    `config.slots`, which already outranks the filler, so the re-route makes NO second
+    model call and cannot re-parse the phrase differently than the first turn did.
+
+    **A free-text answer must be RE-SPOKEN, never bound.** Both live ask cases fall to free
+    text today (`too_many` on Capability's 9 and Project's 14 against a bound of 8), and a
+    free-text answer is *words*, not an identifier: binding `project_id="Wave 1 Cutover"`
+    directly is precisely the `TOTALLY-MADE-UP` hole with a human's typing in it, and it
+    would reach the engine as a 422 — the failure the whole tri-state exists to prevent.
+    So it goes back through the normal path as a phrase, where the filler and the resolver
+    run on it exactly as they would on any question. Nothing enters a verb unresolved.
+
+    This is ADR-0033's *"stateless re-route with the clarified subject substituted"* read
+    literally: for a pick the clarified value substitutes into the slots; for free text the
+    clarified wording substitutes into the query. Neither holds state between turns.
+    """
+    slot = str(card.get("slot") or "")
+    accepted = dict(card.get("accepted_slots") or {})
+    options = card.get("options") or []
+    answer = (answer or "").strip()
+
+    if not slot:
+        raise PickRefused("the card names no slot; nothing can be answered")
+    if not answer:
+        raise PickRefused("an empty answer is not a pick")
+
+    if options:
+        # A menu was offered, so the answer must be ON it. This is the branch that was
+        # missing entirely, and it is the one a fabricated pick would have walked through.
+        value = validate_pick(answer, options)
+        return Reroute(BIND, {**accepted, slot: value}, slot=slot)
+
+    # No menu. The reason is already recorded on the card (too_many / unsupported /
+    # no_provider / no_referent) — every one of them means "we could not offer a list",
+    # never "anything is acceptable".
+    return Reroute(
+        RESPEAK,
+        dict(accepted),
+        query=f"{card.get('sub_query') or ''} ({slot}: {answer})".strip(),
+        slot=slot,
+    )
