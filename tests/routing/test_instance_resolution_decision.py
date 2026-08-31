@@ -221,21 +221,26 @@ def test_provenance_always_has_match_label(candidates, expected_match):
 # THE SELF-MATCH PROPERTY — pinned as a strict xfail while the ruling is open
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "OPEN RULING — see docs/plans/the-specificity-gate-strips-content-words.md. "
-        "`passes_segment_specificity(x, x)` is FALSE for any space-separated label whose "
-        "final word is in _ENV_SUFFIXES, because only the CANDIDATE side strips those "
-        "suffixes: 'Integration and Test' yields name 'test' as an identifier and asset name "
-        "'and' as a candidate, so a name cannot match itself. Measured consequence: every one "
-        "of engine-fin's tied-at-top cases returns `not_specific` — including an exact 1.00 "
-        "label match — so the decision table never reaches `mixed` and ADR-0033's "
-        "disambiguation consumer cannot fire. STRICT, so it goes red the moment the gate is "
-        "ruled and fixed, telling whoever fixed it to flip this marker rather than leaving a "
-        "silently-passing xfail behind."
-    ),
-)
+# MARKER FLIPPED 2026-08-30 — the ruling landed and this now passes. Preserved verbatim
+# rather than deleted, because the xfail's own reason is the clearest statement of what was
+# broken and it did exactly the job it was written for: STRICT, so it went red the moment
+# the gate was fixed, telling whoever fixed it to flip it rather than leave a
+# silently-passing xfail behind.
+#
+#     OPEN RULING — see docs/plans/the-specificity-gate-strips-content-words.md.
+#     `passes_segment_specificity(x, x)` is FALSE for any space-separated label whose final
+#     word is in _ENV_SUFFIXES, because only the CANDIDATE side strips those suffixes:
+#     'Integration and Test' yields name 'test' as an identifier and asset name 'and' as a
+#     candidate, so a name cannot match itself. Measured consequence: every one of
+#     engine-fin's tied-at-top cases returns `not_specific` — including an exact 1.00 label
+#     match — so the decision table never reaches `mixed` and ADR-0033's disambiguation
+#     consumer cannot fire.
+#
+# THE RULING: both readings, because neither alone works. Symmetry ALONE is a regression
+# (it empties "Test" and refuses an identity); path-scoping ALONE still fails
+# `publog.p_cage.prod`. See `_strip_env_suffixes` in instance_resolution.py for the measured
+# table. The third reading — whether "the last word is the name" suits English phrases —
+# remains open and is not prejudged.
 def test_a_name_matches_ITSELF():
     """The property that must hold whichever reading of the gate wins.
 

@@ -111,6 +111,18 @@ DEFAULT_MIN_SCORE = 0.7
 # substring at every score, so substrate drift cannot flip this decision.
 _SEGMENT_SPLIT = re.compile(r"[^A-Za-z0-9_-]+")
 
+#: WHITESPACE IS THE DISCRIMINATOR, and it is the only one that survives contact with a real
+#: URN. The first draft of this rule listed the structural separators explicitly
+#: (`[./\\:]`) and a DataHub URN promptly refused it: its env qualifier is COMMA-separated —
+#: `...publog/p_cage,PROD)` — so `prod` was not stripped and `candidate_asset_name` returned
+#: `prod` instead of `p_cage`, breaking six of the gate's own seal cases.
+#:
+#: Enumerating the structural separators is the losing side of that bet: there is one
+#: whitespace class and an open-ended set of punctuation, so the rule is written the way the
+#: set is bounded. **A separator run containing whitespace joins WORDS OF A PHRASE; a run of
+#: pure punctuation joins COMPONENTS OF AN IDENTIFIER.**
+_WHITESPACE = re.compile(r"\s")
+
 
 def _segments(text: str) -> list[str]:
     """Lowercased name segments of an identifier or a catalog id.
@@ -121,6 +133,66 @@ def _segments(text: str) -> list[str]:
     return [seg for seg in _SEGMENT_SPLIT.split((text or "").lower()) if seg]
 
 
+def _kinded_segments(text: str) -> list[tuple[str, bool]]:
+    """`_segments`, but each segment carries HOW IT WAS SEPARATED from the one before.
+
+    THE INFORMATION `_segments` DISCARDS, AND THE ROOT OF THE SELF-MATCH DEFECT. An env
+    suffix on a catalog id arrives as a PATH COMPONENT (`publog.p_cage.prod`); the same
+    word in a human label arrives as a WORD OF A PHRASE (`Integration and Test`). Splitting
+    on both and keeping neither made the two indistinguishable afterwards, so a rule written
+    for the first silently applied to the second and stripped a content word.
+
+    Returns `(segment, joined_structurally)` — True when the separator run before it was pure
+    punctuation (an identifier's components), False when it contained whitespace (a phrase's
+    words). The first segment is always False; nothing precedes it.
+    """
+    lowered = (text or "").lower()
+    out: list[tuple[str, bool]] = []
+    current = ""
+    structural_before = False
+    pending_punct = False
+    pending_space = False
+    for ch in lowered:
+        if _SEGMENT_SPLIT.match(ch):
+            if current:
+                out.append((current, structural_before))
+                current = ""
+                structural_before = False
+            if _WHITESPACE.match(ch):
+                pending_space = True
+            else:
+                pending_punct = True
+        else:
+            if not current:
+                # Structural only if SOMETHING separated it and none of it was whitespace.
+                structural_before = pending_punct and not pending_space
+                pending_punct = pending_space = False
+            current += ch
+    if current:
+        out.append((current, structural_before))
+    return out
+
+
+def _strip_env_suffixes(kinded: list[tuple[str, bool]]) -> list[tuple[str, bool]]:
+    """Drop trailing env qualifiers — but ONLY where they arrived as a path component.
+
+    RULED 2026-08-30 (`[[the-specificity-gate-strips-content-words]]`). Two conditions, and
+    both are load-bearing:
+
+      * `[1]` the segment was joined STRUCTURALLY (pure punctuation, no whitespace). A
+        spoken word is never an environment:
+        *"Integration and Test"* names a control account, and stripping `test` there took a
+        content word out of a human label.
+      * `len(...) > 1` — never strip the only segment left. An identifier that IS an env
+        word (`"Test"`) must still name itself; emptying it makes the gate refuse an
+        identity, which is the defect one layer over.
+    """
+    out = list(kinded)
+    while len(out) > 1 and out[-1][0] in _ENV_SUFFIXES and out[-1][1]:
+        out.pop()
+    return out
+
+
 def identifier_name_and_qualifiers(identifier: str) -> tuple[str, list[str]]:
     """Split an extracted identifier into its NAME and its QUALIFIERS.
 
@@ -128,10 +200,10 @@ def identifier_name_and_qualifiers(identifier: str) -> tuple[str, list[str]]:
     and all failed before: the matcher could not see past the qualifier. The name
     is the LAST segment; everything before it corroborates.
     """
-    segs = _segments(identifier)
-    if not segs:
+    kinded = _strip_env_suffixes(_kinded_segments(identifier))
+    if not kinded:
         return "", []
-    return segs[-1], segs[:-1]
+    return kinded[-1][0], [seg for seg, _ in kinded[:-1]]
 
 
 def passes_segment_specificity(identifier: str, candidate_text: str) -> bool:
@@ -161,6 +233,30 @@ def passes_segment_specificity(identifier: str, candidate_text: str) -> bool:
 # Env qualifiers trail a catalog id and are not part of the asset's name. A short,
 # explicit list beats a clever heuristic: anything not listed stays part of the name,
 # so an unknown suffix makes the gate STRICTER (reject), never looser.
+#
+# ── RULED 2026-08-30: BOTH readings, because NEITHER ALONE WORKS ─────────────────────────
+# `[[the-specificity-gate-strips-content-words]]` laid out three readings as alternatives.
+# Measured through the FULL gate (fallback branch included) they are not alternatives:
+#
+#   self-match             current   symmetry   path-scoped   BOTH
+#   Integration and Test     FAIL       OK          OK         OK
+#   publog.p_cage.prod       FAIL       OK        FAIL         OK
+#   Test                       OK     FAIL          OK         OK    <- symmetry REGRESSES it
+#
+#   * SYMMETRY ALONE IS A REGRESSION. Stripping the identifier side too empties `"Test"`
+#     to nothing, and a nameless identifier is refused — so the reading called "safest"
+#     breaks a case that works today.
+#   * PATH-SCOPING ALONE IS INCOMPLETE. `publog.p_cage.prod` still yields `prod` on the
+#     identifier side against `p_cage` on the candidate side.
+#   * TOGETHER: every case self-matches, and the terminal name stays a CONTENT word
+#     (`test`, not the stopword `and` that symmetry alone produces).
+#
+# The third reading — whether "the last word is the name" suits English phrases at all —
+# is untouched and still open. It is a larger question and this change does not prejudge it.
+#
+# REGRESSION-GUARDED, not assumed: the three defects the gate was built for
+# (`cage`->`p_cage`, `publog`->a table inside it, `p_caeg`->`p_cage`) are still refused, and
+# the env case the stripping exists for (`p_cage`->`publog.p_cage.prod`) still passes.
 _ENV_SUFFIXES = frozenset({"prod", "dev", "test", "stage", "staging", "qa", "uat"})
 
 
@@ -172,10 +268,8 @@ def candidate_asset_name(candidate_text: str) -> str:
     TABLE inside it (measured: `bare-join-01`, where the extractor emitted `publog`
     for a question about `p_cage`). A container is not the thing it contains.
     """
-    segs = _segments(candidate_text)
-    while segs and segs[-1] in _ENV_SUFFIXES:
-        segs.pop()
-    return segs[-1] if segs else ""
+    kinded = _strip_env_suffixes(_kinded_segments(candidate_text))
+    return kinded[-1][0] if kinded else ""
 
 
 def decide(

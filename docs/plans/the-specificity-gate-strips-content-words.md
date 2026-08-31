@@ -1,11 +1,11 @@
 ---
 id:         the-specificity-gate-strips-content-words
 status:     open
-owner:      needs a RULING — architect, with the elicitation lane's input as the consumer
-blocked-on: the ruling. The three readings are laid out below; none should be applied by a sweep.
+owner:      agent (elicitation lane) — RULED AND IMPLEMENTED 2026-08-30
+blocked-on:
 repo:       invincible-agent
 code-site:  agent_fleet/ontology_service/instance_resolution.py (_ENV_SUFFIXES, candidate_asset_name, identifier_name_and_qualifiers, passes_segment_specificity)
-summary:    MEASURED. `passes_segment_specificity(x, x)` returns FALSE — a name cannot match itself — for any space-separated label whose final word is one of prod|dev|test|stage|staging|qa|uat. "Integration and Test" yields name `test` on the IDENTIFIER side and asset name `and` on the CANDIDATE side, because only the candidate side strips env suffixes. The two halves of the comparison are computed by different functions with different rules. Blast radius is human LABELS, not catalog ids: `my_dataset_prod` is one segment and passes. This is why every one of engine-fin's tied cases returns `not_specific` — the decision table never reaches the tie, and fixing engine-fin's field names is necessary but NOT sufficient for the ADR-0033 disambiguation case.
+summary:    RULED AND FIXED 2026-08-30 — and the three readings turned out NOT to be alternatives. Measured through the FULL gate (fallback branch included), SYMMETRY ALONE IS A REGRESSION: stripping the identifier side empties "Test" to nothing and a nameless identifier is refused, so the reading called safest breaks a case that works today. PATH-SCOPING ALONE IS INCOMPLETE: `publog.p_cage.prod` still yields `prod` against `p_cage`. Only BOTH give self-match for every case, and they also keep the terminal name a CONTENT word (`test`) rather than the stopword (`and`) symmetry alone produces. Reading 3 (terminal-name for English phrases) untouched and still open. IMPLEMENTED by restoring the information `_segments` discarded — the SEPARATOR KIND — and the discriminator is WHITESPACE, not a list of punctuation: the first draft enumerated `[./\:]` and a real DataHub URN refused it, because its env qualifier is COMMA-separated, breaking six of the gate's own seal cases. A separator run containing whitespace joins WORDS OF A PHRASE; pure punctuation joins COMPONENTS OF AN IDENTIFIER. The strict xfail flipped to green; 175 routing tests pass. ORIGINAL FINDING: `passes_segment_specificity(x, x)` returns FALSE — a name cannot match itself — for any space-separated label whose final word is one of prod|dev|test|stage|staging|qa|uat. "Integration and Test" yields name `test` on the IDENTIFIER side and asset name `and` on the CANDIDATE side, because only the candidate side strips env suffixes. The two halves of the comparison are computed by different functions with different rules. Blast radius is human LABELS, not catalog ids: `my_dataset_prod` is one segment and passes. This is why every one of engine-fin's tied cases returns `not_specific` — the decision table never reaches the tie, and fixing engine-fin's field names is necessary but NOT sufficient for the ADR-0033 disambiguation case.
 ---
 
 # The specificity gate strips content words, and a name cannot match itself
@@ -127,3 +127,84 @@ answers `not_specific`.
 `tests/routing/test_instance_resolution_decision.py::test_a_name_matches_ITSELF`. It goes red
 the moment the gate is fixed, which tells whoever fixes it to flip the marker rather than
 leave a silently-passing xfail behind.
+
+
+---
+
+## ⚖ RULED AND IMPLEMENTED 2026-08-30 — and readings 1 and 2 are two halves, not two options
+
+The packet laid out three readings and asked which wins. **Measured, the first two are not
+alternatives: neither alone achieves the self-match property this packet says must hold.**
+
+Measured through the **full** gate — including the segment-membership fallback the first probe
+forgot, which is what makes `Test` interesting:
+
+| self-match | current | (1) symmetry | (2) path-scoped | **both** |
+|---|---|---|---|---|
+| `Integration and Test` | FAIL | OK | OK | **OK** |
+| `Acceptance Test` | FAIL | OK | OK | **OK** |
+| `Wave 1 Test` | FAIL | OK | OK | **OK** |
+| `publog.p_cage.prod` | FAIL | OK | **FAIL** | **OK** |
+| `Test` | OK | **FAIL** | OK | **OK** |
+
+* **Reading (1) alone is a REGRESSION, not merely imperfect.** Stripping the identifier side
+  empties `"Test"` to nothing, and a nameless identifier is refused — so the reading the packet
+  called "safest" breaks a case that works today. It also degrades the terminal name to a
+  stopword: `Integration and Test` → `and`.
+* **Reading (2) alone is incomplete.** `publog.p_cage.prod` still yields `prod` on the
+  identifier side against `p_cage` on the candidate side.
+* **Together:** every case self-matches, and the name stays a content word (`test`).
+
+**Reading (3) — whether "the last word is the name" suits English phrases at all — is untouched
+and still open.** It is the larger question the packet said it was, and this change does not
+prejudge it. Note it also owns a pre-existing behaviour this fix does *not* introduce:
+`"Qualification Test Campaign"` and `"Marketing Test Campaign"` both reduce to `campaign` and
+pass the gate against each other **today**. Terminal-name collisions on spaced labels are
+reading (3)'s territory; the gate is a *specificity* check, not a *uniqueness* one, and
+discriminating between two candidates is the scoring layer's job.
+
+### The implementation: restore the information `_segments` threw away
+
+The root cause is one line older than the bug. `_segments()` splits on `.`/`/`/`,`/`:`/whitespace
+and **keeps none of it**, so afterwards nothing can tell *"the next component of an id"* from
+*"the next word of a phrase"* — and a rule written for the first silently applied to the second.
+`_kinded_segments()` returns `(segment, joined_structurally)` and the env-suffix strip fires only
+on a structurally-joined segment, never on a spoken word, and never on the last one remaining.
+
+> ### ⛔ AND THE FIRST DRAFT OF THAT DISCRIMINATOR WAS WRONG — caught by the gate's own seals
+>
+> It enumerated the structural separators as `[./\\:]`. **A real DataHub URN refused it:**
+>
+> ```
+> urn:li:dataset:(urn:li:dataPlatform:s3,iagent-minio.publog-lake/publog/p_cage,PROD)
+> ```
+>
+> its env qualifier is **comma-separated**, so `prod` was not stripped and `candidate_asset_name`
+> returned `prod` instead of `p_cage` — **six of the gate's own seal cases went red.**
+>
+> My ad-hoc probe had passed, because it used hand-made inputs (`publog/p_cage`) and never a real
+> URN. `[[a-green-check-proves-only-its-scope]]`: the probe's scope was three invented pairs, the
+> suite's was the shape the gate actually meets.
+>
+> **Enumerating the punctuation is the losing side of that bet** — there is one whitespace class
+> and an open-ended set of punctuation. So the rule is written the way the set is bounded:
+> **a separator run containing whitespace joins WORDS OF A PHRASE; a run of pure punctuation
+> joins COMPONENTS OF AN IDENTIFIER.**
+
+### Acceptance
+
+* **`test_a_name_matches_ITSELF` — strict xfail FLIPPED to green.** The marker's reason is
+  preserved as a comment rather than deleted: it is the clearest statement of what was broken,
+  and being strict is what made it go red the moment the gate was fixed instead of rotting into
+  a silently-passing xfail.
+* **The regression guard holds**, and it was checked against the suite rather than my own probe:
+  `cage`→`p_cage`, `publog`→a table inside it, and `p_caeg`→`p_cage` are all still refused, and
+  `p_cage`→`publog.p_cage.prod` still passes.
+* **175 routing tests pass, 0 failures.**
+
+### What this unblocks
+
+`mixed` is now reachable for IPMDAR-shaped names, so **ADR-0033's trigger #3 (ambiguous subject
+class) can fire** once `[[engine-fin-is-registered-but-cannot-participate]]`'s contract mismatch
+is repaired. This packet's own framing — *"blocked on two things, and the second is this"* — is
+now blocked on one.
