@@ -865,6 +865,7 @@ Recorded because the next engine will meet most of them.
 | 9 | **`helm template` against bare `values.yaml` fails** on an unrelated pre-existing nil (`dagster.daemon.image.registry`). | Always render with `-f values-sandbox.yaml`. Not your bug; don't chase it. |
 | 10 | **A test assertion compared a string to a list and asserted nothing** while passing as "checked". | **Assert on the claim, not its neighbour.** The fix was to hoist `DOMAINS` to a constant so the test compares the registration's own value against the prime manifest, instead of a literal typed twice. |
 | 13 | **The inherited `--timeout 40m` was below the measured runtime it cited.** Its own paragraph said the job took 43 minutes. This run took **44** over 17 ingests. | **A recommendation that contradicts the measurement printed beside it survives because nobody re-reads the paragraph.** Under-waiting cuts the hook chain and leaves the substrate half-applied with everything reporting healthy; over-waiting costs nothing. Now 90m. |
+| 18 | **The new engine's image was built by CI and absent from the Artifactory mirror** — 15 built, 14 mirrored. Invisible at home; an ImagePullBackOff at work the moment the chart flag is enabled. | **A lesson written beside a list does not maintain the list.** The `planning-agent` entry already carried a comment explaining that engine-p was missed for exactly this reason — and the next engine was missed anyway. Only something DERIVED maintains a list: `tests/test_mirror_covers_the_build_matrix.py` now takes the required set from the build matrix. |
 | 17 | **A verification probe hit the OLD pod during a rollout**, because `sort` read the AGE column as text and put `22h` before `52s`. It reported pre-fix behaviour over a working engine. | **Pod age is not a sortable string.** Sort by `.metadata.creationTimestamp` and take the last, and never `exec` into `deploy/<name>` to verify a roll. The tell: the result reproduced the old behaviour EXACTLY rather than raggedly. |
 | 16 | **A provider was registered and uncallable.** Wrong request field (`text` vs `identifier`) and wrong response key (`identity` vs `instance_id`) on BOTH providers. Every graph check passed. | **A provider is tested by the payload its consumer sends, not by its registration.** And prefer the failure that shouts: the resolver's 422 was findable, the enumerator's empty menu was not. |
 | 15 | **A `yaml.safe_dump` round-trip on a shared manifest destroyed 188 comment lines** while adding 5 rows. | **Edit config-as-documentation as TEXT.** A structural rewrite that preserves semantics can still delete the reasoning, and the diff (1346 ins / 1339 del) hides the loss in its own size. |
@@ -920,6 +921,14 @@ engine's own directory are the ones that get forgotten.
     manifest rows it asks for. **Edit the YAML as TEXT**: a `yaml.safe_dump` round-trip
     destroyed 188 comment lines on the first attempt, and in that file the comments are the
     reasoning.
+17c. **`scripts/mirror-to-artifactory.ps1` — ADD THE IMAGE, or the work cluster cannot pull it.**
+    CI publishes to ghcr; an air-gapped work cluster pulls from Artifactory and **cannot fall
+    back to ghcr**. An engine built but unmirrored is an **ImagePullBackOff the moment its
+    chart flag is turned on** — on a pod unrelated to whatever the operator is diagnosing.
+    **DEFAULT-OFF IS NOT PROTECTION.** `engineFinance.enabled` is `false` in `values.yaml`
+    (only `values-sandbox.yaml` sets it true), so a work upgrade renders no pod and the gap
+    stays invisible — right up until someone enables it. Mirror first, enable second.
+    Also update the inventory comment's engine count, which states a number that drifts.
 18. **`helm/invincible-agent/Chart.yaml` — BUMP THE VERSION.** Missed on Engine F's first
     push and caught by the release workflow, which fails loudly on exactly this. **Any change
     under `helm/**` needs it**, and the reason is in Chart.yaml's own comment: eight

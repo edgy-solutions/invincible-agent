@@ -149,7 +149,7 @@ if ($Method -eq 'crane') {
 # values-artifactory.yaml together.
 # -----------------------------------------------------------------------
 $IagentImages = @(
-    # Engine fleet (11) + cortex-bff + 2 dagster runtimes — built by
+    # Engine fleet (12) + cortex-bff + 2 dagster runtimes — built by
     # invincible-agent's build-containers.yml matrix.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
@@ -169,6 +169,23 @@ $IagentImages = @(
     # `iagent-engine-p`; those differ for this engine and only for this engine, which is
     # exactly why it was missed here.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/planning-agent:latest';        dst='edgy-solutions/invincible-agent/planning-agent:latest' },
+
+    # engine-fin (finance, ADR-0045). SAME SHAPE AS engine-p ABOVE, AND MISSED FOR THE SAME
+    # REASON — the comment above already records it and the list was still not updated when
+    # the next engine landed. A lesson written beside a list does not maintain the list.
+    #
+    # DEFAULT-OFF in the chart (engineFinance.enabled=false; only values-sandbox.yaml turns
+    # it on), so a work cluster on the default renders no pod and this image is not needed
+    # TODAY. Mirrored anyway, because default-off is a DEFAULT and not a guarantee: the day
+    # an overlay sets it true, an air-gapped cluster cannot fall back to ghcr and the symptom
+    # is ImagePullBackOff on a pod unrelated to whatever is being chased.
+    #
+    # NAME SPLIT AGAIN: the image is `finance-agent`, the SERVICE is `iagent-engine-fin`, and
+    # the values key is `engineFinance`. Grepping any one of them finds part of the wiring.
+    #
+    # tests/test_mirror_covers_the_build_matrix.py now derives the required set from
+    # build-containers.yml, so a THIRD omission fails CI instead of a work deploy.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/finance-agent:latest';         dst='edgy-solutions/invincible-agent/finance-agent:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
     # (work overlay) requires this image.
