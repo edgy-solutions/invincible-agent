@@ -785,6 +785,36 @@ regression. See `[[engine-f-archetype-bindings]]`.
 > the pod name not changing"* — and it caught the same thing again five days later. **Read
 > that comment before running.** It is the shortest true thing written about this hook.
 
+> #### ⛔ POD AGE IS NOT A SORTABLE STRING — and this produces a CONFIDENT READING OF THE
+> #### WRONG CONTAINER
+>
+> **Measured 2026-08-30, verifying engine-fin's roll.** Both pods are up for a moment during a
+> rollout, and picking the new one by piping `kubectl get pods` through `sort`/`head` reads the
+> AGE column as TEXT:
+>
+> ```
+> iagent-engine-fin-6bc75bf89c-2q49p   1/1   22h    <- sorts FIRST as a string
+> iagent-engine-fin-68b5c6fb7f-m2dm7   1/1   52s    <- the one you actually want
+> ```
+>
+> `"22h" < "52s"` lexically, so the probe hit the **old** pod and reported the engine's
+> pre-fix behaviour — a green-looking run of a verification that had verified nothing, and a
+> reading confident enough to send someone chasing a fix that had already landed.
+>
+> **The tell was that the result matched the OLD behaviour EXACTLY**, field for field, rather
+> than being partly right. A genuinely failed deploy is usually ragged; a perfect reproduction
+> of the previous state means you are talking to the previous state.
+>
+> **Sort by the field that is actually ordered**, and take the last:
+>
+> ```bash
+> POD=$(kubectl --context edge get pods -n sandbox --sort-by=.metadata.creationTimestamp >         --no-headers | grep <component> | tail -1 | awk '{print $1}')
+> ```
+>
+> Or wait for the old pod to terminate before probing at all. **Never `exec` into
+> `deploy/<name>` to verify a roll** — it picks an arbitrary ready pod, and during a rollout
+> that is a coin flip between the thing you changed and the thing you replaced.
+
 ### On any failure: PASTE, DO NOT RETRY
 
 A blind second run cannot distinguish "transient" from "the thing is wrong", and it destroys
@@ -811,6 +841,7 @@ Recorded because the next engine will meet most of them.
 | 9 | **`helm template` against bare `values.yaml` fails** on an unrelated pre-existing nil (`dagster.daemon.image.registry`). | Always render with `-f values-sandbox.yaml`. Not your bug; don't chase it. |
 | 10 | **A test assertion compared a string to a list and asserted nothing** while passing as "checked". | **Assert on the claim, not its neighbour.** The fix was to hoist `DOMAINS` to a constant so the test compares the registration's own value against the prime manifest, instead of a literal typed twice. |
 | 13 | **The inherited `--timeout 40m` was below the measured runtime it cited.** Its own paragraph said the job took 43 minutes. This run took **44** over 17 ingests. | **A recommendation that contradicts the measurement printed beside it survives because nobody re-reads the paragraph.** Under-waiting cuts the hook chain and leaves the substrate half-applied with everything reporting healthy; over-waiting costs nothing. Now 90m. |
+| 17 | **A verification probe hit the OLD pod during a rollout**, because `sort` read the AGE column as text and put `22h` before `52s`. It reported pre-fix behaviour over a working engine. | **Pod age is not a sortable string.** Sort by `.metadata.creationTimestamp` and take the last, and never `exec` into `deploy/<name>` to verify a roll. The tell: the result reproduced the old behaviour EXACTLY rather than raggedly. |
 | 16 | **A provider was registered and uncallable.** Wrong request field (`text` vs `identifier`) and wrong response key (`identity` vs `instance_id`) on BOTH providers. Every graph check passed. | **A provider is tested by the payload its consumer sends, not by its registration.** And prefer the failure that shouts: the resolver's 422 was findable, the enumerator's empty menu was not. |
 | 15 | **A `yaml.safe_dump` round-trip on a shared manifest destroyed 188 comment lines** while adding 5 rows. | **Edit config-as-documentation as TEXT.** A structural rewrite that preserves semantics can still delete the reasoning, and the diff (1346 ins / 1339 del) hides the loss in its own size. |
 | 14 | **A verification query selected `e.verb`, which does not exist** — the verb is `type(e)`. It returned **8 rows of `None`**, and the COUNT was right. | **A by-name check must assert the names are non-null and match an expected set**, not that rows returned. Otherwise it is a by-count check wearing a by-name check's clothes — the exact instrument class this whole runbook is written against, produced by the person writing the section that warns about it. |
