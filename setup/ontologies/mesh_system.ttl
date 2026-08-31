@@ -290,7 +290,7 @@ mesh:DecisionArtifact a owl:Class ;
 mesh:DependencyNeighborhoodSet a owl:Class ;
   rdfs:subClassOf mesh:Response ;
   rdfs:label "Dependency Neighborhood Set" ;
-  rdfs:comment "What one item waits on, or what waits on it — every neighbour on the named side, each carrying its own satisfied/violated/unresolvable state. DISTINCT FROM mesh:ConstraintViolationSet on purpose: that reports the SUBSET of edges currently failing, this reports EVERY edge with its answer. The difference is the whole reason this shape exists — when nothing is violated a violation set is empty, and an empty answer to 'what does this wait on' reads as 'nothing', which is a different claim from 'three things, all satisfied'. An item with no neighbours returns an empty set and that IS the answer; an item the model does not contain is refused instead." .
+  rdfs:comment "What one item waits on, or what waits on it — every neighbour on the named side, each carrying its own satisfied/violated/unresolvable state. DISTINCT FROM mesh:ConstraintViolationSet on purpose: that reports the SUBSET of edges currently failing, this reports EVERY edge with its answer. The difference is the whole reason this shape exists — when nothing is violated a violation set is empty, and an empty violation set is read as an absence of dependencies rather than as dependencies that are all satisfied — two different claims, and only one of them is true. An item with no neighbours returns an empty set and that IS the answer; an item the model does not contain is refused instead." .
 
 mesh:MaturityMatrix a owl:Class ;
   rdfs:subClassOf mesh:Response ;
