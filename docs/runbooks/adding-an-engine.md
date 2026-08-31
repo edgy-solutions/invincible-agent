@@ -1,3 +1,27 @@
+---
+iri: docs:runbook-adding-an-engine
+# Every target must exist in the graph — the invented-IRI rule (ADR-0037 §1). This list is
+# therefore DELIBERATELY SHORT. There is NO `mesh:registerEngine` or equivalent verb for the
+# task this page is named after: registration is Contract D, an API call, and minting an IRI to
+# make the edge look tidy is precisely what the gate exists to refuse. So the edges point at the
+# two things this runbook genuinely explains at contract depth, both confirmed present.
+explains:
+  # The two provider verbs every mesh-registered engine must implement. §9 step 4 is their
+  # field-by-field contract — the section that exists because Engine F registered both and
+  # neither was callable while every graph check passed.
+  - mesh:resolveInstance
+  - mesh:enumerateInstances
+  # Their output shapes, declared in setup/ontologies/mesh_system.ttl and verified BY NAME in §9.
+  - mesh:InstanceResolution
+  - mesh:InstanceEnumeration
+doc_kind: how-to
+# From policy/personas.yaml (lowercased) — the canonical enum, and the vocabulary the Topaz sync
+# tool refuses a grant against. NOT one of ADR-0037 §1's original three (data-engineer |
+# reviewer | leader): two of those are not personas in this system and none is a platform
+# builder. That list is superseded — see the ⛔ CORRECTED 2026-08-30 block in ADR-0037 §1.
+audience_hint: architect
+---
+
 # Runbook — adding an engine
 
 **Written 2026-08-29, while building Engine F (finance) per ADR-0045.** Every step below is one
