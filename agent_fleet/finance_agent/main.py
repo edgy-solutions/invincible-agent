@@ -570,6 +570,17 @@ class ResolveRequest(BaseModel):
     query: str = ""
     class_uri: Optional[str] = None
 
+    # ⚠ A CALLER SENDING THE OLD `{"text": ...}` GETS 200 WITH AN EMPTY LIST, NOT A REFUSAL.
+    # `identifier` has a default, pydantic drops the unknown field, and an empty needle scores
+    # nothing — so a mis-implemented caller reads "no match" rather than "wrong field". That is
+    # the same silent shape the rename fixed, surviving one layer down.
+    #
+    # LEFT AS-IS DELIBERATELY: engine-p's ResolveInstanceRequest defaults `identifier` the same
+    # way, and diverging would make Engine F the odd provider in a contract whose whole value
+    # is that the four existing ones agree. The exposure is bounded — engine-o's fan-out always
+    # sends `identifier` — and an empty list IS a first-class answer in this contract. Recorded
+    # rather than fixed, because the reason it is safe is not obvious from the code.
+
 
 #: The classes this provider holds, and the collection + id/label fields for each. ONE MAP,
 #: so the resolver and the enumerator below cannot disagree about what this engine offers —
