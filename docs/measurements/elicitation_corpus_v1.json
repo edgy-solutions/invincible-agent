@@ -2,7 +2,7 @@
   "corpus_version": "elicitation_v1",
   "authored_by": "agent (elicitation lane)",
   "authored_against": "live slots_for() declarations + the seed vocabularies read from PlanStore 2026-08-30",
-  "what_this_measures": "THE ASK, END TO END — not the fill. Every case runs phrase -> /fill_slots -> accept_slots -> decide_disposition -> (ask_card -> resolve_ask -> re-route) and asserts the FINAL disposition and answer. The slot corpus tests whether the filler reads a phrasing; this tests whether the system holds one bounded turn when it cannot.",
+  "what_this_measures": "THE ASK, END TO END \u2014 not the fill. Every case runs phrase -> /fill_slots -> accept_slots -> decide_disposition -> (ask_card -> resolve_ask -> re-route) and asserts the FINAL disposition and answer. The slot corpus tests whether the filler reads a phrasing; this tests whether the system holds one bounded turn when it cannot.",
   "shape_note": "ONE SHAPE ONLY, per [[elicitation-machinery-vs-step-authoring]]: ask -> answer -> re-route -> assert, a single bounded turn, no dependent second menu, no state beyond what the card carries. Step authoring is a different control structure and is deliberately absent.",
   "grading_note": "Graded on the DISPOSITION first and the answer second. A case whose disposition is wrong is a failure even if the final answer happens to be right, because the disposition is what this corpus measures. Report BY TRIGGER SHAPE and BY PATH, never blended: a missed ask and a spurious ask are different failures, and BIND and RESPEAK are different mechanisms.",
   "bound_note": "THE DEPLOYED MENU BOUND IS 8; THE RULED BOUND IS 10 (corrected 2026-08-30, not yet rolled). Capability holds 9 members, so `capability_id` is a RESPEAK case against the deployed engine and a BIND case after the roll. Both expectations are recorded per-case as `expect` and `expect_at_ruled_bound` so the run reports against what it actually met and the redeploy has a pre-registered prediction waiting.",
@@ -20,9 +20,23 @@
       "phrasing": "how has it evolved",
       "verb": "mesh:planProcessEvolution",
       "measure": "plan_process_evolution",
-      "expect": {"disposition": "ask", "slot": "process_id", "option_source": "enumeration", "options_contain": ["BP1", "BP2"]},
+      "expect": {
+        "disposition": "ask",
+        "slot": "process_id",
+        "option_source": "enumeration",
+        "options_contain": [
+          "BP1",
+          "BP2"
+        ]
+      },
       "answer": "BP1",
-      "expect_after_answer": {"path": "bind", "slots": {"process_id": "BP1"}, "verb_answers": true},
+      "expect_after_answer": {
+        "path": "bind",
+        "slots": {
+          "process_id": "BP1"
+        },
+        "verb_answers": true
+      },
       "note": "The first end-to-end ask in the system's history. BusinessProcess holds 2, comfortably under any bound, so this is the cleanest possible BIND."
     },
     {
@@ -31,10 +45,24 @@
       "phrasing": "what is the tech footprint",
       "verb": "mesh:planTechFootprint",
       "measure": "plan_tech_footprint",
-      "expect": {"disposition": "ask", "slot": "tech_id", "option_source": "enumeration", "options_contain": ["T1", "T5"]},
+      "expect": {
+        "disposition": "ask",
+        "slot": "tech_id",
+        "option_source": "enumeration",
+        "options_contain": [
+          "T1",
+          "T5"
+        ]
+      },
       "answer": "T3",
-      "expect_after_answer": {"path": "bind", "slots": {"tech_id": "T3"}, "verb_answers": true},
-      "note": "Five options — the largest real menu available at the deployed bound. T3 is picked from the middle of the list rather than the head, so a runner that silently takes options[0] fails."
+      "expect_after_answer": {
+        "path": "bind",
+        "slots": {
+          "tech_id": "T3"
+        },
+        "verb_answers": true
+      },
+      "note": "Five options \u2014 the largest real menu available at the deployed bound. T3 is picked from the middle of the list rather than the head, so a runner that silently takes options[0] fails."
     },
     {
       "id": "K03",
@@ -42,10 +70,20 @@
       "phrasing": "what does it depend on",
       "verb": "mesh:planDependencyNeighborhood",
       "measure": "plan_dependency_neighborhood",
-      "expect": {"disposition": "ask", "slot": "project_id", "option_source": "none", "free_text_reason": "too_many"},
+      "expect": {
+        "disposition": "ask",
+        "slot": "project_id",
+        "option_source": "none",
+        "free_text_reason": "too_many"
+      },
       "answer": "Wave 1 Cutover",
-      "expect_after_answer": {"path": "respeak", "reissued_fills": {"project_id": "P5"}},
-      "note": "Project holds 14, over every bound under discussion, so free text is LEGITIMATE here and the provider says why. The answer is a real project NAME, and the point is that it is not bound directly — it re-enters as words and the resolver turns it into P5."
+      "expect_after_answer": {
+        "path": "respeak",
+        "reissued_fills": {
+          "project_id": "P5"
+        }
+      },
+      "note": "Project holds 14, over every bound under discussion, so free text is LEGITIMATE here and the provider says why. The answer is a real project NAME, and the point is that it is not bound directly \u2014 it re-enters as words and the resolver turns it into P5."
     },
     {
       "id": "K04",
@@ -53,11 +91,29 @@
       "phrasing": "what is the capability path",
       "verb": "mesh:planCapabilityPath",
       "measure": "plan_capability_path",
-      "expect": {"disposition": "ask", "slot": "capability_id", "option_source": "none", "free_text_reason": "too_many"},
-      "expect_at_ruled_bound": {"disposition": "ask", "slot": "capability_id", "option_source": "enumeration", "options_contain": ["C1", "C9"]},
+      "expect": {
+        "disposition": "ask",
+        "slot": "capability_id",
+        "option_source": "none",
+        "free_text_reason": "too_many"
+      },
+      "expect_at_ruled_bound": {
+        "disposition": "ask",
+        "slot": "capability_id",
+        "option_source": "enumeration",
+        "options_contain": [
+          "C1",
+          "C9"
+        ]
+      },
       "answer": "Integration Platform",
-      "expect_after_answer": {"path": "respeak", "reissued_fills": {"capability_id": "C7"}},
-      "note": "THE BOUND CASE. Capability holds 9: RESPEAK at the deployed bound of 8, BIND at the ruled bound of 10. This is H06 from the slot corpus, which graded CORRECT there (the filler was right not to invent) and must ASK here — filler-correct and disposition-complete are different predicates."
+      "expect_after_answer": {
+        "path": "respeak",
+        "reissued_fills": {
+          "capability_id": "C7"
+        }
+      },
+      "note": "THE BOUND CASE. Capability holds 9: RESPEAK at the deployed bound of 8, BIND at the ruled bound of 10. This is H06 from the slot corpus, which graded CORRECT there (the filler was right not to invent) and must ASK here \u2014 filler-correct and disposition-complete are different predicates."
     },
     {
       "id": "K05",
@@ -65,8 +121,10 @@
       "phrasing": "where is funding short by initiative",
       "verb": "mesh:planFundingGap",
       "measure": "plan_funding_gap",
-      "expect": {"disposition": "route"},
-      "note": "A clean fill on a verb with no mandatory slot. Structurally immune — the disposition walks only spoken-mandatory declarations."
+      "expect": {
+        "disposition": "route"
+      },
+      "note": "A clean fill on a verb with no mandatory slot. Structurally immune \u2014 the disposition walks only spoken-mandatory declarations."
     },
     {
       "id": "K06",
@@ -74,8 +132,10 @@
       "phrasing": "what phases feed into P7",
       "verb": "mesh:planDependencyNeighborhood",
       "measure": "plan_dependency_neighborhood",
-      "expect": {"disposition": "route"},
-      "note": "E04. A GENUINE MISS — `direction` is not filled, and 'feed into' really does mean upstream — and it must STILL route, because direction is spoken-optional and its default IS the answer. One of the two hard negatives."
+      "expect": {
+        "disposition": "route"
+      },
+      "note": "E04. A GENUINE MISS \u2014 `direction` is not filled, and 'feed into' really does mean upstream \u2014 and it must STILL route, because direction is spoken-optional and its default IS the answer. One of the two hard negatives."
     },
     {
       "id": "K07",
@@ -83,7 +143,9 @@
       "phrasing": "how loaded is site S1 in FY26-Q2",
       "verb": "mesh:planSiteLoad",
       "measure": "plan_site_load",
-      "expect": {"disposition": "route"},
+      "expect": {
+        "disposition": "route"
+      },
       "note": "C04, the known non-deterministic case. Both slots it misses are optional. An ask here would make run-to-run flakiness user-visible as a question, which is the worst form for it to take. The second hard negative."
     },
     {
@@ -92,17 +154,26 @@
       "phrasing": "what does spend look like this quarter",
       "verb": "mesh:planCostCurve",
       "measure": "plan_cost_curve",
-      "expect": {"disposition": "route"},
+      "expect": {
+        "disposition": "route"
+      },
       "note": "D05 after the anchor landed. `window` resolves to the current fiscal period and is optional regardless. Included so the anchor work and the disposition are shown not to interfere."
     },
     {
       "id": "K09",
-      "family": "must-not-ask",
+      "family": "must-abstain",
       "phrasing": "what does I1-P1 depend on upstream",
       "verb": "mesh:planDependencyNeighborhood",
       "measure": "plan_dependency_neighborhood",
-      "expect": {"disposition": "route"},
-      "note": "The mandatory slot IS spoken and resolvable, so the guardrail's plainest form: exact short-circuits before any ask fires. A system that asks when it knows is worse than one that guesses when it doesn't."
+      "expect": {
+        "disposition": "abstain",
+        "slot": "project_id",
+        "reason": "empty"
+      },
+      "note": "AMENDED AFTER RUN 1 \u2014 MY EXPECTATION WAS WRONG, NOT THE SYSTEM'S BEHAVIOUR. This case was authored as the must-not-ask control on the claim that 'the mandatory slot IS spoken and resolvable'. I never checked: the seed's projects are P1..P14 and there is no `I1-P1`. The resolver answered `empty` \u2014 the phone book knows the class and there is no such thing \u2014 and `empty -> abstain` is the ruled behaviour, correctly refusing to offer a menu with nothing on it. So the case is re-registered as the MUST-ABSTAIN case, which no other case covered and which had only ever been exercised by fixture. The original expectation is kept in `superseded_expect` because a corrected prediction that erases what it predicted is not a corrected prediction. Run 1 stands at 14/15 and this was the 1.",
+      "superseded_expect": {
+        "disposition": "route"
+      }
     },
     {
       "id": "K10",
@@ -110,9 +181,15 @@
       "phrasing": "how has it evolved",
       "verb": "mesh:planProcessEvolution",
       "measure": "plan_process_evolution",
-      "expect": {"disposition": "ask", "slot": "process_id", "option_source": "enumeration"},
+      "expect": {
+        "disposition": "ask",
+        "slot": "process_id",
+        "option_source": "enumeration"
+      },
       "answer": "BP99",
-      "expect_after_answer": {"path": "refused"},
+      "expect_after_answer": {
+        "path": "refused"
+      },
       "note": "A FABRICATED PICK. The hole this closed: accept_slots({'process_id': 'BP99'}) is ACCEPTED with zero refusals, because an instance slot declares type str with no `values`. Menu integrity on the ANSWER is what refuses it."
     },
     {
@@ -121,10 +198,16 @@
       "phrasing": "how has it evolved",
       "verb": "mesh:planProcessEvolution",
       "measure": "plan_process_evolution",
-      "expect": {"disposition": "ask", "slot": "process_id", "option_source": "enumeration"},
+      "expect": {
+        "disposition": "ask",
+        "slot": "process_id",
+        "option_source": "enumeration"
+      },
       "answer": "T3",
-      "expect_after_answer": {"path": "refused"},
-      "note": "A PICK FROM A DIFFERENT SLOT'S MENU. T3 is a real id and a valid answer to K02 — it is simply not on THIS menu. Refusing it is the difference between validating against a vocabulary and validating against what was OFFERED."
+      "expect_after_answer": {
+        "path": "refused"
+      },
+      "note": "A PICK FROM A DIFFERENT SLOT'S MENU. T3 is a real id and a valid answer to K02 \u2014 it is simply not on THIS menu. Refusing it is the difference between validating against a vocabulary and validating against what was OFFERED."
     },
     {
       "id": "K12",
@@ -132,10 +215,17 @@
       "phrasing": "what does it depend on",
       "verb": "mesh:planDependencyNeighborhood",
       "measure": "plan_dependency_neighborhood",
-      "expect": {"disposition": "ask", "slot": "project_id", "option_source": "none"},
+      "expect": {
+        "disposition": "ask",
+        "slot": "project_id",
+        "option_source": "none"
+      },
       "answer": "actually, what does spend look like",
-      "expect_after_answer": {"path": "respeak", "reissued_fills": {}},
-      "note": "THE ANSWER IS A WHOLE NEW QUESTION. There is no menu, so the answer re-enters as words — and the honest outcome is that the re-issue fills NOTHING for project_id, because the user changed the subject. Recorded as the expected behaviour rather than a failure: a bounded turn that does not get its answer falls to the existing abstain, and the user's new question is theirs to ask again. What must NOT happen is binding the sentence as an id."
+      "expect_after_answer": {
+        "path": "respeak",
+        "reissued_fills": {}
+      },
+      "note": "THE ANSWER IS A WHOLE NEW QUESTION. There is no menu, so the answer re-enters as words \u2014 and the honest outcome is that the re-issue fills NOTHING for project_id, because the user changed the subject. Recorded as the expected behaviour rather than a failure: a bounded turn that does not get its answer falls to the existing abstain, and the user's new question is theirs to ask again. What must NOT happen is binding the sentence as an id."
     },
     {
       "id": "K13",
@@ -143,10 +233,17 @@
       "phrasing": "what does it depend on",
       "verb": "mesh:planDependencyNeighborhood",
       "measure": "plan_dependency_neighborhood",
-      "expect": {"disposition": "ask", "slot": "project_id", "option_source": "none"},
+      "expect": {
+        "disposition": "ask",
+        "slot": "project_id",
+        "option_source": "none"
+      },
       "answer": "ERP Modernization",
-      "expect_after_answer": {"path": "respeak", "reissued_outcome": "wrong_class"},
-      "note": "AN ANSWER NAMING SOMETHING REAL BUT OF THE WRONG KIND. 'ERP Modernization' is initiative I1, and the slot declares #Project. The re-issue must report wrong_class and REMOVE the value, never bind it — which is E05 arriving through the answer path instead of the question path."
+      "expect_after_answer": {
+        "path": "respeak",
+        "reissued_outcome": "wrong_class"
+      },
+      "note": "AN ANSWER NAMING SOMETHING REAL BUT OF THE WRONG KIND. 'ERP Modernization' is initiative I1, and the slot declares #Project. The re-issue must report wrong_class and REMOVE the value, never bind it \u2014 which is E05 arriving through the answer path instead of the question path."
     },
     {
       "id": "K14",
@@ -154,8 +251,11 @@
       "phrasing": "what does the Module Build depend on",
       "verb": "mesh:planDependencyNeighborhood",
       "measure": "plan_dependency_neighborhood",
-      "expect": {"disposition": "ask", "slot": "project_id"},
-      "note": "NEWLY REACHABLE. P3 'Finance Module Build' and P4 'Procurement Module Build' share the phrase. Before 257f9dd this died in the specificity gate and returned not_specific before tie-breaking. PRE-REGISTERED PREDICTION, held loosely: the resolver returns both as same-class candidates and the ask offers them from `resolution`. If it instead returns empty or a single exact, that is a refutation and is reported as one — the gate fix made the path reachable, not necessarily productive."
+      "expect": {
+        "disposition": "ask",
+        "slot": "project_id"
+      },
+      "note": "NEWLY REACHABLE. P3 'Finance Module Build' and P4 'Procurement Module Build' share the phrase. Before 257f9dd this died in the specificity gate and returned not_specific before tie-breaking. PRE-REGISTERED PREDICTION, held loosely: the resolver returns both as same-class candidates and the ask offers them from `resolution`. If it instead returns empty or a single exact, that is a refutation and is reported as one \u2014 the gate fix made the path reachable, not necessarily productive."
     },
     {
       "id": "K15",
@@ -163,8 +263,36 @@
       "phrasing": "what does the Rollout depend on",
       "verb": "mesh:planDependencyNeighborhood",
       "measure": "plan_dependency_neighborhood",
-      "expect": {"disposition": "ask", "slot": "project_id"},
-      "note": "The second disambiguation shape: P8 'Site B Rollout' and P9 'Site C Rollout'. Same prediction and the same caveat — a single terminal word shared by two projects is exactly what the specificity gate is FOR, so this case can legitimately come back not_specific and still be correct. Recorded as the case that tells us which."
+      "expect": {
+        "disposition": "ask",
+        "slot": "project_id"
+      },
+      "note": "The second disambiguation shape: P8 'Site B Rollout' and P9 'Site C Rollout'. Same prediction and the same caveat \u2014 a single terminal word shared by two projects is exactly what the specificity gate is FOR, so this case can legitimately come back not_specific and still be correct. Recorded as the case that tells us which."
+    },
+    {
+      "id": "K16",
+      "family": "must-not-ask",
+      "phrasing": "what does P7 depend on upstream",
+      "verb": "mesh:planDependencyNeighborhood",
+      "measure": "plan_dependency_neighborhood",
+      "expect": {
+        "disposition": "route"
+      },
+      "note": "ADDED AFTER RUN 1 to cover the shape K09 was mis-authored for. `P7` is a real project (Line 3 Pilot), so the mandatory slot fills and resolves and the ask must NOT fire \u2014 ADR-0033 #4's guardrail in its plainest form: exact short-circuits before any ask. Added rather than editing K09's phrasing so the run-1 record keeps meaning what it measured."
+    }
+  ],
+  "amendments": [
+    {
+      "after_run": 1,
+      "date": "2026-08-30",
+      "changed": [
+        "K09 re-registered must-not-ask -> must-abstain; my expectation was wrong and the system was right. `I1-P1` is not a project id, the resolver answered `empty`, and `empty -> abstain` is ruled behaviour. Original expectation preserved in `superseded_expect`.",
+        "K16 added \u2014 the route case K09 was meant to be, with a project id that exists."
+      ],
+      "not_changed": [
+        "K15's prediction. It was refuted and is LEFT REFUTED: I predicted the resolver would return candidates or answer not_specific, and the actual outcome was `slot-unfilled` \u2014 the filler never attempted `project_id` for 'the Rollout' at all, which is a third possibility I did not enumerate. Rewriting the prediction to match would destroy the measurement."
+      ],
+      "reporting_rule": "RUN 1 IS REPORTED AS 14/15 AND IS NOT RE-SCORED. A case that passes after its expectation was corrected did not pass in the run that measured it, and re-scoring a pre-registered run against amended expectations is the adjustment pre-registration exists to prevent."
     }
   ]
 }

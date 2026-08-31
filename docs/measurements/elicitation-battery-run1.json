@@ -1,0 +1,303 @@
+[
+ {
+  "id": "K01",
+  "family": "bind-menu",
+  "phrasing": "how has it evolved",
+  "disposition": "ask",
+  "slot": "process_id",
+  "reason": "slot-unfilled",
+  "option_source": "enumeration",
+  "free_text_reason": null,
+  "options": [
+   "BP1",
+   "BP2"
+  ],
+  "filled": {},
+  "message": "Which process did you mean? Options: Order to Cash, Plan to Produce.",
+  "path": "bind",
+  "bound_slots": {
+   "process_id": "BP1"
+  },
+  "bound_refusals": [],
+  "verb_status": 200,
+  "verb_answers": true,
+  "verb_rows": null,
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K02",
+  "family": "bind-menu",
+  "phrasing": "what is the tech footprint",
+  "disposition": "ask",
+  "slot": "tech_id",
+  "reason": "slot-unfilled",
+  "option_source": "enumeration",
+  "free_text_reason": null,
+  "options": [
+   "T1",
+   "T2",
+   "T3",
+   "T4",
+   "T5"
+  ],
+  "filled": {},
+  "message": "Which tech did you mean? Options: Core ERP Platform, Device Telemetry Bus, Event Streaming Backbone, Analytics Warehouse, Manufacturing Execution Suite.",
+  "path": "bind",
+  "bound_slots": {
+   "tech_id": "T3"
+  },
+  "bound_refusals": [],
+  "verb_status": 200,
+  "verb_answers": true,
+  "verb_rows": null,
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K03",
+  "family": "respeak-no-menu",
+  "phrasing": "what does it depend on",
+  "disposition": "ask",
+  "slot": "project_id",
+  "reason": "slot-unfilled",
+  "option_source": "none",
+  "free_text_reason": "too_many",
+  "options": [],
+  "filled": {},
+  "message": "Which project? There are 14 to choose from. Too many to list \u2014 name it and I will run this.",
+  "path": "respeak",
+  "reissued_query": "what does it depend on (project_id: Wave 1 Cutover)",
+  "reissued_fills": {
+   "project_id": "P5"
+  },
+  "reissued_outcome": "exact",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K04",
+  "family": "respeak-no-menu",
+  "phrasing": "what is the capability path",
+  "disposition": "ask",
+  "slot": "capability_id",
+  "reason": "slot-unfilled",
+  "option_source": "none",
+  "free_text_reason": "too_many",
+  "options": [],
+  "filled": {},
+  "message": "Which capability? There are 9 to choose from. Too many to list \u2014 name it and I will run this.",
+  "path": "respeak",
+  "reissued_query": "what is the capability path (capability_id: Integration Platform)",
+  "reissued_fills": {
+   "capability_id": "C7"
+  },
+  "reissued_outcome": "exact",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K05",
+  "family": "must-not-ask",
+  "phrasing": "where is funding short by initiative",
+  "disposition": "route",
+  "slot": "",
+  "reason": "",
+  "option_source": "",
+  "free_text_reason": null,
+  "options": [],
+  "filled": {
+   "group_by": "initiative"
+  },
+  "message": "",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K06",
+  "family": "must-not-ask",
+  "phrasing": "what phases feed into P7",
+  "disposition": "route",
+  "slot": "",
+  "reason": "",
+  "option_source": "",
+  "free_text_reason": null,
+  "options": [],
+  "filled": {
+   "project_id": "P7"
+  },
+  "message": "",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K07",
+  "family": "must-not-ask",
+  "phrasing": "how loaded is site S1 in FY26-Q2",
+  "disposition": "route",
+  "slot": "",
+  "reason": "",
+  "option_source": "",
+  "free_text_reason": null,
+  "options": [],
+  "filled": {
+   "site_id": "S1",
+   "window": [
+    "FY26-Q2"
+   ]
+  },
+  "message": "",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K08",
+  "family": "must-not-ask",
+  "phrasing": "what does spend look like this quarter",
+  "disposition": "route",
+  "slot": "",
+  "reason": "",
+  "option_source": "",
+  "free_text_reason": null,
+  "options": [],
+  "filled": {
+   "window": [
+    "FY26-Q4"
+   ]
+  },
+  "message": "",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K09",
+  "family": "must-not-ask",
+  "phrasing": "what does I1-P1 depend on upstream",
+  "disposition": "abstain",
+  "slot": "project_id",
+  "reason": "empty",
+  "option_source": "",
+  "free_text_reason": null,
+  "options": [],
+  "filled": {
+   "direction": "upstream"
+  },
+  "message": "",
+  "verdict": "FAIL",
+  "why": [
+   "disposition 'abstain' != 'route'"
+  ]
+ },
+ {
+  "id": "K10",
+  "family": "adversarial",
+  "phrasing": "how has it evolved",
+  "disposition": "ask",
+  "slot": "process_id",
+  "reason": "slot-unfilled",
+  "option_source": "enumeration",
+  "free_text_reason": null,
+  "options": [
+   "BP1",
+   "BP2"
+  ],
+  "filled": {},
+  "message": "Which process did you mean? Options: Order to Cash, Plan to Produce.",
+  "path": "refused",
+  "refusal": "'BP99' was not one of the options offered. No close match.",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K11",
+  "family": "adversarial",
+  "phrasing": "how has it evolved",
+  "disposition": "ask",
+  "slot": "process_id",
+  "reason": "slot-unfilled",
+  "option_source": "enumeration",
+  "free_text_reason": null,
+  "options": [
+   "BP1",
+   "BP2"
+  ],
+  "filled": {},
+  "message": "Which process did you mean? Options: Order to Cash, Plan to Produce.",
+  "path": "refused",
+  "refusal": "'T3' was not one of the options offered. No close match.",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K12",
+  "family": "adversarial",
+  "phrasing": "what does it depend on",
+  "disposition": "ask",
+  "slot": "project_id",
+  "reason": "slot-unfilled",
+  "option_source": "none",
+  "free_text_reason": "too_many",
+  "options": [],
+  "filled": {},
+  "message": "Which project? There are 14 to choose from. Too many to list \u2014 name it and I will run this.",
+  "path": "respeak",
+  "reissued_query": "what does it depend on (project_id: actually, what does spend look like)",
+  "reissued_fills": {},
+  "reissued_outcome": "",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K13",
+  "family": "adversarial",
+  "phrasing": "what does it depend on",
+  "disposition": "ask",
+  "slot": "project_id",
+  "reason": "slot-unfilled",
+  "option_source": "none",
+  "free_text_reason": "too_many",
+  "options": [],
+  "filled": {},
+  "message": "Which project? There are 14 to choose from. Too many to list \u2014 name it and I will run this.",
+  "path": "respeak",
+  "reissued_query": "what does it depend on (project_id: ERP Modernization)",
+  "reissued_fills": {},
+  "reissued_outcome": "wrong_class",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K14",
+  "family": "disambiguation",
+  "phrasing": "what does the Module Build depend on",
+  "disposition": "ask",
+  "slot": "project_id",
+  "reason": "mixed",
+  "option_source": "resolution",
+  "free_text_reason": null,
+  "options": [
+   "P3",
+   "P4",
+   "P3"
+  ],
+  "filled": {},
+  "message": "",
+  "verdict": "PASS",
+  "why": []
+ },
+ {
+  "id": "K15",
+  "family": "disambiguation",
+  "phrasing": "what does the Rollout depend on",
+  "disposition": "ask",
+  "slot": "project_id",
+  "reason": "slot-unfilled",
+  "option_source": "none",
+  "free_text_reason": "too_many",
+  "options": [],
+  "filled": {},
+  "message": "",
+  "verdict": "PASS",
+  "why": []
+ }
+]

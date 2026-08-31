@@ -164,11 +164,25 @@ def _from_candidates(
     """
     if referent:
         cands = [c for c in cands if not c.get("class_uri") or c.get("class_uri") == referent]
-    opts = tuple(
-        Option(str(c.get("instance_id") or ""), str(c.get("label") or c.get("instance_id") or ""))
-        for c in cands
-        if c.get("instance_id")
-    )
+    # DEDUPED BY VALUE, FIRST OCCURRENCE WINS — found by the elicitation corpus, run 1.
+    # `"what does the Module Build depend on"` came back `mixed` with candidates
+    # [P3, P4, P3] and the menu offered P3 TWICE. Every option routed, so menu integrity
+    # in its narrow reading held — and a person reading "Finance Module Build" twice is
+    # looking at a broken menu. The resolver may legitimately return one instance more
+    # than once (several providers, or one provider matching on two fields); making the
+    # MENU unique is the consumer's job, not the phone book's.
+    #
+    # First occurrence wins because candidates arrive RANKED — dropping the earlier copy
+    # would silently demote a candidate the resolver scored higher.
+    seen: set[str] = set()
+    opts_list: list[Option] = []
+    for c in cands:
+        value = str(c.get("instance_id") or "")
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        opts_list.append(Option(value, str(c.get("label") or value)))
+    opts = tuple(opts_list)
     if len(opts) > menu_bound:
         return opts[:menu_bound], len(opts)
     return opts, 0

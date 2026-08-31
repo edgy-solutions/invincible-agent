@@ -569,3 +569,31 @@ def test_the_menu_bound_default_agrees_with_the_providers():
     from iagent_pure import slot_disposition as pure
     engine = pytest.importorskip("agent_fleet.planning_agent.main")
     assert pure.MENU_BOUND == engine._MENU_BOUND
+
+
+def test_a_menu_never_offers_the_same_option_TWICE(slots_for):
+    """FOUND BY THE ELICITATION CORPUS, run 1. `"what does the Module Build depend on"`
+    resolved `mixed` with candidates [P3, P4, P3] and the menu offered P3 twice.
+
+    Every option routed, so menu integrity in its narrow reading held — and a person
+    reading "Finance Module Build" twice is looking at a broken menu. The resolver may
+    legitimately return one instance more than once (several providers, or one provider
+    matching on two fields); making the MENU unique is the consumer's job.
+
+    FIRST OCCURRENCE WINS, because candidates arrive ranked and dropping the earlier copy
+    would silently demote a candidate the resolver scored higher."""
+    P = IDP + "Project"
+    d = decide_disposition(
+        accepted={}, declared=slots_for("plan_dependency_neighborhood"),
+        resolution={"project_id": {
+            "outcome": "mixed", "spoken": "Module Build",
+            "candidates": [
+                {"instance_id": "P3", "class_uri": P, "label": "Finance Module Build"},
+                {"instance_id": "P4", "class_uri": P, "label": "Procurement Module Build"},
+                {"instance_id": "P3", "class_uri": P, "label": "Finance Module Build"},
+            ],
+        }},
+        enumerate_class=None,
+    )
+    values = [o.value for o in d.options]
+    assert values == ["P3", "P4"], f"duplicate or reordered: {values}"
