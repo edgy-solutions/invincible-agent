@@ -24,6 +24,16 @@ Every piece of the fix already exists **except the conversational turn**:
 - **Confidence is honest** — the 0.50 cap, `recall_override`, the `resolved_via` tiers (ADR-0031).
 - **Abstention is principled** — multi-hit containment abstains rather than guesses; the goal-shape card offers sub-questions (ADR-0031/0032).
 - **Widget interrogation already shipped once** — the SPO interview asks "which subject did you mean" from a menu (ADR-0029).
+  > **⛔ CORRECTED 2026-08-30 — THIS SENTENCE WAS TRUE OF THE MODULE AND FALSE OF THE PATH.**
+  > `ProcessInterviewerV2` (ADR-0029 Slice 2), which holds that menu and its server-side
+  > `validate_pick`, is **registered, mounted, and has no callers** — the gateway drives V1,
+  > the BPMN-era interview V2 supersedes. So the menu had never been offered to anyone.
+  > **It must not be cited as shipped behaviour.** The reasoning it supported here still
+  > holds (the mechanism exists and its pure core is reusable — see
+  > `[[spo-interview-reuse-for-elicitation]]`, where `validate_pick` was in fact reused);
+  > what does not hold is "shipped". Left in place with the correction attached rather than
+  > deleted, because this ADR is the reason the claim propagated and the record should show
+  > that. `[[a-registration-is-not-a-reachable-call]]`, instance 4.
 
 The missing middle behavior is **ask**. Best-effort-at-low-confidence is the system jumping off the cliff politely.
 

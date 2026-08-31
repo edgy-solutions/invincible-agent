@@ -84,3 +84,38 @@ Those are the first questions in this system that would produce a genuine
 ask-menu-pick-answer round trip. They belong in the corpus as `mandatory-missing` cases beside
 `H06`, whose class is the one that cannot produce a menu — which is why `H06` alone was never
 enough to test the path.
+
+
+---
+
+## ADDENDUM — the bound was corrected to 10 after this probe, and two rows RE-CLASSIFY
+
+**The measured values above are unchanged and are not rewritten.** The distinction matters:
+
+* **the counts are substrate facts** — `Capability` holds 9 members, `Project` holds 14. Those
+  were measured and they stand.
+* **the outcomes are a JUDGMENT APPLIED to those facts** — `members` vs `too_many` is whatever
+  the bound says it is, and the bound moved.
+
+Rewriting the outcome column in place would have quietly turned a measurement into a
+restatement of the current ruling. So the re-classification lives here instead:
+
+| slot | class | n | at bound **8** (probed) | at bound **10** (ruled 2026-08-30) |
+|---|---|---|---|---|
+| `process_id` | `BusinessProcess` | 2 | `members` | `members` |
+| `tech_id` | `Technology` | 5 | `members` | `members` |
+| **`capability_id`** | **`Capability`** | **9** | `too_many` | **`members` — a real menu** |
+| `project_id` | `Project` | 14 | `too_many` | `too_many` |
+
+**The correction was caused by this probe**, which is the point of having run it: the bound had
+been ruled at 8 while its own worked example was *"nine capabilities is a menu"*, and nothing
+had measured whether that mattered. It did — it cost `capability_id`, the most-asked slot in the
+corpus, its menu.
+
+**So `H06` now gets a real menu**, and `E05` correctly does not. *"Both live ask cases fall to
+free text"* was true for one day and is now false; corrected where it was asserted.
+
+**And `Project` at 14 still answers `too_many` at the new bound**, which is the property worth
+keeping: the outcome stays reachable at the DEFAULT, rather than only by lowering the bound
+inside a test. An outcome a suite can reach only by changing the thing under test is one nobody
+has really checked.

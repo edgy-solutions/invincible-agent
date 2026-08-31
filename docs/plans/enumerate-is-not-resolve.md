@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0033 Amendment 2026-08-28 (#2's fourth option source) — this item is the SCOPING of the capability that clause assumes
 code-site:  agent_fleet/datahub_wrapper/main.py (the mesh:resolveInstance registration, as the shape to copy), agent_fleet/ontology_service/instance_resolution.py, agent_fleet/utils/mesh_registration.py
-summary:    PROVIDER DONE (3516103), CALLER MISSING — now the single item gating both live ask cases. Engine P is a registered `mesh:enumerateInstances` provider: minted, ontology-classed, three-outcome (members | too_many | unsupported), correct. NOTHING IN ENGINE O DISPATCHES AN ENUMERATE the way /resolve fans out a resolve, so the supervisor cannot reach it — A REGISTRATION IS NOT A REACHABLE CALL ([[a-registration-is-not-a-reachable-call]], instance 2). The disposition ships wired to `ENUMERATE_INSTANCES_URL`, unset, reporting free_text_reason `no_provider` rather than silence, so the gap is visible in logs and assertable in tests and ONE ENV VAR CLOSES IT. REMAINING DELTA IS THE FAN-OUT ONLY — cardinality is ruled (three outcomes, bound 8), the class-vocabulary join is closed (`referent` carries the class URI), lifetime is settled (live from the store, no registry). What is left is a provider-agnostic dispatch in Engine O, copying /resolve. Routed to the option-source lane. MEASURED CONSEQUENCE, stated before the work rather than after: at bound 8 the fan-out gives NEITHER live ask case a menu — Capability is 9 and Project is 14, both `too_many` — but it DOES give two of the four spoken-mandatory slots real menus (process_id n=2, tech_id n=5), and it converts `no_provider` into a provider-reported reason, which is the difference between a boundary and a fudge.
+summary:    PROVIDER DONE (3516103), CALLER MISSING — now the single item gating both live ask cases. Engine P is a registered `mesh:enumerateInstances` provider: minted, ontology-classed, three-outcome (members | too_many | unsupported), correct. NOTHING IN ENGINE O DISPATCHES AN ENUMERATE the way /resolve fans out a resolve, so the supervisor cannot reach it — A REGISTRATION IS NOT A REACHABLE CALL ([[a-registration-is-not-a-reachable-call]], instance 2). The disposition ships wired to `ENUMERATE_INSTANCES_URL`, unset, reporting free_text_reason `no_provider` rather than silence, so the gap is visible in logs and assertable in tests and ONE ENV VAR CLOSES IT. REMAINING DELTA IS THE FAN-OUT ONLY — cardinality is ruled (three outcomes, bound 8), the class-vocabulary join is closed (`referent` carries the class URI), lifetime is settled (live from the store, no registry). What is left is a provider-agnostic dispatch in Engine O, copying /resolve. Routed to the option-source lane. MEASURED CONSEQUENCE, and the probe it asked for CORRECTED THE BOUND: ruled at 8 while its own example was "nine capabilities is a menu", now 10, so Capability's 9 IS a menu and H06 gets a real one; Project at 14 still `too_many` — but it DOES give two of the four spoken-mandatory slots real menus (process_id n=2, tech_id n=5), and it converts `no_provider` into a provider-reported reason, which is the difference between a boundary and a fudge.
 ---
 
 # `enumerate` is not `resolve` — the fourth option source needs a verb the mesh does not have
@@ -142,14 +142,26 @@ built this*.
 
 Counts read from the live store, not recalled:
 
-| slot | class | n | at bound 8 |
-|---|---|---|---|
-| `capability_id` | `Capability` | 9 | **`too_many`** — free text, legitimately |
-| `project_id` | `Project` | 14 | **`too_many`** — free text, legitimately |
-| `process_id` | `BusinessProcess` | **2** | **a real menu** |
-| `tech_id` | `Technology` | **5** | **a real menu** |
+| slot | class | n | at bound 8 | **at bound 10 (corrected 2026-08-30)** |
+|---|---|---|---|---|
+| `capability_id` | `Capability` | 9 | `too_many` | **a real menu** |
+| `project_id` | `Project` | 14 | `too_many` | `too_many` — free text, legitimately |
+| `process_id` | `BusinessProcess` | **2** | a real menu | a real menu |
+| `tech_id` | `Technology` | **5** | a real menu | a real menu |
 
-> **STATED BEFORE THE WORK RATHER THAN AFTER: the fan-out gives NEITHER live ask case a menu.**
+> **THE BOUND WAS CORRECTED BY THE PROBE THIS ITEM ASKED FOR.** Ruled at 8 while the ruling's
+> own worked example was *"nine capabilities is a menu"* — the number contradicted the case it
+> was chosen to justify, and `capability_id` fell to free text because of it. Measured in
+> `[[enumerate-probe-2026-08-30]]`, corrected to **10**: still a human-attention bound, now
+> consistent with its own reason. `Project` at 14 still answers `too_many`, so the outcome
+> stays reachable at the DEFAULT rather than only by lowering the bound inside a test.
+>
+> **THREE of four spoken-mandatory slots now get a real menu**, not two.
+
+> **STATED BEFORE THE WORK — and half of it was overtaken by the bound correction.** At bound
+> 8 the fan-out gave neither live ask case a menu; at the corrected bound of 10, `H06` gets a
+> real one and `E05` does not. The paragraph below is preserved as written, because being wrong
+> for a measurable reason is the outcome that having written it down early is FOR.
 > `H06` (`capability_id`, 9) and `E05` (`project_id`, 14) both exceed the bound and stay free
 > text. What changes is that their reason becomes `too_many` **from the provider** instead of
 > `no_provider` from an unbuilt hop — which is the entire difference between a decidable boundary

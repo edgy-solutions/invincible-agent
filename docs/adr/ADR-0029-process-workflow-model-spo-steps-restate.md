@@ -6,6 +6,36 @@ deciders: Platform team
 
 # ADR-0029 — The process-workflow model (SPO-native steps on Restate; the standard→substrate mapping)
 
+> ## ⚠ SLICE 2 IS IMPLEMENTED AND NOT LIVE — recorded 2026-08-30
+>
+> **`ProcessInterviewerV2` has no callers.** It is defined (`restate_analyst/main.py:2384`),
+> mounted (`:3259`), and its pure core (`spo_interview.py`) is unit-tested — and **nothing
+> dispatches to it**. `src/iagent/gateway.py` drives **V1** (`ProcessInterviewer`), the
+> BPMN-era interview whose machinery V2's own docstring says it supersedes. The supersession
+> happened in the code and not on the wire.
+>
+> **Ruled: V1 stays; V2 is marked not-live; the gateway is NOT switched.** The reasoning,
+> so this is a decision rather than an indefinite deferral:
+>
+> * **V2 has never run against a user.** Its core is tested; the *path* — a turn arriving, a
+>   pick validated, a definition finalising — has zero production evidence. Switching a live
+>   conversational surface to it is a **cutover, not a wiring change**.
+> * **The harm actually done was a citation, not an outage.** ADR-0033 reasoned from
+>   *"widget interrogation already shipped once"* and would have been built on. A note closes
+>   that today, at no risk; corrected in place there.
+>
+> **The condition that reopens this:** a live case needing the **verb question** — the thing
+> V1 genuinely cannot do (V1 asks subject and object and never a verb; V2's
+> `authorized_verbs` sources it from `/find_compatible_verbs`). Then the cutover has a reason
+> beyond tidiness and V1's production evidence can be weighed against V2's better model with
+> something at stake.
+>
+> **Reusable in the meantime, and already reused:** `validate_pick` — server-side
+> select-from-authorized-set — was mirrored into `iagent_pure.slot_disposition` for ADR-0033's
+> elicitation, with a test pinning the two against each other. Mirrored rather than imported
+> because engine images do not ship `iagent_pure`. See
+> `[[spo-interview-reuse-for-elicitation]]`.
+
 ## Status
 
 **Accepted** for: (1) the **process-workflow model shape** — SPO-native steps +

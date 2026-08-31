@@ -44,6 +44,10 @@ def _enum(client, class_uri):
 
 @pytest.mark.parametrize("cls,count", [
     ("Site", 4), ("BusinessProcess", 2), ("Initiative", 3), ("Technology", 5),
+    # MOVED HERE 2026-08-30 when the bound was corrected 8 -> 10. Capability's 9 was the
+    # ruling's own worked example of a menu and was answering `too_many` because the ruled
+    # number contradicted the example. It is the case the correction exists for.
+    ("Capability", 9),
 ])
 def test_a_class_within_the_bound_returns_its_MEMBERS(client, cls, count):
     """Asserted on the counts the seed actually holds, per class, rather than "some members
@@ -54,22 +58,26 @@ def test_a_class_within_the_bound_returns_its_MEMBERS(client, cls, count):
     assert len(body["members"]) == count
 
 
-@pytest.mark.parametrize("cls,count", [("Capability", 9), ("Project", 14)])
+@pytest.mark.parametrize("cls,count", [("Project", 14)])
 def test_a_class_over_the_RULED_bound_is_too_many_at_the_DEFAULT(client, cls, count):
     """AT THE RULED BOUND OF 8, and no test-local override — which is the point of ruling it
     at a human-attention number rather than a substrate fit. `too_many` used to be reachable
     only by lowering the bound inside a test, and an outcome the suite can only reach by
     changing the thing under test is an outcome nobody has really checked.
 
-    CONSEQUENCE WORTH SEEING IN A TEST NAME: `capability_id` and `project_id` are two of the
-    four spoken-mandatory slots, so at this bound BOTH of their asks fall to free text rather
-    than a menu. That is the ruled behaviour, not a defect — but it is the opposite of the
-    "9 capabilities is a menu" example the bound was ruled against, and a reader should meet
-    that fact here rather than discover it from an ask with no options."""
+    UPDATED 2026-08-30, BOUND CORRECTED 8 -> 10. This docstring previously recorded that
+    `capability_id` AND `project_id` both fell to free text, and noted that this was "the
+    opposite of the '9 capabilities is a menu' example the bound was ruled against". That
+    flag is what got the contradiction decided: the bound was an off-by-one and is now 10.
+
+    So `Capability` moved to the members test above, and `project_id` alone remains over the
+    bound. The property this test still guards is the one that matters — `too_many` must be
+    reachable at the DEFAULT bound, because an outcome a suite can reach only by lowering
+    the bound inside itself is an outcome nobody has really checked."""
     body = _enum(client, IDP + cls)
     assert body["outcome"] == "too_many"
     assert body["count"] == count
-    assert body["bound"] == 8
+    assert body["bound"] == 10
     assert body["members"] == [], "too_many must not also return a truncated menu"
 
 

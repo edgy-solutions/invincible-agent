@@ -553,3 +553,19 @@ def test_END_TO_END_a_real_menu_a_validated_pick_and_a_reroute(slots_for):
     from iagent_pure.slot_acceptance import accept_slots
     acc = accept_slots(r.slots, slots_for("plan_process_evolution"))
     assert acc.params == {"process_id": "BP1"} and not acc.refusals
+
+
+def test_the_menu_bound_default_agrees_with_the_providers():
+    """TWO DEFAULTS OVER ONE ENV VAR, AND THEY MUST NOT DIVERGE.
+
+    `ENUMERATE_MENU_BOUND` is read by the provider (which decides `members` vs `too_many`)
+    and by this module (which truncates resolver candidates). The bound is a fact about
+    READERS, so it is the same number in both places by definition — and if the defaults
+    drift, the disposition and the provider disagree about what a menu IS, silently, in the
+    direction of offering a list one of them thinks is too long.
+
+    Pinned rather than shared because the provider lives in an engine package this pure
+    module must not import — the same trade as `SLOT_KINDS` and `validate_pick`."""
+    from iagent_pure import slot_disposition as pure
+    engine = pytest.importorskip("agent_fleet.planning_agent.main")
+    assert pure.MENU_BOUND == engine._MENU_BOUND

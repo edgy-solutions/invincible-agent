@@ -650,19 +650,36 @@ class EnumerateInstancesRequest(BaseModel):
 #: that no class the seed happens to hold would be truncated — a bound fitted to the data,
 #: which would have moved every time the seed grew and would have justified itself forever.
 #:
-#: CONSEQUENCE, STATED BECAUSE IT IS NOT OBVIOUS: at 8, `Capability` (9 members) is
-#: `too_many`. The item that ruled this bound used "9 capabilities is a menu" as its example
-#: of a menu, so the ruled number and that example disagree — and `capability_id` is one of
-#: the four spoken-mandatory slots, so its ask falls to free text rather than a list. That
-#: may be intended (nine is genuinely a lot to read back in one turn) or may be an
-#: off-by-one against the example; either way the number is the ruling and this comment is
-#: the flag, not a silent adjustment.
+#: **CORRECTED 2026-08-30: 8 -> 10.** The wrong number is kept visible rather than silently
+#: renumbered, because the next reader would otherwise meet an example and a bound that
+#: disagree and have to work out which one was wrong.
 #:
-#: `Project` (14) is now a real `too_many` case, which retires the previous problem that the
-#: outcome was only reachable by lowering the bound inside a test.
+#: The bound was first ruled at **8** while the ruling's own worked example was
+#: *"nine capabilities is a menu"* — so the number contradicted the case it was chosen to
+#: justify, and `capability_id`, the most-asked slot in the corpus, fell to free text
+#: because of the contradiction. The probe that measured it is
+#: `docs/measurements/enumerate-probe-2026-08-30.md`.
+#:
+#: **10 is the correction, and it is still a human-attention bound, not a substrate fit.**
+#: The reasoning was always "what a person can choose from in one turn"; 9 was the concrete
+#: case in mind when that was said; 10 keeps a round number and makes the example true.
+#: `Project` at 14 still answers `too_many`, correctly — the bound is not being fitted to
+#: the data, it is being made consistent with its own stated reason.
+#:
+#: The flag that caught it was in this comment, which previously read: *"that may be
+#: intended (nine is genuinely a lot to read back in one turn) or may be an off-by-one
+#: against the example; either way the number is the ruling and this comment is the flag,
+#: not a silent adjustment."* It was an off-by-one, and flagging rather than silently
+#: adjusting is what let it be decided instead of absorbed.
+#:
+#: CONSEQUENCE OF THE CORRECTION: `Capability` (9) now returns **members**, so
+#: `capability_id`'s ask gets a real menu. `Project` (14) is still `too_many`, which keeps
+#: that outcome reachable at the DEFAULT bound rather than only by lowering it inside a
+#: test — an outcome a suite can reach only by changing the thing under test is one nobody
+#: has really checked.
 #:
 #: Env-overridable so the bound can be tuned against real readers without a code change.
-_MENU_BOUND = int(os.getenv("ENUMERATE_MENU_BOUND", "8"))
+_MENU_BOUND = int(os.getenv("ENUMERATE_MENU_BOUND", "10"))
 
 
 def _enumerable() -> dict[str, tuple[str, str, str]]:

@@ -61,11 +61,22 @@ from typing import Any, Callable, Mapping, NamedTuple, Sequence
 
 from iagent_pure.slot_acceptance import decode_declarations
 
-#: THE MENU BOUND — ruled 2026-08-29 at 8, and it is a HUMAN-ATTENTION bound: the number of
-#: options a person can choose from in one turn. That makes it a fact about readers, so it
-#: must be the SAME number wherever a menu is built. Read from the same env var Engine P's
-#: enumerator reads rather than restated here — one bound, single-sourced, not mirrored.
-MENU_BOUND = int(os.getenv("ENUMERATE_MENU_BOUND", "8"))
+#: THE MENU BOUND — a HUMAN-ATTENTION bound: the number of options a person can choose from
+#: in one turn. That makes it a fact about readers, so it must be the SAME number wherever a
+#: menu is built. Read from the same env var Engine P's enumerator reads rather than
+#: restated here — one bound, single-sourced by environment.
+#:
+#: **CORRECTED 2026-08-30: ruled at 8 on 2026-08-29, corrected to 10.** The original ruling
+#: contradicted its own worked example (*"nine capabilities is a menu"*), and the
+#: contradiction cost `capability_id` — the most-asked slot in the corpus — its menu. The
+#: wrong number is recorded rather than renumbered away; see
+#: `agent_fleet/planning_agent/main.py`'s `_MENU_BOUND` for the full note and
+#: `docs/measurements/enumerate-probe-2026-08-30.md` for the measurement that decided it.
+#:
+#: THE DEFAULTS MUST AGREE. This one and the provider's are two defaults over one env var,
+#: and if they diverge the disposition and the provider disagree about what a menu IS —
+#: pinned by `test_the_menu_bound_default_agrees_with_the_providers`.
+MENU_BOUND = int(os.getenv("ENUMERATE_MENU_BOUND", "10"))
 
 #: Resolution outcomes that mean "the phone book had something, and it was not conclusive."
 #: These carry candidates, so they are DISAMBIGUATION — ADR-0033 #2's ORIGINAL option source
