@@ -215,3 +215,53 @@ def test_provenance_always_has_match_label(candidates, expected_match):
     assert d.provenance["instance_match"] == expected_match
     assert "instance_resolved" in d.provenance
     assert "instance_n" in d.provenance
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SELF-MATCH PROPERTY — pinned as a strict xfail while the ruling is open
+# ─────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "OPEN RULING — see docs/plans/the-specificity-gate-strips-content-words.md. "
+        "`passes_segment_specificity(x, x)` is FALSE for any space-separated label whose "
+        "final word is in _ENV_SUFFIXES, because only the CANDIDATE side strips those "
+        "suffixes: 'Integration and Test' yields name 'test' as an identifier and asset name "
+        "'and' as a candidate, so a name cannot match itself. Measured consequence: every one "
+        "of engine-fin's tied-at-top cases returns `not_specific` — including an exact 1.00 "
+        "label match — so the decision table never reaches `mixed` and ADR-0033's "
+        "disambiguation consumer cannot fire. STRICT, so it goes red the moment the gate is "
+        "ruled and fixed, telling whoever fixed it to flip this marker rather than leaving a "
+        "silently-passing xfail behind."
+    ),
+)
+def test_a_name_matches_ITSELF():
+    """The property that must hold whichever reading of the gate wins.
+
+    An identity that fails a specificity check is incoherent regardless of whether the fix is
+    symmetry (strip suffixes on both sides), scoping (strip only on id-shaped text), or
+    rethinking terminal-name for multi-word labels. So this is the assertion to keep, and it
+    is written now — while the ruling is open — rather than after, because the value of a
+    property test is that it predates the fix it describes.
+
+    Parameterisation is deliberately inline: a parametrised xfail reports one result per case
+    and the claim here is about ALL of them at once."""
+    from agent_fleet.ontology_service.instance_resolution import passes_segment_specificity
+
+    failures = [
+        s for s in (
+            "Integration and Test",          # a real IPMDAR ControlAccount
+            "Acceptance Test",
+            "Site A — Aurora",               # passes today — the control
+            "Order to Cash",                 # passes today — the control
+            "Core ERP Platform",             # passes today — the control
+            "my_dataset_prod",               # passes today — one segment, nothing stripped
+        )
+        if not passes_segment_specificity(s, s)
+    ]
+    assert not failures, (
+        f"a name did not match itself: {failures}. Only the candidate side strips "
+        f"_ENV_SUFFIXES, so a label ending in prod|dev|test|stage|staging|qa|uat is given two "
+        f"different names by the two halves of the comparison."
+    )

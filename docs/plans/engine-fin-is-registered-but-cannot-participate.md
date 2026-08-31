@@ -65,9 +65,19 @@ Through engine-fin's own shape:
 ```
 
 Three classes, one phrase — which is the `mixed` outcome the decision table exists for, and
-the case ADR-0033's fourth consumer was scoped around. **It is unreachable through the mesh
-until the contract mismatch is fixed**, so the disambiguation work is blocked on this, not on
-the disposition.
+the case ADR-0033's fourth consumer was scoped around.
+
+> **⛔ CORRECTED — the contract mismatch is NOT the only blocker, and this doc said it was.**
+> Measured after the fact: feeding these candidates through the real decision table returns
+> **`not_specific` for all of them**, including a 1.00 exact label match. The
+> segment-specificity gate rejects them before tie-breaking, because only the candidate side
+> strips `_ENV_SUFFIXES` and *"Integration and Test"* therefore yields `test` on one side and
+> `and` on the other — **a name cannot match itself**. See
+> `[[the-specificity-gate-strips-content-words]]`.
+>
+> So fixing `identity`/`text` is **necessary and not sufficient**: it makes the fan-out reach
+> the decision table, and the table then declines. The disambiguation work is blocked on
+> **both**, and the second one is a ruling rather than a rename.
 
 ## AND `enumerate_instances` HAS THE SAME DEFECT, SILENTLY — probed 2026-08-29 night
 

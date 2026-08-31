@@ -1,8 +1,8 @@
 ---
 id:         the-specificity-gate-strips-content-words
 status:     open
-owner:
-blocked-on:
+owner:      needs a RULING — architect, with the elicitation lane's input as the consumer
+blocked-on: the ruling. The three readings are laid out below; none should be applied by a sweep.
 repo:       invincible-agent
 code-site:  agent_fleet/ontology_service/instance_resolution.py (_ENV_SUFFIXES, candidate_asset_name, identifier_name_and_qualifiers, passes_segment_specificity)
 summary:    MEASURED. `passes_segment_specificity(x, x)` returns FALSE — a name cannot match itself — for any space-separated label whose final word is one of prod|dev|test|stage|staging|qa|uat. "Integration and Test" yields name `test` on the IDENTIFIER side and asset name `and` on the CANDIDATE side, because only the candidate side strips env suffixes. The two halves of the comparison are computed by different functions with different rules. Blast radius is human LABELS, not catalog ids: `my_dataset_prod` is one segment and passes. This is why every one of engine-fin's tied cases returns `not_specific` — the decision table never reaches the tie, and fixing engine-fin's field names is necessary but NOT sufficient for the ADR-0033 disambiguation case.
@@ -100,3 +100,30 @@ three readings exist:
 (1) is the safest and (2) the most precise; (3) is a larger question. **Whoever rules it should
 know the self-match property is the crispest test**: `passes_segment_specificity(x, x)` must be
 true for every x, and that assertion is worth adding whichever way the rule goes.
+
+## Why the elicitation lane is the consumer whose input this needs
+
+Their ADR-0033 fourth consumer — the subject-class ambiguity case — is scoped entirely around
+IPMDAR name reuse: one phrase, several classes, and the class determines the *verb*. That is
+the `mixed` outcome, and **`mixed` is unreachable for those names while this gate stands.**
+
+So their item's stated blocker is incomplete. It reads as *"blocked on engine-fin's contract
+mismatch"*; it is blocked on **two** things, and the second is this. Fixing
+`identity`/`text` makes the fan-out reach the decision table, and the decision table then
+answers `not_specific`.
+
+**Which reading wins is partly their call**, because the three differ in what they let through:
+
+* **symmetry** — every name matches itself; the most conservative, and it leaves multi-word
+  labels still reduced to their last word (so *"Integration and Test"* and *"Qualification
+  Test Campaign"* both resolve on their terminal word, which may or may not be what a speaker
+  meant);
+* **scope the suffix list to id-shaped text** — the same, plus spaced labels keep their whole
+  terminal word, which is the population their consumer cares about;
+* **rethink terminal-name for labels** — changes which word is the name at all, and is the
+  only reading that would let *"Integration"* match *"Integration Lab Standup"* on a head word.
+
+**The self-match property is pinned regardless**, as a strict xfail at
+`tests/routing/test_instance_resolution_decision.py::test_a_name_matches_ITSELF`. It goes red
+the moment the gate is fixed, which tells whoever fixes it to flip the marker rather than
+leave a silently-passing xfail behind.
