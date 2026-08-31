@@ -181,6 +181,28 @@ def test_every_registered_input_class_can_be_resolved_or_enumerated():
     assert engine._unroutable_classes() == []
 
 
+def test_referent_map_entries_are_attached_or_declared():
+    """Every `_REFERENT_KIND` key must be a real slot, or be declared as not-yet-attached.
+
+    FOUND 2026-08-30: three entries (`wp_id`, `wbs_id`, `obs_id`) map to classes no verb
+    declares a parameter for. They are inert — `slots_for` attaches a referent only to a
+    parameter that exists — but an inert entry that reads as live is the remembered-list shape
+    this module exists to remove. Kept and DECLARED; this seal is what keeps the declaration
+    honest when a verb finally takes one.
+    """
+    declared = {sl["name"] for v in engine.VERBS for sl in slots.slots_for(v["fn"])}
+    for key in slots._REFERENT_KIND:
+        assert key in declared or key in slots.UNATTACHED_REFERENTS, (
+            f"_REFERENT_KIND['{key}'] names no declared slot and is not in "
+            f"UNATTACHED_REFERENTS — either wire it or declare it"
+        )
+    for key in slots.UNATTACHED_REFERENTS:
+        assert key not in declared, (
+            f"'{key}' IS a declared slot now — remove it from UNATTACHED_REFERENTS so the "
+            f"referent actually attaches"
+        )
+
+
 def test_every_resolvable_class_leads_somewhere_or_says_why_not():
     """The REVERSE of test_every_registered_input_class_can_be_resolved_or_enumerated.
 
@@ -411,6 +433,129 @@ def test_every_response_discloses_that_the_data_is_notional():
                 params["method"] = "CPI"
             body = client.post(f"/measure/{fn}", json={"params": params}).json()
             assert "NOTIONAL" in body["data_provenance"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The provider contract — tested by the payload the CONSUMER actually sends
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# ⛔ THESE EXIST BECAUSE EVERY CHECK ABOVE PASSED WHILE THE PROVIDER WAS UNCALLABLE.
+#
+# Engine F registered as a `mesh:resolveInstance` and `mesh:enumerateInstances` provider and
+# could not be reached by either. The graph read 8 edges by name, non-null, at the right FQDN
+# endpoint; `/health` was green; all six finance verbs answered. And:
+#
+#   * the resolver required `text` while the fan-out sends `identifier`  -> 422 on every call
+#   * both providers emitted `identity` while consumers read `instance_id`
+#
+# A PROVIDER IS NOT TESTED BY ITS REGISTRATION. IT IS TESTED BY THE PAYLOAD ITS CONSUMER
+# ACTUALLY SENDS. So these seals do not restate what this module believes the shape to be —
+# they drive the REAL consumer, and they read the REAL fan-out's request from its own source.
+
+
+def test_resolve_accepts_the_payload_the_fanout_actually_sends():
+    """Engine O sends `{"identifier": ..., "query": ...}`. Anything else is a 422 in prod.
+
+    The `text` spelling this engine shipped with was invisible to every registration check
+    because a registration describes an edge, not a payload.
+    """
+    from fastapi.testclient import TestClient
+    with TestClient(engine.app) as client:
+        r = client.post("/resolve_instance",
+                        json={"identifier": "meridian", "query": "what is the EAC"})
+        assert r.status_code == 200, f"the fan-out's own payload was refused: {r.text[:200]}"
+        assert r.json()["candidates"], "identifier reached the scorer but matched nothing"
+
+
+def test_the_fanout_request_shape_is_read_from_engine_o_not_remembered():
+    """DERIVED, NOT TRANSCRIBED. If Engine O's fan-out changes its request keys, this fails
+    rather than quietly describing a contract that moved."""
+    src = (REPO / "agent_fleet" / "ontology_service" / "main.py").read_text(encoding="utf-8")
+    assert 'json={"identifier": identifier, "query": query}' in src, (
+        "Engine O's resolver fan-out no longer sends {identifier, query} — re-read it and "
+        "re-align engine-fin's ResolveRequest rather than trusting this test's memory"
+    )
+    fields = set(engine.ResolveRequest.model_fields)
+    assert {"identifier", "query"} <= fields, fields
+    assert "text" not in fields, (
+        "a `text` alias reintroduces two correct spellings for one field, which is how the "
+        "next engine copies the wrong one"
+    )
+
+
+def test_resolve_candidates_carry_the_key_engine_o_parses():
+    """Engine O reads `c.get("instance_id")` and coerces a miss to "" — so the wrong key
+    yields candidates that resolve 'successfully' with no usable id."""
+    from fastapi.testclient import TestClient
+    with TestClient(engine.app) as client:
+        cands = client.post("/resolve_instance",
+                            json={"identifier": "meridian"}).json()["candidates"]
+    assert cands
+    for c in cands:
+        assert c.get("instance_id"), f"candidate has no instance_id: {c}"
+        assert "identity" not in c, "the old key is back; Engine O will read '' for every row"
+        for f in ("class_uri", "label", "score"):
+            assert f in c, f"Engine O's parser reads {f}"
+
+
+def test_the_real_disposition_builds_a_real_menu_from_engine_f_members():
+    """THE SEAL THAT WOULD HAVE CAUGHT THE SILENT HALF, and it drives the actual consumer.
+
+    `decide_disposition` builds options from `m.get("instance_id")` and FILTERS OUT members
+    lacking it. With the old `identity` key engine-fin answered "here are 5 members" and the
+    disposition produced ZERO options — no error, anywhere. An ask on a finance instance slot
+    fell to free text while a good menu sat one field name away.
+
+    This does not assert a field name. It injects engine-fin's REAL enumerate output into the
+    REAL `decide_disposition` and requires a populated menu to come out.
+    """
+    import sys
+    sys.path.insert(0, str(REPO / "src"))
+    from iagent_pure.slot_disposition import decide_disposition
+
+    from fastapi.testclient import TestClient
+    with TestClient(engine.app) as client:
+        def enumerate_class(class_uri):
+            return client.post("/enumerate_instances",
+                               json={"class_uri": class_uri, "limit": 8}).json()
+
+        disp = decide_disposition(
+            accepted={},
+            declared=[{"name": "program_id", "kind": "spoken-mandatory", "required": True,
+                       "type": "str", "referent": FIN + "ControlAccount"}],
+            resolution={},
+            enumerate_class=enumerate_class,
+        )
+
+    assert disp.options, (
+        "the real disposition built an EMPTY menu from engine-fin's members — this is the "
+        "silent failure: 'here are N members' in, zero options out, no error"
+    )
+    assert all(o[0] for o in disp.options), f"an option has a blank id: {disp.options}"
+    assert len(disp.options) == 5, f"expected the 5 control accounts, got {disp.options}"
+
+
+def test_enumerate_outcomes_match_the_contract_setting_peer():
+    """engine-p sets the contract; engine-fin matches it rather than inventing spellings."""
+    from fastapi.testclient import TestClient
+    with TestClient(engine.app) as client:
+        def enum(cls):
+            return client.post("/enumerate_instances",
+                               json={"class_uri": FIN + cls, "limit": 8}).json()
+        members = enum("ControlAccount")
+        assert members["outcome"] == "members" and members["count"] == 5
+        assert all("instance_id" in m and "label" in m for m in members["members"])
+
+        too_many = enum("WorkPackage")
+        assert too_many["outcome"] == "too_many"
+        assert too_many["count"] == 9, "the count is what makes free text legitimate"
+        assert too_many.get("members") == [], "carried empty, matching engine-p"
+        assert "bound" in too_many, "engine-p spells it `bound`; do not invent `limit`"
+
+        unsup = enum("PerformanceMeasurementBaseline")
+        assert unsup["outcome"] == "unsupported"
+        assert unsup.get("reason"), "the disposition surfaces this reason verbatim"
+        assert unsup.get("members") == []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

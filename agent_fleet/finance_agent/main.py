@@ -550,7 +550,24 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
 # ---------------------------------------------------------------------------
 
 class ResolveRequest(BaseModel):
-    text: str
+    """The mesh's resolveInstance request. THE FIELD IS `identifier`, NOT `text`.
+
+    ⛔ THIS WAS WRONG AND IT MADE THE PROVIDER UNCALLABLE. Engine F registered as a
+    `mesh:resolveInstance` provider and could not be called by one: Engine O's fan-out sends
+    `{"identifier": ..., "query": ...}` (`ontology_service/main.py` `_call_resolver`) and this
+    model required `text`, so every real call was a **422** while the graph said the provider
+    was registered, by name, at the right endpoint.
+
+    REGISTERED IS NOT PARTICIPATING. The registration set read 8-by-name and non-null — the
+    check I wrote and ran — and the provider still could not answer, because a registration
+    describes an edge and says nothing about the payload the consumer actually sends.
+
+    NO `text` ALIAS. Accepting both spellings would leave two correct answers in the fleet and
+    guarantee the next engine copies the wrong one; the contract is set by the four providers
+    that already work, and `query` is carried because the fan-out sends it.
+    """
+    identifier: str = ""
+    query: str = ""
     class_uri: Optional[str] = None
 
 
@@ -605,7 +622,13 @@ def _members_of(class_uri: str) -> list[dict[str, Any]]:
         ident = getattr(item, id_field)
         if ident not in seen:
             seen[ident] = {
-                "identity": ident,
+                # `instance_id` — and THIS is the half that failed SILENTLY. The disposition
+                # builds options from `m.get("instance_id")` and FILTERS OUT any member
+                # lacking it (`slot_disposition.py`), so engine-fin answered "here are 5
+                # members" and the consumer built ZERO options with no error anywhere. An ask
+                # on a finance instance slot fell to free text while a good five-item menu sat
+                # one field name away.
+                "instance_id": ident,
                 "label": getattr(item, label_field),
                 "class_uri": class_uri,
             }
@@ -679,7 +702,11 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
         if class_uri and class_uri != uri:
             continue
         for member in _members_of(uri):
-            ident, label = member["identity"], member["label"]
+            # `_members_of` now emits `instance_id`; this is its INTERNAL consumer and it
+            # broke with the rename. The law that caught it is the same one that produced the
+            # rename: read the consumer of what you fixed — including the ones inside your
+            # own module, which a contract test against the HTTP surface would still miss.
+            ident, label = member["instance_id"], member["label"]
             hay_id, hay_label = ident.lower(), label.lower()
             if needle in (hay_id, hay_label):
                 score = 1.0
@@ -695,9 +722,13 @@ def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:
                     continue
                 score = 0.4 + 0.2 * (len(overlap) / max(len(tokens_n), 1))
             out.append({
-                "identity": ident, "label": label, "class_uri": uri, "score": round(score, 3),
+                # `instance_id`, NEVER `identity`. Engine O parses
+                # `c.get("instance_id")` and coerces a miss to "" — so the wrong key
+                # produced candidates that resolved "successfully" with no usable id.
+                "instance_id": ident, "label": label,
+                "class_uri": uri, "score": round(score, 3),
             })
-    out.sort(key=lambda c: (-c["score"], c["identity"]))
+    out.sort(key=lambda c: (-c["score"], c["instance_id"]))
     return out
 
 
@@ -709,10 +740,11 @@ _RESOLVE_FLOOR = 0.5
 @app.post("/resolve_instance")
 def resolve_instance(req: ResolveRequest) -> dict[str, Any]:
     """Resolve a spoken finance name to an identifier in this model."""
-    cands = [c for c in _candidates(req.text, req.class_uri) if c["score"] >= _RESOLVE_FLOOR]
+    cands = [c for c in _candidates(req.identifier, req.class_uri)
+             if c["score"] >= _RESOLVE_FLOOR]
     return {
         "output_uri": MESH + "InstanceResolution",
-        "query": req.text,
+        "query": req.identifier,
         "candidates": cands,
         "provider": "engine_fin_finance",
     }
@@ -750,6 +782,9 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
                 "engine-fin holds no addressable members of this class. Classes it does "
                 "enumerate: " + ", ".join(sorted(_RESOLVABLE))
             ),
+            # CARRIED EMPTY, matching engine-p. A consumer doing `.get("members") or []`
+            # should not have to special-case which outcome it is reading.
+            "members": [],
             "provider": "engine_fin_finance",
         }
     members = _members_of(req.class_uri)
@@ -760,9 +795,14 @@ def enumerate_instances(req: EnumerateRequest) -> dict[str, Any]:
             "outcome": "too_many",
             # THE COUNT IS THE POINT. "too many" without a number is indistinguishable from
             # "I did not look", and the ask downstream has to decide whether free text is
-            # legitimate on exactly that difference.
+            # legitimate on exactly that difference. (The disposition reads `count` and
+            # renders "N to choose from".)
             "count": len(members),
-            "limit": req.limit,
+            # `bound`, matching engine-p's spelling rather than inventing `limit`. Nothing
+            # reads it today; a second spelling for one concept is how the next reader picks
+            # the wrong one.
+            "bound": req.limit,
+            "members": [],
             "provider": "engine_fin_finance",
         }
     return {

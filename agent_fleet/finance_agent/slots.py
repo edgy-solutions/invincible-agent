@@ -88,10 +88,24 @@ _FIN = "http://invincible-agent/fin#"
 _REFERENT_KIND = {
     "program_id": _FIN + "Program",
     "ca_id":      _FIN + "ControlAccount",
+    # ── NOT ATTACHED TO ANY SLOT TODAY, and that is stated rather than left to be noticed.
+    # No verb declares `wp_id`, `wbs_id` or `obs_id`, so these three entries are INERT:
+    # `slots_for` only attaches a referent to a parameter that actually exists. Found
+    # 2026-08-30 while measuring the resolvable-vs-routable asymmetry — the same measurement
+    # that found the dead-end classes, looked at from the slot side.
+    #
+    # KEPT rather than deleted, because the drill-down is where they become live: the variance
+    # tree already reaches work packages, and a verb that takes one is the obvious next step.
+    # `test_referent_map_entries_are_attached_or_declared` asserts this set stays HONEST — an
+    # entry here that neither attaches nor appears below is a claim about a slot that does not
+    # exist, which is the remembered-list shape this module was written to remove.
     "wp_id":      _FIN + "WorkPackage",
     "wbs_id":     _FIN + "WBSElement",
     "obs_id":     _FIN + "OBSElement",
 }
+
+#: The `_REFERENT_KIND` keys that intentionally have no slot yet (see the note above).
+UNATTACHED_REFERENTS = {"wp_id", "wbs_id", "obs_id"}
 
 #: Slots whose value is a fiscal period. Their vocabulary is DATA, not a `Literal`, so it
 #: cannot come from the signature — `window: Optional[list[str]]` states the shape and

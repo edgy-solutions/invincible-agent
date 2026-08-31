@@ -791,6 +791,82 @@ services:
           count, and PlanState holds notional demo data. Neither is a gate. When this substrate
           holds real portfolio data, this route is the first one to revisit."
 
+  finance_agent:
+    inbound_transport_auth: engine-fin
+    notes: |
+      Engine F — six deterministic finance verbs over IPMDAR vocabulary (ADR-0045), plus
+      mesh:resolveInstance and mesh:enumerateInstances providers. Every response carries
+      `output_uri` and rows and NAMES NO ARCHETYPE.
+
+      Cluster-internal: reached via cortex-bff and the mesh fan-outs, never by a browser.
+      Takes the mesh transport-auth dependency in OBSERVE posture like every other engine.
+
+      THE DATA IS NOTIONAL AND THAT IS WHY THESE ROWS ARE RELEASABLE. Nothing from the finance
+      group's actual work is in this repository (ADR-0045 Decision 4): an invented program,
+      round figures, public EVM formulas, and every measure response says so in
+      `data_provenance`. WHEN THIS ENGINE READS A GOVERNED DATASET, EVERY ROW BELOW MUST BE
+      RE-CLASSIFIED — the read then goes through a per-request minted ticket carrying the
+      CALLER's identity (ADR-0044), and a releasable row that quietly begins serving real
+      program cost data is the failure this manifest exists to make impossible.
+
+      ABSENT FROM SERVICE_FILES UNTIL 2026-08-30, so none of these five routes were
+      gate-checked at all. The hand-kept dict was blind exactly as its own docstring warns, and
+      tests/test_service_enumerations_agree.py — which exists to cover that blindness — caught
+      the omission BY NAME. The layered guard worked; these rows are what it was asking for.
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: liveness
+        consumers: [kubelet]
+        class: releasable_by_design
+        justification: "liveness only — a verb COUNT, the reported periods, and an explicit
+          field stating that the count is NOT proof of registration. No financial figures."
+      - method: GET
+        path: /verbs
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: capability-catalogue
+        consumers: [cortex-bff, operators]
+        class: releasable_by_design
+        justification: "the engine's own view of what it registered, with each verb's slot
+          declarations. Diagnostic: when this and the mesh disagree, registration is what
+          failed. Names verbs, output types and slot names — never program data."
+      - method: POST
+        path: /measure/{fn}
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: finance-measure-rows
+        consumers: [cortex-bff, mesh routing]
+        class: releasable_by_design
+        justification: "the six finance verbs — variance analysis, EAC, performance indices,
+          burn rate, variance drivers, funding status. Releasable ONLY because the model is the
+          notional seed; this is the row to revisit first when real program data arrives."
+      - method: POST
+        path: /resolve_instance
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: instance-candidates
+        consumers: [engine-o resolver fan-out]
+        class: releasable_by_design
+        justification: "mesh:resolveInstance provider. Returns scored candidates — instance_id,
+          label, class_uri, score — over notional program entities, to any in-cluster caller.
+          Same fleet-wide contract gap as engine-p's resolve: `{identifier, query}` carries no
+          identity, and that is a mesh-level decision rather than this engine's. Notional data
+          bounds the exposure today and that is incidental, not a gate."
+      - method: POST
+        path: /enumerate_instances
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: instance-menu
+        consumers: [engine-o enumerate fan-out, slot disposition]
+        class: releasable_by_design
+        justification: "mesh:enumerateInstances provider. Returns members / too_many /
+          unsupported over notional entities so an elicitation can offer a menu; members carry
+          instance_id and label. Same identity gap and the same incidental bound as resolve
+          above — the menu bound of 8 truncates larger classes to a count, which is not a gate."
+
   presentation_agent:
     file: agent_fleet/presentation_agent/main.py
     # INBOUND TRANSPORT AUTH (2026-08-07) — declared ONCE per service, not per row, because it

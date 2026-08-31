@@ -692,7 +692,30 @@ no `subClassOf` edge to a `prov:` target materialises anywhere in this graph (AD
 implementer note). Verify the **names**; verify a parent only where the parent is a `mesh:`
 term.
 
-### 4. Declarations spot-checked against signatures — no cluster needed
+### 4. THE PROVIDER CONTRACT — send the payload the CONSUMER sends, not the one you designed
+
+> **REGISTERED IS NOT PARTICIPATING, and every check above passes while a provider is
+> uncallable.** Engine F registered `mesh:resolveInstance` and `mesh:enumerateInstances`,
+> showed **8 edges by name, non-null, at the right FQDN endpoint**, answered `/health` green
+> and served all six verbs — and **neither provider could be called**:
+>
+> * the resolver required `text`; Engine O's fan-out sends `{"identifier", "query"}` → **422
+>   on every real call**;
+> * both providers emitted `identity`; every consumer reads `instance_id`.
+>
+> **The enumerate half was the SILENT one and it is the one to fear.** The disposition builds
+> options from `m.get("instance_id")` and *filters out members lacking it* — so the engine
+> answered "here are 5 members" and the consumer built **zero options, with no error
+> anywhere.** A perfectly good menu sat one field name away while the ask fell to free text.
+> **The louder half was the lucky half:** had only the resolver been wrong, fixing it would
+> have looked complete while every menu stayed empty.
+>
+> **So: exercise each provider with the payload its consumer actually sends, read from the
+> consumer's source rather than remembered**, and assert the response keys the consumer
+> parses. Better still, drive the real consumer — `decide_disposition` is pure and takes an
+> injected enumerator, so a test can feed it your real output and require a populated menu.
+
+### 4b. Declarations spot-checked against signatures — no cluster needed
 
 ```bash
 curl -s http://localhost:8096/verbs | python -m json.tool | head -60
@@ -788,6 +811,8 @@ Recorded because the next engine will meet most of them.
 | 9 | **`helm template` against bare `values.yaml` fails** on an unrelated pre-existing nil (`dagster.daemon.image.registry`). | Always render with `-f values-sandbox.yaml`. Not your bug; don't chase it. |
 | 10 | **A test assertion compared a string to a list and asserted nothing** while passing as "checked". | **Assert on the claim, not its neighbour.** The fix was to hoist `DOMAINS` to a constant so the test compares the registration's own value against the prime manifest, instead of a literal typed twice. |
 | 13 | **The inherited `--timeout 40m` was below the measured runtime it cited.** Its own paragraph said the job took 43 minutes. This run took **44** over 17 ingests. | **A recommendation that contradicts the measurement printed beside it survives because nobody re-reads the paragraph.** Under-waiting cuts the hook chain and leaves the substrate half-applied with everything reporting healthy; over-waiting costs nothing. Now 90m. |
+| 16 | **A provider was registered and uncallable.** Wrong request field (`text` vs `identifier`) and wrong response key (`identity` vs `instance_id`) on BOTH providers. Every graph check passed. | **A provider is tested by the payload its consumer sends, not by its registration.** And prefer the failure that shouts: the resolver's 422 was findable, the enumerator's empty menu was not. |
+| 15 | **A `yaml.safe_dump` round-trip on a shared manifest destroyed 188 comment lines** while adding 5 rows. | **Edit config-as-documentation as TEXT.** A structural rewrite that preserves semantics can still delete the reasoning, and the diff (1346 ins / 1339 del) hides the loss in its own size. |
 | 14 | **A verification query selected `e.verb`, which does not exist** — the verb is `type(e)`. It returned **8 rows of `None`**, and the COUNT was right. | **A by-name check must assert the names are non-null and match an expected set**, not that rows returned. Otherwise it is a by-count check wearing a by-name check's clothes — the exact instrument class this whole runbook is written against, produced by the person writing the section that warns about it. |
 | 12 | **The engine image failed to build: no `uv.lock`.** `Dockerfile.agent` runs `uv sync --locked`, which refuses to generate one. Every other matrix job — including `dagster-control-plane`, the prime's image — went green, so the prime could have run against a correct ontology while the engine image did not exist. | **A new engine directory needs the lockfile, not just the manifest.** And note the shape: ONE red job in a 16-job matrix, with the workflow's overall status the only summary. Read WHICH job failed, not whether the run did. |
 | 11 | **Pushed a `helm/**` change without bumping `Chart.yaml`.** `Release Helm Charts` failed in 10 seconds; the container build was unaffected and green, so a reader watching only the build would have proceeded. | **A chart change that does not move the version publishes NOTHING and reports success at the resolution of "I ran".** The seal exists because this exact omission once shipped engines with no client secret. Watch BOTH workflows on a push, not just the image build. |
@@ -832,6 +857,14 @@ engine's own directory are the ones that get forgotten.
 15. `helm/.../templates/configmap.yaml` — `ENGINE_FIN_PUBLIC_URL` (FQDN via `svcDomain`)
 16. `helm/.../templates/secrets.yaml` — `ENGINE_FIN_CLIENT_SECRET` projection
 17. `helm/.../templates/NOTES.txt`, `values-sandbox.yaml`, `.github/workflows/build-containers.yml`
+17b. **`tests/test_endpoint_gating_manifest.py` `SERVICE_FILES` + `docs/architecture/endpoint_gating_manifest.yaml`.**
+    A new engine's routes are **not gate-checked at all** until it is in that hand-kept dict.
+    Engine F shipped absent from it, so five routes had no declared gating posture.
+    `tests/test_service_enumerations_agree.py` — which exists precisely to cover that dict's
+    blindness — **caught it by name**, so the layered guard worked; add the entry and the
+    manifest rows it asks for. **Edit the YAML as TEXT**: a `yaml.safe_dump` round-trip
+    destroyed 188 comment lines on the first attempt, and in that file the comments are the
+    reasoning.
 18. **`helm/invincible-agent/Chart.yaml` — BUMP THE VERSION.** Missed on Engine F's first
     push and caught by the release workflow, which fails loudly on exactly this. **Any change
     under `helm/**` needs it**, and the reason is in Chart.yaml's own comment: eight
