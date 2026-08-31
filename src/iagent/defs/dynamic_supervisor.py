@@ -1072,13 +1072,74 @@ _CALLER_IDENTITY_VERBS = frozenset({"seedPortfolioCanvas"})
 
 
 class CallerIdentityUnavailable(Exception):
-    """Redemption failed. The subtask must fail LOUDLY rather than fall back.
+    """The caller's identity could not be obtained. The subtask fails LOUDLY, never back.
 
-    THE FALLBACK IS THE TRAP: dispatching as svc:supervisor when redemption fails would
+    THE FALLBACK IS THE TRAP: dispatching as svc:supervisor when this happens would
     reproduce the original `403 cell_not_entitled x5` — the same symptom, now with a
     second cause hidden behind it. A named failure here costs one message of diagnosis;
     the silent fallback costs the afternoon that filed the plan item.
+
+    TWO FIELDS, AND THE SPLIT IS THE POINT (2026-08-31, from a live card).
+
+    A seed failed with `KeyError: 'SUPERVISOR_CLIENT_SECRET'` rendered verbatim on the
+    user's answer card, under a message saying the credential reference could not be
+    REDEEMED. Both halves were wrong in the same way:
+
+      * a raw Python exception is not a disposition. It is the same species as the
+        `400 bad params … missing 1 required keyword-only argument` that leaked a function
+        signature to a user;
+      * and NO REDEMPTION WAS EVER ATTEMPTED. The supervisor could not authenticate
+        ITSELF, so it never reached the vault — yet the message sent the reader to the
+        vault, which is where the first diagnosis of this went and it was the wrong lane.
+
+    So `cause` is a stable, user-safe disposition that names WHICH STEP failed, and
+    `detail` is the raw text, which goes to the LOG and never to a card.
     """
+
+    def __init__(self, cause: str, detail: str = "") -> None:
+        self.cause = cause
+        self.detail = detail
+        super().__init__(f"{cause}: {detail}" if detail else cause)
+
+
+#: Disposition -> what the PERSON who asked should be told. Keyed on the cause, so a new
+#: cause without a sentence here degrades to the generic line rather than leaking a
+#: traceback. The remedy differs per cause and so does the OWNER: a service-identity fault
+#: is a deployment matter, an expired reference is "ask again", a replay is a security
+#: event. One message that covered all three would misdirect two of them.
+_CALLER_IDENTITY_MESSAGES = {
+    "service_identity_unconfigured": (
+        "This request runs under your own identity, and the service that fetches it is "
+        "missing its own credentials, so nothing was attempted. This is a deployment "
+        "configuration problem rather than anything about your access — it needs an "
+        "operator, not a retry."
+    ),
+    "not_found": (
+        "The credential reference for this request was no longer available, so nothing "
+        "was attempted. Asking again creates a fresh one."
+    ),
+    "expired": (
+        "This request took longer to start than its credential reference lasts, so "
+        "nothing was attempted. Asking again creates a fresh one."
+    ),
+    "already_redeemed": (
+        "The credential reference for this request had already been used, so nothing was "
+        "attempted. Asking again creates a fresh one."
+    ),
+    "launcher_mismatch": (
+        "The credential reference did not match the request that created it, so nothing "
+        "was attempted. This one is worth reporting rather than retrying."
+    ),
+    "not_the_redeemer": (
+        "The service that fetches your identity was refused, so nothing was attempted. "
+        "This needs an operator rather than a retry."
+    ),
+}
+
+_CALLER_IDENTITY_DEFAULT_MESSAGE = (
+    "This request needs to run under your own identity, and that identity could not be "
+    "obtained, so nothing was attempted. Asking again is safe."
+)
 
 
 def _verb_local_name(verb_iri: str) -> str:
@@ -1107,14 +1168,35 @@ def _redeem_caller_token(context, config) -> str:
     run_id = str(getattr(context, "run_id", "") or "")
     if not run_id:
         raise CallerIdentityUnavailable(
-            "this op has no run id, so there is no reference to redeem"
+            "no_run_id", "this op has no run id, so there is no reference to redeem"
         )
 
-    from agent_fleet.utils.service_identity import mint_supervisor_token
+    # ── STEP ONE: AUTHENTICATE OURSELVES. A DISTINCT FAILURE FROM A VAULT REFUSAL ──
+    #
+    # The supervisor authenticates AS ITSELF to redeem — invariant 1 at the far end checks
+    # this is svc:supervisor specifically. The service identity still OPENS the vault; it
+    # is simply no longer what dispatches.
+    #
+    # This mint is guarded separately because its failure has a DIFFERENT OWNER and a
+    # different remedy. `mint_supervisor_token` reads SUPERVISOR_CLIENT_ID/SECRET straight
+    # out of os.environ, so an unconfigured pod raises KeyError here — before any request
+    # is made. Reporting that as "the reference could not be redeemed" is false twice: the
+    # vault was never contacted, and the fix is a deployment one. That exact conflation
+    # sent the first diagnosis of a live failure to the wrong lane.
+    #
+    # NOTE FOR WHOEVER MEETS THIS IN THE FIELD: the credentials arrive via `envFrom` on
+    # the user-code deployment, which injects at POD START. A pod that started while the
+    # secret was absent stays broken for its whole life even after the secret is fixed —
+    # so the remedy is a RESTART, not only a chart edit.
+    try:
+        from agent_fleet.utils.service_identity import mint_supervisor_token
+        _svc_token = mint_supervisor_token()
+    except Exception as _mint_exc:  # noqa: BLE001
+        raise CallerIdentityUnavailable(
+            "service_identity_unconfigured",
+            f"{type(_mint_exc).__name__}: {_mint_exc}",
+        ) from _mint_exc
 
-    # The supervisor authenticates AS ITSELF to redeem — invariant 1 at the far end
-    # checks this is svc:supervisor specifically. The service identity is still what
-    # opens the vault; it is simply no longer what dispatches.
     resp = requests.post(
         f"{_CORTEX_BFF_URL}/internal/identity/redeem",
         json={
@@ -1123,7 +1205,7 @@ def _redeem_caller_token(context, config) -> str:
             # against the subject of the token that was stashed.
             "claimed_launcher": getattr(config, "user_email", "") or "",
         },
-        headers={"Authorization": f"Bearer {mint_supervisor_token()}"},
+        headers={"Authorization": f"Bearer {_svc_token}"},
         timeout=15,
     )
     if resp.status_code != 200:
@@ -1136,14 +1218,16 @@ def _redeem_caller_token(context, config) -> str:
             _msg = _err.get("message") or ""
         except Exception:  # noqa: BLE001
             _cause, _msg = f"http_{resp.status_code}", (resp.text or "")[:200]
-        raise CallerIdentityUnavailable(f"{_cause}: {_msg}")
+        raise CallerIdentityUnavailable(_cause, _msg)
 
     token = str((resp.json() or {}).get("token") or "")
     if not token:
         # A 200 with no token is a contract violation, not an empty answer. Checking the
         # transport and THEN the payload, in that order, is the standing lesson from an
         # auth failure that once wore an empty result's clothes.
-        raise CallerIdentityUnavailable("the vault answered 200 with no token")
+        raise CallerIdentityUnavailable(
+            "malformed_vault_response", "the vault answered 200 with no token"
+        )
     return token
 
 
@@ -2110,17 +2194,28 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 predicate.get("verb_iri"),
             )
         except Exception as _ident_exc:  # noqa: BLE001
-            _idetail = f"{type(_ident_exc).__name__}: {_ident_exc}"
+            # THE CARD GETS THE DISPOSITION; THE LOG GETS THE EXCEPTION. A raw traceback
+            # string on an answer card is the same species as leaking a function signature
+            # into a 400 — it tells the person who asked nothing they can act on, and tells
+            # anyone else more than they should see.
+            _icause = getattr(_ident_exc, "cause", "") or "caller_identity_unavailable"
+            _idetail = getattr(_ident_exc, "detail", "") or (
+                f"{type(_ident_exc).__name__}: {_ident_exc}"
+            )
             context.log.error(
-                "execute_subtask: could not redeem the caller's identity for %s (%s). "
-                "REFUSING to dispatch under the service identity — that would reproduce "
-                "the original 403 cell_not_entitled with a second cause hidden behind it.",
-                predicate.get("verb_iri"), _idetail,
+                "execute_subtask: could not obtain the caller's identity for %s "
+                "[cause=%s] (%s). REFUSING to dispatch under the service identity — that "
+                "would reproduce the original 403 cell_not_entitled with a second cause "
+                "hidden behind it.",
+                predicate.get("verb_iri"), _icause, _idetail,
             )
             try:
                 context.add_output_metadata({
                     "caller_identity_unavailable": True,
                     "endpoint": str(endpoint),
+                    "cause": _icause,
+                    # Dagster metadata is an OPERATOR surface, not a user one, so the raw
+                    # exception belongs here as well as in the log.
                     "error": _idetail,
                 })
             except Exception:  # pragma: no cover
@@ -2136,15 +2231,19 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                     # This is an identity fault, and naming it as one is what keeps the
                     # next diagnosis from starting at the wrong pod.
                     "status": "caller_identity_unavailable",
-                    "reason": "vault_redemption_failed",
-                    "message": (
-                        "This request needs to run under your own identity, and the "
-                        "credential reference for it could not be redeemed. Nothing was "
-                        "attempted. Asking again will create a fresh reference."
+                    # THE REASON NAMES WHICH STEP FAILED. "vault_redemption_failed" was
+                    # wrong for the most common case: when the supervisor cannot
+                    # authenticate itself, the vault is never contacted at all.
+                    "reason": _icause,
+                    "message": _CALLER_IDENTITY_MESSAGES.get(
+                        _icause, _CALLER_IDENTITY_DEFAULT_MESSAGE
                     ),
                     "data": "",
                     "sources": [],
-                    "error": _idetail,
+                    # NO RAW EXCEPTION ON THE CARD. `_idetail` is in the log and in the
+                    # op metadata above, which is where an operator looks; a person who
+                    # asked a planning question is not that audience.
+                    "error": _icause,
                 },
             }
 

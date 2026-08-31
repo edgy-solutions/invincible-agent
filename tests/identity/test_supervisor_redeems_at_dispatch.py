@@ -309,3 +309,101 @@ def test_the_ordering_guard_is_PROVEN_RED():
     assert _refusal_precedes_dispatch(no_refusal) is False
     assert _refusal_precedes_dispatch(wrong_order) is False
     assert _refusal_precedes_dispatch(right_order) is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# THE FAILURE NAMES WHICH STEP BROKE — and never leaks the exception to a card
+# ══════════════════════════════════════════════════════════════════════════════════
+#
+# FROM A LIVE CARD, 2026-08-31. A seed failed with `KeyError: 'SUPERVISOR_CLIENT_SECRET'`
+# printed verbatim on the user's answer, under a message saying the credential reference
+# could not be REDEEMED. Both halves misled: no redemption was attempted (the supervisor
+# could not authenticate ITSELF, so it never reached the vault), and a raw traceback is not
+# a disposition. The first diagnosis went to the vault lane, which was the wrong lane.
+
+def test_an_unconfigured_service_identity_NEVER_CONTACTS_THE_VAULT(monkeypatch):
+    """The mint reads os.environ directly, so an unconfigured pod raises BEFORE any request.
+
+    Reporting that as a redemption failure is false twice over — the vault was never
+    contacted, and the remedy is a deployment one rather than a retry. This asserts the
+    network is not touched, which is the fact that makes the distinction real rather than
+    cosmetic.
+    """
+    def _no_creds(*a, **k):
+        raise KeyError("SUPERVISOR_CLIENT_SECRET")
+
+    monkeypatch.setattr(
+        "agent_fleet.utils.service_identity.mint_supervisor_token", _no_creds, raising=False
+    )
+    monkeypatch.setattr(
+        ds.requests, "post",
+        lambda *a, **k: pytest.fail("the vault was contacted despite no service identity"),
+    )
+
+    with pytest.raises(ds.CallerIdentityUnavailable) as exc:
+        ds._redeem_caller_token(_Ctx(), _Config())
+
+    assert exc.value.cause == "service_identity_unconfigured", (
+        "a self-authentication failure must not wear a redemption failure's clothes"
+    )
+    assert "SUPERVISOR_CLIENT_SECRET" in exc.value.detail, (
+        "the operator still needs the real reason, in the detail"
+    )
+
+
+def test_the_causes_are_DISTINCT_because_their_owners_are(monkeypatch):
+    """A service-identity fault is a deployment matter; an expired reference is 'ask again';
+    a replay is a security event. One shared cause would misdirect two of the three."""
+    seen = set()
+
+    def _mint_ok(*a, **k):
+        return SERVICE_TOKEN
+
+    monkeypatch.setattr(
+        "agent_fleet.utils.service_identity.mint_supervisor_token", _mint_ok, raising=False
+    )
+    for status, cause in [(404, "not_found"), (404, "expired"),
+                          (409, "already_redeemed"), (403, "not_the_redeemer")]:
+        monkeypatch.setattr(
+            ds.requests, "post",
+            lambda *a, s=status, c=cause, **k: _Resp(s, {"detail": {"error": c}}),
+        )
+        with pytest.raises(ds.CallerIdentityUnavailable) as exc:
+            ds._redeem_caller_token(_Ctx(), _Config())
+        seen.add(exc.value.cause)
+
+    assert seen == {"not_found", "expired", "already_redeemed", "not_the_redeemer"}
+    assert "service_identity_unconfigured" not in seen
+
+
+def test_every_cause_has_a_user_sentence_that_leaks_no_mechanism():
+    """The card's audience asked a planning question. It is not the audience for a
+    traceback, an env var name, or the word 'vault'."""
+    forbidden = ("Traceback", "KeyError", "os.environ", "SUPERVISOR_CLIENT_SECRET",
+                 "Exception", "None", "null")
+    for cause, sentence in ds._CALLER_IDENTITY_MESSAGES.items():
+        assert sentence and sentence[0].isupper() and sentence.rstrip().endswith("."), cause
+        for bad in forbidden:
+            assert bad not in sentence, f"{cause}'s sentence leaks {bad!r}"
+        assert "nothing was attempted" in sentence.lower(), (
+            f"{cause} must say nothing was attempted — the honest half of this refusal"
+        )
+
+
+def test_the_service_identity_sentence_points_at_an_OPERATOR_not_a_retry():
+    """The single most misdirecting thing the old message did was invite a retry for a
+    fault no number of retries can fix."""
+    s = ds._CALLER_IDENTITY_MESSAGES["service_identity_unconfigured"].lower()
+    assert "operator" in s
+    assert "deployment" in s or "configuration" in s
+    assert "asking again creates a fresh one" not in s
+
+
+def test_an_unknown_cause_degrades_to_the_generic_sentence_not_a_traceback():
+    """A cause added later without a sentence must fall back to something safe. The failure
+    mode being prevented is a `.get(cause, str(exc))` that quietly reintroduces the leak."""
+    msg = ds._CALLER_IDENTITY_MESSAGES.get(
+        "some_future_cause", ds._CALLER_IDENTITY_DEFAULT_MESSAGE
+    )
+    assert msg == ds._CALLER_IDENTITY_DEFAULT_MESSAGE
+    assert "Traceback" not in msg and "Error" not in msg
