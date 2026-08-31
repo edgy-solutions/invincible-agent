@@ -202,6 +202,24 @@ services:
         class: gated
         justification: "THE exemplar — the ONLY route wired to the per-IRI _can_view_class gate (flag-gated). The Slice-2 subject source should route through this gate."
       - method: POST
+        path: /fill_slots
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: gated-content
+        consumers: [dynamic_supervisor.py]
+        class: ungated_by_accident
+        justification: "FINDING, and the exposure is INHERITED rather than its own. The route
+          takes a query plus a verb's slot DECLARATIONS and returns the parameters the speaker
+          named. It reads no graph and holds no data of its own — but it CALLS `_resolve_instance`
+          to resolve referent slots, so it re-exposes whatever the mesh:resolveInstance fan-out
+          exposes, from a caller position that carries no identity.
+          `/resolve` next door is THE exemplar of the per-IRI can_view gate; this route reaches
+          similar substrate through a different door and is not behind it. It also echoes back
+          the declarations it was handed, which is caller-supplied and not a leak.
+          Not `internal`: the supervisor is the only caller today, but the exposure question is
+          about the resolution hop, and that is a live mesh-contract gap
+          (`the-filler-has-no-entity-resolution`, and the provider rows under planning_agent)."
+      - method: POST
         path: /route_intent
         identity: "OPTIONAL-IGNORED — persona/entitled_domains echoed, not gated"
         gate: none
@@ -736,6 +754,42 @@ services:
           route needs a CALLER IDENTITY and a change record, not just a transport posture.
           Recorded here rather than in a packet because the manifest is where the next reader
           of this route will actually be looking."
+      - method: POST
+        path: /resolve_instance
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: existence
+        consumers: [engine-o /resolve fan-out]
+        class: ungated_by_accident
+        justification: "THE mesh:resolveInstance PROVIDER for PORTFOLIO_PLANNING. Turns a spoken
+          name into an instance id — 'the Aurora site' -> S1 — so it EXPOSES EXISTENCE: a caller
+          learns whether a named entity is in the plan, and an empty candidate list is itself an
+          answer about the model's contents. Read-only, no effect, and the fan-out that calls it
+          is in-cluster.
+          `ungated_by_accident` rather than `internal` DELIBERATELY. Reachability is the only
+          thing protecting it, and the four sibling providers (engine-d, engine-e, engine-o,
+          engine-fin) share that posture — so this is a FLEET-WIDE property of the
+          mesh:resolveInstance contract, not a gap unique to engine-p. The contract carries no
+          caller identity at all: `{identifier, query}` has nowhere to put one. Gating it means
+          changing the verb's contract for every provider, which is a mesh decision and not a
+          per-engine one."
+      - method: POST
+        path: /enumerate_instances
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: existence
+        consumers: [supervisor ask disposition via ENUMERATE_INSTANCES_URL]
+        class: ungated_by_accident
+        justification: "THE mesh:enumerateInstances PROVIDER. Exposes MORE existence than
+          resolve does, and that difference is the reason this row is written out rather than
+          copied: resolve answers 'is this one thing here?', enumerate answers 'what is here?'
+          and returns the membership of a class — 9 capabilities, 4 sites — to any in-cluster
+          caller.
+          Same fleet-wide contract gap as resolve above (`{class_uri}` carries no identity), and
+          the same mesh-level decision. Two things bound the exposure today and BOTH are
+          incidental rather than designed: the menu bound of 8 truncates larger classes to a
+          count, and PlanState holds notional demo data. Neither is a gate. When this substrate
+          holds real portfolio data, this route is the first one to revisit."
 
   presentation_agent:
     file: agent_fleet/presentation_agent/main.py
