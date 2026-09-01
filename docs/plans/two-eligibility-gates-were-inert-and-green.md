@@ -231,3 +231,97 @@ landed. **Sandbox never emitted it** — a compat walk was triggered and the ful
 and it appears on the work cluster but not here. So that tell is cluster-specific and was
 never available as a before/after on sandbox. The carriage numbers are the measurement; the
 warning was a neighbour of the claim, not the claim.
+
+
+---
+
+## ⚖ THE DERIVATION LANDED, AND A ROLL LIED ON THE WAY — 2026-09-01
+
+`f417de6` replaced the one-verb probe with `arity_for()`: a measure is **single** when it
+has a slot that is both REQUIRED and a REFERENT — it cannot run without one named
+instance. Four of fourteen.
+
+### The blast radius was measured against the corpus, not asserted
+
+| | |
+|---|---|
+| target of ALL 14 TIER 3 phrasings | the four single verbs |
+| target of any Tier 1 (22) or Tier 2 (12) phrasing | **none of them** |
+
+And Tier 3's own header, written by hand from demo failures months earlier, is the same
+predicate: *"the measure requires an id that nothing can resolve … Architecture item,
+post-demo. Do not script these."* **Two independent derivations of one set** — the corpus
+found it from failures, `arity_for` finds it from signatures. That agreement is worth more
+than either alone.
+
+So the gate turns Tier 3 from *routes, then 400s two hops later* into *never a candidate*,
+which is what that tier's standing note asks for.
+
+### Measured post-prime, across all four subject classes
+
+The four verbs are typed on four DIFFERENT classes, so `idp#Portfolio` alone shows 1, not
+4 — an expectation stated wrongly before it was checked, and corrected by looking.
+
+```
+idp#Portfolio        10 verbs   single: planDependencyNeighborhood   set-query drops 1, keeps 9
+idp#Capability        2 verbs   single: planCapabilityPath           set-query drops 1, keeps 1
+idp#BusinessProcess   1 verb    single: planProcessEvolution         set-query drops 1, keeps 0
+idp#Technology        1 verb    single: planTechFootprint            set-query drops 1, keeps 0
+                                        TOTAL 4/14 ; instance-query drops 0 everywhere
+```
+
+**Two classes now go to ZERO candidates for a set-shaped query.** That is correct rather
+than alarming — the only verb on each cannot run without a named instance — and zero verbs
+is a defined ADR-0019 Contract B outcome, not a crash. It abstains where it used to 400.
+
+**They survived the prime.** The pod was started 03:16:09Z with 0 restarts and the prime
+finished 04:03:07Z, so these properties were written 47 minutes BEFORE the prime and came
+through it. That retires a risk flagged in advance: registration happens at engine startup
+only, so a prime that rebuilt verb edges would have silently dropped them with nothing to
+re-register. It does not.
+
+## ⛔ AND THE ROLL THAT CARRIED IT PASSED EVERY LEG WHILE THE ENGINE WAS UNREGISTERED
+
+The first attempt rolled engine-p into a window where the whole sandbox was being
+redeployed and Keycloak was mid realm-import. Every mint retry got connection-refused:
+
+```
+❌ mesh registration: UNREGISTERED (mint failed: Keycloak token endpoint unreachable)
+```
+
+**`roll-litany.sh` reported `fail=0`.** Rollout ok, digest changed, SDK present, posture
+announced, gauge line produced. Five green legs on an engine that had joined nothing.
+
+**And the measurement that followed was believable.** The verb edges from the previous
+registration were still in the graph, so `planDependencyNeighborhood` still read `single`
+and the three new verbs read `None` — which looks exactly like *"the derivation only
+reached one verb."* It was nearly reported as that. What caught it was the number
+disagreeing with a derivation that had just passed its unit tests, and reading the
+registration log before believing the graph.
+
+> **A ROLL IS EXACTLY WHEN STALE AND FRESH STOP BEING DISTINGUISHABLE BY LOOKING.** Every
+> other check in the litany asks whether the pod SERVES. None asked whether it JOINED, and
+> a half-rolled engine serves perfectly.
+
+**LEG 6 added** (`roll-litany.sh`): fail if the pod log carries the UNREGISTERED alarm. It
+fails on the alarm's PRESENCE, never on a success line's absence — mesh-registrar and the
+other non-registrants emit neither and must keep passing, which is the defect leg 5 had to
+be rescued from once already. The alarm had always named its own postcondition test
+(`tests/routing/test_resolve_instance_probes.py`); that test was simply never part of a
+roll.
+
+Proven both ways: **green** live against a registered engine-p (0 alarms, 16 registrations)
+and against mesh-registrar as a non-registrant (0 alarms, 0 registrations, passes);
+**red** against the captured alarm text from the roll that passed 5/5 — the unregistered
+pod itself was gone by then, so that arm is the predicate rather than a live firing, and
+the kubectl plumbing it shares with legs 4 and 5 is live-proven.
+
+### Two neighbours, outside this lane
+
+* **`iagent-realm-reconcile` failed** — *"keycloak never became ready"*. Minting works
+  anyway because the realm survived in the Postgres PVC, so the failure is currently
+  invisible. On a genuinely fresh environment every engine's registration would fail the
+  way engine-p's did, and the litany would have reported `fail=0` for all of them.
+* **Keycloak reported `ready=true` while port 8080 refused connections**, still importing
+  its realm. That is what let engine-p roll into the window, and what timed out the
+  reconcile job.

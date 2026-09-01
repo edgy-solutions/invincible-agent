@@ -128,6 +128,41 @@ except Exception: pass
       fail=1
     fi
   fi
+
+  # LEG 6 — DID THE ENGINE ACTUALLY JOIN THE MESH, or only start serving?
+  #
+  # ADDED 2026-09-01, AFTER A ROLL PASSED ALL FIVE LEGS WITH THE ENGINE UNREGISTERED.
+  # engine-p rolled into a window where Keycloak was mid realm-import, every mint retry got
+  # connection-refused, and registration ended UNREGISTERED. Legs 1-5 were all green: the
+  # pod rolled, the digest changed, the SDK was present, the posture announced, and the
+  # gauge produced a line. Every one of those tests that the pod SERVES. None tests that it
+  # JOINED. The verb edges from the PREVIOUS registration were still in the graph, so the
+  # measurement taken afterwards looked entirely plausible and was stale.
+  #
+  # THAT IS THE WHOLE CASE FOR THIS LEG: the failure mode is not a missing answer, it is a
+  # believable one. A roll is exactly when stale-versus-fresh stops being distinguishable
+  # by looking.
+  #
+  # FAILS ON THE PRESENCE OF THE ALARM, never on the absence of a success line.
+  # mesh-registrar and the other non-registrants emit neither and must keep passing;
+  # demanding a success line would make this fail for the wrong population, which is the
+  # defect leg 5 already had to be rescued from once.
+  #
+  # The alarm names its own postcondition test
+  # (tests/routing/test_resolve_instance_probes.py), and that test was never part of a
+  # roll. This leg is the roll half of it.
+  UNREG=$(kubectl -n "$NS" logs "$POD" 2>/dev/null | grep -c "mesh registration: UNREGISTERED")
+  if [ "${UNREG:-0}" -ge 1 ]; then
+    echo "  LEG6 registered: FAIL — ${UNREG} UNREGISTERED alarm(s) in this pod log."
+    echo "                   The engine is SERVING but its verbs will not route. Any edge"
+    echo "                   still in the graph is STALE, left by an earlier registration —"
+    echo "                   which is why this fails loudly rather than reading as clean."
+    kubectl -n "$NS" logs "$POD" 2>/dev/null | grep -m1 "mesh registration: UNREGISTERED" | cut -c1-150 | sed "s/^/                   /"
+    fail=1
+  else
+    OKN=$(kubectl -n "$NS" logs "$POD" 2>/dev/null | grep -c "mesh registration: OK")
+    echo "  LEG6 registered: ok — 0 alarms, ${OKN} registration(s) confirmed"
+  fi
 done
 
 echo "=================== litany complete (fail=$fail) ==================="
