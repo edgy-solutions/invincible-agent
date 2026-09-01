@@ -169,6 +169,33 @@ async def lifespan(app: FastAPI):
                     # DERIVED from the measure's signature, never hand-transcribed — the enum
                     # values cannot drift from the `Literal` because they are read out of it.
                     slots=slots_for(v["fn"]),
+                    # QUERY-SHAPE ELIGIBILITY, and THE FIRST DECLARATION OF IT ANYWHERE IN
+                    # THE FLEET. Until 2026-08-31 `arity` reached no Neo4j edge from any of
+                    # the five write sites, so `_filter_verbs_by_arity` read null for every
+                    # verb, treated null as "never exclude", and excluded nothing on any
+                    # cluster since it shipped. See
+                    # docs/plans/two-eligibility-gates-were-inert-and-green.md.
+                    #
+                    # `single` IS TRUE OF THIS VERB ON ITS SIGNATURE, not on its prose:
+                    # `plan_dependency_neighborhood(state, *, project_id: str, ...)` has NO
+                    # default for `project_id`, so the measure cannot run without one named
+                    # item. The gate drops it from set-shaped queries (`query_is_set = not
+                    # subject_instance_id`), which turns what is today a downstream 400 for a
+                    # missing mandatory slot into upstream non-candidacy — exactly what the
+                    # gate was built to do. See
+                    # docs/plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md.
+                    #
+                    # ONE VERB ON PURPOSE. The same rule — a REQUIRED REFERENT SLOT MEANS
+                    # SINGLE — derives cleanly for four of the fourteen measures
+                    # (neighborhood, capability_path, process_evolution, tech_footprint) and
+                    # for none of the other ten. Landing all four is a routing change across
+                    # four verbs and wants its own ruling; landing one proves the carry
+                    # end to end at population size one, which is the same narrow-first
+                    # discipline scripts/roll-litany.sh enforces for rolls. When that ruling
+                    # lands, this literal should become `arity_for(v["fn"])` in slots.py
+                    # beside `slots_for` — hand-transcription here is a deliberate probe,
+                    # not the end state.
+                    arity=("single" if v["fn"] == "plan_dependency_neighborhood" else None),
                 )
             except Exception as exc:  # pragma: no cover
                 # Best-effort, matching the fleet's existing posture: a failed registration
