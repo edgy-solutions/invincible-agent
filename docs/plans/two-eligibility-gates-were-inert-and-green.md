@@ -164,3 +164,70 @@ two properties violated at five of seven sites) and
 `[[read-the-consumer-of-what-you-fixed]]` (the law that produced the sandbox measurement:
 `/find_compatible_verbs` was read as the consumer's view rather than the graph queried
 directly).
+
+---
+
+## ✅ ROLLED AND MEASURED ON SANDBOX — 2026-09-01
+
+`9d25db7` (the carry) + `ac0b837` (the first declaration) + `f65c5ce` (the probe map).
+Rolled through `scripts/roll-litany.sh` in dependency order — **mesh-registrar first**, so
+the engines re-register against the fixed registrar rather than before it — then engine-p,
+then engine-o. Five legs each, `fail=0`, and **every image digest changed**, so these were
+new images rather than restarts:
+
+```
+mesh-registrar  8b577ecf -> 2537174e
+engine-p        c917bc18 -> fc8f03fb
+engine-o        7f2159db -> 867d413c
+```
+
+### Finding 1 — the carry, measured as a transition
+
+Through `/find_compatible_verbs` on `idp#Portfolio`, the consumer's own view:
+
+| | before | after |
+|---|---|---|
+| verbs | 10 | 10 |
+| carrying `arity` (non-null) | **0/10** | **1/10** |
+| carrying the `required_args` key | **0/10** | **10/10** |
+
+The 1 is exactly the one verb declared — `planDependencyNeighborhood`, value `single`.
+`required_args` is now present on every edge as `[]`, which the gate reads as
+unconstrained and which makes the edge self-describing.
+
+### The gate, run on the REAL dicts the live compat walk returned
+
+```
+set-shaped query -> DROPPED 1: ['mesh:planDependencyNeighborhood'],  KEPT 9
+instance query   -> DROPPED 0                                        (conservative direction holds)
+```
+
+**Lumpy, not uniform** — 1 of 10, 9 kept, 0 in the other direction. A uniform result here
+would have been the tell that the instrument, not the system, was answering.
+
+**THE HONEST BOUNDARY:** the gate function was fed the live response and run out of process.
+What is proven is the CARRY and the JOIN — the property survives registration, reaches the
+edge, comes back through the compat walk under the key the gate reads, and the gate acts on
+it. What is NOT exercised here is the supervisor's own three-line call site
+(`query_is_set = not subject_instance_id`), which is unit-tested and unchanged. A full route
+through the dagster supervisor would close that last link.
+
+### Finding 2 — `/plan`, verified in production
+
+Same probe, same cluster, before and after the roll:
+
+```
+before:  tasks=[{'target_persona': 'DATA_STEWARD'}]   degraded='synthesized_passthrough_zero_tasks'
+after :  tasks=[{'target_persona': 'PORTFOLIO_LEAD'}] degraded=None
+```
+
+The passthrough no longer fires. `degraded` is now real signal about the model rather than a
+constant.
+
+### A prediction that was wrong, recorded because it was nearly reported
+
+The `the missing property name is: arity` warning was going to be the proof that the write
+landed. **Sandbox never emitted it** — a compat walk was triggered and the full log checked,
+and it appears on the work cluster but not here. So that tell is cluster-specific and was
+never available as a before/after on sandbox. The carriage numbers are the measurement; the
+warning was a neighbour of the claim, not the claim.
