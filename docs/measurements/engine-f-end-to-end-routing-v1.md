@@ -222,3 +222,30 @@ definition rewrite it prompted (+1, `11 → 12`), and the structural fix that pr
 **Standing correction to the routing summary above:** `7/7` synonym routing and `3/20` phrase
 routing are unaffected — those hops never took a domain argument. Only the grounding numbers
 and their explanation are restated here.
+
+---
+
+# ⛔ THE TOTALS IN THIS DOCUMENT ARE DRAWS, NOT FACTS (annotated 2026-09-01)
+
+**Measured after the fact: `/resolve`'s candidate SET is deterministic (0 of 20 flipped across
+3 draws on one fixed substrate) and the WINNER selected from it is NOT (2 of 20 flipped).**
+
+So every right-class total above — `12/20`, `11/20`, `7/20` — is a sample from a partly
+non-deterministic selection layer, not a property of the system. The two rows known to flip are
+`"show me SPI over time"` and `"how fast are we spending"`, and a third
+(`"what is the funding status"`) flipped between two earlier runs. **2/20 is a floor, not a
+rate.**
+
+**What this retires specifically:** the `11` vs `12` comparison between lanes, which was read
+as evidence about substrate completeness. The row that difference consisted of is one of the
+two known flippers, so the comparison discriminates nothing and neither number is reinstated.
+
+**Everything measured on SETS stands unchanged** — the 24 shape-occurrences across 14 candidate
+sets, and the invariant checks (8 verb edges, 14 classes, 6 response shapes, 3 archetypes),
+which are counts of graph state rather than samples.
+
+**The synonym-routing result (`7/7`) and phrase-routing (`3/20`) also stand:** `/find_tool` is
+a deterministic graph lookup, not a sampled selection, and takes no domain argument.
+
+Full analysis and the method that replaces totals:
+`[[the-winner-is-a-sample-the-set-is-the-answer]]`.
