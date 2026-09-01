@@ -39,6 +39,27 @@ probe_path() {
     iagent-domain-broker)  echo "POST /api/v1/internal/resolve" ;;
     iagent-engine-w)       echo "POST /query_knowledge" ;;
     iagent-engine-o)       echo "GET /personas" ;;
+    # engine-p had NO mapping, so leg 5 could not run for it at all — the exact
+    # silence this map exists to prevent. /resolve_instance is real, cheap, and
+    # non-exempt; an empty body is rejected 422 on the route's own terms, which
+    # is a gauge line either way. NOT /measure/<fn>: those run a measure.
+    iagent-engine-p)       echo "POST /resolve_instance" ;;
+    # engine-fin was the OTHER unmapped service, and the only one besides engine-p:
+    # diffing sandbox deployments against this map found 15 unmapped, of which
+    # exactly ONE announces a posture (leg 4's criterion, and so the litany's real
+    # population). The other 14 -- redis, topaz, the dagster trio, cortex-ui,
+    # electric, projector, the broker pairs -- would stop at leg 4 regardless.
+    #
+    # Routes verified off the live app object, per this map's own rule. engine-fin
+    # serves /health (exempt), /verbs, /measure/{fn}, /resolve_instance and
+    # /enumerate_instances -- the same shape as engine-p.
+    #
+    # NOTE ON A KNOWN BUG THAT DOES NOT INVALIDATE THIS PROBE: engine-fin's
+    # /resolve_instance has a contract mismatch on its field names. Leg 5 asserts a
+    # GAUGE LINE, not a correct answer, and the empty {} body this script sends is
+    # rejected 422 on the route's own terms either way. The probe measures transport,
+    # which is what it claims to measure.
+    iagent-engine-fin)     echo "POST /resolve_instance" ;;
     iagent-engine-d)       echo "POST /query_metadata" ;;
     iagent-engine-e)       echo "POST /query_graph" ;;
     iagent-engine-f)       echo "POST /render_ui" ;;
