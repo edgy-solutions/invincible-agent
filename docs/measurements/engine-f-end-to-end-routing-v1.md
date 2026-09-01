@@ -182,3 +182,43 @@ which means the collision cannot even be reached for them.
 All three are the same shape: **a query or count that returns something plausible while
 measuring the wrong thing.** In every case the tell was a value too uniform or too round to be
 real. This is now the standing signature, and it has fired four times in two days.
+
+---
+
+# CORRECTION 2026-09-01 — the grounding number above measured MAINTENANCE, not alice
+
+**The results section above is left standing and its CAUSE is retracted.** An expectation or an
+explanation quietly edited to match later evidence is not a measurement, so the error stays
+visible and the correction sits beneath it.
+
+**What was wrong.** `/resolve`'s model is `domain: str = "MAINTENANCE"` with
+`domains: list[str] = []` superseding it **only when non-empty**. The corpus run passed
+`user_email` and **neither domain field**, so the candidate pool was scoped to **MAINTENANCE**.
+The write-up attributed 8/20 to *"alice holds seven cells so the pool is wide"*. That
+explanation was invented, not measured — and the losers it cited (`DescriptiveDataModule`,
+`ProcedureDataModule`, IOF `Procedure`) are maintenance vocabulary, which should have been the
+tell.
+
+**The control proves it.** Re-run with no `domains`, twice, on two different primes:
+**7/20 right, 8/20 any-fin — exactly reproducing the original.**
+
+| arm | right | any `fin:` |
+|---|---|---|
+| **C** no `domains` → `MAINTENANCE` | 7/20 | 8/20 |
+| **B** alice's seven domains | 12/20 | 19/20 |
+| **A** one cell, `PROGRAM_FINANCE` | **12/20** | **19/20** |
+
+**Passing the scoping field at all is what matters: any-`fin:` grounding goes 8 → 19 of 20.**
+
+**And the second hypothesis is refuted too.** A and B are identical, so **pool width was never
+the cause** — a one-cell analyst does no better than a seven-cell power user, and the
+improvement predicted for the narrow arm did not occur.
+
+**The real cause is that a verb's OUTPUT shape competes with its own INPUT subject** for the
+question that invokes it, and grounding to an output is a hard dead end. Full analysis, the
+definition rewrite it prompted (+1, `11 → 12`), and the structural fix that prose cannot reach:
+`[[response-classes-compete-for-grounding]]`.
+
+**Standing correction to the routing summary above:** `7/7` synonym routing and `3/20` phrase
+routing are unaffected — those hops never took a domain argument. Only the grounding numbers
+and their explanation are restated here.
