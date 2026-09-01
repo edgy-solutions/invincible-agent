@@ -1,0 +1,66 @@
+{
+  "_about": "Engine F's 20 grounding phrasings, with the class each grounded to. Published for Lane 1's response-shape-exclusion transition measurement so the corpus is NOT invented by the party being graded.",
+  "_provenance": {
+    "authored": "2026-08-31, before any exclusion fix existed",
+    "baseline_measured": "2026-09-01, after commit af81511 (output definitions rewritten to describe answer shape) and its prime",
+    "harness": "POST /resolve on engine-o, per phrase, with user_email + domains",
+    "engine_f_state_at_baseline": "14 fin: classes live; 8 verb edges at iagent-engine-fin.sandbox.svc.cluster.local:8096; 3 archetype classes under mesh:Archetype"
+  },
+  "_scoping_warning": "THE FIELD IS `domains` (plural, list). `domain` is a separate legacy field defaulting to \"MAINTENANCE\", and `domains` supersedes it ONLY when non-empty. Passing neither silently measures MAINTENANCE — that error produced a published 8/20 that was reported as an alice measurement and was not one. Arm C below exists as the control for it.",
+  "request_template": {
+    "endpoint": "POST http://<engine-o>/resolve",
+    "body": {"query": "<phrase>", "user_email": "alice@example.com", "domains": ["PROGRAM_FINANCE"]}
+  },
+  "arms": {
+    "A": {"domains": ["PROGRAM_FINANCE"], "note": "one-cell analyst — the population that exists at work"},
+    "B": {"domains": ["AVIATION", "DEFENSE", "ENTERPRISE", "DATA_ENGINEERING", "MAINTENANCE", "PORTFOLIO_PLANNING", "PROGRAM_FINANCE"], "note": "alice's seven cells"},
+    "C": {"domains": [], "note": "CONTROL — omit `domains` entirely so `domain` defaults to MAINTENANCE. Reproduced 7/20 twice across two primes; if it moves, something other than the exclusion changed."}
+  },
+  "baseline_totals": {
+    "A": {"right_class": 12, "any_fin_class": 19, "of": 20},
+    "B": {"right_class": 12, "any_fin_class": 19, "of": 20},
+    "C": {"right_class": 7, "any_fin_class": 8, "of": 20}
+  },
+  "corpus": [
+    {"phrase": "why are we over budget on Meridian", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+    {"phrase": "break down the cost variance on Meridian", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+    {"phrase": "what is driving the overrun on Meridian", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+    {"phrase": "explain the variance on Notional Program Meridian", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+    {"phrase": "what is the EAC on Meridian", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+    {"phrase": "estimate at completion for Meridian", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+    {"phrase": "where will Meridian land when it is done", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+    {"phrase": "forecast at completion for Meridian", "expected": "fin:Program", "grounded_A": "fin:Program", "correct": true},
+
+    {"phrase": "what is the CPI on Meridian", "expected": "fin:PerformanceMeasurementBaseline", "grounded_A": "fin:Program", "correct": false, "miss_kind": "wrong-subject-noun", "should_move_on_exclusion": false},
+    {"phrase": "show me SPI over time", "expected": "fin:PerformanceMeasurementBaseline", "grounded_A": "fin:PerformanceMeasurementBaseline", "correct": true},
+    {"phrase": "are we getting more efficient", "expected": "fin:PerformanceMeasurementBaseline", "grounded_A": "http://purl.obolibrary.org/obo/BFO_0000144", "correct": false, "miss_kind": "non-fin", "should_move_on_exclusion": false},
+    {"phrase": "what is our burn rate", "expected": "fin:PerformanceMeasurementBaseline", "grounded_A": "fin:BurnRateSeries", "correct": false, "miss_kind": "RESPONSE-SHAPE", "should_move_on_exclusion": true},
+    {"phrase": "how fast are we spending", "expected": "fin:PerformanceMeasurementBaseline", "grounded_A": "fin:FundingLine", "correct": false, "miss_kind": "wrong-subject-noun", "should_move_on_exclusion": false},
+    {"phrase": "when do we run out of money", "expected": "fin:PerformanceMeasurementBaseline", "grounded_A": "fin:FundingLine", "correct": false, "miss_kind": "wrong-subject-noun", "should_move_on_exclusion": false},
+
+    {"phrase": "which control account is worst", "expected": "fin:ControlAccount", "grounded_A": "fin:ControlAccount", "correct": true},
+    {"phrase": "who is driving the overrun", "expected": "fin:ControlAccount", "grounded_A": "fin:OBSElement", "correct": false, "miss_kind": "wrong-subject-noun", "should_move_on_exclusion": false},
+    {"phrase": "rank the biggest contributors to the variance", "expected": "fin:ControlAccount", "grounded_A": "fin:VarianceDriverRanking", "correct": false, "miss_kind": "RESPONSE-SHAPE", "should_move_on_exclusion": true},
+
+    {"phrase": "what is the funding status", "expected": "fin:FundingLine", "grounded_A": "fin:FundingStatusGrid", "correct": false, "miss_kind": "RESPONSE-SHAPE", "should_move_on_exclusion": true},
+    {"phrase": "how much is unobligated", "expected": "fin:FundingLine", "grounded_A": "fin:FundingLine", "correct": true},
+    {"phrase": "is the money committed", "expected": "fin:FundingLine", "grounded_A": "fin:FundingLine", "correct": true}
+  ],
+  "prediction_for_the_exclusion_fix": {
+    "_written_before_the_transition_was_measured": true,
+    "rows_that_SHOULD_move": [
+      "what is our burn rate            (fin:BurnRateSeries        -> expect fin:PerformanceMeasurementBaseline)",
+      "rank the biggest contributors to the variance (fin:VarianceDriverRanking -> expect fin:ControlAccount)",
+      "what is the funding status       (fin:FundingStatusGrid     -> expect fin:FundingLine)"
+    ],
+    "ceiling_from_this_fix_alone": "15/20 right class, arm A",
+    "why_not_20": "The other five misses are NOT response shapes and the exclusion cannot touch them: four ground to the WRONG SUBJECT NOUN (Program / FundingLine / OBSElement — all legitimate pool members) and one leaves fin: entirely (BFO_0000144). Grading the exclusion against 20/20 would fail it for problems it does not address.",
+    "any_fin_class_expectation": "may DROP slightly. Three phrases currently reach fin: only via a response shape; if the exclusion removes those and no subject noun wins, they leave fin: altogether. A fall from 19 with a rise in right-class is the fix working, not regressing.",
+    "control": "Arm C must stay at 7/20 and 8/20. It reproduced twice across two primes. If C moves, something other than the exclusion changed and the transition is not attributable."
+  },
+  "known_dead_ends": {
+    "_note": "Classes that ground but no verb serves — find_tool returns 'No predicate edge'. Relevant because a phrase moving OFF a response shape ONTO one of these is not an improvement.",
+    "classes": ["fin:WorkPackage", "fin:WBSElement", "fin:OBSElement"],
+    "declared_in": "agent_fleet/finance_agent/main.py _NO_VERB_BY_DESIGN"
+  }
+}
