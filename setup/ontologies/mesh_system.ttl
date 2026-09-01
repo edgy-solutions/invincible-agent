@@ -430,6 +430,27 @@ mesh:ThresholdGrid a owl:Class ;
   rdfs:label "Threshold Grid" ;
   rdfs:comment "Subjects by periods, each cell against a threshold the subject owns. Axes are DERIVED from the cells, so a pair with no activity renders as a gap rather than a zero — a zero in a heat grid reads as measured-and-fine, which is a different claim from nothing-was-happening. A LIVE VIEW." .
 
+# ── ENGINE F'S THREE (2026-08-31) ────────────────────────────────────────────────────
+# Contract D refuses on the OBJECT end, so a binding cortex-ui ships is inert until these
+# exist as :OntologyClass nodes. All three were minted because the payload read found no
+# existing archetype fit — see `[[engine-f-archetype-bindings]]` for the demonstration
+# rather than the assertion.
+
+mesh:VarianceTree a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Variance Tree" ;
+  rdfs:comment "A variance decomposed into the contributing parts that sum to it, each part carrying its own further breakdown where one was needed to explain it. THE NESTING IS THE ANSWER, not a display choice: a variance stated without what produced it is a number nobody can act on. Every node states why the drill STOPPED — explained, leaf, or depth — because a tree truncated by a limit and a tree that genuinely ended look identical otherwise, and only one of them is a complete answer. Contributors below the materiality floor are reported as a residual rather than dropped, so the children visibly sum to the parent. Distinct from every grid and series in the one way that matters: it is the only archetype whose payload is RECURSIVE. A LIVE VIEW." .
+
+mesh:ContributionRanking a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Contribution Ranking" ;
+  rdfs:comment "Contributors to one measure ordered by how much of it each accounts for, each with its signed magnitude and its share of the total. ORDER IS THE ANSWER, which is what separates it from mesh:InstancesByProperty — that is a table of instances FILTERED by a property, where row order carries nothing. FAVOURABLE CONTRIBUTORS ARE RANKED TOO: showing only the adverse ones yields magnitudes summing to MORE than the variance they claim to explain, and the first reader who adds them up finds the numbers do not work. A truncated ranking states what it withheld and by how much. A LIVE VIEW." .
+
+mesh:ForecastMeasure a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Forecast Measure" ;
+  rdfs:comment "A single forward-looking figure shown together with THE NAMED METHOD THAT PRODUCED IT and the inputs that method consumed. The method is not metadata here, it is half the answer: competing formulas over the same data can differ by a margin that changes decisions, so a figure drawn without its method re-creates at the card the ambiguity a mandatory-method refusal already forced the asker to resolve. Distinct from mesh:AssetStateMetric, which reports a measured present state and needs no provenance to be read. DETERMINISTIC BY REQUIREMENT — a forecast must not be routed through a generative renderer. A LIVE VIEW." .
+
 mesh:ShortfallGrid a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Shortfall Grid" ;

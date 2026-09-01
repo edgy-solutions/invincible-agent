@@ -45,7 +45,28 @@ from rdflib.namespace import OWL, RDF  # noqa: E402
 sys.path.insert(0, str(_ROOT / "agent_fleet" / "presentation_agent"))
 from capability_admission import KNOWN_ARCHETYPES  # noqa: E402
 
-_TTL = _ROOT / "setup" / "ontologies" / "mesh_system.ttl"
+# ⛔ THE SEAL READ ONE FILE AND REPORTED SIX FALSE GAPS (2026-08-31).
+#
+# `_TTL` was `mesh_system.ttl` alone. When Engine F's bindings landed, all six `fin:` subject
+# ends read as undeclared — and every one of them IS declared, in
+# `setup/ontologies/finance_extension.ttl`, and live in the graph. Engine F declares its own
+# response shapes in its own namespace and its own file DELIBERATELY (a domain extension does
+# not write into the platform namespace); the seal predated that and assumed one file.
+#
+# A seal that reports six gaps that do not exist is worse than one that reports none: it
+# trains its reader to discount it, and the three REAL failures in the same run — the missing
+# admission entries and the missing object-end classes — were sitting right beside them.
+#
+# DERIVED FROM THE PRIME MANIFEST, which is the authoritative statement of what actually gets
+# seeded. A new domain extension is covered the day it is added to that list, with no edit
+# here — the same remedy as test_service_enumerations_agree and
+# test_mirror_covers_the_build_matrix: where the thing cannot be derived, derive the
+# population it must cover.
+def _seeded_ttls() -> list:
+    manifest = (_ROOT / "setup" / "prime_databases.py").read_text(encoding="utf-8")
+    rels = re.findall(r'"path":\s*"(ontologies/[^"]+\.ttl)"', manifest)
+    assert rels, "prime_databases.py's ONTOLOGIES manifest parsed to nothing — regex is stale"
+    return [_ROOT / "setup" / r for r in rels]
 _MESH = "http://invincible-agent/mesh#"
 _BINDINGS = _ROOT.parent / "cortex-ui" / "src" / "registry" / "assembleCapabilities.ts"
 
@@ -58,14 +79,80 @@ _ROW = re.compile(
 _ARCHETYPE = re.compile(r'archetype:\s*"(?P<name>[A-Z_]+)"')
 
 
-def _declared_classes() -> set[str]:
+def _seeded_graph():
+    """Every seeded TTL parsed into one graph, so both the classes AND the prefix map come
+    from the files rather than from this module's memory."""
     g = rdflib.Graph()
-    g.parse(str(_TTL), format="turtle")
-    return {str(s) for s in g.subjects(RDF.type, OWL.Class)}
+    for ttl in _seeded_ttls():
+        if ttl.exists():
+            g.parse(str(ttl), format="turtle")
+    return g
+
+
+def _declared_classes() -> set[str]:
+    """Every owl:Class across the TTLs the prime actually seeds — not one file."""
+    return {str(s) for s in _seeded_graph().subjects(RDF.type, OWL.Class)}
+
+
+def _prefix_bindings() -> dict:
+    """prefix -> {namespace IRIs it is bound to}, collected PER FILE.
+
+    ⛔ DERIVED FROM A MERGED GRAPH IS WRONG HERE, and this is the third narrowness in one
+    seal (2026-08-31). Collecting namespaces from one merged rdflib graph is LAST-BINDING-WINS:
+    `product_structure_extension.ttl` binds `mesh:` to `http://internal/mesh#` while
+    `mesh_system.ttl` and `finance_extension.ttl` bind it to `http://invincible-agent/mesh#`,
+    so the merge silently produced the wrong namespace and EVERY `mesh:` row reported as
+    undeclared — a hardcoded constant replaced by a more general derivation that was less
+    correct.
+
+    Per file, so a conflict is VISIBLE as a conflict rather than resolved by file order.
+    """
+    out: dict = {}
+    for ttl in _seeded_ttls():
+        if not ttl.exists():
+            continue
+        g = rdflib.Graph()
+        g.parse(str(ttl), format="turtle")
+        for prefix, ns in g.namespaces():
+            if prefix:
+                out.setdefault(prefix, set()).add(str(ns))
+    return out
+
+
+#: Prefixes this module knows authoritatively. A prefix bound two ways across the seeded set
+#: is resolved HERE rather than by whichever file parsed last — and `test_no_seeded_prefix_is
+#: _bound_two_ways` makes the conflict itself visible instead of letting this quietly paper
+#: over it.
+_AUTHORITATIVE = {"mesh": _MESH}
 
 
 def _expand(iri: str) -> str:
-    return iri.replace("mesh:", _MESH, 1) if iri.startswith("mesh:") else iri
+    """`fin:Foo` -> the full IRI, using the prefixes the seeded TTLs actually declare."""
+    if ":" not in iri or iri.startswith("http"):
+        return iri
+    prefix, _, local = iri.partition(":")
+    if prefix in _AUTHORITATIVE:
+        return f"{_AUTHORITATIVE[prefix]}{local}"
+    bound = _prefix_bindings().get(prefix) or set()
+    return f"{next(iter(bound))}{local}" if len(bound) == 1 else iri
+
+
+def test_no_seeded_prefix_is_bound_two_ways():
+    """One prefix, two namespaces, across files the prime seeds TOGETHER.
+
+    FOUND 2026-08-31 by this seal's own prefix derivation. Not fatal to the bindings — TTL
+    prefixes are file-local, so each file's classes resolve correctly — but it means the
+    token `mesh:` denotes different things in different seeded files, and any tool that
+    merges them (this seal did) silently picks one.
+
+    xfail rather than a hard failure: `product_structure_extension.ttl` is another lane's and
+    whether `http://internal/mesh#` is deliberate is theirs to rule. Recorded so it is a known
+    fact rather than a surprise the next merger meets.
+    """
+    conflicts = {p: sorted(v) for p, v in _prefix_bindings().items() if len(v) > 1}
+    if conflicts:
+        pytest.xfail(f"prefix(es) bound to more than one namespace across seeded TTLs: "
+                     f"{conflicts} — see docs/plans/, filed for the owning lane")
 
 
 def _binding_rows() -> list[tuple[str, str]]:
@@ -112,7 +199,7 @@ def test_every_binding_SUBJECT_end_is_a_declared_class():
     declared = _declared_classes()
     missing = sorted({s for s, _ in _binding_rows() if _expand(s) not in declared})
     assert not missing, (
-        f"binding subject_uri(s) with no owl:Class in mesh_system.ttl: {missing}.\n"
+        f"binding subject_uri(s) with no owl:Class in any SEEDED ttl: {missing}.\n"
         f"Contract D refuses the triple on its SUBJECT end and the rejection reads as "
         f"'gateway-rejected-REFUSED', which points at the registration rather than at the "
         f"missing declaration."
@@ -126,7 +213,7 @@ def test_every_binding_OBJECT_end_is_a_declared_class():
     declared = _declared_classes()
     missing = sorted({o for _, o in _binding_rows() if _expand(o) not in declared})
     assert not missing, (
-        f"binding object_uri(s) with no owl:Class in mesh_system.ttl: {missing}. "
+        f"binding object_uri(s) with no owl:Class in any SEEDED ttl: {missing}. "
         f"Contract D refuses on the OBJECT end."
     )
 

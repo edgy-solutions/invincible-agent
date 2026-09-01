@@ -56,15 +56,44 @@ _BINDINGS = (
 _LEGACY_SELF_BOUND = {"mesh:WorkflowObservation", "mesh:InstancesByProperty"}
 
 
+def _seeded_ttls() -> list:
+    """Every TTL the prime actually seeds, from its own manifest.
+
+    ⛔ THIS READ ONE FILE AND WAS WRONG THE SAME WAY ITS SIBLING WAS (2026-08-31).
+    `mesh_system.ttl` alone meant Engine F's six `fin:` response classes — declared in
+    `finance_extension.ttl`, `rdfs:subClassOf mesh:Response`, and live in the graph — read as
+    "SUBJECT end is undeclared, not mesh:Response". Six false failures beside three real ones.
+
+    Fixed in `test_archetype_registries_agree.py` first; this twin carried the identical
+    defect, and repairing one while the other stayed narrow is the partial-application trap
+    this repo has already paid for. Derived from the manifest, so the next domain extension is
+    covered with no edit here.
+    """
+    setup = Path(__file__).resolve().parents[2] / "setup"
+    rels = re.findall(r'"path":\s*"(ontologies/[^"]+\.ttl)"',
+                      (setup / "prime_databases.py").read_text(encoding="utf-8"))
+    assert rels, "prime_databases.py's ONTOLOGIES manifest parsed to nothing — regex is stale"
+    return [setup / r for r in rels]
+
+
 def _parents() -> dict[str, str]:
-    """class -> its rdfs:subClassOf parent, read from the TTL itself."""
-    ttl = _TTL.read_text(encoding="utf-8")
-    return {
-        m.group(1): m.group(2)
+    """class -> its rdfs:subClassOf parent, read from the seeded TTLs themselves.
+
+    ANY PREFIX ON THE CHILD, any on the parent. The child side was pinned to `mesh:` and so
+    could not see a domain extension's own namespace — Engine F declares
+    `fin:VarianceDecomposition rdfs:subClassOf mesh:Response` deliberately, because a domain
+    file does not write into the platform namespace.
+    """
+    out: dict[str, str] = {}
+    for ttl in _seeded_ttls():
+        if not ttl.exists():
+            continue
+        text = ttl.read_text(encoding="utf-8")
         for m in re.finditer(
-            r"^(mesh:\w+)\s+a\s+owl:Class\s*;\s*\n\s*rdfs:subClassOf\s+(mesh:\w+)", ttl, re.M
-        )
-    }
+            r"^(\w+:\w+)\s+a\s+owl:Class\s*;\s*\n\s*rdfs:subClassOf\s+(\w+:\w+)", text, re.M
+        ):
+            out[m.group(1)] = m.group(2)
+    return out
 
 
 def _bindings() -> list[tuple[str, str]]:

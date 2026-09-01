@@ -72,6 +72,17 @@ KNOWN_ARCHETYPES = frozenset({
     # advertising a component the interpreter cannot render. Admission is a DIFFERENT registry
     # with a different trigger: a declared contract must be a name the backend knows.
     "SHORTFALL_GRID",
+    # ENGINE F'S THREE (2026-08-31). Added because cortex-ui's binding rows now declare
+    # them and this door refuses an archetype the backend has no name for — the same
+    # refusal the four live-view archetypes met on their first registration, when this was
+    # the one registry nobody enumerated.
+    #
+    # CAUGHT BY THE SEAL, NOT BY A PRODUCTION REFUSAL: test_archetype_registries_agree
+    # failed the moment the bindings landed, naming all three. That is the prospective use
+    # the CANVAS_SEED note above hoped for, finally paying out on someone else's change.
+    "VARIANCE_TREE",
+    "CONTRIBUTION_RANKING",
+    "FORECAST_MEASURE",
     # THE FIRST ARCHETYPE THAT IS ACTED ON RATHER THAN DRAWN, 2026-08-26. "make me a portfolio
     # canvas" answers with slot-ordered artifact ids and `canvasSeedFromArtifact` arranges them;
     # no component renders it. Added HERE FIRST, before the binding exists -- the ontology class
