@@ -2305,10 +2305,38 @@ async def plan_query(request: PlanRequest) -> dict:
     assigned to different personas using the LLM.
     """
     try:
-        # INJECT active_personas HERE (view-function — see ADR-0009 Step E')
+        # INJECT active_personas HERE (view-function — see ADR-0009 Step E'), TWICE:
+        # once as the ROSTER PROSE the prompt reads, and once as the VALUES of the
+        # `PersonaTarget` dynamic enum the ANSWER IS PARSED AGAINST. Only the first
+        # was supplied, and the second is not optional.
+        #
+        # `PersonaTarget` is declared `@@dynamic` with NO static members
+        # (baml_shared/baml_src/contracts.baml). A call that ships no TypeBuilder hands
+        # BAML an EMPTY enum, so `AgentTaskDefinition.target_persona` has no legal value
+        # and EVERY task fails to parse. The model answers correctly — a live sandbox
+        # trace shows it returning one well-formed `{"target_persona": "PORTFOLIO_LEAD"}`
+        # task — and the parser then drops it, leaving `tasks: []` with `reasoning` and
+        # `extracted_concepts` fully populated. The passthrough below fires and stamps
+        # DATA_STEWARD on it.
+        #
+        # WHY IT SURVIVED: the shape is indistinguishable from a small model declining to
+        # decompose, and the comment on that passthrough said exactly that. A wrong
+        # explanation that fits is stickier than no explanation. The tell is in the
+        # RENDERED PROMPT, not the response — `target_persona: ,` with nothing after the
+        # colon, where the enum members should be listed.
+        #
+        # `/route_and_plan` further down builds this TypeBuilder correctly. This endpoint
+        # is the one the supervisor actually calls, and it did not. Both reads come from
+        # `fetch_active_personas` so the enum and the prose cannot disagree.
+        tb = TypeBuilder()
+        for persona_name in await fetch_active_personas():
+            tb.PersonaTarget.add_value(persona_name).description(
+                _LEGACY_PERSONA_PROMPTS.get(persona_name, "Persona-specific specialist.")
+            )
         plan = await b.DecomposeQuery(
             raw_query=request.query,
-            active_personas=await get_baml_persona_string()
+            active_personas=await get_baml_persona_string(),
+            baml_options={"tb": tb},
         )
         result = {**plan.model_dump(), "domain": request.domain}
 
@@ -2348,9 +2376,25 @@ async def plan_query(request: PlanRequest) -> dict:
             )
 
         # ── Legitimate degraded passthrough ─────────────────────────────
-        # gpt-oss via Ollama (and similar reasoning-heavy small models)
-        # sometimes populates reasoning + extracted_concepts but leaves
-        # tasks=[]. Synthesizing a single passthrough task keeps the
+        # ⚠️ THIS COMMENT USED TO BLAME THE MODEL, AND THAT WAS WRONG. It read:
+        # "gpt-oss via Ollama (and similar reasoning-heavy small models) sometimes
+        # populates reasoning + extracted_concepts but leaves tasks=[]". Measured on
+        # the sandbox cluster 2026-08-31, that never happened: the model returned a
+        # well-formed task every time and the EMPTY `PersonaTarget` enum above discarded
+        # it. `tasks=[]` was deterministic, not occasional, and this branch fired on
+        # 100% of calls — stamping DATA_STEWARD on every query the fleet ever planned.
+        #
+        # The branch is KEPT, because a genuinely task-less response is still possible
+        # and spawning nothing is still worse. But it is now a fallback rather than the
+        # only path, and `degraded` in a response is now real signal about the model
+        # instead of a constant. If you see it on every call again, suspect the
+        # TypeBuilder before you suspect the LLM.
+        #
+        # STILL OPEN: DATA_STEWARD is a hardcoded guess and a wrong one for most
+        # domains. Left as-is deliberately — changing it is a routing change and wants
+        # its own ruling, not a ride-along on a wiring fix.
+        #
+        # Synthesizing a single passthrough task keeps the
         # supervisor's dynamic_tasks.map() from spawning nothing. The
         # `degraded` flag lets downstream callers (supervisor, gateway)
         # know this is the degraded path rather than a normal plan —

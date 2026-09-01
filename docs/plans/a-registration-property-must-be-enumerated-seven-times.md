@@ -94,3 +94,39 @@ Cypher-bearing literal in three modules for `--`.
 `mesh_slots`, end to end, is `[[slots-are-extracted-then-dropped-at-dispatch]]`. Verified on
 the live graph by name against signatures — five verbs, zero disagreements — and through
 Engine O's HTTP surface at 7 of 10 verbs carrying declarations.
+
+---
+
+## A second worked example, and it is worse than the first — 2026-08-31
+
+`mesh_slots` cost a day because four of the seven sites were found only after an earlier
+one had been declared "the gate". **`arity` and `required_args` were missing at FIVE of
+the seven, and had been since the arity gate shipped.**
+
+The distribution is what makes this one instructive. It was not a scatter of misses — it
+was a clean split:
+
+```
+sites 1-5  (the WRITE path)  ✗ ✗ ✗ ✗ ✗       nothing could ever be declared
+sites 6-7  (the READ path)   ✓ ✓             everything was ready to consume it
+```
+
+An engine could not declare `arity` at any hop, and `required_args` — which *did* reach
+the manifest and *was* populated — was dropped at `_build_rel_props_for_saga`, the one
+function whose output lands on the edge.
+
+**Two additions to the checklist, both from this case:**
+
+1. **Check the halves, not the count.** "Five of seven" sounds like a nearly-finished
+   feature. It was a feature that could not run at all, because the five were contiguous
+   and were the ones that write. A property carried at 2 of 7 sites and a property
+   carried at 5 of 7 are the same property: absent. Walk the path in ORDER and find the
+   first gap; sites downstream of it are decoration.
+
+2. **A unit test on the consumer proves nothing about the carry.** `test_arity_gate.py`
+   was green throughout, because it constructs its verb dicts by hand — it is the thing
+   supplying the declaration whose absence is the bug. The seal for an enumerated
+   property must start at the WRITE site and end at the consumer, joined by the real key
+   names. `tests/test_eligibility_declarations_reach_the_edge.py` is that shape.
+
+Full account: `[[two-eligibility-gates-were-inert-and-green]]`.

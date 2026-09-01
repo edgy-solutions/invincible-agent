@@ -241,6 +241,19 @@ class RegistrationManifest(BaseModel):
     # value→arg-key resolver (does the query supply arg X? — needs the arg's
     # vocabulary, e.g. DataHub tags) travels with the concrete verb, not here.
     required_args: list[str] = Field(default_factory=list)
+    # QUERY-SHAPE eligibility (ADR-0008 follow-up). "set" = operates on the
+    # collection, "single" = operates on one asset, "any"/None = neutral. The
+    # supervisor drops POSITIVELY-single verbs for a set-shaped query, so a
+    # collection question can never resolve to a single-asset verb.
+    #
+    # DECLARED, never inferred from definition prose — and until 2026-08-31 it
+    # could not be declared: `required_args` reached this manifest but never the
+    # Neo4j edge, and `arity` was not a field here at all, while the read side
+    # (Cypher RETURN, CompatibleVerb, its constructor, the gate itself) was
+    # complete. Both gates therefore ran on null for every verb, which they are
+    # written to treat as "never exclude". None → any (never excluded), which
+    # keeps an incomplete backfill from over-restricting.
+    arity: Optional[str] = Field(default=None)
     cost_class: str = Field(default="medium")
     requires_human_approval: bool = Field(default=False)
     version: str = Field(default="0.1.0")
@@ -658,6 +671,7 @@ def _build_custom_properties(manifest: "RegistrationManifest") -> dict:
         "mesh_verb_synonyms":           ",".join(manifest.verb_synonyms),
         "mesh_verb_anti_synonyms":      ",".join(manifest.verb_anti_synonyms),
         "mesh_required_args":           ",".join(manifest.required_args),
+        "mesh_arity":                   manifest.arity or "",
         "mesh_version":                 manifest.version,
         "mesh_registrar_version":       REGISTRAR_VERSION,
         "mesh_provider":                provider,
@@ -962,6 +976,29 @@ def _build_rel_props_for_saga(
         # same container-traded-for-elements defect that produced
         # "422 unknown fiscal period(s): F, Y, 2, 6, -, Q, 4".
         "slots": json.dumps([dict(s) for s in (manifest.slots or [])]),
+        # THE ELIGIBILITY GATES' ONLY SOURCE, and for months this bag did not name them.
+        #
+        # `dynamic_supervisor._filter_verbs_by_arity` and `_filter_verbs_by_argument_fit`
+        # read these off the compat walk. The walk RETURNs them, `CompatibleVerb` declares
+        # them, its constructor passes them — the whole read half was wired. Nothing wrote
+        # them. Every verb came back null, both gates read null as "never exclude", and the
+        # arity gate has been structurally inert on every cluster since it shipped.
+        #
+        # IT HAD A TELL AND NOBODY WAS LISTENING: Neo4j emits
+        # `the missing property name is: arity` on every single compat walk. Measured on
+        # sandbox 2026-08-31, 0 of 10 verbs on idp#Portfolio carried either property.
+        #
+        # AND ITS UNIT TESTS WERE GREEN THROUGHOUT. tests/test_arity_gate.py builds its
+        # verb dicts by hand (`_v(iri, arity="single")`), so it proves the FILTER's logic
+        # and says nothing about whether a real verb can ever carry a non-null arity. The
+        # claim was "single-asset verbs are excluded from set queries"; the assertion was
+        # on the neighbouring claim that the function excludes what it is handed.
+        #
+        # required_args is a list of primitives — a legal Neo4j property. arity follows the
+        # `timeout_s` idiom below and is written ONLY when declared, so an undeclared verb
+        # holds no property at all rather than an empty string that reads as a value.
+        "required_args": [str(a) for a in (manifest.required_args or [])],
+        **({"arity": str(manifest.arity)} if manifest.arity else {}),
         # timeout_s is optional — only set when the engine declared it.
         **(
             {"timeout_s": float(manifest.timeout_s)}

@@ -152,6 +152,8 @@ def _emit_to_registrar(
     provider: Optional[str] = None,
     timeout_s: Optional[float] = None,
     slots: Optional[list] = None,
+    arity: Optional[str] = None,
+    required_args: Optional[Iterable[str]] = None,
 ) -> None:
     """POST a structured manifest to the mesh-registrar gateway.
 
@@ -206,6 +208,23 @@ def _emit_to_registrar(
         # up into every engine that registers. `openapi_schema` above stringifies at the
         # client, which is the older habit and the reason nothing can validate it.
         "slots": list(slots or []),
+        # QUERY-SHAPE AND ARGUMENT-FIT ELIGIBILITY — both DECLARED facts, never
+        # inferred, and until 2026-08-31 neither could be declared at all.
+        #
+        # The READ half of this carry was complete and had been for months: the compat
+        # walk's Cypher RETURNs `r.arity` and `r.required_args`, `CompatibleVerb`
+        # declares both, its constructor passes both, and `_filter_verbs_by_arity`
+        # gates on the result. The WRITE half existed nowhere — not in this helper, not
+        # in the manifest, not in the property bag that reaches Neo4j. So every verb
+        # read back null, every null was treated as "never exclude", and the arity gate
+        # was INERT on a live cluster while its unit tests stayed green, because those
+        # tests build their verb dicts by hand.
+        #
+        # Measured on sandbox before the fix: 0 of 10 verbs on idp#Portfolio carried
+        # either property, and Neo4j said so out loud — the compat walk logs
+        # `the missing property name is: arity` on every call.
+        "arity": arity,
+        "required_args": [str(a) for a in (required_args or [])],
     }
 
     # v0.2 SDK retry semantics per ADR-0006 §Addendum §SDK side:
@@ -281,6 +300,8 @@ def register_engine_to_mesh(
     provider: Optional[str] = None,
     timeout_s: Optional[float] = None,
     slots: Optional[list] = None,
+    arity: Optional[str] = None,
+    required_args: Optional[Iterable[str]] = None,
 ) -> None:
     """Emit a DataHub MCP describing this engine as a predicate edge.
 
@@ -330,6 +351,11 @@ def register_engine_to_mesh(
             # measured once: presentations emitted direct-to-DataHub while the
             # DataHub->substrate materialiser was RETIRED, so 11 URNs reached 0 rows.
             slots=slots,
+            # Same reasoning as `slots` above, and the same failure if omitted: the
+            # gateway is the live path, so a property set only in the DataHub fallback
+            # below reaches no edge and no reader.
+            arity=arity,
+            required_args=required_args,
         )
         return
 
@@ -388,6 +414,13 @@ def register_engine_to_mesh(
         # means domain-agnostic.
         "mesh_domains":                 json.dumps(list(domains or [])),
         "mesh_cost_class":              cost_class,
+        # Eligibility declarations. Mirrored here for symmetry with the gateway
+        # manifest — this DataHub path no longer materialises to the substrate
+        # (ADR-0006 §Addendum retired the linker), so it is the audit record rather
+        # than the live write. An asymmetry between the two is the thing that has
+        # cost this repo real time, so they move together.
+        "mesh_arity":                   arity or "",
+        "mesh_required_args":           json.dumps([str(a) for a in (required_args or [])]),
         "mesh_requires_human_approval": "true" if requires_human_approval else "false",
         # Runtime
         "mesh_endpoint_url":            endpoint_url,
