@@ -137,6 +137,34 @@ data:
   # resolves differently depending on where the reader stands, and a ticket or an endpoint
   # is consumed somewhere else.
   ENGINE_FIN_PUBLIC_URL: "http://{{ .Release.Name }}-engine-fin{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineFinance.port }}"
+  # Engine O's SELF url — the endpoint it bakes into the mesh when it registers its OWN
+  # mesh:resolveInstance provider for SUSTAINMENT.
+  #
+  # ADDED 2026-09-01, AND IT IS THE SEVENTH OF SEVEN. The code reads seven such variables;
+  # this template set six. ENGINE_{A,DA,E,FIN,P,W}_PUBLIC_URL were all wired when the
+  # bare-literal defect was fixed for the engines; ONTOLOGY_SVC_SELF_URL arrived LATER, with
+  # engine-o's own provider registration, through a different door, and nobody re-ran the
+  # diff. So it was never a regression — it was a gap that had always been there, which is
+  # exactly why "but my values.yaml has not changed" was true and did not help.
+  #
+  # UNTIL NOW ENGINE-O ADVERTISED `http://iagent-engine-o:8084` ON EVERY CLUSTER, from the
+  # getenv default at agent_fleet/ontology_service/main.py. Measured on the work cluster
+  # 2026-09-01: 2 of 44 registered endpoint_urls were bare, and this was one of them. On
+  # sandbox the literal is accidentally correct, which is what kept it invisible — the
+  # release IS named `iagent-` there and a bare name resolves in-namespace.
+  #
+  # TWO FAULTS IN ONE STRING, both fixed by the same helper the siblings use:
+  #   1. `iagent-` is the SANDBOX RELEASE. Work runs `invincible-agent-`, so the host does
+  #      not exist there at all.
+  #   2. A host with NO DOTS cannot suffix-match a NO_PROXY entry of `.svc.cluster.local`,
+  #      so an in-cluster call gets handed to a corporate proxy even where the name resolves.
+  #
+  # INERT UNTIL ENGINE-O RE-REGISTERS. Registration bakes this value into the verb edge and
+  # the dispatcher reads the endpoint FROM THE GRAPH, never from its own environment — so
+  # changing it here fixes nothing until engine-o restarts and overwrites the edge. Verify by
+  # READING THE EDGE, not the pod status and not the boot log:
+  #   MATCH ()-[r]->() WHERE r.iri = 'mesh:resolveInstance' RETURN r.endpoint_url, r.provider
+  ONTOLOGY_SVC_SELF_URL: "http://{{ .Release.Name }}-engine-o{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineO.port }}"
 
   # Dagster Discovery
   # DAGSTER_WEBSERVER_URL: consumed by cortex-bff and src/iagent/gateway.py
