@@ -21,3 +21,14 @@ personas:
   - ARCHITECT
   - MECHANIC
   - ANALYST
+  # Engine F registers its six finance verbs, plus its resolveInstance and
+  # enumerateInstances providers, with owner_persona=PROGRAM_FINANCE_ANALYST
+  # (agent_fleet/finance_agent/main.py OWNER_PERSONA). Added 2026-08-31.
+  #
+  # ASSERTABLE FROM THIS FILE ALONE. The header above says to update ADR-0009's persona
+  # enum in the same edit; that instruction predates chart 0.3.12. The catalog rego now
+  # walks the directory (domain.can_view) instead of enumerating a hardcoded persona
+  # list — validate_policy.py's own header records this — so adding a persona here needs
+  # no code-side change. ADR-0009 is the ADR that SUNSET persona as a classification
+  # axis; it describes the legacy 6-way enum rather than maintaining a live one.
+  - PROGRAM_FINANCE_ANALYST

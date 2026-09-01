@@ -53,6 +53,13 @@ users:
       - aviation-engineers
       - defense-engineers
       - enterprise-architects
+      - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
+                            # Engine F demo actor, so the persona/domain picker offers
+                            # her the PROGRAM_FINANCE_ANALYST cell and a finance question
+                            # can ground. NOT an assertion that alice-the-persona owns
+                            # program finance — same fixture posture as the four below.
+                            # Comes out when the demo no longer needs a finance-entitled
+                            # user.
       - portfolio-leads     # FIXTURE grant, 2026-08-22: alice is the
                             # portfolio-review demo actor. Not a claim that
                             # alice-the-persona owns portfolio governance.

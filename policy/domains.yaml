@@ -14,3 +14,12 @@ domains:
   - ENTERPRISE
   - DATA_ENGINEERING
   - MAINTENANCE
+  # The domain Engine F's eight registrations live in, and the domain its fourteen
+  # fin: OntologyClasses carry (setup/prime_databases.py's ONTOLOGIES entry). Same
+  # consequence as PORTFOLIO_PLANNING above: /resolve domain-scopes the class pool to the
+  # caller's cells, so a finance question only grounds+routes to Engine F from a
+  # PROGRAM_FINANCE cell. Added 2026-08-31.
+  #
+  # A DOMAIN IN NO GROUP GRANTS NOBODY ANYTHING — scoping is per CELL. This line alone
+  # changed nothing observable; the grant is the finance-analysts group in groups.yaml.
+  - PROGRAM_FINANCE

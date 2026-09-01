@@ -16,6 +16,20 @@ groups:
     grants:
       - {persona: PORTFOLIO_LEAD, domain: PORTFOLIO_PLANNING}
 
+  # ── Program finance (2026-08-31) ─────────────────────────────────
+  # The cell Engine F's verbs live in. Exactly the shape of portfolio-leads above, and
+  # for the same reason: /resolve scopes the OntologyClass pool to the cells the caller
+  # holds, and none of the existing cells contain the fourteen fin: subjects — so a
+  # finance question grounds to nothing and routes nowhere while engine-fin reports
+  # healthy, serves all six verbs, and shows eight verb edges in the graph.
+  #
+  # MEASURED 2026-08-31: engine-fin was fully deployed and verified — 8 edges by name at
+  # the FQDN endpoint, every verb answering — and unreachable by every user, because the
+  # cell did not exist. Registration is not entitlement.
+  finance-analysts:
+    grants:
+      - {persona: PROGRAM_FINANCE_ANALYST, domain: PROGRAM_FINANCE}
+
   aviation-stewards:
     grants:
       - {persona: DATA_STEWARD, domain: AVIATION}
