@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_modules_survive_flat_layout.py
     import measures
-    from slots import slots_for
+    from slots import arity_for, slots_for
     from seed import build_seed, check_consistency
     from state import (
         MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
@@ -32,7 +32,7 @@ try:  # flat in the image (/app), packaged in the repo — see tests/test_agent_
     from entities import Interval
 except ImportError:
     from agent_fleet.planning_agent import measures
-    from agent_fleet.planning_agent.slots import slots_for
+    from agent_fleet.planning_agent.slots import arity_for, slots_for
     from agent_fleet.planning_agent.seed import build_seed, check_consistency
     from agent_fleet.planning_agent.state import (
         MoveProject, MoveSiteImpact, PlanStore, SetCommitment, SetCost, UnknownTarget,
@@ -185,17 +185,14 @@ async def lifespan(app: FastAPI):
                     # gate was built to do. See
                     # docs/plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md.
                     #
-                    # ONE VERB ON PURPOSE. The same rule — a REQUIRED REFERENT SLOT MEANS
-                    # SINGLE — derives cleanly for four of the fourteen measures
-                    # (neighborhood, capability_path, process_evolution, tech_footprint) and
-                    # for none of the other ten. Landing all four is a routing change across
-                    # four verbs and wants its own ruling; landing one proves the carry
-                    # end to end at population size one, which is the same narrow-first
-                    # discipline scripts/roll-litany.sh enforces for rolls. When that ruling
-                    # lands, this literal should become `arity_for(v["fn"])` in slots.py
-                    # beside `slots_for` — hand-transcription here is a deliberate probe,
-                    # not the end state.
-                    arity=("single" if v["fn"] == "plan_dependency_neighborhood" else None),
+                    # DERIVED, like `slots` above — the one-verb literal that stood here
+                    # was a deliberate probe to prove the carry at population size one, and
+                    # the ruling to generalise it landed the same day. A measure is single
+                    # when it has a slot that is both REQUIRED and a REFERENT, i.e. it
+                    # cannot run without one named instance: neighborhood, capability_path,
+                    # process_evolution, tech_footprint — four of fourteen, and none of the
+                    # other ten.
+                    arity=arity_for(v["fn"]),
                 )
             except Exception as exc:  # pragma: no cover
                 # Best-effort, matching the fleet's existing posture: a failed registration

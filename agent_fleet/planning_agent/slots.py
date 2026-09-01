@@ -266,3 +266,40 @@ def slots_for(fn_name: str) -> List[dict]:
             ) else str(prm.default)
         out.append(rec)
     return out
+
+
+def arity_for(fn_name: str) -> str | None:
+    """QUERY-SHAPE eligibility, derived from the signature — never hand-transcribed.
+
+    "single" when the measure CANNOT RUN without one named instance: it has a slot that is
+    both REQUIRED and a REFERENT. Otherwise None, which the supervisor's gate reads as
+    "any" and never excludes.
+
+    WHY THOSE TWO CONDITIONS AND NOT THE PROSE. `plan_dependency_neighborhood` and
+    `plan_dependency_violations` have descriptions a paragraph apart and opposite arities;
+    the discriminator that is actually load-bearing is in the signature —
+    `project_id: str` with NO default versus no such parameter at all. A required referent
+    means the question has to name something; an optional one is a FILTER on a
+    portfolio-wide answer (`plan_schedule`'s `scope_initiative_id`) and leaves the verb
+    set-shaped.
+
+    WHAT THIS BUYS. `_filter_verbs_by_arity` drops a "single" verb when
+    `query_is_set = not subject_instance_id` — so a question that named no instance stops
+    being routed to a verb that cannot answer it. Today that same question routes there and
+    gets a 400 for a missing mandatory slot, two hops later and with no surface a reader can
+    act on. See docs/plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md.
+
+    ROUTE-SUPPLIED HANDLES CANNOT TRIGGER THIS, and that falls out rather than being
+    special-cased: `slots_for` sets `referent` only on SPOKEN slots, because a handle is
+    resolved by the dispatcher from the store and was never something a speaker names.
+    `plan_commit_scenario` has nine slots and stays set-shaped for exactly that reason.
+
+    Derived for four of the fourteen measures and for none of the other ten — a lumpy split,
+    which is the shape a real discriminator produces. Pinned in
+    tests/planning/test_arity_is_derived_from_the_signature.py so a signature change moves
+    the declaration with it instead of leaving a stale literal behind.
+    """
+    for d in slots_for(fn_name):
+        if d.get("required") and d.get("referent"):
+            return "single"
+    return None
