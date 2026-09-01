@@ -96,6 +96,30 @@ fin:FundingLine a owl:Class ;
 # in its own file. Contract D checks that the URI RESOLVES to an :OntologyClass node; it
 # does not care which namespace supplied it.
 #
+# ⛔ AN OUTPUT DEFINITION DESCRIBES THE SHAPE OF THE ANSWER, NEVER THE QUESTION.
+#
+# MEASURED 2026-09-01, on a one-cell PROGRAM_FINANCE user — the right population, not a
+# power user. Nine of twenty finance phrasings grounded to a class that no verb serves, and
+# almost every one landed on a RESPONSE shape below rather than on the subject noun above:
+#
+#     "what is our burn rate"    -> fin:BurnRateSeries      (no predicate edge: DEAD END)
+#     "what is the funding status" -> fin:FundingStatusGrid  (no predicate edge: DEAD END)
+#     "show me SPI over time"    -> fin:PerformanceIndexSeries
+#
+# CAUSE: these definitions were written as descriptions of the QUESTION — BurnRateSeries
+# literally began "Answers how fast money is going out and when it runs out at this rate".
+# That is exactly the sentence a user types, so the output class outranked the subject noun
+# it should never have competed with. Grounding must land on the INPUT end of Contract D;
+# the output end is reachable only through a verb.
+#
+# Engine P does not have this defect and its mesh: response definitions show why — they
+# describe structure and refusals ("Refuses a payload with no periods"), never the ask.
+# Rewritten to match: structure, invariants, what each REFUSES. The question-shaped language
+# belongs to the subject nouns above and to each verb's registered description.
+#
+# This is the sibling-name-bleed rule one level up: there a definition competed with its
+# NEIGHBOUR, here it competed with its own SUBJECT.
+
 # They still hang off mesh:Response, because the root is a platform fact and re-rooting
 # would make the response taxonomy two trees. See the flat-graph note above for what that
 # parent edge does and does not materialise into.
@@ -103,32 +127,32 @@ fin:FundingLine a owl:Class ;
 fin:VarianceDecomposition a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Variance Decomposition" ;
-    rdfs:comment "A variance broken into the contributing parts that sum to it, each part carrying its own further breakdown where one was needed to explain it, down to the level at which the explanation stops. Output shape of a recursive drill: the nesting is the answer rather than a presentation choice, because a variance stated without what produced it is a number nobody can act on." .
+    rdfs:comment "A nested structure whose root figure equals the sum of its children, each child carrying its own children where a further level was required, and every node stating the reason its expansion stopped. Children below a materiality floor are collapsed into a stated residual so that every level still sums. Refuses a payload whose children do not reconcile to their parent. The only response shape here whose payload is RECURSIVE." .
 
 fin:EstimateAtCompletion a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Estimate At Completion" ;
-    rdfs:comment "A forecast of total cost at the finish, stated together with the named formula that produced it and the inputs that formula consumed. The method is never implicit in this shape: two forecasts for the same effort differ materially by method alone, so a figure that does not carry its method is not this shape." .
+    rdfs:comment "A single projected figure carried together with the identifier of the formula that produced it, that formula written out, and the quantities it consumed. Refuses a payload in which the figure is present and the formula identifier is not: the two travel together or neither is meaningful. Carries the variance against budget and the remaining-cost figure derived from the same inputs." .
 
 fin:PerformanceIndexSeries a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Performance Index Series" ;
-    rdfs:comment "Efficiency ratios reported period by period - value claimed against money spent, and value claimed against value planned - with the raw quantities each ratio was computed from carried alongside it. A series rather than a point, because the direction of travel is the question and a single ratio cannot show it." .
+    rdfs:comment "Dimensionless ratios indexed by period, each accompanied by the two quantities it was divided from, and by its cumulative counterpart. Carries no currency and refuses one: a ratio has no unit, and the amounts travelling beside it declare their unit under a separate field so nothing promotes a currency onto the ratio. A period with no reported quantities is ABSENT rather than zero." .
 
 fin:BurnRateSeries a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Burn Rate Series" ;
-    rdfs:comment "Money leaving per period beside the money the plan phased for that period, with the cumulative position and the runway that the observed rate implies. Answers how fast money is going out and when it runs out at this rate; it counts CASH LEAVING rather than value claimed, which is why it can look healthy while performance is poor." .
+    rdfs:comment "Amounts indexed by period in a single declared currency, each period carrying an outflow, the phased plan figure for that period, both cumulative counterparts, the remaining balance, and a rate-derived projection with the width of the window it was averaged over stated alongside it. The projection is expressed in periods, never as a date." .
 
 fin:VarianceDriverRanking a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Variance Driver Ranking" ;
-    rdfs:comment "The contributors to a variance ordered by how much of it each one accounts for, each with its signed magnitude and its share of the total. A ranking, so the tail is visible as a tail: an answer naming only the largest contributor hides whether it is the cause or merely the biggest of many." .
+    rdfs:comment "An ordered sequence of contributors whose signed magnitudes sum to the figure they decompose, each carrying its share of that total and its position in the order. Signs are preserved in both directions so the sum reconciles. A truncated sequence declares how many entries it withheld and their combined magnitude; an untruncated one declares neither." .
 
 fin:FundingStatusGrid a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Funding Status Grid" ;
-    rdfs:comment "Cells of three nested quantities - what was made available, what has been placed under obligation, and what has actually been paid out - with the producer's own verdict on each cell. The verdict is stated rather than inferred, because a cell whose obligations are covered on paper and whose payments have not started is not the same condition as one that is genuinely spent down, and no comparison of two of the three quantities can tell them apart." .
+    rdfs:comment "Cells indexed by subject and period, each holding three nested quantities where each is a subset of the one above it, the two balances derived between them, and a verdict stated by the producer rather than derived by the reader. Refuses a cell whose nesting is violated. The verdict is required because two of the three quantities cannot distinguish the middle condition from the settled one." .
 
 # =============================================================================
 # Money primitives - FIBO, referenced rather than reinvented (ADR-0045 Decision 2)
