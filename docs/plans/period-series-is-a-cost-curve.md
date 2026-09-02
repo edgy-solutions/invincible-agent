@@ -92,6 +92,36 @@ stayed remembered.
 in `_FIN_WRONG_ARCHETYPE` with written reasons — with a second test that **proves each exemption
 still fails**, so a stale one cannot sit there suppressing a live check after the repair lands.
 
+## THE GENERAL LESSON: deriving one population does not protect the other
+
+**A seal has as many populations as its parametrisation has axes, and fixing one is what stops
+you thinking about the rest.**
+
+`test_the_producer_emits_every_key_its_archetype_requires` is parametrised on two axes:
+
+| axis | how the population was obtained | outcome |
+|---|---|---|
+| **archetype** | DERIVED from the projector's own table — after a remembered list missed `SHORTFALL_GRID` | caught the three finance archetypes on the day they were added |
+| **producer** | REMEMBERED — one lambda per archetype, all seven Engine P's | missed both finance producers entirely |
+
+The file *documents the first fix in its own docstring* — *"the list was REMEMBERED rather than
+enumerated… a fix applied to the instances someone could recall, not to the population that
+shares the cause"* — and then leaves the second axis remembered, two parameters to the left.
+
+**Why the second axis is the harder one to see:** after deriving the archetype population, the
+test *feels* enumerated. It reports coverage, it has a coverage test guarding it, and that test
+passes. Nothing about it says "coverage of archetypes, given one arbitrary producer each." The
+fixed axis supplies the feeling of completeness for the whole seal.
+
+**The check that generalises:** for any parametrised seal, list the axes and ask of EACH one —
+*where did this population come from?* An axis whose answer is "someone wrote them down" is
+unguarded regardless of how rigorously its neighbour is derived. Here the un-derived axis was
+the one that decides whether a card draws.
+
+*This is the enumeration law with an axis added. It is recorded in this packet rather than
+promoted to `docs/principles/`, because that law has instances across several lanes and its
+write-up is not this lane's to author alone — offered for promotion if the architect wants it.*
+
 ## Owed
 
 * The ruling: A or B.

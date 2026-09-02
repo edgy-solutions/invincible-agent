@@ -47,6 +47,34 @@ stated as a fact**. The event that actually happened was `ui_payload_timeout`. A
 like an observation but holds a guess is the same disease as a field named `rejected` that reports
 one of two refusal kinds.
 
+## THE PAIR — the counter-example that makes this arguable rather than merely felt
+
+Same system, same week, two degraded cards. The only difference is whether the refusal named
+itself.
+
+| | `Knowledge Document · No content available` | `NOTHING TO DRAW — no numeric amount on any row` |
+|---|---|---|
+| distinct causes behind it | **eleven**, in four services | one |
+| what it tells the reader | that something went wrong | **which contract clause failed** |
+| time to root cause | **a night** | **minutes** |
+| found by | three out-of-band artifacts and a pre-registration | reading the message |
+
+**The second card is this law being obeyed, by a component nobody wrote it for.** cortex's
+`validatePeriodSeries` returns a typed refusal reason — `"no numeric amount on any row"` — and
+that one string carried the diagnosis: it named the clause, which named the field set, which
+named the archetype mismatch. No probe, no correlation across three logs, no prereg.
+
+It is also worth being precise about what the good card did NOT do. It did not say
+`"unable to render"`, and it did not draw a chart with an empty series — **either would have
+been a collapse.** The second is the more tempting: a component that draws whatever numbers it
+can find always produces something, and what it produces is a confident wrong card. Refusing
+*with a reason* is the behaviour, not refusing.
+
+**And the refusal was still not enough on its own.** Two people reported those cards as
+drawing — one measuring the selected archetype rather than the rendered artifact, one relaying
+that report — and what closed the gap was a person opening the UI. A named refusal shortens the
+diagnosis; it does not substitute for looking at the thing.
+
 ## The information usually already exists
 
 **This is what makes the law cheap to obey and expensive to ignore: at every measured instance,
