@@ -1512,9 +1512,55 @@ from iagent_pure.predicate_routing import (
 from iagent_pure.slot_acceptance import accept_slots, decode_declarations
 from iagent_pure.slot_disposition import ask_card, decide_disposition
 
-#: One model call's budget. Short on purpose: a slot REFINES a question that will still be
-#: answered without it, so a slow extractor must cost the user a default, never a timeout.
+#: One model call's budget, CONDITIONAL ON THE ROUTED VERB'S SLOT CENSUS.
+#:
+#: The short budget's justification used to be stated unconditionally: "a slot REFINES a
+#: question that will still be answered without it, so a slow extractor must cost the user a
+#: default, never a timeout." THAT IS TRUE FOR spoken-OPTIONAL AND EXACTLY INVERTED FOR
+#: spoken-MANDATORY. Without a mandatory slot the verb cannot run at all, so the timeout does
+#: not cost a default — it converts a fully-specified question into an elicitation.
+#:
+#: MEASURED 2026-09-02: "why are we over budget on Notional Program Meridian" routed to
+#: finVarianceAnalysis at 0.96; engine-o extracted program_id="Notional Program Meridian" at
+#: 0.95 and returned 200 OK; the supervisor had already given up at 20s. The user was then
+#: asked "which Program?" about a question that named the program. EVERY Engine F verb has a
+#: spoken-mandatory slot, so this converted all six into asks and no card ever drew.
+#: See docs/plans/a-mandatory-slot-does-not-refine.md.
+#:
+#: SO THE BUDGET IS NOT ONE NUMBER. A verb whose slots are all optional keeps the short one —
+#: the original reasoning is sound there and waiting is the wrong trade. A verb with any
+#: spoken-mandatory slot gets the long one, because the alternative to waiting is not a
+#: default, it is asking the user something they already said.
 _FILL_SLOTS_TIMEOUT_S = float(os.getenv("FILL_SLOTS_TIMEOUT_S", "20"))
+
+#: The budget when the routed verb cannot run without something the speaker must say.
+#: Larger than the observed extraction (which returned correctly AFTER 20s), and bounded:
+#: the cost of waiting is one user's patience, the cost of timing out is a wrong question.
+_FILL_SLOTS_TIMEOUT_MANDATORY_S = float(
+    os.getenv("FILL_SLOTS_TIMEOUT_MANDATORY_S", "75")
+)
+
+#: Slot kinds whose ABSENCE the verb cannot run without. `handle` and `ceremony` are
+#: route-supplied — the dispatcher resolves them from the store and no speaker names them —
+#: so they never make a question un-runnable for want of extraction.
+_MUST_BE_SPOKEN_KINDS = frozenset({"spoken-mandatory"})
+
+
+def _fill_slots_budget(declarations) -> float:
+    """The extraction budget for THIS verb, from its own declarations.
+
+    Derived, never configured per-verb: the census is a fact about the signature the verb
+    already published, so a verb that gains a mandatory slot gets the longer budget with no
+    second place to update. Falls back to the short budget when the declarations are absent
+    or unreadable — the conservative direction, matching every other degradation on this path.
+    """
+    try:
+        for d in declarations or []:
+            if isinstance(d, dict) and d.get("kind") in _MUST_BE_SPOKEN_KINDS:
+                return _FILL_SLOTS_TIMEOUT_MANDATORY_S
+    except TypeError:
+        pass
+    return _FILL_SLOTS_TIMEOUT_S
 
 #: THE OPTION SOURCE FOR AN ELICITATION, AND IT IS NOT WIRED YET - deliberately, and the
 #: gap is named rather than papered over.
@@ -1584,12 +1630,24 @@ def _fill_slots_from_query(
     answered without it; spending a second model call and another few seconds of a user's
     wait to maybe refine it is the wrong trade. The generalist fallback next door retries
     because its failure means NO answer at all.
+
+    THAT REASONING IS TRUE OF spoken-OPTIONAL SLOTS ONLY, and the budget above is now
+    conditional for exactly that reason — see `_fill_slots_budget`. For a spoken-MANDATORY
+    slot the failure DOES mean no answer: the honest-empty return leaves the slot unfilled,
+    the ask disposition fires, and a fully-specified question becomes an elicitation.
+
+    THE RESIDUE, NAMED RATHER THAN PAPERED OVER: a longer budget makes the timeout rare, it
+    does not make `{}` honest. A genuine failure still returns the same empty dict as a
+    successful extraction from a question that named nothing — identical shape, opposite
+    meaning — so the ask cannot tell "the speaker did not say" from "we failed to look".
+    Distinguishing those is a change to the ask disposition's input, not to this budget, and
+    it is deliberately not made here.
     """
     try:
         resp = requests.post(
             f"{ONTOLOGY_SVC_URL}/fill_slots",
             json={"query": query, "verb_iri": verb_iri, "declarations": declarations},
-            timeout=_FILL_SLOTS_TIMEOUT_S,
+            timeout=_fill_slots_budget(declarations),
         )
         if resp.status_code != 200:
             context.log.warning(
