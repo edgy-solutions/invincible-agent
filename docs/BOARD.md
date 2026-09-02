@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **110 of 122 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **111 of 123 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -37,6 +37,10 @@ _Coverage: **110 of 122 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **a-namespace-is-declared-in-four-places** — Adding a namespace prefix requires editing FOUR independent compact-to-full IRI maps (three in prod code, two more in tests) and NOTHING asserts they agree. They already disagree today — the test map carries `data:` and no prod map does. Every one of them fails the same way: an unknown prefix is passed through VERBATIM by deliberate design, so the miss is SILENT at every site. Engine F is the first namespace after `mesh:`/`idp:` and it hit two of the four; the third is a DELETING path it does not reach today only by accident of calling convention. MEASURED COST: six Contract-D refusals (`gateway-rejected-REFUSED`) on a POST that returned `200 OK, accepted: 29, rejected: []` — 11/11 endpoints present at their FULL IRIs, 0 nodes under compact `fin:`.
   status: open · owner: agent
   → [docs/plans/a-namespace-is-declared-in-four-places.md](plans/a-namespace-is-declared-in-four-places.md)
+
+- **a-rebind-does-not-replace** — REBINDING A SUBJECT TO A DIFFERENT ARCHETYPE LEAVES THE OLD BINDING LIVE, AND THE OLD ONE WINS. The presentation registration NAME encodes the archetype — `presentation_{archetype}_for_{slug}__{frontend_id}` — so it becomes a different tool_urn, and the compensate-on-rescope sweep (keyed on tool_urn + verb_iri) never sees the predecessor. Measured 2026-09-02 after rebinding two fin classes from PERIOD_SERIES to MULTI_SERIES: BOTH menus now hold BOTH bindings, all four rows `registration_complete: True`, and `select_archetype` returns the FIRST match — which is the stale PERIOD_SERIES. So the rebind materialised perfectly and changed nothing a card can see. The verb path does NOT have this defect: the same sweep correctly deleted `fin#Program` when finBurnRate's subject moved, because a verb's name does not encode its input_uri. TWO SECONDARY FINDINGS: the gateway's inline slug puts a COLON inside a DataHub URN (`presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop`) — the same defect fixed in the presentation agent and only there — and the BFF logged `failed_count: 2, gateway-rejected-REFUSED` for two registrations the registrar logged as SUCCEEDED.
+  status: open · owner: agent (Engine F lane) — BLOCKED on a decision: 4 stale rows need deleting · blocked-on: user approval for a targeted delete of 4 Weaviate Predicate rows
+  → [docs/plans/a-rebind-does-not-replace.md](plans/a-rebind-does-not-replace.md)
 
 - **a-registration-property-must-be-enumerated-seven-times** — THE CHECKLIST, written once so the next feature does not rediscover it four hops at a time. A new registration property reaches the router only if it is named at SEVEN sites, each of which enumerates fields BY NAME. An enumeration that omits a key is SILENT BY CONSTRUCTION - no error, no warning, and the symptom is a verb that appears to declare nothing. Adding `mesh_slots` cost a day and two false "this is the single gate" claims, because four of the seven were found only after an earlier one had been declared complete. Carries two laws: a fix is not finished until you have READ the consumer of what you fixed; and walk the path for embedded DSLs - lift the real string, substitute its parameters, execute it against the real engine, BEFORE deploying.
   status: open · owner: unassigned
