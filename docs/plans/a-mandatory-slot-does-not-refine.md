@@ -63,6 +63,26 @@ program. And because an ask card carries no `output_uri`, `/render_ui` takes the
 **which is indistinguishable from the presentation-binding failure this lane just fixed.** Two
 unrelated causes, one observable.
 
+## THE FAILURE MODE, STATED AS ITS OWN LINE
+
+> **A question that named the program was answered by asking which program.**
+
+And the reason this was invisible for a night is the part that generalises: **every guard
+downstream worked correctly.** The disposition was RIGHT to ask — a missing mandatory slot must
+never be defaulted, and that rule is one of the better ones in this system. The router was right
+to route. The ask card was right to carry no `output_uri`, because it has no output. `/render_ui`
+was right to take `fallback-no-output-uri`.
+
+Every one of those components made the correct decision **on inputs that a timeout upstream had
+made wrong.** Nothing was in an error state; nothing had a bug to find. The system was working as
+designed, on a false premise, all the way down — which is why it presents as a considered
+elicitation rather than as a fault, and why no amount of reading the downstream code would have
+found it.
+
+**A correct decision on a corrupted input is indistinguishable from a correct decision.** That is
+the diagnostic cost of a silent upstream default, and it is the argument for (3) below regardless
+of what is decided about the budget.
+
 ## Scope: all six Engine F verbs
 
 Every Engine F verb declares at least one `spoken-mandatory` slot (`program_id`, plus `method`
@@ -85,8 +105,20 @@ takes ADR-0045's "declare slots from day one" seriously.
    masquerade as a considered elicitation — `[[a-plausible-negative-is-not-a-considered-one]]`,
    in its exact shape.
 
-**Not fixed here: the filler is explicitly outside this lane's fences.** Recommending (2), with
-(3) regardless of which is chosen.
+**RULED 2026-09-02 (architect): (2), and (3) regardless. DISPATCHED TO LANE 1.**
+
+The ruling in the architect's words: *the fill_slots budget becomes conditional on the SLOT
+CENSUS of the routed verb — a verb with spoken-mandatory slots gets a budget sized to the
+measured fill time, a verb with only optional slots keeps the tight budget.* That preserves the
+original comment's reasoning exactly where it is true and stops applying it where it is inverted.
+
+Sizing input, from this measurement: engine-o returned the correct extraction at 0.95 confidence
+with a 200 on the very request the supervisor abandoned, so the budget is short of a working
+extractor rather than covering for a broken one. The step timings are already in the Dagster
+event log — the number is a read, not an instrumentation project.
+
+**Not fixed here: the filler is outside this lane's fences.** Handed over with the evidence
+attached rather than diagnosed further.
 
 ## Related
 

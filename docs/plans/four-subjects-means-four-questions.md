@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0045 (Engine F verbs over IPMDAR entities); ADR-0031 (instance resolution ladder); ADR-0033 (route | ask | abstain)
 code-site:  agent_fleet/finance_agent/main.py (VERBS, the input_uri per verb), setup/ontologies/finance_extension.ttl (the eight subject nouns)
-summary:    ENGINE F'S SIX VERBS DECLARE FOUR DIFFERENT SUBJECTS, so which verbs are reachable depends entirely on which class the grounding step picks — and a question that names the PROGRAM can only ever reach two of the six. Measured 2026-09-02: `subject_uri=fin#Program compatible_count=2`, and the classifier correctly returned no_match for burn rate, funding status and CPI/SPI because those verbs hang off fin:PerformanceMeasurementBaseline and fin:FundingLine, which the question never mentioned. The classifier is right, the modelling is defensible, and the SYSTEM still cannot answer "what is the burn rate on Meridian" — because nothing traverses from a Program to its PMB. This is the routable-asymmetry finding arriving on the verb side rather than the class side.
+summary:    ENGINE F'S SIX VERBS DECLARED FOUR DIFFERENT SUBJECTS, so which verbs were reachable depended entirely on which class the grounding step picked — and a question naming the PROGRAM could only ever reach two of six. Measured 2026-09-02: `subject_uri=fin#Program compatible_count=2`, and the classifier correctly returned no_match for burn rate, funding status and CPI/SPI because those verbs hang off fin:PerformanceMeasurementBaseline / fin:FundingLine / fin:ControlAccount, which the question never mentioned. The classifier was right every time; the modelling was right; the question was still unanswerable — an information gap wearing a threshold gap's clothes. RULED and FIXED: `fin:Program` is now declared as an ADDITIONAL subject on the four verbs (6 registrations -> 10), leaving each verb's primary subject as the thing it actually MEASURES. The relation-following ladder step is filed as the ADR-0045 amendment question, deliberately NOT built — it is a resolver capability with fleet-wide blast radius. IMPLEMENTATION TRAP, measured before building: two subjects need two registration NAMES, because the registrar's sweep deletes rows matching (tool_urn, verb_iri) with a different input_uri and the name IS the tool_urn — 0 of 46 engine rows held two subjects under one name, and Engine A's findSchema is the precedent for doing it right. Sealed and bite-checked.
 ---
 
 # Four subjects means four questions — and a user only asks one
@@ -88,10 +88,36 @@ nothing in the ask tells them — the honest refusal names no path forward, beca
    verb genuinely IS askable of a program), costs nothing structurally, and is testable today.
    ADR-0030 is unaffected — one verb still has one output type.
 
-**Leaning (3) as the immediate move and (1) as the ruling**, because (3) is what makes the six
-verbs askable this week without teaching the ontology something false, and (1) is what stops the
-next engine paying the same cost. **Not decided — this is an ADR-0045 amendment question, not
-mine to settle alone.**
+**RULED 2026-09-02 (architect): take (3) now, file (1) as the ADR-0045 amendment question, do
+NOT build traversal.** The reasoning, recorded because it is the reusable half: the classifier
+was handed two verbs and picked correctly every time, so the defect is that four verbs declare
+subjects no natural question names — a program manager says "Meridian", not "Meridian's
+performance measurement baseline". Declaring `fin:Program` as an ADDITIONAL subject is honest
+(the question genuinely is about the program; the PMB is HOW the engine answers it), it is a
+registration change inside this engine, and it is measurable tonight. The relation-following
+ladder step is the prettier answer and a RESOLVER capability with fleet-wide blast radius —
+which is exactly why it wants an amendment and not a night's unilateral build.
+
+### Implementing (3) turned up a trap that would have made it silently self-defeating
+
+**Registering one verb twice under one registration NAME deletes the first edge.** The
+registrar's compensate-on-rescope sweep removes rows matching `(tool_urn, verb_iri)` whose
+`input_uri` differs from the one being written — which is what makes a re-registration an UPSERT
+rather than a duplicate. The registration name IS the tool_urn.
+
+Measured before building: **0 of 46** engine verb rows held two subjects under one
+`(tool_urn, verb_iri)`. The precedent for doing it correctly already exists — Engine A's
+`findSchema` carries BOTH `idp:Column` and `idp:Dataset`, under `engine_a_find_schema_column`
+and `engine_a_find_schema`. **Two subjects means two names**, and this follows that idiom rather
+than inventing one.
+
+Sealed in `tests/finance/test_second_subject_survives_the_sweep.py`, bite-checked: collapsing
+the two names back to one produces 4 colliding `(name, verb)` pairs and the seal fails. Without
+it, a later "simplification" would delete the four primary subjects with no error and a green
+startup.
+
+Registrations: 6 → 10. `fin:Program` now hosts all six verbs; the primary subjects are unchanged,
+and a seal asserts the accommodation has not replaced the modelling.
 
 ## Related
 

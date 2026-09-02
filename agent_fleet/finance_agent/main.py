@@ -124,6 +124,14 @@ VERBS: list[dict[str, Any]] = [
         "fn": "fin_performance_indices",
         "verb": "mesh:finPerformanceIndices",
         "input_uri": FIN + "PerformanceMeasurementBaseline",
+        # ALSO ASKABLE OF THE PROGRAM. The subject above is what this verb MEASURES and
+        # stays the primary; this is what a person NAMES. Measured 2026-09-02: every
+        # question phrased about the program grounded to fin:Program, where
+        # `compatible_count=2`, so this verb was never a candidate and the classifier
+        # correctly returned no_match. The modelling was right and the question was
+        # unanswerable, which is the pair that makes this a coverage gap rather than a
+        # threshold one.
+        "also_askable_of": [FIN + "Program"],
         "desc": (
             "Cost and schedule performance indices reported period by period, both per-period "
             "and cumulative, with the budgeted, claimed and actual quantities each ratio was "
@@ -143,6 +151,14 @@ VERBS: list[dict[str, Any]] = [
         "fn": "fin_burn_rate",
         "verb": "mesh:finBurnRate",
         "input_uri": FIN + "PerformanceMeasurementBaseline",
+        # ALSO ASKABLE OF THE PROGRAM. The subject above is what this verb MEASURES and
+        # stays the primary; this is what a person NAMES. Measured 2026-09-02: every
+        # question phrased about the program grounded to fin:Program, where
+        # `compatible_count=2`, so this verb was never a candidate and the classifier
+        # correctly returned no_match. The modelling was right and the question was
+        # unanswerable, which is the pair that makes this a coverage gap rather than a
+        # threshold one.
+        "also_askable_of": [FIN + "Program"],
         "desc": (
             "Money leaving per period beside the money the plan phased for that period, with "
             "the cumulative position, the budget remaining, and the runway in periods implied "
@@ -162,6 +178,14 @@ VERBS: list[dict[str, Any]] = [
         "fn": "fin_variance_drivers",
         "verb": "mesh:finVarianceDrivers",
         "input_uri": FIN + "ControlAccount",
+        # ALSO ASKABLE OF THE PROGRAM. The subject above is what this verb MEASURES and
+        # stays the primary; this is what a person NAMES. Measured 2026-09-02: every
+        # question phrased about the program grounded to fin:Program, where
+        # `compatible_count=2`, so this verb was never a candidate and the classifier
+        # correctly returned no_match. The modelling was right and the question was
+        # unanswerable, which is the pair that makes this a coverage gap rather than a
+        # threshold one.
+        "also_askable_of": [FIN + "Program"],
         "desc": (
             "The control accounts or work packages contributing to a variance, ranked by how "
             "much of it each accounts for, each with its signed magnitude, its share of the "
@@ -182,6 +206,14 @@ VERBS: list[dict[str, Any]] = [
         "fn": "fin_funding_status",
         "verb": "mesh:finFundingStatus",
         "input_uri": FIN + "FundingLine",
+        # ALSO ASKABLE OF THE PROGRAM. The subject above is what this verb MEASURES and
+        # stays the primary; this is what a person NAMES. Measured 2026-09-02: every
+        # question phrased about the program grounded to fin:Program, where
+        # `compatible_count=2`, so this verb was never a candidate and the classifier
+        # correctly returned no_match. The modelling was right and the question was
+        # unanswerable, which is the pair that makes this a coverage gap rather than a
+        # threshold one.
+        "also_askable_of": [FIN + "Program"],
         "desc": (
             "Authorized, obligated and expended amounts per funding line per period, with the "
             "unobligated and unexpended balances and a stated verdict on each cell. The three "
@@ -287,14 +319,32 @@ async def lifespan(app: FastAPI):
     _mint = engine_mint(client_id="iagent-finance-agent",
                         secret_env="ENGINE_FIN_CLIENT_SECRET")
 
-    for v in VERBS:
+    # ── ONE EDGE PER (VERB, SUBJECT), AND THE NAME IS WHAT MAKES THAT POSSIBLE ──────────
+    #
+    # ⛔ REGISTERING ONE VERB TWICE UNDER ONE NAME DELETES THE FIRST EDGE. The registrar's
+    # compensate-on-rescope sweep removes rows matching (tool_urn, verb_iri) whose input_uri
+    # differs from the one being written -- which is what makes a re-registration an UPSERT
+    # rather than a duplicate. The registration NAME is the tool_urn, so a second subject
+    # needs a second name or it silently replaces the first.
+    #
+    # Measured before building this: 0 of 46 engine verb rows hold two subjects under one
+    # (tool_urn, verb_iri). The precedent for doing it correctly is Engine A's `findSchema`,
+    # which carries BOTH idp:Column and idp:Dataset under `engine_a_find_schema_column` and
+    # `engine_a_find_schema`. This follows that idiom rather than inventing one.
+    _registrations = [
+        (v, v["input_uri"], "engine_fin_finance") for v in VERBS
+    ] + [
+        (v, subj, "engine_fin_finance_by_subject")
+        for v in VERBS for subj in v.get("also_askable_of", ())
+    ]
+    for v, _subject_uri, _reg_name in _registrations:
         try:
             register_engine_to_mesh(
                 mint=_mint,
-                name="engine_fin_finance",
+                name=_reg_name,
                 description=v["desc"],
                 verb=v["verb"],
-                input_uri=v["input_uri"],
+                input_uri=_subject_uri,
                 output_uri=measures.OUTPUT_URI[v["fn"]],
                 verb_synonyms=v["synonyms"],
                 verb_anti_synonyms=v.get("anti_synonyms"),
@@ -670,6 +720,17 @@ _NO_VERB_BY_DESIGN = {
 }
 
 
+def _all_subjects() -> set[str]:
+    """Every class this engine registers a verb ON — primary and also-askable alike.
+
+    THE BOOT CHECKS BELOW MUST USE THIS, NOT `input_uri`. Both of them reason about the set
+    of classes that route somewhere, and after `also_askable_of` the primary subject is no
+    longer that set. Reading `input_uri` alone would make `_unroutable_classes()` blind to a
+    secondary subject that cannot be resolved — exactly the silent gap it exists to catch.
+    """
+    return ({v["input_uri"] for v in VERBS}
+            | {s for v in VERBS for s in v.get("also_askable_of", ())})
+
 def _dead_end_classes() -> list[str]:
     """Classes that resolve to a subject no verb serves, and were not declared as such.
 
@@ -681,7 +742,7 @@ def _dead_end_classes() -> list[str]:
     resolver reports success, the router sets a subject, and the question dies one hop later
     with nothing to blame.
     """
-    return sorted(set(_RESOLVABLE) - {v["input_uri"] for v in VERBS} - _NO_VERB_BY_DESIGN)
+    return sorted(set(_RESOLVABLE) - _all_subjects() - _NO_VERB_BY_DESIGN)
 
 
 def _unroutable_classes() -> list[str]:
@@ -693,7 +754,7 @@ def _unroutable_classes() -> list[str]:
     `unsupported`. Checked at boot, beside the seed check, for the same reason.
     """
     return sorted(
-        {v["input_uri"] for v in VERBS} - set(_RESOLVABLE) - _NOT_ENUMERABLE
+        _all_subjects() - set(_RESOLVABLE) - _NOT_ENUMERABLE
     )
 
 

@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **106 of 118 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **108 of 120 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -21,6 +21,10 @@ _Coverage: **106 of 118 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   → [docs/plans/urn-reconciliation-guard.md](plans/urn-reconciliation-guard.md)
 
 ## open
+
+- **a-fallback-that-absorbs-every-failure-reports-none** — THREE UNRELATED SEAMS PRODUCED ONE INDISTINGUISHABLE SYMPTOM. A missing rendersAs binding, a fill_slots timeout that turned a specified question into an ask, and a subject-coverage gap that made four verbs non-candidates ALL rendered as `Knowledge Document / No content available`. The diagnosis took a night precisely because the card carried no discriminating information, and fixing the first only revealed the second. THE LAW, and it is the uniform-fallback form of the count law: a fallback that absorbs every failure class reports none of them. The fix is cheap and mostly already built — `select_archetype` ALREADY returns a provenance naming which refusal fired (`unrenderable` vs `no registered capability menu` vs an absent output_uri), and `/render_ui` ALREADY stamps X-Presentation-Path with four distinct values. Both are discarded before the card. Carry the reason to the card.
+  status: open · owner: agent
+  → [docs/plans/a-fallback-that-absorbs-every-failure-reports-none.md](plans/a-fallback-that-absorbs-every-failure-reports-none.md)
 
 - **a-mandatory-slot-does-not-refine** — THE 20-SECOND FILL_SLOTS BUDGET IS JUSTIFIED BY A PREMISE THAT IS FALSE FOR MANDATORY SLOTS. Its comment reads "a slot REFINES a question that will still be answered without it, so a slow extractor must cost the user a default, never a timeout." That holds for spoken-OPTIONAL. For spoken-MANDATORY it is exactly inverted: without the slot the verb cannot run, so the timeout does not cost a default — it converts a fully-specified question into an elicitation. Measured 2026-09-02: "why are we over budget on Notional Program Meridian" routed to finVarianceAnalysis at 0.96, engine-o extracted `program_id="Notional Program Meridian"` at 0.95 confidence and returned 200 OK, and the supervisor had already given up at 20s. The user is then asked "which Program?" about a question that named the program. EVERY Engine F verb has a spoken-mandatory slot, so this affects all six.
   status: open · owner: agent (Engine F lane) — FILED, NOT FIXED: the filler is outside this lane's fences · blocked-on: the filler/supervisor lane
@@ -45,6 +49,10 @@ _Coverage: **106 of 118 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **a-spoken-handle-can-forge-the-change-log** — MEASURED on real bytes. `run_measure` injects route-supplied arguments into the SAME `params` dict a caller's values land in, and for `plan_session_changes` it uses `params.setdefault(...)` — so a CALLER-SUPPLIED value WINS. A spoken `ops: []` makes the change log report ZERO changes for a scenario that has one; a spoken `scenario_name` relabels the artifact anything the speaker likes. This is the DECISION-ARTIFACT verb (INV-4, "why did we move this?"), so the failure mode is forged provenance rather than a wrong number. Reachable today: cortex-bff's /plan/measure forwards `body.params` verbatim. Its two sibling injection sites use ASSIGNMENT and are safe — nobody chose the difference, it fell out of `=` vs `setdefault`. FIX IS ONE WORD, not applied: engine-p is fenced. The new carry path is already guarded (iagent_pure/slot_acceptance.py).
   status: open · owner: unassigned · blocked-on: human approval to touch engine-p (fenced for the night of 2026-08-28)
   → [docs/plans/a-spoken-handle-can-forge-the-change-log.md](plans/a-spoken-handle-can-forge-the-change-log.md)
+
+- **a-succeeded-run-reported-as-failed** — TWO ITEMS, ONE OBSERVATION, handed to lane 1. (1) A FALSE RED, which is the worse direction: `supervisor_query_job` logged RUN_SUCCESS while the stream had already emitted `pipeline_error dagster_run_failed` and `ui_payload_timeout` to the user. A run that succeeded was reported as failed, so the instrument disagrees with the system in the direction that manufactures phantom bugs. (2) THE LATENCY ITSELF: measured 5m06s, 5m23s and 6m37s for single finance questions, against a BFF budget shorter than any of them. That is the demo's ceiling and nobody has profiled where it goes.
+  status: open · owner: lane 1 (supervisor / BFF queue) — HANDED OVER, not diagnosed further · blocked-on: lane 1
+  → [docs/plans/a-succeeded-run-reported-as-failed.md](plans/a-succeeded-run-reported-as-failed.md)
 
 - **adr0039-deliverables** — ADR-0039's three artifacts — schema generated from the executor models, authoring scaffold, BPMN exporter.
   status: open · owner: unassigned
@@ -170,7 +178,7 @@ _Coverage: **106 of 118 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   status: open · owner: human · blocked-on: nothing — the scope sentence is ANSWERED (2026-08-15): Tier-3 row 8 IS in scope, so the path is three items in the order stated below. What remains is building them.
   → [docs/plans/first-viewer-critical-path.md](plans/first-viewer-critical-path.md)
 
-- **four-subjects-means-four-questions** — ENGINE F'S SIX VERBS DECLARE FOUR DIFFERENT SUBJECTS, so which verbs are reachable depends entirely on which class the grounding step picks — and a question that names the PROGRAM can only ever reach two of the six. Measured 2026-09-02: `subject_uri=fin#Program compatible_count=2`, and the classifier correctly returned no_match for burn rate, funding status and CPI/SPI because those verbs hang off fin:PerformanceMeasurementBaseline and fin:FundingLine, which the question never mentioned. The classifier is right, the modelling is defensible, and the SYSTEM still cannot answer "what is the burn rate on Meridian" — because nothing traverses from a Program to its PMB. This is the routable-asymmetry finding arriving on the verb side rather than the class side.
+- **four-subjects-means-four-questions** — ENGINE F'S SIX VERBS DECLARED FOUR DIFFERENT SUBJECTS, so which verbs were reachable depended entirely on which class the grounding step picked — and a question naming the PROGRAM could only ever reach two of six. Measured 2026-09-02: `subject_uri=fin#Program compatible_count=2`, and the classifier correctly returned no_match for burn rate, funding status and CPI/SPI because those verbs hang off fin:PerformanceMeasurementBaseline / fin:FundingLine / fin:ControlAccount, which the question never mentioned. The classifier was right every time; the modelling was right; the question was still unanswerable — an information gap wearing a threshold gap's clothes. RULED and FIXED: `fin:Program` is now declared as an ADDITIONAL subject on the four verbs (6 registrations -> 10), leaving each verb's primary subject as the thing it actually MEASURES. The relation-following ladder step is filed as the ADR-0045 amendment question, deliberately NOT built — it is a resolver capability with fleet-wide blast radius. IMPLEMENTATION TRAP, measured before building: two subjects need two registration NAMES, because the registrar's sweep deletes rows matching (tool_urn, verb_iri) with a different input_uri and the name IS the tool_urn — 0 of 46 engine rows held two subjects under one name, and Engine A's findSchema is the precedent for doing it right. Sealed and bite-checked.
   status: open · owner: agent (Engine F lane) — MINE: the subjects are my authoring decision
   → [docs/plans/four-subjects-means-four-questions.md](plans/four-subjects-means-four-questions.md)
 
