@@ -50,6 +50,7 @@ _CONTRACTS = {
     "VARIANCE_TREE": ("VarianceTree.contract.ts", "VarianceNode"),
     "CONTRIBUTION_RANKING": ("ContributionRanking.contract.ts", "ContributionRow"),
     "FORECAST_MEASURE": ("ForecastMeasure.contract.ts", "ForecastRow"),
+    "MULTI_SERIES": ("MultiSeries.contract.ts", "MultiSeriesRow"),
 }
 
 #: Projected archetypes with no producer case here, each with the reason. AN EXEMPTION IS A
@@ -93,6 +94,11 @@ _MIRROR = {
     "VARIANCE_TREE": {"level", "entity_id", "entity_name", "variance"},
     "CONTRIBUTION_RANKING": {"entity_id", "entity_name", "contribution"},
     "FORECAST_MEASURE": {"method", "formula", "eac"},
+    # MULTI_SERIES declares only `period` structurally — the rest of the row is an index
+    # signature, because WHICH keys carry numbers is declared per payload in `series`. The
+    # real guard for this archetype is not a key list; it is
+    # `test_every_declared_series_appears_in_every_row` below.
+    "MULTI_SERIES": {"period"},
     "THRESHOLD_GRID": {"subject_id", "period", "value", "threshold", "over_threshold"},
     # `assessed_at`/`assessed_by`/`assessment_count` are OPTIONAL in the contract — the
     # producer supplies all three, but a cell may honestly have no provenance. Listing them
@@ -228,21 +234,17 @@ def test_every_projected_archetype_has_a_producer_case():
 #
 # Derived from PRESENTATION_CAPABILITIES so the seventh Engine F verb inherits the guard.
 
-_FIN_WRONG_ARCHETYPE = {
-    # (subject_uri, archetype): why this binding cannot be satisfied, not merely why it isn't
-    ("fin:BurnRateSeries", "PERIOD_SERIES"):
-        "PERIOD_SERIES is Engine P's COST CURVE wearing a generic name: its row contract "
-        "requires capex/expense/total plus cap/over_cap/overage, and its component hardcodes "
-        "stacked capex+expense bars against a cap column. A burn-rate row is burn vs planned "
-        "with no cap. Emitting `total` would satisfy the validator and still draw the wrong "
-        "chart. Needs an archetype that plots labelled numeric series over periods without a "
-        "cap — a mint, per the ADR-0045 precedent that produced the other three.",
-    ("fin:PerformanceIndexSeries", "PERIOD_SERIES"):
-        "Same archetype, and a sharper mismatch: CPI/SPI are DIMENSIONLESS RATIOS. There is "
-        "no cap, no overage, and no total. Giving a ratio a field called `total` beside an "
-        "`over by` column would be a false claim about the number, which is the same species "
-        "as the generative-renderer violation — a plausible-looking card asserting something "
-        "untrue about a finance figure.",
+_FIN_WRONG_ARCHETYPE: dict = {
+    # EMPTIED 2026-09-02, BY THE GUARD BELOW RATHER THAN BY MEMORY. Both entries named
+    # (fin:BurnRateSeries, PERIOD_SERIES) and (fin:PerformanceIndexSeries, PERIOD_SERIES) as
+    # unsatisfiable bindings. mesh:MultiSeries was minted, both were rebound, and
+    # `test_every_named_wrong_binding_STILL_fails` went red with "is exempted but no longer
+    # bound — delete the entry".
+    #
+    # THAT IS THE WHOLE POINT OF THAT TEST. A stale exemption is worse than no exemption: it
+    # is a fixed defect still described as broken, silently suppressing a live check. The dict
+    # stays because the next unsatisfiable binding needs somewhere to be written down WITH ITS
+    # REASON, and empty is the honest state rather than a deleted mechanism.
 }
 
 
@@ -322,3 +324,71 @@ def test_every_named_wrong_binding_STILL_fails():
             f"required key. If the archetype was fixed or the binding changed, DELETE the "
             f"exemption — it is now suppressing a live check."
         )
+
+
+# ── MULTI_SERIES: THE DECLARATION IS THE CONTRACT ─────────────────────────────────────
+#
+# A key-presence check cannot guard this archetype, because its row shape is an index
+# signature: which keys carry numbers is declared per payload in `series`. So the two things
+# worth asserting are the two the contract names as refusals — a declared series that appears
+# in no row, and series that declare different units.
+
+
+def _fin_series_declarations():
+    """(fn_name, series_decl, rows) for every verb that declares series."""
+    from agent_fleet.finance_agent import measures as fin_measures
+    from agent_fleet.finance_agent.seed import build_seed
+    st = build_seed()
+    out = []
+    for fn_name, decl in fin_measures.SERIES.items():
+        fn = getattr(fin_measures, fn_name)
+        rows = _call_fin(fn, st)
+        out.append((fn_name, decl, rows["rows"] if isinstance(rows, dict) else rows))
+    return out
+
+
+def test_every_declared_series_appears_in_every_row():
+    """`a declared series appears in no row` is a refusal reason. Declaring a key the rows do
+    not carry produces a card that refuses — the failure this archetype exists to make loud."""
+    for fn_name, decl, rows in _fin_series_declarations():
+        assert rows, f"{fn_name}: no rows — the check would be vacuous"
+        for spec in decl:
+            key = spec["key"]
+            missing = [i for i, r in enumerate(rows) if not isinstance(r.get(key), (int, float))]
+            assert not missing, (
+                f"{fn_name} declares series {key!r} but rows {missing[:3]} carry no number "
+                f"under it — the card will refuse with 'a declared series appears in no row'"
+            )
+
+
+def test_series_on_one_card_share_a_unit():
+    """⛔ ONE AXIS IS A CLAIM THAT TWO QUANTITIES ARE COMPARABLE.
+
+    The archetype refuses mixed units rather than drawing a second axis, so a verb declaring a
+    USD series beside a dimensionless one produces a card that will not draw. Absent `unit`
+    means DIMENSIONLESS — a ratio, not an unknown currency — so absent and present must not be
+    mixed either.
+    """
+    for fn_name, decl, _rows in _fin_series_declarations():
+        units = {spec.get("unit") for spec in decl}
+        assert len(units) == 1, (
+            f"{fn_name} declares series with differing units {units} — they cannot share an "
+            f"axis, and the card refuses rather than drawing dollars beside a ratio"
+        )
+
+
+def test_a_dimensionless_series_declares_NO_unit_key_rather_than_a_null_one():
+    """`unit: None` and no `unit` at all are the same to Python and NOT the same on the wire.
+
+    The contract reads absence as dimensionless; a JSON `"unit": null` is a different claim to
+    a reader of the payload, and this is the same absent-means-silent rule VALUE_UNIT follows
+    by omitting fin_performance_indices rather than mapping it to None.
+    """
+    from agent_fleet.finance_agent import measures as fin_measures
+    for fn_name, decl in fin_measures.SERIES.items():
+        for spec in decl:
+            if "unit" in spec:
+                assert spec["unit"], (
+                    f"{fn_name}: series {spec['key']!r} carries an empty/None unit. Omit the "
+                    f"key entirely to declare it dimensionless."
+                )

@@ -587,6 +587,10 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
         # a dollar sign on 0.85 is a lie the producer told.
         **({"value_unit": measures.VALUE_UNIT[fn]} if fn in measures.VALUE_UNIT else {}),
         **({"value_label": measures.VALUE_LABEL[fn]} if fn in measures.VALUE_LABEL else {}),
+        # MULTI_SERIES only. Same absent-means-silent rule: a verb that declares no series
+        # sends no `series` key, and the archetype refuses rather than guessing which of its
+        # numeric columns to plot.
+        **({"series": measures.SERIES[fn]} if fn in measures.SERIES else {}),
         # THE DISCLOSURE RIDES ON THE PAYLOAD, not only in a docstring. A finance figure that
         # leaves this engine without saying it is notional is a figure somebody can paste
         # into a deck, and a docstring is not visible from a screenshot.

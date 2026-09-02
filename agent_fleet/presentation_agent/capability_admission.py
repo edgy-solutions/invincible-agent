@@ -83,6 +83,11 @@ KNOWN_ARCHETYPES = frozenset({
     "VARIANCE_TREE",
     "CONTRIBUTION_RANKING",
     "FORECAST_MEASURE",
+    # MULTI_SERIES. THE ORDERING TRAP, and it is written in the runbook by name: an archetype
+    # the backend has no word for is REFUSED AT THE DOOR, so this line must land before the
+    # frontend advertises it — not after. Four live-view archetypes were refused on their
+    # first registration for exactly this.
+    "MULTI_SERIES",
     # THE FIRST ARCHETYPE THAT IS ACTED ON RATHER THAN DRAWN, 2026-08-26. "make me a portfolio
     # canvas" answers with slot-ordered artifact ids and `canvasSeedFromArtifact` arranges them;
     # no component renders it. Added HERE FIRST, before the binding exists -- the ontology class

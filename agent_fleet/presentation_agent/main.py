@@ -535,6 +535,11 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     "VARIANCE_TREE": ("rows", ("value_label", "value_unit", "scope_label")),
     "CONTRIBUTION_RANKING": ("rows", ("value_label", "value_unit", "scope_label")),
     "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label")),
+    # MULTI_SERIES (ADR-0045 follow-on, 2026-09-02). `series` is in the PASSTHROUGH and the
+    # archetype REQUIRES it — the projector carries only what the producer supplied, so a verb
+    # that forgets to declare its series produces a card that refuses by name rather than one
+    # that plots whatever numbers it can find.
+    "MULTI_SERIES": ("rows", ("series", "value_label", "scope_label")),
 }
 
 

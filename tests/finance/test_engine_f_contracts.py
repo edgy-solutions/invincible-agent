@@ -376,40 +376,52 @@ def test_the_funding_grid_shows_all_three_states_and_the_ladder_holds():
 
 
 def test_indices_rows_never_name_a_field_value_unit():
-    """ACCOMMODATION A2, ENCODED SO A TIDY-UP GOES RED. This is the least discoverable
-    decision in the engine and a comment is not enough to protect it.
+    """ACCOMMODATION A2 IS RETIRED — the hazard it defended against no longer exists.
 
-    `fin_performance_indices` names its row-level unit field **`amount_unit`**, not
-    `value_unit`, and the difference is load-bearing rather than stylistic. The presentation
-    projector reads each archetype's passthrough fields from the response envelope and
-    **falls back to `rows[0].get(field)`** (`_project_planning_archetype`). `PERIOD_SERIES`
-    declares `value_unit` in its passthrough. So a row field spelled `value_unit` would be
-    LIFTED TO THE CARD ENVELOPE and drawn as the series' unit — putting a dollar sign on a
-    chart of CPI and SPI, by way of a field that was only ever describing the secondary
-    amount columns beside them.
+    WHAT A2 WAS. `fin_performance_indices` named its row-level unit field `amount_unit`
+    rather than `value_unit`, because the projector falls back to `rows[0].get(field)` for
+    each of an archetype's passthrough fields, and PERIOD_SERIES declared `value_unit` in
+    its passthrough. A row field spelled `value_unit` would have been LIFTED to the card
+    envelope and drawn as the series' unit — a dollar sign on a chart of CPI and SPI.
 
-    The name defeats that lift deliberately. It LOOKS like a naming inconsistency with the
-    other five verbs, which is exactly why someone will eventually "fix" it — and the fix is
-    silent, because nothing errors: the card simply starts asserting that 0.85 is 0.85 US
-    dollars.
+    WHY IT IS RETIRED. This verb now binds to MULTI_SERIES, whose passthrough is
+    `("series", "value_label", "scope_label")` and carries NO card-level unit at all: the
+    unit belongs to each declared series, and CPI and SPI declare none, which is how the
+    contract says "dimensionless". There is nothing left to lift.
 
-    Same species as the assertion that `slots` crosses the wire as a list rather than a
-    string: encode the REASON, so the well-meaning cleanup fails loudly instead of shipping.
+    ⛔ THE ASSERTION IS NOT DELETED, IT IS REPOINTED AT THE REASON. A2 was a workaround and
+    its seal guarded the workaround; this guards the DESIGN PROPERTY that made the
+    workaround unnecessary. If MULTI_SERIES ever regains a card-level unit in its
+    passthrough, the lift hazard returns for every dimensionless series in the fleet — and
+    that is the change this test should fail on, not a rename.
+
+    A design that makes an accommodation UNNECESSARY is better than one that seals it. The
+    retirement is recorded rather than performed silently, because the next reader will find
+    `amount_unit` and wonder why it is not `value_unit` — and the answer is now "no reason,
+    it is an ordinary field name" rather than the load-bearing one it used to be.
     """
+    import sys, pathlib, re
+    src = (pathlib.Path(__file__).resolve().parents[2] / "agent_fleet" /
+           "presentation_agent" / "main.py").read_text(encoding="utf-8")
+    block = re.search(r'"MULTI_SERIES": \("rows", \(([^)]*)\)\)', src)
+    assert block, "MULTI_SERIES is not in the projector table — the binding moved again"
+    passthrough = block.group(1)
+    assert "unit" not in passthrough, (
+        f"MULTI_SERIES regained a card-level unit in its passthrough ({passthrough.strip()}). "
+        "The projector lifts each passthrough field from rows[0], so a row field matching it "
+        "would be promoted to the card — which is exactly the hazard accommodation A2 "
+        "existed to defeat. Units belong to the SERIES here; a card-level unit re-opens the "
+        "dollar-sign-on-a-ratio failure for every dimensionless series."
+    )
+
+    # The amounts beside the ratios still have a unit and it must still be stated. That was
+    # always true independently of the lift, so it survives the retirement.
     rows = measures.fin_performance_indices(STATE, program_id="NP-MERIDIAN")
     assert rows, "the seed must produce a series for this seal to mean anything"
     for row in rows:
-        assert "value_unit" not in row, (
-            "fin_performance_indices row must NOT carry `value_unit` — the projector lifts "
-            "it from rows[0] into PERIOD_SERIES's passthrough and the card would draw a "
-            "currency on a dimensionless ratio. The field is `amount_unit` on purpose; see "
-            "accommodation A2 in docs/plans/engine-f-archetype-bindings.md"
-        )
         assert row.get("amount_unit"), (
-            "the amounts beside the ratios still have a unit and it must be stated — "
-            "just not under a name the archetype's passthrough will promote"
+            "the amounts beside the ratios have a unit and it must be stated"
         )
-
 
 def test_performance_indices_carry_no_currency():
     """CPI is a ratio. A dollar sign on 0.85 is a lie the producer told, and the absence of

@@ -63,6 +63,35 @@ VALUE_UNIT: dict[str, str] = {
     # "USD" would put a dollar sign on 0.84. The absence is the assertion.
 }
 
+#: WHICH KEYS ARE SERIES, for MULTI_SERIES. Declared, never inferred — and the inference is
+#: not merely unavailable, it is REFUSED by the archetype: cortex's contract makes `series`
+#: required precisely so a renderer cannot fall back to "plot every numeric key I can find".
+#: On a live burn-rate row that fallback draws `trailing_periods: 6` as a third line beside
+#: burn and planned — a confident wrong picture, which is the honest-absence doctrine applied
+#: to a chart.
+#:
+#: THE UNIT BELONGS TO THE SERIES, and that is what retires accommodation A2. `amount_unit`
+#: was named to defeat an envelope-level lift that would have promoted a currency onto a
+#: ratio chart; here CPI and SPI declare NO unit and render as bare ratios while burn and
+#: planned declare USD. The lift has nothing to lift.
+#:
+#: ⛔ SERIES ON ONE CARD MUST SHARE A UNIT. Two quantities on one y-axis is a claim that they
+#: are comparable, and the archetype refuses mixed units rather than drawing a second axis.
+#: So a verb may not declare a USD series beside a dimensionless one.
+SERIES: dict[str, list[dict[str, Any]]] = {
+    "fin_burn_rate": [
+        {"key": "burn",    "label": "Spent",  "unit": "USD"},
+        {"key": "planned", "label": "Planned", "unit": "USD"},
+    ],
+    # NO `unit` KEY AT ALL, not `"unit": None`. Absent means DIMENSIONLESS by the contract —
+    # a ratio, not an unknown currency — which is the same assertion VALUE_UNIT makes above
+    # by omitting this verb.
+    "fin_performance_indices": [
+        {"key": "cpi", "label": "CPI"},
+        {"key": "spi", "label": "SPI"},
+    ],
+}
+
 #: The archetype contracts' `value_label` / `scope_label` passthroughs, supplied at the
 #: response envelope rather than left for a renderer to invent. Engine P supplies only
 #: `value_unit` and leaves the other two absent; they are cheap to state and a grid that has

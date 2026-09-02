@@ -206,11 +206,10 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
     # and rendered as "Knowledge Document — No content available".
     {
         "subject_uri": "fin:BurnRateSeries",
-        "object_uri": "mesh:PeriodSeries",
-        "archetype": "PERIOD_SERIES",
-        "expected_fields": ["period", "burn", "planned", "cum_burn",
-                            "budget_remaining", "runway_periods", "scope_label"],
-        "description": "Renders fin:BurnRateSeries as a PERIOD_SERIES — spend per period against the phased plan",
+        "object_uri": "mesh:MultiSeries",
+        "archetype": "MULTI_SERIES",
+        "expected_fields": ["rows", "series", "value_label", "scope_label"],
+        "description": "Renders fin:BurnRateSeries as a MULTI_SERIES — spend and the phased plan as two declared USD series over periods, with no cap",
     },
     {
         "subject_uri": "fin:FundingStatusGrid",
@@ -222,11 +221,10 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
     },
     {
         "subject_uri": "fin:PerformanceIndexSeries",
-        "object_uri": "mesh:PeriodSeries",
-        "archetype": "PERIOD_SERIES",
-        "expected_fields": ["period", "cpi", "spi", "cum_cpi", "cum_spi",
-                            "scope_label", "amount_unit"],
-        "description": "Renders fin:PerformanceIndexSeries as a PERIOD_SERIES — CPI/SPI over time. The unit field is `amount_unit`, NEVER `value_unit`: the ratios are dimensionless and a lifted currency would draw a dollar sign on 0.85",
+        "object_uri": "mesh:MultiSeries",
+        "archetype": "MULTI_SERIES",
+        "expected_fields": ["rows", "series", "value_label", "scope_label"],
+        "description": "Renders fin:PerformanceIndexSeries as a MULTI_SERIES — CPI and SPI as two DIMENSIONLESS declared series; neither declares a unit, which is the assertion, not an omission",
     },
     {
         "subject_uri": "fin:VarianceDecomposition",

@@ -453,6 +453,28 @@ mesh:ThresholdGrid a owl:Class ;
 # retrofitted: rewriting a shipped definition changes a live recall signal and is a
 # measurement, not a tidy-up.
 
+# ── MULTI_SERIES (2026-09-02) ────────────────────────────────────────────────────────
+#
+# MINTED RATHER THAN GENERALISING mesh:PeriodSeries, and the reason is a measurement:
+# PeriodSeries is not a generic archetype with a lax validator, it is ONE PRODUCER'S COST
+# CURVE wearing a generic name. Its row contract requires seven keys — period, capex,
+# expense, total, cap, over_cap, overage — and its component hardcodes stacked capex and
+# expense bars against an "over by" column. Two finance verbs bound to it were missing SIX
+# of the seven and drew "NOTHING TO DRAW / no numeric amount on any row".
+#
+# A burn rate and a pair of indices are two lines with NO CAP, and one of them is
+# dimensionless. That is a different visual claim, not a missing field.
+#
+# THE SIBLING DISTINCTION LIVES HERE IN A `#` COMMENT AND NOT IN rdfs:comment, because the
+# comment is the recall signal: naming a sibling class inside it bleeds that sibling's
+# vocabulary into this one's matches, and a class defined by what it is NOT competes for
+# the questions that belong to its neighbour.
+
+mesh:MultiSeries a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Multi Series" ;
+  rdfs:comment "Several named quantities measured over the same periods and drawn together, where the payload DECLARES which of its keys are the series and what each is called. The declaration is the substance: a card that inferred its series from whichever columns held numbers would plot bookkeeping fields as though they were measurements, so a payload that does not say what its series are is refused rather than guessed at. Each series carries its own unit, or carries none at all to say it is a dimensionless ratio; series with different units are refused rather than drawn together, because one axis is a claim that two quantities are comparable and a card should not make that claim on the reader's behalf. There is no ceiling, threshold or limit anywhere in it — nothing here is over or under anything. A LIVE VIEW." .
+
 mesh:VarianceTree a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Variance Tree" ;
