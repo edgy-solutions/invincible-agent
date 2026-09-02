@@ -2,11 +2,11 @@
 id:         engine-f-ui-path-seam-audit-v1
 status:     open
 owner:      agent
-blocked-on: a push to master (image rebuild for cortex-bff and engine-f)
+blocked-on: seam 9 — the filler lane (FILL_SLOTS_TIMEOUT_S vs spoken-mandatory slots)
 repo:       invincible-agent
 ruled-by:   ADR-0019 (Contract D, atomic); ADR-0017 (rendersAs); ADR-0045 (Engine F)
 code-site:  agent_fleet/utils/mesh_registration.py:492, agent_fleet/presentation_agent/capabilities.py:32, src/iagent/gateway.py:4330 (_emit_presentation_to_registrar call), agent_fleet/presentation_agent/capability_registry.py:239 (select_archetype)
-summary:    EVERY SEAM ON THE FINANCE CARD PATH AUDITED INDIVIDUALLY, 2026-09-01. Seven of eight verified live; exactly ONE stops all six cards, and it is one line already committed (9022c3b) awaiting an image rebuild. The stopping seam is NOT the binding table and NOT the frontend: `fin:` was absent from the CURIE prefix map, so the gateway emitted the subject compact, the registrar MATCHed it against :OntologyClass nodes holding FULL IRIs, and Contract D refused all six atomically — while the POST returned `200 OK, accepted: 29, rejected: []`. Verified: 11/11 triple endpoints present at full IRIs and 0 nodes under compact `fin:`, so the gate was right and the lookup was wrong. Also verified live: all six verbs return `rows` payloads carrying every field their cortex contract refusalReasons name.
+summary:    EVERY SEAM ON THE FINANCE CARD PATH AUDITED INDIVIDUALLY, 2026-09-01/02. STARTED as one seam and ENDED as three, because the first was masking the others — all three produce the identical observable, a card reading `Knowledge Document / No content available`. SEAM 8 (bindings) IS FIXED AND PROVEN: `fin:` was absent from the CURIE prefix map, so the gateway emitted the subject compact, the registrar MATCHed against :OntologyClass nodes holding FULL IRIs, and Contract D refused all six atomically while the POST returned `200 OK, accepted: 29, rejected: []`. After the one-line fix and a redeploy: cortex-ui-desktop rows 23->29, __system_default__ 10->16, graph-registration failures 6->0, and the selector returns the intended archetype for 6/6 with a biting negative control. SEAM 9 STOPS ALL SIX and is fenced: fill_slots times out at 20s while engine-o extracts the slot correctly and returns 200, so the mandatory slot is unfilled, the disposition correctly becomes an ASK, and an ask card has no output_uri. SEAM 10 STOPS FOUR and is MINE: the six verbs declare four subjects, so a question naming the program grounds to fin:Program where compatible_count=2 and four verbs were never candidates. The classifier is right every time. Also observed, unowned: supervisor_query_job takes 5-6.5 min and the BFF reports dagster_run_failed for runs that log RUN_SUCCESS.
 ---
 
 # Engine F → card: every seam, audited one at a time
@@ -15,7 +15,8 @@ summary:    EVERY SEAM ON THE FINANCE CARD PATH AUDITED INDIVIDUALLY, 2026-09-01
 path, or a named list of exactly which seam stops each one — no 'routing works' standing in for
 'the card appeared.'"*
 
-**The cards do not draw yet.** This is the named list, and it is one item long.
+**The cards do not draw yet.** This is the named list. It began as one item and ended as three —
+see the UPDATE section, which supersedes the seam table immediately below.
 
 ## The chain, seam by seam
 
@@ -28,7 +29,7 @@ path, or a named list of exactly which seam stops each one — no 'routing works
 | 5 | ontology classes exist for both triple ends | ✅ | **11/11** at full IRIs |
 | 6 | archetypes declared + admitted | ✅ | 3 minted under `mesh:Archetype`; `KNOWN_ARCHETYPES` widened |
 | 7 | HUD names the engine | ✅ | `engine-fin → "Engine F (Finance)"` (`e9dd2c7`) |
-| 8 | **`rendersAs` rows in cortex's menu** | ❌ **STOPS ALL SIX** | §1 |
+| 8 | **`rendersAs` rows in cortex's menu** | ✅ **FIXED — see UPDATE** | §1 |
 
 ## §1 — The one seam, and why it was invisible
 
