@@ -96,6 +96,76 @@ lift. cortex declares `value_unit` optional, so accommodation A2 holds on both s
 *Scope: this asserts the fields the contracts' refusal conditions name are PRESENT. Which key
 each component reads is a cortex-side fact, unmeasured here.*
 
+## UPDATE — the deploy landed, and the real path found two MORE seams
+
+Both images rebuilt and rolled 2026-09-02. **Seam 8 is closed and proven:**
+
+| | before | after |
+|---|---|---|
+| `cortex-ui-desktop` rendersAs rows | 23 (0 fin) | **29 (6 fin)** |
+| `__system_default__` rows | 10 (0 fin) | **16 (6 fin)** |
+| graph-registration failures in the BFF log | 6 | **0** |
+
+And the selector, asked directly for each of the six against cortex's real menu:
+**6/6 return the intended archetype**, `presentation_source: registered`. Negative control: an
+unbound `fin:` class returns `None` / `unrenderable`, so the check bites rather than passing
+everything.
+
+**The cards still do not draw**, for two reasons that have nothing to do with presentation. Both
+were invisible until the binding was fixed, because the binding failure was masking them — all
+three produce the same `KNOWLEDGE_DOCUMENT`.
+
+### Seam 9 — the mandatory slot times out, so every question becomes an ask (stops ALL SIX)
+
+```
+routing_decision  verb_iri=mesh:finVarianceAnalysis verb_conf=0.96
+WARNING  fill_slots unavailable (engine-o:8084 read timeout=20.0) — running on defaults
+```
+
+engine-o extracted it correctly and returned 200 on the same request:
+`{"program_id":"Notional Program Meridian"}` at 0.95. **The supervisor had already stopped
+listening at 20s.** With the mandatory slot unfilled the disposition correctly becomes an ASK,
+an ask card carries no `output_uri`, and `/render_ui` takes `fallback-no-output-uri`.
+
+So a question that NAMED the program is answered by asking which program.
+Filed: `[[a-mandatory-slot-does-not-refine]]` — the budget's own comment justifies itself with
+*"a slot REFINES a question that will still be answered without it"*, which is true for
+spoken-optional and exactly inverted for spoken-mandatory. **Not fixed: the filler is outside
+this lane's fences.**
+
+### Seam 10 — four of six verbs are unreachable from a program-shaped question (stops FOUR)
+
+```
+classify_predicate no_match  query='What is the burn rate for the Notional Program Meridian?'
+  subject_uri=fin#Program  compatible=['mesh:finEacCalculation','mesh:finVarianceAnalysis']
+```
+
+`compatible_count=2`. The six verbs declare FOUR subjects — burn rate and indices hang off
+`fin:PerformanceMeasurementBaseline`, funding status off `fin:FundingLine`, drivers off
+`fin:ControlAccount`. **The classifier is right every time**; it was handed two verbs, neither of
+which answers the question. Nothing traverses Program → its PMB.
+Filed: `[[four-subjects-means-four-questions]]`. **This one is mine** — the subjects are my
+authoring decision.
+
+### The corrected seam table
+
+| seam | state | stops |
+|---|---|---|
+| 1–7 (routing, entitlement, verbs, payloads, classes, archetypes, HUD) | ✅ | — |
+| 8 rendersAs bindings | ✅ **FIXED, 6/6 proven** | — |
+| 9 fill_slots budget vs mandatory slots | ❌ filed, fenced | **all six** |
+| 10 four subjects, no traversal | ❌ filed, mine | **four of six** |
+
+**Three distinct causes, one observable.** That is the finding worth carrying: a card reading
+`Knowledge Document · No content available` names none of them, and fixing the first only
+revealed the second.
+
+### One more thing the runs showed
+
+`supervisor_query_job` takes **5–6.5 minutes** per question and the BFF gives up first, reporting
+`dagster_run_failed` / `ui_payload_timeout` for runs that go on to log `RUN_SUCCESS`. A failure
+the user sees for a run that succeeded is its own defect; unowned and unfiled here.
+
 ## What remains
 
 1. **Push `9022c3b` + `4e69947`** → rebuild `cortex-bff` and `engine-f`. *(Blocked: the push was
