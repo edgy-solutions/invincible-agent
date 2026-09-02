@@ -119,8 +119,31 @@ in the same run returned 1–8 candidates and were correctly `fin:`-only, so the
 This did not affect the primary claim — a set with no `fin:` classes trivially contains no `fin:`
 response shapes — and the row was equally wrong before the delete, so **it is pre-existing and not
 caused by it.** But it means the pool figure is a statement about the scoped path, not about every
-path `/resolve` can take. Whether this is a threshold fallback that widens when nothing scores, or
-scoping that is simply not applied on one branch, is **not determined here.**
+path `/resolve` can take.
+
+### RESOLVED 2026-09-02 by the lane that owns `/resolve` — and it was neither of my hypotheses
+
+I left this as "a threshold fallback that widens, or scoping not applied on one branch — not
+determined here." **It is the second, in a form neither guess named:** the cold-start fallback
+(`_SPARQL_MAINTENANCE_CLASSES`, `agent_fleet/ontology_service/main.py:411`) selects every
+labelled `owl:Class` with **no domain filter in the query at all**. So the requested domain scopes
+the hybrid path and is *discarded* by the fallback path.
+
+**Scoping is not bypassed — the fallback never had it.** And the namespace breakdown of those 122
+candidates is the tell I did not recognise: IOF 104, mil 10, MaintenanceReferenceOntology 7, obo 1
+— the maintenance ontology, which is the **cold-start signature**, on a cluster whose Weaviate is
+fully populated. The fallback fires per QUERY when hybrid search returns nothing for that query,
+not per deployment.
+
+**And it is the same mechanism that broke d4**, where it fired for every query because Weaviate
+was empty for the domain — so every planning question was answered from the maintenance ontology
+at plausible confidence. Same code path, same silent substitution, different trigger: d4 made a
+design property continuous and it was read as an environment problem. Here it is one row in
+twenty on a healthy cluster.
+
+*Not my finding and not my fix — recorded here so this packet does not leave a resolved question
+standing open. `[[a-degradation-must-name-itself]]` again: an answer from the wrong ontology at a
+plausible confidence is a substitution that announces nothing.*
 
 ## What is NOT claimed
 
