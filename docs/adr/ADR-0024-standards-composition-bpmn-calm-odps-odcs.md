@@ -30,6 +30,10 @@ at different times.
   disciplines this ADR already reserves — single-authoritative-
   standard-per-concept — applied at action time: after publish,
   the target tool is canonical for the published asset.
+  **AMENDED 2026-09-02** — the sequencing STOP is scoped to TOOL
+  targets; `target_system` gains `recipient`; the graph-node
+  discipline is unchanged. See the amendment above the STOP-point
+  section, and ADR-0047.
 
 ## Related
 
@@ -378,9 +382,54 @@ substrate. It's a small UI affordance on the existing transcript
 / canvas pair and a fine place to put energy in parallel if a
 small thread is wanted while the projector work runs.
 
+### AMENDMENT 2026-09-02 — the STOP binds TOOL targets only; recipient targets are added to the enum
+
+**Ruled by this ADR's owner, in answer to the collision recorded at
+[ADR-0047](ADR-0047-computation-export-governed-emit-carrying-its-own-algorithm.md) §7.** Recorded
+here rather than only downstream, because a STOP whose resolution lives in another document is a
+STOP the next reader will re-litigate.
+
+**The question.** ADR-0047 emits a package to a **recipient** — a person outside the organisation —
+and models it as a `PublishedArtifact`. Does the sequencing ruling below (*the publish backend does
+not start until the projector lands*) bind that target too?
+
+**The ruling: no. The STOP binds TOOL targets only.** The reasoning is this section's own stated
+harms, applied to a target it did not anticipate:
+
+| Part B's stated harm | does it apply to a recipient target? |
+|---|---|
+| **(a)** a parallel non-graph storage path for `PublishedArtifact`, violating ADR-0023's graph-native discipline | **YES — still binds.** Nothing about the target changes where the node lives |
+| **(b)** publish code that cannot project published artifacts to the canvas | **NO.** A recipient package has no canvas projection requirement and **no wrapper-layer read-back at all** — the artifact leaves the building and, by ADR-0047 §4's one-way rule, nothing reads it back by design |
+
+**So the consequences are split, and the split is the useful part:**
+
+- **The packaging path may proceed now** — the verb, the entitlement filter at packaging time, the
+  verification manifest, and the seals. None of it touches the projector.
+- **The graph-node half still waits**, and waits on harm (a) specifically: **`PublishedArtifact` for
+  a recipient target must not be built as a side-store.** It lands graph-native, or it lands after
+  the projector ruling. **The graph-node discipline is unchanged by this amendment** — this is a
+  scoping of the STOP, not a relaxation of Rule 1 or of ADR-0023.
+
+**`target_system` gains `recipient`** alongside `dbt | superset | grist | dagster`. The enum is
+extended, not bypassed, and the locator for that value is a **content hash** per ADR-0034's
+`ruleset_ref` discipline rather than a system-specific pointer — because for this target there is no
+system to point into. See ADR-0047 §6.
+
+**One asymmetry worth naming for whoever builds it:** for a tool target, Rule 1's thin reference
+works because *the target holds the content*. For a recipient target the recipient holds it, so the
+same rule is satisfied by the same mechanism with the parties reversed. **Rule 1's purpose — iagent
+must never be able to present stale content as live — is preserved exactly**, and the absence of a
+copy remains load-bearing.
+
+---
+
 ### STOP point for this ADR work
 
-**This ADR commit is the STOP for the current thread.**
+**This ADR commit is the STOP for the current thread.** **Scoped by the 2026-09-02 amendment
+above:** this STOP governs the tool-target publish backend. A recipient-target packaging path is not
+gated by it; its graph-node half still is.
+
+**Original text follows, unchanged:**
 
 The scaffold sub-bullets that would follow this ADR (publish
 backend action, DataHub scrub job for orphan detection,
