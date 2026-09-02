@@ -47,6 +47,20 @@ def engine_name_from_provider(provider: str | None) -> str:
 # release prefix). A new such engine also needs an endpoint-probe entry.
 _NAMED_COMPONENTS = {
     "data-analyst": "Engine DA",
+    # engine-fin (finance, ADR-0045). MEASURED 2026-09-01: the HUD rendered
+    # "Handled by: Unknown engine" on a finance answer that had routed perfectly —
+    # Program 0.97 -> finVarianceAnalysis 0.95 -> VarianceDecomposition. The whole
+    # chain worked and the engine could not be named.
+    #
+    # WHY IT FELL THROUGH: `_ENGINE_LETTER_RE` matches `engine-` plus ONE OR TWO
+    # letters. `engine-fin` is three, so the regex misses it, and it was absent here.
+    #
+    # "ENGINE F" IS ALREADY TAKEN, by the presentation agent above — which is the
+    # same collision that forced the component to be `engine-fin` rather than
+    # `engine-f` in the first place. So the display name is disambiguated rather
+    # than duplicated; a HUD reading "Engine F" for both would be worse than
+    # "Unknown".
+    "engine-fin": "Engine F (Finance)",
 }
 
 # NOT ENGINES AT ALL — and that is the point of a separate map.

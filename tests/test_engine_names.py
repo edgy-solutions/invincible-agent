@@ -25,6 +25,17 @@ from iagent.engine_names import handler_name_from_endpoint
     ("http://iagent-engine-a:8081/analyze", "Engine A"),
     ("http://iagent-engine-f:8087/render_ui", "Engine F"),
     ("http://iagent-engine-w:8086/x", "Engine W"),
+    # engine-fin: THREE letters, so `engine-([a-z]{1,2})\b` misses it — the HUD read
+    # "Handled by: Unknown engine" on a finance answer that had routed perfectly
+    # (Program 0.97 -> finVarianceAnalysis 0.95). Both releases, FQDN and bare.
+    ("http://invincible-agent-engine-fin.prod-ns.svc.cluster.local:8096/measure/fin_burn_rate",
+     "Engine F (Finance)"),
+    ("http://iagent-engine-fin.sandbox.svc.cluster.local:8096/measure/fin_variance_analysis",
+     "Engine F (Finance)"),
+    ("http://iagent-engine-fin:8096/measure/fin_funding_status", "Engine F (Finance)"),
+    # AND THE COLLISION STAYS DISAMBIGUATED: engine-f is the PRESENTATION agent and
+    # keeps "Engine F" (asserted above). Two engines rendering as one name in the HUD
+    # would be worse than "Unknown" — it would be wrong and confident.
     # data-analyst: component name, not engine-<letter> — both releases.
     ("http://invincible-agent-data-analyst.prod-ns.svc.cluster.local:8083/x", "Engine DA"),
     ("http://iagent-data-analyst:8083/x", "Engine DA"),
