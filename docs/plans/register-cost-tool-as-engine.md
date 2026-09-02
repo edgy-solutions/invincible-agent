@@ -28,6 +28,7 @@ file names appear in this packet, per the same fence ADR-0047/0048 carry.
 |---|---|
 | [ADR-0049](../adr/ADR-0049-cross-engine-composition-a-verb-that-needs-another-engines-data.md) — cross-engine composition | Affordability's **third source**. Under option A (mesh-mediated, ruled) a composing verb calls sibling **verbs**. An unregistered tool has no verbs, so there is literally nothing to call — the composition cannot be built, and building it against options B or D is the thing 0049 refuses |
 | [ADR-0047](../adr/ADR-0047-computation-export-governed-emit-carrying-its-own-algorithm.md) / [ADR-0048](../adr/ADR-0048-customer-validation-package-first-consumer-of-computation-export.md) — computation export | The **computation the package carries**, at a pinned commit SHA. §§1–5 are cleared to build (the ADR-0024 STOP was scoped to tool targets on 2026-09-02) but the package has nothing to carry until the modules are isolable and pinned |
+| ADR-0048 §6 — the **customer-facing format prototype** (added 2026-09-02) | Slice 1 now builds BOTH formats as notional-data mocks and puts them in front of a customer to choose. **The mock must be produced by the real packaging verb, not hand-assembled** (a fixture a developer built is a test of the fixture) — so the prototype, and therefore the format decision and the §3 measurements, all wait on this registration |
 
 **And it carries a risk that needs a durable home** (§Risk). If that risk fires, the finding must be
 findable by whoever picks up ADR-0048's slice 1 — which will not be this session, and may not be

@@ -61,7 +61,24 @@ becomes the customer's actual question, it is the right build.
 
 ---
 
-## §2 — The concrete shape
+## §2 — The concrete shape — TWO formats, one emit
+
+**RULED 2026-09-02: both the HTML package and the notebook are built** (ADR-0047 §8.1), because they
+answer different recipient questions and a single customer routinely has both people:
+
+| | **HTML package** | **notebook** |
+|---|---|---|
+| the question it answers | ***"can I CHECK this?"*** | ***"can I SEE this?"*** |
+| typical recipient | a contracting officer | that recipient's cost analyst |
+| intermediates | verified, not displayed | **cells** — the arithmetic walked step by step |
+| editing the computation | not possible | **possible, and it is the point** |
+| `target_system` | `recipient-html` | `recipient-notebook` |
+
+**One governed emit, two output targets.** The pinned modules, the recipient-scoped data, the
+verification manifest and the audit line are format-independent; `format` is a declared enum slot on
+the one packaging verb (ADR-0047 §1). **Two rows, not two designs.**
+
+### The HTML package
 
 - **A single self-contained HTML file.** One artifact, opens by double-click, survives being emailed
   and copied to a share. No installer, no environment, no instructions beyond "open it".
@@ -76,6 +93,39 @@ becomes the customer's actual question, it is the right build.
 - **Thin JavaScript, for UI only.** Tabs, tables, expand/collapse. **No JS arithmetic**, and no JS
   that transforms a computed value before display beyond formatting it. The renderer never sums.
 - **The verification manifest asserts on open**, before anything renders (ADR-0047 §3).
+
+### The notebook
+
+Same pinned modules, same scoped data, same manifest, same audit line. The differences are what the
+recipient can do:
+
+- **Intermediates are cells.** The value is watching the arithmetic happen, not being told its
+  result — which is what a cost analyst actually wants when they disagree with a number.
+- **The manifest is the FIRST cell, and it asserts.** Not a comment, not an appendix — the
+  equivalence check runs before anything else and fails loudly.
+- **Editing is possible and expected.** ADR-0047 §8.1's drafted cost line — *"it invites editing the
+  computation"* — is a **feature** in this format. An analyst poking at a rate assumption is the
+  use case, not the abuse of it.
+
+### §2.1 — THE TWO FORMATS DO NOT CARRY THE SAME GUARANTEE, and neither may claim the other's
+
+**This is the one place the formats genuinely diverge, and it must be stated rather than inherited
+from ADR-0047 §3's shared text.**
+
+| format | the equivalence claim | why |
+|---|---|---|
+| **HTML** | **verified on every view** | the manifest gates display; a divergence blocks rendering, so nothing is ever shown that the engine did not produce |
+| **notebook** | **verified AS DELIVERED** | the manifest cell runs first and asserts — but the recipient can then run cells out of order, edit one, and obtain a divergent number **with no refusal firing**, because they broke the seal deliberately |
+
+**The notebook's weaker claim is not a defect; it is the cost of the thing that makes it valuable.**
+An analyst who cannot change an assumption cannot explore, and exploration is why they wanted this
+format. **After the manifest cell passes, the customer owns what they see** — and that sentence
+belongs in the notebook's own header text, not only in this ADR.
+
+**What must never happen:** the notebook being described, in a proposal or a cover note, with the
+HTML's guarantee. *"The package refuses to show you a number we didn't produce"* is true of one
+format and false of the other, and it is precisely the kind of claim that gets copied between
+documents because it is the better sentence.
 
 ---
 
@@ -100,10 +150,11 @@ guess wearing a decimal point:
 
 ## §4 — What this ADR does not decide
 
-- **The runtime** — ADR-0047 §8.1's trade table, resolved by §3's measurements. §2 above states the
-  *intended* shape (browser-embedded Python) because it is the one that satisfies the requirement
-  with the least ceremony; **if measurement 3 fails, the shape changes and this section is where to
-  record it.** That is a stated intent contingent on evidence, not a decision.
+- **~~The runtime~~ — RULED 2026-09-02: both formats are built** (ADR-0047 §8.1, §2 above). What
+  remains open is narrower and belongs to the recipient rather than to us: **which format a given
+  recipient class receives by default**, answered by §6's prototype exercise on evidence. **If
+  measurement 3 fails**, the HTML format's runtime changes and this section is where to record it —
+  the notebook is unaffected, which is a second reason not to have picked one.
 - **Manifest intermediate filtering** — ADR-0047 §8.3, open there, inherited open here.
 - **Whether the graph-node half proceeds now** — no longer a collision question: ADR-0024's
   amendment leaves only its harm (a), so the open part is *how* the `PublishedArtifact` node lands
@@ -130,7 +181,12 @@ guess wearing a decimal point:
 4. **THE ALGORITHM IS THE PINNED ONE.** The package's declared SHA resolves to the modules it
    actually carries — asserted by comparing the embedded modules' hash against the pin, not by
    trusting the pin's presence. *A version string is a claim; the hash is the check.*
-5. **THE AUDIT LINE EXISTS AND IS COMPLETE.** After a packaging run, the record answers **what was
+5. **THE NOTEBOOK'S MANIFEST CELL RUNS FIRST AND ASSERTS.** Executing the notebook top-to-bottom on
+   a corrupted intermediate **fails at the first cell**, before any figure is produced. *Bite check:*
+   the same notebook uncorrupted runs clean. **This seal is deliberately weaker than seal 1 and that
+   is the ruled position** (§2.1) — it asserts *as delivered*, not on every view, and a seal claiming
+   otherwise for this format would be asserting something the format cannot deliver.
+6. **THE AUDIT LINE EXISTS AND IS COMPLETE.** After a packaging run, the record answers **what was
    disclosed, to whom, when, by which algorithm version** — asserted by reading the record back, not
    by observing that packaging succeeded.
 
@@ -155,6 +211,34 @@ disclosure that has already happened by the time it is noticed.
 so seal 2 has something real to discriminate. Notional data that produces identical packages for
 both recipients would make seal 2 vacuous while appearing to pass, which is the shape of an
 instrument measuring its neighbour.
+
+### Slice 1 does DOUBLE DUTY — it is also the format decision, made by the recipient
+
+**Build BOTH formats in slice 1, with the notional data, and put them in front of a real customer as
+prototypes with obviously-fake numbers.** Ask which they would actually open. Three things that
+buys, none of which an internal decision can:
+
+1. **The §3 measurements come from BUILDING the mock, not from estimating it.** Bundle size, cold
+   boot and numeric-stack fidelity in WASM are all outputs of the exercise. A measurement taken from
+   a thing that exists beats a number argued about.
+2. **The customer picks the format BEFORE real data enters the path.** The disclosure surface is
+   then chosen by **the person receiving it, on evidence**, rather than by us guessing their
+   tooling — and getting that wrong is expensive precisely because a package cannot be unsent.
+3. **It tests the refusal beat in front of a customer.** Hand them the HTML with one intermediate
+   deliberately corrupted and let them watch it refuse to render. **That demonstration IS the trust
+   argument** — more persuasive than any description of the manifest, and it costs one corrupted
+   byte.
+
+**THE MOCK MUST BE PRODUCED BY THE REAL PACKAGING VERB against the registered engine — not
+hand-assembled.** This is §5's own rule turned on the prototype: *a fixture a developer built is a
+test of the fixture*, and a hand-made prototype would demonstrate a packaging path that does not
+exist while looking exactly like one that does.
+
+**Which makes the dependency explicit, and it is already on the board:** slice 1 waits on
+[`register-cost-tool-as-engine`](../plans/register-cost-tool-as-engine.md). There is no real
+packaging verb to produce a mock with until the computation is a registered engine. **That is the
+right dependency rather than an obstacle** — it is the same one ADR-0047's package has, arriving one
+step earlier than expected.
 
 **Slice 1 was never gated by ADR-0047 §7, and now the collision is ruled it is doubly clear.** The packaging verb, the
 manifest, the entitlement filter and all five seals are exercisable without the `PublishedArtifact`

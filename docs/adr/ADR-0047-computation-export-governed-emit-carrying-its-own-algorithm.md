@@ -51,12 +51,17 @@ because the algorithm goes out of the building along with the data.
 ([ADR-0046](ADR-0046-langgraph-graphs-as-registered-mesh-verbs.md) §1). Shape:
 
 ```
-package_export(recipient_scope, scenario, as_of)
+package_export(recipient_scope, scenario, as_of, format)
 ```
 
 - **`recipient_scope`** — spoken-mandatory. There is no default recipient, and a defaulted one
   would be a disclosure decision made by omission.
 - **`scenario`**, **`as_of`** — declared per the slot grammar; `as_of` fixes the vintage §4 freezes.
+- **`format`** — a **declared enum slot** (§8.1, ruled 2026-09-02). The format is an **output
+  target, not a second design**: everything this ADR governs — pinned modules, scoped data, the
+  verification manifest, the audit line — is **packaging-format-independent**. One governed emit,
+  rendered into one of the declared targets. **The guarantee the manifest provides is NOT identical
+  across formats**; see §3's closing clause.
 - **Output** — a declared `owl:Class` under `mesh:Response`, so the package's own descriptor is a
   first-class answer and inherits the grounding-pool exclusion.
 - **Refusal contract** — declared: what packaging refuses, and on what grounds (§5's unentitled
@@ -140,6 +145,15 @@ reason the port is refused.
 **The manifest must be proven to bite before any green counts** — corrupt one embedded intermediate,
 confirm the package refuses. A self-check that has never failed is decoration.
 
+**AND THE STRENGTH OF THIS GUARANTEE IS FORMAT-DEPENDENT, which must not be glossed.** In a format
+where the manifest gates display, equivalence is asserted **on every view**. In a format where the
+recipient can execute cells out of order, edit one, and see the result — which is a *feature* for
+some recipients — the manifest asserts **as delivered**, and after that the recipient owns what they
+see. Both are honest; **they are not the same claim**, and a format must not inherit the stronger
+one by sharing this section. See
+[ADR-0048](ADR-0048-customer-validation-package-first-consumer-of-computation-export.md) §2.1, where
+the distinction is stated per format.
+
 ---
 
 ## §4 — Frozen, one-way, read-and-verify
@@ -196,8 +210,10 @@ force to a file that leaves the building.
 
 Per ADR-0024 Part B's node shape, with the recipient target:
 
-- **`target_system`** = `recipient` — a new value in the enum alongside `dbt | superset | grist |
-  dagster`. The enum is extended, not bypassed.
+- **`target_system`** = **`recipient-html` | `recipient-notebook`** — new values in the enum
+  alongside `dbt | superset | grist | dagster`. The enum is extended, not bypassed. **Two rows, not
+  two designs** (§8.1): the format is an output target of one governed emit, and the enum already
+  anticipated extension. *A third row is what a future format costs.*
 - **`locator`** = **the package's content hash**, per ADR-0034's `ruleset_ref` discipline. A
   content hash is the right locator here for the reason it is right everywhere: it is the only
   identifier that cannot drift from what it names. *"Which package did they get"* and *"is this the
@@ -261,17 +277,30 @@ and ruled rather than missed.*
 
 ## §8 — Open questions, laid out with trades
 
-**1. The runtime the package executes in.** The determining constraint is that §3 forbids a port, so
-the recipient must run *Python*, offline.
+**1. ~~The runtime the package executes in.~~ RULED 2026-09-02 — BOTH, because they answer
+different recipient questions.** The determining constraint remains that §3 forbids a port, so the
+recipient must run *Python*, offline. What changed is the framing: this was drafted as a choice
+between runtimes and it is not one.
 
-| option | trade |
-|---|---|
-| **Browser-embedded Python (WASM)** | Single file, no install, opens by double-click — the lowest possible ceremony for the recipient, which is the whole value. Cost: bundle size (a Python runtime is not small), boot time, and the numeric stack's WASM support is the risk to measure, not assume |
-| **A container image** | Faithful runtime, trivially correct, no packaging cleverness. Cost: the recipient needs a container runtime and permission to run it — in a closed network, often the blocking constraint rather than a preference |
-| **A notebook + pinned environment** | Familiar to analysts, inspectable, naturally shows intermediates. Cost: environment reproduction is the recipient's problem, which is exactly the burden the package exists to remove; and it invites editing the computation, which §3's equivalence claim depends on nobody doing |
+| option | what the recipient can do with it | status |
+|---|---|---|
+| **Browser-embedded Python (WASM), single HTML file** | ***"Can I CHECK this?"*** — double-click, zero ceremony, the manifest gates display, the computation is sealed | **RULED IN** |
+| **A notebook + pinned environment** | ***"Can I SEE this?"*** — intermediates are cells, the analyst walks the arithmetic step by step. **The drafted cost line — *"it invites editing the computation"* — is a FEATURE here**, for a cost analyst who wants to poke at a rate assumption | **RULED IN** |
+| **A container image** | faithful runtime, no packaging cleverness — but needs a container runtime and permission to run it, which in a closed network is the blocking constraint rather than a preference | **available, unchosen** — not refused; wakes if a recipient class cannot use either of the above |
 
-**Not decided.** The choice is a measurement (§ ADR-0048 states which measurements), not a
-preference, and it may differ per recipient class.
+**The reasoning the first draft contained but did not follow through:** these are not competing
+runtimes, they are **different questions from different people**. A contracting officer wants to
+check a number; that recipient's cost analyst wants to see how it was built. **A single customer
+will routinely have both**, and forcing one format on both is choosing which of them is served.
+
+**And supporting both is nearly free under this ADR as ruled** — the pinned modules, the scoped
+data, the verification manifest and the audit line are all packaging-format-independent, so `format`
+is a declared enum slot on one verb (§1) and two `target_system` rows (§6).
+
+**What is still open:** which format a given recipient class receives by default — **and that is
+answered by the recipient, on evidence, per
+[ADR-0048](ADR-0048-customer-validation-package-first-consumer-of-computation-export.md) §6**, not
+by us guessing their tooling.
 
 **2. Size and offline-bundling discipline.** **Every asset must be embedded; the package may not
 reach a CDN.** A recipient in a closed network gets a silent partial render — fonts, a chart
