@@ -195,8 +195,8 @@ def test_every_projected_archetype_has_a_producer_case():
     """
     src = (Path(__file__).resolve().parents[2] / "agent_fleet" / "presentation_agent"
            / "main.py").read_text(encoding="utf-8")
-    block = re.search(r"_PLANNING_ARCHETYPES: Dict\[str, tuple\] = \{(.*?)^\}", src, re.S | re.M)
-    assert block, "could not find _PLANNING_ARCHETYPES — the projector's shape moved"
+    block = re.search(r"_PROJECTED_ARCHETYPES: Dict\[str, tuple\] = \{(.*?)^\}", src, re.S | re.M)
+    assert block, "could not find _PROJECTED_ARCHETYPES — the projector's shape moved"
     projected = set(re.findall(r'^\s*"(\w+)":', block.group(1), re.M))
     assert len(projected) >= 5, f"parsed only {projected} — the regex is not reading the table"
 

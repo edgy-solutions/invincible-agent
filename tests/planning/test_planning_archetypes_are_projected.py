@@ -43,7 +43,7 @@ def _fns():
         "logger": types.SimpleNamespace(warning=lambda *a, **k: None),
     }
     import re as _re
-    for marker in ("def _extract_agent_response(", "_PLANNING_ARCHETYPES: Dict[str, tuple] = {",
+    for marker in ("def _extract_agent_response(", "_PROJECTED_ARCHETYPES: Dict[str, tuple] = {",
                    "def _project_planning_archetype("):
         start = src.index(marker)
         # End at the next TOP-LEVEL definition OF ANY KIND. Searching for a bare
@@ -236,7 +236,7 @@ def test_rows_are_an_ARRAY_not_a_json_string():
 
 def _projected_archetypes(ns):
     """The population, read from the projector's own table."""
-    return sorted(ns["_PLANNING_ARCHETYPES"])
+    return sorted(ns["_PROJECTED_ARCHETYPES"])
 
 
 def test_every_archetype_carries_the_freshness_pair():
@@ -244,14 +244,14 @@ def test_every_archetype_carries_the_freshness_pair():
     It was `undefined` for every planning card: the producer emits it on the envelope and the
     projection never carried it across — the SAME seam that swallowed the axis keys today.
 
-    Enumerated from `_PLANNING_ARCHETYPES` rather than listed here, because a remembered list
+    Enumerated from `_PROJECTED_ARCHETYPES` rather than listed here, because a remembered list
     is what let SHORTFALL_GRID ship broken this morning while its seal passed.
     """
     ns = _fns()
     archetypes = _projected_archetypes(ns)
     assert len(archetypes) >= 5, f"parsed only {archetypes} — the table's shape moved"
     for arch in archetypes:
-        key = ns["_PLANNING_ARCHETYPES"][arch][0]
+        key = ns["_PROJECTED_ARCHETYPES"][arch][0]
         env = _envelope([{"a": 1}], state_ref="SC-DEMO", state_version=3)
         got = ns["_project_planning_archetype"](arch, env, "PORTFOLIO_LEAD", None)
         assert got is not None and got[key] == [{"a": 1}]

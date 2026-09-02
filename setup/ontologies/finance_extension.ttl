@@ -76,7 +76,7 @@ fin:EarnedValueTechnique a owl:Class ;
 fin:PerformanceMeasurementBaseline a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Performance Measurement Baseline" ;
-    rdfs:comment "The time-phased plan against which performance is measured: budgeted cost for work scheduled spread over periods, together with the claimed and actual figures reported against it period by period. Questions about the planned spread of budget over time, how much was planned versus claimed versus paid in a period, or how the phasing has shifted target this class. It is the SERIES, not a single figure - anything asked over time or by month means this." .
+    rdfs:comment "The time-phased plan against which performance is measured: budgeted cost for work scheduled spread over periods, together with the claimed and actual figures reported against it period by period. IT CARRIES THE ACTUAL COST INCURRED IN EACH PERIOD, so the rate at which cost is being incurred - how fast money is going out, and whether that is faster or slower than the plan phased for it - is a property of this class. Questions about the planned spread of budget over time, about how much was planned versus claimed versus paid in a period, about the pace of expenditure against plan, or about how the phasing has shifted target this class. What is measured here is COST INCURRED AGAINST A PHASED PLAN, which is a different thing from the headroom remaining in an appropriation: this compares spending to a schedule, not a drawn amount to an authorized ceiling. It is the SERIES, not a single figure - anything asked over time or by month means this." .
 
 fin:FundingLine a owl:Class ;
     rdfs:subClassOf prov:Entity ;

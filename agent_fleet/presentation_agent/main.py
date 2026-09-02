@@ -459,13 +459,21 @@ except ImportError:
 # `client MainAgent` resolved to -- a fallback chain whose FIRST entry is
 # OpenRouter. Projection deletes both.
 #: output_uri -> (archetype, payload key, extra passthrough fields)
-# ⚠️ THE NAME IS NO LONGER ACCURATE and is kept deliberately. This is the PROJECTED set —
-# archetypes drawn by deterministic passthrough rather than by a model — and it now holds
-# finance archetypes as well as planning ones. Renaming it is a one-line change here and a
-# four-site change in tests/planning/, which parse this constant BY NAME out of the source
-# (test_producers_speak_their_archetype regexes the block). Filed rather than done, so the
-# rename is one reviewable change instead of a rider on a correctness fix.
-_PLANNING_ARCHETYPES: Dict[str, tuple] = {
+# THE PROJECTED SET — archetypes drawn by DETERMINISTIC PASSTHROUGH rather than by a model.
+#
+# Renamed from `_PLANNING_ARCHETYPES` 2026-09-02. The old name was accurate while planning was
+# the only producer, and became a false claim the moment Engine F's three finance archetypes
+# were projected here — a reader checking "is my archetype rendered deterministically?" would
+# have found a planning-shaped list and reasonably concluded no.
+#
+# WHAT DECIDES MEMBERSHIP IS THE RENDERING GUARANTEE, NOT THE DOMAIN. fin:ForecastMeasure is
+# here because its own rdfs:comment says "DETERMINISTIC BY REQUIREMENT — a forecast must not
+# be routed through a generative renderer", and absence from this dict is exactly how it got
+# routed through one. The name now says the property the membership test actually uses.
+#
+# Two tests under tests/planning/ parse this constant BY NAME out of the source, so the name
+# is load-bearing in four places rather than one.
+_PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # `milestones` joined the passthrough on 2026-08-25, when mesh:ContributionSequence
     # bound to this archetype. WITHOUT IT the projector silently drops the markers and the
     # capability path renders as a plain schedule — the bars are all correct and the ANSWER
@@ -548,7 +556,7 @@ def _project_planning_archetype(
     is carried only if the producer supplied it; nothing is defaulted, inferred
     or invented, because each of those is a named prohibition in the contracts.
     """
-    spec = _PLANNING_ARCHETYPES.get(archetype)
+    spec = _PROJECTED_ARCHETYPES.get(archetype)
     if spec is None:
         return None
     payload_key, passthrough = spec
@@ -683,7 +691,7 @@ async def _render_archetype_hardened(
     # these five have structured rows and contracts that forbid interpretation,
     # so a deterministic projection is both correct and the only way the card
     # renders the same way twice. See _project_planning_archetype.
-    if archetype in _PLANNING_ARCHETYPES:
+    if archetype in _PROJECTED_ARCHETYPES:
         projected = _project_planning_archetype(
             archetype, raw_data, persona, subject_concept=None,
         )
