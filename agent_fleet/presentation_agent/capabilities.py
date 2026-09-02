@@ -21,6 +21,7 @@ names so the lifespan / render_ui code does not change.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 
@@ -32,6 +33,12 @@ from typing import Any, Dict, Optional
 _IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
     "mesh:": "http://invincible-agent/mesh#",
     "idp:": "http://invincible-agent/idp#",
+    # fin: (Engine F finance, ADR-0045). REQUIRED, and its absence fails SILENTLY: an
+    # unknown prefix passes through verbatim BY DESIGN, so `fin:BurnRateSeries` would never
+    # match the full IRI a payload carries and the archetype lookup would simply miss — a
+    # card falling through to KNOWLEDGE_DOCUMENT with "No content available", which is
+    # indistinguishable from having no binding at all.
+    "fin:": "http://invincible-agent/fin#",
 }
 
 
@@ -49,6 +56,27 @@ def canonical_iri_for_lookup(iri: str) -> str:
             return expansion + iri[len(prefix):]
     return iri
 
+
+def capability_slug(subject_uri: str) -> str:
+    """Turn a capability subject URI into a URN-safe slug for registration names.
+
+    Strips ANY compact prefix, not just ``mesh:``. The slug lands INSIDE a DataHub URN --
+    ``urn:li:mlModel:(urn:li:dataPlatform:mesh,presentation_<archetype>_for_<slug>,PROD)``
+    -- where a colon is a URN DELIMITER. A prefix left in place is not untidy, it puts a
+    structural character inside a URN component.
+
+    This read ``.replace("mesh:", "")`` while every capability was a ``mesh:`` one, so the
+    literal was indistinguishable from a general rule until Engine F (ADR-0045) registered
+    the first ``fin:`` subjects and all six names came out as
+    ``presentation_period_series_for_fin:burnrateseries``.
+
+    IT LIVES HERE, NOT IN main.py, AND THAT IS THE ACTUAL REPAIR. main.py imports
+    baml_client, so it cannot be imported outside the container and nothing under tests/
+    could reach this function to assert on it. A `mesh:`-only literal in an untestable
+    module is a bug with nowhere to write its own regression test; beside the table it
+    names, it is one line of import away from covered.
+    """
+    return re.sub(r"^[a-z][a-z0-9]*:", "", subject_uri).lower()
 
 # Engine F's view of "which archetype should this output_uri render
 # as." ADR-0017 §6 envisions this as an HTTP call to Engine O's
@@ -146,6 +174,67 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "archetype": "KNOWLEDGE_DOCUMENT",
         "expected_fields": ["query", "documents", "scores"],
         "description": "Renders mesh:KnowledgeRetrievalResponse as a KNOWLEDGE_DOCUMENT",
+    },
+
+    # ── ENGINE F (FINANCE) — ADR-0045. Added 2026-09-01. ────────────────────────────────
+    #
+    # THIS LIST IS WHAT MAKES A FINANCE CARD DRAW, and that was not obvious. cortex-ui
+    # declares matching binding rows and POSTs them at login, but
+    # `/register_frontend_capabilities` only LOGS them — its own docstring says the graph
+    # plumbing is "Stage 2". Measured 2026-09-01: that endpoint returned
+    # `accepted: 29, rejected: []` while rendersAs edges from fin: classes stayed at ZERO.
+    # ACCEPTANCE AND MATERIALISATION ARE DIFFERENT CLAIMS.
+    #
+    # The rendersAs triples come from HERE, on this agent's startup. Until these six rows
+    # existed, every finance answer routed correctly, produced its output, and rendered as
+    # "Knowledge Document — No content available".
+    {
+        "subject_uri": "fin:BurnRateSeries",
+        "object_uri": "mesh:PeriodSeries",
+        "archetype": "PERIOD_SERIES",
+        "expected_fields": ["period", "burn", "planned", "cum_burn",
+                            "budget_remaining", "runway_periods", "scope_label"],
+        "description": "Renders fin:BurnRateSeries as a PERIOD_SERIES — spend per period against the phased plan",
+    },
+    {
+        "subject_uri": "fin:FundingStatusGrid",
+        "object_uri": "mesh:ShortfallGrid",
+        "archetype": "SHORTFALL_GRID",
+        "expected_fields": ["subject_id", "subject_name", "period", "required",
+                            "committed", "secured", "shortfall", "state"],
+        "description": "Renders fin:FundingStatusGrid as a SHORTFALL_GRID — authorized/obligated/expended per line per period",
+    },
+    {
+        "subject_uri": "fin:PerformanceIndexSeries",
+        "object_uri": "mesh:PeriodSeries",
+        "archetype": "PERIOD_SERIES",
+        "expected_fields": ["period", "cpi", "spi", "cum_cpi", "cum_spi",
+                            "scope_label", "amount_unit"],
+        "description": "Renders fin:PerformanceIndexSeries as a PERIOD_SERIES — CPI/SPI over time. The unit field is `amount_unit`, NEVER `value_unit`: the ratios are dimensionless and a lifted currency would draw a dollar sign on 0.85",
+    },
+    {
+        "subject_uri": "fin:VarianceDecomposition",
+        "object_uri": "mesh:VarianceTree",
+        "archetype": "VARIANCE_TREE",
+        "expected_fields": ["level", "entity_id", "entity_name", "variance",
+                            "share_of_root", "stop_reason", "contributors"],
+        "description": "Renders fin:VarianceDecomposition as a VARIANCE_TREE — the only RECURSIVE payload here; `contributors` nests and `stop_reason` says why each branch ended",
+    },
+    {
+        "subject_uri": "fin:VarianceDriverRanking",
+        "object_uri": "mesh:ContributionRanking",
+        "archetype": "CONTRIBUTION_RANKING",
+        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
+                            "share_of_total", "favourable", "value_unit"],
+        "description": "Renders fin:VarianceDriverRanking as a CONTRIBUTION_RANKING — ordered contributors whose signed magnitudes sum to the variance they explain",
+    },
+    {
+        "subject_uri": "fin:EstimateAtCompletion",
+        "object_uri": "mesh:ForecastMeasure",
+        "archetype": "FORECAST_MEASURE",
+        "expected_fields": ["eac", "method", "formula", "vac", "etc", "bac",
+                            "cpi", "spi", "value_unit"],
+        "description": "Renders fin:EstimateAtCompletion as a FORECAST_MEASURE — the figure WITH its method and formula; a forecast drawn without its method re-creates the ambiguity the mandatory-method refusal just made the asker resolve",
     },
 ]
 

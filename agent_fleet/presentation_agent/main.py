@@ -103,16 +103,13 @@ logger.propagate = False
 try:
     from capabilities import (  # type: ignore[no-redef]
         PRESENTATION_CAPABILITIES as _PRESENTATION_CAPABILITIES,
+        capability_slug as _capability_slug,
     )
 except ImportError:
     from agent_fleet.presentation_agent.capabilities import (
         PRESENTATION_CAPABILITIES as _PRESENTATION_CAPABILITIES,
+        capability_slug as _capability_slug,
     )
-
-
-def _capability_slug(subject_uri: str) -> str:
-    """Turn a subject URI into a URN-safe slug for registration names."""
-    return subject_uri.replace("mesh:", "").lower()
 
 
 @asynccontextmanager

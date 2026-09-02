@@ -63,3 +63,58 @@ def test_EVERY_capability_endpoint_expands_to_a_full_iri():
                 f"and the presentation will never materialize"
             )
             assert ":" in expanded and not expanded.startswith("mesh:")
+
+
+# ── THE REGISTRATION NAME IS ALSO WIRE ────────────────────────────────────────────────
+#
+# The tests above pin the two triple ENDPOINTS onto the wire in full-IRI form. The
+# registration NAME is the third thing that crosses, and it crosses somewhere stricter:
+# inside a DataHub URN,
+#
+#     urn:li:mlModel:(urn:li:dataPlatform:mesh,presentation_<archetype>_for_<slug>,PROD)
+#
+# where a colon is the URN's own delimiter.
+#
+# `capability_slug` read `.replace("mesh:", "")` for as long as every capability was a
+# `mesh:` one — a literal that is indistinguishable from a general rule until a second
+# namespace exists. Engine F (ADR-0045) is that second namespace, and all six of its rows
+# came out as `presentation_period_series_for_fin:burnrateseries`.
+#
+# THE REASON IT WENT UNCAUGHT IS THE REASON THIS TEST IS NEW: the function used to live in
+# presentation_agent/main.py, which imports baml_client and therefore cannot be imported
+# outside the container. Nothing under tests/ could reach it. The fix was to move it beside
+# the table it names — an untestable module is where a `mesh:`-shaped assumption goes to
+# survive.
+
+from agent_fleet.presentation_agent.capabilities import capability_slug
+
+
+def test_no_capability_slug_carries_a_prefix_into_the_urn():
+    """The property, asserted over the real table rather than over examples."""
+    for cap in PRESENTATION_CAPABILITIES:
+        slug = capability_slug(cap["subject_uri"])
+        assert ":" not in slug, (
+            f"{cap['subject_uri']} -> {slug!r} puts a URN delimiter inside a URN component"
+        )
+        assert slug and slug == slug.lower()
+
+
+def test_capability_slug_strips_ANY_prefix_not_just_mesh():
+    """The generalisation, stated directly so a future namespace inherits it."""
+    assert capability_slug("mesh:OwnershipFact") == "ownershipfact"
+    assert capability_slug("fin:BurnRateSeries") == "burnrateseries"
+    assert capability_slug("idp:Dataset") == "dataset"
+    assert capability_slug("pcn:SustainmentNotice") == "sustainmentnotice"
+
+
+def test_capability_slug_is_byte_identical_for_every_pre_existing_mesh_row():
+    """A widened rule must not quietly RENAME anything already registered.
+
+    Registration name is URN identity: had the new rule differed on any `mesh:` row, the
+    next startup would have created a second capability rather than upserting the one that
+    exists. This pins the widening as strictly additive.
+    """
+    for cap in PRESENTATION_CAPABILITIES:
+        if cap["subject_uri"].startswith("mesh:"):
+            legacy = cap["subject_uri"].replace("mesh:", "").lower()
+            assert capability_slug(cap["subject_uri"]) == legacy

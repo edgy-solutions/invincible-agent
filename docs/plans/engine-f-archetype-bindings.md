@@ -6,7 +6,7 @@ blocked-on:
 repo:       cortex-ui
 ruled-by:   ADR-0045 Amendment 2026-08-29 (the three rulings on this table); ADR-0042 (§2 the selector decides from the payload; the projection arm); ADR-0030 (one verb, one fixed output type)
 code-site:  agent_fleet/presentation_agent/main.py (_PLANNING_ARCHETYPES, the projection arm), agent_fleet/finance_agent/measures.py (the six payloads), cortex-ui src/registry/assembleCapabilities.ts (DERIVED_BINDINGS)
-summary:    THE BINDING TABLE FOR ENGINE F, produced BEFORE cortex is dispatched, with payload field names read off the running verbs and contract fields read off _PLANNING_ARCHETYPES — so the fit is demonstrated rather than asserted. RESULT IS NOT SIX BINDING ROWS. Two map cleanly (fin_burn_rate, fin_funding_status). One maps at a stated cost (fin_performance_indices — PERIOD_SERIES declares `value_unit` in its passthrough and this verb DELIBERATELY does not emit one, because CPI is a dimensionless ratio; the row field is named `amount_unit` specifically to defeat the projector's rows[0] lift, which is an accommodation nobody would find without this note). THREE ARE REAL CORTEX BUILDS, NOT BINDING ROWS: fin_variance_analysis emits a TREE (nested `contributors`) and no archetype in the projection arm takes nesting — ADR-0045 already deferred its archetype and this confirms why; fin_eac_calculation emits ONE forecast whose METHOD is half the answer and no existing archetype carries a method, while the nearest candidate (ASSET_STATE_METRIC) is an LLM renderer that would send finance figures to a fallback chain beginning at OpenRouter; fin_variance_drivers was assigned INSTANCES_BY_PROPERTY by ADR-0045, but that archetype is A FILTERED INSTANCE TABLE fed by a hand-set BFF feeder, is ABSENT from _PLANNING_ARCHETYPES entirely, and requires target/columns/row_identity/state_vocabulary that a RANKING has none of. Also records the page-load registration law as a runbook verification step: bindings reach the graph on an authenticated browser page load, never from a deploy. RULED 2026-08-29 (architect), recorded as ADR-0045's Amendment: (1) EAC gets a small DETERMINISTIC value+method+formula archetype, NOT ASSET_STATE_METRIC — build this first; (2) INSTANCES_BY_PROPERTY REFUSED for drivers, and DELTA_SET was checked before minting and does NOT generalize (the axis is inverted — N metrics x one comparison vs one metric x N entities — and ordering is meaningful in one and not the other), so a ranked-set archetype is the build, reusing DELTA_SET's CELL grammar but not the archetype and NOT its producer-formatted magnitude string; (3) variance-tree RULED 2026-08-30 — THE VERB RETURNS THE TREE, build the hierarchical archetype, flattening refused. It is a CLARIFICATION of Decision 3 rather than an amendment: one verb not a chain means one INVOCATION not one STEP, and Decision 3 already states the recursion is the verb's implementation; what it refuses is a CONVERSATIONAL chain. Do not cite the ruling by letter — it arrived as 'Option B' while this packet's (b) is flattening. Accommodation A2 is now SEALED (tests/finance, negative control verified).
+summary:    THE BINDING TABLE FOR ENGINE F, produced BEFORE cortex is dispatched, with payload field names read off the running verbs and contract fields read off _PLANNING_ARCHETYPES — so the fit is demonstrated rather than asserted. RESULT IS NOT SIX BINDING ROWS. Two map cleanly (fin_burn_rate, fin_funding_status). One maps at a stated cost (fin_performance_indices — PERIOD_SERIES declares `value_unit` in its passthrough and this verb DELIBERATELY does not emit one, because CPI is a dimensionless ratio; the row field is named `amount_unit` specifically to defeat the projector's rows[0] lift, which is an accommodation nobody would find without this note). THREE ARE REAL CORTEX BUILDS, NOT BINDING ROWS: fin_variance_analysis emits a TREE (nested `contributors`) and no archetype in the projection arm takes nesting — ADR-0045 already deferred its archetype and this confirms why; fin_eac_calculation emits ONE forecast whose METHOD is half the answer and no existing archetype carries a method, while the nearest candidate (ASSET_STATE_METRIC) is an LLM renderer that would send finance figures to a fallback chain beginning at OpenRouter; fin_variance_drivers was assigned INSTANCES_BY_PROPERTY by ADR-0045, but that archetype is A FILTERED INSTANCE TABLE fed by a hand-set BFF feeder, is ABSENT from _PLANNING_ARCHETYPES entirely, and requires target/columns/row_identity/state_vocabulary that a RANKING has none of. CORRECTED 2026-09-01 — THIS PACKET'S REGISTRATION CLAIM WAS WRONG. It said bindings reach the graph on an authenticated browser page load and never from a deploy. Measured: cortex's exact 29-capability payload POSTed as alice returned `accepted: 29, rejected: []` and `rendersAs` for `fin:` classes stayed at ZERO. `/register_frontend_capabilities` only LOGS -- its own docstring says the graph plumbing is 'Stage 2'. The rendersAs triples are written by the PRESENTATION AGENT'S OWN STARTUP off `PRESENTATION_CAPABILITIES`, so the move is a deploy after all, and the opposite of what this packet told a reader. See the CORRECTION section at the end. RULED 2026-08-29 (architect), recorded as ADR-0045's Amendment: (1) EAC gets a small DETERMINISTIC value+method+formula archetype, NOT ASSET_STATE_METRIC — build this first; (2) INSTANCES_BY_PROPERTY REFUSED for drivers, and DELTA_SET was checked before minting and does NOT generalize (the axis is inverted — N metrics x one comparison vs one metric x N entities — and ordering is meaningful in one and not the other), so a ranked-set archetype is the build, reusing DELTA_SET's CELL grammar but not the archetype and NOT its producer-formatted magnitude string; (3) variance-tree RULED 2026-08-30 — THE VERB RETURNS THE TREE, build the hierarchical archetype, flattening refused. It is a CLARIFICATION of Decision 3 rather than an amendment: one verb not a chain means one INVOCATION not one STEP, and Decision 3 already states the recursion is the verb's implementation; what it refuses is a CONVERSATIONAL chain. Do not cite the ruling by letter — it arrived as 'Option B' while this packet's (b) is flattening. Accommodation A2 is now SEALED (tests/finance, negative control verified).
 ---
 
 # Engine F → archetype bindings, demonstrated before cortex is dispatched
@@ -304,3 +304,40 @@ unit from the producer.
 
 **Nothing should be built from this packet alone**; it is the payload read those builds start
 from, so they begin with evidence rather than a blank page.
+
+
+## CORRECTION 2026-09-01 — the registration claim in this packet was backwards
+
+This packet told its reader that archetype bindings reach the mesh graph **on an authenticated
+browser page load, never from a deploy**, and recorded that as a runbook verification step. It is
+wrong, and it was wrong in the direction that costs the most: it points at a browser action for a
+thing only a deploy does.
+
+**What was measured.** cortex-ui's exact payload was generated from the sibling repo
+(`npx vitest run src/dump_caps.test.ts`) -- 29 capabilities, 6 of them `fin:`, `frontend_id:
+`cortex-ui-desktop` -- and POSTed to `/register_frontend_capabilities` under a real alice token:
+
+```
+{"accepted": 29, "frontend_id": "cortex-ui-desktop", "rejected": []}
+```
+
+`rendersAs` edges from `fin:` classes: **0 before, 0 after.** The endpoint's own docstring says why
+-- it logs the declaration structurally and *"Stage 2 will plumb this into the SPO predicate
+graph."* **Acceptance and materialisation are different claims, and only the first is built.**
+
+A frontend POSTing its capabilities therefore gets a clean `accepted` count whether or not anything
+renders. That is the same failure grammar as the rest of this lane's findings: a green signal at a
+layer above the one that does the work.
+
+**Where the edges actually come from:** `PRESENTATION_CAPABILITIES` in
+`agent_fleet/presentation_agent/capabilities.py`, written to the mesh by the presentation agent's
+OWN startup (`main.py` lifespan). It held ten rows and zero `fin:` rows, which is why six correct
+routes drew as `Knowledge Document - No content available`.
+
+**So the two surfaces are independent, and both are required:** cortex declares its rows for its
+own selector; the backend table declares them for the graph. Neither writes the other, nothing
+compares them, and the failure of the backend one is silent from the frontend side.
+
+**What this changes for work:** the move is a redeploy of the presentation agent, not a browser
+refresh. Recorded in `docs/runbooks/adding-an-engine.md` under registration verification, replacing
+the page-load instruction this packet supplied.

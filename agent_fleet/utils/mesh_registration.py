@@ -492,6 +492,15 @@ def register_engine_to_mesh(
 _IRI_PREFIXES = {
     "mesh:": "http://invincible-agent/mesh#",
     "idp:": "http://invincible-agent/idp#",
+    # fin: (Engine F finance, ADR-0045) -- the FIRST non-platform namespace to register a
+    # presentation, and the entry without which its six rendersAs rows are never created.
+    # This is the 2026-08-21 compact-vs-full bug recurring for a new namespace rather than
+    # a new one: the linker MATCHes both triple ends against :OntologyClass nodes holding
+    # FULL IRIs, an unknown prefix is deliberately passed through VERBATIM (see below), so
+    # `fin:BurnRateSeries` misses on both ends and the row is silently absent. Same symptom
+    # as having no binding at all -- a finance card drawn as KNOWLEDGE_DOCUMENT,
+    # "No content available", on an answer that routed perfectly.
+    "fin:": "http://invincible-agent/fin#",
 }
 
 
