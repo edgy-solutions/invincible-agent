@@ -261,12 +261,26 @@ that removes the per-graph registration code. Nothing here requires a new regist
 > objection is gone. Kept visible rather than edited away, because the sentence was quotable and
 > someone would have checked it.
 >
-> **The ruling is unchanged and now rests on cleaner ground: nothing here consumes it.** Counted
-> against the tracked tree, not the working one — **13 `pyproject.toml` files carrying the pin (12
-> under `agent_fleet/`, plus the root, which holds two occurrences), and 13 `uv.lock` files. Every
-> one still resolves `v0.3.1`; not a single pin has moved.** So §8.5's condition is unmet, and the
-> route-C refusal below stands — for the sharper reason it was already given: not two open defects,
-> but a fix no consumer here has taken.
+> **The ruling is unchanged and now rests on cleaner ground: nothing here consumes it.**
+> **13 `pyproject.toml` files carry the pin in 14 occurrences** (12 under `agent_fleet/` at one
+> each, plus the root at two; a 14th tracked `pyproject.toml`, `agent_fleet/cortex_bff/`, carries
+> none), **and 13 `uv.lock` files. Every one still resolves `v0.3.1`; not a single pin has moved.**
+>
+> **Count the TRACKED population, and here is the command, because an unscoped grep gives a
+> different and wrong answer** — 15 files / 18 occurrences, the extra coming from vendored
+> `site-packages` copies under `.venv`:
+>
+> ```bash
+> git ls-files '*pyproject.toml' | xargs grep -c 'iagent-mesh @ git+'   # 13 files, 14 occurrences
+> ```
+>
+> *That discrepancy was found by two lanes counting independently and reconciling — a file count
+> filtered to tracked files reported alongside an occurrence count that was not. The number was
+> not wrong so much as **un-scoped**, which is the same defect class as a by-name check that
+> matches only one spelling. Hence the command rather than the number.*
+>
+> So §8.5's condition is unmet, and the route-C refusal below stands — for the sharper reason it
+> was already given: not two open defects, but a fix no consumer here has taken.
 >
 > **Two consequences of publication, both narrowing the question rather than answering it:**
 >
@@ -513,6 +527,26 @@ on slice 1's critical path, not a filed nicety**, and it comes first: writing th
 either existing copy lands a third divergent derivation and makes the extraction strictly harder
 than it is today. The flat/packaged import idiom the extraction must survive is
 `adding-an-engine.md` §5, and `tests/test_agent_modules_survive_flat_layout.py` is the seal.
+
+**And the extraction has a SHAPE, measured rather than assumed** (by the lane that owns both
+copies, 2026-09-01): `planning_agent/slots.py` is 305 lines, `finance_agent/slots.py` is 267, and
+they are **30% similar — 86 identical lines. This is not a copy with drift.** What is shared is the
+**derivation mechanism**: the `inspect.signature` walk, the `eval_str=True` handling for
+`from __future__ import annotations`, the union/container origin split in `_type_of`, the
+required/default logic. What diverges is each engine's **vocabulary**: `_REFERENT_KIND` maps
+different parameters to different class URIs, `_PERIOD_KIND` and the fiscal calendar are
+planning-only, and `HANDLE_SLOTS`/`CEREMONY_VERBS` differ per engine.
+
+**So the extraction takes the MECHANISM and each engine keeps and passes its own VOCABULARY.** An
+extraction that hoisted the vocabularies too would either grow a domain switch inside a shared
+util or force one engine's referent map onto the other — and the finance and planning referent
+kinds are genuinely different facts about different ontologies. That distinction is the difference
+between a refactor that holds and one that gets re-forked in a month.
+
+**One moving target, named here so it does not become a three-way merge:** planning's copy gained
+`arity_for()` (§1's arity row) deriving query-shape eligibility from the same signature walk;
+finance has no equivalent. The extraction therefore merges a function that exists on one side only,
+and doing it while that is still settling costs more than waiting for it to.
 
 **Slice 2 wakes on the first real graph a team wants to plug in** — not before. The manifest schema
 (§8.3) should be authored against a second real consumer rather than designed against an imagined
