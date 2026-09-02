@@ -459,6 +459,12 @@ except ImportError:
 # `client MainAgent` resolved to -- a fallback chain whose FIRST entry is
 # OpenRouter. Projection deletes both.
 #: output_uri -> (archetype, payload key, extra passthrough fields)
+# ⚠️ THE NAME IS NO LONGER ACCURATE and is kept deliberately. This is the PROJECTED set —
+# archetypes drawn by deterministic passthrough rather than by a model — and it now holds
+# finance archetypes as well as planning ones. Renaming it is a one-line change here and a
+# four-site change in tests/planning/, which parse this constant BY NAME out of the source
+# (test_producers_speak_their_archetype regexes the block). Filed rather than done, so the
+# rename is one reviewable change instead of a rider on a correctness fix.
 _PLANNING_ARCHETYPES: Dict[str, tuple] = {
     # `milestones` joined the passthrough on 2026-08-25, when mesh:ContributionSequence
     # bound to this archetype. WITHOUT IT the projector silently drops the markers and the
@@ -495,6 +501,32 @@ _PLANNING_ARCHETYPES: Dict[str, tuple] = {
     # "No content available." Picked up here because the arm is mechanical
     # once the contract exists.
     "SHORTFALL_GRID": ("rows", ("value_label", "value_unit", "scope_label")),
+
+    # ── ENGINE F (FINANCE), ADR-0045. Added 2026-09-02, MEASURED FIRST. ────────────────
+    #
+    # These three were minted, declared in the ontology, admitted by capability_admission,
+    # bound in PRESENTATION_CAPABILITIES and registered in cortex's menu — and then fell
+    # through to legacy BAML DesignUI, because NOTHING PROJECTED THEM. The selector chose
+    # correctly every time; there was simply no renderer on the other side:
+    #
+    #   render_ui: no hardened renderer for archetype=FORECAST_MEASURE;
+    #              falling back to legacy DesignUI.
+    #
+    # ⛔ AND THE FALLBACK IS A RULING VIOLATION, not a cosmetic miss. fin:ForecastMeasure's
+    # own rdfs:comment says "DETERMINISTIC BY REQUIREMENT — a forecast must not be routed
+    # through a generative renderer", and ADR-0045's amendment rejected ASSET_STATE_METRIC
+    # for exactly that reason. Measured 2026-09-02: an EAC of $14,152,380.95 went through
+    # DesignUI and came back as a CHART_WIDGET of label/value pairs. The number survived
+    # the trip, which is the problem — nothing looked broken.
+    #
+    # Projected rather than hardened-rendered because the payloads are already row-shaped
+    # and the passthrough fields match cortex's declared contracts exactly. VARIANCE_TREE
+    # is RECURSIVE — rows[0] carries a nested `contributors` — and rows pass through
+    # VERBATIM here, so the nesting survives, which is what ADR-0045 required when it
+    # ruled the verb returns the tree and refused flattening.
+    "VARIANCE_TREE": ("rows", ("value_label", "value_unit", "scope_label")),
+    "CONTRIBUTION_RANKING": ("rows", ("value_label", "value_unit", "scope_label")),
+    "FORECAST_MEASURE": ("rows", ("value_unit", "scope_label")),
 }
 
 

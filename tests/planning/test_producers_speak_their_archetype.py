@@ -43,6 +43,13 @@ _CONTRACTS = {
     "INTERVAL_TIMELINE": ("IntervalTimeline.contract.ts", "IntervalRow"),
     "SHORTFALL_GRID": ("ShortfallGrid.contract.ts", "ShortfallCell"),
     "PERIOD_SERIES": ("PeriodSeries.contract.ts", "PeriodSeriesRow"),
+    # ENGINE F (finance), ADR-0045. Added when the three were put into the projector
+    # 2026-09-02 — this seal FAILED first and is the reason they have conformance cases at
+    # all: it enumerates from the projector's own table, so adding a projected archetype
+    # without a producer case is caught here rather than by a blank card in a demo.
+    "VARIANCE_TREE": ("VarianceTree.contract.ts", "VarianceNode"),
+    "CONTRIBUTION_RANKING": ("ContributionRanking.contract.ts", "ContributionRow"),
+    "FORECAST_MEASURE": ("ForecastMeasure.contract.ts", "ForecastRow"),
 }
 
 #: Projected archetypes with no producer case here, each with the reason. AN EXEMPTION IS A
@@ -75,6 +82,17 @@ _EXEMPT = {
 #: THE MIRROR — used only when the sibling repo is absent, and cross-checked against the
 #: parsed contract whenever it is present. Required (non-optional) fields only.
 _MIRROR = {
+    # ENGINE F (finance). REQUIRED (non-optional) fields only, per this table's rule — the
+    # cross-check against the parsed contract is what keeps these honest when the sibling
+    # repo is present.
+    #
+    # NOTE what is NOT here: `rank`. The producer emits it and CONTRIBUTION_RANKING's
+    # contract does not declare it, because ORDER is the answer and the contract says
+    # orderIsUpstream — a rank column is a convenience, not a required field. Listing it
+    # would assert a contract cortex never made.
+    "VARIANCE_TREE": {"level", "entity_id", "entity_name", "variance"},
+    "CONTRIBUTION_RANKING": {"entity_id", "entity_name", "contribution"},
+    "FORECAST_MEASURE": {"method", "formula", "eac"},
     "THRESHOLD_GRID": {"subject_id", "period", "value", "threshold", "over_threshold"},
     # `assessed_at`/`assessed_by`/`assessment_count` are OPTIONAL in the contract — the
     # producer supplies all three, but a cell may honestly have no provenance. Listing them
