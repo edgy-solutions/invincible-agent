@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **104 of 116 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **106 of 118 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -21,6 +21,10 @@ _Coverage: **104 of 116 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   → [docs/plans/urn-reconciliation-guard.md](plans/urn-reconciliation-guard.md)
 
 ## open
+
+- **a-mandatory-slot-does-not-refine** — THE 20-SECOND FILL_SLOTS BUDGET IS JUSTIFIED BY A PREMISE THAT IS FALSE FOR MANDATORY SLOTS. Its comment reads "a slot REFINES a question that will still be answered without it, so a slow extractor must cost the user a default, never a timeout." That holds for spoken-OPTIONAL. For spoken-MANDATORY it is exactly inverted: without the slot the verb cannot run, so the timeout does not cost a default — it converts a fully-specified question into an elicitation. Measured 2026-09-02: "why are we over budget on Notional Program Meridian" routed to finVarianceAnalysis at 0.96, engine-o extracted `program_id="Notional Program Meridian"` at 0.95 confidence and returned 200 OK, and the supervisor had already given up at 20s. The user is then asked "which Program?" about a question that named the program. EVERY Engine F verb has a spoken-mandatory slot, so this affects all six.
+  status: open · owner: agent (Engine F lane) — FILED, NOT FIXED: the filler is outside this lane's fences · blocked-on: the filler/supervisor lane
+  → [docs/plans/a-mandatory-slot-does-not-refine.md](plans/a-mandatory-slot-does-not-refine.md)
 
 - **a-missing-mandatory-slot-is-a-400-not-an-ask** — MEASURED on the live filler. Four of eleven planning verbs declare a spoken-MANDATORY slot (capability_id, project_id, process_id, tech_id). If the filler does not produce it, `func(state, **params)` raises TypeError and the caller gets `400 bad params ... missing 1 required keyword-only argument: 'project_id'` — a Python signature error shown to a person who asked a question. The right behaviour is ADR-0033's ASK. Found by a live case where the model filled BOTH enums correctly (direction=upstream, kind=phase) and dropped the mandatory id, reporting confidence 0.0 — a signal nothing currently reads. The positive half of the same finding: those four verbs could ONLY ever 400 before the filler existed, because nothing supplied a mandatory parameter at all.
   status: open · owner: unassigned
@@ -165,6 +169,10 @@ _Coverage: **104 of 116 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **first-viewer-critical-path** — TRIAGE — FOUR load-bearing now (a prerequisite the triage missed was found by item 1's live witness: no asset is both granted and fetchable, so the data path serves nothing — inserted ahead of da-collects). Of 27 live board items, originally THREE were load-bearing for "one other person can use this", in a stated order. The other 24 sort into demo-day operational risk (3, now a runbook not board work) and hygiene/posture/architecture (21). The goal is three items away, not thirty-nine, and this packet names which and why the other 24 are not.
   status: open · owner: human · blocked-on: nothing — the scope sentence is ANSWERED (2026-08-15): Tier-3 row 8 IS in scope, so the path is three items in the order stated below. What remains is building them.
   → [docs/plans/first-viewer-critical-path.md](plans/first-viewer-critical-path.md)
+
+- **four-subjects-means-four-questions** — ENGINE F'S SIX VERBS DECLARE FOUR DIFFERENT SUBJECTS, so which verbs are reachable depends entirely on which class the grounding step picks — and a question that names the PROGRAM can only ever reach two of the six. Measured 2026-09-02: `subject_uri=fin#Program compatible_count=2`, and the classifier correctly returned no_match for burn rate, funding status and CPI/SPI because those verbs hang off fin:PerformanceMeasurementBaseline and fin:FundingLine, which the question never mentioned. The classifier is right, the modelling is defensible, and the SYSTEM still cannot answer "what is the burn rate on Meridian" — because nothing traverses from a Program to its PMB. This is the routable-asymmetry finding arriving on the verb side rather than the class side.
+  status: open · owner: agent (Engine F lane) — MINE: the subjects are my authoring decision
+  → [docs/plans/four-subjects-means-four-questions.md](plans/four-subjects-means-four-questions.md)
 
 - **generalist-verbs-bulk-declared-on-content-kinds** — engine-w's `mesh:retrieveKnowledge` is typed against three `mil:*DataModule` content kinds and engine-e's `mesh:queryKnowledgeGraph` against a fourth, putting all four into the resolver candidate pool. B0 §3's Wave-3 rule is one verb per demonstrated question; this is a bulk sweep. B4 has NOT shipped — the guard that catches it (`test_pool_hold_kind_classes_have_no_verbs_yet`, both ingest files) is correct and had simply never run in CI, because its file skipped on "Neo4j unreachable" until the port-forward set landed 2026-08-26.
   status: open · owner: unassigned · blocked-on: **which registration path types these verbs against content kinds** — engine-w and engine-e each register their own verbs, and the leak is either (a) an `input_uri` declared too broadly in one of their manifests, or (b) a saga/sensor path materialising kind-class edges as a side effect. Those have different fixes and guessing between them is how the wrong one ships. Trace the four edges' provenance before editing anything.
