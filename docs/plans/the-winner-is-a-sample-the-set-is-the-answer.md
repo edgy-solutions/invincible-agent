@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0031 (instance resolution ladder); ADR-0025 (the can_view-filtered candidate pool)
 code-site:  agent_fleet/ontology_service/main.py (/resolve — candidate recall, then selection), docs/measurements/engine-f-end-to-end-routing-v1.md and engine-f-grounding-corpus-v1.json (the totals this retires)
-summary:    MEASURED 2026-09-01, arm A n=3 on one fixed substrate, recording the candidate SET and the WINNER on every draw. The candidate sets are DETERMINISTIC — 0 of 20 flipped. The winner selected from them is NOT — 2 of 20 flipped, and that is a FLOOR rather than a rate: a third row flipped between two earlier runs and held across these three, so n=3 understates it. CONSEQUENCE: a right-class grounding TOTAL is not a usable instrument at this precision, because it sums twenty draws from a partly non-deterministic selection layer sitting on top of a stable one. This retires BOTH published totals for the finance corpus — 11/20 and 12/20 — and, more importantly, retires the DIFFERENCE between them, which was read as substrate evidence and discriminates nothing: one of the two known-unstable rows IS the row the difference consisted of. THE FORBIDDEN ARITHMETIC is treating 2/20 as a noise budget and subtracting it from a delta; the claim the data supports is qualitative and stronger than any budget. What to measure instead: SET DISJOINTNESS, which is measured on the deterministic layer.
+summary:    MEASURED 2026-09-01, arm A n=3 on one fixed substrate, recording the candidate SET and the WINNER on every draw. The candidate sets are DETERMINISTIC — 0 of 20 flipped. The winner selected from them is NOT — 2 of 20 flipped, and that is a FLOOR rather than a rate: a third row flipped between two earlier runs and held across these three, so n=3 understates it. CONSEQUENCE: a right-class grounding TOTAL is not a usable instrument at this precision, because it sums twenty draws from a partly non-deterministic selection layer sitting on top of a stable one. This retires BOTH published totals for the finance corpus — 11/20 and 12/20 — and, more importantly, retires the DIFFERENCE between them, which was read as substrate evidence and discriminates nothing: one of the two known-unstable rows IS the row the difference consisted of. THE FORBIDDEN ARITHMETIC is treating 2/20 as a noise budget and subtracting it from a delta; the claim the data supports is qualitative and stronger than any budget. What to measure instead: SET DISJOINTNESS, which is measured on the deterministic layer. SCOPE ESCALATED 2026-09-02: the non-determinism is NOT confined to the layer measured here. `"what is the funding status"` — one of the rows already named unstable — produced `subject_uri=UNKNOWN subject_conf=0.0 fallback_reason=subject_unknown` on one draw and grounded to `fin:Program` at 0.9 on both re-draws. That is the GROUNDING layer failing, not a different winner inside a stable set, and it is WORSE: a subject_unknown skips the mesh entirely for the generalist fallback, so the question is answered by a component that was never eligible. n=3 on a known flipper evidences no rate and none is claimed; what changed is the finding's SCOPE.
 ---
 
 # The winner is a sample; the set is the answer
@@ -102,6 +102,54 @@ measures**.
 * **Not** specific to finance. The mechanism is the recall/selection split, which every
   grounded question crosses. A planning or catalog corpus scored by right-class totals inherits
   the same defect; none has been measured for it.
+
+## SCOPE ESCALATION 2026-09-02 — the recall layer is not unconditionally deterministic either
+
+This packet's central split was: **the candidate SET holds still (0/20 flipped) and the WINNER
+does not (≥2/20).** The remedy that follows — assert on the set — depends on the first half.
+
+**One draw has now failed on the set side.** `"what is the funding status"`, measured through
+the full path 2026-09-02:
+
+```
+draw 1:  subject_uri=UNKNOWN  subject_conf=0.0  fallback_reason=subject_unknown
+         → generalist fallback (ADR-0019 Contract B: no LLM call without subject grounding)
+draw 2:  subject_uri=fin#Program  subject_conf=0.9   compatible_count=6  → finFundingStatus 0.96
+draw 3:  subject_uri=fin#Program  subject_conf=0.9   compatible_count=6  → finFundingStatus 0.96
+```
+
+**Note which row this is.** It is the same phrasing recorded above as the third unstable row —
+the one that flipped `FundingStatusGrid` / `FundingLine` between earlier runs and then held
+across three. It has now failed a third distinct way.
+
+### Why this is worse than a winner flip, and not merely different
+
+A winner flip returns a wrong-but-eligible class from a correct set: the mesh still answers, and
+the answer is traceable to a candidate that genuinely competed. **A `subject_unknown` produces no
+set at all.** Contract B correctly refuses to make an LLM call without subject grounding, so the
+question leaves the mesh and is answered by the generalist fallback — a component that was never
+in any candidate set, carries no `output_uri`, and therefore also lands on the undiscriminated
+KNOWLEDGE_DOCUMENT floor (`[[a-fallback-that-absorbs-every-failure-reports-none]]`).
+
+So the failure is invisible twice over: it does not appear as a bad choice, and its card looks
+like three other failure modes.
+
+### What is NOT claimed
+
+n=3, on a row already known to be unstable. **No rate, no direction, and specifically no claim
+that grounding instability is new** — nothing here was measured for it before, so "it now reaches
+grounding" is a statement about THIS PACKET'S SCOPE, not about a change in the system. Reading
+1-in-3 as a frequency would be the forbidden arithmetic above, in the same shape.
+
+What IS supportable: **"assert on the set" is a narrower remedy than this packet implied.** The
+set is the right unit and it is far steadier than the winner, but it is not a fixed point, and a
+measurement that assumes a set always exists has an unhandled case. Record `subject_unknown` as a
+distinct outcome alongside the set and the winner, rather than as a missing row.
+
+### Owed by this escalation
+
+A determinism run that records THREE things per draw — grounded subject, candidate set, winner —
+so a grounding failure is visible as itself. Every run to date recorded the last two.
 
 ## Owed
 

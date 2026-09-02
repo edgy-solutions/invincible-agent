@@ -119,6 +119,44 @@ startup.
 Registrations: 6 → 10. `fin:Program` now hosts all six verbs; the primary subjects are unchanged,
 and a seal asserts the accommodation has not replaced the modelling.
 
+## FOR THE ADR-0045 AMENDMENT — the widening consumes discrimination margin
+
+**Written here so whoever drafts the ladder-step amendment has the number rather than the
+impression.** Option (3) was taken and it works; this is its price, measured, and it is the
+strongest available argument for eventually doing (1).
+
+Widening a subject does not add candidates for free — **it spends the margin the classifier has
+to tell verbs apart.** Before, `finEacCalculation` and `finVarianceAnalysis` chose between each
+other. Now every finance question presents six candidates:
+
+| verb | confidence at 6 candidates | at 2 |
+|---|---|---|
+| `finPerformanceIndices` | 0.96 | — |
+| `finBurnRate` | 0.96 | — |
+| `finFundingStatus` | 0.96 | — |
+| `finEacCalculation` | 0.96 | 0.96 (held) |
+| `finVarianceAnalysis` | **0.92** | 0.96 |
+| `finVarianceDrivers` | **0.86** | — |
+
+**The two thinnest are the two that are genuinely near-synonymous**: a nested explanation of a
+variance and a ranked list of that same variance's contributors. That is not a defect in the
+descriptions — it is a real semantic adjacency, and the `anti_synonyms` plus the "NOT that other
+verb" clauses held at six candidates, which is the first genuine test they have had.
+
+**The structural point for the amendment:** every verb added to an engine now costs margin for
+every OTHER verb in that engine, because they all share one subject. Option (3) trades
+discrimination margin for reachability, and the trade gets worse monotonically as an engine
+grows. A relation-following ladder step does not make that trade at all — it keeps each verb in
+the small set its own subject implies and reaches it by traversal instead.
+
+**So (3) is correct now and self-limiting later.** The question the amendment should answer is
+not "is traversal nicer" but **"at how many verbs per subject does the margin stop being
+adequate"** — and the answer will differ per engine, which is itself an argument for solving it
+in the ladder rather than per engine.
+
+*Not a prediction of failure: 0.86 routed correctly. Recorded because a number trending in one
+direction is worth having before it matters, not after.*
+
 ## Related
 
 * `[[planning-classes-have-the-same-routable-asymmetry]]` — the same asymmetry measured on the
