@@ -1,15 +1,53 @@
 ---
 id:         sdk-blocking-sync-handlers
-status:     blocked-on-human
+status:     closed
 owner:      human
-blocked-on: TWO RULINGS, and an enumeration between them. (1) Fix the code or fix the doc? The quickstart RECOMMENDS sync def for Polars work and promises a background thread that does not exist, so every author who followed it wrote blocking code believing it safe — the fix decides which of them is currently wrong. (2) Who audits existing handlers? Needs a count of deployed tools with sync handlers before anyone chooses. MUST be coordinated with [[sdk-discards-caller-identity]] — both change MeshTool.execute(), and two uncoordinated fixes to one seam is how it grows a third defect.
-closed-by:  
+blocked-on: 
+closed-by:  iagent-mesh-sdk e6b6757 (v0.4.0) — sync handlers run on a worker thread via anyio.to_thread.run_sync under an explicit contextvars.copy_context(); the quickstart's promise was made TRUE rather than corrected away. BOTH RULINGS ANSWERED BY ENUMERATION: the census this item demanded found ZERO MeshTool.execute() handlers in invincible-agent (zero MeshTool call sites at all), so the population holding retroactively-broken sync handlers was EMPTY — fix the code, no migration debt, nobody to audit. Landed TOGETHER with [[sdk-discards-caller-identity]]'s SDK half in one change to route_handler, so the run_in_executor composition hazard never had a window.
 code-site:  iagent_mesh/core.py:438, docs/jupyter_guide.md
 repo:       iagent-mesh-sdk
 summary:    AVAILABILITY BUG WEARING A DOC CLAIM. MeshTool runs synchronous handlers DIRECTLY on the event loop — no threadpool — while the quickstart tells authors to prefer sync `def` for Polars work because "we will execute it safely in a background thread." There is no background thread. A recommended handler doing df.collect() blocks the whole tool server. The doc did not describe the code; it described an intention, and authors have been coding against the intention.
 ---
 
 # The quickstart promises a background thread that does not exist
+
+> ## RESOLVED — iagent-mesh-sdk v0.4.0 (`e6b6757`)
+>
+> **NOT YET PUSHED OR PUBLISHED.** The tag is local to the SDK working tree; the fleet still
+> consumes `v0.3.1`. This item is closed against the SDK's `master`, not against anything
+> deployed. See the wake-condition note at the foot of this file.
+>
+> **Ruling 1 — fix the code, not the doc.** `anyio.to_thread.run_sync`, with the request
+> context copied explicitly via `contextvars.copy_context()`. The doc's promise is now true.
+>
+> **Ruling 2 — the count, which decided ruling 1.** The enumeration this item required found
+> **zero** `MeshTool.execute()` handlers across invincible-agent — in fact zero `MeshTool`
+> call sites at all. The population that "currently holds broken code" was empty, so the
+> blast-radius question the ruling turned on had no blast radius. The five in-repo SDK
+> templates all use the unchanged single-parameter form. **Nobody needed auditing, and that
+> was established rather than assumed.**
+>
+> **Coordination honoured.** Landed in the SAME change as
+> [[sdk-discards-caller-identity]]'s SDK half — one edit to `route_handler`, not two. The
+> `run_in_executor` trap this item named never had a window to occur, and
+> `test_THE_COORDINATION_TEST_contextvar_survives_into_the_threaded_sync_handler` is the
+> standing proof: it passes only when the threading mechanism copies context. Verified by
+> substituting `loop.run_in_executor`, which passes every other threading test while losing
+> the caller.
+>
+> **Acceptance, each sealed:**
+>
+> | criterion | seal |
+> |---|---|
+> | a multi-second `collect()` does not delay a concurrent request | `test_a_blocking_sync_handler_does_not_delay_a_concurrent_request` |
+> | quickstart claim and code agree | `docs/jupyter_guide.md` updated; code threads |
+> | a `ContextVar` set by the auth dependency is readable in a sync handler | `test_THE_COORDINATION_TEST_...` |
+> | the count of affected deployed handlers is known, not estimated | zero, by enumeration |
+>
+> A false green was caught while sealing this: the concurrency test originally passed **with
+> the defect present**, because its clock started after the stall had already ended. Fixed,
+> then confirmed to fail against the unthreaded path.
+
 
 **Found 2026-08-27**, while checking whether a `ContextVar` would survive into a sync handler
 for [[sdk-discards-caller-identity]]. The threading question had a prior: *does the SDK thread
@@ -92,3 +130,18 @@ them, or do them together.
 > **A performance promise in a quickstart is an API contract, because it changes what
 > callers write. Documentation that recommends a path is answerable for that path
 > working.**
+
+---
+
+## Wake condition — read before treating this as deployed
+
+**Closed in source, present nowhere downstream.** `v0.4.0` (`09d7326`) exists only in the SDK
+working tree: not pushed, not tagged on `origin`, not on PyPI. Every consumer still resolves
+`iagent-mesh @ git+...@v0.3.1`.
+
+**So the checkable event is the PIN BUMP, not the tag.** The deployment surface is the 13
+`pyproject.toml` files (plus their `uv.lock` entries) that pin `v0.3.1`. Until those move, a
+deployed engine's `MeshTool` still runs sync handlers on the event loop.
+
+This file will be updated again when the SDK is pushed and published — that is the event worth
+recording, and it has not happened.

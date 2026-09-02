@@ -2,14 +2,73 @@
 id:         sdk-discards-caller-identity
 status:     open
 owner:      human
-blocked-on: 
+blocked-on: THE SDK HALF IS DONE; THE CLIENT HALF IS NOT. iagent-mesh-sdk v0.4.0 closes steps 1, 2, 4, 5 and 6 — the CallerIdentity reaches the handler, a request-scoped ContextVar carries it, require_authz_id() fails closed, sync handlers thread with the context copied, and the guide documents the pair. STEP 3 REMAINS AND IS IN dag-tools: CortexDataClient still has no `caller=` parameter, no contextvar read, no CORTEX_USER_TOKEN rung and no opt-in service identity (verified against dag_tools/cortex_data/client.py at 61cbfa9). So acceptance 3 ('CORTEX_USER_TOKEN on an agent pod changes nothing') is only VACUOUSLY true — the variable is unread, not outranked — and acceptance 4 ('reading as the service requires saying so') holds inside a handler that uses require_authz_id() but NOT for a bare CortexDataClient(), which still resolves to the service silently. Needs a dag-tools item, and a human ruling on whether this packet closes at the SDK boundary or spans both repos.
 closed-by:  
-code-site:  iagent_mesh/core.py:180, iagent_mesh/core.py:440
+code-site:  dag_tools/cortex_data/client.py (remaining); iagent_mesh/core.py:180+:440 (pre-fix line numbers, no longer valid — fixed in v0.4.0)
 repo:       iagent-mesh-sdk
 summary:    THE DESTINATION IS AGENTS, NOT NOTEBOOKS — and per-user reads are impossible there today, INVISIBLY, because reading as the service works. MeshTool computes a CallerIdentity, logs it, and DISCARDS it (app-level dependency return values are dropped by FastAPI; execute() calls func(input_data) only), so a tool author cannot learn who invoked them and their only working option entitles every caller of that agent to everything the service can reach. Would otherwise have been found by an analyst promoting their first notebook to a tool — by which point the wrong pattern is written and copied. Carries the CortexDataClient resolution-order decision (explicit caller WINS over env; service identity opt-in only), recorded before tool authors invent the precedence backwards.
 ---
 
 # A MeshTool cannot learn who invoked it
+
+> ## PARTIALLY RESOLVED — SDK half closed in iagent-mesh-sdk v0.4.0; client half OPEN
+>
+> **Do not read this as closed.** The blocker this item opens with is gone — a `MeshTool`
+> handler CAN now learn who invoked it — but the item's own Order of Work step 3 and two of
+> its four acceptance criteria live in `dag-tools` and are untouched.
+>
+> **What the SDK now does** (`e6b6757` + `09d7326`, both v0.4.0):
+>
+> | step | state |
+> |---|---|
+> | 1 — auth dependency sets a request-scoped `ContextVar` | **done** |
+> | 2 — fail closed inside a request | **done** — `require_authz_id()` raises `PermissionError` naming the reason; shipped WITH step 1, as this item required |
+> | 3 — `CortexDataClient` reads the contextvar; `caller=` an override | **NOT DONE — dag-tools** |
+> | 4 — `execute()` passes `CallerIdentity` to handlers that ask | **done** — matched by ANNOTATION, so the parameter may be named anything |
+> | 5 — sync handlers on a thread that COPIES context | **done** — `anyio.to_thread.run_sync` + explicit `copy_context()`; `run_in_executor` was rejected for exactly the reason named here |
+> | 6 — documented snippet pair in the guide | **done** — and only after step 1 landed, as this item insisted |
+>
+> **Plus the half the packet asked for that the first fix missed.** Making the identity
+> reachable left OMISSION silent — a handler that just didn't take the parameter was back in
+> this item's own opening condition, unable to scope, with nothing saying so. Now: a handler
+> taking `caller: CallerIdentity` announces `CALLER-SCOPED`; `@app.execute(caller_scoped=False)`
+> records deliberate intent; **an undeclared unscoped handler WARNS at registration.** All five
+> shipped templates declare a posture, because an undeclared template would fire the warning on
+> every scaffolded pod and train authors to ignore it.
+>
+> ### The target shape, as it actually is today
+>
+> This item's snippet — `CortexDataClient(caller=caller)` — **does not work**, because step 3
+> is outstanding. The working form is:
+>
+> ```python
+> @app.execute()
+> def detect_anomalies(data: AnomalyInput, caller: CallerIdentity) -> AnomalyOutput:
+>     client = CortexDataClient(originator_email=caller.require_authz_id())
+> ```
+>
+> `require_authz_id()` is the load-bearing call: `.authz_id` is `Optional[str]`, and passing it
+> straight in is how an unresolved caller becomes a silent service read. The SDK guide and the
+> `smolagents_subswarm` template both teach this form.
+>
+> ### What is still open, precisely
+>
+> * **`CortexDataClient` has no resolution order.** No `caller=`, no contextvar read, no
+>   `CORTEX_USER_TOKEN` rung, no opt-in service identity — verified against
+>   `dag_tools/cortex_data/client.py` at `61cbfa9`. The precedence decision this item recorded
+>   *"before tool authors invent it"* is recorded but **not implemented**.
+> * **Acceptance 3 is vacuous, not satisfied.** "`CORTEX_USER_TOKEN` on an agent pod changes
+>   nothing" is true only because the variable is never read. The designed property — the
+>   request's caller OUTRANKS it — does not exist yet, so it cannot be relied on the moment
+>   someone adds that rung.
+> * **Acceptance 4 is partial.** Inside a handler that calls `require_authz_id()`, reading as
+>   the service does require saying so. A bare `CortexDataClient()` in that same handler still
+>   resolves to the service **silently** — this item's "rung 3 must be loud" is undelivered.
+>
+> **Ruling needed (owner: human):** does this packet close at the SDK boundary, with the client
+> work tracked as its own dag-tools item, or does it stay open until the resolution order
+> lands? The SDK lane has no standing to decide that, which is why the status is unchanged.
+
 
 **Found 2026-08-26**, answering a question about what notebook code looks like once it becomes
 an agent. The answer is that the correct version **cannot currently be written**.
@@ -272,3 +331,25 @@ before.
 
 > **The environment carries deployment context; the request carries identity. A process that
 > serves many callers cannot take its authorization subject from its own environment.**
+
+---
+
+## Wake condition — ADR-0046 §8.5
+
+**Two reasons route C should not wake yet, and the second is the harder one.**
+
+1. **Nothing is deployed.** `v0.4.0` (`09d7326`) is local to the SDK working tree — not pushed,
+   not on `origin`, not on PyPI. Every consumer still resolves
+   `iagent-mesh @ git+...@v0.3.1`. **The checkable event is the PIN BUMP** across the 13
+   `pyproject.toml` files and their `uv.lock` entries, not the existence of a tag. A tag that
+   exists locally is a fix that exists nowhere downstream.
+
+2. **This item is not fully closed.** [[sdk-blocking-sync-handlers]] is closed; this one is
+   half closed, with the `CortexDataClient` resolution order outstanding in dag-tools. If
+   §8.5's wake condition is *"both defects close"* read strictly, **it is not met** — and the
+   part that remains is precisely the part that decides whether a bare client construction in
+   an agent handler still reads as the service.
+
+Route C's authoring story works today only if tool authors use
+`originator_email=caller.require_authz_id()`. It becomes the clean `CortexDataClient()` this
+item argues for once step 3 lands.
