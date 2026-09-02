@@ -306,38 +306,79 @@ unit from the producer.
 from, so they begin with evidence rather than a blank page.
 
 
-## CORRECTION 2026-09-01 — the registration claim in this packet was backwards
+## CORRECTION 2026-09-01 — twice: this packet was wrong, and so was my first correction
 
-This packet told its reader that archetype bindings reach the mesh graph **on an authenticated
-browser page load, never from a deploy**, and recorded that as a runbook verification step. It is
-wrong, and it was wrong in the direction that costs the most: it points at a browser action for a
-thing only a deploy does.
+### What this packet claimed
 
-**What was measured.** cortex-ui's exact payload was generated from the sibling repo
-(`npx vitest run src/dump_caps.test.ts`) -- 29 capabilities, 6 of them `fin:`, `frontend_id:
-`cortex-ui-desktop` -- and POSTed to `/register_frontend_capabilities` under a real alice token:
+That archetype bindings reach the mesh graph **on an authenticated browser page load, never
+from a deploy**, recorded as a runbook verification step. Wrong.
+
+### What I first "corrected" it to — ALSO WRONG, and worth keeping visible
+
+That `/register_frontend_capabilities` **only logs**, on the strength of its own docstring:
+*"Stage 2 will plumb this into the SPO predicate graph."* **That docstring is STALE.** I read it,
+matched it against the symptom, and did not read the handler body. The body converts every
+admitted row to a real graph registration via `_emit_presentation_to_registrar`.
+
+**A docstring is a claim about code, not evidence of it** — and this one was consistent with the
+symptom, which is what made it convincing. `[[read-the-consumer-of-what-you-fixed]]`, in the one
+direction that packet does not cover: read the BODY of what you cite.
+
+### What is actually true, measured on the live substrate
+
+The endpoint writes to the graph, and **23 of 29 rows landed**. The six that did not are exactly
+the `fin:` ones. From cortex-bff's log, for all six:
 
 ```
-{"accepted": 29, "frontend_id": "cortex-ui-desktop", "rejected": []}
+reason_class: gateway-rejected-REFUSED
+detail: a current gateway REFUSED this manifest (Contract D...) Gateway said: registrar rejected
 ```
 
-`rendersAs` edges from `fin:` classes: **0 before, 0 after.** The endpoint's own docstring says why
--- it logs the declaration structurally and *"Stage 2 will plumb this into the SPO predicate
-graph."* **Acceptance and materialisation are different claims, and only the first is built.**
+**Why.** `_emit_presentation_to_registrar` expands the subject through `_expand_mesh_iri`, whose
+prefix map held `mesh:` and `idp:` and not `fin:`. An unknown prefix is passed through VERBATIM by
+deliberate design, so `fin:VarianceDecomposition` reached the registrar compact, and the linker
+MATCHes `:OntologyClass` nodes that hold FULL IRIs. Measured in Neo4j:
 
-A frontend POSTing its capabilities therefore gets a clean `accepted` count whether or not anything
-renders. That is the same failure grammar as the rest of this lane's findings: a green signal at a
-layer above the one that does the work.
+| | |
+|---|---|
+| the 6 `fin:` subjects + 5 archetype objects, at their FULL IRIs | **11 / 11 present** |
+| nodes stored under compact `fin:` — what the pre-fix MATCH looked for | **0** |
 
-**Where the edges actually come from:** `PRESENTATION_CAPABILITIES` in
-`agent_fleet/presentation_agent/capabilities.py`, written to the mesh by the presentation agent's
-OWN startup (`main.py` lifespan). It held ten rows and zero `fin:` rows, which is why six correct
-routes drew as `Knowledge Document - No content available`.
+Contract D refused **correctly**. The declaration was fine; the lookup was spelled wrong. Only the
+SUBJECT end missed — `mesh:VarianceTree` expanded fine — and Contract D is ATOMIC, so one bad end
+refuses the whole manifest.
 
-**So the two surfaces are independent, and both are required:** cortex declares its rows for its
-own selector; the backend table declares them for the graph. Neither writes the other, nothing
-compares them, and the failure of the backend one is silent from the frontend side.
+### THE FINDING THAT SURVIVES, sharper than the one I first wrote
 
-**What this changes for work:** the move is a redeploy of the presentation agent, not a browser
-refresh. Recorded in `docs/runbooks/adding-an-engine.md` under registration verification, replacing
-the page-load instruction this packet supplied.
+The HTTP response to that POST was:
+
+```
+200 OK   {"accepted": 29, "frontend_id": "cortex-ui-desktop", "rejected": []}
+```
+
+**`rejected` counts ADMISSION refusals — vocabulary the backend has no name for. The six Contract-D
+graph failures are logged loudly and never reach the response body at all.** So a frontend
+registering its menu is told 29 accepted, nothing rejected, while a quarter of its menu is not in
+the graph and nothing it can see says so. Acceptance and materialisation are different claims; the
+response reports only the first, under a field name that reads like both.
+
+### The two menus, and why the backend table was NOT sufficient
+
+Live `rendersAs` rows, by `frontend_id`:
+
+| menu | rows | `fin:` |
+|---|---|---|
+| `cortex-ui-desktop` — what the card selector reads for cortex | 23 | **0** |
+| `__system_default__` — the universal fallback, from `PRESENTATION_CAPABILITIES` | 10 | **0** |
+
+`29 - 23 = 6`. Adding the six rows to `PRESENTATION_CAPABILITIES` is **necessary and not
+sufficient**: that table is the system-default menu an unknown client gets, not cortex's. Both
+menus were missing `fin:`, and **one line fixes both**, because both paths expand through the same
+map. The two pods that must carry it are therefore **cortex-bff** (the gateway handler) and
+**engine-f** (the presentation agent's own startup).
+
+### What this changes for work
+
+The move is a redeploy of both, not a browser refresh. A page load DOES re-register — that half of
+the original claim stands — but it re-registers through the same expansion, so before the fix a
+reload could only reproduce the same six refusals.

@@ -802,6 +802,99 @@ cortex builds and one carries an open question. Until those land, finance answer
 return rows correctly and do not draw as their intended cards** — which is a known state, not a
 regression. See `[[engine-f-archetype-bindings]]`.
 
+### 6b. THE 200 THAT MEANS NOTHING — and the headless way to trigger a registration
+
+**Measured 2026-09-01. A page load posted 29 capabilities and got this back:**
+
+```
+200 OK   {"accepted": 29, "frontend_id": "cortex-ui-desktop", "rejected": []}
+```
+
+**Six of them were not in the graph.** All six were Engine F's.
+
+`rejected` counts **admission** refusals only — an archetype the backend has no vocabulary for
+(§6's ordering trap). The row then goes on to a real graph registration, and THAT failure is
+logged loudly and **never reaches the response body.** So the field named `rejected` reports one
+of the two ways a capability can be refused, under a name that reads like both.
+
+**⛔ NEVER conclude a registration landed from the HTTP response. Read the log, then the rows.**
+
+```bash
+# THE CHECK THAT ACTUALLY READS. Absent = good; present = named failures, per capability.
+kubectl --context edge -n sandbox logs deploy/iagent-cortex-bff --tail=4000 \
+  | grep frontend_capabilities_graph_registration_failed | tail -1
+```
+
+Each failure names a `reason_class` — `gateway-rejected-REFUSED` is Contract D, and the repair is
+the registration, never a direct emit (which only records the same bad claim as audit).
+
+#### The two menus — and why fixing the backend table is not enough
+
+```bash
+# rendersAs rows BY frontend_id. Two menus exist and they are not interchangeable.
+kubectl --context edge -n sandbox exec -i deploy/iagent-mesh-registrar -- python - <<'EOF'
+import json,urllib.request
+Q={"query":"{ Get { Predicate(limit:500){ input_uri archetype frontend_id tool_kind } } }"}
+r=urllib.request.Request("http://iagent-weaviate:8080/v1/graphql",data=json.dumps(Q).encode(),
+                         headers={"content-type":"application/json"})
+rows=json.loads(urllib.request.urlopen(r,timeout=60).read())["data"]["Get"]["Predicate"]
+by={}
+for x in rows:
+    if x.get("archetype"): by.setdefault(x.get("frontend_id") or "<none>",[]).append(x)
+for fid,v in sorted(by.items(),key=lambda kv:-len(kv[1])):
+    print("%-26s rows=%-3d" % (fid,len(v)), sorted((x["input_uri"] or "").rsplit("#",1)[-1] for x in v))
+EOF
+```
+
+| menu | written by | who reads it |
+|---|---|---|
+| `cortex-ui-desktop` | the browser POST, converted by the gateway handler | the card selector, for cortex |
+| `__system_default__` | `PRESENTATION_CAPABILITIES`, on the presentation agent's OWN startup | the universal fallback for a client with no menu |
+
+A new engine needs rows in **both**, and they come from different places. Getting only the backend
+table right leaves cortex on the labelled floor — `KNOWLEDGE_DOCUMENT`, "No content available" —
+which is indistinguishable from having no binding at all.
+
+#### ⛔ A NEW NAMESPACE MUST BE IN THE PREFIX MAPS BEFORE ANY BINDING CAN LAND
+
+**This is the one that cost Engine F its cards, and it is invisible.** Both registration paths
+expand a compact CURIE to a full IRI before emitting, because the linker MATCHes `:OntologyClass`
+nodes that hold FULL IRIs. **An unknown prefix is passed through VERBATIM by deliberate design** —
+inventing a namespace would fabricate the phantom class Contract D exists to refuse — so a missing
+entry produces no error, no warning, and a Contract D refusal that reads as *"your class is not
+declared"* when the class is declared and the LOOKUP is spelled wrong.
+
+Measured for `fin:`: **11/11** endpoints present at their full IRIs, **0** nodes under compact
+`fin:`. Add the entry to `agent_fleet/utils/mesh_registration.py` `_IRI_PREFIXES` and
+`agent_fleet/presentation_agent/capabilities.py` `_IRI_PREFIXES_FOR_LOOKUP` — and see
+`[[a-namespace-is-declared-in-four-places]]` for the other two, one of which is a DELETING path.
+
+#### Registering headlessly — no browser
+
+**Work needs this and a page load is not always available.** The payload must be the frontend's
+REAL one, not one written by hand — generate it from the frontend repo so it is what the browser
+would send (`npx vitest run src/dump_caps.test.ts` in `cortex-ui` emits exactly the POST body).
+Then, from inside the cluster:
+
+```bash
+kubectl --context edge -n sandbox exec -i deploy/iagent-mesh-registrar -- python - <<'EOF'
+import json,urllib.request,urllib.parse
+KC="http://iagent-keycloak:8080/realms/invincible-agent/protocol/openid-connect/token"
+tok=json.loads(urllib.request.urlopen(urllib.request.Request(KC,
+    data=urllib.parse.urlencode({"grant_type":"password","client_id":"cortex-ui",
+        "username":"alice","password":"alice"}).encode(),
+    headers={"content-type":"application/x-www-form-urlencoded"}),timeout=30).read())["access_token"]
+PAYLOAD=json.load(open("/tmp/caps_dump.json"))   # the generated body, copied in
+req=urllib.request.Request("http://iagent-cortex-bff:8090/register_frontend_capabilities",
+    data=json.dumps(PAYLOAD).encode(),
+    headers={"content-type":"application/json","authorization":"Bearer "+tok})
+print(urllib.request.urlopen(req,timeout=90).read()[:300])
+EOF
+```
+
+**Then ignore what it printed and run the two checks above.** That is the whole lesson of this
+section.
+
 ### 7. The pod name across a reregister
 
 > **The one check that has caught something twice.** `values.yaml`'s `reregisterEngines`

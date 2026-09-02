@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0019 (Contract D — both triple ends must resolve to :OntologyClass nodes); ADR-0045 (Engine F, the first non-platform namespace)
 code-site:  agent_fleet/utils/mesh_registration.py:492 (_IRI_PREFIXES, FIXED for fin:), agent_fleet/presentation_agent/capabilities.py:32 (_IRI_PREFIXES_FOR_LOOKUP, FIXED for fin:), agent_fleet/mesh_registrar/v2_substrate.py:558 (_IRI_PREFIXES, NOT fixed — see "why not"), tests/routing/test_substrate_invariants.py:295, tests/routing/test_predicate_collection_dedup.py:92
-summary:    Adding a namespace prefix requires editing FOUR independent compact-to-full IRI maps (three in prod code, two more in tests) and NOTHING asserts they agree. They already disagree today — the test map carries `data:` and no prod map does. Every one of them fails the same way: an unknown prefix is passed through VERBATIM by deliberate design, so the miss is SILENT at every site. Engine F is the first namespace after `mesh:`/`idp:` and it hit two of the four; the third is a DELETING path it does not reach today only by accident of calling convention.
+summary:    Adding a namespace prefix requires editing FOUR independent compact-to-full IRI maps (three in prod code, two more in tests) and NOTHING asserts they agree. They already disagree today — the test map carries `data:` and no prod map does. Every one of them fails the same way: an unknown prefix is passed through VERBATIM by deliberate design, so the miss is SILENT at every site. Engine F is the first namespace after `mesh:`/`idp:` and it hit two of the four; the third is a DELETING path it does not reach today only by accident of calling convention. MEASURED COST: six Contract-D refusals (`gateway-rejected-REFUSED`) on a POST that returned `200 OK, accepted: 29, rejected: []` — 11/11 endpoints present at their FULL IRIs, 0 nodes under compact `fin:`.
 ---
 
 # A namespace is declared in four places and nothing makes them agree
@@ -71,3 +71,33 @@ were added, and it is why site 1's gap was found before deploy rather than after
   per engine, none of which knows about the others. A namespace has four too.
 * `[[read-the-consumer-of-what-you-fixed]]` — sites 1 and 2 are both *consumers* of a table that
   looked complete on its own.
+
+## The measured cost, added 2026-09-01
+
+Site 1 was not hypothetical. `/register_frontend_capabilities` converts each admitted capability to
+a graph registration, expanding the subject through this map first. cortex-ui's real 29-capability
+payload was POSTed as alice:
+
+```
+200 OK   {"accepted": 29, "frontend_id": "cortex-ui-desktop", "rejected": []}
+```
+
+**23 rows landed. The six `fin:` ones did not**, each logged as:
+
+```
+reason_class: gateway-rejected-REFUSED   (Contract D)
+```
+
+In Neo4j: the six `fin:` subjects and their five archetype objects are **11/11 present at their
+FULL IRIs**, and **0** nodes exist under compact `fin:` — precisely what the unexpanded MATCH
+searched for. **Contract D refused correctly.** The declaration was fine; the lookup was spelled
+wrong, and only the SUBJECT end missed — `mesh:VarianceTree` expanded — with the atomic refusal
+taking the whole manifest.
+
+So the failure mode of a missing prefix entry is: **a clean 200, a full `accepted` count, an empty
+`rejected` list, and a quarter of a frontend's menu absent from the graph.** The one place it is
+visible is a log line the caller never sees.
+
+**One line fixed both production sites at once**, because the frontend path and the engine-startup
+path expand through the same map — which is the argument for the single exported map above, not
+against it.

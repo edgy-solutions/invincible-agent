@@ -178,16 +178,32 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
 
     # ── ENGINE F (FINANCE) — ADR-0045. Added 2026-09-01. ────────────────────────────────
     #
-    # THIS LIST IS WHAT MAKES A FINANCE CARD DRAW, and that was not obvious. cortex-ui
-    # declares matching binding rows and POSTs them at login, but
-    # `/register_frontend_capabilities` only LOGS them — its own docstring says the graph
-    # plumbing is "Stage 2". Measured 2026-09-01: that endpoint returned
-    # `accepted: 29, rejected: []` while rendersAs edges from fin: classes stayed at ZERO.
-    # ACCEPTANCE AND MATERIALISATION ARE DIFFERENT CLAIMS.
+    # THERE ARE TWO MENUS AND THIS IS ONLY ONE OF THEM. Measured on the live substrate
+    # 2026-09-01, rendersAs rows by frontend_id:
     #
-    # The rendersAs triples come from HERE, on this agent's startup. Until these six rows
-    # existed, every finance answer routed correctly, produced its output, and rendered as
-    # "Knowledge Document — No content available".
+    #     cortex-ui-desktop     23 rows   <- what the card selector reads for cortex
+    #     __system_default__    10 rows   <- THIS TABLE, written by this agent's startup
+    #
+    # This one is the UNIVERSAL FALLBACK: what an unknown client gets. cortex's menu is
+    # written by the browser POST to /register_frontend_capabilities, which the gateway
+    # converts into real graph registrations. So these six rows are NECESSARY AND NOT
+    # SUFFICIENT for a finance card in cortex, and adding them here while believing they
+    # fixed cortex would have been a fix aimed one menu to the left.
+    #
+    # ⛔ AN EARLIER COMMENT HERE SAID THAT ENDPOINT `only LOGS`, citing its own docstring
+    # ("Stage 2 will plumb this into the SPO predicate graph"). THE DOCSTRING IS STALE and
+    # the claim was wrong. What actually happened: 23 of 29 rows landed and the six fin:
+    # ones were refused by Contract D, because the subject was emitted COMPACT — `fin:` was
+    # missing from the prefix map above and an unknown prefix passes through verbatim. The
+    # response was still `200 OK, accepted: 29, rejected: []`, because `rejected` counts
+    # ADMISSION refusals and the graph failures never reach the response body.
+    #
+    # So the surviving lesson is sharper than the one that was written here first:
+    # ACCEPTANCE AND MATERIALISATION ARE DIFFERENT CLAIMS, and the field named `rejected`
+    # reports only one of the two ways a capability can be refused.
+    #
+    # Until these rows existed, every finance answer routed correctly, produced its output,
+    # and rendered as "Knowledge Document — No content available".
     {
         "subject_uri": "fin:BurnRateSeries",
         "object_uri": "mesh:PeriodSeries",
