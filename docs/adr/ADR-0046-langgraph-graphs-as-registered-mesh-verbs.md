@@ -249,12 +249,35 @@ that removes the per-graph registration code. Nothing here requires a new regist
 >   because nothing reads it) and acceptance 4 is partial (a bare `CortexDataClient()` in a handler
 >   still resolves to the service **silently**).
 >
-> **THE WAKE CONDITION IS THE PIN BUMP, NOT THE TAG.** v0.4.0 is local to the SDK working tree —
-> not pushed, not on `origin`, not on PyPI — and all 13 `pyproject.toml`/`uv.lock` entries here
-> still resolve `@v0.3.1`. **A tag that exists locally is a fix that exists nowhere downstream.**
-> So §8.5's *"when both defects close"* is not met on either count, and the route-C refusal below
-> stands — for a sharper reason than it was written with: not two open defects, but a fix no
-> consumer can reach.
+> **THE WAKE CONDITION IS THE PIN BUMP, NOT THE TAG** — and the reason is now the *second* one,
+> because the first expired within the hour.
+>
+> ⛔ **SUPERSEDED, same day, before anyone read it.** This paragraph first said v0.4.0 was *"local
+> to the SDK working tree — not pushed, not on `origin`, not on PyPI"*, and concluded *"a tag that
+> exists locally is a fix that exists nowhere downstream."* **That was true when written and false
+> by the time it was committed.** Verified directly rather than accepted from the report:
+> `refs/tags/v0.4.0` → `9b36f7d` on the SDK's `origin` (which is also `origin/master`), and
+> `iagent-mesh 0.4.0` is **live on PyPI** — wheel and sdist both published. The availability
+> objection is gone. Kept visible rather than edited away, because the sentence was quotable and
+> someone would have checked it.
+>
+> **The ruling is unchanged and now rests on cleaner ground: nothing here consumes it.** Counted
+> against the tracked tree, not the working one — **13 `pyproject.toml` files carrying the pin (12
+> under `agent_fleet/`, plus the root, which holds two occurrences), and 13 `uv.lock` files. Every
+> one still resolves `v0.3.1`; not a single pin has moved.** So §8.5's condition is unmet, and the
+> route-C refusal below stands — for the sharper reason it was already given: not two open defects,
+> but a fix no consumer here has taken.
+>
+> **Two consequences of publication, both narrowing the question rather than answering it:**
+>
+> 1. **The bump is now cheaper and has two legal forms.** `iagent-mesh==0.4.0` from PyPI is
+>    available alongside the `git+…@v0.4.0` pin this fleet uses today. **§8.5's checkable event
+>    must admit either**, or a bump that takes the PyPI form will read as unmet when it is not.
+> 2. **The half-closed defect is now the ONLY structural blocker, exactly as predicted.**
+>    Publication removed the availability objection and did nothing for `CortexDataClient` step 3.
+>    So once the pins move, route C's refusal rests **entirely** on: a bare `CortexDataClient()` in
+>    an agent handler still resolves to the service *silently*, and acceptance 3 is vacuously true
+>    rather than satisfied. That is the load-bearing half, and it is untouched.
 >
 > **A severity correction, recorded because it was overstated in conversation before it was
 > checked:** "every current MeshTool consumer is entitlement-unscoped" has **zero instances in
@@ -443,11 +466,15 @@ Each of these is genuinely open. **None is a decision written as prose.**
    (§9's slice 1); or keep it as the hosting engine for option A. Decided by 1 and 2, not
    independently — but **not left as it is** (§4).
 5. **When the SDK fix is CONSUMED here, does route C supersede route A's shim?** (§3.1.)
-   **The checkable event is the pin bump across the 13 `pyproject.toml` files and their `uv.lock`
-   entries — not the existence of a tag**, which is the SDK lane's own framing and the right one:
-   v0.4.0 exists locally and reaches no consumer. Note also that only one of the two defects is
-   closed; the identity item's remaining step is in `dag-tools`, so "both closed" is a three-repo
-   condition, not a two-repo one. It is the
+   **The checkable event is the pin bump across the 13 `pyproject.toml` files and their 13
+   `uv.lock` entries — not the existence of a tag.** v0.4.0 is now on the SDK's `origin` and on
+   PyPI (§3.1), and *still* no consumer here has taken it: every pin resolves `v0.3.1`.
+   **The bump counts in EITHER form** — the `git+…@v0.4.0` pin this fleet uses today, or
+   `iagent-mesh==0.4.0` from PyPI, which publication newly makes available. Naming only the git
+   form would make a PyPI-form bump read as unmet when it is not.
+   Note also that only one of the two defects is closed; the identity item's remaining step is in
+   `dag-tools`, so "both closed" is a **three-repo** condition, not a two-repo one — and after the
+   pins move it is the *only* thing route C's refusal rests on. It is the
    better authoring story — a handler instead of an engine — but it moves the boundary enforcement
    into the SDK, which means the 422-with-vocabulary and the entitlement filter become the SDK's
    guarantees rather than this platform's. That is a good trade only if the SDK's guarantees are
