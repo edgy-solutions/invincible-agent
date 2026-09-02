@@ -206,3 +206,119 @@ def test_every_projected_archetype_has_a_producer_case():
         f"projected archetypes with no producer conformance case: {sorted(uncovered)}. "
         "Each one can mount and refuse with a blank card that no test on either side catches."
     )
+
+
+# ── THE PRODUCER POPULATION WAS ALSO REMEMBERED ───────────────────────────────────────
+#
+# This file already fixed the ARCHETYPE population once: the coverage test above enumerates
+# from the projector's own table because a remembered list of archetypes missed
+# SHORTFALL_GRID. The PRODUCER population above is still remembered — one lambda per
+# archetype, all seven of them Engine P's.
+#
+# So a SECOND producer binding to an EXISTING archetype is unguarded, and that is exactly
+# what happened. Engine F bound fin:BurnRateSeries and fin:PerformanceIndexSeries to
+# PERIOD_SERIES, emitted none of its seven required keys, and every seal in this repo stayed
+# green: the archetype had a producer case (Engine P's), the binding was declared, the class
+# was seeded, the renderer selected correctly — and the card mounted and refused.
+#
+# MEASURED 2026-09-02: both producers are missing SIX of the seven required keys. The
+# archetype's row contract is capex/expense/total/cap/over_cap/overage — Engine P's cost
+# curve — so this was never a payload gap. It was the wrong archetype, and the binding could
+# not have been made to work by adding a field.
+#
+# Derived from PRESENTATION_CAPABILITIES so the seventh Engine F verb inherits the guard.
+
+_FIN_WRONG_ARCHETYPE = {
+    # (subject_uri, archetype): why this binding cannot be satisfied, not merely why it isn't
+    ("fin:BurnRateSeries", "PERIOD_SERIES"):
+        "PERIOD_SERIES is Engine P's COST CURVE wearing a generic name: its row contract "
+        "requires capex/expense/total plus cap/over_cap/overage, and its component hardcodes "
+        "stacked capex+expense bars against a cap column. A burn-rate row is burn vs planned "
+        "with no cap. Emitting `total` would satisfy the validator and still draw the wrong "
+        "chart. Needs an archetype that plots labelled numeric series over periods without a "
+        "cap — a mint, per the ADR-0045 precedent that produced the other three.",
+    ("fin:PerformanceIndexSeries", "PERIOD_SERIES"):
+        "Same archetype, and a sharper mismatch: CPI/SPI are DIMENSIONLESS RATIOS. There is "
+        "no cap, no overage, and no total. Giving a ratio a field called `total` beside an "
+        "`over by` column would be a false claim about the number, which is the same species "
+        "as the generative-renderer violation — a plausible-looking card asserting something "
+        "untrue about a finance figure.",
+}
+
+
+#: Extra spoken-mandatory slots a fin verb needs beyond `program_id`. `method` is mandatory
+#: with NO DEFAULT by ADR-0045 ruling — supplying one here is the test's job, not the engine's,
+#: and the refusal it would otherwise raise is itself sealed in tests/finance/.
+_FIN_EXTRA_KWARGS = {"fin_eac_calculation": {"method": "CPI"}}
+
+
+def _call_fin(fn, state):
+    """Invoke a fin producer with its mandatory slots filled."""
+    return fn(state, program_id="NP-MERIDIAN", **_FIN_EXTRA_KWARGS.get(fn.__name__, {}))
+
+
+def _fin_producer_bindings():
+    """(subject_uri, archetype, producer_fn) for every fin: binding, derived not listed."""
+    from agent_fleet.presentation_agent.capabilities import PRESENTATION_CAPABILITIES
+    from agent_fleet.finance_agent import measures as fin_measures
+    by_output = {uri: fn for fn, uri in fin_measures.OUTPUT_URI.items()}
+    out = []
+    for cap in PRESENTATION_CAPABILITIES:
+        subj = cap["subject_uri"]
+        if not subj.startswith("fin:"):
+            continue
+        full = subj.replace("fin:", "http://invincible-agent/fin#", 1)
+        fn_name = by_output.get(full) or by_output.get(subj)
+        if fn_name:
+            out.append((subj, cap["archetype"], getattr(fin_measures, fn_name)))
+    return out
+
+
+def test_every_FIN_producer_emits_its_archetype_keys_or_is_a_named_wrong_binding():
+    """Every fin: binding, derived from the capability table rather than remembered.
+
+    An entry in `_FIN_WRONG_ARCHETYPE` is a CLAIM that the binding is unsatisfiable, not a
+    licence to skip it — the test below proves each exemption still fails, so a stale one
+    cannot sit here pretending to be a known issue after it is fixed.
+    """
+    from agent_fleet.finance_agent.seed import build_seed
+    st = build_seed()
+    bindings = _fin_producer_bindings()
+    assert len(bindings) >= 6, f"derived only {len(bindings)} fin bindings — the derivation is stale"
+
+    failures = []
+    for subj, archetype, fn in bindings:
+        if (subj, archetype) in _FIN_WRONG_ARCHETYPE:
+            continue
+        if archetype not in _CONTRACTS and archetype not in _MIRROR:
+            continue
+        rows = _call_fin(fn, st)
+        rows = rows["rows"] if isinstance(rows, dict) else rows
+        assert rows, f"{subj}: producer returned no rows — the check would be vacuous"
+        missing = _required(archetype) - set(rows[0])
+        if missing:
+            failures.append(f"{subj} -> {archetype} missing {sorted(missing)}")
+    assert not failures, (
+        "bound fin producers that will MOUNT AND REFUSE:\n  " + "\n  ".join(failures)
+        + "\nAdd the keys, or record it in _FIN_WRONG_ARCHETYPE with why the binding cannot "
+          "be satisfied at all."
+    )
+
+
+def test_every_named_wrong_binding_STILL_fails():
+    """THE EXEMPTIONS ARE PROVEN, not asserted. A stale exemption is worse than none: it is a
+    fixed defect still described as broken, and it silently suppresses a real check."""
+    from agent_fleet.finance_agent.seed import build_seed
+    st = build_seed()
+    st_bindings = {(s, a): fn for s, a, fn in _fin_producer_bindings()}
+    for key, reason in _FIN_WRONG_ARCHETYPE.items():
+        assert key in st_bindings, f"{key} is exempted but no longer bound — delete the entry"
+        assert len(reason) > 80, f"{key}: an exemption needs a reason, not a label"
+        rows = _call_fin(st_bindings[key], st)
+        rows = rows["rows"] if isinstance(rows, dict) else rows
+        missing = _required(key[1]) - set(rows[0])
+        assert missing, (
+            f"{key} is listed as an unsatisfiable binding but its producer now emits every "
+            f"required key. If the archetype was fixed or the binding changed, DELETE the "
+            f"exemption — it is now suppressing a live check."
+        )

@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **109 of 121 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **110 of 122 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -217,6 +217,10 @@ _Coverage: **109 of 121 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **pcn-extraction-sort** — The decided three-pile sort (rename-and-promote / keep-domain-specific / delete) so the M2 extraction milestone is a mechanical execution rather than a fresh analysis. Pairs with the generic-at-birth rule. DECIDED, NOT EXECUTED - verified 2026-08-19: no three-pile implementation exists, and the cited 0cc406e is the review-state tripwire, a different artifact.
   status: open · owner: unassigned
   → [docs/plans/pcn-extraction-sort.md](plans/pcn-extraction-sort.md)
+
+- **period-series-is-a-cost-curve** — PERIOD_SERIES IS ENGINE P'S COST CURVE WEARING A GENERIC NAME, and I bound two finance verbs to it because the NAME sounded right. Its row contract requires capex/expense/total/cap/over_cap/overage and its component hardcodes stacked capex+expense bars against a cap column; both fin producers are missing SIX of the seven keys. So `finBurnRate` and `finPerformanceIndices` mount and refuse honestly with "no numeric amount on any row" — the component is correct and the binding was never satisfiable. NO FIELD ADDITION FIXES IT: emitting `total` passes the validator and still draws the wrong chart, and for CPI/SPI it would be a false claim about a dimensionless ratio, which is the same species as the generative-renderer violation. THE REPAIR IS A RULING, NOT A PATCH: mint an archetype for labelled numeric series over periods without a cap (the ADR-0045 precedent that produced the other three), or generalise PERIOD_SERIES so producers DECLARE which fields carry numbers. I refuse the third option — "renderer falls back to any numeric field" — because drawing some number without knowing which is worse than refusing.
+  status: open · owner: agent (Engine F lane) — THE BINDING IS MINE; the archetype contract and renderer are cortex-ui's · blocked-on: a ruling — mint a new archetype, or generalise PERIOD_SERIES
+  → [docs/plans/period-series-is-a-cost-curve.md](plans/period-series-is-a-cost-curve.md)
 
 - **period-slots-declare-no-vocabulary** — THIRD INSTANCE of "the declaration is less precise than the code it describes" (after `direction: str` over a closed vocabulary and the six id-typed slots). Period slots declare `window: list[str]` and `as_of: str` with NO `values`, because there is no Literal to read them out of — so `accept_slots`, whose whole contract is that the declarations ARE the acceptance schema, has a blind spot exactly here and D05's `window=["this quarter"]` passes the guard clean. THE TWO HALVES FAIL DIFFERENTLY AND THE SILENT ONE IS WORSE. `window` reaches `_periods()` and raises NotInModel -> 422, loud. `as_of` reaches a bare STRING COMPARISON -> `'2026-03-15' <= 'FY26-Q4'` is True for EVERY ISO date including 9999-12-31, so `as_of="FY26-Q4"` is a COMPLETE NO-OP: 200, unfiltered superset, identical to passing nothing. AND THEY ARE TWO DIFFERENT VOCABULARIES BOTH DECLARED AS BARE STRINGS — window takes a fiscal period, as_of takes an ISO date — which is why acceptance row 2 ("maturity grid as of FY26-Q4") CANNOT GO GREEN FROM THE CARRY ALONE. Verified by execution, not by reading.
   status: open · owner: agent

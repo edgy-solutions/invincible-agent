@@ -1,13 +1,92 @@
 ---
 id:         engine-f-cards-draw-v1
-status:     closed
+status:     open — CORRECTED 2026-09-02, the headline claim was wrong
 owner:      agent
 blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0045 (Engine F; the amendment's deterministic-renderer ruling); ADR-0017 (rendersAs); ADR-0042 §2 (the selector decides from the payload)
-code-site:  agent_fleet/presentation_agent/main.py (_PLANNING_ARCHETYPES — the projected set), agent_fleet/utils/mesh_registration.py:492, src/iagent/defs/dynamic_supervisor.py (the conditional fill_slots budget, lane 1)
-summary:    THE BAR IS MET. All six finance cards draw in sandbox through the real path — phrase -> BFF -> supervisor as alice -> engine-fin -> artifact -> projection -> card. 6/6 land on their intended archetype (FORECAST_MEASURE, VARIANCE_TREE, PERIOD_SERIES x2, SHORTFALL_GRID, CONTRIBUTION_RANKING), all six post-roll runs report presentation_path=archetype-hardened, and there are ZERO generative renders and ZERO fill_slots timeouts. It took ELEVEN seams, four of which were mine, and every one of them produced the identical observable — a card reading `Knowledge Document / No content available` — which is why the diagnosis cost what it did and why the discriminating-fallback packet is the most valuable thing filed alongside it. The last seam is the sharpest: three archetypes I minted were declared, admitted, bound and registered, and NEVER PROJECTED, so a $14.15M forecast was being rendered by an LLM in direct violation of the ruling written into that archetype's own definition.
+code-site:  agent_fleet/presentation_agent/main.py (_PROJECTED_ARCHETYPES — the projected set), agent_fleet/utils/mesh_registration.py:492, src/iagent/defs/dynamic_supervisor.py (the conditional fill_slots budget, lane 1)
+summary:    THE HEADLINE CLAIM IN THIS DOCUMENT WAS WRONG AND IS CORRECTED BELOW. It said all six cards draw. FOUR draw. The two bound to PERIOD_SERIES - finBurnRate and finPerformanceIndices - mount and REFUSE with `NOTHING TO DRAW / no numeric amount on any row`. I measured which archetype the renderer SELECTED and reported it as the card appearing, which is the exact substitution the bar forbade: routing standing in for the card. ROOT CAUSE, a binding error of mine rather than a payload gap: PERIOD_SERIES is Engine P's COST CURVE wearing a generic name - its row contract requires capex/expense/total plus cap/over_cap/overage and its component hardcodes stacked capex+expense bars against a cap column. Both fin producers are missing SIX of the seven required keys, so no field addition could have made the binding work; CPI/SPI are dimensionless ratios with no cap, no overage and no total. THE SEAL THAT SHOULD HAVE CAUGHT IT checked one producer per archetype, all seven of them Engine P's, so a SECOND producer on an EXISTING archetype was unguarded - the same remembered-population defect this file had already fixed once for archetypes. Now derived from the capability table, with both bad bindings recorded as exemptions a second test PROVES still fail. Everything else stands: routing, entitlement, the fill_slots fix, the projection fix, and four cards drawing with zero generative renders.
 ---
+
+# ~~All six finance cards draw~~ — FOUR draw. Correcting my own headline.
+
+> ## CORRECTION 2026-09-02
+>
+> **This document claimed all six cards draw. Four do.** `finBurnRate` and
+> `finPerformanceIndices` mount and refuse:
+>
+> ```
+> NOTIONAL PROGRAM MERIDIAN — NOTHING TO DRAW
+> no numeric amount on any row
+> ```
+>
+> **The instrument error is the one the bar was written about.** I read `archetype=PERIOD_SERIES`
+> out of the response stream and recorded it as the card drawing. Selecting an archetype and
+> rendering a card are different events, and the dispatch said in as many words: *no "routing
+> works" standing in for "the card appeared."* I substituted exactly that, on the claim it was
+> written to prevent — and published it as `status: closed`.
+>
+> A card that mounts and refuses is INDISTINGUISHABLE from one that draws, if what you measure is
+> the archetype label. The refusal text was in the artifact the whole time and my harness
+> extracted the one field that could not see it.
+>
+> Found by the lane that owns the renderer, from the user's report. Not by me, and not by any
+> seal here.
+
+## The root cause: the binding was never satisfiable
+
+**`PERIOD_SERIES` is Engine P's cost curve wearing a generic name.** Its row contract:
+
+```
+PeriodSeriesRow: period, capex, expense, total, cap, over_cap, overage   (all required)
+PeriodSeries.tsx: <Bar dataKey="capex" stackId="a">  <Bar dataKey="expense" stackId="a">
+                  table columns: period | total | cap | over by
+```
+
+Measured against both producers:
+
+| producer | missing |
+|---|---|
+| `fin_burn_rate` | `cap, capex, expense, over_cap, overage, total` — **6 of 7** |
+| `fin_performance_indices` | `cap, capex, expense, over_cap, overage, total` — **6 of 7** |
+
+**So this is not a payload gap and no field addition fixes it.** Emitting `total` would satisfy
+the validator and still draw the wrong chart — empty capex/expense bars and a cap column. For
+CPI/SPI it would be worse than wrong: they are DIMENSIONLESS RATIOS, and a ratio in a field called
+`total` beside an "over by" column is a false claim about the number. That is the same species as
+the generative-renderer violation — a plausible-looking card asserting something untrue about a
+finance figure — which is why the "just emit total" interim is refused here.
+
+**I chose this archetype because its NAME sounded right**, and my own bindings packet compared the
+payload against the projector's passthrough fields (`rows`, `scope_label`, `value_unit`) rather
+than against cortex's row contract, where `capex`/`total`/`cap` live. One registry checked, and
+not the one that draws — the same error as seam 11, four days earlier.
+
+## The seal that should have caught it, and why it did not
+
+`test_the_producer_emits_every_key_its_archetype_requires` already encodes the exact requirement.
+Its producer list is **one lambda per archetype, all seven of them Engine P's**:
+
+```python
+("PERIOD_SERIES", lambda s: measures.plan_cost_curve(s)),
+```
+
+**So a SECOND producer binding to an EXISTING archetype is unguarded.** This file had already
+fixed the remembered-population defect once — for archetypes, after a hand-written list missed
+SHORTFALL_GRID — and left the producer population remembered. Fixed now: fin bindings are derived
+from `PRESENTATION_CAPABILITIES`, so a seventh verb inherits the guard, and both bad bindings are
+recorded as exemptions that a second test PROVES still fail.
+
+## What stands, unchanged
+
+Routing, entitlement, verb execution, the ontology classes, the archetype declarations, lane 1's
+fill_slots fix, the projection fix, and **four cards drawing with zero generative renders** —
+including the FORECAST_MEASURE carrying the $14.2M EAC, which was the ruling-violation repair.
+
+---
+
+## Original document follows, with its 6/6 table left standing as written
 
 # All six finance cards draw
 
@@ -22,9 +101,9 @@ standing in for 'the card appeared.'"*
 |---|---|---|---|
 | estimate at completion, using CPI | `finEacCalculation` | 0.92 | **FORECAST_MEASURE** |
 | why are we over budget | `finVarianceAnalysis` | 0.96 | **VARIANCE_TREE** |
-| what is the burn rate | `finBurnRate` | 0.96 | **PERIOD_SERIES** |
+| what is the burn rate | `finBurnRate` | 0.96 | ~~PERIOD_SERIES~~ **REFUSES** |
 | what is the funding status | `finFundingStatus` | 0.96 | **SHORTFALL_GRID** |
-| CPI and SPI over time | `finPerformanceIndices` | 0.96 | **PERIOD_SERIES** |
+| CPI and SPI over time | `finPerformanceIndices` | 0.96 | ~~PERIOD_SERIES~~ **REFUSES** |
 | what is driving the cost variance | `finVarianceDrivers` | 0.86 | **CONTRIBUTION_RANKING** |
 
 ```
