@@ -4289,6 +4289,7 @@ async def register_frontend_capabilities(
         )
 
     from agent_fleet.presentation_agent.capability_admission import validate_registration
+    from agent_fleet.presentation_agent.capabilities import capability_slug as _capability_slug
 
     _admitted, _rejected = validate_registration(
         [c.model_dump() for c in payload.capabilities]
@@ -4341,9 +4342,29 @@ async def register_frontend_capabilities(
                 _recomputes = bool(_contract.get("recomputes"))
             _outcome = _emit_presentation_to_registrar(
                 registrar_url=_registrar_url,
+                # ⛔ SLUG VIA THE SHARED HELPER, NOT A SECOND rsplit. This read
+                # `.rsplit('#', 1)[-1].lower()`, which is correct for a FULL IRI and wrong for
+                # the COMPACT curie a frontend actually sends: `fin:BurnRateSeries` has no
+                # `#`, so the whole thing survived and the name became
+                #   presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop
+                # — a URN DELIMITER inside a URN component. Measured on the live substrate
+                # 2026-09-02: the __system_default__ rows written by the presentation agent
+                # were clean and the cortex-ui-desktop rows written HERE carried the colon,
+                # which is what identified this as the second site.
+                #
+                # THE SAME DEFECT WAS FIXED IN presentation_agent.capability_slug AND ONLY
+                # THERE, in the same week the five-registries lesson was written up. Fixing
+                # the instance you found is what stops you looking for the sibling. Imported
+                # rather than re-implemented so there is no third copy to diverge.
+                #
+                # ⚠️ THIS CHANGES THE tool_urn, and a presentation rebind INSERTS rather than
+                # replaces (see [[a-rebind-does-not-replace]]). So the next registration after
+                # this ships leaves the colon-bearing rows standing and double-binds every
+                # subject. It must ride the same migration as the archetype-out-of-the-name
+                # ruling, which moves every presentation urn anyway.
                 name=(
                     f"presentation_{str(_c.get('archetype') or '').lower()}"
-                    f"_for_{str(_c.get('subject_uri') or '').rsplit('#', 1)[-1].lower()}"
+                    f"_for_{_capability_slug(str(_c.get('subject_uri') or ''))}"
                     f"__{payload.frontend_id}"
                 ),
                 description=(

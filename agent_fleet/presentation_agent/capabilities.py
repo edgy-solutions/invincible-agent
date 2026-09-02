@@ -75,8 +75,17 @@ def capability_slug(subject_uri: str) -> str:
     could reach this function to assert on it. A `mesh:`-only literal in an untestable
     module is a bug with nowhere to write its own regression test; beside the table it
     names, it is one line of import away from covered.
+
+    ⛔ BOTH SPELLINGS, AND NEITHER PREDECESSOR HANDLED BOTH. The presentation agent sends the
+    COMPACT form (``fin:BurnRateSeries``); the gateway receives whatever a frontend declares and
+    can see the FULL IRI. The first version here stripped a compact prefix and turned a full IRI
+    into ``//invincible-agent/fin#burnrateseries``; the gateway's own copy did ``rsplit("#")``,
+    correct on a full IRI and a NO-OP on a compact one — which is exactly how a colon reached a
+    URN component. Two implementations, each correct on the input its author happened to have
+    and each silently wrong on the other's. Fragment first, then any compact prefix.
     """
-    return re.sub(r"^[a-z][a-z0-9]*:", "", subject_uri).lower()
+    local = subject_uri.rsplit("#", 1)[-1] if "#" in subject_uri else subject_uri
+    return re.sub(r"^[a-z][a-z0-9]*:", "", local).lower()
 
 # Engine F's view of "which archetype should this output_uri render
 # as." ADR-0017 §6 envisions this as an HTTP call to Engine O's

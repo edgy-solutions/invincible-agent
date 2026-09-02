@@ -118,3 +118,33 @@ def test_capability_slug_is_byte_identical_for_every_pre_existing_mesh_row():
         if cap["subject_uri"].startswith("mesh:"):
             legacy = cap["subject_uri"].replace("mesh:", "").lower()
             assert capability_slug(cap["subject_uri"]) == legacy
+
+
+def test_capability_slug_handles_BOTH_spellings_because_two_callers_send_different_ones():
+    """The defect that produced a colon inside a DataHub URN, from the other direction.
+
+    presentation_agent sends COMPACT (`fin:BurnRateSeries`). The gateway receives whatever a
+    frontend declares and can see the FULL IRI. Two implementations existed and each was correct
+    only on the input its author happened to have:
+
+        this one (before):  strip a compact prefix  -> mangled a full IRI to
+                            `//invincible-agent/fin#burnrateseries`
+        gateway's (before): rsplit("#")             -> a NO-OP on a compact curie, so the whole
+                            `fin:BurnRateSeries` survived into the URN
+
+    One implementation now, imported by both, and this pins the property rather than the callers.
+    """
+    for compact, full, expected in [
+        ("fin:BurnRateSeries", "http://invincible-agent/fin#BurnRateSeries", "burnrateseries"),
+        ("mesh:OwnershipFact", "http://invincible-agent/mesh#OwnershipFact", "ownershipfact"),
+        ("idp:Dataset", "http://invincible-agent/idp#Dataset", "dataset"),
+    ]:
+        assert capability_slug(compact) == expected
+        assert capability_slug(full) == expected, (
+            f"{full} did not reduce to its local name — a full IRI reaching the gateway would "
+            f"put a slash and a hash inside a URN component"
+        )
+        assert capability_slug(compact) == capability_slug(full), (
+            "the two spellings must produce the SAME slug, or one subject registers under two "
+            "urns depending on which caller wrote it"
+        )

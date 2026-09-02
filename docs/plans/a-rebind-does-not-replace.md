@@ -1,8 +1,8 @@
 ---
 id:         a-rebind-does-not-replace
 status:     open
-owner:      agent (Engine F lane) — BLOCKED on a decision: 4 stale rows need deleting
-blocked-on: user approval for a targeted delete of 4 Weaviate Predicate rows
+owner:      agent (Engine F lane) — rows deleted; identity change ruled and pending a window
+blocked-on: a quiet window for the urn migration (every presentation row moves)
 repo:       invincible-agent
 ruled-by:   ADR-0017 (rendersAs); ADR-0006 Addendum (the registrar is the sole writer); ADR-0019 (Contract D)
 code-site:  src/iagent/gateway.py:~4347 (the frontend registration name), agent_fleet/utils/mesh_registration.py (register_presentation_to_mesh), agent_fleet/mesh_registrar/v2_substrate.py:579 (sweep_stale_weaviate_predicate_rows — verb-keyed, does not cover presentations), agent_fleet/presentation_agent/capability_registry.py:263 (first-match-wins)
@@ -62,21 +62,60 @@ correctly. **The same mechanism is correct on one path and inert on the other, b
 choice made for a different reason** — the archetype went into the name so one subject could hold
 several bindings, which is exactly what makes retiring one impossible.
 
-## What is needed, and why I have not done it
+## What was needed, and why I did not do it myself
 
-**Four rows must be deleted** — the two `PERIOD_SERIES` presentation rows in each menu, by exact
-`tool_urn`. That is a destructive write to a live store, and the standing protocol in this repo is
-that a targeted delete gets explicit approval rather than agent judgement, however small. **Filed,
-not executed.**
+**Four rows had to be deleted** — the two `PERIOD_SERIES` presentation rows in each menu, by
+exact `tool_urn`. A destructive write to a live store gets explicit approval here rather than
+agent judgement, however small and however obviously correct. Filed, then executed on approval;
+the result is in RESOLVED below.
 
-There is no non-destructive path: the selector takes the first match, the order is not
-controllable, and re-registering the correct binding again only adds another row.
+There was no non-destructive path: the selector takes the first match, the order is not
+controllable, and re-registering the correct binding only adds another row.
 
-**The durable repair is separate and larger:** either the sweep learns about presentations (match
-on `subject_uri` + `frontend_id` + predicate rather than `tool_urn`), or the archetype comes out of
-the name and a subject's binding becomes genuinely one row. The second is the honest model — ADR-0017
-says the predicate is constant, so `(subject, frontend)` is the identity and the archetype is the
-*value* — but it changes an identity scheme other things read.
+## RULED 2026-09-02 (architect): TAKE THE ARCHETYPE OUT OF THE NAME
+
+> *"The predicate is constant, so `(subject, frontend)` is the identity and **the archetype is
+> the value.** Putting the value in the name was the accommodation that let one subject hold
+> several bindings, and it is precisely what makes retiring one impossible — a naming scheme
+> that supports addition but not replacement is a write-only registry."*
+
+**Teaching the sweep about presentations was the smaller patch and it was refused, because it
+would have preserved the wrong model.** The sweep is not broken; the identity is. A row keyed
+on `(subject, frontend, predicate)` upserts naturally and needs no sweep at all for this case.
+
+**It waits for a quiet window, not this one:** it is a registrar change with a migration behind
+it — every existing presentation row's `tool_urn` moves.
+
+### THE COLON FIX MUST RIDE THE SAME MIGRATION, and here is why
+
+Fixing the gateway's slug (below) **changes the `tool_urn` too**. So on the next registration
+after it ships, the colon-bearing rows stay standing and every subject double-binds again —
+this packet's own defect, re-created by its own fix. The code fix is committed; **no
+re-registration has been run against it**, and it should land with the identity change rather
+than before it.
+
+## RESOLVED — the four rows are deleted
+
+Approved and executed by exact `tool_urn`, 2026-09-02:
+
+```
+Predicate rows 99 -> 95   (exactly 4)
+  presentation_period_series_for_fin:burnrateseries__cortex-ui-desktop
+  presentation_period_series_for_fin:performanceindexseries__cortex-ui-desktop
+  presentation_period_series_for_burnrateseries              (__system_default__)
+  presentation_period_series_for_performanceindexseries      (__system_default__)
+```
+
+| after | |
+|---|---|
+| rows for the two rebound subjects | **4, all MULTI_SERIES, all complete** |
+| `PERIOD_SERIES` rows for those subjects | **0** |
+| **control:** Engine P's `PeriodCostSeries → PERIOD_SERIES` | **survives** — no over-removal |
+| `select_archetype` for all six fin classes | **6/6 intended** |
+
+**Note which URNs carried the colon and which did not** — it is what identified the second
+site: the `__system_default__` rows, written by the presentation agent whose slug was already
+fixed, are clean; the `cortex-ui-desktop` rows, written by the gateway, carry `fin:`.
 
 ## Two secondary findings from the same run
 

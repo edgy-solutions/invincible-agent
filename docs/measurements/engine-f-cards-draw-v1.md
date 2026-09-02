@@ -1,6 +1,6 @@
 ---
 id:         engine-f-cards-draw-v1
-status:     open — CORRECTED 2026-09-02, the headline claim was wrong
+status:     open
 owner:      agent
 blocked-on:
 repo:       invincible-agent
@@ -8,6 +8,37 @@ ruled-by:   ADR-0045 (Engine F; the amendment's deterministic-renderer ruling); 
 code-site:  agent_fleet/presentation_agent/main.py (_PROJECTED_ARCHETYPES — the projected set), agent_fleet/utils/mesh_registration.py:492, src/iagent/defs/dynamic_supervisor.py (the conditional fill_slots budget, lane 1)
 summary:    THE HEADLINE CLAIM IN THIS DOCUMENT WAS WRONG AND IS CORRECTED BELOW. It said all six cards draw. FOUR draw. The two bound to PERIOD_SERIES - finBurnRate and finPerformanceIndices - mount and REFUSE with `NOTHING TO DRAW / no numeric amount on any row`. I measured which archetype the renderer SELECTED and reported it as the card appearing, which is the exact substitution the bar forbade: routing standing in for the card. ROOT CAUSE, a binding error of mine rather than a payload gap: PERIOD_SERIES is Engine P's COST CURVE wearing a generic name - its row contract requires capex/expense/total plus cap/over_cap/overage and its component hardcodes stacked capex+expense bars against a cap column. Both fin producers are missing SIX of the seven required keys, so no field addition could have made the binding work; CPI/SPI are dimensionless ratios with no cap, no overage and no total. THE SEAL THAT SHOULD HAVE CAUGHT IT checked one producer per archetype, all seven of them Engine P's, so a SECOND producer on an EXISTING archetype was unguarded - the same remembered-population defect this file had already fixed once for archetypes. Now derived from the capability table, with both bad bindings recorded as exemptions a second test PROVES still fail. Everything else stands: routing, entitlement, the fill_slots fix, the projection fix, and four cards drawing with zero generative renders.
 ---
+
+# Six of six satisfy every declared refusal condition — pending a human look
+
+> ## RE-MEASURED 2026-09-02, after MULTI_SERIES and the stale-row delete
+>
+> **This time "draw" is measured as the payload satisfying cortex's DECLARED REFUSAL
+> CONDITIONS, evaluated field by field — not the archetype label.** That substitution is what
+> made the earlier headline wrong, and the correction below is left standing.
+>
+> | question | archetype | verdict against the contract |
+> |---|---|---|
+> | estimate at completion | FORECAST_MEASURE | eac=14,152,380.95 method=CPI formula=`EAC = BAC / CPI` |
+> | why are we over budget | VARIANCE_TREE | root=Notional Program Meridian variance=−1,130,000 children=3 |
+> | what is the burn rate | **MULTI_SERIES** | 6 periods × 2 series (Spent/USD, Planned/USD) |
+> | what is the funding status | SHORTFALL_GRID | 18 cells |
+> | CPI and SPI over time | **MULTI_SERIES** | 6 periods × 2 series (CPI, SPI — **no unit**) |
+> | what is driving the cost variance | CONTRIBUTION_RANKING | 3 contributors, top = Integration and Test −1,100,000 |
+>
+> Every declared refusal condition was evaluated against the real payload: rows present,
+> series declared, every declared series numeric in at least one row, units consistent,
+> method and value present on the forecast, single root carrying a variance and a name,
+> contributors carrying names and contributions, cells carrying subject and required amount.
+>
+> **The CPI/SPI card declares NO unit and the burn card declares USD** — the per-series unit
+> working as designed, and the reason accommodation A2 could be retired rather than sealed.
+>
+> ⚠️ **THIS IS STILL NOT "A PERSON SAW A CARD."** It is the strongest server-side proxy
+> available — the component's own refusal conditions, applied to the bytes it will receive —
+> and it is exactly one step short of the claim. The last time this document said six, the
+> gap between "the payload is right" and "the card rendered" is where the error lived.
+> **Chris opens the UI; until then this says six of six SATISFY, not six of six DREW.**
 
 # ~~All six finance cards draw~~ — FOUR draw. Correcting my own headline.
 

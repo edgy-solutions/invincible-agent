@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **111 of 123 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **112 of 124 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -39,7 +39,7 @@ _Coverage: **111 of 123 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   → [docs/plans/a-namespace-is-declared-in-four-places.md](plans/a-namespace-is-declared-in-four-places.md)
 
 - **a-rebind-does-not-replace** — REBINDING A SUBJECT TO A DIFFERENT ARCHETYPE LEAVES THE OLD BINDING LIVE, AND THE OLD ONE WINS. The presentation registration NAME encodes the archetype — `presentation_{archetype}_for_{slug}__{frontend_id}` — so it becomes a different tool_urn, and the compensate-on-rescope sweep (keyed on tool_urn + verb_iri) never sees the predecessor. Measured 2026-09-02 after rebinding two fin classes from PERIOD_SERIES to MULTI_SERIES: BOTH menus now hold BOTH bindings, all four rows `registration_complete: True`, and `select_archetype` returns the FIRST match — which is the stale PERIOD_SERIES. So the rebind materialised perfectly and changed nothing a card can see. The verb path does NOT have this defect: the same sweep correctly deleted `fin#Program` when finBurnRate's subject moved, because a verb's name does not encode its input_uri. TWO SECONDARY FINDINGS: the gateway's inline slug puts a COLON inside a DataHub URN (`presentation_multi_series_for_fin:burnrateseries__cortex-ui-desktop`) — the same defect fixed in the presentation agent and only there — and the BFF logged `failed_count: 2, gateway-rejected-REFUSED` for two registrations the registrar logged as SUCCEEDED.
-  status: open · owner: agent (Engine F lane) — BLOCKED on a decision: 4 stale rows need deleting · blocked-on: user approval for a targeted delete of 4 Weaviate Predicate rows
+  status: open · owner: agent (Engine F lane) — rows deleted; identity change ruled and pending a window · blocked-on: a quiet window for the urn migration (every presentation row moves)
   → [docs/plans/a-rebind-does-not-replace.md](plans/a-rebind-does-not-replace.md)
 
 - **a-registration-property-must-be-enumerated-seven-times** — THE CHECKLIST, written once so the next feature does not rediscover it four hops at a time. A new registration property reaches the router only if it is named at SEVEN sites, each of which enumerates fields BY NAME. An enumeration that omits a key is SILENT BY CONSTRUCTION - no error, no warning, and the symptom is a verb that appears to declare nothing. Adding `mesh_slots` cost a day and two false "this is the single gate" claims, because four of the seven were found only after an earlier one had been declared complete. Carries two laws: a fix is not finished until you have READ the consumer of what you fixed; and walk the path for embedded DSLs - lift the real string, substitute its parameters, execute it against the real engine, BEFORE deploying.
@@ -77,6 +77,10 @@ _Coverage: **111 of 123 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **bff-liveness-probe-kills-under-load** — ⚠️ DEMO RISK, classified 2026-08-22, SCOPE CORRECTED the same day: this is CHART-WIDE, not one service. 16 of 27 deployments carry `timeoutSeconds: 1` on LIVENESS — every engine, the BFF, the registrar, the projector. Most engines pair it with `readiness: 10`, so someone already judged 1s too tight for readiness and did not carry that to the check that KILLS — the inversion is the finding. Two observed failing so far (BFF SIGKILLed exit 137; Engine DA flapping); the other fourteen have not been under load yet. cortex-bff was SIGKILLed (exit 137) under ordinary traffic — not OOM, a LIVENESS PROBE KILL. The probe allows `/health` `timeoutSeconds: 1` with `failureThreshold: 3`; kubelet recorded "Liveness probe failed x4 over 105m" and "Readiness probe failed x6" with `context deadline exceeded`. A single-threaded FastAPI event loop busy with an Electric shape proxy or a graph query cannot always answer within one second, so the BFF is killed for being busy. In a demo this is every answer failing at once with nothing in the log to point at — the container dies without writing a reason.
   status: open · owner: unassigned
   → [docs/plans/bff-liveness-probe-kills-under-load.md](plans/bff-liveness-probe-kills-under-load.md)
+
+- **bff-reports-refused-for-a-registration-that-succeeded** — A FALSE RED IN THE WORSE DIRECTION. cortex-bff logged `failed_count: 2, reason_class: gateway-rejected-REFUSED` for two presentation registrations that the mesh-registrar logged as SUCCEEDED via the v0.2 saga, and whose rows are present in Weaviate with `registration_complete: True`. Three artifacts, two of which agree and one of which does not. A `DataHub emit failed AFTER saga succeeded` warning sits between them and is the plausible cause — the saga completing while a downstream emit fails, classified upstream as a gateway refusal — but THAT IS A HYPOTHESIS AND IT IS NOT DIAGNOSED HERE. It matters because the repair text is confidently wrong: it tells the reader to fix a registration that is already correct.
+  status: open · owner: lane owning the registration path (cortex-bff / registrar) — ROUTED, not diagnosed · blocked-on: that lane
+  → [docs/plans/bff-reports-refused-for-a-registration-that-succeeded.md](plans/bff-reports-refused-for-a-registration-that-succeeded.md)
 
 - **board-migration** — Retrofit ADR-0040 headers onto the unheadered packets; the board's first tracked item is its own completion.
   status: open · owner: unassigned
