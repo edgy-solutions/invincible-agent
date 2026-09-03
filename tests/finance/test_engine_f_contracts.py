@@ -597,3 +597,91 @@ def test_the_ticketed_read_refuses_without_a_callers_identity():
     src = inspect.getsource(engine.mesh_ticketed_read)
     assert "x-originator-sub" in src and "x-originator-email" in src
     assert "401" in src
+
+
+# ── THE TWO SEALS FOR THE PRODUCER-STATED VERDICTS (2026-09-02) ────────────────────────
+
+def test_every_declared_series_key_exists_as_a_row_field():
+    """PRESENCE IS NOT CONTENT. A declared key with no data draws an EMPTY LINE.
+
+    `series` tells the card which keys to plot. A key that no row carries is not a refusal —
+    the contract's refusal is "a declared series appears in no row", so the card is entitled
+    to refuse, but a subtler failure is a key present on SOME rows: the line draws with holes
+    and nothing anywhere says the producer declared something it does not emit.
+
+    Asserted over EVERY row, not merely one, and over the declaration rather than a
+    remembered key list, so a seventh series inherits the guard.
+    """
+    from agent_fleet.finance_agent import measures as _m
+    for fn_name, decl in _m.SERIES.items():
+        rows = getattr(_m, fn_name)(STATE, program_id="NP-MERIDIAN")
+        assert rows, f"{fn_name}: no rows — the check would be vacuous"
+        for spec in decl:
+            key = spec["key"]
+            holes = [i for i, r in enumerate(rows) if not isinstance(r.get(key), (int, float))]
+            assert not holes, (
+                f"{fn_name} declares series {key!r}; rows {holes[:3]} carry no number under it. "
+                f"The card plots a line with holes and no layer reports the gap."
+            )
+
+
+def test_favourable_follows_the_CONVENTION_and_not_the_sign():
+    """⛔ THE MUTATION THAT MUST FLIP THE VERDICTS, and the one that must not.
+
+    `favourable` is meaningless unless it is derived from the declared convention. If it were
+    written `variance > 0` at each call site it would still be CORRECT today and would agree
+    with `_variance`'s docstring by coincidence — and nothing would tie them together, so the
+    day the convention changed the verdicts would silently keep the old meaning.
+
+    So this asserts the DERIVATION, in both directions:
+
+      * mutate the CONVENTION  -> every verdict flips
+      * mutate nothing but re-read the same signs -> nothing flips
+
+    The second half is what makes the first meaningful: a test that only checked "verdicts
+    exist" would pass against a hardcoded sign test.
+    """
+    from agent_fleet.finance_agent import measures as _m
+
+    def verdicts():
+        tree = _m.fin_variance_analysis(STATE, program_id="NP-MERIDIAN")[0]
+        out, stack = [], [tree]
+        while stack:
+            n = stack.pop()
+            out.append((n["entity_name"], n["variance"] > 0, n.get("favourable")))
+            stack.extend(n.get("contributors") or [])
+        drivers = [(r["entity_name"], r["contribution"] > 0, r["favourable"])
+                   for r in _m.fin_variance_drivers(STATE, program_id="NP-MERIDIAN")]
+        return out + drivers
+
+    baseline = verdicts()
+    assert baseline, "no nodes — the check would be vacuous"
+    assert any(v for _n, _p, v in baseline), "no favourable node in the seed — half the seal is untested"
+    assert any(v is False for _n, _p, v in baseline), "no unfavourable node — the other half is untested"
+
+    # Under the declared convention, positive == favourable. Pinned so the next assertion means
+    # something: it is this agreement the mutation must break.
+    for name, positive, fav in baseline:
+        if fav is not None:
+            assert fav is positive, f"{name}: verdict disagrees with the declared convention"
+
+    original = dict(_m._FAVOURABLE_WHEN_POSITIVE)
+    try:
+        _m._FAVOURABLE_WHEN_POSITIVE["cost"] = not original["cost"]
+        flipped = verdicts()
+    finally:
+        _m._FAVOURABLE_WHEN_POSITIVE.clear()
+        _m._FAVOURABLE_WHEN_POSITIVE.update(original)
+
+    assert len(flipped) == len(baseline)
+    for (n0, p0, v0), (n1, p1, v1) in zip(baseline, flipped):
+        assert n0 == n1 and p0 == p1, "the DATA moved — the mutation must change only the verdict"
+        if v0 is None:
+            assert v1 is None, f"{n0}: a neutral node gained a verdict from a convention flip"
+        else:
+            assert v1 is not v0, (
+                f"{n0}: the convention was inverted and the verdict did NOT move. `favourable` "
+                f"is being read off the sign rather than derived from the convention."
+            )
+
+    assert verdicts() == baseline, "the convention was not restored — later tests would inherit it"

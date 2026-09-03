@@ -127,7 +127,7 @@ fin:FundingLine a owl:Class ;
 fin:VarianceDecomposition a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Variance Decomposition" ;
-    rdfs:comment "A nested structure whose root figure equals the sum of its children, each child carrying its own children where a further level was required, and every node stating the reason its expansion stopped. Children below a materiality floor are collapsed into a stated residual so that every level still sums. Refuses a payload whose children do not reconcile to their parent. The only response shape here whose payload is RECURSIVE." .
+    rdfs:comment "A nested structure whose root figure equals the sum of its children, each child carrying its own children where a further level was required, and every node stating the reason its expansion stopped. Children below a materiality floor are collapsed into a stated residual so that every level still sums. Refuses a payload whose children do not reconcile to their parent. Every node also carries the PRODUCER'S VERDICT on whether its figure is favourable, because the sign alone does not say: NEGATIVE IS UNFAVOURABLE here, the standard's convention, and a shop that treats an under-run as unfavourable would emit the opposite verdict on the same number. A node stating no verdict is neutral rather than good. The signs on a single node can also disagree with each other - a favourable child inside an unfavourable parent has a positive figure and a negative share of that parent - which is why the verdict travels with the node instead of being read off either one. The only response shape here whose payload is RECURSIVE." .
 
 fin:EstimateAtCompletion a owl:Class ;
     rdfs:subClassOf mesh:Response ;

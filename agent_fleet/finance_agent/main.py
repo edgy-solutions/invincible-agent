@@ -591,10 +591,22 @@ def run_measure(fn: str, req: MeasureRequest, request: Request) -> dict[str, Any
         # sends no `series` key, and the archetype refuses rather than guessing which of its
         # numeric columns to plot.
         **({"series": measures.SERIES[fn]} if fn in measures.SERIES else {}),
+        # The dashed reference line. Static per verb; the card draws it and says nothing
+        # about which side of it is good, because that differs by measure.
+        **({"reference": measures.REFERENCE[fn]} if fn in measures.REFERENCE else {}),
         # THE DISCLOSURE RIDES ON THE PAYLOAD, not only in a docstring. A finance figure that
         # leaves this engine without saying it is notional is a figure somebody can paste
         # into a deck, and a docstring is not visible from a screenshot.
         "data_provenance": notional_banner(),
+        # COMPUTED FROM THE ROWS, so it is emitted here rather than declared in a table — and
+        # ABSENT WHEN THERE IS NOTHING TO SAY. A verdict key holding None would make the card
+        # render an empty caption slot; omission is the honest-absence rule this envelope
+        # already follows for `value_unit`.
+        **(
+            {"verdict": _v}
+            if fn in measures.VERDICT and (_v := measures.VERDICT[fn](rows)) is not None
+            else {}
+        ),
         "rows": rows,
     }
 

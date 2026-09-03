@@ -79,9 +79,13 @@ VALUE_UNIT: dict[str, str] = {
 #: are comparable, and the archetype refuses mixed units rather than drawing a second axis.
 #: So a verb may not declare a USD series beside a dimensionless one.
 SERIES: dict[str, list[dict[str, Any]]] = {
+    # `dashed` MARKS THE PLAN, and the card cannot work it out. Two USD series over the same
+    # periods are structurally identical; which of them is the commitment and which is the
+    # comparison is a fact about the domain. Dashing "whichever is second" would be arbitrary
+    # here and actively wrong for CPI beside SPI, where neither is a plan.
     "fin_burn_rate": [
-        {"key": "burn",    "label": "Spent",  "unit": "USD"},
-        {"key": "planned", "label": "Planned", "unit": "USD"},
+        {"key": "burn",    "label": "Burn", "unit": "USD"},
+        {"key": "planned", "label": "Plan", "unit": "USD", "dashed": True},
     ],
     # NO `unit` KEY AT ALL, not `"unit": None`. Absent means DIMENSIONLESS by the contract —
     # a ratio, not an unknown currency — which is the same assertion VALUE_UNIT makes above
@@ -96,6 +100,50 @@ SERIES: dict[str, list[dict[str, Any]]] = {
 #: response envelope rather than left for a renderer to invent. Engine P supplies only
 #: `value_unit` and leaves the other two absent; they are cheap to state and a grid that has
 #: to guess what its cells count is a grid captioned by convention.
+#: THE DASHED REFERENCE LINE, and it is deliberately SEPARATE from any verdict about it.
+#:
+#: 1.0 is where an index means "as planned". Whether being under it is bad is NOT derivable
+#: from the line: for a performance index, below 1.0 is unfavourable; for a cost ratio it is
+#: the opposite. So the card draws the line from here and says nothing about which side is
+#: good — the verdict, if any, arrives separately below.
+REFERENCE: dict[str, dict[str, Any]] = {
+    "fin_performance_indices": {"value": 1.0, "label": "target"},
+}
+
+
+def _verdict_indices(rows: list[dict[str, Any]]) -> Optional[str]:
+    """A MECHANICAL restatement of the cumulative index against the declared reference."""
+    if not rows:
+        return None
+    ref = REFERENCE["fin_performance_indices"]["value"]
+    last = rows[-1]
+    below = [n.upper() for n in ("cpi", "spi")
+             if isinstance(last.get(f"cum_{n}"), (int, float)) and last[f"cum_{n}"] < ref]
+    return f"{' and '.join(below)} below {ref}" if below else None
+
+
+def _verdict_burn(rows: list[dict[str, Any]]) -> Optional[str]:
+    """The FIRST period where cumulative spend passed cumulative plan, or nothing."""
+    for r in rows:
+        b, p = r.get("cum_burn"), r.get("cum_planned")
+        if isinstance(b, (int, float)) and isinstance(p, (int, float)) and b > p:
+            return f"Spend above plan since {r.get('period')}"
+    return None
+
+
+#: THE PRODUCER'S ONE-LINE READING OF ITS OWN SERIES. Absent when there is nothing to say —
+#: a card with no verdict shows the chart and no caption, which is the honest state.
+#:
+#: ⛔ SCOPE, because "verdict" invites more than belongs here. These are MECHANICAL
+#: restatements of the data against a declared reference — "CPI below 1.0" is arithmetic a
+#: reader could redo from the chart. They say nothing about whether that is ACCEPTABLE, which
+#: is a programmatic judgement this engine has no standing to make and does not have the
+#: inputs for. If a phrasing ever implies one, it belongs to the finance group, not here.
+VERDICT: dict[str, Any] = {
+    "fin_performance_indices": _verdict_indices,
+    "fin_burn_rate": _verdict_burn,
+}
+
 VALUE_LABEL: dict[str, str] = {
     "fin_variance_analysis":   "Variance",
     "fin_eac_calculation":     "Estimate at completion",
@@ -125,6 +173,41 @@ def _totals(
         sum(f.bcwp for f in facts),
         sum(f.acwp for f in facts),
     )
+
+
+#: WHICH SIGN IS FAVOURABLE, PER VARIANCE KIND — the convention as DATA, so a verdict is
+#: derived from it rather than from a sign test written out at each call site.
+#:
+#: ⛔ THIS TABLE IS THE THING TO MUTATE. `favourable` must follow the CONVENTION, not the sign:
+#: flip an entry here and every verdict in the fleet flips with it; flip a sign somewhere else
+#: and none of them do. That difference is what the seal in tests/finance/ asserts, and it is
+#: the reason this is a dict rather than `variance > 0` written inline.
+#:
+#: Both kinds are True because both are BCWP-minus-something (see `_variance` below): work
+#: claimed beyond what it cost, or beyond what was scheduled. A convention where an under-run
+#: is unfavourable is a real one in some shops — it would be a `False` here, and nothing else
+#: in the engine would change.
+_FAVOURABLE_WHEN_POSITIVE: dict[str, bool] = {"cost": True, "schedule": True}
+
+
+def _is_favourable(kind: str, variance: Optional[float]) -> Optional[bool]:
+    """The producer's VERDICT on a variance. None means NEUTRAL, deliberately.
+
+    A card must never infer this from the number: the same `+120000` is favourable under one
+    convention and unfavourable under another, and the card knows neither. So the verdict
+    travels with the datum, or the node renders gray.
+
+    EXACTLY ZERO IS NEUTRAL rather than favourable. A package precisely on budget has not done
+    well, it has done what was planned, and colouring it green would overstate it — the same
+    honest-absence rule the rest of this engine follows.
+    """
+    if variance is None:
+        return None
+    if kind not in _FAVOURABLE_WHEN_POSITIVE:
+        raise NotInModel(f"no favourability convention for a {kind!r} variance")
+    if variance == 0:
+        return None
+    return (variance > 0) is _FAVOURABLE_WHEN_POSITIVE[kind]
 
 
 def _variance(kind: str, bcws: float, bcwp: float, acwp: float) -> float:
@@ -181,6 +264,19 @@ def fin_variance_analysis(
 ) -> list[dict[str, Any]]:
     """Decompose a variance into the parts that produced it, recursing until explained.
 
+    ⛔ THE SIGN CONVENTION, STATED HERE BECAUSE THE NEXT READER WILL ASSUME THE OPPOSITE:
+    **NEGATIVE IS UNFAVOURABLE.** A cost variance is BCWP - ACWP, so a negative number means
+    the work claimed cost more than it was budgeted — over budget. Every node carries
+    `favourable` computed from `_FAVOURABLE_WHEN_POSITIVE`, never from the sign at the call
+    site, so a shop with the opposite convention changes one table entry and every verdict in
+    the fleet follows.
+
+    AND THE TWO SIGNS ON A NODE CAN DISAGREE. A favourable child inside an unfavourable parent
+    has a POSITIVE `variance` and a NEGATIVE `share_of_root`. On this seed, Systems Engineering
+    is +120,000 inside a -1,130,000 root. A card colouring from either number alone would be
+    right about half the tree, which is the whole reason the verdict is emitted rather than
+    inferred.
+
     THE NESTING IS THE ANSWER. A variance stated without what produced it is a number
     nobody can act on, so the decomposition is the output type rather than a rendering
     choice — which is also why this returns a one-element list holding a TREE rather than a
@@ -225,6 +321,13 @@ def fin_variance_analysis(
             "entity_name": entity_name,
             "variance_kind": variance_kind,
             "variance": variance,
+            # THE PRODUCER'S VERDICT, on the root and on every contributor. The card colours
+            # from THIS and never from the sign — and note why that matters on this exact row:
+            # a favourable contributor inside an unfavourable root carries a POSITIVE variance
+            # and a NEGATIVE share_of_root, so the two signs on one node disagree. A card
+            # choosing either would be right about half the tree. Measured on the seed:
+            # Systems Engineering is +120,000 inside a -1,130,000 root.
+            "favourable": _is_favourable(variance_kind, variance),
             "share_of_root": (variance / root_variance) if root_variance else None,
             "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
             "value_unit": program.value_unit,
@@ -600,7 +703,11 @@ def fin_variance_drivers(
             "variance_kind": variance_kind,
             "contribution": contribution,
             "share_of_total": (contribution / total) if total else None,
-            "favourable": contribution > 0,
+            # VIA THE CONVENTION, not `contribution > 0`. The inline sign test was correct and
+            # unmaintainable: it agreed with `_variance`'s stated convention by coincidence of
+            # both being written the same day, and nothing tied the two together. Now one
+            # table decides, and mutating it moves this row and the tree's nodes together.
+            "favourable": _is_favourable(variance_kind, contribution),
             "bcws": bcws, "bcwp": bcwp, "acwp": acwp,
             "value_unit": program.value_unit,
             "scope_label": program.name,
