@@ -328,6 +328,32 @@ CANONICAL_TTL_MANIFEST = [
         "path": "ontologies/finance_extension.ttl",
     },
 
+    # ----- LAYER 3d: PRODUCTION_COST (engine-cost's subject nouns AND its outputs) -----
+    # Both ends of Contract D in one file, same reasoning as the finance entry above.
+    #
+    # DOMAIN IS PRODUCTION_COST and it is a NEW domain, not a reuse of PROGRAM_FINANCE.
+    # The two are different questions about the same effort — finance measures the
+    # authorization as earned value, this measures the manufacturing run as recurring unit
+    # cost — and they carry different entitlements. Filing these classes under
+    # PROGRAM_FINANCE would put them in that domain's vocabulary graph, sweep them with it
+    # on every prime, and grant them to anyone holding the finance cell.
+    #
+    # THE DROP SET IS DERIVED FROM THIS FIELD. clear_ontology_graphs() computes
+    # {f"http://internal/{e['domain']}"} over this manifest, so a new domain becomes an
+    # eighth graph picked up automatically — no change to the clearer is needed, and none
+    # should be made.
+    #
+    # Same warning as the two entries above: the resolver queries by semantic domain name,
+    # and a class whose domain does not match what the resolver asks for gives a silent
+    # UNKNOWN cascade. engine-cost registers its verbs under PRODUCTION_COST
+    # (agent_fleet/cost_agent/main.py) and the two strings must not drift.
+    {
+        "domain": "PRODUCTION_COST",
+        "name": "cost_extension",
+        "s3_key": "cost/cost_extension.ttl",
+        "path": "ontologies/cost_extension.ttl",
+    },
+
     # ----- LAYER 4: MANUFACTURING (the manufacturing content-kind axis) -----
     # General mfg:WorkInstruction kind only — the routing-visible class the
     # ManufacturingPlugin's INSTANCE_OF stamping (ADR-0021) targets. Single

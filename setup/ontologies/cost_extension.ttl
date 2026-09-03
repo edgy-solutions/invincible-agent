@@ -1,0 +1,131 @@
+@prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix mesh:  <http://invincible-agent/mesh#> .
+@prefix cost:  <http://invincible-agent/cost#> .
+
+<http://internal/production_cost> a owl:Ontology ;
+    rdfs:label "Production cost domain extension" ;
+    rdfs:comment "The subject nouns engine-cost's six verbs operate ON, and the response shapes they produce. Contract D (ADR-0019) requires BOTH ends of a verb edge to pre-exist as owl:Class, so both are in this one file - the planning extension authored only the input end and collected twelve 422s for it, and the split is what made that failure hard to see. Declared 2026-09-02 per docs/plans/register-cost-tool-as-engine.md." .
+
+# CONVENTIONS INHERITED FROM idp_extension.ttl AND finance_extension.ttl, and they are
+# not stylistic:
+#
+#   * rdfs:comment ONLY. The Jena->Weaviate sync UNIONs skos:definition with rdfs:comment
+#     and the last row wins, so a skos:definition silently clobbers it. rdfs:comment is
+#     what lands in Weaviate.OntologyClass.definition.
+#   * The definition IS the recall signal, written for the CLASS and never for a query.
+#   * No sibling-name bleed. A definition naming a neighbouring class competes for that
+#     class's traffic - measured on idp:Pipeline, which ranked top for a question squarely
+#     about idp:Dataset purely because it said "datasets" twice. Each definition below
+#     names its own class's DISTINGUISHING QUESTION rather than its position in a
+#     hierarchy.
+#
+# -- WHY A SEPARATE PRODUCTION-COST SUBJECT AND NOT fin:Program ------------------------
+# fin:Program is the authorization whole measured as earned-value performance. The subject
+# here is the manufacturing run measured as recurring unit cost across successive buys.
+# They are genuinely different questions about the same effort, and DECLARING A SECOND
+# CLASS LABELLED "Program" WOULD BE THE DUPLICATE-LABEL DEFECT ON PURPOSE - Engine F
+# measured what that costs: a duplicate label makes a question unroutable while every
+# component reports healthy. cost:ProductionProgram is named for what it is.
+#
+# -- FLAT IS EXPECTED HERE (ADR-0045, implementer's note) ------------------------------
+# The ingest does NOT materialise a subClassOf edge to a prov: target - no such edge
+# exists anywhere in the graph today. These subject classes will be FLAT in Neo4j exactly
+# as the planning and finance classes are. That is the current design, not a defect.
+#
+# -- RESPONSE SHAPES ARE DECLARED subClassOf mesh:Response ON PURPOSE ------------------
+# doc-tools filters mesh:Response subclasses OUT of the Weaviate grounding pool, so a
+# verb's OUTPUT can never out-compete its own INPUT subject for the question that invokes
+# it. That defect was measured at 12/20 on Engine F's corpus before the filter landed;
+# this engine inherits the fix for free by declaring the parent.
+# tests/routing/test_response_shapes_are_not_groundable.py seals it in both directions.
+#
+# -- NOTIONAL BY RULE ------------------------------------------------------------------
+# Structural cost-accounting nouns carrying no organisation, program, supplier or customer
+# vocabulary. Every concept named below is public cost-estimating practice. Nothing from
+# any real program appears in this file, in the seed, or in any docstring.
+
+# =============================================================================
+# Subject nouns - the INPUT end of Contract D
+# =============================================================================
+
+cost:ProductionLot a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Production Lot" ;
+    rdfs:comment "One numbered quantity built under a single authorization at a single point in time, costed as a self-contained whole. Questions naming a number and asking what that quantity cost, what it cost per unit, how its labour split, or which rates were applied to it target this class. It is the unit at which cost is accumulated and reported, and the smallest thing that has a complete price of its own." .
+
+cost:ProductionProgram a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Production Program" ;
+    rdfs:comment "A recurring manufacturing effort measured across its successive quantities, where the question is direction rather than amount. Questions asking whether cost per unit is rising or falling, whether the effort is getting cheaper as it matures, or how any measure has moved from one buy to the next target this class. It is the subject of every trend, and it is a cost-accumulation view rather than an earned-value one." .
+
+cost:RateTable a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Rate Table" ;
+    rdfs:comment "The set of direct rates, indirect rates and escalation indices in force for a fiscal year, carrying the date on which that set was fixed. Questions asking which assumptions produced a number, what escalation was applied, or what the burden factors were at a stated point in time target this class. Two answers computed from different vintages of the same fiscal year are both correct and are not comparable, which is why the vintage is part of the identity rather than metadata about it." .
+
+cost:CostCategory a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Cost Category" ;
+    rdfs:comment "One of the accounting buckets a price is decomposed into for reporting - labour, material, other direct charges, warranty, or contracted effort. Questions asking where the money went, which bucket grew, or what proportion of a total came from a named bucket target this class. It is a reporting dimension rather than a thing that is built, and it exists so a total can be explained rather than merely stated." .
+
+cost:Supplier a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Supplier" ;
+    rdfs:comment "An external party providing purchased content, considered as a share of purchased value rather than as a company record. Questions asking how concentrated purchasing is, which parties account for most of the purchased value, or whether dependence on any single party exceeds a stated threshold target this class. It carries no contact, contract or performance information - only its weight in a total." .
+
+# =============================================================================
+# Response shapes - the OUTPUT end of Contract D
+#
+# Each is subClassOf mesh:Response. One per verb, no shape shared between two verbs, so a
+# card binding can never be ambiguous about which verb produced what it is drawing.
+# =============================================================================
+
+cost:LotCostBreakdown a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Lot Cost Breakdown" ;
+    rdfs:comment "The decomposition of one quantity's cost into its accounting buckets, each with its price and, where the bucket is worked rather than purchased, its hours. A payload: what the verb produced, carrying the reported figures and the vintage of the assumptions behind them, and nothing about how they should be displayed." .
+
+cost:UnitPriceTrend a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Unit Price Trend" ;
+    rdfs:comment "Cost per unit at each successive quantity, one series per accounting bucket, ordered so that direction is readable. The order is load-bearing rather than incidental: the answer is the shape of the movement, not the individual values, and a set returned without its ordering would not answer the question that produced it." .
+
+cost:RateComparison a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Rate Comparison" ;
+    rdfs:comment "Applied rates set against the rates that were assumed when the work was estimated, with the difference stated per rate. A payload whose value is entirely in the pairing: either figure alone is unremarkable, and it is the gap between them that a reader acts on." .
+
+cost:LaborComposition a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Labor Composition" ;
+    rdfs:comment "Worked effort separated into the kinds of work performed - hands-on production, indirect support, and engineering or management effort - each with its hours, its applied rate and its extended cost. A payload reporting the mix, because two quantities with identical totals and different mixes have different cost drivers and respond to different actions." .
+
+cost:PriceComposition a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Price Composition" ;
+    rdfs:comment "The ordered build-up from a starting cost to a final price, each step naming what it adds and the amount it adds, ending at a total that equals the sum of the steps. A payload whose ordering is its meaning: the same components applied in a different sequence produce a different answer, so the sequence is reported rather than assumed." .
+
+cost:RateAssumptions a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Rate Assumptions" ;
+    rdfs:comment "The assumption set in force at a stated point in time, listing each factor with its value and the fiscal year it applies to. A payload that exists so any figure elsewhere can be reproduced: it is the answer to what was believed when a number was computed, rather than to what is believed now." .
+
+# =============================================================================
+# Standard-vocabulary bindings - REFERENCE, do not redeclare
+#
+# ADR-0045's ruling and prime_databases.py's own reasoning: importing a standard's classes
+# puts W3C-quality generic definitions into the routable pool where they OUT-COMPETE domain
+# classes carrying weaker ones, and doc-tools' meta-ontology filter drops them anyway -
+# which once made sync_jena_ontologies_to_neo4j fail with a confusing "zero classes
+# extracted". So the binding is a property whose range points OUT of the file. It costs
+# nothing at routing time, states the mapping for anyone reading the model, and adds no
+# class to the pool.
+# =============================================================================
+
+cost:hasMonetaryAmount a owl:ObjectProperty ;
+    rdfs:label "has monetary amount" ;
+    rdfs:comment "Binds a reported cost figure to the FIBO monetary-amount primitive, stating the mapping without importing the class." ;
+    rdfs:range <https://spec.edmcouncil.org/fibo/ontology/FND/Accounting/CurrencyAmount/MonetaryAmount> .

@@ -1,0 +1,24 @@
+[project]
+name = "cost-agent"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Mesh membership package — transport auth (the app dependency) + the ONE general
+    # mint. PINNED TO A TAG, same as every other engine: this package governs fleet auth,
+    # so a floating ref would let one SDK commit change every engine's security behaviour
+    # at rebuild. Matched to the fleet pin; tests/test_lock_coherence.py polices drift.
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.3.1",
+    "fastapi",
+    "hypercorn",
+    "pydantic",
+    "httpx",
+    "python-dotenv",
+]
+
+# DELIBERATELY THIN, copied from Engine F's list. engine-cost computes over an in-process
+# notional model and speaks to nobody: no LLM client, no smolagents, no DataHub, no restate,
+# no database driver. `pricing.py` deliberately depends on NOTHING beyond the standard
+# library, because ADR-0047 ships it to a recipient byte-identical — every dependency it
+# gained would become a dependency the export bundle has to carry and the customer has to
+# trust. Every addition here should have to explain itself; an addition to pricing.py has to
+# explain itself twice.
