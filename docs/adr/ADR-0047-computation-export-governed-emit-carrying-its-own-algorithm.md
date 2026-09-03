@@ -30,12 +30,23 @@ A recipient outside the system needs to check a number the system produced — n
 again, but to **re-derive it themselves**, offline, on their own machine, without asking anyone.
 The predecessor practice for this was to hand over the whole tool and let them run it.
 
-The capability being exported, described generically and deliberately so: **a per-category
-cost-estimation tool with a deterministic pricing engine and rate/escalation management.** No
-internal module, page, or file names from that tool appear in this ADR or in
-[ADR-0048](ADR-0048-customer-validation-package-first-consumer-of-computation-export.md). What
-matters architecturally is only that the computation is **deterministic** and **already exists in
-Python** — every ruling below turns on those two properties and none turns on what it prices.
+The capability being exported: **a per-category cost-estimation tool with a deterministic pricing
+engine and rate/escalation management.** What matters architecturally is only that the computation
+is **deterministic** and **importable standalone in Python** — every ruling below turns on those two
+properties and none turns on what it prices.
+
+> **AMENDED 2026-09-02 — the second property is now DESIGNED IN rather than inherited.** This
+> section first said the computation *"already exists in Python"*, written on the assumption that an
+> existing external tool would be wrapped. **There is no such tool to wrap in this workspace**, so
+> the capability is being **built to this specification** as a mesh engine
+> ([`register-cost-tool-as-engine`](../plans/register-cost-tool-as-engine.md)), with *no config read
+> at import, no module-level I/O, and the pricing composition a pure function of its inputs.*
+>
+> **This strengthens §3 rather than weakening it.** "The modules happen to be importable" was a
+> property to be discovered and possibly refuted; "the modules are written to be importable" is a
+> construction constraint that cannot come back false. The isolability risk that packet carried —
+> and the fork it named between *refactor* and *revise §3's byte-identical claim* — **is retired,
+> because neither branch can now be reached.**
 
 **The shape of the thing is not "an export."** It is a **governed emit that carries its own
 algorithm**, and that is why it needs its own discipline rather than inheriting a report-download's.

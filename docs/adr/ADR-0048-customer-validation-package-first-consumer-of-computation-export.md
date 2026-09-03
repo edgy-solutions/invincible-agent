@@ -17,10 +17,16 @@ recipient data enters this path until it passes.
   - [ADR-0046](ADR-0046-langgraph-graphs-as-registered-mesh-verbs.md) — the admission grammar the
     packaging verb passes through.
 
-**Naming fence, stated because it is load-bearing:** the exported capability is described here only
-as **a per-category cost-estimation tool with a deterministic pricing engine and rate/escalation
-management**. No internal module, page, or file names appear in this ADR. Nothing architectural
-depends on them — every ruling turns on the computation being *deterministic* and *already Python*.
+**The exported capability** is **a per-category cost-estimation tool with a deterministic pricing
+engine and rate/escalation management**. Nothing architectural depends on what it prices — every
+ruling turns on the computation being *deterministic* and *importable standalone*.
+
+> **AMENDED 2026-09-02.** This originally read *"already Python"* and carried a naming fence,
+> because the plan was to wrap an existing external tool. **There is no such tool in this workspace**,
+> so the capability is **built to specification** as `engine-cost`
+> ([`register-cost-tool-as-engine`](../plans/register-cost-tool-as-engine.md)) with exportability as
+> a construction constraint. **The measurements in §3 are unaffected** — bundle size, boot time and
+> numeric-stack fidelity are properties of the runtime and the data, not of the module's origin.
 
 ---
 
