@@ -27,7 +27,9 @@ import os
 from decimal import Decimal
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
@@ -62,9 +64,162 @@ DOMAIN = "PRODUCTION_COST"          # MUST match the prime manifest entry, or th
                                     # silent UNKNOWN cascade (setup/prime_databases.py).
 PORT = int(os.getenv("PORT", "8097"))
 
+#: The persona these verbs are owned by. Named once, read at every registration.
+OWNER_PERSONA = "COST_ANALYST"
+DOMAINS = [DOMAIN]
+
+MESH = "http://invincible-agent/mesh#"
+
 _announce_transport_auth(component=COMPONENT)
 
+
+# -----------------------------------------------------------------------------
+# Verb catalogue - the registration source, read twice
+# -----------------------------------------------------------------------------
+#
+# ONE TABLE, READ BY THE ROUTES AND BY THE REGISTRATION, so the mesh and the served surface
+# cannot disagree about which verbs exist.
+#
+# THE DESCRIPTIONS ARE THE ROUTING SIGNAL and the ANTI-SYNONYMS ARE LOAD-BEARING: they keep
+# a verb out of traffic that belongs to its neighbour. The sharpest pair here is
+# `cost_lot_breakdown` against `cost_price_composition` - BOTH decompose the same total, one
+# by accounting bucket and one by burden step, and a question aimed at either would
+# otherwise reach both.
+CATALOGUE: list[dict[str, Any]] = [
+    {
+        "fn": "cost_lot_breakdown",
+        "verb": "mesh:costLotBreakdown",
+        "synonyms": ["what did lot 4 cost", "cost breakdown for a lot",
+                     "where did the money go on a lot", "lot cost by category"],
+        "anti_synonyms": ["how did the price build up", "what is the overhead rate",
+                          "is cost per unit falling", "which rates were assumed"],
+    },
+    {
+        "fn": "cost_unit_price_trend",
+        "verb": "mesh:costUnitPriceTrend",
+        "synonyms": ["is cost per unit falling", "unit price across lots",
+                     "are we getting cheaper", "unit cost trend"],
+        "anti_synonyms": ["what did one lot cost", "how did the price build up",
+                          "what is the labour split"],
+    },
+    {
+        "fn": "cost_rate_comparison",
+        "verb": "mesh:costRateComparison",
+        "synonyms": ["applied versus estimated rates", "did the rates move",
+                     "how do actual rates compare to the estimate"],
+        "anti_synonyms": ["what is the rate table", "what did the lot cost",
+                          "is unit price falling"],
+    },
+    {
+        "fn": "cost_labor_composition",
+        "verb": "mesh:costLaborComposition",
+        "synonyms": ["labour split for a lot", "touch versus support hours",
+                     "how much is programme management", "what is the labour mix"],
+        "anti_synonyms": ["what did the lot cost in total", "how did the price build up",
+                          "what are the material costs"],
+    },
+    {
+        "fn": "cost_price_composition",
+        "verb": "mesh:costPriceComposition",
+        "synonyms": ["how did the price build up", "show the burden stack",
+                     "what is in the price", "base to price walk"],
+        "anti_synonyms": ["what did the lot cost by category", "is unit price falling",
+                          "what is the labour split"],
+    },
+    {
+        "fn": "cost_rate_assumptions",
+        "verb": "mesh:costRateAssumptions",
+        "synonyms": ["what rates are we using", "the rate table",
+                     "what escalation was applied", "which assumptions produced this"],
+        "anti_synonyms": ["did the rates move against the estimate", "what did the lot cost"],
+    },
+]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Boot checks, then register every verb with the mesh.
+
+    FLAT FIRST. In the image, /app IS this directory, so `utils` is a sibling top-level
+    module and `agent_fleet` does not exist at all. Engine P got this backwards once and
+    paid a full roll: the import failed, the helper became None, and twelve registrations
+    were skipped WHILE THE ENGINE REPORTED HEALTHY.
+    """
+    check_consistency(STATE)
+    _assert_declarations_cover_verbs()
+    log.info(
+        "engine-cost boot OK: %d lots, %d rate sets, %d verbs",
+        len(STATE.lots), len(STATE.rates), len(measures.VERBS),
+    )
+
+    register_engine_to_mesh = None
+    engine_mint = None
+    try:
+        from utils.mesh_registration import engine_mint, register_engine_to_mesh
+    except ImportError:
+        try:
+            from agent_fleet.utils.mesh_registration import engine_mint, register_engine_to_mesh
+        except ImportError:  # pragma: no cover - local runs without the fleet extra
+            register_engine_to_mesh = None
+
+    if register_engine_to_mesh is None:
+        # SAY SO. A registration that silently does not happen leaves an engine that passes
+        # every probe and answers nothing - the failure mode with no symptom, and exactly
+        # what ADR-0046 documented about Engine B.
+        log.warning("[engine-cost] mesh registration helper unavailable - NO verbs registered")
+        yield
+        return
+
+    # The SERVICE is iagent-engine-cost. The IMAGE is cost-agent. The two differ on purpose.
+    base = os.getenv("ENGINE_COST_PUBLIC_URL", "http://iagent-engine-cost:8097").rstrip("/")
+
+    # IDENTITY IS AN ARGUMENT, NEVER DERIVED FROM THE COMPONENT NAME. Both the client id and
+    # the env var holding its secret are named HERE, at this call site. Engine P's provider
+    # registration was first written with a neighbour's deployment name and minting failed
+    # 401 SILENTLY while the verb registrations beside it succeeded.
+    _mint = engine_mint(client_id="iagent-cost-agent",
+                        secret_env="ENGINE_COST_CLIENT_SECRET")
+
+    registered, failed = [], []
+    for entry in CATALOGUE:
+        fn_name = entry["fn"]
+        try:
+            register_engine_to_mesh(
+                mint=_mint,
+                # ONE NAME PER (VERB, SUBJECT). The registration NAME is the tool_urn, and
+                # the registrar's compensate-on-rescope sweep DELETES rows matching
+                # (tool_urn, verb_iri) whose input_uri differs - so registering a second
+                # subject under one name silently replaces the first rather than adding.
+                name="engine_cost_production_cost",
+                description=_DESCRIPTIONS[fn_name],
+                verb=entry["verb"],
+                input_uri=measures.INPUT_URI[fn_name],
+                output_uri=measures.OUTPUT_URI[fn_name],
+                verb_synonyms=entry["synonyms"],
+                verb_anti_synonyms=entry.get("anti_synonyms"),
+                endpoint_url=f"{base}/measure/{fn_name}",
+                owner_persona=OWNER_PERSONA,
+                domains=DOMAINS,
+                cost_class="fast",
+                # DECLARED FROM DAY ONE - what makes `rate_vintage`'s refusal reachable by
+                # the router at all, rather than a rule only this process knows.
+                slots=slot_decls.slots_for(fn_name),
+            )
+            registered.append(entry["verb"])
+        except Exception as exc:  # pragma: no cover
+            # Best-effort, matching the fleet's posture: a failed registration means this
+            # verb is not routable yet, NOT that the engine is down. But SAY WHICH.
+            failed.append(entry["verb"])
+            log.error("[engine-cost] registration failed for %s: %s", entry["verb"], exc)
+
+    log.info("[engine-cost] registered %d verb(s): %s", len(registered), registered)
+    if failed:
+        log.error("[engine-cost] %d verb(s) NOT registered: %s", len(failed), failed)
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     **_docs_kwargs(),   # /docs,/redoc,/openapi.json OFF in deployment (Starlette-bypass class)
     dependencies=[Depends(_transport_auth(COMPONENT))],
     title="engine-cost — production cost accounting",
@@ -79,22 +234,6 @@ app = FastAPI(
 #: no I/O and no clock read, so this is deterministic across replicas — two pods answer
 #: identically, which a composing verb depends on.
 STATE: CostState = build_state()
-
-
-@app.on_event("startup")
-async def _boot() -> None:
-    """Refuse to serve a seed that would make a verb vacuous or an arithmetic claim false.
-
-    RAISES rather than warns. Engine F measured what the alternative costs twice over: a
-    seed defect that does not raise at start becomes a demo over data indistinguishable
-    from a bug.
-    """
-    check_consistency(STATE)
-    _assert_declarations_cover_verbs()
-    log.info(
-        "engine-cost boot OK: %d lots, %d rate sets, %d verbs",
-        len(STATE.lots), len(STATE.rates), len(measures.VERBS),
-    )
 
 
 def _assert_declarations_cover_verbs() -> None:
@@ -115,9 +254,8 @@ def _assert_declarations_cover_verbs() -> None:
         )
 
 
-class InvokeRequest(BaseModel):
+class MeasureRequest(BaseModel):
     """A dispatched verb call. `params` carries the declared slots, nothing else."""
-    verb: str
     params: dict[str, Any] = {}
 
 
@@ -131,27 +269,28 @@ def _refusal(kind: str, message: str, **extra: Any) -> dict[str, Any]:
     return {"refused": True, "outcome": kind, "reason": message, **extra}
 
 
-@app.post("/invoke")
-async def invoke(req: InvokeRequest) -> dict[str, Any]:
-    """Run one declared verb. Refusals are typed; nothing here improvises an answer."""
-    fn = measures.VERBS.get(req.verb)
-    if fn is None:
-        return _refusal(
-            "not_in_model",
-            f"{req.verb!r} is not a verb this engine serves",
-            served=sorted(measures.VERBS),
-        )
+@app.post("/measure/{fn_name}")
+async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
+    """Run one declared verb.
 
-    missing = [s for s in slot_decls.mandatory_slots(req.verb) if s not in req.params]
+    ONE ENDPOINT PER VERB, matching the fleet idiom, because the registrar BAKES
+    `endpoint_url` into the mesh per verb — a single body-dispatched route would give every
+    verb the same URL and the mesh would have no way to reach one rather than another.
+    """
+    fn = measures.VERBS.get(fn_name)
+    if fn is None:
+        raise HTTPException(status_code=404, detail=f"{fn_name!r} is not a verb this engine serves")
+
+    missing = [s for s in slot_decls.mandatory_slots(fn_name) if s not in req.params]
     if missing:
         # A MISSING MANDATORY SLOT IS AN ASK, NOT A PYTHON ERROR. Calling through with a
         # gap raises TypeError and shows a caller "missing 1 required keyword-only
         # argument" — a signature error rendered to a person who asked a question.
         return _refusal(
             "slot_required",
-            f"{req.verb} needs {', '.join(missing)}",
+            f"{fn_name} needs {', '.join(missing)}",
             missing=missing,
-            declarations=slot_decls.slots_for(req.verb),
+            declarations=slot_decls.slots_for(fn_name),
         )
 
     try:

@@ -331,6 +331,11 @@ engineFinance:
   image:
     tag: "latest"
 
+engineCost:
+  enabled: true
+  image:
+    tag: "latest"
+
 # --------------------------------------------------------------------------
 # Infrastructure — sandbox-sized storage
 # --------------------------------------------------------------------------

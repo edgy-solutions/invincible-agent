@@ -137,6 +137,12 @@ data:
   # resolves differently depending on where the reader stands, and a ticket or an endpoint
   # is consumed somewhere else.
   ENGINE_FIN_PUBLIC_URL: "http://{{ .Release.Name }}-engine-fin{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineFinance.port }}"
+  # engine-cost. Same contract as ENGINE_FIN_PUBLIC_URL directly above, and the same two
+  # traps: the registration BAKES this value into the mesh as the endpoint a verb resolves
+  # to, so a change here is INERT until the engine re-registers; and the FQDN comes from the
+  # svcDomain helper rather than a bare service name, because a bare name resolves
+  # differently depending on where the reader stands.
+  ENGINE_COST_PUBLIC_URL: "http://{{ .Release.Name }}-engine-cost{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineCost.port }}"
   # Engine O's SELF url — the endpoint it bakes into the mesh when it registers its OWN
   # mesh:resolveInstance provider for SUSTAINMENT.
   #

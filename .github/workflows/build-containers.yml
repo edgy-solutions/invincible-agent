@@ -75,6 +75,12 @@ jobs:
           - service: finance-agent
             path: agent_fleet/finance_agent
             port: "8096"
+          # engine-cost, production cost accounting. Image name is cost-agent; the SERVICE it
+          # runs as is engine-cost. Port must match project.toml's PORT launch env and the
+          # chart's engineCost.port, or the readiness probe hits a closed port.
+          - service: cost-agent
+            path: agent_fleet/cost_agent
+            port: "8097"
           - service: cortex-bff
             path: .
             # Port aligned with the helm chart's cortexBff.port (8090).

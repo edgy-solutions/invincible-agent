@@ -55,6 +55,9 @@ Your release "{{ .Release.Name }}" has been deployed.
 {{- if .Values.engineFinance.enabled }}
     Engine F (Finance):    {{ .Release.Name }}-engine-fin:{{ .Values.engineFinance.port }}
 {{- end }}
+{{- if .Values.engineCost.enabled }}
+    engine-cost:           {{ .Release.Name }}-engine-cost:{{ .Values.engineCost.port }}
+{{- end }}
 {{- if .Values.engineW.enabled }}
     Engine W (Weaviate):   {{ .Release.Name }}-engine-w:{{ .Values.engineW.port }}
 {{- end }}

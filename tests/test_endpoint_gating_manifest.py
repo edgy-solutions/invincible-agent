@@ -40,6 +40,11 @@ SERVICE_FILES: dict[str, str] = {
     # and test_service_enumerations_agree, which exists to cover that blindness, CAUGHT
     # it by name. The layered guard worked; this entry is what it was asking for.
     "finance_agent": "agent_fleet/finance_agent/main.py",
+    # engine-cost. Added IN THE SAME CHANGE that adds the engine, because Engine F shipped
+    # ABSENT from this dict and its five routes had no declared gating posture until
+    # test_service_enumerations_agree caught it by name. A new engine's routes are not
+    # gate-checked at all until it is here.
+    "cost_agent": "agent_fleet/cost_agent/main.py",
     "presentation_agent": "agent_fleet/presentation_agent/main.py",
     "mesh_registrar": "agent_fleet/mesh_registrar/main.py",
     "projector": "src/iagent/projector/app.py",

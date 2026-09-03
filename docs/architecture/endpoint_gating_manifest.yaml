@@ -791,6 +791,63 @@ services:
           count, and PlanState holds notional demo data. Neither is a gate. When this substrate
           holds real portfolio data, this route is the first one to revisit."
 
+  cost_agent:
+    inbound_transport_auth: engine-cost
+    notes: |
+      engine-cost — six deterministic production-cost verbs over notional lot data
+      (docs/plans/register-cost-tool-as-engine.md). Every response carries `output_uri` and
+      rows and NAMES NO ARCHETYPE.
+
+      Cluster-internal: reached via cortex-bff and the mesh fan-outs, never by a browser.
+      Takes the mesh transport-auth dependency in OBSERVE posture like every other engine.
+
+      THE DATA IS NOTIONAL AND THAT IS WHY THESE ROWS ARE RELEASABLE. One invented program,
+      nine lots, round rates, suppliers named after colours. WHEN THIS ENGINE READS A GOVERNED
+      DATASET, EVERY ROW BELOW MUST BE RE-CLASSIFIED — the read then goes through a
+      per-request minted ticket carrying the CALLER's identity (ADR-0044), and a releasable
+      row that quietly begins serving real program cost data is the failure this manifest
+      exists to make impossible. Cost data is the most commercially sensitive class this
+      fleet has contemplated serving: rates, supplier concentration and price build-ups are
+      exactly what a competitor would want, so this re-classification is not a formality.
+
+      DECLARED IN THE SAME CHANGE THAT ADDS THE ENGINE. Engine F shipped ABSENT from
+      SERVICE_FILES and its five routes had no declared gating posture until
+      tests/test_service_enumerations_agree.py caught it by name. Doing it here at birth is
+      the cheap version of that fix.
+    routes:
+      - method: GET
+        path: /health
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: liveness
+        consumers: [kubelet]
+        class: releasable_by_design
+        justification: "liveness only — a verb COUNT, a lot count, and an explicit field
+          stating that the count is NOT proof of registration. No cost figures."
+      - method: GET
+        path: /verbs
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: capability-catalogue
+        consumers: [cortex-bff, operators]
+        class: releasable_by_design
+        justification: "the engine's own view of what it registered, with each verb's slot
+          declarations and routing descriptions. Diagnostic: when this and the mesh disagree,
+          registration is what failed. Names verbs, output types and slot names — never cost
+          data."
+      - method: POST
+        path: /measure/{fn_name}
+        identity: none
+        gate: "transport auth (OBSERVE)"
+        exposes: production-cost-rows
+        consumers: [cortex-bff, mesh routing]
+        class: releasable_by_design
+        justification: "the six cost verbs — lot breakdown, unit-price trend, rate comparison,
+          labour composition, price composition and rate assumptions. Releasable ONLY because
+          the model is the notional seed; THIS IS THE ROW TO REVISIT FIRST when real program
+          data arrives, and the price-composition and rate-assumption responses are the two
+          that would carry the most sensitive content."
+
   finance_agent:
     inbound_transport_auth: engine-fin
     notes: |

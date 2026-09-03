@@ -414,6 +414,28 @@ engineFinance:
       cpu: 500m
       memory: 512Mi
 
+# engine-cost — production cost accounting (docs/plans/register-cost-tool-as-engine.md).
+# NOT `engine-c`, which is the swarms scraper: the single-letter space was exhausted before
+# this engine existed, which is the same collision that cost Engine F its first hour.
+# The four names differ on purpose — values key engineCost, component engine-cost, image
+# cost-agent, Keycloak client iagent-cost-agent — so grepping any one of them finds only
+# part of the wiring.
+engineCost:
+  enabled: false
+  replicas: 1
+  image:
+    name: cost-agent
+    tag: ""
+  port: 8097
+  env: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 engineD:
   enabled: true
   replicas: 1
@@ -1089,6 +1111,13 @@ primeSubstrate:
       # leaving it out fails CI rather than a demo. Renders as
       # <release>-engine-fin; a disabled engine is a harmless skip.
       - engine-fin
+      # engine-cost self-registers six verbs on startup. Added HERE, in the same change
+      # that adds the engine — data-analyst and Engine P were both omitted and both
+      # discovered only after a wipe+reprime left the engine present and unrouted, with
+      # every hook reporting success. tests/test_reregister_covers_every_registering_engine.py
+      # derives this list from who calls register_engine_to_mesh, so an omission fails CI
+      # rather than a demo. Renders as <release>-engine-cost.
+      - engine-cost
     # The Neo4j node whose presence signals "the ontology ingest populated
     # the class graph" — restart is deferred until it exists so the
     # re-registering engines don't Contract-D-reject against an empty graph.
@@ -1665,6 +1694,14 @@ keycloak:
       authzId: "svc:finance-agent"
       secretRef: "financeAgentClientSecret"
 
+    # engine-cost's registration identity. Same contract as every engine above, and given
+    # one even though the engine is DEFAULT-OFF for the reason stated there: a service that
+    # appears later without an identity is a service that flips REQUIRE_TRANSPORT_AUTH from
+    # working to broken.
+    - clientId: "iagent-cost-agent"
+      authzId: "svc:cost-agent"
+      secretRef: "costAgentClientSecret"
+
   # Registration identity for engine-d (see serviceClients above).
   engineDClientSecret: "sandbox-engine-d-secret"
   # Registration identity for engine-e (see serviceClients above).
@@ -1682,6 +1719,10 @@ keycloak:
   # value feeds BOTH the realm import's `secret` and ENGINE_FIN_CLIENT_SECRET in the Secret,
   # so the two cannot drift.
   financeAgentClientSecret: "sandbox-finance-agent-secret"
+  # engine-cost's service-account client secret (iagent-cost-agent). PLACEHOLDER in the
+  # tracked file, overridden per deployment. This ONE value feeds BOTH the realm import's
+  # `secret` and ENGINE_COST_CLIENT_SECRET in the Secret, so the two cannot drift.
+  costAgentClientSecret: "sandbox-cost-agent-secret"
   # Engine DA's service-account client secret (iagent-data-analyst). Same contract as the
   # review starter's above — this value AND the realm import's `secret` come from here, so
   # they cannot drift. Override per deployment (a real secret at work); the sandbox default
