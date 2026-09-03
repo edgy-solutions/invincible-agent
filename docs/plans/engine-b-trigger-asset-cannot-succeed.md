@@ -1,9 +1,10 @@
 ---
 id:         engine-b-trigger-asset-cannot-succeed
-status:     open
-owner:      unassigned
+status:     closed
+owner:      agent
 blocked-on:
-closed-by:
+closed-by:  f87d025
+closed-by-note: fixed, AND THE CLASS WAS THREE, NOT ONE. Reading the neighbours found three of the six trigger assets sending no body: Engine B /support 422 (thread_id), Engine C /scrape 422 (ScrapeRequest requires task_description AND dataset_id), Engine A /analyze 502 reading "Restate proxy call failed" because analyze_proxy takes a raw Starlette Request and its `await request.json()` raised inside a bare `except Exception` — a caller defect wearing a downstream outage's clothes. The three assets that DID work carry hand-written `# Dummy payload for now` comments, so the set READ as though somebody had decided which engines needed a body; fixing this one alone would have left that reading intact and made it more convincing. thread_id is run-scoped (`dagster-{run_id}`) and the choice is stated in the code as this item asked. analyze_proxy now returns 400 naming the body, leaving 502 to mean Restate. Sealed by tests/test_agent_router_triggers_send_a_body.py (ast on both sides, no engine imports; each guard broken on purpose, red for its own reason, restored). CAVEAT, AND IT IS THIS ITEM'S OWN: the seal is SOURCE-LEVEL — it asserts the request shape, not a live 200 with an AgentResponse body. Engine B is still `enabled: false` in sandbox, so the live assertion this item asked for remains unmade and is behind the deploy window.
 repo:       invincible-agent
 ruled-by:   ADR-0046 Context (the Engine B read that found it) — this item is the DEFECT, not the ADR's decision
 code-site:  src/iagent/defs/agent_routers.py:110-117, agent_fleet/langgraph_support/main.py:200-213
