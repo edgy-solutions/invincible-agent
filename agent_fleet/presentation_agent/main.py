@@ -539,7 +539,21 @@ _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # archetype REQUIRES it — the projector carries only what the producer supplied, so a verb
     # that forgets to declare its series produces a card that refuses by name rather than one
     # that plots whatever numbers it can find.
-    "MULTI_SERIES": ("rows", ("series", "value_label", "scope_label")),
+    # `reference` and `verdict` ADDED 2026-09-03, and their absence is the reason this comment
+    # is long. THE ENGINE EMITTED BOTH CORRECTLY THE WHOLE TIME — verified at its own wire:
+    # /measure/fin_performance_indices returns them at the top level. THIS ALLOWLIST DROPPED
+    # THEM, because the projector carries the payload key plus these declared fields and
+    # NOTHING ELSE, and this tuple was written before either field existed.
+    #
+    # `favourable` survived the same trip and that contrast is the diagnosis: it rides inside
+    # `rows`, which pass through VERBATIM, so a row-level addition needs no declaration here
+    # and an ENVELOPE-level one needs exactly this edit. Two additions in one commit, one
+    # visible and one silent, and nothing reported the difference.
+    #
+    # The reporting lane read it as a producer bug — "report says emitted, wire says absent" —
+    # and it was, at the wire that matters to a card. Both wires were telling the truth about
+    # different hops.
+    "MULTI_SERIES": ("rows", ("series", "reference", "verdict", "value_label", "scope_label")),
 }
 
 
