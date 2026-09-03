@@ -69,13 +69,13 @@ spec:
             # serves /v1/register on clusters that haven't enabled v0.2.
             - name: RESTATE_INGRESS_URL
               value: {{ if .Values.restate.enabled -}}
-                "http://{{ .Release.Name }}-restate:{{ .Values.restate.ingressPort | default 8080 }}"
+                "http://{{ .Release.Name }}-restate{{ include "invincible-agent.svcDomain" . }}:{{ .Values.restate.ingressPort | default 8080 }}"
               {{- else -}}
                 {{ .Values.externalRestate.ingressUrl | quote }}
               {{- end }}
             - name: RESTATE_ADMIN_URL
               value: {{ if .Values.restate.enabled -}}
-                "http://{{ .Release.Name }}-restate:{{ .Values.restate.adminPort | default 9070 }}"
+                "http://{{ .Release.Name }}-restate{{ include "invincible-agent.svcDomain" . }}:{{ .Values.restate.adminPort | default 9070 }}"
               {{- else -}}
                 {{ .Values.externalRestate.adminUrl | quote }}
               {{- end }}

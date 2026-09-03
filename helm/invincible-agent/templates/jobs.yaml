@@ -31,22 +31,22 @@ spec:
               
               {{- if .Values.engineA.enabled }}
               echo "Waiting for Engine A..."
-              until curl -sf http://{{ .Release.Name }}-engine-a:8081/health; do sleep 2; done
+              until curl -sf http://{{ .Release.Name }}-engine-a{{ include "invincible-agent.svcDomain" . }}:8081/health; do sleep 2; done
               {{- end }}
               
               {{- if .Values.engineE.enabled }}
               echo "Waiting for Engine E..."
-              until curl -sf http://{{ .Release.Name }}-engine-e:8086/health; do sleep 2; done
+              until curl -sf http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:8086/health; do sleep 2; done
               {{- end }}
 
               {{- if .Values.dataAnalyst.enabled }}
               echo "Waiting for Engine DA (data-analyst)..."
-              until curl -sf http://{{ .Release.Name }}-data-analyst:{{ .Values.dataAnalyst.port }}/health; do sleep 2; done
+              until curl -sf http://{{ .Release.Name }}-data-analyst{{ include "invincible-agent.svcDomain" . }}:{{ .Values.dataAnalyst.port }}/health; do sleep 2; done
               {{- end }}
 
               {{- if .Values.engineW.enabled }}
               echo "Waiting for Engine W..."
-              until curl -sf http://{{ .Release.Name }}-engine-w:{{ .Values.engineW.port }}/health; do sleep 2; done
+              until curl -sf http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}/health; do sleep 2; done
               {{- end }}
 
               echo "Awaiting total readiness..."
@@ -60,10 +60,26 @@ spec:
             - |
               {{- $restateAdmin := (include "invincible-agent.restateAdminUrl" .) }}
               echo "Registering Analyst Service..."
-              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-a:8081/restate", "force": true}'
+              # ── THE REGISTERED URI IS DEREFERENCED BY RESTATE, NOT BY THIS JOB ──
+              #
+              # FQDN, not a bare service name, and that distinction IS the bug. The
+              # health-waits above run HERE, in the release namespace, so a bare name
+              # resolves for them. These four values are STORED IN RESTATE and resolved BY
+              # Restate, which in a split-namespace deploy (iagent services in one namespace,
+              # restate/postgres/redis in another — the work topology) is somewhere else:
+              #
+              #   [META0003] error when calling 'http://iagent-engine-e:8086/restate':
+              #   dns error ... failed to lookup address information: Name or service not known
+              #
+              # svcDomain is the RELEASE's namespace, which is where these engines actually
+              # live, so the qualified form is correct from anywhere INCLUDING Restate's
+              # namespace. It is also the only form that suffix-matches a NO_PROXY entry of
+              # .svc.cluster.local — chart 0.3.22 fixed exactly that for engine URLs, and
+              # these four lines were never converted.
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-a{{ include "invincible-agent.svcDomain" . }}:8081/restate", "force": true}'
               
               echo "Registering Neo4j Expert Service..."
-              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-e:8086/restate", "force": true}'
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-e{{ include "invincible-agent.svcDomain" . }}:8086/restate", "force": true}'
 
               {{- if .Values.dataAnalyst.enabled }}
               {{- /* Engine DA was MISSING here, and the gap was invisible from every side.
@@ -79,7 +95,7 @@ spec:
                      force:true on every install/upgrade — a hand-registration survives until
                      the next helm apply re-registers the other two and silently not this one. */}}
               echo "Registering Data Analyst Service (Engine DA)..."
-              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-data-analyst:{{ .Values.dataAnalyst.port }}/restate", "force": true}'
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-data-analyst{{ include "invincible-agent.svcDomain" . }}:{{ .Values.dataAnalyst.port }}/restate", "force": true}'
               {{- end }}
 
               {{- if .Values.engineW.enabled }}
@@ -94,7 +110,7 @@ spec:
                      -state debt: sandbox worked from state no bootstrap reproduced, so the
                      defect could only ever surface at a fresh deploy. */}}
               echo "Registering Weaviate Expert Service (Engine W)..."
-              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-w:{{ .Values.engineW.port }}/restate", "force": true}'
+              curl -X POST {{ $restateAdmin }}/deployments -H 'Content-Type: application/json' -d '{"uri": "http://{{ .Release.Name }}-engine-w{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineW.port }}/restate", "force": true}'
               {{- end }}
 
 ---

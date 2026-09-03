@@ -8,7 +8,7 @@ port 4000.
 
 Engines that should reach LiteLLM set:
   SMOLAGENTS_PROVIDER = "openai"
-  OPENAI_BASE_URL     = "http://{{ .Release.Name }}-litellm:4000/v1"
+  OPENAI_BASE_URL     = "http://{{ .Release.Name }}-litellm{{ include "invincible-agent.svcDomain" . }}:4000/v1"
   OPENAI_MODEL        = "<a model_name from litellm.config.model_list>"
   OPENAI_API_KEY      = "<general_settings.master_key from litellm.config>"
 

@@ -272,7 +272,7 @@ data:
   hand-supplied release values, which is exactly the committed-vs-
   deployed drift this default retires. */}}
   {{- if and .Values.meshRegistrar.enabled (not (hasKey (.Values.agentFleet.env | default dict) "MESH_REGISTRAR_URL")) }}
-  MESH_REGISTRAR_URL: "http://{{ .Release.Name }}-mesh-registrar:8090"
+  MESH_REGISTRAR_URL: "http://{{ .Release.Name }}-mesh-registrar{{ include "invincible-agent.svcDomain" . }}:8090"
   {{- end }}
 {{- if .Values.postgresql.enabled }}
 ---

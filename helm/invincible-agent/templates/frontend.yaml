@@ -129,7 +129,7 @@ spec:
             {{- if not (hasKey (default (dict) .Values.cortexBff.env) "ELECTRIC_UPSTREAM_URL") }}
             {{- if .Values.electric.enabled }}
             - name: ELECTRIC_UPSTREAM_URL
-              value: "http://{{ .Release.Name }}-electric:{{ .Values.electric.port | default 3000 }}"
+              value: "http://{{ .Release.Name }}-electric{{ include "invincible-agent.svcDomain" . }}:{{ .Values.electric.port | default 3000 }}"
             {{- end }}
             {{- end }}
             {{- if .Values.cortexBff.tlsTrust.secretName }}
