@@ -797,8 +797,8 @@ wheels = [
 
 [[package]]
 name = "iagent-mesh"
-version = "0.3.1"
-source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.3.1#a934c6179942c0f9de2223e6162f7193d1d4427c" }
+version = "0.4.0"
+source = { git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.4.0#9b36f7da7ec0b8042ea8fec93d60a2a7c17ddde4" }
 dependencies = [
     { name = "acryl-datahub" },
     { name = "fastapi" },
@@ -807,6 +807,7 @@ dependencies = [
     { name = "nest-asyncio" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "pyjwt" },
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
@@ -1997,7 +1998,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "hypercorn" },
-    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.3.1" },
+    { name = "iagent-mesh", git = "https://github.com/edgy-solutions/iagent-mesh-sdk.git?rev=v0.4.0" },
     { name = "langchain-community" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },

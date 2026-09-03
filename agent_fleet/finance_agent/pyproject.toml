@@ -7,7 +7,7 @@ dependencies = [
     # mint. PINNED TO A TAG, same as every other engine: this package governs fleet auth,
     # so a floating ref would let one SDK commit change every engine's security behaviour
     # at rebuild. Matched to the fleet pin; tests/test_lock_coherence.py polices drift.
-    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.3.1",
+    "iagent-mesh @ git+https://github.com/edgy-solutions/iagent-mesh-sdk.git@v0.4.0",
     "fastapi",
     "hypercorn",
     "pydantic",
