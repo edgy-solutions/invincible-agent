@@ -30,6 +30,15 @@ groups:
     grants:
       - {persona: PROGRAM_FINANCE_ANALYST, domain: PROGRAM_FINANCE}
 
+  # engine-cost's cell. MEASURED 2026-09-02, and it is the same measurement the
+  # finance-analysts comment above records: engine-cost was fully deployed and verified --
+  # 6 verb edges by name at the FQDN endpoint, 11 classes by name, every verb answering --
+  # and unreachable by every user, because this cell did not exist.
+  # REGISTRATION IS NOT ENTITLEMENT, demonstrated twice now on two consecutive engines.
+  cost-analysts:
+    grants:
+      - {persona: COST_ANALYST, domain: PRODUCTION_COST}
+
   aviation-stewards:
     grants:
       - {persona: DATA_STEWARD, domain: AVIATION}

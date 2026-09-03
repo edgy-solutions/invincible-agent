@@ -53,6 +53,12 @@ users:
       - aviation-engineers
       - defense-engineers
       - enterprise-architects
+      - cost-analysts       # FIXTURE grant, 2026-09-02: alice is the
+                            # engine-cost demo actor, so the picker offers her the
+                            # COST_ANALYST cell and a cost question can ground. Same
+                            # fixture status as the finance grant below -- it makes the
+                            # demo path reachable, it is not a claim about who should
+                            # hold production cost data.
       - finance-analysts    # FIXTURE grant, 2026-08-31: alice is the
                             # Engine F demo actor, so the persona/domain picker offers
                             # her the PROGRAM_FINANCE_ANALYST cell and a finance question

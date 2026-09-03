@@ -23,3 +23,18 @@ domains:
   # A DOMAIN IN NO GROUP GRANTS NOBODY ANYTHING — scoping is per CELL. This line alone
   # changed nothing observable; the grant is the finance-analysts group in groups.yaml.
   - PROGRAM_FINANCE
+  # The domain engine-cost's six registrations live in, and the domain its eleven cost:
+  # OntologyClasses carry (setup/prime_databases.py's manifest entry). Same consequence as
+  # the two above: /resolve domain-scopes the class pool to the caller's cells, so a cost
+  # question only grounds+routes to engine-cost from a PRODUCTION_COST cell.
+  # Added 2026-09-02.
+  #
+  # DELIBERATELY NOT PROGRAM_FINANCE. The two are different questions about the same effort
+  # -- finance measures the authorization as earned value, this measures the manufacturing
+  # run as recurring unit cost -- and they carry different entitlements. Filing cost classes
+  # under the finance domain would have granted them to everyone holding the finance cell,
+  # which is an entitlement decision made by a manifest field rather than by anyone.
+  #
+  # A DOMAIN IN NO GROUP GRANTS NOBODY ANYTHING -- scoping is per CELL. This line alone
+  # changes nothing observable; the grant is the cost-analysts group in groups.yaml.
+  - PRODUCTION_COST

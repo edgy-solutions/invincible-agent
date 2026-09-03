@@ -32,3 +32,16 @@ personas:
   # no code-side change. ADR-0009 is the ADR that SUNSET persona as a classification
   # axis; it describes the legacy 6-way enum rather than maintaining a live one.
   - PROGRAM_FINANCE_ANALYST
+
+  # engine-cost registers its six production-cost verbs with owner_persona=COST_ANALYST
+  # (agent_fleet/cost_agent/main.py OWNER_PERSONA). Added 2026-09-02.
+  #
+  # FOUND BY THE SYNC CONTRACT, NOT BY A REVIEW: the engine was written naming this persona
+  # before it existed here, and the sync tool would have refused every grant referencing it.
+  # That refusal is the control working -- a persona the product never shipped must not
+  # entitle through the group walk.
+  #
+  # Same ADR-0009 note as PROGRAM_FINANCE_ANALYST above: the header's instruction to update
+  # that ADR's enum predates chart 0.3.12, and the catalog rego now walks the directory
+  # rather than enumerating a hardcoded list, so adding a persona here needs no code change.
+  - COST_ANALYST
