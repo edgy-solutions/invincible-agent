@@ -3280,9 +3280,27 @@ async def analyze_proxy(request: Request) -> JSONResponse:
     ``AgentTask`` JSON body. This route forwards the payload to the Restate Ingress
     at /{ServiceName}/{MethodName} for durable execution.
     """
+    # BODY PARSE IS ITS OWN FAILURE, NAMED SEPARATELY. This was inside the try below, so an
+    # empty or malformed body raised JSONDecodeError, hit the bare `except Exception`, and
+    # came back as a 502 reading "Restate proxy call failed" — a caller defect wearing a
+    # downstream outage's clothes, which sends the next person to debug Restate. The Dagster
+    # trigger asset posted no body at all and had produced exactly that reading.
     try:
         payload = await request.json()
-        
+    except Exception as exc:
+        return JSONResponse(
+            content={
+                "status": AgentStatus.FAILED.value,
+                "summary": (
+                    f"/analyze requires a JSON AgentTask body (task_description, dataset_id); "
+                    f"could not parse one: {exc}"
+                ),
+                "extracted_metrics": {},
+            },
+            status_code=400,
+        )
+
+    try:
         # Inject the incoming request Authorization into the Restate payload
         auth_header = request.headers.get("Authorization")
         if auth_header:

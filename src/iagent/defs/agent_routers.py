@@ -83,6 +83,14 @@ def trigger_restate_analyst() -> dict:
     # worse coupling.
     response = requests.post(
         f"{RESTATE_ANALYST_URL}/analyze",
+        # BODY REQUIRED. `/analyze` forwards to Restate's AnalystService, which reads AgentTask
+        # fields off the payload; posting nothing made `await request.json()` raise inside the
+        # proxy's bare except and come back as a 502 NAMING RESTATE. Fields mirror AnalyzeRequest
+        # (restate_analyst/main.py) — smoke payload, same standing as Engines E/F/DA's.
+        json={
+            "task_description": "Smoke: summarise this dataset's lineage and freshness.",
+            "dataset_id": "default",
+        },
         timeout=300,
         headers=outbound_auth_headers(
             client_id=os.getenv("SUPERVISOR_CLIENT_ID", "iagent-supervisor"),
@@ -107,10 +115,20 @@ def trigger_restate_analyst() -> dict:
         ),
     },
 )
-def trigger_langgraph_support() -> dict:
+def trigger_langgraph_support(context) -> dict:
     """Trigger Engine B (LangGraph) support agent pod."""
+    # BODY REQUIRED. `SupportRequest.thread_id` (langgraph_support/main.py) has no default, so a
+    # bodyless POST was a 422 before the graph was ever reached — the asset advertised an endpoint
+    # it could not call. `thread_id` is the AsyncPostgresSaver CHECKPOINT KEY, so it is run-scoped
+    # deliberately: a constant would accumulate every Dagster run into one conversation forever,
+    # and that is a memory-shape decision, not a placeholder.
     response = requests.post(
         f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
+        json={
+            "thread_id": f"dagster-{context.run_id}",
+            "task_description": "Smoke: triage and respond for the default dataset.",
+            "dataset_id": "default",
+        },
         timeout=300,
     )
     response.raise_for_status()
@@ -132,8 +150,15 @@ def trigger_langgraph_support() -> dict:
 )
 def trigger_swarms_scraper() -> dict:
     """Trigger Engine C (Swarms.ai) scraper/extraction agent pod."""
+    # BODY REQUIRED. `ScrapeRequest` (swarms_scraper/main.py) requires BOTH `task_description` and
+    # `dataset_id` with no defaults — a bodyless POST was a 422. Same defect class as Engine A and
+    # Engine B above; ADR-0046 filed only Engine B's, and the class was three.
     response = requests.post(
         f"{SWARMS_SCRAPER_URL}/scrape",
+        json={
+            "task_description": "Smoke: extract structured records for the default dataset.",
+            "dataset_id": "default",
+        },
         timeout=300,
     )
     response.raise_for_status()

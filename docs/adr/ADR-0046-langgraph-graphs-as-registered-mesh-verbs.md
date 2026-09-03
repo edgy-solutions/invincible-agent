@@ -88,6 +88,28 @@ this ADR's fences are `docs/adr/` only:
   `SupportRequest.thread_id` (`main.py:202`) is required with no default — so the request is a
   422 before the graph is reached. The asset has a metadata card describing an endpoint it cannot
   call successfully.
+
+  > **AMENDED 2026-09-02 — THE CLASS WAS THREE, NOT ONE, AND IS NOW FIXED.** This bullet filed
+  > Engine B's instance. Reading its neighbours found that **three of the six trigger assets sent
+  > no body**, each failing differently: Engine B → 422 (`thread_id`); **Engine C `/scrape` → 422**
+  > (`ScrapeRequest` requires `task_description` *and* `dataset_id`); **Engine A `/analyze` → 502
+  > reading `Restate proxy call failed`**, because `analyze_proxy` takes a raw Starlette `Request`
+  > and its `await request.json()` raised inside a bare `except Exception` — **a caller defect
+  > wearing a downstream outage's clothes**, which sends the next reader to debug Restate.
+  >
+  > **The one-of-three filing was itself load-bearing.** The other three assets carry hand-written
+  > `# Dummy payload for now` comments, so the set *reads* as if somebody decided which engines
+  > needed a body — when the three without were simply the three nobody ran. Fixing only Engine B's
+  > would have left that reading intact and made it more convincing.
+  >
+  > All three now send a body; Engine B's `thread_id` is run-scoped (`dagster-{run_id}`) because it
+  > is the `AsyncPostgresSaver` checkpoint key and a constant would fold every Dagster run into one
+  > conversation forever. `analyze_proxy` now returns **400 naming the body** for a parse failure,
+  > leaving 502 to mean Restate. Guarded by
+  > `tests/test_agent_router_triggers_send_a_body.py`, which reads both sides as source via `ast`
+  > (no engine imports) and was **proven to bite** — each guard broken on purpose, red for its own
+  > reason, restored. **The second defect below is NOT fixed**: it needs an output `owl:Class` and
+  > a prime, which is §1 work.
 - **Engine B borrows Engine A's response shape.** It returns BAML `AgentResponse`, whose graph class
   `mesh:AgentResponse` is documented as *"The final output of a smolagents CodeAgent run"*
   (`setup/ontologies/mesh_system.ttl:109-112`) — Engine A's loop, not Engine B's graph. Engine B has
