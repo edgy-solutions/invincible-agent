@@ -59,4 +59,36 @@ for f in "${VALUES[@]}"; do echo "  -f ${f##*/}"; done
 # 75m leaves the inner bound room to be the thing that actually fails, which is the one
 # that can say WHY. tests/test_prime_timeout_bounds_agree.py asserts the ordering.
 HELM_TIMEOUT="${HELM_TIMEOUT:-75m}"
+
+# KILLED-CLIENT TRAP. ${HELM_TIMEOUT} above protects against helm giving up early; it does
+# NOT protect against something killing this process from outside — a wrapper timeout, a
+# Ctrl-C, a CI step budget. Measured 2026-09-02: this script was invoked as
+# `timeout 600 bash scripts/upgrade-sandbox.sh` and SIGTERMed at ten minutes against a
+# 51-minute prime. THE HELM DEFAULT WAS CORRECT AND IRRELEVANT — an outer kill wins.
+#
+# The cost is not the lost wait. The hooks keep running in-cluster and complete, so the
+# substrate looks fine, while TWO THINGS GO WRONG SILENTLY:
+#   1. the release is left `pending-upgrade`, and the NEXT upgrade is refused with
+#      "another operation (install/upgrade/rollback) is in progress"
+#   2. every hook scheduled AFTER the long one is never CREATED — the post-prime
+#      reregister job simply does not exist, so engines keep whatever registration they
+#      had. The only evidence is a pod age that never changed.
+#
+# This trap cannot prevent any of that. It exists so the operator LEARNS IT AT THE MOMENT
+# IT HAPPENS instead of at the next upgrade, days later, from a refusal message that names
+# none of it.
+_on_kill() {
+  echo "" >&2
+  echo "!! helm client KILLED (signal) — the upgrade did NOT finalize." >&2
+  echo "   The in-cluster hooks are still running and will complete on their own." >&2
+  echo "   TWO CONSEQUENCES, neither of which will announce itself:" >&2
+  echo "     1. release ${RELEASE} is left pending-upgrade; the next upgrade will be REFUSED." >&2
+  echo "        Fix: the release Secret's status field. NOT a rollback — see" >&2
+  echo "        docs/plans/helm-release-stuck-pending-upgrade-97.md" >&2
+  echo "     2. hooks scheduled after the long one were never created. If a prime ran, the" >&2
+  echo "        post-prime reregister job does NOT exist — engines hold stale registrations" >&2
+  echo "        and the tell is a pod age that never changed." >&2
+  exit 143
+}
+trap _on_kill TERM INT
 exec helm upgrade "${RELEASE}" "${CHART}" -n "${NAMESPACE}" "${ARGS[@]}"      --timeout "${HELM_TIMEOUT}" "$@"

@@ -54,7 +54,28 @@ _KEY_TO_AGENT_DIR = {
     "engineF": "presentation_agent",
     "engineW": "weaviate_expert",
     "enginePlanning": "planning_agent",
+    "engineFinance": "finance_agent",
+    "engineCost": "cost_agent",
     "dataAnalyst": "data_analyst",
+}
+
+# Engine keys that deploy from this chart but are NOT agent_fleet engines, or that
+# deliberately do not self-register. Every key in engines.yaml must be in the map above or
+# in here — `test_every_engine_key_is_accounted_for` enforces the partition, which is what
+# stops the map from silently stopping at whichever engine was newest when someone last
+# looked.
+_NOT_A_REGISTERING_AGENT = {
+    "centralGateway": "not an agent_fleet engine; a gateway with no verbs of its own",
+    "engineB": (
+        "LangGraph support. Registers NOTHING and is invisible to the mesh by omission "
+        "rather than by design — see ADR-0046, which documents it. Waived here so the "
+        "partition holds; the waiver is a description of the defect, not an endorsement."
+    ),
+    "engineC": "swarms scraper; no mesh verbs",
+    "engineF": (
+        "presentation agent. Its capabilities reach the graph from its OWN startup off "
+        "PRESENTATION_CAPABILITIES, not through register_engine_to_mesh."
+    ),
 }
 
 
@@ -158,4 +179,64 @@ def test_the_reregister_list_names_only_real_components():
     assert not unknown, (
         f"reregisterEngines.deployments names components engines.yaml does not deploy: "
         f"{unknown}. A stale entry patches a deployment that does not exist."
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# THE REVERSE AXIS, added 2026-09-03 after engine-cost shipped UNREGISTERED for a commit.
+#
+# THE SEAL ABOVE ENUMERATES CALLERS: it finds every agent that calls register_engine_to_mesh
+# and asserts each is in the re-register list. That direction cannot see an engine that
+# calls it ZERO times — such an engine simply is not in the population, so the seal passes
+# while the engine is invisible to the mesh. engine-cost sat in the re-register list, served
+# /health, and registered nothing; the seal was green throughout.
+#
+# WORSE, AND FOUND WHILE FIXING IT: `_KEY_TO_AGENT_DIR` was hand-kept and stopped at Engine
+# P. `engineFinance` was never in it, so THE SEAL HAD NEVER CHECKED ENGINE F EITHER — added
+# 2026-08-29, unexamined by this file for five days. A seal whose population is a hand-kept
+# dict tests whatever someone remembered to add.
+#
+# So both directions are now closed, and the population is DERIVED from engines.yaml rather
+# than remembered.
+# ---------------------------------------------------------------------------------------
+
+
+def test_every_engine_key_is_accounted_for():
+    """Every key in engines.yaml maps to an agent dir OR is explicitly not-an-agent.
+
+    THIS IS THE TEST THAT WOULD HAVE CAUGHT THE STALE MAP. A key in neither set is a key the
+    rest of this file silently skips.
+    """
+    keys = set(_components())
+    mapped = set(_KEY_TO_AGENT_DIR)
+    waived = set(_NOT_A_REGISTERING_AGENT)
+    unaccounted = keys - mapped - waived
+    assert not unaccounted, (
+        f"engines.yaml declares {sorted(unaccounted)}, which are in neither "
+        "_KEY_TO_AGENT_DIR nor _NOT_A_REGISTERING_AGENT. Until one of those names it, every "
+        "check in this file skips it — which is how engineFinance went five days unexamined."
+    )
+
+
+def test_every_mapped_engine_actually_registers():
+    """The reverse of the seal above: a MAPPED engine that registers nothing is a defect.
+
+    An engine deployed, transport-authed and health-green while registering zero verbs is
+    ADR-0046's Engine B shape. If a new engine legitimately does not register, it belongs in
+    _NOT_A_REGISTERING_AGENT with a stated reason — declared, not defaulted.
+    """
+    silent = []
+    for key, agent_dir in sorted(_KEY_TO_AGENT_DIR.items()):
+        if key in _NOT_A_REGISTERING_AGENT:
+            # Mapped AND waived: the dir mapping stays so other checks can find the source,
+            # while the must-register rule is lifted with a written reason. Being in both
+            # sets is legitimate; being in NEITHER is what the partition test catches.
+            continue
+        path = _ROOT / "agent_fleet" / agent_dir
+        if not _registers_on_boot(path):
+            silent.append(f"{key} ({agent_dir})")
+    assert not silent, (
+        "mapped engines that call register_engine_to_mesh ZERO times: "
+        f"{silent}. Each is deployed and invisible to the mesh. Either register, or move the "
+        "key to _NOT_A_REGISTERING_AGENT with the reason written down."
     )

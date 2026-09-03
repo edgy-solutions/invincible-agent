@@ -932,6 +932,40 @@ section.
 > `deploy/<name>` to verify a roll** — it picks an arbitrary ready pod, and during a rollout
 > that is a coin flip between the thing you changed and the thing you replaced.
 
+### 8. THE ENTITLEMENT CELL — the step that decides whether a human can reach any of this
+
+**MEASURED TWICE, ON TWO CONSECUTIVE ENGINES, AND THE SENTENCE IS THE SAME BOTH TIMES:**
+
+> *fully deployed and verified — edges by name at the FQDN endpoint, every verb answering —
+> and unreachable by every user, because the cell did not exist.*
+
+`policy/groups.yaml` records it for **engine-fin, 2026-08-31**. **engine-cost repeated it
+exactly on 2026-09-02**: eleven classes by name, six verb edges by name, all six verbs
+answering the consumer's payload, the designed refusal firing — and no human able to ask a
+single question, because `PRODUCTION_COST` was in no group.
+
+**REGISTRATION IS NOT ENTITLEMENT.** Steps 1–7 verify the engine joined the mesh. They say
+**nothing** about whether anyone can invoke it, and they pass identically in both worlds. An
+engine that nobody can reach is Engine B's shape with better paperwork
+([ADR-0046](../adr/ADR-0046-langgraph-graphs-as-registered-mesh-verbs.md)).
+
+**So the bar is not met until a persona·domain cell exists in Topaz, readback-gated, for at
+least one test user.** Three files on the git rail, and the live write:
+
+| what | where | trap |
+|---|---|---|
+| the persona | `policy/personas.yaml` | the sync tool **refuses** a grant naming a persona not listed — a positive control against typos. engine-cost's `COST_ANALYST` was caught by exactly this, not by review |
+| the domain | `policy/domains.yaml` | **a domain in no group grants nobody anything.** Adding the line alone changes nothing observable |
+| the cell | `policy/groups.yaml` + a user in `policy/users.yaml` | the grant is the GROUP; `get_entitlements` walks group→cell |
+
+**The live Topaz write is the human's action** — the agent prepares and validates the rail
+(`policy/sync/validate_policy.py`), the human executes and readback-gates it.
+
+**Verify it the way everything else here is verified: by asking whether a routed question
+reaches the engine as an entitled caller** — not by re-reading the YAML you just wrote.
+
+---
+
 ### On any failure: PASTE, DO NOT RETRY
 
 A blind second run cannot distinguish "transient" from "the thing is wrong", and it destroys
@@ -964,6 +998,8 @@ Recorded because the next engine will meet most of them.
 | 15 | **A `yaml.safe_dump` round-trip on a shared manifest destroyed 188 comment lines** while adding 5 rows. | **Edit config-as-documentation as TEXT.** A structural rewrite that preserves semantics can still delete the reasoning, and the diff (1346 ins / 1339 del) hides the loss in its own size. |
 | 14 | **A verification query selected `e.verb`, which does not exist** — the verb is `type(e)`. It returned **8 rows of `None`**, and the COUNT was right. | **A by-name check must assert the names are non-null and match an expected set**, not that rows returned. Otherwise it is a by-count check wearing a by-name check's clothes — the exact instrument class this whole runbook is written against, produced by the person writing the section that warns about it. |
 | 12 | **The engine image failed to build: no `uv.lock`.** `Dockerfile.agent` runs `uv sync --locked`, which refuses to generate one. Every other matrix job — including `dagster-control-plane`, the prime's image — went green, so the prime could have run against a correct ontology while the engine image did not exist. | **A new engine directory needs the lockfile, not just the manifest.** And note the shape: ONE red job in a 16-job matrix, with the workflow's overall status the only summary. Read WHICH job failed, not whether the run did. |
+| 18 | **An OUTER timeout killed a correctly-configured helm client.** `upgrade-sandbox.sh` already defaults `--timeout 75m`; it was invoked as `timeout 600 bash scripts/upgrade-sandbox.sh` and SIGTERMed at ten minutes against a 51-minute prime. | **A CORRECT INTERNAL DEFAULT DOES NOT SURVIVE AN EXTERNAL KILL, and the script cannot defend itself.** The cost is not the lost wait: the hooks complete in-cluster so the substrate looks fine, while (a) the release is left `pending-upgrade` and the NEXT upgrade is refused, and (b) **every hook scheduled after the long one is never CREATED** — the post-prime reregister job simply did not exist, so the engine held six failed registrations with the only evidence being a pod age that never changed. **An under-set timeout is not "waiting less"; it silently drops the tail of the hook chain.** Do not wrap this script in a shorter budget; a trap now names both consequences at the moment of the kill. |
+| 19 | **The stuck `pending-upgrade` lock, and what NOT to do about it.** The next upgrade is refused: *"another operation (install/upgrade/rollback) is in progress"*. | **THE FIX IS THE RELEASE SECRET'S STATUS FIELD, NOT A ROLLBACK.** `helm rollback` to the prior revision deletes any resource the new one added — for engine-cost that meant deleting a working, verified engine — and re-runs the hook chain twice more to repair bookkeeping. Patch `sh.helm.release.v1.<release>.v<N>`: set BOTH `.metadata.labels.status` and the `status` inside the gzipped `.data.release` blob, or `helm list` and `helm history` disagree. `failed` is the honest value — helm's operation genuinely did not complete. **Justified only when the state is KNOWN wrong**: resources verified by name, and the lock proven stale (no jobs running). Blob is ~370KB, so `kubectl patch --patch-file`, never `-p`. |
 | 11 | **Pushed a `helm/**` change without bumping `Chart.yaml`.** `Release Helm Charts` failed in 10 seconds; the container build was unaffected and green, so a reader watching only the build would have proceeded. | **A chart change that does not move the version publishes NOTHING and reports success at the resolution of "I ran".** The seal exists because this exact omission once shipped engines with no client secret. Watch BOTH workflows on a push, not just the image build. |
 
 ---
