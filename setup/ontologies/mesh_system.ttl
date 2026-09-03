@@ -384,6 +384,21 @@ mesh:HumanApprovalTask a owl:Class ;
   rdfs:label "Human Approval Task" ;
   rdfs:comment "A single decision awaiting a named audience, carrying its subject reference and requester. The SUBJECT an approval card renders for; the honest default when no more specific task shape claims it." .
 
+# THE ASK IS A TYPED THING, NOT A STATUS A CARD HAPPENS TO RECOGNISE (ADR-0033, 2026-09-03).
+#
+# `slot_disposition.py` set `status: "slot_elicitation"` and NO output type, so an ask had no
+# subject — and the presentation agent selects an archetype from the subject. With nothing to
+# select on, every ask landed on KNOWLEDGE_DOCUMENT: the disposition was correct, the card was
+# wrong, and nothing in either component was broken. The missing thing was a declaration.
+#
+# Declaring it under mesh:Response also keeps it OUT OF THE GROUNDING POOL for free, which is
+# not incidental: response shapes are not subjects anyone asks about, and
+# `[[response-classes-compete-for-grounding]]` measured what it costs when they compete.
+mesh:SlotElicitation a owl:Class ;
+  rdfs:subClassOf mesh:Response ;
+  rdfs:label "Slot Elicitation" ;
+  rdfs:comment "One bounded turn asking for a value the question needed and did not carry (ADR-0033's `ask`). Carries the slot, the options when a menu exists, and the provider's own reason when one does not — too_many, unsupported, no_provider or no_referent, never silence. ABSTAIN IS A DIFFERENT SHAPE AND SAYS SO: it arrives with status `slot_abstain` and no options, because nothing was run and there is nothing to choose from, and a surface that draws one as the other is reporting a choice where none exists." .
+
 # --- THE FOUR REVIEW ARCHETYPES -----------------------------------------------
 # Registered by cortex-ui since before the presentation arc, declared NOWHERE until now — the
 # same gap the chart and document archetypes had, surviving in the four that were converted

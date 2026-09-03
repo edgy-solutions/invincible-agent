@@ -94,6 +94,32 @@ ROUTE = "route"
 ASK = "ask"
 ABSTAIN = "abstain"
 
+#: THE OUTPUT CLASS OF AN ASK, and the reason a status was not enough.
+#:
+#: The presentation agent selects an archetype from the response's SUBJECT, and until this
+#: existed `slot_disposition` set a status and no output type — so an ask had no subject, the
+#: agent could not select for it, and the card landed on `KNOWLEDGE_DOCUMENT`. A status is a
+#: string a consumer may recognise; a class is a thing the mesh knows about.
+#:
+#: Declared `rdfs:subClassOf mesh:Response` in `setup/ontologies/mesh_system.ttl`, which also
+#: keeps it OUT OF THE GROUNDING POOL for free — response shapes are not subjects anyone asks
+#: about, and `[[response-classes-compete-for-grounding]]` is the measured cost of letting them
+#: compete.
+SLOT_ELICITATION_URI = "http://invincible-agent/mesh#SlotElicitation"
+
+#: ⛔ ONE STATUS FOR TWO DISPOSITIONS WAS A DEFECT, found by the cortex walk 2026-09-03.
+#:
+#: `ask_card` emitted `status: "slot_elicitation"` for BOTH `ask` and `abstain`, so a surface
+#: switching on status draws an options field on an abstain — which says *nothing was run and
+#: there is nothing to choose from*. The seal that was supposed to catch it asserted "never
+#: renders on a non-ask status" and would have PASSED while the defect shipped, because the
+#: status it named does not discriminate the case it meant.
+#:
+#: Two statuses, so a consumer switching on EITHER `status` or `disposition` is correct. The
+#: card's own fix is to read `disposition`; this is the producer's half, and it is the half
+#: that makes the wrong lever unavailable rather than merely discouraged.
+STATUS_BY_DISPOSITION = {ASK: "slot_elicitation", ABSTAIN: "slot_abstain"}
+
 #: Where an ask's options came from. `none` is permitted ONLY with a reason (see
 #: `free_text_reason` below) — a menuless ask that cannot say why is the open question
 #: ADR-0033 retired, wearing a slot's name.
@@ -131,6 +157,7 @@ class Disposition(NamedTuple):
     free_text_reason: str | None = None
     spoken: str = ""                 # what the user said for this slot, when they said it
     truncated_from: int = 0          # candidates before the menu bound, 0 if untruncated
+    total_count: int = 0             # how many EXIST, when a provider counted them
     detail: str = ""                 # provider colour for the honest fallback text
     found: str = ""                  # a cross-class candidate: what WAS found, as context
 
@@ -334,10 +361,17 @@ def decide_disposition(
             # class is real and larger than a menu, so free text is LEGITIMATE here — this
             # is the condition ADR-0033's clause actually names, as opposed to "nobody
             # built the capability."
-            count = enumerated.get("count")
+            # THE COUNT IS CONTENT, NOT COLOUR. It reached the card only inside `message`
+            # prose, so a surface wanting to say "14 projects" had to parse an English
+            # sentence — presence-is-not-content in a field. `truncated_from` did not cover
+            # it either: that counts what was CUT, and `too_many` cuts nothing because the
+            # provider returns no members at all. Two different numbers, and the one a
+            # reader wants was the missing one.
+            count = enumerated.get("count") or 0
             return Disposition(
                 ASK, slot=name, reason=reason, spoken=spoken, found=found,
                 option_source=SRC_NONE, free_text_reason=FT_TOO_MANY,
+                total_count=int(count),
                 detail=f"{count} to choose from" if count else "",
             )
 
@@ -381,8 +415,12 @@ def ask_card(
     reconstructed, never re-parsed.
     """
     return {
-        "status": "slot_elicitation",
+        # PER-DISPOSITION, so a consumer switching on status cannot draw an abstain as an ask.
+        "status": STATUS_BY_DISPOSITION.get(disp.action, "slot_elicitation"),
         "disposition": disp.action,
+        # THE TYPED SUBJECT the presentation agent selects an archetype from. Without it the
+        # ask had no output class and landed on KNOWLEDGE_DOCUMENT.
+        "output_uri": SLOT_ELICITATION_URI,
         "verb_iri": verb_iri,
         "sub_query": sub_query,
         "slot": disp.slot,
@@ -393,6 +431,7 @@ def ask_card(
         "option_source": disp.option_source,
         "free_text_reason": disp.free_text_reason,
         "truncated_from": disp.truncated_from,
+        "total_count": disp.total_count,
         # The merge, per the docstring above.
         "accepted_slots": dict(accepted or {}),
         "message": ask_message(disp),
@@ -561,3 +600,108 @@ def resolve_ask(card: Mapping[str, Any], answer: str) -> Reroute:
         query=f"{card.get('sub_query') or ''} ({slot}: {answer})".strip(),
         slot=slot,
     )
+
+
+def validate_bound_slots(
+    bound: Mapping[str, Any] | None,
+    *,
+    declared: Any,
+    enumerate_class: Callable[[str], Mapping[str, Any]] | None = None,
+    resolve_identifier: Callable[[str, str], Sequence[Mapping[str, Any]]] | None = None,
+    menu_bound: int = MENU_BOUND,
+) -> tuple[dict, list[str]]:
+    """Validate slots a CLIENT says the user picked, by RECOMPUTING what was offered.
+
+    THE PROBLEM THIS SOLVES, AND WHY THE OBVIOUS ANSWERS ARE WRONG. A pick comes back over a
+    stateless request, so "validate it against what was offered" needs the offered set — and
+    the two easy ways to get one are both unsound:
+
+      * **the client echoes the menu it was shown** — self-certifying, and worth nothing: a
+        caller that can send the pick can send the menu that permits it;
+      * **the server holds the menu between turns** — a held lifetime, which is exactly what
+        the stateless re-route was chosen to avoid.
+
+    **THE MENU IS RECOMPUTABLE, so neither is needed.** Options came from the slot's own
+    `referent` class or from a resolution on what the speaker said; given the verb and the
+    slot, the authorized set can be derived again from the same sources. That is the SPO
+    interview's rule for the same reason it gives — *"recomputed for the exact proposed
+    subject, so the verb is checked against the right subject's eligibility, never a stale
+    set"* — and it buys freshness for free: a pick against a menu that has since changed is
+    refused, rather than honoured because a stale copy still permits it.
+
+    REFUSALS ARE RETURNED, NEVER RAISED, matching `accept_slots`. A refused pick is a thing to
+    report honestly, not a crash — and the caller decides whether that is an abstain or a
+    re-ask.
+
+    WHAT THIS DOES NOT VALIDATE, stated because the gap is deliberate: a slot with no
+    `referent` (a literal the speaker supplies) and a slot whose class the provider reports as
+    `too_many` have **no menu to check against** — nothing was offered, so nothing can be
+    validated as having been offered. Those arrive as free text and are the RESPEAK path's
+    business, where the value re-enters as words and the resolver adjudicates it. Accepting
+    them here unchecked would be the fabricated-pick hole; the answer is that they must not
+    come through this door at all, and a caller sending one gets it refused as `no_menu`.
+    """
+    bound = dict(bound or {})
+    if not bound:
+        return {}, []
+    try:
+        decls = {d["name"]: d for d in decode_declarations(declared)}
+    except Exception:  # noqa: BLE001 — fail closed, same posture as accept_slots
+        return {}, [f"{n}: declarations unreadable" for n in sorted(bound)]
+
+    out: dict = {}
+    refusals: list[str] = []
+    for name, value in sorted(bound.items()):
+        decl = decls.get(name)
+        if decl is None:
+            refusals.append(f"{name}: not a declared slot")
+            continue
+        if decl.get("kind") in ("handle", "ceremony"):
+            # The boundary `accept_slots` exists for, restated here because this door is new:
+            # a caller supplying route-supplied state is not answering an ask.
+            refusals.append(f"{name}: route-supplied, never offered")
+            continue
+
+        values = decl.get("values")
+        if values:
+            if value in values:
+                out[name] = value
+            else:
+                refusals.append(f"{name}={value!r}: not in the declared vocabulary")
+            continue
+
+        referent = str(decl.get("referent") or "")
+        if not referent:
+            refusals.append(f"{name}: no_menu — a literal slot offers no options to pick from")
+            continue
+
+        offered: list[str] = []
+        if enumerate_class is not None:
+            try:
+                enumerated = dict(enumerate_class(referent) or {})
+            except Exception as exc:  # noqa: BLE001
+                refusals.append(f"{name}: option source unreachable ({type(exc).__name__})")
+                continue
+            if str(enumerated.get("outcome") or "") == "members":
+                offered = [str(m.get("instance_id")) for m in (enumerated.get("members") or [])
+                           if m.get("instance_id")]
+        if not offered and resolve_identifier is not None:
+            # The disambiguation menu: candidates for what the speaker actually said, filtered
+            # to the slot's class exactly as `_from_candidates` filters them.
+            try:
+                cands = resolve_identifier(name, referent) or []
+            except Exception as exc:  # noqa: BLE001
+                refusals.append(f"{name}: resolver unreachable ({type(exc).__name__})")
+                continue
+            offered = [str(c.get("instance_id")) for c in cands
+                       if c.get("instance_id")
+                       and (not c.get("class_uri") or c.get("class_uri") == referent)][:menu_bound]
+
+        if not offered:
+            refusals.append(f"{name}: no_menu — nothing was offered for this slot")
+            continue
+        try:
+            out[name] = validate_pick(str(value), [{"value": v} for v in offered])
+        except PickRefused as exc:
+            refusals.append(f"{name}: {exc}")
+    return out, refusals

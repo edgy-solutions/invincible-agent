@@ -2208,6 +2208,19 @@ class InterviewRequest(BaseModel):
     # from the ADR-0009 JWT-claim path.
     active_persona: str | None = None
     active_domains: list[str] | None = None
+    # THE ANSWER TO AN ASK (ADR-0033). `{slot_name: chosen_id}` for a pick the user made from
+    # a menu this system offered. Optional and absent on every ordinary turn.
+    #
+    # SEPARATE FROM THE MESSAGE, not encoded into it, because a pick is not a phrase: routing
+    # it through `message` would re-parse it, and re-parsing is the one thing the BIND path
+    # exists to forbid — a menu whose selections get re-interpreted is a menu whose selections
+    # are suggestions.
+    #
+    # NOT TRUSTED. The supervisor recomputes the menu for the verb and slot and refuses a pick
+    # that is not on it, so this field is a claim the server checks rather than an instruction
+    # it follows. A slot whose menu was `too_many` had nothing offered and is refused here by
+    # design; that answer belongs on the free-text path instead.
+    bound_slots: dict[str, str] | None = None
 
 
 class BPMNTask(BaseModel):
@@ -3068,6 +3081,10 @@ async def _launch_supervisor_job(
     # would have raised NameError on every request in the cluster while every test stayed
     # green, because no test calls this function.
     slots: dict | None = None,
+    # The user's pick from an ask, kept SEPARATE from `slots` all the way down so the
+    # supervisor can tell a chosen value from an extracted one and validate only the
+    # first against the menu it offered.
+    bound_slots: dict | None = None,
     trace_id: str = "",
     session_id: str = "",
 ) -> str | None:
@@ -3139,6 +3156,7 @@ async def _launch_supervisor_job(
         # because the two come from the same response and are constantly confused: refs are
         # untyped values, slots are argument name -> value.
         "slots": dict(slots or {}),
+        "bound_slots": dict(bound_slots or {}),
         # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
@@ -3746,6 +3764,7 @@ async def generate_dagster_stream(
         entity_refs=entity_refs,
         # Forwarded rather than dropped - the carry. `{}` until the slot-filler is called.
         slots=dict(intent_extraction.get("slots") or {}),
+        bound_slots=dict(request.bound_slots or {}),
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )

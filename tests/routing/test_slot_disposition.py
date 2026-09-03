@@ -597,3 +597,130 @@ def test_a_menu_never_offers_the_same_option_TWICE(slots_for):
     )
     values = [o.value for o in d.options]
     assert values == ["P3", "P4"], f"duplicate or reordered: {values}"
+
+
+# ---------------------------------------------------------------------------------------
+# THE CORTEX WALK'S FINDINGS, 2026-09-03 — three producer-side defects a fixture missed
+# ---------------------------------------------------------------------------------------
+
+from iagent_pure.slot_disposition import (  # noqa: E402
+    SLOT_ELICITATION_URI,
+    validate_bound_slots,
+)
+
+
+def test_ABSTAIN_DOES_NOT_WEAR_THE_ASKS_STATUS(slots_for):
+    """THE DEFECT THE SEAL WOULD HAVE PASSED THROUGH. `ask_card` emitted
+    `status: "slot_elicitation"` for BOTH `ask` and `abstain`, so a surface switching on
+    status draws an options field on an abstain — which says *nothing was run and there is
+    nothing to choose from*.
+
+    The seal written against it asserted "never renders on a non-ask status" and would have
+    been GREEN while the defect shipped, because the status it named does not discriminate the
+    case it meant. Two statuses now, so a consumer switching on EITHER `status` or
+    `disposition` is correct — the producer's half, which makes the wrong lever unavailable
+    rather than merely discouraged."""
+    d_abstain = decide_disposition(
+        accepted={}, declared=slots_for("plan_capability_path"),
+        resolution={"capability_id": {"outcome": "empty", "spoken": "Nonesuch", "candidates": []}},
+        enumerate_class=_members(("C1", "Billing")),
+    )
+    assert d_abstain.action == ABSTAIN
+    abstain_card = ask_card(d_abstain, verb_iri="v", sub_query="q", accepted={})
+
+    d_ask = decide_disposition(
+        accepted={}, declared=slots_for("plan_capability_path"), resolution={},
+        enumerate_class=_members(("C1", "Billing")),
+    )
+    ask = ask_card(d_ask, verb_iri="v", sub_query="q", accepted={})
+
+    assert abstain_card["status"] != ask["status"], "abstain wears the ask's status"
+    assert abstain_card["status"] == "slot_abstain"
+    assert ask["status"] == "slot_elicitation"
+    # and the abstain has nothing to choose from, which is the whole point
+    assert abstain_card["options"] == []
+
+
+def test_the_ask_carries_a_TYPED_SUBJECT_so_an_archetype_can_be_selected(slots_for):
+    """Without an output class the ask had no subject, the presentation agent had nothing to
+    select an archetype from, and every ask landed on KNOWLEDGE_DOCUMENT — a correct
+    disposition rendered as the wrong thing, with nothing broken in either component.
+
+    `mesh:SlotElicitation` is declared `rdfs:subClassOf mesh:Response` in `mesh_system.ttl`,
+    which also keeps it out of the grounding pool: response shapes are not subjects anyone
+    asks about."""
+    d = decide_disposition(
+        accepted={}, declared=slots_for("plan_capability_path"), resolution={},
+        enumerate_class=_members(("C1", "Billing")),
+    )
+    card = ask_card(d, verb_iri="v", sub_query="q", accepted={})
+    assert card["output_uri"] == SLOT_ELICITATION_URI
+    assert SLOT_ELICITATION_URI.endswith("#SlotElicitation")
+
+
+def test_the_too_many_COUNT_is_a_field_and_not_only_prose(slots_for):
+    """PRESENCE-IS-NOT-CONTENT IN A FIELD. The count reached the card only inside `message`,
+    so a surface wanting to say "14 projects" had to parse an English sentence.
+
+    `truncated_from` did not cover it: that counts what was CUT, and `too_many` cuts nothing
+    because the provider returns no members at all. Two different numbers, and the one a
+    reader wants was the missing one."""
+    d = decide_disposition(
+        accepted={}, declared=slots_for("plan_dependency_neighborhood"),
+        resolution={}, enumerate_class=_too_many(14),
+    )
+    assert d.total_count == 14
+    assert d.truncated_from == 0, "nothing was truncated — the provider sent no members"
+    card = ask_card(d, verb_iri="v", sub_query="q", accepted={})
+    assert card["total_count"] == 14
+
+
+# ---------------------------------------------------------------------------------------
+# bound_slots — the BIND transport's server half
+# ---------------------------------------------------------------------------------------
+
+def test_bound_slots_are_validated_against_a_RECOMPUTED_menu(slots_for):
+    """The menu is recomputed rather than echoed or held. A client that can send the pick can
+    send a menu permitting it, so an echo is self-certifying; holding it between turns is the
+    lifetime the stateless re-route exists to avoid."""
+    ok, refused = validate_bound_slots(
+        {"capability_id": "C2"}, declared=slots_for("plan_capability_path"),
+        enumerate_class=_members(("C1", "Billing"), ("C2", "Invoicing")),
+    )
+    assert ok == {"capability_id": "C2"} and refused == []
+
+
+def test_a_bound_slot_NOT_on_the_recomputed_menu_is_refused(slots_for):
+    ok, refused = validate_bound_slots(
+        {"capability_id": "C99"}, declared=slots_for("plan_capability_path"),
+        enumerate_class=_members(("C1", "Billing"), ("C2", "Invoicing")),
+    )
+    assert ok == {} and refused and "C99" in refused[0]
+
+
+def test_a_bound_slot_with_NO_MENU_is_refused_rather_than_trusted(slots_for):
+    """THE GAP IS DELIBERATE AND THIS IS THE TEST THAT SAYS SO. A `too_many` class offered
+    nothing, so nothing can be validated as having been offered. Accepting it here would be
+    the fabricated-pick hole with an extra hop; free text belongs on the RESPEAK path, where
+    the value re-enters as words and the resolver adjudicates it."""
+    ok, refused = validate_bound_slots(
+        {"project_id": "P5"}, declared=slots_for("plan_dependency_neighborhood"),
+        enumerate_class=_too_many(14),
+    )
+    assert ok == {}
+    assert refused and "no_menu" in refused[0]
+
+
+def test_bound_slots_cannot_reach_a_route_supplied_slot(slots_for):
+    """The boundary `accept_slots` exists for, restated at this new door: a caller supplying
+    `baseline_state` is not answering an ask, they are supplying the evidence the answer is
+    computed from."""
+    ok, refused = validate_bound_slots(
+        {"baseline_state": "anything"}, declared=slots_for("plan_diff"), enumerate_class=None,
+    )
+    assert ok == {} and refused and "route-supplied" in refused[0]
+
+
+def test_bound_slots_fail_CLOSED_on_unreadable_declarations():
+    ok, refused = validate_bound_slots({"x": "y"}, declared="not json", enumerate_class=None)
+    assert ok == {} and refused

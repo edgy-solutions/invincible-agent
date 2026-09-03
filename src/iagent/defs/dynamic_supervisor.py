@@ -129,6 +129,17 @@ class SupervisorQueryConfig(Config):
     # Empty on every request until the slot-filler is called, and empty is exactly today's
     # behaviour, which is what makes this landable ahead of the model work.
     slots: Dict[str, Any] = {}
+    #: SLOTS A USER PICKED FROM AN ASK — kept SEPARATE from `slots`, not merged upstream,
+    #: because the two have different provenance and earn different treatment. `slots` is what
+    #: a caller supplied or the filler extracted; `bound_slots` is what a person chose from a
+    #: menu this system offered, and only the second can be validated against that menu.
+    #:
+    #: Merging them at the gateway would have made the distinction unrecoverable here, and the
+    #: consequence is not cosmetic: an API caller may legitimately supply an id for a class
+    #: whose menu was `too_many` (no menu was ever offered), while a PICK for that same slot
+    #: must be refused precisely because nothing was offered to pick from. One field cannot
+    #: carry both rules.
+    bound_slots: Dict[str, Any] = {}
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
     # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
@@ -1510,7 +1521,11 @@ from iagent_pure.predicate_routing import (
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.slot_acceptance import accept_slots, decode_declarations
-from iagent_pure.slot_disposition import ask_card, decide_disposition
+from iagent_pure.slot_disposition import (
+    ask_card,
+    decide_disposition,
+    validate_bound_slots,
+)
 
 #: One model call's budget, CONDITIONAL ON THE ROUTED VERB'S SLOT CENSUS.
 #:
@@ -1989,6 +2004,35 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     spoken = dict(config.slots or {})
     declared = predicate.get("slots")
     resolution: Dict[str, Any] = {}
+
+    # ── THE ANSWER TO AN ASK, ARRIVING BACK ─────────────────────────────────────────────
+    # A pick is validated against a RECOMPUTED menu, never against one the client echoes
+    # (self-certifying: a caller that can send the pick can send a menu permitting it) and
+    # never against one this process held between turns (the lifetime the stateless re-route
+    # exists to avoid). Recomputing also buys freshness: a pick against a menu that has since
+    # changed is refused rather than honoured because a stale copy still permits it.
+    #
+    # It merges OVER `config.slots` because a person choosing from a menu outranks both an
+    # extraction and a caller-supplied default — ADR-0033 #5's user-confirmed provenance,
+    # applied at the only point that can check it.
+    if config.bound_slots and declared:
+        picked, refusals = validate_bound_slots(
+            config.bound_slots,
+            declared=declared,
+            enumerate_class=_make_enumerator(context),
+        )
+        for refusal in refusals:
+            # LOUD. A refused pick is the menu-integrity guard doing its job, and it is the
+            # one refusal a user can actually see the consequence of.
+            context.log.warning(
+                "bound_slot_refused verb_iri=%s %s", predicate.get("verb_iri"), refusal
+            )
+        if picked:
+            context.log.info(
+                "bound_slots_accepted verb_iri=%s %s", predicate.get("verb_iri"), picked
+            )
+            spoken = {**spoken, **picked}
+
     if not spoken and declared:
         filled = _fill_slots_from_query(
             context,
