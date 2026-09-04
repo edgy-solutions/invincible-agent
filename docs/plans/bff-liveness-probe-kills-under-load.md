@@ -163,3 +163,36 @@ are NOT this and deserve a real diagnosis.
 **Retired by** recommendation 3 above — a `startupProbe` would hold the pod out of the endpoint
 list until its upstreams are reachable, closing the window rather than documenting it. Until then
 this is a known shape, not an open defect.
+
+---
+
+## REPRODUCED ON DEMAND 2026-09-03 — and the workload that does it is small
+
+**This item was classified from kubelet events and two opportunistic observations. It is now
+reproducible deliberately, which moves it from "seen twice" to "a property of the deployment".**
+
+**The workload: SIX sequential `/orchestrate` calls**, issued back to back by
+`tests/sandbox_e2e/mesh_client.py` as `alice`, over about four minutes. Not a load test — six
+questions, one after another, which is *less* than a person exploring during a demo.
+
+```
+iagent-cortex-bff-856b7d449-q5tfm   restarts=2
+lastState.terminated: exitCode 137, reason "Error",
+                      startedAt 2026-09-03T03:29:58Z, finishedAt 2026-09-03T13:27:11Z
+```
+
+**What it looked like from the caller's side, and this is the part that matters for a demo:**
+the first two questions answered. The next four returned `RemoteProtocolError: peer closed
+connection without sending complete message body`, then `ReadError`, then `ConnectError: All
+connection attempts failed` — **and every one of those is indistinguishable, at the caller,
+from the system having nothing to say.** The probe that produced them had no transport control,
+so its first pass recorded four "results" that were not measurements at all. A person in a demo
+would read the same four as the system failing to answer.
+
+**The tell, for anyone who meets this next:** answers that *degrade in sequence* — a real
+answer, then a truncated one, then connection errors — rather than failing uniformly. A busy
+event loop dies partway through a run, so the shape is a cliff mid-session, not a flat failure.
+
+**No fix attempted here.** The finding is only that the trigger is far cheaper than "load", and
+that the failure reaches the caller wearing an empty answer's clothes. Recorded by the
+engine-cost lane while measuring something else entirely.

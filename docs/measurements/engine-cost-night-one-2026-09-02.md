@@ -139,3 +139,78 @@ want of a waterfall archetype) remains untested rather than confirmed.
    in-cluster, and **the release sits `pending-upgrade` at revision 97**. The reregister hook
    was therefore never created, which is why registration had to be repaired by an explicit
    `rollout restart`. **The release state is unresolved and is the first thing to fix.**
+
+---
+
+# THE ROUTED QUESTION — measured 2026-09-03, after the Topaz cell landed
+
+**The entitlement is real and reaches the caller.** `alice can_assume
+cell:COST_ANALYST:PRODUCTION_COST`, applied readback-gated (`checked=26 failures=0`), and
+`/me/entitlements` returns `{"persona": "COST_ANALYST", "domain": "PRODUCTION_COST"}` among
+alice's **eleven** cells, `source: topaz`.
+
+## Result: all six phrasings answered — and NONE of them reached engine-cost
+
+Every one returned a DataHub-catalog answer of the form *"the DataHub catalog does not contain
+any assets that provide …"*. **A uniform result across six different phrasings is the tell**,
+so this was taken as an instrument suspicion rather than a finding, and pursued down a layer.
+
+## Grounding is NOT the problem — it works, measured in isolation
+
+`POST /resolve` on Engine O, with the payload the supervisor actually sends
+(`query` / `domain` / `domains` / `user_email` — read off `dynamic_supervisor.py:290-312`
+rather than invented):
+
+```
+query   = "is cost per unit falling across the lots"
+domains = ["PRODUCTION_COST"]
+->  resolved_uri     = http://invincible-agent/cost#ProductionProgram
+    confidence_score = 0.96
+    reasoning        = "...a trend question about how the unit cost changes over successive
+                        production quantities. This matches the Production Program class..."
+```
+
+**Grounding resolves the right class, with the right reasoning, at high confidence.**
+
+## Where it actually diverges
+
+The live orchestration's final payload:
+
+```json
+{"archetype": "KNOWLEDGE_DOCUMENT",
+ "source_persona": "DATA_ENGINEER",
+ "subject_concept": "http://invincible-agent/mesh#AgentResponse",
+ "markdown_content": "The DataHub catalog does not contain any assets that provide
+                      cost-per-unit information for the production lots..."}
+```
+
+**`source_persona: DATA_ENGINEER`.** Alice holds eleven cells; the path selected a
+DATA_ENGINEER cell and answered from the catalog. The cost question never entered the
+PRODUCTION_COST scope in which grounding demonstrably succeeds.
+
+**So the chain is: entitlement ✅ → grounding ✅ (when scoped) → SCOPE SELECTION ✗ → catalog.**
+This is a routing/persona-selection finding, NOT a registration, entitlement or grounding one,
+and each of those three was eliminated by measurement rather than by reasoning.
+
+**NOT YET DIAGNOSED** — what selects the cell for a session, and whether an
+eleven-cell user needs an explicit persona/domain selection the harness does not make. That is
+the next thread, and it is deliberately left open rather than guessed at.
+
+## Two instrument defects of my own, both in my own memory already
+
+1. **I invented `subject_uri`. The field is `resolved_uri`.** That exact pair is instance #3 in
+   my own recorded instrument-defect table — *"`subject_uri` (invented field) vs `resolved_uri`
+   (the real one) — 0 of 48 resolve, PUBLISHED"*. Reading `subject_uri` returned `None` beside
+   `confidence 0.97`, a contradiction that should have stopped me one probe earlier. **Dump the
+   response and read the keys** was the rule, and I applied it second rather than first.
+2. **The first probe run had no transport control**, and recorded four `ReadError` /
+   `ConnectError` results as if they were answers. cortex-bff was SIGKILLed (exit 137) mid-run
+   by six sequential orchestrations — a live reproduction of
+   [[bff-liveness-probe-kills-under-load]], appended there as evidence.
+
+## The card question, answered honestly
+
+**No card drew from engine-cost, and none refused, because no question reached it.** The
+pre-registered expectation for `cost_price_composition` — verb answers, card refuses for want
+of a waterfall archetype — remains **untested**. It is now blocked on the scope-selection
+finding above rather than on entitlement.
