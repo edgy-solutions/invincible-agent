@@ -239,7 +239,7 @@ def test_slot_types_survive_postponed_annotations():
     """`lot` is an integer. Without eval_str=True it declares as a string to every consumer."""
     decl = {s["name"]: s for s in slots.slots_for("cost_lot_breakdown")}
     assert decl["lot"]["type"] == "integer"
-    assert decl["lot"]["mandatory"] is True
+    assert decl["lot"]["required"] is True
     assert decl["lot"]["referent"].endswith("ProductionLot")
 
 
@@ -458,3 +458,19 @@ def test_both_new_verbs_declare_both_contract_d_ends_in_the_TTL():
             f"{verb}: output is not subClassOf mesh:Response, so it would re-enter the "
             "grounding pool and compete with its own subject"
         )
+
+
+def test_the_declaration_uses_the_key_THE_CONSUMER_READS():
+    """`required`, not `mandatory` — and the consumer is the reason, not convention.
+
+    ontology_service/main.py builds the slot-filling prompt and marks a slot REQUIRED from
+    `d.get("required")`. This engine emitted `mandatory`, which that line never reads, so
+    every spoken-mandatory slot reached the filler UNMARKED — a weaker fill and a needless
+    ask, and nothing failed, which is why it survived. Engines F and P both emit `required`.
+    """
+    for verb in measures.VERBS:
+        for d in slots.slots_for(verb):
+            assert "required" in d, f"{verb}.{d['name']}: no `required` key for the filler"
+            assert "mandatory" not in d, (
+                f"{verb}.{d['name']}: still emits `mandatory`, which no consumer reads"
+            )

@@ -119,7 +119,17 @@ def slots_for(fn_name: str) -> List[dict]:
         decl: dict = {
             "name": name,
             "type": _type_of(p.annotation),
-            "mandatory": mandatory,
+            # THE WIRE KEY IS `required`, NOT `mandatory`, AND THE CONSUMER IS WHY.
+            # agent_fleet/ontology_service/main.py:2673 builds the slot-filling prompt and
+            # marks a slot REQUIRED from `d.get("required")`. This engine originally emitted
+            # `mandatory`, which that line never reads — so every spoken-mandatory slot here
+            # went to the filler UNMARKED. The cost is a weaker fill and a needless ask
+            # rather than a wrong answer, which is exactly why it survived: nothing failed.
+            # Engines F and P both emit `required`; this file was the odd one out, and the
+            # divergence was found by the lane scoping the shared-derivation extraction.
+            # Settled HERE, before that extraction, so it does not inherit a disagreement as
+            # if it were a feature.
+            "required": mandatory,
             "kind": "spoken-mandatory" if mandatory else "spoken-optional",
         }
         if not mandatory and p.default is not None:
@@ -141,4 +151,4 @@ def all_declarations() -> Dict[str, List[dict]]:
 
 def mandatory_slots(fn_name: str) -> List[str]:
     """Names a caller must supply. Used to build the refusal, not just to check it."""
-    return [s["name"] for s in slots_for(fn_name) if s["mandatory"]]
+    return [s["name"] for s in slots_for(fn_name) if s["required"]]
