@@ -549,8 +549,17 @@ mesh:DecisionRecord a owl:Class ;
 # in Fuseki and never reach the store the filter queries — a declaration the enforcement
 # point cannot see is not a declaration.
 #
-# THE REASON GOES IN THE CLASS'S OWN rdfs:comment, which the declaration seals already
-# require, so an exemption cannot be silent about why it exists.
+# WHERE THE REASON GOES, corrected 2026-09-04 after the engine-cost lane caught the
+# conflict: NOT in the class's rdfs:comment. That field is RETRIEVAL INPUT — it is scored
+# against user questions — so a note explaining why a class has no verb would compete for
+# traffic with the description of what the class IS, which is the same sibling-bleed rule
+# that governs every definition in this file. An exemption's reason is a statement to a
+# maintainer, not a recall signal.
+#
+# So the reason goes in a `#` file comment BESIDE the declaration, as every other design
+# note here does, and rdfs:comment keeps describing the thing. The declaration seals still
+# require a non-empty rdfs:comment, so an exemption cannot be silent — they just do not
+# require the REASON to live inside the sentence that has to earn its recall.
 #
 # THIS IS NOT A PLACE TO PUT A GAP. A class a question WILL target and nothing answers is a
 # missing verb, not a referent — declaring it here converts an omission into something
