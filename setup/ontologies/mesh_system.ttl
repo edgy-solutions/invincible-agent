@@ -528,6 +528,37 @@ mesh:DecisionRecord a owl:Class ;
   rdfs:label "Decision Record" ;
   rdfs:comment "The card a committed decision draws as. NOT A LIVE VIEW, and it is the only planning archetype that is not: the others describe a plan still moving, this describes an act at a time by a named actor. It refuses a record with no rationale rather than drawing it — a decision presented in the visual language of a governed one, without the reason that governed it, is the one thing this card must never launder. It publishes no pending-approval refusal, because a pending approval is a different archetype and offering to stand in for one is how two shapes become one confused shape." .
 
+# --- THE PRODUCTIVE-OPTION EXEMPTION ------------------------------------------
+# Declared 2026-09-04 by the slots lane, as the read-time pool filter's only escape.
+#
+# THE FILTER IT EXEMPTS FROM: the resolver's candidate pool is now restricted to classes
+# carrying at least one verb edge in the caller's domains. A class nothing serves cannot be
+# a useful answer to grounding — it resolves at high confidence, finds no verb, and falls
+# to the generalist wearing the caller's own persona, which is indistinguishable from a
+# real answer until someone reads the card. Measured on three engines in one week:
+# cost#CostCategory, idp#Job, idp#Pipeline, fin#EarnedValueTechnique.
+#
+# BUT SOME VERB-LESS CLASSES MUST STAY GROUNDABLE. A drill-down referent — a work package,
+# an OBS element — is named by a user and resolved by a provider without any verb operating
+# on it directly. Filtering those would replace one silent failure with another, so the
+# exemption exists and is DECLARED rather than inferred.
+#
+# WHY A subClassOf MARKER RATHER THAN AN ANNOTATION, and this was not a style choice: the
+# filter reads Neo4j, and doc-tools syncs subClassOf edges to Neo4j (its Step 2.5) while
+# carrying only uri/label/definition for the class itself. An annotation property would sit
+# in Fuseki and never reach the store the filter queries — a declaration the enforcement
+# point cannot see is not a declaration.
+#
+# THE REASON GOES IN THE CLASS'S OWN rdfs:comment, which the declaration seals already
+# require, so an exemption cannot be silent about why it exists.
+#
+# THIS IS NOT A PLACE TO PUT A GAP. A class a question WILL target and nothing answers is a
+# missing verb, not a referent — declaring it here converts an omission into something
+# wearing the clothes of a decision, which is the one failure this marker makes easy.
+mesh:ResolvableReferent a owl:Class ;
+  rdfs:label "Resolvable Referent" ;
+  rdfs:comment "A subject a speaker may name and a provider may resolve, which no verb operates on directly and which is therefore exempt from the productive-option restriction on the grounding pool. Drill-down targets are the case it exists for: a component of an answer that a reader points at to go deeper, reached through resolution rather than through a verb of its own. DECLARING A CLASS HERE ASSERTS THAT NO QUESTION SHOULD EVER BE ANSWERED ABOUT IT DIRECTLY — a subject users do ask about, with nothing behind it, is an unserved gap and belongs in a verb rather than here." .
+
 # --- THE ASK ------------------------------------------------------------------
 # Declared 2026-09-04 by the slots lane. cortex-ui registered mesh:AskCard for the typed-ask
 # work and this class did not exist, so every archetype-declaration seal fired at once —

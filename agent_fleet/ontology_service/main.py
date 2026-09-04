@@ -1640,6 +1640,90 @@ except ImportError:  # pragma: no cover - import path differs by runtime
     from agent_fleet.ontology_service.policy_rules_sparql import build_rules_construct, build_graph_probe_ask
 
 
+#: EVERY OPTION IN THE POOL MUST BE PRODUCTIVE — menu integrity, applied to grounding.
+#:
+#: A class nothing serves is not a useful answer to subject resolution. It grounds at high
+#: confidence, `/find_compatible_verbs` returns nothing, and the supervisor falls to the
+#: generalist — which answers from the catalog wearing the CALLER's persona, and is
+#: indistinguishable from a real answer until a human reads the card. Measured across three
+#: engines in one week: cost#CostCategory, idp#Job, idp#Pipeline, fin#EarnedValueTechnique.
+#:
+#: AND IT IS WHY WINNER-INSTABILITY LOOKED LIKE NOISE. The row "show me SPI over time"
+#: flipped between PerformanceMeasurementBaseline and EarnedValueTechnique across draws and
+#: was recorded as an unstable sampler. One of those winners routes and the other cannot be
+#: answered at all, so half its draws were a different KIND of event — and a run scored on
+#: class names cannot see the difference, because both produce a class name.
+#:
+#: DOMAIN-RELATIVE BY CONSTRUCTION, which is the half a global check gets wrong. idp:Dashboard
+#: carries nine verbs under DATA_ENGINEERING and none under PORTFOLIO_PLANNING; that is the
+#: domain filter working, not a gap. Restricting per the caller's own domains keeps it
+#: available to the caller who can use it and absent from the one who cannot.
+#:
+#: The `*0..5` walk mirrors `/find_compatible_verbs` exactly: a class is served when IT or an
+#: ANCESTOR carries a verb, because that is the walk the router will perform next. A filter
+#: with a different reach than the consumer it feeds would drop classes that do route.
+_SERVED_CLASSES_CYPHER = """
+MATCH (c:OntologyClass)-[:subClassOf*0..5]->(anc:OntologyClass)
+MATCH (anc)-[r]->(:OntologyClass)
+WHERE r.iri IS NOT NULL
+  AND (
+    size($domains) = 0
+    OR coalesce(r.domains, []) = []
+    OR any(d IN r.domains WHERE d IN $domains)
+  )
+RETURN DISTINCT c.uri AS uri
+UNION
+MATCH (c:OntologyClass)-[:subClassOf*1..5]->(m:OntologyClass)
+WHERE m.uri = $referent_root
+RETURN DISTINCT c.uri AS uri
+"""
+
+#: Declared exemption: groundable on purpose, served by no verb. See mesh:ResolvableReferent
+#: in mesh_system.ttl for why the marker is a subClassOf edge rather than an annotation.
+_RESOLVABLE_REFERENT_ROOT = "http://invincible-agent/mesh#ResolvableReferent"
+
+#: (domains-key) -> (expiry, frozenset). Verb edges change only at registration, so a short
+#: TTL is ample and keeps a per-request graph walk off the hot path.
+_SERVED_CACHE: dict = {}
+_SERVED_TTL_S = float(os.getenv("SERVED_CLASSES_TTL_S", "120"))
+
+
+async def _served_class_uris(domains: list) -> frozenset:
+    """Classes carrying a verb in these domains, plus declared resolvable referents.
+
+    RETURNS AN EMPTY SET ON ANY FAILURE, AND THE CALLER MUST READ THAT AS "DO NOT FILTER".
+    That direction is not a detail: an empty served-set applied as a filter would empty the
+    candidate pool and take routing down globally, turning a Neo4j hiccup into a total
+    outage. Degrading OPEN restores exactly the pre-filter behaviour — a dead end reachable
+    again — which is the failure this filter reduces rather than one it creates.
+    """
+    key = ",".join(sorted(domains or []))
+    now = time.time()
+    hit = _SERVED_CACHE.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    if not _NEO4J_DRIVER:
+        return frozenset()
+
+    def _run() -> set:
+        with _NEO4J_DRIVER.session() as session:
+            rows = session.run(
+                _SERVED_CLASSES_CYPHER,
+                domains=list(domains or []),
+                referent_root=_RESOLVABLE_REFERENT_ROOT,
+            )
+            return {str(r["uri"]) for r in rows if r["uri"]}
+
+    try:
+        served = frozenset(await asyncio.to_thread(_run))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Engine O] productive-option gate: served-class lookup failed "
+              f"({type(exc).__name__}) — NOT filtering this request")
+        return frozenset()
+    _SERVED_CACHE[key] = (now + _SERVED_TTL_S, served)
+    return served
+
+
 # ---------------------------------------------------------------------------
 # POST /resolve
 # ---------------------------------------------------------------------------
@@ -1696,6 +1780,33 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             print(f"[Engine O] ontology-visibility gate DROPPED {_dropped} ungated "
                   f"class(es) BEFORE classification (caller={request.user_email!r})")
         candidates = _visible
+
+    # ── Step 1.56: THE PRODUCTIVE-OPTION GATE (ruled 2026-09-04) ──────────────────
+    #
+    # Every option the resolver may pick must be one the router can then serve, for the
+    # caller's own domains. See _served_class_uris for the measured defect and why this is
+    # domain-relative.
+    #
+    # DEGRADES OPEN, DELIBERATELY, AND THE ORDER OF THESE TWO CHECKS IS THE SAFETY. An empty
+    # `served` means the lookup failed or the graph is cold, and filtering against it would
+    # empty the pool and take routing down for every caller — a far worse outcome than the
+    # dead end this gate exists to remove. Likewise a filter that would remove EVERYTHING is
+    # refused: that is the signature of a served-set computed against the wrong domains, and
+    # answering from a dead end beats answering nothing while the cause is found.
+    if candidates:
+        _served = await _served_class_uris(request.domains or ([request.domain] if request.domain else []))
+        if _served:
+            _productive = [c for c in candidates if c.get("uri") in _served]
+            _unproductive = len(candidates) - len(_productive)
+            if _productive and _unproductive:
+                print(f"[Engine O] productive-option gate DROPPED {_unproductive} "
+                      f"unserved class(es) from the pool "
+                      f"(domains={request.domains or request.domain!r})")
+                candidates = _productive
+            elif not _productive:
+                print("[Engine O] productive-option gate would have emptied the pool "
+                      f"({len(candidates)} candidate(s), 0 served) — NOT filtering. "
+                      "Suspect a served-set computed against the wrong domains.")
 
     # Step 1.6: Class-recall failed (both Weaviate hybrid and SPARQL
     # fallback returned zero candidates). Before declaring UNKNOWN,

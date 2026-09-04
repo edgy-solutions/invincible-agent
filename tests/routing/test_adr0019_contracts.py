@@ -265,9 +265,26 @@ def test_the_stub_covers_every_dagster_name_iagent_IMPORTS():
     This asserts coverage directly, against the DERIVED set, so it fails the same way
     every time regardless of order.
     """
-    _install_stubs()
-    d = sys.modules["dagster"]
-    missing = sorted(n for n in _dagster_names_imported_by_iagent() if not hasattr(d, n))
+    # FORCE THE STUB TO BE BUILT. `_install_stubs` is a no-op when "dagster" is already in
+    # sys.modules, and real dagster IS installed here — so reading sys.modules["dagster"]
+    # after calling it could hand back the real package, which has all thirty names and
+    # would make this seal pass without ever examining the stub. That is the same
+    # order-dependence the stub's own comment warns about, reappearing inside the check
+    # written to end it.
+    _saved = sys.modules.pop("dagster", None)
+    try:
+        _install_stubs()
+        d = sys.modules["dagster"]
+        missing = sorted(n for n in _dagster_names_imported_by_iagent()
+                         if not hasattr(d, n))
+        assert getattr(d, "__file__", None) is None, (
+            "expected the STUB and got a real module — this seal would be vacuous"
+        )
+    finally:
+        if _saved is not None:
+            sys.modules["dagster"] = _saved
+        else:
+            sys.modules.pop("dagster", None)
     assert not missing, (
         "src/iagent imports these from dagster and the stub does not provide them: "
         + ", ".join(missing)
@@ -280,6 +297,30 @@ def test_the_derivation_actually_found_names():
     names = _dagster_names_imported_by_iagent()
     assert len(names) >= 20, f"only {len(names)} names derived; the AST scan is broken"
     assert "Definitions" in names, "the name that produced this repair is not in the set"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_stubbed_modules():
+    """PUT sys.modules BACK. The stubs above are process-global and outlive this file.
+
+    MEASURED 2026-09-04: running tests/routing before tests/planning failed FIFTEEN tests in
+    test_fill_slots_seam.py with "No module named 'baml_client.types'; 'baml_client' is not a
+    package" — because `_install_stubs` leaves a bare ModuleType named baml_client in
+    sys.modules, and a later file importing a SUBMODULE of it cannot. Each suite passed
+    alone; only the combination failed, which is why it survived: nobody runs them together
+    in one process except a full-suite run, and a full-suite run has other noise.
+
+    THE STUB IS NOT THE DEFECT — not restoring it is. A stub scoped to the file that needs it
+    is correct; one that escapes into every file that follows makes an unrelated suite fail
+    for a reason nothing in it mentions.
+    """
+    saved = {k: sys.modules.get(k) for k in ("baml_client", "dagster")}
+    yield
+    for k, v in saved.items():
+        if v is None:
+            sys.modules.pop(k, None)
+        else:
+            sys.modules[k] = v
 
 
 @pytest.fixture(scope="module")
