@@ -3888,6 +3888,51 @@ async def generate_dagster_stream(
                 emitted_steps.add("plan_emitted")
                 logger.info("✅ Plan emission confirmed for run %s", run_id)
 
+            elif path == ["subtask_slots_decision"]:
+                # HOP 2: what the system UNDERSTOOD, as opposed to what it extracted.
+                #
+                # `resolved_intent` has always been written from /route_intent's
+                # ExtractIntent output — mode and entity_refs, captured before any
+                # resolution runs — and never updated. A field named for resolution
+                # holding extraction. The supervisor now emits the real thing at its
+                # disposition point, which is the only line where the accepted
+                # parameters, the REFUSED ones, the per-slot resolution outcomes and the
+                # route|ask|abstain decision all exist at once.
+                #
+                # OVERWRITES RATHER THAN MERGES, deliberately. Keeping the extraction
+                # under the same key beside the resolution would leave two answers to
+                # "what did the system understand" in one field, and the older one reads
+                # as current. The extraction is not lost — it is what /route_intent
+                # returned and it is recorded on that hop.
+                #
+                # NOT emitted as SSE: this is provenance for the artifact, not a step for
+                # the HUD, and inventing a UI event with no reader is the orphan-field
+                # shape this codebase has removed twice.
+                _slots_md = _metadata_dict(mat)
+
+                def _j(key: str, fallback):
+                    try:
+                        return json.loads(_slots_md.get(key) or "null") or fallback
+                    except (ValueError, TypeError):
+                        return fallback
+
+                _artifact_bundle["resolved_intent"] = {
+                    "verb_iri": _slots_md.get("verb_iri") or "",
+                    "disposition": _slots_md.get("disposition") or "",
+                    "accepted_slots": _j("accepted_slots", {}),
+                    "refused_slots": _j("refused_slots", []),
+                    "slot_resolution": _j("slot_resolution", {}),
+                }
+                logger.info(
+                    "resolved_intent captured for run %s: verb=%s disposition=%s "
+                    "accepted=%d refused=%d",
+                    run_id,
+                    _slots_md.get("verb_iri") or "-",
+                    _slots_md.get("disposition") or "-",
+                    len(_artifact_bundle["resolved_intent"]["accepted_slots"] or {}),
+                    len(_artifact_bundle["resolved_intent"]["refused_slots"] or []),
+                )
+
             elif (
                 path == ["subtask_routing_decision"]
                 and "route_decision_emitted" not in emitted_steps

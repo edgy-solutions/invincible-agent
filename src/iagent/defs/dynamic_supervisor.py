@@ -2073,6 +2073,53 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         resolution=resolution,
         enumerate_class=_make_enumerator(context),
     )
+    # ── subtask_slots_decision — THE HOP THAT WAS NEVER THERE ────────────────────────
+    #
+    # `resolved_intent` on the AnswerArtifact has always been populated from
+    # /route_intent's ExtractIntent output — mode and entity_refs, captured before any
+    # resolution happens — and never updated afterwards. A field named for resolution
+    # holding extraction, written once at the start of the run.
+    #
+    # AND THE DATA COULD NOT HAVE REACHED IT. `_log_subtask_route_assets` fires ~150 lines
+    # ABOVE this one, before /fill_slots has run, so the routing materialization carries
+    # subject, verb, candidates and fallback_reason and no slots at all. The gateway had
+    # nothing to write even if it had wanted to; the capture point preceded the data.
+    #
+    # THIS IS THE ONLY LINE WHERE THE WHOLE ANSWER TO "WHAT DID THE SYSTEM UNDERSTAND"
+    # EXISTS: the phrase, the routed verb, the declarations, the accepted parameters, the
+    # ones it REFUSED and why, the per-slot resolution outcomes, and the disposition. The
+    # comment above says everything below dispatches — so this is also the last moment
+    # before the understanding turns into an action.
+    #
+    # REFUSALS ARE CARRIED, not just acceptances. A dropped slot is a question the system
+    # did not answer as asked, and an artifact recording only what it accepted would be the
+    # silent-narrowing shape at the provenance layer: a record that reads as complete
+    # because the omission left no trace in it.
+    try:
+        context.log_event(
+            AssetMaterialization(
+                asset_key=["subtask_slots_decision"],
+                metadata={
+                    "verb_iri": MetadataValue.text(str(predicate.get("verb_iri") or "")),
+                    "disposition": MetadataValue.text(str(disposition.action or "")),
+                    "accepted_slots": MetadataValue.text(
+                        json.dumps(accepted.params, default=str)
+                    ),
+                    "refused_slots": MetadataValue.text(
+                        json.dumps([str(r) for r in accepted.refusals])
+                    ),
+                    "slot_resolution": MetadataValue.text(
+                        json.dumps(resolution, default=str)
+                    ),
+                },
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        # NON-FATAL, matching every other capture on this path. Provenance that fails must
+        # not take an answer down — a run that succeeded and recorded nothing is worse than
+        # one that succeeded and recorded less, but both beat one that did not run.
+        context.log.warning("subtask_slots_decision materialization failed: %s", exc)
+
     if disposition.action != "route":
         context.log.info(
             "slot_disposition=%s verb_iri=%s slot=%s reason=%s option_source=%s "
