@@ -742,6 +742,29 @@ _NO_VERB_BY_DESIGN = {
     FIN + "WorkPackage",
 }
 
+#: A REAL SUBJECT NOBODY SERVES YET. Kept apart from `_NO_VERB_BY_DESIGN` deliberately, and
+#: the distinction is the point: that set says "this class is a drill-down referent and a
+#: question will never target it." This one says "a question WILL target it and we have no
+#: answer." Collapsing them would let a gap hide inside a design statement, which is the
+#: plausible-negative defect — an omission wearing the clothes of a decision.
+#:
+#: `fin:EarnedValueTechnique` is groundable in PROGRAM_FINANCE and its own definition says
+#: questions target it — *how is progress being claimed, is it measurable or merely accrued*.
+#: None of the six verbs answers that. MEASURED: it won a `/resolve` draw for "show me SPI over
+#: time" (see [[the-winner-is-a-sample-the-set-is-the-answer]]), so this is a reachable class
+#: with no answer behind it, not a theoretical one.
+#:
+#: ⛔ AND IT WAS INVISIBLE TO THIS ENGINE'S OWN BOOT GUARD, which is the finding that produced
+#: this constant. The guard's findable set is `_RESOLVABLE` — what the ENGINE can resolve. The
+#: router's findable set is the DOMAIN POOL — every class the prime seeds under this domain.
+#: A class in the pool and absent from `_RESOLVABLE` is invisible to the guard and reachable by
+#: the router, which is precisely the shape the guard exists to prevent. Sealed at the pool
+#: level in tests/finance/test_every_groundable_class_is_served.py, because that is where the
+#: seeded TTLs can be read.
+_UNSERVED_KNOWN_GAP = {
+    FIN + "EarnedValueTechnique",
+}
+
 
 def _all_subjects() -> set[str]:
     """Every class this engine registers a verb ON — primary and also-askable alike.
