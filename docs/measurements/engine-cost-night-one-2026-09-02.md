@@ -249,3 +249,53 @@ tail of the chain**, and the tail is where the repair lives. Runbook §10 row 18
 
 Neither neighbour moved. Registration was repaired **by the hook** this time, not by hand,
 which is the behaviour the reregister list exists to produce.
+
+---
+
+# CORRECTION 2026-09-04 — "scope selection" was the NEIGHBOUR of the claim
+
+**The finding recorded above as *"the break is in which of alice's eleven cells a session
+selects"* is superseded.** It was read at the BFF layer — the answer came back
+`source_persona: DATA_ENGINEER` from the catalog — and that observation was true and was not
+the mechanism.
+
+**The mechanism, measured with one more field per draw:** grounding picks a class that
+**carries no verb**, and routing then falls through to the generalist/catalog.
+
+Captured as the before-state for the `/resolve` pool gate (`4d13eee`), 9 phrasings x 2 scopes,
+in `pool-gate-before-2026-09-04.json`:
+
+| PRODUCTION_COST-scoped winner | draws | carries a verb in scope? |
+|---|---|---|
+| `cost:ProductionProgram` | 2 | **yes** — the good case, and it works |
+| `cost:RateTable` | 1 | **yes** |
+| `fin:WBSElement` | **5** | **NO — and it carries none in ANY domain** |
+| `cost:CostCategory` | 1 | **NO** |
+
+**Six of nine scoped draws end on a class with no verb behind it.**
+
+## And the winner is frequently not a candidate
+
+**In 10 of 18 draws the `resolved_uri` is NOT in the returned `candidates` list**, at
+confidence 0.96–0.98. Every one of those resolves to `fin:WBSElement`:
+
+```
+q      = "what is the labour split on lot 4"    scope = ["PRODUCTION_COST"]
+winner = fin#WBSElement   confidence 0.98
+cands  = ["ProductionLot", "CostCategory", "RateTable"]     <-- winner absent
+```
+
+**Consequence for the pool gate, stated before it rolled rather than after:** a gate that
+restricts the CANDIDATE POOL cannot change a draw whose winner never came from the pool. If
+`WBSElement` still wins after the roll that is a different mechanism, not the gate failing.
+
+## The instrument lesson, which is the transferable part
+
+**Recording the winner and the candidate set was not enough. The fourth field —
+*does the winning class carry a verb in this scope* — is what separated "moved but still wrong"
+from "moved to a dead end".** Without it, this lane reported a routing/persona finding when the
+evidence was a grounding finding, from the same draws.
+
+Credit where it belongs: the four-field law is the Lane 1 formulation, arrived at from its own
+n=5 baseline logging dead-end draws as instability. This lane supplied a fourth instance of the
+identical mistake before hearing the rule.

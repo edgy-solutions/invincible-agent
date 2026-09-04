@@ -1,0 +1,349 @@
+{
+ "served_by_domain": {
+  "http://edgy-solutions.com/ontology/mfg#WorkInstruction": [
+   "MANUFACTURING"
+  ],
+  "http://invincible-agent/idp#Column": [
+   "DATA_ENGINEERING"
+  ],
+  "http://invincible-agent/idp#Dataset": [
+   "DATA_ENGINEERING"
+  ],
+  "http://invincible-agent/idp#Portfolio": [
+   "PORTFOLIO_PLANNING"
+  ],
+  "http://invincible-agent/idp#Site": [
+   "PORTFOLIO_PLANNING"
+  ],
+  "http://invincible-agent/idp#Capability": [
+   "PORTFOLIO_PLANNING"
+  ],
+  "http://invincible-agent/idp#BusinessProcess": [
+   "PORTFOLIO_PLANNING"
+  ],
+  "http://invincible-agent/idp#Technology": [
+   "PORTFOLIO_PLANNING"
+  ],
+  "http://invincible-agent/fin#Program": [
+   "PROGRAM_FINANCE"
+  ],
+  "http://invincible-agent/fin#ControlAccount": [
+   "PROGRAM_FINANCE"
+  ],
+  "http://invincible-agent/fin#PerformanceMeasurementBaseline": [
+   "PROGRAM_FINANCE"
+  ],
+  "http://invincible-agent/fin#FundingLine": [
+   "PROGRAM_FINANCE"
+  ],
+  "http://invincible-agent/mesh#InstanceClass": [
+   "MESH"
+  ],
+  "http://invincible-agent/cost#ProductionLot": [
+   "PRODUCTION_COST"
+  ],
+  "http://invincible-agent/cost#ProductionProgram": [
+   "PRODUCTION_COST"
+  ],
+  "http://invincible-agent/cost#RateTable": [
+   "PRODUCTION_COST"
+  ],
+  "http://internal/sustainment/pcn#SustainmentNotice": [
+   "SUSTAINMENT"
+  ],
+  "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/WorkInstruction": [
+   "MAINTENANCE"
+  ],
+  "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual": [
+   "MAINTENANCE"
+  ],
+  "http://invincible-agent/mesh#AgentTask": [
+   "MESH"
+  ],
+  "http://edgy-solutions.com/ontology/mil#DescriptiveDataModule": [
+   "MAINTENANCE"
+  ],
+  "http://edgy-solutions.com/ontology/mil#ProcedureDataModule": [
+   "MAINTENANCE"
+  ],
+  "http://edgy-solutions.com/ontology/mil#FaultIsolationDataModule": [
+   "MAINTENANCE"
+  ],
+  "http://edgy-solutions.com/ontology/mil#IllustratedPartsDataModule": [
+   "MAINTENANCE"
+  ],
+  "http://invincible-agent/mesh#KnowledgeQuery": [
+   "MESH"
+  ],
+  "http://invincible-agent/mesh#GraphQuery": [
+   "MESH"
+  ],
+  "http://invincible-agent/mesh#DatasetAnalysisRequest": [
+   "MESH"
+  ],
+  "http://invincible-agent/mesh#InstanceIdentifier": [
+   "MESH"
+  ],
+  "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/ProcedureStep": [
+   "MAINTENANCE"
+  ]
+ },
+ "draws": [
+  {
+   "q": "is cost per unit falling across the lots",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "ProductionProgram",
+   "winner_uri": "http://invincible-agent/cost#ProductionProgram",
+   "confidence": 0.96,
+   "winner_carries_verb_in_scope": true,
+   "candidates": [
+    "CostCategory",
+    "Supplier",
+    "RateTable",
+    "ProductionProgram",
+    "ProductionLot"
+   ]
+  },
+  {
+   "q": "is cost per unit falling across the lots",
+   "scope": "unscoped",
+   "winner": "Storage_Unit",
+   "winner_uri": "http://www.hsu-ifa.de/ontologies/DINEN62264-2/assetHierarchy#Storage_Unit",
+   "confidence": 0.62,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "Unit",
+    "Storage_Unit",
+    "Work_Unit",
+    "IadsNode",
+    "DitaNode",
+    "DataModule"
+   ]
+  },
+  {
+   "q": "what rates are we using",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "RateTable",
+   "winner_uri": "http://invincible-agent/cost#RateTable",
+   "confidence": 0.97,
+   "winner_carries_verb_in_scope": true,
+   "candidates": [
+    "RateTable",
+    "ProductionLot",
+    "CostCategory"
+   ]
+  },
+  {
+   "q": "what rates are we using",
+   "scope": "unscoped",
+   "winner": "DescriptiveDataModule",
+   "winner_uri": "http://edgy-solutions.com/ontology/mil#DescriptiveDataModule",
+   "confidence": 0.78,
+   "winner_carries_verb_in_scope": true,
+   "candidates": [
+    "DescriptiveDataModule"
+   ]
+  },
+  {
+   "q": "what is the labour split on lot 4",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.98,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "ProductionLot",
+    "CostCategory",
+    "RateTable"
+   ]
+  },
+  {
+   "q": "what is the labour split on lot 4",
+   "scope": "unscoped",
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.92,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "DescriptiveDataModule"
+   ]
+  },
+  {
+   "q": "what did lot 4 cost",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.99,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "ProductionLot",
+    "CostCategory",
+    "RateTable",
+    "Supplier",
+    "ProductionProgram"
+   ]
+  },
+  {
+   "q": "what did lot 4 cost",
+   "scope": "unscoped",
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.9,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "DescriptiveDataModule"
+   ]
+  },
+  {
+   "q": "how did the price build up on lot 4 at the 2022-02-01 rates",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.92,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "ProductionLot",
+    "RateTable",
+    "CostCategory",
+    "Supplier",
+    "ProductionProgram"
+   ]
+  },
+  {
+   "q": "how did the price build up on lot 4 at the 2022-02-01 rates",
+   "scope": "unscoped",
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.9,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
+    "FaultIsolationDataModule",
+    "ProcedureDataModule"
+   ]
+  },
+  {
+   "q": "did the applied rates move against the estimate on lot 3",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.95,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "ProductionLot",
+    "RateTable"
+   ]
+  },
+  {
+   "q": "did the applied rates move against the estimate on lot 3",
+   "scope": "unscoped",
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.9,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual"
+   ]
+  },
+  {
+   "q": "what's the unit price trend on the notional program",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "ProductionProgram",
+   "winner_uri": "http://invincible-agent/cost#ProductionProgram",
+   "confidence": 0.96,
+   "winner_carries_verb_in_scope": true,
+   "candidates": [
+    "ProductionProgram",
+    "ProductionLot",
+    "CostCategory",
+    "RateTable"
+   ]
+  },
+  {
+   "q": "what's the unit price trend on the notional program",
+   "scope": "unscoped",
+   "winner": "Unit",
+   "winner_uri": "http://www.hsu-ifa.de/ontologies/DINEN62264-2/assetHierarchy#Unit",
+   "confidence": 0.32,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "Unit",
+    "Storage_Unit",
+    "Work_Unit",
+    "IadsNode",
+    "DitaNode",
+    "DescriptiveDataModule",
+    "DataModule"
+   ]
+  },
+  {
+   "q": "what's the lot breakdown for lot 5",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.97,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "ProductionLot",
+    "RateTable",
+    "CostCategory"
+   ]
+  },
+  {
+   "q": "what's the lot breakdown for lot 5",
+   "scope": "unscoped",
+   "winner": "WBSElement",
+   "winner_uri": "http://invincible-agent/fin#WBSElement",
+   "confidence": 0.93,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "DescriptiveDataModule"
+   ]
+  },
+  {
+   "q": "how did the price build up",
+   "scope": [
+    "PRODUCTION_COST"
+   ],
+   "winner": "CostCategory",
+   "winner_uri": "http://invincible-agent/cost#CostCategory",
+   "confidence": 0.96,
+   "winner_carries_verb_in_scope": false,
+   "candidates": [
+    "ProductionLot",
+    "CostCategory",
+    "Supplier",
+    "ProductionProgram"
+   ]
+  },
+  {
+   "q": "how did the price build up",
+   "scope": "unscoped",
+   "winner": "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
+   "winner_uri": "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
+   "confidence": 0.15,
+   "winner_carries_verb_in_scope": true,
+   "candidates": [
+    "https://spec.industrialontologies.org/ontology/maintenance/MaintenanceReferenceOntology/TechnicalManual",
+    "FaultIsolationDataModule",
+    "ProcedureDataModule"
+   ]
+  }
+ ]
+}
