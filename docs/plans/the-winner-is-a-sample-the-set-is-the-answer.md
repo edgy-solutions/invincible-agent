@@ -6,7 +6,7 @@ blocked-on:
 repo:       invincible-agent
 ruled-by:   ADR-0031 (instance resolution ladder); ADR-0025 (the can_view-filtered candidate pool)
 code-site:  agent_fleet/ontology_service/main.py (/resolve — candidate recall, then selection), docs/measurements/engine-f-end-to-end-routing-v1.md and engine-f-grounding-corpus-v1.json (the totals this retires)
-summary:    MEASURED 2026-09-01, arm A n=3 on one fixed substrate, recording the candidate SET and the WINNER on every draw. The candidate sets are DETERMINISTIC — 0 of 20 flipped. The winner selected from them is NOT — 2 of 20 flipped, and that is a FLOOR rather than a rate: a third row flipped between two earlier runs and held across these three, so n=3 understates it. CONSEQUENCE: a right-class grounding TOTAL is not a usable instrument at this precision, because it sums twenty draws from a partly non-deterministic selection layer sitting on top of a stable one. This retires BOTH published totals for the finance corpus — 11/20 and 12/20 — and, more importantly, retires the DIFFERENCE between them, which was read as substrate evidence and discriminates nothing: one of the two known-unstable rows IS the row the difference consisted of. THE FORBIDDEN ARITHMETIC is treating 2/20 as a noise budget and subtracting it from a delta; the claim the data supports is qualitative and stronger than any budget. What to measure instead: SET DISJOINTNESS, which is measured on the deterministic layer. SCOPE ESCALATED 2026-09-02: the non-determinism is NOT confined to the layer measured here. `"what is the funding status"` — one of the rows already named unstable — produced `subject_uri=UNKNOWN subject_conf=0.0 fallback_reason=subject_unknown` on one draw and grounded to `fin:Program` at 0.9 on both re-draws. That is the GROUNDING layer failing, not a different winner inside a stable set, and it is WORSE: a subject_unknown skips the mesh entirely for the generalist fallback, so the question is answered by a component that was never eligible. n=3 on a known flipper evidences no rate and none is claimed; what changed is the finding's SCOPE.
+summary:    MEASURED 2026-09-01, arm A n=3 on one fixed substrate, recording the candidate SET and the WINNER on every draw. The candidate sets are DETERMINISTIC — 0 of 20 flipped. The winner selected from them is NOT — 2 of 20 flipped, and that is a FLOOR rather than a rate: a third row flipped between two earlier runs and held across these three, so n=3 understates it. CONSEQUENCE: a right-class grounding TOTAL is not a usable instrument at this precision, because it sums twenty draws from a partly non-deterministic selection layer sitting on top of a stable one. This retires BOTH published totals for the finance corpus — 11/20 and 12/20 — and, more importantly, retires the DIFFERENCE between them, which was read as substrate evidence and discriminates nothing: one of the two known-unstable rows IS the row the difference consisted of. THE FORBIDDEN ARITHMETIC is treating 2/20 as a noise budget and subtracting it from a delta. ⛔ CORRECTED 2026-09-04, AND THE CORRECTION IS TO THIS PACKET'S OWN CONCLUSION: "not a usable instrument at this precision" says the number is NOISY, which implies more samples would rescue it. One of the flipping rows was flipping onto fin:EarnedValueTechnique, a class served by NO VERB IN ANY SCOPE — so one outcome answers and the other falls through to the generalist, and the draws are not measurements of the same KIND of event. Noisy and CATEGORICALLY MIXED are different defects with different remedies: noise is answered by n, a mixed population by nothing except splitting it. And "assert on the set" does not rescue right-class scoring either, because the dead end is IN the set, deterministically, every draw. What to measure instead: SET DISJOINTNESS, which is measured on the deterministic layer. SCOPE ESCALATED 2026-09-02: the non-determinism is NOT confined to the layer measured here. `"what is the funding status"` — one of the rows already named unstable — produced `subject_uri=UNKNOWN subject_conf=0.0 fallback_reason=subject_unknown` on one draw and grounded to `fin:Program` at 0.9 on both re-draws. That is the GROUNDING layer failing, not a different winner inside a stable set, and it is WORSE: a subject_unknown skips the mesh entirely for the generalist fallback, so the question is answered by a component that was never eligible. n=3 on a known flipper evidences no rate and none is claimed; what changed is the finding's SCOPE.
 ---
 
 # The winner is a sample; the set is the answer
@@ -53,6 +53,32 @@ three rows are unstable and **n=3 understates it**.
 >
 > **The supportable claim is qualitative and stronger than any budget: a right-class grounding
 > total is not a usable instrument at this precision.**
+>
+> ### ⛔⛔ AND THAT CLAIM IS TOO WEAK — corrected 2026-09-04
+>
+> *"Not usable at this precision"* says the number is **NOISY**, which implies more samples
+> would rescue it. They would not. One of the flipping rows was flipping onto
+> `fin:EarnedValueTechnique`, **a class served by no verb in any scope** — so one of its two
+> outcomes routes and answers and the other falls through to the generalist.
+>
+> **The draws in that column are not measurements of the same kind of event.** Noisy and
+> CATEGORICALLY MIXED are different defects with different remedies: noise is answered by n,
+> and a mixed population is answered by nothing except splitting it. Averaging an answer
+> together with a non-answer produces a number that is not imprecise — it is about no single
+> thing.
+>
+> This packet had the weaker diagnosis written down as the finding, and a reader following it
+> would have raised n and believed the result.
+
+### The remedy in this packet's title is also incomplete
+
+"Assert on the set" reads the layer that holds still, and it remains right for the question it
+was written for — **did a response shape leave the candidate set**. It does NOT rescue
+right-class scoring, because a set containing an unserved class is not a set one outcome of
+which is correct: the dead end is IN the set, deterministically, every draw.
+
+So the set being stable was never evidence that the set was answerable. Those are different
+properties and this packet used the first as comfort about the second.
 
 ## What this retires
 
