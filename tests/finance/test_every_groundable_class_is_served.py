@@ -19,15 +19,30 @@ So the guard is a useful in-engine approximation and NOT sufficient on its own, 
 adopting it should know that before they rely on it. This test is the other half, and it lives
 at the pool level because that is where the seeded TTLs can be read.
 
-THE SAME QUERY OVER OTHER NAMESPACES, same run, reported and not asserted here — those engines
-are other lanes' and their declarations are theirs to write:
+THE SAME QUERY OVER OTHER NAMESPACES, reported and not asserted here — and CORRECTED once,
+which is the part worth carrying:
 
     cost#   2 unserved   (CostCategory, Supplier — the defect that prompted the extraction)
-    idp#    4 unserved   (Dashboard, Job, Pipeline, Table)
+    idp#    2 unserved   (Job, Pipeline)
 
-Whether this seal should be widened to fail for them is a decision with an owner, and it is not
-this lane's to take: exemptions authored on another lane's behalf, with reasons invented here,
-would be the stale-exemption defect created rather than caught.
+⛔ THE idp: NUMBER WAS FIRST REPORTED AS FOUR, from this file's own method — counting verb
+subjects GLOBALLY out of source. Checked per scope against the live graph it is two: Dashboard
+and Table carry nine verbs each in DATA_ENGINEERING and correctly zero under
+PORTFOLIO_PLANNING, which is the domain filter working rather than a gap.
+
+**So "groundable and unserved" is DOMAIN-RELATIVE, and the assertion that holds is UNSERVED IN
+EVERY SCOPE.** A global count calls a class fine when a user in one domain cannot route to it;
+a per-domain count calls it a gap when it is correctly out of scope.
+
+THIS SEAL SURVIVES THAT CORRECTION ONLY BECAUSE PROGRAM_FINANCE IS SINGLE-DOMAIN: every fin:
+verb is registered under exactly one domain, so global and per-scope counts coincide here. A
+multi-domain engine copying this file MUST check per scope instead — and
+fin:EarnedValueTechnique was re-verified under the stricter test (0 verb edges in EVERY scope)
+rather than being assumed to carry over.
+
+Whether this seal should be widened to fail for other namespaces is a decision with an owner,
+and it is not this lane's to take: exemptions authored on another lane's behalf, with reasons
+invented here, would be the stale-exemption defect created rather than caught.
 """
 from __future__ import annotations
 

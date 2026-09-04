@@ -103,6 +103,56 @@ measures**.
   grounded question crosses. A planning or catalog corpus scored by right-class totals inherits
   the same defect; none has been measured for it.
 
+## 2026-09-04 — ONE OF THE FLIPPING ROWS WAS FLIPPING ONTO A DEAD END
+
+**Two lanes had two ends of one incident and neither saw the other.** This packet recorded
+`"show me SPI over time"` flipping between `PerformanceMeasurementBaseline` and
+`EarnedValueTechnique` and filed it as WINNER INSTABILITY. Engine F separately found that
+`fin:EarnedValueTechnique` is **served by no verb in any scope** — verified against the live
+graph, 0 verb edges, while every other groundable `fin:` class carries between one and six.
+
+**They are the same row.** The sampler was not choosing between two answers; it was choosing
+between an answer and a fall-through.
+
+### This makes the CONSEQUENCE of a winner flip worse than recorded here
+
+The packet treats a flip as landing on a different-but-comparable class, which is why
+"a right-class total is not a usable instrument" was the strongest claim drawn from it. That
+understates it. A flip between a SERVED and an UNSERVED class is not a coin toss between two
+readings — one outcome routes and answers, and the other **grounds at high confidence, finds
+no verb, and falls through to the generalist, which answers wearing the caller's persona.**
+
+So a row can be recorded as "unstable" when half its draws are not answers at all. **Nothing
+in a winner-scored run distinguishes those two outcomes**, because both produce a class name
+to write in the results column.
+
+### What to record per draw, revised again
+
+The escalation below added `subject_unknown` as a third outcome alongside the set and the
+winner. This adds a fourth thing, and it is a property of the WINNER rather than of the draw:
+
+> **does the class that won carry a verb in this scope?**
+
+It is cheap — one lookup against the registered verb edges — and without it a corpus cannot
+tell a wrong answer from no answer. Both of this lane's measurement instruments were blind to
+it: the grounding corpus scored the class name, and the boot guard could not see the class at
+all (`[[a-namespace-is-declared-in-four-places]]`'s sibling — the guard reads what the ENGINE
+resolves, the router reads what the PRIME seeded).
+
+### And "unserved" is DOMAIN-RELATIVE, which neither lane had right at first
+
+Credit where it is owed: a first pass over `idp:` reported **four** unserved classes by
+counting verb subjects globally from source. Checked per scope against the live graph it is
+**two** — `Dashboard` and `Table` carry nine verbs each in `DATA_ENGINEERING` and correctly
+zero under `PORTFOLIO_PLANNING`, which is the domain filter working rather than a gap.
+
+**So the assertion that holds is UNSERVED IN EVERY SCOPE.** A global count reports a class as
+fine when a user in one domain cannot route to it; a per-domain count reports it as a gap when
+it is correctly out of scope. Neither number is the answer alone.
+
+`fin:EarnedValueTechnique` was re-checked under the stricter test and still qualifies: 0 verb
+edges in every scope.
+
 ## SCOPE ESCALATION 2026-09-02 — the recall layer is not unconditionally deterministic either
 
 This packet's central split was: **the candidate SET holds still (0/20 flipped) and the WINNER
