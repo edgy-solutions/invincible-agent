@@ -214,3 +214,38 @@ the next thread, and it is deliberately left open rather than guessed at.
 pre-registered expectation for `cost_price_composition` — verb answers, card refuses for want
 of a waterfall archetype — remains **untested**. It is now blocked on the scope-selection
 finding above rather than on entitlement.
+
+---
+
+# SECOND PRIME — 2026-09-03, run UNWRAPPED. The cascade closes.
+
+**Revision 98, `deployed`, "Upgrade complete".** The difference from the first attempt is the
+only thing that changed: the script was invoked **with no external `timeout` wrapper**, so its
+own `HELM_TIMEOUT=75m` was the binding budget rather than a ten-minute outer kill.
+
+**THE WHOLE HOOK CHAIN RAN, and that is the finding rather than a formality:**
+
+| hook | first attempt (wrapped) | this run (unwrapped) |
+|---|---|---|
+| `iagent-db-init` | Complete | Complete |
+| `iagent-realm-reconcile` | Complete | Complete |
+| `iagent-prime-substrate` | Complete (51m) | Complete (56m), **18 ok / 0 failed / 0 unfinished** |
+| `iagent-ontology-seed` | — | Complete |
+| **`iagent-engine-reregister`** | **NEVER CREATED** | **Complete (38s)** |
+
+The first run's registration had to be repaired by a hand `rollout restart` precisely because
+that last hook did not exist. **An under-set outer timeout is not "waiting less" — it drops the
+tail of the chain**, and the tail is where the repair lives. Runbook §10 row 18.
+
+## Post-conditions, by name, after a full wipe and re-ingest
+
+| check | result |
+|---|---|
+| `cost:` classes | **11**, zero missing, zero extra |
+| engine-cost verbs | **6**, non-null, all six names correct |
+| `mesh:SlotElicitation` | **present** — the class this prime carried |
+| engine-p | **16 distinct verbs** (pre-registered 16) |
+| engine-fin | **8 distinct verbs** (pre-registered 8) |
+
+Neither neighbour moved. Registration was repaired **by the hook** this time, not by hand,
+which is the behaviour the reregister list exists to produce.
