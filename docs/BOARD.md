@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **118 of 130 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **119 of 131 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -121,6 +121,10 @@ _Coverage: **118 of 130 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **cortex-ui-no-test-runner** — cortex-ui has NO test runner at all — no vitest, no jest, no `test` script, zero test files. Found 2026-08-20 while building the presentation contract slice. This is why ten hand-copied capability contracts could drift with nothing pinning them: the drift was not missed, it was UNOBSERVABLE. Sibling of no-ci-gate-on-the-suite, one repo over.
   status: open · owner: unassigned · repo: cortex-ui
   → [docs/plans/cortex-ui-no-test-runner.md](plans/cortex-ui-no-test-runner.md)
+
+- **cost-category-and-supplier-need-verbs** — RULED — cost:CostCategory and cost:Supplier get VERBS, not the mesh:ResolvableReferent marker. Both were removed from /resolve's candidate pool by the productive-option gate (PRODUCTION_COST pool 5 -> 3), which is CORRECT: a class a question will target with nothing behind it is a missing verb, and declaring it a referent would convert this lane's omission into something wearing a decision's clothes. Both are real questions already named in the engine's own spec and left unimplemented — "where did the money go on this lot" (category breakdown) and supplier concentration above a threshold. Needs two verbs, two response shapes in the TTL, slot declarations, and therefore a prime window; the classes themselves already exist. Until then the gate correctly hides them and the cross-engine seal correctly stays red.
+  status: open · owner: unassigned
+  → [docs/plans/cost-category-and-supplier-need-verbs.md](plans/cost-category-and-supplier-need-verbs.md)
 
 - **da-collects-before-filtering** — `SELECT ... LIMIT 2` reads the ENTIRE table into RAM. `get_dataframe` returns a LazyFrame so scans can push down projections and limits, and `.collect()` discards that one line later — so memory is a function of the DATASET, never of the query. OOM-killed Engine DA at work 2026-08-14 on a two-row read.
   status: open · owner: agent · blocked-on: nothing — the defect is two lines and the repair is a design choice about WHERE the query executes.

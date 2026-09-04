@@ -350,3 +350,58 @@ still answered from the catalog. A single-mechanism story cannot hold both facts
 **The instrument lesson, and it is the same one twice in a night:** replacing one finding with
 another is itself a claim, and it needs the same evidence as the original. I retired a true
 finding because a better-looking one arrived.
+
+---
+
+# THE WBSElement FINDING, CORRECTLY READ — and what it actually exposes
+
+**Confirmed by the producing lane, with digests: my capture is an AFTER.** Pre-roll image
+`sha256:679af347…`, running `sha256:1bfd9214…` started 13:40:54Z, which roll-litany reported
+as the `4d13eee` build. **The pre-gate state is gone and is not recoverable** — rolling
+backwards to manufacture one would be a worse instrument than the honest gap, so the gap
+stands. File already renamed `pool-gate-state-…json`.
+
+*Their pool-level before/after survives independently, because they took both sides
+themselves:* `PRODUCTION_COST` pool **5 → 3**, with `CostCategory` and `Supplier` removed. That
+is the mechanism claim and it holds.
+
+## "The winner is outside the candidate set" is DELIBERATE, not a defect
+
+`agent_fleet/ontology_service/main.py`, Step 4 — the instance-resolution pre-step (Recipe v2):
+
+> *If the LLM extracted a named-individual identifier, fan it out to registered
+> `mesh:resolveInstance` providers. A unanimous-class answer **OVERRIDES** the LLM's guess.*
+
+and it returns the **pre-override** pool deliberately, so a decision path can show *"the LLM
+guessed X from these candidates; instance resolution then overrode to Y."*
+
+**So my ten draws are that path firing on "lot 4".** `candidates` is the class contest's pool;
+`resolved_uri` legitimately came from the phone book instead. **I reported documented behaviour
+as an anomaly** — I had the observation right and its meaning wrong, and the meaning was
+readable in the code I did not open.
+
+## What it DOES expose, which is real and is the producing lane's
+
+**The gate constrains what the LLM may CHOOSE. It does not constrain what instance preemption
+may OVERRIDE WITH.** A provider can return a class carrying no verb in the caller's domains and
+nothing checks it — so the dominant dead end here (`WBSElement`, 5 of 9) is reached by **the one
+path the gate cannot see**. Two ways into `resolved_uri`; one of them gated.
+
+**And `fin:WBSElement` is in engine-fin's `_NO_VERB_BY_DESIGN`** — a legitimate drill-down
+referent. So resolving *"lot 4"* to it is arguably **instance resolution working correctly**.
+What is missing is that nothing then notices the resulting subject is unanswerable; the router
+simply falls through.
+
+**Which makes the repair a RULING, not a patch:** *an override onto an unserved class must
+abstain or ask, rather than proceed.* Filed by the producing lane, not fixed tonight, and
+correctly so — "block the override" would break a working referent path to fix a missing
+refusal.
+
+## Three mechanisms, one symptom — the full chain as it now stands
+
+1. the session grounds with **`domains=['DATA_ENGINEERING']`** for a cost question
+2. instance preemption **overrides onto a verbless class** (`WBSElement`), ungated
+3. nothing notices the subject is **unanswerable**, so routing falls through to the catalog
+
+Each was found by a different instrument, and none of the three would have been visible from
+the BFF answer alone — which read, for all six phrasings, as *"the catalog has no such asset."*

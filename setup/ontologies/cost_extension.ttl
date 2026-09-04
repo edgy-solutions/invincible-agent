@@ -66,6 +66,26 @@ cost:RateTable a owl:Class ;
     rdfs:label "Rate Table" ;
     rdfs:comment "The set of direct rates, indirect rates and escalation indices in force for a fiscal year, carrying the date on which that set was fixed. Questions asking which assumptions produced a number, what escalation was applied, or what the burden factors were at a stated point in time target this class. Two answers computed from different vintages of the same fiscal year are both correct and are not comparable, which is why the vintage is part of the identity rather than metadata about it." .
 
+# -- RULED 2026-09-04: CostCategory AND Supplier GET VERBS, NOT THE REFERENT MARKER ----
+# Both were removed from /resolve's candidate pool by the productive-option gate (the
+# PRODUCTION_COST pool went 5 -> 3), because neither carries a verb. That is CORRECT and is
+# left alone deliberately.
+#
+# mesh:ResolvableReferent is NOT FOR GAPS. A class a question will target with nothing behind
+# it is a MISSING VERB; declaring it a referent converts an omission into something wearing a
+# decision's clothes. The marker belongs to a class a caller names ON THE WAY TO another
+# answer -- fin:WBSElement's case -- not to one a caller asks about directly. Both of these
+# are asked about directly, and both are named in this engine's own spec and were left
+# unimplemented when the six verbs were chosen.
+#
+# The build is docs/plans/cost-category-and-supplier-need-verbs.md. Until it lands the gate
+# correctly hides both and the cross-engine seal correctly stays red. NEITHER IS TO BE
+# SOFTENED to remove the symptom -- that removes the signal with it.
+#
+# NOTE ON THE DEFINITIONS BELOW: they are unchanged. The definition is the RECALL SIGNAL,
+# written for the class and never for a query, so a ruling about roadmap does not belong in
+# rdfs:comment. It lives here, as a file comment, where it does not compete for traffic.
+
 cost:CostCategory a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Cost Category" ;
