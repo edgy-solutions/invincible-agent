@@ -1,8 +1,10 @@
 ---
 id:         period-series-is-a-cost-curve
-status:     open
+status:     closed
 owner:      agent (Engine F lane) — THE BINDING IS MINE; the archetype contract and renderer are cortex-ui's
-blocked-on: a ruling — mint a new archetype, or generalise PERIOD_SERIES
+blocked-on: 
+closed-by:  eb65ee3
+closed-by-note: VERIFIED BY HAND because the generator could not: eb65ee3 touches TWO declared code-sites — agent_fleet/presentation_agent/capabilities.py (the two bindings) and tests/planning/test_producers_speak_their_archetype.py (_FIN_WRONG_ARCHETYPE, emptied by that commit). The attribution check reads the code-site field as paths and every entry here carries a parenthetical, so the match fails on FORMAT rather than on fact. Second packet tonight to hit this; the parser limitation belongs to whoever owns scripts/generate_board.py, and the check itself is correct and should not be weakened to accommodate my formatting.
 repo:       invincible-agent
 ruled-by:   ADR-0045 (the amendment's precedent: when no archetype fits, MINT one); ADR-0042 §2 (the selector decides from the payload); ADR-0030 (one verb, one fixed output type)
 code-site:  cortex-ui/src/components/planning/PeriodSeries.contract.ts (PeriodSeriesRow, validatePeriodSeries:178), cortex-ui/src/components/planning/PeriodSeries.tsx (hardcoded capex/expense bars), agent_fleet/presentation_agent/capabilities.py (the two bindings), tests/planning/test_producers_speak_their_archetype.py (_FIN_WRONG_ARCHETYPE)
@@ -10,6 +12,27 @@ summary:    PERIOD_SERIES IS ENGINE P'S COST CURVE WEARING A GENERIC NAME, and I
 ---
 
 # `PERIOD_SERIES` is a cost curve, and I bound finance to it because the name sounded right
+
+> **CLOSED eb65ee3. Option A was taken: `mesh:MultiSeries` was MINTED, not PERIOD_SERIES
+> generalised.** Several named quantities over the same periods, no cap, and the payload
+> DECLARES which of its keys are series — because a renderer that infers them hardcodes, which
+> is precisely how PERIOD_SERIES became specific in the first place.
+>
+> Both finance verbs were rebound and both cards now satisfy every declared refusal condition:
+> burn draws 6 periods x 2 USD series, indices draw 6 periods x 2 DIMENSIONLESS series.
+>
+> **The multi-series objection is what decided it.** Option B — give PERIOD_SERIES a
+> `value_label` like its siblings — could not express two series, and burn (spend vs plan) and
+> indices (CPI vs SPI) both have two. A single named value field was the wrong shape, so the
+> "smaller" fix was not smaller, it was insufficient.
+>
+> Option C stayed refused: a renderer plotting "any numeric field" draws `trailing_periods: 6`
+> as a third line beside burn and planned — a confident wrong picture, which is worse than the
+> honest refusal it replaces.
+>
+> **PERIOD_SERIES keeps its misleading name and its cost-curve contract.** Nothing here fixed
+> that; the next engine to read "period series" and assume generic will make the same binding
+> error. Left standing deliberately as a separate, un-owned finding.
 
 ## What a person sees
 

@@ -1,8 +1,10 @@
 ---
 id:         a-mandatory-slot-does-not-refine
-status:     open
+status:     closed
 owner:      agent (Engine F lane) — FILED, NOT FIXED: the filler is outside this lane's fences
-blocked-on: the filler/supervisor lane
+blocked-on: 
+closed-by:  863a3a4
+closed-by-note: VERIFIED BY HAND because the generator could not: 863a3a4 touches src/iagent/defs/dynamic_supervisor.py, which IS the first declared code-site. The attribution check reads the code-site field as paths and this entry carries a line number and a parenthetical (`dynamic_supervisor.py:1517 (_FILL_SLOTS_TIMEOUT_S...)`), so the match fails on FORMAT rather than on fact. The check is right to demand attribution and I am not weakening it; the parser limitation belongs to whoever owns scripts/generate_board.py.
 repo:       invincible-agent
 ruled-by:   ADR-0033 (route | ask | abstain; the four-kind slot vocabulary); ADR-0045 (Engine F declares slots from day one)
 code-site:  src/iagent/defs/dynamic_supervisor.py:1517 (_FILL_SLOTS_TIMEOUT_S, env FILL_SLOTS_TIMEOUT_S, default 20), dynamic_supervisor.py:~2009 (the ask_card branch whose expert_response carries no output_uri), agent_fleet/finance_agent/slots.py (the spoken-mandatory declarations)
@@ -10,6 +12,22 @@ summary:    THE 20-SECOND FILL_SLOTS BUDGET IS JUSTIFIED BY A PREMISE THAT IS FA
 ---
 
 # A mandatory slot does not refine — so a timeout on it is not a default
+
+> **CLOSED 863a3a4.** The filler lane took ruling (2): the `fill_slots` budget is now
+> conditional on the ROUTED VERB'S SLOT CENSUS — 75s when any slot is spoken-mandatory, the
+> original 20s otherwise, with route-supplied `handle` and `ceremony` deliberately not
+> counting, since nobody speaks them and counting them would give every verb the long budget
+> and silently undo the conditionality.
+>
+> **Verified on the deployed cluster: ZERO `fill_slots unavailable` warnings across every run
+> since the roll**, where previously every finance question hit it.
+>
+> ⚠️ **RULING (3) IS NOT CLOSED BY THIS AND IS NAMED IN THE FIX'S OWN DOCSTRING:** a longer
+> budget makes the timeout rare, it does not make `{}` honest. A genuine failure still returns
+> the same empty dict as a successful extraction from a question that named nothing — identical
+> shape, opposite meaning — so the ask still cannot tell "the speaker did not say" from "we
+> failed to look." That is a change to the ask disposition's INPUT and belongs to a separate
+> packet; it is an instance of `[[a-degradation-must-name-itself]]` one layer down.
 
 ## The premise, quoted from the code it justifies
 

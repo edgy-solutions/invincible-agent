@@ -2,11 +2,11 @@
 id:         engine-f-ui-path-seam-audit-v1
 status:     open
 owner:      agent
-blocked-on: seam 9 — the filler lane (FILL_SLOTS_TIMEOUT_S vs spoken-mandatory slots)
+blocked-on: a human look — every seam is repaired and no card has been seen render
 repo:       invincible-agent
 ruled-by:   ADR-0019 (Contract D, atomic); ADR-0017 (rendersAs); ADR-0045 (Engine F)
 code-site:  agent_fleet/utils/mesh_registration.py:492, agent_fleet/presentation_agent/capabilities.py:32, src/iagent/gateway.py:4330 (_emit_presentation_to_registrar call), agent_fleet/presentation_agent/capability_registry.py:239 (select_archetype)
-summary:    EVERY SEAM ON THE FINANCE CARD PATH AUDITED INDIVIDUALLY, 2026-09-01/02. STARTED as one seam and ENDED as three, because the first was masking the others — all three produce the identical observable, a card reading `Knowledge Document / No content available`. SEAM 8 (bindings) IS FIXED AND PROVEN: `fin:` was absent from the CURIE prefix map, so the gateway emitted the subject compact, the registrar MATCHed against :OntologyClass nodes holding FULL IRIs, and Contract D refused all six atomically while the POST returned `200 OK, accepted: 29, rejected: []`. After the one-line fix and a redeploy: cortex-ui-desktop rows 23->29, __system_default__ 10->16, graph-registration failures 6->0, and the selector returns the intended archetype for 6/6 with a biting negative control. SEAM 9 STOPS ALL SIX and is fenced: fill_slots times out at 20s while engine-o extracts the slot correctly and returns 200, so the mandatory slot is unfilled, the disposition correctly becomes an ASK, and an ask card has no output_uri. SEAM 10 STOPS FOUR and is MINE: the six verbs declare four subjects, so a question naming the program grounds to fin:Program where compatible_count=2 and four verbs were never candidates. The classifier is right every time. Also observed, unowned: supervisor_query_job takes 5-6.5 min and the BFF reports dagster_run_failed for runs that log RUN_SUCCESS.
+summary:    EVERY SEAM ON THE FINANCE CARD PATH AUDITED INDIVIDUALLY, 2026-09-01/04. STARTED as one seam and ENDED AS FOURTEEN, because each repair uncovered the next — all three produce the identical observable, a card reading `Knowledge Document / No content available`. SEAM 8 (bindings) IS FIXED AND PROVEN: `fin:` was absent from the CURIE prefix map, so the gateway emitted the subject compact, the registrar MATCHed against :OntologyClass nodes holding FULL IRIs, and Contract D refused all six atomically while the POST returned `200 OK, accepted: 29, rejected: []`. After the one-line fix and a redeploy: cortex-ui-desktop rows 23->29, __system_default__ 10->16, graph-registration failures 6->0, and the selector returns the intended archetype for 6/6 with a biting negative control. SEAM 9 STOPS ALL SIX and is fenced: fill_slots times out at 20s while engine-o extracts the slot correctly and returns 200, so the mandatory slot is unfilled, the disposition correctly becomes an ASK, and an ask card has no output_uri. SEAM 10 STOPS FOUR and is MINE: the six verbs declare four subjects, so a question naming the program grounds to fin:Program where compatible_count=2 and four verbs were never candidates. The classifier is right every time. Also observed, unowned: supervisor_query_job takes 5-6.5 min and the BFF reports dagster_run_failed for runs that log RUN_SUCCESS.
 ---
 
 # Engine F → card: every seam, audited one at a time
@@ -148,18 +148,45 @@ which answers the question. Nothing traverses Program → its PMB.
 Filed: `[[four-subjects-means-four-questions]]`. **This one is mine** — the subjects are my
 authoring decision.
 
-### The corrected seam table
+### The corrected seam table — CURRENT as of 2026-09-04
 
-| seam | state | stops |
-|---|---|---|
-| 1–7 (routing, entitlement, verbs, payloads, classes, archetypes, HUD) | ✅ | — |
-| 8 rendersAs bindings | ✅ **FIXED, 6/6 proven** | — |
-| 9 fill_slots budget vs mandatory slots | ❌ filed, fenced | **all six** |
-| 10 four subjects, no traversal | ❌ filed, mine | **four of six** |
+**Fourteen seams, not three.** The audit opened calling it one, revised to three, and each
+repair uncovered the next — because every one of them rendered as the same card.
 
-**Three distinct causes, one observable.** That is the finding worth carrying: a card reading
-`Knowledge Document · No content available` names none of them, and fixing the first only
-revealed the second.
+| seam | state | owner | stopped |
+|---|---|---|---|
+| 1–7 routing, entitlement, verbs, payloads, classes, archetypes, HUD | ✅ verified | — | — |
+| 8 `rendersAs` bindings — `fin:` absent from two prefix maps | ✅ **fixed** | mine | all six |
+| 9 `fill_slots` budget applied to spoken-MANDATORY slots | ✅ **fixed** `863a3a4` | filler lane | all six |
+| 10 four verbs on subjects no question names | ✅ **fixed** | mine | four of six |
+| 11 three minted archetypes never projected → generative renderer | ✅ **fixed** | mine | three of six |
+| 12 `PERIOD_SERIES` is a cost curve — the binding was never satisfiable | ✅ **fixed** via `mesh:MultiSeries` | mine + cortex | two of six |
+| 13 a rebind INSERTS rather than replaces; the stale binding wins | ✅ **cleared** (4 rows deleted) | mine | two of six |
+| 14 projector passthrough dropped `reference` / `verdict` | ✅ **fixed** | mine | two cards' captions |
+
+**Nine of the fourteen were mine.** The two that were not — the filler budget and the
+archetype contract — were both found by another lane reading a symptom I had misdiagnosed.
+
+#### What each repair revealed, which is the shape worth carrying
+
+Seam 8 fixed and **nothing observable changed**, because 9 was behind it. 9 fixed and three
+cards drew while three fell to a generative renderer — 11. 11 fixed and two cards mounted and
+refused — 12. 12 fixed and the old binding still won — 13. 13 cleared and two captions were
+missing — 14.
+
+**Six repairs, each correct, five of which produced no visible improvement at the time.** A
+card reading `Knowledge Document · No content available` named none of them, which is
+`[[a-degradation-must-name-itself]]` measured rather than argued.
+
+#### The one that is still open
+
+| | |
+|---|---|
+| all six payloads satisfy every declared refusal condition | ✅ measured |
+| **a person has seen the cards render** | ⏳ **not yet** |
+
+That distinction is the audit's own lesson: this document once said "all six draw" on the
+strength of an archetype label and was wrong. It stays `open` until someone reloads.
 
 ### One more thing the runs showed
 
@@ -169,12 +196,23 @@ the user sees for a run that succeeded is its own defect; unowned and unfiled he
 
 ## What remains
 
-1. **Push `9022c3b` + `4e69947`** → rebuild `cortex-bff` and `engine-f`. *(Blocked: the push was
-   refused by this session's classifier and was not routed around.)*
-2. Re-register cortex's menu — a page load, or the headless procedure in
-   `adding-an-engine.md` §6b.
-3. Assert **6** `fin:` rows under `cortex-ui-desktop`, then drive the six phrasings and read the
-   cards. **Not "routing works" — the card.**
+**One thing, and it is not code.** Every seam in the table above is repaired, deployed and
+measured. The bar this audit was opened against has one clause left:
+
+> *no "routing works" standing in for "the card appeared."*
+
+1. **Reload the UI and read the six cards.** Not an archetype label, not a payload that
+   satisfies its contract — the rendered card. This document has already been wrong once by
+   substituting the first for the third, and it was wrong in exactly the direction that reads
+   like success.
+2. While reloading: **omit a program name.** The typed-ask path (`mesh:AskCard`, `ELICITATION`)
+   is primed and on master and has never been walked by a person. Whether the
+   `KNOWLEDGE_DOCUMENT` fallback is gone is unmeasured, and it is a different lane's next item
+   either way.
+
+*(The original list here — push two commits, re-register the menu, assert six rows — is done:
+the commits shipped, the menu carries 6 `fin:` rows, and the six phrasings were driven. It
+read as blocked on a classifier refusal that was resolved days ago.)*
 
 ## Method note
 

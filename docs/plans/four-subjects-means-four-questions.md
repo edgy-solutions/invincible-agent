@@ -2,7 +2,7 @@
 id:         four-subjects-means-four-questions
 status:     open
 owner:      agent (Engine F lane) — MINE: the subjects are my authoring decision
-blocked-on:
+blocked-on: an ADR-0045 amendment — the relation-following ladder step, deliberately not built
 repo:       invincible-agent
 ruled-by:   ADR-0045 (Engine F verbs over IPMDAR entities); ADR-0031 (instance resolution ladder); ADR-0033 (route | ask | abstain)
 code-site:  agent_fleet/finance_agent/main.py (VERBS, the input_uri per verb), setup/ontologies/finance_extension.ttl (the eight subject nouns)
