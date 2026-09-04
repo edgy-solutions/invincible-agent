@@ -112,6 +112,92 @@ def _module_string_consts(tree: ast.Module) -> dict[str, str]:
     return out
 
 
+def _package_string_consts(py: Path) -> dict[str, str]:
+    """Module-level string constants from every sibling module in the same package.
+
+    THE SECOND HOP, and it is why the first repair only half worked. finance defines
+    FIN = "http://..." in its own measures.py and resolved immediately; cost IMPORTS COST
+    from .state, so the prefix was not a local constant and COST + "LotCostBreakdown"
+    stayed unresolvable. Two engines, same construction, different visibility — and a seal
+    that handled only the visible one would have been green for cost while blind to it,
+    which is the exact failure this repair exists to end.
+
+    Locals win over siblings; a package-wide collision on an IRI prefix is not a real case
+    and preferring the nearer definition is the conservative resolution.
+    """
+    out: dict[str, str] = {}
+    for sib in sorted(py.parent.glob("*.py")):
+        if sib == py:
+            continue
+        try:
+            out.update(_module_string_consts(ast.parse(sib.read_text(encoding="utf-8"))))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+    return out
+
+
+def _module_dicts(tree: ast.Module, consts: dict[str, str]) -> dict[str, list[str]]:
+    """Module-level `NAME = {...}` whose values resolve to IRIs.
+
+    THE FORM THAT MADE THIS SEAL BLIND. Every measure-based engine registers as
+    `output_uri=measures.OUTPUT_URI[fn_name]` — an ast.Subscript, unresolvable — and the
+    dict's KEYS are function names, so the dict scan below never matched either. The seal
+    was green over a population that excluded engine-cost, engine-fin and engine-p: all
+    three of them, which is every engine that uses a lookup table.
+
+    Measured 2026-09-04: 16 outputs harvested, ZERO of them `cost:`, while 6 of
+    engine-cost's 11 classes were groundable-and-unserved response shapes.
+    """
+    out: dict[str, list[str]] = {}
+    for node in tree.body:
+        target = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            target, value = node.targets[0].id, node.value
+        if target and isinstance(value, ast.Dict):
+            vals = [v for v in (_resolve(x, consts) for x in value.values)
+                    if v and v.startswith("http")]
+            if vals:
+                out[target] = vals
+    return out
+
+
+def _sibling_dict(py: Path, mod_name: str, dict_name: str) -> list[str]:
+    """Resolve `<module>.<DICT>` by parsing the sibling module in the same package.
+
+    Derived from the CALL SITE, never from a remembered list of dict names — the point of
+    the repair is that a new engine using a new table name is covered without an edit here.
+    """
+    sib = py.parent / f"{mod_name}.py"
+    if not sib.exists():
+        return []
+    try:
+        tree = ast.parse(sib.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return []
+    consts = {**_package_string_consts(sib), **_module_string_consts(tree)}
+    return _module_dicts(tree, consts).get(dict_name, [])
+
+
+def _resolve_subscript(node: ast.AST, py: Path, own: dict[str, list[str]]) -> list[str]:
+    """`TABLE[k]` and `mod.TABLE[k]` -> every value in TABLE.
+
+    The key is a runtime value, so the honest harvest is the whole column: any of them
+    could be the registered URI, and a seal that guessed one would be asserting on a
+    neighbour of the claim.
+    """
+    if not isinstance(node, ast.Subscript):
+        return []
+    base = node.value
+    if isinstance(base, ast.Name):
+        return own.get(base.id, [])
+    if isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name):
+        return _sibling_dict(py, base.value.id, base.attr)
+    return []
+
+
 def _resolve(node: ast.AST, consts: dict[str, str]) -> str | None:
     """Resolve `"literal"` and `PREFIX + "literal"`. Anything else is unresolvable."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -143,15 +229,22 @@ def _endpoint_uris() -> tuple[set[str], set[str]]:
                 tree = ast.parse(py.read_text(encoding="utf-8"))
             except (SyntaxError, UnicodeDecodeError):
                 continue
-            consts = _module_string_consts(tree)
+            consts = {**_package_string_consts(py), **_module_string_consts(tree)}
+            own_dicts = _module_dicts(tree, consts)
             for node in ast.walk(tree):
                 # call keywords: register_engine_to_mesh(input_uri=..., output_uri=...)
                 if isinstance(node, ast.Call):
                     for kw in node.keywords:
                         if kw.arg in ("input_uri", "output_uri"):
+                            bucket = inputs if kw.arg == "input_uri" else outputs
                             val = _resolve(kw.value, consts)
                             if val and val.startswith("http"):
-                                (inputs if kw.arg == "input_uri" else outputs).add(val)
+                                bucket.add(val)
+                            # THE LOOKUP-TABLE FORM. `measures.OUTPUT_URI[fn_name]` is the
+                            # way all three measure-based engines register; without this the
+                            # seal harvests none of them and passes over an empty set.
+                            for v in _resolve_subscript(kw.value, py, own_dicts):
+                                bucket.add(v)
                 # dict entries: {"input_uri": FIN + "Program", ...}
                 if isinstance(node, ast.Dict):
                     for k, v in zip(node.keys, node.values):
