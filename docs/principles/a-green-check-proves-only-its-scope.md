@@ -18,10 +18,30 @@ the repair.
 **INCLUDED NON-POPULATION** — the check looks at something that is not the thing: it cannot tell
 a *use* from a *mention*. Widening makes this worse; the repair is a way to mark the mention.
 
+**DERIVED SCAN, REMEMBERED POPULATION** — the check walks everything (its scope is genuinely
+derived) and still misses members, because its EXTRACTOR only understands some of the forms the
+subject is written in. Widening the scan does nothing; the scan was already total. The repair is
+to derive the *population* from the authoritative enumeration and to check non-vacuity **per
+member**.
+
+> **DERIVING THE SCAN IS NOT DERIVING THE POPULATION.** (Lane 1's formulation, 2026-09-03,
+> after hitting it three times in one night in three unrelated enforcement mechanisms.)
+
+**AND THE PART THAT MAKES THIS SPECIES HARD: AN AGGREGATE NON-VACUITY CHECK CANNOT SEE IT.**
+The response-shape seal below carried exactly the guard this document asks for — *"a seal that
+measures nothing passes trivially"*, asserting `len(inputs) >= 10` — and it passed while
+harvesting **zero** URIs from three engines, because the engines it *did* understand cleared the
+floor on their own. A population floor proves the scan is not dead. It says nothing about who is
+missing. **Assert per member, against a list derived from somewhere else** — the fleet's own
+enumeration, not the scanner's output.
+
 ## The instances
 
-Five, from one project, three of them on a single day and authored by the agent that had just
-written the rule about the others.
+
+Nine, from one project. Three arrived on a single day, authored by the agent that had just
+written the rule about the others; four more arrived on one night, across three unrelated
+enforcement mechanisms and two lanes, and **not one of them shared any code with another** —
+which is the argument for this being a law rather than a bug that keeps recurring in one file.
 
 | the guard | what its scope excluded — or wrongly included | how it surfaced |
 |---|---|---|
@@ -29,6 +49,10 @@ written the rule about the others.
 | *"the citation baseline is clean"* (`0d1dae7`) | verified over `docs/plans/` paths; the phantoms lived elsewhere under `docs/` | the claim was published in a commit message, then falsified minutes later by a broader check |
 | the first citation seal (`db4eed4`) | matched **absolute** `docs/…` strings; the breakage was in **relative** link targets | four links broke in the same commit and the seal stayed green through all of them |
 | the second citation seal, immediately | included prose **quoting** a link shape as though it were a link — *mention read as use* | it flagged its own documentation |
+| the dagster stub (`tests/routing/test_adr0019_contracts.py`, fixed `2da0d76`) | hand-wrote ~18 attributes; `src/iagent` imports **30** distinct dagster names. **REMEMBERED POPULATION** | green proved the stub had been **SKIPPED**, not that it was complete — `_install_stubs` no-ops when real dagster is already in `sys.modules`, so which name bit depended on collection order |
+| the same stub's `MetadataValue`, one level down | the NAMES had just been derived; the ATTRIBUTES inside them were still remembered (`text`, `json`, no `.md()`) | **the first defect masked the second**, so closing it looked like a regression for a minute |
+| the response-shape seal (`d9d584c`) | walked every file — scan fully derived — but the resolver understood only two construction forms, so **engine-cost, engine-fin and engine-p contributed ZERO URIs** to a seal asserting over "every registered output" | its own non-vacuity floor (`>= 10`) passed, because the two understood engines cleared it alone |
+| the reregister seal's `_KEY_TO_AGENT_DIR` (fixed `81cd4f4`) | a hand-kept dict that **stopped at Engine P**, so engine-fin went five days unexamined; and the seal enumerated CALLERS, so an engine calling the helper **zero** times was not in the population at all | engine-cost shipped for a commit deployed, health-green and registering nothing — Engine B's shape — while this seal was green throughout |
 | the definition guard (`a0fb983`, fixed in `434bf08`) | `_definitions()` collected only `rdfs:comment`; the embedder reads `{skos:definition}` **UNION** `{rdfs:comment}`, so half the population was never in scope | **the fix it was measuring removed the predicate it read** — de-clobbering moved build notes to `#` comments, the four files it had just certified went to *zero definitions visible*, and every debt entry read "CLEANED" |
 
 **The fifth is the cleanest specimen of the excluded-population species, because the exclusion
