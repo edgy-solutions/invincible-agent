@@ -45,6 +45,13 @@ except ImportError:
         missing_mandatory, refusal_for, slots_for, with_live_vocabularies,
     )
 
+try:  # same three-shape idiom; `utils` is a sibling top-level module in the flattened image
+    from utils.subject_coverage import dead_end_classes as _dead_end
+    from utils.subject_coverage import unroutable_classes as _unroutable
+except ImportError:
+    from agent_fleet.utils.subject_coverage import dead_end_classes as _dead_end
+    from agent_fleet.utils.subject_coverage import unroutable_classes as _unroutable
+
 FIN = "http://invincible-agent/fin#"
 MESH = "http://invincible-agent/mesh#"
 
@@ -758,7 +765,11 @@ def _dead_end_classes() -> list[str]:
     resolver reports success, the router sets a subject, and the question dies one hop later
     with nothing to blame.
     """
-    return sorted(set(_RESOLVABLE) - _all_subjects() - _NO_VERB_BY_DESIGN)
+    # DELEGATED 2026-09-04 to utils/subject_coverage.py, so the next engine gets this in one
+    # line — two shipped without it, and one of those predates this engine. Equivalence is
+    # STRUCTURAL rather than asserted: there is one implementation now, not two that agree.
+    return _dead_end(resolvable=_RESOLVABLE, verb_subjects=_all_subjects(),
+                     no_verb_by_design=_NO_VERB_BY_DESIGN)
 
 
 def _unroutable_classes() -> list[str]:
@@ -769,9 +780,8 @@ def _unroutable_classes() -> list[str]:
     speaker omits the slot and the elicitation offers free text because a provider said
     `unsupported`. Checked at boot, beside the seed check, for the same reason.
     """
-    return sorted(
-        _all_subjects() - set(_RESOLVABLE) - _NOT_ENUMERABLE
-    )
+    return _unroutable(verb_subjects=_all_subjects(), resolvable=_RESOLVABLE,
+                       not_enumerable=_NOT_ENUMERABLE)
 
 
 def _candidates(text: str, class_uri: Optional[str]) -> list[dict[str, Any]]:

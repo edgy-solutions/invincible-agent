@@ -481,6 +481,63 @@ registrations**:
   *said*. A slot the phrase never filled has no such string, so **no number of resolve
   providers builds a menu for it.**
 
+### REQUIRED — the boot guard: does every class you make findable lead to a verb?
+
+**Two engines shipped without this and both were wrong in the same way. Add it before your
+first registration, not after your first demo.**
+
+```python
+from agent_fleet.utils.subject_coverage import assert_subject_coverage   # or utils.… in-image
+
+@asynccontextmanager
+async def lifespan(app):
+    assert_subject_coverage(
+        component="engine-x",
+        resolvable=_RESOLVABLE,          # classes THIS engine can resolve or enumerate
+        verb_subjects=_all_subjects(),   # EVERY subject a verb registers on, primary and secondary
+        no_verb_by_design=_NO_VERB_BY_DESIGN,
+        not_enumerable=_NOT_ENUMERABLE,
+    )
+```
+
+It asks two questions that fail in opposite directions and are invisible from each other:
+
+| | the gap | what a person sees |
+|---|---|---|
+| **dead end** | a class you can RESOLVE that no verb ROUTES on | the resolver succeeds, the router sets a subject, the question dies one hop later — and the answer arrives **from the generalist, wearing the caller's persona** |
+| **unroutable** | a class a verb routes on that you can neither resolve nor enumerate | the elicitation offers **free text** where it should offer a menu, because the provider said `unsupported` and the ask read that as a considered refusal |
+
+**Measured 2026-09-04 on an engine that lacked it:** a cost question grounded to
+`cost#CostCategory` at 0.96, that class had zero verbs, and the answer came back as the caller's
+persona from the catalog — three weeks after the class shipped. Two of five groundable classes
+were unserved. **Engine P has no such check either, and it predates the engine that does**, so
+this is not one team forgetting.
+
+#### ⛔ IT RAISES. Do not soften it to a warning.
+
+Both failures produce a **working system that answers wrongly.** Every probe is green, `/health`
+is green, and the only symptom is three layers away. A warning in a startup log is
+indistinguishable from the hundred lines around it and nothing downstream goes red — which is
+how a class sits in the grounding pool for weeks.
+
+**And the choice it forces is a real one, not a bug report.** A class that exists only to be
+drilled *into* is legitimate — Engine F declares three that way. The check does not demand a
+verb; it demands that you say which case you are in, at build time, where it costs a line.
+
+#### The one way to get it wrong
+
+`verb_subjects` must be **every** subject, including any additional ones a verb registers
+against (`also_askable_of` and its kin). Pass only the primaries and the guard reports a class
+as a dead end while a verb routes on it — **a false red on a check that RAISES stops an engine
+that was fine**, which is worse than the gap it guards. Pinned in
+`tests/test_subject_coverage.py`.
+
+> **A runbook step is the weaker half of this and is written down as such.** Both engines that
+> needed the check had this runbook available. What makes it stick is that the logic is one
+> import away in `agent_fleet/utils/subject_coverage.py` rather than something to re-derive —
+> and if a third engine ships without it, the honest conclusion is that the step needs to be a
+> derived seal over the engine population, not a louder paragraph here.
+
 ### CONTRACT D: both ends must PRE-EXIST, and rejection is ATOMIC
 
 The registrar validates that `input_uri` **and** `output_uri` resolve to real
