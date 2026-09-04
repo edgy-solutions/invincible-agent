@@ -299,3 +299,54 @@ evidence was a grounding finding, from the same draws.
 Credit where it belongs: the four-field law is the Lane 1 formulation, arrived at from its own
 n=5 baseline logging dead-end draws as instability. This lane supplied a fourth instance of the
 identical mistake before hearing the rule.
+
+---
+
+# TWO CORRECTIONS TO THE SECTION ABOVE, both mine, within the hour
+
+## 1. The file is not a "before". The gate was ALREADY LIVE.
+
+`pool-gate-before-…json` is renamed `pool-gate-state-…json`. Engine-o's running pod
+(`started 2026-09-04T13:40:54Z`) already contains the gate — `/app/main.py` carries its log
+string, and it EXECUTED during the run:
+
+```
+[Engine O] productive-option gate DROPPED 2 unserved class(es) from the pool (domains=['DATA_ENGINEERING'])
+[Engine O] productive-option gate would have emptied the pool (128 candidate(s), 0 served)
+           — NOT filtering. Suspect a served-set computed against the wrong domains.
+```
+
+**A capture labelled "before" that was taken after is worse than no capture**, because a
+subsequent comparison shows "no change" and reads as the change doing nothing. Renamed and
+said here rather than quietly.
+
+**The gate FAIL-OPENS when the served set would empty the pool**, so a draw can look ungated
+while the gate is live — which is precisely the condition that makes a before/after
+unreadable, and is why the mislabel mattered rather than being cosmetic.
+
+## 2. "Scope selection is superseded" was WRONG. The two mechanisms COMPOSE.
+
+The section above retired this lane's earlier BFF-layer finding in favour of the verbless-class
+one. **That was an over-correction, and engine-o's own logs refute it:**
+
+```
+productive-option gate DROPPED 2 unserved class(es) from the pool (domains=['DATA_ENGINEERING'])
+```
+
+**The supervisor sends `domains=['DATA_ENGINEERING']` for a cost question.** That is the
+original finding, now confirmed from the producer's logs rather than inferred from a payload.
+
+**Both are real and they compose:**
+
+1. the session grounds in the **wrong domain scope** (`DATA_ENGINEERING`, not `PRODUCTION_COST`)
+2. wrong-scoped grounding then lands on a **verbless class** (`WBSElement`, `Storage_Unit`)
+3. routing falls through to the catalog
+
+**Supporting evidence that neither alone explains it:** `/resolve` scoped correctly to
+`PRODUCTION_COST` resolves *"what's the unit price trend on the notional program"* to
+`cost:ProductionProgram` — which **carries verbs** — and the same phrasing through the BFF
+still answered from the catalog. A single-mechanism story cannot hold both facts.
+
+**The instrument lesson, and it is the same one twice in a night:** replacing one finding with
+another is itself a claim, and it needs the same evidence as the original. I retired a true
+finding because a better-looking one arrived.
