@@ -14,7 +14,7 @@
   Mirrors two image groups, controlled by `-IncludeExternal`:
 
     1. iagent-owned (always mirrored)
-       ghcr.io/edgy-solutions/invincible-agent/* — the 12 engine fleet
+       ghcr.io/edgy-solutions/invincible-agent/* — the 13 engine fleet
          images, dagster runtimes, cortex-bff
        ghcr.io/edgy-solutions/cortex-ui/* — the React frontend
        ghcr.io/edgy-solutions/dag-tools/* — the central-gateway
@@ -94,7 +94,7 @@
   Print the commands without executing.
 
 .EXAMPLE
-  # Default: mirror only iagent-owned images (12 engines + cortex-ui + central-gateway = 14)
+  # Default: mirror only iagent-owned images (13 engines + cortex-ui + central-gateway = 15)
   .\mirror-to-artifactory.ps1 -RepoBase cbm-containers-dev-and.artifactory-and.rmd.ray.com
 
 .EXAMPLE
@@ -149,7 +149,7 @@ if ($Method -eq 'crane') {
 # values-artifactory.yaml together.
 # -----------------------------------------------------------------------
 $IagentImages = @(
-    # Engine fleet (12) + cortex-bff + 2 dagster runtimes — built by
+    # Engine fleet (13) + cortex-bff + 2 dagster runtimes — built by
     # invincible-agent's build-containers.yml matrix.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/cortex-bff:latest';            dst='edgy-solutions/invincible-agent/cortex-bff:latest' },
     @{ src='ghcr.io/edgy-solutions/invincible-agent/dagster-server:latest';        dst='edgy-solutions/invincible-agent/dagster-server:latest' },
@@ -186,6 +186,19 @@ $IagentImages = @(
     # tests/test_mirror_covers_the_build_matrix.py now derives the required set from
     # build-containers.yml, so a THIRD omission fails CI instead of a work deploy.
     @{ src='ghcr.io/edgy-solutions/invincible-agent/finance-agent:latest';         dst='edgy-solutions/invincible-agent/finance-agent:latest' },
+    # engine-cost — production cost accounting. DEFAULT-OFF in the chart
+    # (engineCost.enabled=false; only values-sandbox.yaml turns it on), mirrored anyway for
+    # the reason the finance entry above states: default-off is a DEFAULT, not a guarantee.
+    #
+    # THE SAME NAME SPLIT: the image is `cost-agent`, the SERVICE is `iagent-engine-cost`,
+    # the values key is `engineCost`. Grepping any one finds part of the wiring.
+    #
+    # FOURTH OMISSION OF THIS EXACT ENTRY, and the first one a seal caught before a deploy:
+    # test_mirror_covers_the_build_matrix.py went red naming `cost-agent`. The runbook's §10
+    # row and appendix item 17c both told the lane to do this and it was skipped anyway —
+    # which is the row's own point, that a lesson written beside a list does not maintain
+    # the list. What maintained it was the derived check.
+    @{ src='ghcr.io/edgy-solutions/invincible-agent/cost-agent:latest';            dst='edgy-solutions/invincible-agent/cost-agent:latest' },
     # Gateway v0.2 — sole writer of Predicate edges into Neo4j + Weaviate
     # per ADR-0006 §Addendum. The chart's meshRegistrar.enabled=true
     # (work overlay) requires this image.
