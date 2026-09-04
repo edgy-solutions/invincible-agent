@@ -47,6 +47,8 @@ OUTPUT_URI: dict[str, str] = {
     "cost_labor_composition":  COST + "LaborComposition",
     "cost_price_composition":  COST + "PriceComposition",
     "cost_rate_assumptions":   COST + "RateAssumptions",
+    "cost_category_breakdown": COST + "CategoryBreakdown",
+    "cost_supplier_concentration": COST + "SupplierConcentration",
 }
 
 #: The SUBJECT each verb is asked about — Contract D's input end.
@@ -57,12 +59,20 @@ INPUT_URI: dict[str, str] = {
     "cost_labor_composition":  COST + "ProductionLot",
     "cost_price_composition":  COST + "ProductionLot",
     "cost_rate_assumptions":   COST + "RateTable",
+    "cost_category_breakdown": COST + "CostCategory",
+    "cost_supplier_concentration": COST + "Supplier",
 }
 
 #: Money is dollars throughout. Declared per row rather than assumed, because "dollars or
 #: thousands of dollars" is the one question a cost answer must never leave to convention.
 VALUE_UNIT = "USD"
 HOURS_UNIT = "hours"
+
+#: The default concentration bound, ONE QUARTER of purchased value. A round, defensible
+#: figure rather than a tuned one -- and it is DISCLOSED in every answer that uses it
+#: (see `cost_supplier_concentration`), because a threshold the caller cannot see makes
+#: the verdict unreproducible.
+DEFAULT_CONCENTRATION_THRESHOLD = Decimal("0.25")
 
 
 def _require_vintage(state: CostState, fiscal_year: int, rate_vintage: Optional[str]) -> str:
@@ -304,6 +314,132 @@ def cost_rate_assumptions(
     }
 
 
+# ---------------------------------------------------------------------------------------
+# 7. cost_category_breakdown - SHARE and MOVEMENT, not amount
+#
+# DELIBERATELY DISTINCT FROM cost_lot_breakdown, and the anti-synonyms carry the split:
+# that verb reports what each bucket COST (absolute figures, hours, and therefore the rate
+# assumptions behind them); this one reports what SHARE each bucket is and how that share
+# MOVED against the preceding lot. Two lots with identical totals can divide them
+# differently, and the division is the thing a reader acts on.
+#
+# NO rate_vintage, and that is a consequence rather than an omission: a share is a ratio of
+# recorded costs, so it does not depend on which assumption set produced the amounts. A verb
+# that demanded a vintage it does not use would be ceremony.
+# ---------------------------------------------------------------------------------------
+def cost_category_breakdown(state: CostState, *, lot: int) -> dict[str, Any]:
+    """How one lot's cost divides across its buckets, and how the division moved."""
+    lot_obj = state.lot(lot)
+    prior = state.lots.get(lot - 1)
+
+    def buckets(l) -> dict[str, Decimal]:
+        return {
+            "labor": l.direct_labor,
+            "material": l.material,
+            "other_direct": l.other_direct,
+            "warranty": l.warranty,
+            "contracts": l.contracts,
+        }
+
+    mine = buckets(lot_obj)
+    total = sum(mine.values(), Decimal("0"))
+    if total <= 0:  # pragma: no cover - the seed guards against it, but a share of zero
+        raise NotInModel(f"lot {lot} has no recorded cost, so it has no division")
+    prior_shares = None
+    if prior is not None:
+        p = buckets(prior)
+        ptotal = sum(p.values(), Decimal("0"))
+        prior_shares = {k: (v / ptotal) for k, v in p.items()} if ptotal > 0 else None
+
+    rows = []
+    for name, amount in mine.items():
+        share = (amount / total).quantize(Decimal("0.0001"))
+        row = {
+            "category": name,
+            "share_of_total": str(share),
+            "amount": str(amount),
+            "value_unit": VALUE_UNIT,
+            # A share is a ratio, not an amount. Saying so stops a renderer appending a
+            # currency to it.
+            "share_unit": None,
+        }
+        if prior_shares is not None:
+            delta = (share - prior_shares[name]).quantize(Decimal("0.0001"))
+            row["share_delta_vs_prior_lot"] = str(delta)
+            row["direction"] = "up" if delta > 0 else ("down" if delta < 0 else "flat")
+        else:
+            # FIRST LOT HAS NO PRIOR, and that is reported rather than rendered as zero
+            # movement — a flat delta and an absent one mean different things.
+            row["share_delta_vs_prior_lot"] = None
+            row["direction"] = None
+        rows.append(row)
+
+    return {
+        "output_uri": OUTPUT_URI["cost_category_breakdown"],
+        "lot": lot_obj.number,
+        "fiscal_year": lot_obj.fiscal_year,
+        "total": str(total),
+        "value_unit": VALUE_UNIT,
+        "compared_to_lot": None if prior is None else prior.number,
+        "rows": rows,
+    }
+
+
+# ---------------------------------------------------------------------------------------
+# 8. cost_supplier_concentration - exposure to any single party, against a STATED bound
+#
+# THE THRESHOLD IS ALWAYS DISCLOSED, INCLUDING WHEN IT WAS DEFAULTED. A verdict of
+# "concentrated" against a bound the caller never saw is the EAC-without-method ambiguity in
+# another costume: the number is unactionable without the assumption that produced it. So
+# the parameter defaults to None and is resolved HERE, which is what lets the payload report
+# `threshold_defaulted` honestly — a signature default could not tell the two apart.
+# ---------------------------------------------------------------------------------------
+def cost_supplier_concentration(
+    state: CostState, *, lot: int, threshold: Optional[float] = None
+) -> dict[str, Any]:
+    """Which suppliers hold more than `threshold` of a lot's purchased value."""
+    lot_obj = state.lot(lot)
+    defaulted = threshold is None
+    bound = DEFAULT_CONCENTRATION_THRESHOLD if defaulted else Decimal(str(threshold))
+    if not (Decimal("0") < bound < Decimal("1")):
+        raise NotInModel(
+            f"threshold {bound} is not a share between 0 and 1; concentration is a "
+            "proportion of purchased value, not an amount"
+        )
+
+    purchased = sum((s.amount for s in lot_obj.suppliers), Decimal("0"))
+    if purchased <= 0:  # pragma: no cover - guarded by the seed's own consistency check
+        raise NotInModel(f"lot {lot} records no purchased value to concentrate")
+
+    ranked = sorted(lot_obj.suppliers, key=lambda s: s.amount, reverse=True)
+    rows = []
+    for s in ranked:
+        share = (s.amount / purchased).quantize(Decimal("0.0001"))
+        rows.append({
+            "supplier": s.name,
+            "amount": str(s.amount),
+            "share_of_purchased": str(share),
+            "above_threshold": share > bound,
+            "value_unit": VALUE_UNIT,
+        })
+
+    above = [r for r in rows if r["above_threshold"]]
+    top = Decimal(rows[0]["share_of_purchased"]) if rows else Decimal("0")
+    return {
+        "output_uri": OUTPUT_URI["cost_supplier_concentration"],
+        "lot": lot_obj.number,
+        "fiscal_year": lot_obj.fiscal_year,
+        "purchased_value": str(purchased),
+        "value_unit": VALUE_UNIT,
+        # THE BOUND TRAVELS WITH THE VERDICT, always, and says whether the caller chose it.
+        "threshold": str(bound),
+        "threshold_defaulted": defaulted,
+        "suppliers_above_threshold": len(above),
+        "largest_share": str(top),
+        "rows": rows,
+    }
+
+
 #: The catalogue, read ONCE and consumed twice — by the router's dispatch table and by the
 #: registration. One table, so a verb cannot be servable and unregistered or the reverse.
 VERBS = {
@@ -313,4 +449,6 @@ VERBS = {
     "cost_labor_composition": cost_labor_composition,
     "cost_price_composition": cost_price_composition,
     "cost_rate_assumptions":  cost_rate_assumptions,
+    "cost_category_breakdown": cost_category_breakdown,
+    "cost_supplier_concentration": cost_supplier_concentration,
 }

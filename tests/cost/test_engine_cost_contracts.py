@@ -381,3 +381,80 @@ def test_validation_runs_BEFORE_any_arithmetic():
             direct_labor=Decimal("1"), material=Decimal("0"), other_direct=Decimal("0"),
             rates=_rates(), spec=(StepSpec("X", "nope", "running_total"),),
         )
+
+
+# ---------------------------------------------------------------------------------------
+# SEAL 10 — the two verbs minted to close the gate's honest reds
+# (docs/plans/cost-category-and-supplier-need-verbs.md)
+# ---------------------------------------------------------------------------------------
+def test_category_breakdown_reports_SHARE_and_MOVEMENT_not_amount(state):
+    """The distinction from cost_lot_breakdown, asserted rather than left to the prose."""
+    r = measures.cost_category_breakdown(state, lot=4)
+    assert r["compared_to_lot"] == 3
+    shares = {x["category"]: Decimal(x["share_of_total"]) for x in r["rows"]}
+    assert abs(sum(shares.values()) - Decimal("1")) < Decimal("0.001"), "shares must total 1"
+    assert all(x["share_delta_vs_prior_lot"] is not None for x in r["rows"])
+    assert {x["direction"] for x in r["rows"]} <= {"up", "down", "flat"}
+
+
+def test_the_FIRST_lot_reports_absent_movement_not_zero(state):
+    """A flat delta and an absent one mean different things; lot 1 has no prior."""
+    r = measures.cost_category_breakdown(state, lot=1)
+    assert r["compared_to_lot"] is None
+    assert all(x["share_delta_vs_prior_lot"] is None for x in r["rows"])
+    assert all(x["direction"] is None for x in r["rows"])
+
+
+def test_category_breakdown_needs_NO_rate_vintage(state):
+    """A share is a ratio of recorded costs, so demanding a vintage would be ceremony."""
+    assert slots.mandatory_slots("cost_category_breakdown") == ["lot"]
+    measures.cost_category_breakdown(state, lot=5)
+
+
+def test_concentration_ALWAYS_discloses_its_threshold_and_whether_it_defaulted(state):
+    """A verdict against a bound the caller never saw is the EAC-without-method shape."""
+    d = measures.cost_supplier_concentration(state, lot=4)
+    assert d["threshold_defaulted"] is True and d["threshold"] == "0.25"
+
+    n = measures.cost_supplier_concentration(state, lot=4, threshold=0.5)
+    assert n["threshold_defaulted"] is False and n["threshold"] == "0.5"
+
+
+def test_the_threshold_actually_CHANGES_the_verdict(state):
+    """Otherwise the parameter is decorative and the disclosure is decorative with it."""
+    low = measures.cost_supplier_concentration(state, lot=4, threshold=0.1)
+    high = measures.cost_supplier_concentration(state, lot=4, threshold=0.5)
+    assert low["suppliers_above_threshold"] > high["suppliers_above_threshold"]
+
+
+def test_a_threshold_outside_0_to_1_is_refused(state):
+    """Concentration is a proportion; an amount-shaped threshold is a category error."""
+    with pytest.raises(NotInModel, match="between 0 and 1"):
+        measures.cost_supplier_concentration(state, lot=4, threshold=25000)
+
+
+def test_concentration_rows_are_ordered_largest_first(state):
+    r = measures.cost_supplier_concentration(state, lot=6)
+    shares = [Decimal(x["share_of_purchased"]) for x in r["rows"]]
+    assert shares == sorted(shares, reverse=True)
+    assert r["largest_share"] == str(shares[0])
+
+
+def test_both_new_verbs_declare_both_contract_d_ends_in_the_TTL():
+    """The check that would have caught the planning engine's twelve 422s, for the new two."""
+    import rdflib
+    from rdflib.namespace import OWL, RDF, RDFS
+
+    g = rdflib.Graph()
+    g.parse("setup/ontologies/cost_extension.ttl", format="turtle")
+    declared = {str(s) for s in g.subjects(RDF.type, OWL.Class)}
+    response = {str(s) for s in g.subjects(
+        RDFS.subClassOf, rdflib.URIRef("http://invincible-agent/mesh#Response"))}
+
+    for verb in ("cost_category_breakdown", "cost_supplier_concentration"):
+        assert measures.INPUT_URI[verb] in declared, f"{verb}: input_uri absent from the TTL"
+        assert measures.OUTPUT_URI[verb] in declared, f"{verb}: output_uri absent from the TTL"
+        assert measures.OUTPUT_URI[verb] in response, (
+            f"{verb}: output is not subClassOf mesh:Response, so it would re-enter the "
+            "grounding pool and compete with its own subject"
+        )

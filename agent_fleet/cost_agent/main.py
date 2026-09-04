@@ -127,6 +127,27 @@ CATALOGUE: list[dict[str, Any]] = [
                           "what is the labour split"],
     },
     {
+        "fn": "cost_category_breakdown",
+        "verb": "mesh:costCategoryBreakdown",
+        "synonyms": ["where did the money go", "which cost bucket grew",
+                     "what proportion was material", "how does the cost split by category",
+                     "how did the price build up"],
+        # THE SHARPEST ANTI-SYNONYM PAIR IN THIS ENGINE. cost_lot_breakdown reports what each
+        # bucket COST; this reports what SHARE each bucket IS and how that share MOVED. A
+        # question aimed at either would otherwise reach both, because they decompose the
+        # same total along the same axis.
+        "anti_synonyms": ["what did lot 4 cost", "what were the labour hours",
+                          "show the burden stack", "which rates were applied"],
+    },
+    {
+        "fn": "cost_supplier_concentration",
+        "verb": "mesh:costSupplierConcentration",
+        "synonyms": ["how concentrated is purchasing", "which suppliers are above the threshold",
+                     "are we dependent on one supplier", "supplier concentration"],
+        "anti_synonyms": ["what did material cost", "where did the money go by category",
+                          "what is the labour split"],
+    },
+    {
         "fn": "cost_rate_assumptions",
         "verb": "mesh:costRateAssumptions",
         "synonyms": ["what rates are we using", "the rate table",
@@ -348,6 +369,15 @@ _DESCRIPTIONS: dict[str, str] = {
         "The ordered build-up from base cost to final price for one lot — fringe, overhead, "
         "G&A, cost of money and profit, each naming what it added. NOT a category "
         "breakdown, which divides the same total a different way.",
+    "cost_category_breakdown":
+        "How one lot's total divides proportionally across labour, material, other direct "
+        "charges, warranty and contracted effort, and how each proportion moved against the "
+        "preceding lot. NOT what each bucket cost in money — that is a different question "
+        "with different assumptions behind it — and NOT the burden build-up.",
+    "cost_supplier_concentration":
+        "How a lot's purchased value is distributed across suppliers, naming those whose "
+        "share exceeds a stated bound, with the bound reported alongside. NOT what material "
+        "cost in total, and NOT a category split.",
     "cost_rate_assumptions":
         "The rate and escalation assumptions in force at a stated point in time, so any "
         "figure computed elsewhere can be reproduced. NOT what a lot cost.",

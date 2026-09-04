@@ -133,6 +133,16 @@ cost:RateAssumptions a owl:Class ;
     rdfs:label "Rate Assumptions" ;
     rdfs:comment "The assumption set in force at a stated point in time, listing each factor with its value and the fiscal year it applies to. A payload that exists so any figure elsewhere can be reproduced: it is the answer to what was believed when a number was computed, rather than to what is believed now." .
 
+cost:CategoryBreakdown a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Category Breakdown" ;
+    rdfs:comment "How a quantity's total divides proportionally between its accounting buckets, and how each proportion moved against the preceding quantity. A payload about SHARE and MOVEMENT rather than amount: two quantities with identical totals can divide them differently, and the division is what a reader acts on. Distinguished from a statement of what each bucket cost, which reports the amounts themselves and needs the rate assumptions behind them." .
+
+cost:SupplierConcentration a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Supplier Concentration" ;
+    rdfs:comment "How purchased value is distributed across the parties providing it, with the parties whose share exceeds a stated bound listed explicitly and the bound reported alongside them. A payload answering how exposed a purchase is to any single party, carrying the bound it was judged against because a verdict of concentrated or not is meaningless without one." .
+
 # =============================================================================
 # Standard-vocabulary bindings - REFERENCE, do not redeclare
 #
