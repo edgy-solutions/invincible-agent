@@ -405,3 +405,61 @@ refusal.
 
 Each was found by a different instrument, and none of the three would have been visible from
 the BFF answer alone — which read, for all six phrasings, as *"the catalog has no such asset."*
+
+---
+
+# THE TWO MINTED VERBS LANDED — 2026-09-04, post-prime
+
+**Prime complete (51m), roll complete, registration by the hook.** Verified by name:
+
+| check | result |
+|---|---|
+| `cost:` classes | **13**, zero missing, zero extra (both new response shapes present) |
+| engine-cost verbs | **8**, non-null, matching the expected set exactly |
+| `costCategoryBreakdown` | `CostCategory → CategoryBreakdown` |
+| `costSupplierConcentration` | `Supplier → SupplierConcentration` |
+
+## The gate re-admitted both classes, on its own terms
+
+The productive-option gate had removed `CostCategory` and `Supplier` because neither carried a
+verb (`PRODUCTION_COST` pool 5 → 3). **They are back in the candidate set now** — not by
+exemption, but because they carry verbs:
+
+```
+"how did the price build up"  candidates: ProductionLot, CostCategory, Supplier, ProductionProgram
+```
+
+**That is the gate working in both directions**, and it is the cleanest confirmation available
+that minting was the right disposition rather than the referent marker. The marker would have
+readmitted them while leaving them unanswerable.
+
+## The headline: the generalist fall-through is fixed for the phrasing it was named for
+
+```
+"how did the price build up"  ->  cost:CostCategory   confidence 0.86   CARRIES A VERB
+```
+
+Previously this resolved to `CostCategory` **with nothing behind it** and fell through to the
+generalist. Same winner, opposite outcome — which is exactly why the fourth field matters: the
+class did not change, its answerability did.
+
+## And the remaining blocker is NOT mine, measured rather than assumed
+
+Any phrasing naming a lot still loses to instance preemption:
+
+```
+"where did the money go on lot 4"          -> fin:WBSElement  0.93   (candidates: ProductionLot, CostCategory, ProductionProgram)
+"how concentrated is purchasing on lot 4"  -> fin:WBSElement  0.95   (candidates: ProductionLot, Supplier, ProductionProgram)
+```
+
+**The candidate sets are correct** — `Supplier` is present for the concentration question, and
+`CostCategory` for the category one. The phone-book override wins anyway, onto a class that
+carries no verb in any domain.
+
+**This is precisely the filed ruling** — *an override onto an unserved class must abstain or
+ask, not proceed* — and it is the producing lane's item. Minting my two verbs could not have
+fixed it and did not: the override path does not consult the pool the gate curates.
+
+**So the honest split:** the no-instance phrasing is fixed and reaches a verb; every
+lot-naming phrasing is still blocked by the override, which is one ruling away and not this
+lane's to make.
