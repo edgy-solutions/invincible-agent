@@ -60,6 +60,22 @@ KNOWN_ARCHETYPES = frozenset({
     # registry nobody enumerated, and the lesson only counts if the next archetype does not
     # repeat it. test_archetype_registries_agree is the seal; this is its prospective use.
     "INTERVAL_TIMELINE",
+    # THE ASK, 2026-09-04, slots lane. cortex-ui registered ELICITATION for the typed-ask
+    # work and the backend had no name for it, so the door refused it -- correctly, and the
+    # same way it refused the four live views above. THE LESSON HAS NOW COST THREE ROUNDS:
+    # the vocabulary is the registry that gets forgotten because it is the only one that is
+    # neither the ontology, the contract, nor the binding, and forgetting it looks like a
+    # frontend bug rather than a missing entry.
+    #
+    # ONE ARCHETYPE, TWO ORIGINS, per ADR-0033-s archetype-unity constraint: a slot the
+    # router could not fill and a goal shape the caller has not chosen draw the same card,
+    # because a reader owes the same kind of reply to both. Named ELICITATION rather than
+    # for slots for exactly that reason -- a name from one origin would have made the other
+    # look like a borrowed affordance. Its class is mesh:AskCard, declared under
+    # mesh:Archetype and deliberately NOT under mesh:Response: it is reached through a
+    # rendersAs binding, never through recall, so it must not enter the grounding pool and
+    # compete with the subjects an ask exists to obtain.
+    "ELICITATION",
     # Phase 3's commit-ceremony card. Its CONTRACT exists before any verb emits a
     # DecisionArtifact, so it is deliberately NOT in DERIVED_BINDINGS yet -- but the admission
     # vocabulary is a different registry with a different trigger: a declared contract must be

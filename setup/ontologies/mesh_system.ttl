@@ -528,6 +528,23 @@ mesh:DecisionRecord a owl:Class ;
   rdfs:label "Decision Record" ;
   rdfs:comment "The card a committed decision draws as. NOT A LIVE VIEW, and it is the only planning archetype that is not: the others describe a plan still moving, this describes an act at a time by a named actor. It refuses a record with no rationale rather than drawing it — a decision presented in the visual language of a governed one, without the reason that governed it, is the one thing this card must never launder. It publishes no pending-approval refusal, because a pending approval is a different archetype and offering to stand in for one is how two shapes become one confused shape." .
 
+# --- THE ASK ------------------------------------------------------------------
+# Declared 2026-09-04 by the slots lane. cortex-ui registered mesh:AskCard for the typed-ask
+# work and this class did not exist, so every archetype-declaration seal fired at once —
+# nine failures with one cause, which is the ordering trap the adding-an-engine runbook
+# names: the consumer registers before the producer declares, and Contract D refuses the
+# binding on the OBJECT end until the class is here.
+#
+# AN ARCHETYPE, NOT A RESPONSE, and the distinction is load-bearing rather than tidy. It is
+# reached through a rendersAs binding and never through recall, so it must not be a
+# groundable subject: a class describing how to draw a request is not a thing anyone asks
+# about. Hanging it off mesh:Response would put it in the resolver's candidate pool, where
+# it would compete with the very subjects an ask exists to obtain.
+mesh:AskCard a owl:Class ;
+  rdfs:subClassOf mesh:Archetype ;
+  rdfs:label "Ask Card" ;
+  rdfs:comment "The card drawn when no answer exists yet because one declaration is missing: it states what is needed, and what may be said in reply. NOT AN ANSWER WEARING A QUESTION MARK — it carries no result, and its place is the turn before a result rather than beside one. ONE ARCHETYPE FOR TWO ORIGINS: a value the router could not fill and a shape the caller has not yet chosen draw the same card, because a reader owes the same kind of reply to both and splitting them would put two names on one affordance. THE TWO REPLY PATHS ARE NOT ONE PATH. A pick from the offered set is already an identifier the producer accepts and rides back as a bound value with no second interpretation, so the second turn cannot read it differently than the first. Typed words are re-spoken instead: they re-enter as a phrase and are interpreted afresh, because binding a human's typing where an identifier belongs reaches the producer as a refusal. A PICK IS VALIDATED AGAINST WHAT WAS OFFERED, never against the wider vocabulary — a real and otherwise valid identifier that was not on this menu is refused, because the menu is the promise. It publishes its own reason when no menu exists rather than drawing an empty one, since an absent set and an empty set are different facts." .
+
 mesh:IntervalTimeline a owl:Class ;
   rdfs:subClassOf mesh:Archetype ;
   rdfs:label "Interval Timeline" ;
