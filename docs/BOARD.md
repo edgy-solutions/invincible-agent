@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **119 of 131 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **120 of 132 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -73,6 +73,10 @@ _Coverage: **119 of 131 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
 - **agentic-auth-flip** — ENABLE_AGENTIC_AUTH — the CONTENT-authz flip. Turns three Topaz asks on at once and deletes the fallbacks. Downstream of the transport flip.
   status: open · owner: agent · blocked-on: transport-flip, which is itself open/agent (2 decodes + 2 sweeps). Nothing is awaited from the human until that lands; the flip act is then theirs.
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
+
+- **an-override-onto-an-unserved-class-must-abstain** — THERE ARE TWO PATHS INTO resolved_uri AND ONLY ONE IS GATED. The productive-option gate (4d13eee) restricts what the LLM may CHOOSE — the candidate pool is limited to classes carrying a verb in the caller's domains. Step 4's instance-resolution pre-step then OVERRIDES that choice with a unanimous provider answer, unchecked, so a phone-book match can install a class no verb serves. Measured by the engine-cost lane: 10 of 18 draws had a winner outside the candidate set, and every one resolved to fin:WBSElement, which carries no verb in ANY domain. That is the DOMINANT dead end in their data — 5 of 9 scoped draws — and it is reached by the one path the gate cannot see. THE OVERRIDE IS NOT THE DEFECT: a caller named "lot 4", a provider resolved it, and fin:WBSElement is a DECLARED drill-down referent in engine-fin's _NO_VERB_BY_DESIGN. The instance resolution is working. What is missing is that nothing notices the resolved subject cannot be answered. RULED: a productivity check AFTER preemption — same predicate as the gate, applied to the WINNER rather than the pool — abstaining or asking, with the resolved instance carried as context.
+  status: open · owner: agent (lane 1) — RULED 2026-09-04, NOT BUILT
+  → [docs/plans/an-override-onto-an-unserved-class-must-abstain.md](plans/an-override-onto-an-unserved-class-must-abstain.md)
 
 - **answer-latency-tier1** — DECOMPOSED 2026-08-19 (n=5 + isolated hop probes). Tier-1 answer is 262.0s +/- 10.6 (the filed 324.9s was a ~6-sigma outlier, likely a cold 64.7GB model load). >99% is sequential LLM generation; ALL data/graph work totals 2.3s. Root cause: a 116.8B REASONING model at ~33 tok/s where 95-97% of generated tokens are hidden reasoning, called ~sequentially. Largest phase is composing (102.5s), which the original filing never named.
   status: open · owner: unassigned
