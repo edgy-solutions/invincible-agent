@@ -60,23 +60,26 @@ def test_composition_sums_for_every_seeded_lot(state):
         assert sum(Decimal(s["amount"]) for s in r["steps"]) == Decimal(r["price"])
 
 
-def test_the_sum_seal_BITES_when_the_arithmetic_is_wrong(monkeypatch):
+def test_the_sum_seal_BITES_when_THE_TWO_PATHS_DISAGREE(monkeypatch):
     """PROVEN TO BITE. A seal that has never failed is decoration.
 
-    Corrupt quantize_money so one step's amount is wrong, and confirm compose_price REFUSES
-    rather than returning a build-up whose steps do not add up.
+    The seal's claim is that the step loop and the independent fold agree, so the bite check
+    breaks ONE PATH and confirms compose_price refuses.
+
+    ITS FIRST VERSION CORRUPTED THE Nth CALL TO quantize_money AND WENT SILENTLY VACUOUS when
+    the composition became parameterised: three new quantize calls were added for the
+    components dict, so index 3 moved onto `material` — which the default spec never uses as
+    a basis. The mutation stopped touching anything load-bearing and the test passed while
+    proving nothing. A bite check keyed on a CALL INDEX is a check on the neighbour of the
+    claim; keyed on a PATH, it tests what the seal actually asserts.
     """
     import agent_fleet.cost_agent.pricing as pricing
 
-    real = pricing.quantize_money
-    calls = {"n": 0}
-
-    def broken(value):
-        calls["n"] += 1
-        out = real(value)
-        return out + Decimal("0.01") if calls["n"] == 3 else out
-
-    monkeypatch.setattr(pricing, "quantize_money", broken)
+    real_fold = pricing._fold_price
+    monkeypatch.setattr(
+        pricing, "_fold_price",
+        lambda *a, **k: real_fold(*a, **k) + Decimal("0.01"),
+    )
     with pytest.raises(CompositionError, match="does not sum"):
         pricing.compose_price(
             direct_labor=Decimal("1000000"), material=Decimal("2500000"),
@@ -291,4 +294,90 @@ def test_pricing_imports_nothing_from_its_own_package():
     for forbidden in ("entities", "seed", "measures", "slots", "iagent_mesh", "fastapi"):
         assert f"import {forbidden}" not in src, (
             f"pricing.py imports {forbidden}; the export stops being isolable"
+        )
+
+
+# ---------------------------------------------------------------------------------------
+# SEAL 9 — THE EXTENSION SURFACE. Parameters, never code (ADR-0047 §3).
+#
+# A recipient with a different burden structure supplies a different RateSet and a different
+# STEP SEQUENCE, both DATA, validated against a closed vocabulary. What they cannot do is
+# author or edit the computation — because a subclassed step is not our algorithm, and every
+# guarantee ADR-0047 §3 makes rests on the algorithm being ours and pinned.
+# ---------------------------------------------------------------------------------------
+def test_a_customer_can_supply_a_different_burden_STRUCTURE_as_data():
+    """The real extension case: no fringe, overhead struck straight on labour."""
+    from agent_fleet.cost_agent.pricing import DEFAULT_COMPOSITION, StepSpec
+
+    theirs = (
+        StepSpec("Overhead", "overhead", "component", component="direct_labor"),
+        StepSpec("G&A", "g_and_a", "running_total"),
+        StepSpec("Profit", "profit", "running_total"),
+    )
+    ours = compose_price(
+        direct_labor=Decimal("1000000"), material=Decimal("500000"),
+        other_direct=Decimal("0"), rates=_rates(), spec=DEFAULT_COMPOSITION,
+    )
+    theirs_built = compose_price(
+        direct_labor=Decimal("1000000"), material=Decimal("500000"),
+        other_direct=Decimal("0"), rates=_rates(), spec=theirs,
+    )
+    assert theirs_built.sums() and ours.sums()
+    assert theirs_built.price != ours.price, "a different structure must produce a different price"
+    assert [s.name for s in theirs_built.steps] == [
+        "Base cost", "Overhead", "G&A", "Profit"
+    ]
+
+
+def test_an_undeclared_basis_kind_is_REFUSED_not_defaulted():
+    from agent_fleet.cost_agent.pricing import StepSpec, validate_composition
+
+    with pytest.raises(CompositionError, match="basis_kind"):
+        validate_composition((StepSpec("X", "fringe", "whatever_i_like"),))
+
+
+def test_an_undeclared_rate_key_is_REFUSED():
+    from agent_fleet.cost_agent.pricing import StepSpec, validate_composition
+
+    with pytest.raises(CompositionError, match="not a declared rate"):
+        validate_composition((StepSpec("X", "my_secret_markup", "running_total"),))
+
+
+def test_a_FORWARD_step_reference_is_refused_rather_than_treated_as_zero():
+    """Resolving it as zero would silently UNDERSTATE the price — the dangerous direction."""
+    from agent_fleet.cost_agent.pricing import StepSpec, validate_composition
+
+    with pytest.raises(CompositionError, match="has not run yet"):
+        validate_composition((
+            StepSpec("Overhead", "overhead", "component",
+                     component="direct_labor", plus_steps=("Fringe",)),
+            StepSpec("Fringe", "fringe", "component", component="direct_labor"),
+        ))
+
+
+def test_duplicate_step_names_are_refused():
+    from agent_fleet.cost_agent.pricing import StepSpec, validate_composition
+
+    with pytest.raises(CompositionError, match="duplicate"):
+        validate_composition((
+            StepSpec("Fringe", "fringe", "component", component="direct_labor"),
+            StepSpec("Fringe", "overhead", "running_total"),
+        ))
+
+
+def test_the_default_composition_is_itself_valid():
+    """The shipped default must satisfy the validator it ships with."""
+    from agent_fleet.cost_agent.pricing import DEFAULT_COMPOSITION, validate_composition
+
+    validate_composition(DEFAULT_COMPOSITION)
+
+
+def test_validation_runs_BEFORE_any_arithmetic():
+    """A bad spec must be refused where it is read, not after producing a wrong number."""
+    from agent_fleet.cost_agent.pricing import StepSpec
+
+    with pytest.raises(CompositionError, match="not a declared rate"):
+        compose_price(
+            direct_labor=Decimal("1"), material=Decimal("0"), other_direct=Decimal("0"),
+            rates=_rates(), spec=(StepSpec("X", "nope", "running_total"),),
         )

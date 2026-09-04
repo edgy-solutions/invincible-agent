@@ -38,7 +38,12 @@ from decimal import Decimal
 from typing import Iterable, Mapping, Sequence
 
 __all__ = [
+    "BASIS_KINDS",
+    "COMPONENT_NAMES",
     "COMPOSITION_ORDER",
+    "DEFAULT_COMPOSITION",
+    "StepSpec",
+    "validate_composition",
     "CompositionStep",
     "PriceBuildUp",
     "RateSet",
@@ -128,16 +133,125 @@ class CompositionError(ValueError):
     """
 
 
-#: THE SEQUENCE IS THE ALGORITHM. Each entry is (step name, rate attribute, basis rule).
-#: The basis rule names which earlier subtotal the factor applies to, and it is the part
-#: that makes the order load-bearing rather than cosmetic.
-COMPOSITION_ORDER: tuple[tuple[str, str, str], ...] = (
-    ("Fringe",         "fringe",        "direct_labor"),
-    ("Overhead",       "overhead",      "labor_plus_fringe"),
-    ("G&A",            "g_and_a",       "subtotal_with_overhead"),
-    ("Cost of money",  "cost_of_money", "total_cost"),
-    ("Profit",         "profit",        "total_cost_plus_com"),
+# =======================================================================================
+# THE COMPOSITION SPEC -- the extension surface, and the ONLY one.
+#
+# EXTENSION IS BY DECLARED PARAMETER, NEVER BY CODE. A recipient with a different burden
+# structure supplies a different RateSet and a different STEP SEQUENCE; both are DATA,
+# validated against a closed vocabulary before anything runs. What they cannot do is author
+# or edit the computation -- no subclassing, no injected callables, no new basis kinds.
+#
+# WHY THE LINE IS THERE AND NOT SOMEWHERE MORE GENEROUS. ADR-0047 §3's guarantee is that a
+# divergence between the recipient's re-run and ours can mean DATA or RUNTIME but never
+# ALGORITHM. Code extension breaks that BY DESIGN: a subclassed step is not our algorithm,
+# so the verification manifest cannot check it, the package cannot refuse on divergence
+# (divergence is the point), and "which version did they validate against" stops having an
+# answer because they validated against their own fork. Parameter extension keeps all three:
+# the pinned modules still produce the pinned outputs on the pinned inputs, and the
+# customer's tweak produces THEIR number beside ours, both traceable.
+#
+# This is OKF §10's attested-computation shape, which ADR-0037 already pointed at for
+# exactly this case: the caller MAY supply values for the declared parameters; it MUST NOT
+# author or edit the computation.
+# =======================================================================================
+
+#: Basis kinds a step may be struck on. CLOSED SET -- a spec naming anything else is refused
+#: rather than defaulted, which is the select-from-authorized-set discipline applied to
+#: arithmetic. Adding a kind is a change to THIS module, reviewed and pinned, never a thing a
+#: recipient can do from a data file.
+BASIS_KINDS = ("base", "running_total", "component")
+
+
+@dataclass(frozen=True)
+class StepSpec:
+    """One declared rung: what it is called, which rate it applies, and to what.
+
+    `basis_kind`:
+      * ``base``          -- the seed amount (all components, escalated if asked)
+      * ``running_total`` -- the total after every preceding step
+      * ``component``     -- a named base component, optionally PLUS named earlier steps
+    """
+    name: str
+    rate_key: str
+    basis_kind: str
+    component: str | None = None            # for basis_kind == "component"
+    plus_steps: tuple[str, ...] = ()        # earlier step names added to that component
+
+
+#: The default build-up. THE SEQUENCE IS THE ALGORITHM: fringe applies to labour, overhead to
+#: labour plus fringe, G&A to the subtotal INCLUDING overhead, then cost of money, then
+#: profit. The same factors in a different order produce a different, wrong price -- which is
+#: why the order is stated as data a reader can see rather than inferred from control flow.
+DEFAULT_COMPOSITION: tuple[StepSpec, ...] = (
+    StepSpec("Fringe",        "fringe",        "component", component="direct_labor"),
+    StepSpec("Overhead",      "overhead",      "component", component="direct_labor",
+             plus_steps=("Fringe",)),
+    StepSpec("G&A",           "g_and_a",       "running_total"),
+    StepSpec("Cost of money", "cost_of_money", "running_total"),
+    StepSpec("Profit",        "profit",        "running_total"),
 )
+
+#: Base components a `component` basis may name. Closed, like BASIS_KINDS.
+COMPONENT_NAMES = ("direct_labor", "material", "other_direct")
+
+#: Kept as a name so existing readers land somewhere. The spec above supersedes it.
+COMPOSITION_ORDER = DEFAULT_COMPOSITION
+
+
+def validate_composition(spec: "tuple[StepSpec, ...]") -> None:
+    """Refuse a spec that is not expressible in the declared vocabulary.
+
+    FAIL-CLOSED AND BEFORE ANY ARITHMETIC. A spec that is wrong should be refused where it is
+    read, not produce a number that is wrong somewhere a recipient has to notice. Every
+    refusal names the offending step, because "invalid composition" is not actionable.
+    """
+    if not spec:
+        raise CompositionError("composition spec is empty; a price needs at least one step")
+
+    seen: list[str] = []
+    rate_fields = {f for f in RateSet.__dataclass_fields__ if f not in
+                   ("fiscal_year", "vintage")}
+
+    for i, s in enumerate(spec):
+        where = f"step {i} ({s.name!r})"
+        if not s.name:
+            raise CompositionError(f"{where}: step name is empty")
+        if s.name in seen:
+            raise CompositionError(
+                f"{where}: duplicate step name -- a later step's basis could not name it "
+                "unambiguously"
+            )
+        if s.rate_key not in rate_fields:
+            raise CompositionError(
+                f"{where}: rate_key {s.rate_key!r} is not a declared rate. "
+                f"Declared: {sorted(rate_fields)}"
+            )
+        if s.basis_kind not in BASIS_KINDS:
+            raise CompositionError(
+                f"{where}: basis_kind {s.basis_kind!r} is not declared. "
+                f"Declared: {list(BASIS_KINDS)}"
+            )
+        if s.basis_kind == "component":
+            if s.component not in COMPONENT_NAMES:
+                raise CompositionError(
+                    f"{where}: component {s.component!r} is not declared. "
+                    f"Declared: {list(COMPONENT_NAMES)}"
+                )
+            for ref in s.plus_steps:
+                if ref not in seen:
+                    # FORWARD REFERENCE. Refused rather than resolved: a step whose basis
+                    # depends on a step that has not run has no defined value, and computing
+                    # it as zero would silently understate the price.
+                    raise CompositionError(
+                        f"{where}: plus_steps names {ref!r}, which has not run yet. "
+                        f"Steps available at this point: {seen or '(none)'}"
+                    )
+        elif s.component is not None or s.plus_steps:
+            raise CompositionError(
+                f"{where}: component/plus_steps are only meaningful for basis_kind "
+                "'component'"
+            )
+        seen.append(s.name)
 
 
 def compose_price(
@@ -147,6 +261,7 @@ def compose_price(
     other_direct: Decimal,
     rates: RateSet,
     escalate: bool = False,
+    spec: "tuple[StepSpec, ...] | None" = None,
 ) -> PriceBuildUp:
     """Build a price from its components, in the one order that is correct.
 
@@ -156,6 +271,9 @@ def compose_price(
     False because escalation is a forward-looking choice and a silent default would be the
     same defect as a defaulted rate vintage.
     """
+    spec = DEFAULT_COMPOSITION if spec is None else tuple(spec)
+    validate_composition(spec)
+
     for name, amount in (
         ("direct_labor", direct_labor), ("material", material), ("other_direct", other_direct)
     ):
@@ -180,31 +298,33 @@ def compose_price(
 
     # The bases each factor is struck on. Computed as we go, because every one of them
     # depends on a step above it -- which is the whole reason the order is data.
-    bases: dict[str, Decimal] = {"direct_labor": quantize_money(base_labor)}
+    components: dict[str, Decimal] = {
+        "direct_labor": quantize_money(base_labor),
+        "material": quantize_money(base_material),
+        "other_direct": quantize_money(base_other),
+    }
     running = seed
+    by_name: dict[str, Decimal] = {}
 
-    for step_name, rate_attr, basis_key in COMPOSITION_ORDER:
-        rate: Decimal = getattr(rates, rate_attr)
+    for s in spec:
+        rate: Decimal = getattr(rates, s.rate_key)
         if rate < 0:
-            raise CompositionError(f"{step_name} rate is negative ({rate})")
-        if basis_key not in bases:
-            # Bases that only exist once earlier steps have run.
-            if basis_key == "labor_plus_fringe":
-                bases[basis_key] = bases["direct_labor"] + _amount_of(steps, "Fringe")
-            elif basis_key == "subtotal_with_overhead":
-                bases[basis_key] = running
-            elif basis_key == "total_cost":
-                bases[basis_key] = running
-            elif basis_key == "total_cost_plus_com":
-                bases[basis_key] = running
-            else:  # pragma: no cover - guarded by the tuple above being a closed set
-                raise CompositionError(f"unknown basis rule {basis_key!r}")
-        basis = bases[basis_key]
+            raise CompositionError(f"{s.name} rate is negative ({rate})")
+        if s.basis_kind == "base":
+            basis = seed
+        elif s.basis_kind == "running_total":
+            basis = running
+        else:  # "component" -- validated above, so component is a declared name
+            basis = components[s.component]
+            for ref in s.plus_steps:
+                basis = basis + by_name[ref]
+            basis = quantize_money(basis)
         amount = quantize_money(basis * rate)
         running = quantize_money(running + amount)
+        by_name[s.name] = amount
         steps.append(
             CompositionStep(
-                name=step_name, rate=rate, basis=basis, amount=amount, running_total=running
+                name=s.name, rate=rate, basis=basis, amount=amount, running_total=running
             )
         )
 
@@ -221,14 +341,7 @@ def compose_price(
     # So the price is re-derived here by the closed form, and the two paths must agree. A
     # single wrong quantization now shows up as a disagreement between two independent
     # computations, which is what the seal was always supposed to be testing.
-    _fringe = quantize_money(quantize_money(base_labor) * rates.fringe)
-    _overhead = quantize_money((quantize_money(base_labor) + _fringe) * rates.overhead)
-    _subtotal = quantize_money(seed + _fringe + _overhead)
-    _ga = quantize_money(_subtotal * rates.g_and_a)
-    _total_cost = quantize_money(_subtotal + _ga)
-    _com = quantize_money(_total_cost * rates.cost_of_money)
-    _profit = quantize_money(quantize_money(_total_cost + _com) * rates.profit)
-    price_closed_form = quantize_money(_total_cost + _com + _profit)
+    price_closed_form = _fold_price(spec, rates, seed, components)
 
     build = PriceBuildUp(
         steps=tuple(steps),
@@ -245,6 +358,50 @@ def compose_price(
             f"independently is {build.price}"
         )
     return build
+
+
+def _fold_price(
+    spec: "tuple[StepSpec, ...]",
+    rates: RateSet,
+    seed: Decimal,
+    components: Mapping[str, Decimal],
+) -> Decimal:
+    """Compute the price again, by a different traversal, for the sum seal to compare against.
+
+    WHAT THIS SEAL PROVES, AND WHAT IT STOPPED PROVING WHEN THE SEQUENCE BECAME DATA -- stated
+    because quietly weakening a seal is worse than not having one.
+
+    BEFORE: the price was re-derived by a hand-written closed form. That was independent of
+    the step loop in both CODE and SPEC, so it caught an error in either.
+
+    NOW: both paths read the SAME declared spec, so the seal no longer cross-checks the spec
+    against an independent statement of the algorithm -- it cross-checks two DIFFERENT
+    TRAVERSALS of one spec. It still catches accumulation, rounding and basis-resolution bugs
+    in either path, which is what it was introduced for (the original version compared the
+    steps against their own accumulator and could not fail at all). It does NOT catch a spec
+    that is internally consistent and wrong.
+
+    THAT GAP IS COVERED ELSEWHERE, ON PURPOSE: `validate_composition` refuses a spec outside
+    the declared vocabulary before any arithmetic runs, and the verification manifest
+    (ADR-0047 §3) compares against outputs captured from the PRODUCING ENGINE, which is the
+    independent statement a shipped package actually needs.
+    """
+    running = seed
+    amounts: dict[str, Decimal] = {}
+    for s in spec:
+        if s.basis_kind == "base":
+            basis = seed
+        elif s.basis_kind == "running_total":
+            basis = running
+        else:
+            basis = components[s.component]
+            for ref in s.plus_steps:
+                basis = basis + amounts[ref]
+            basis = quantize_money(basis)
+        amount = quantize_money(basis * getattr(rates, s.rate_key))
+        amounts[s.name] = amount
+        running = quantize_money(running + amount)
+    return running
 
 
 def _amount_of(steps: Sequence[CompositionStep], name: str) -> Decimal:
