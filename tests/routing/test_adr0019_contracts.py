@@ -123,7 +123,19 @@ def _install_stubs() -> None:
         d.DynamicOut = lambda *a, **k: None
         d.DynamicOutput = lambda *a, **k: None
         d.Output = lambda *a, **k: None
-        d.MetadataValue = type("MetadataValue", (), {
+        # SAME LAW ONE LEVEL DOWN. This used to be a plain type carrying "text" and
+        # "json", which is a remembered list of ATTRIBUTES inside a stub whose missing
+        # NAMES had already bitten twice. dagster_factory calls MetadataValue.md() and got
+        # AttributeError the moment the name-level gap above was closed — the next layer of
+        # the same defect, revealed only because the first one stopped masking it.
+        #
+        # The metaclass __getattr__ makes every constructor pass its value through, so
+        # .md/.url/.path/.float and anything dagster adds later are covered without an edit.
+        class _MetaMV(type):
+            def __getattr__(cls, _name):
+                return lambda v=None, *a, **k: v
+
+        d.MetadataValue = _MetaMV("MetadataValue", (), {
             "text": staticmethod(lambda s: s),
             "json": staticmethod(lambda j: j),
         })
@@ -159,7 +171,115 @@ def _install_stubs() -> None:
             def configured(_cfg):
                 return object()
         d.multiprocess_executor = _Cfg2()
+
+        # ── AND THE REST OF THE NAMES, DERIVED RATHER THAN REMEMBERED ─────────────
+        #
+        # Everything above is hand-written because it needs real semantics: Failure must
+        # be an Exception, MetadataValue needs .text/.json, Config must be subclassable.
+        # THE REMAINDER IS THE LONG TAIL, and hand-maintaining it is what has failed
+        # twice. `Failure` and `Nothing` were added after one ImportError; `Definitions`
+        # and `load_assets_from_modules` then bit the same way — because
+        # src/iagent/definitions.py is pulled in transitively and imports both, and this
+        # stub had never heard of either.
+        #
+        # The comment above already stated the rule ("THE STUB MUST COVER EVERY NAME THE
+        # MODULE IMPORTS") and the repair was still a remembered list, so the rule was
+        # true and unenforced. src/iagent imports 30 distinct names from dagster; this
+        # stub hand-wrote about eighteen of them.
+        #
+        # So the tail is derived from the source at install time: any name imported from
+        # dagster anywhere under src/iagent gets a benign stand-in if nothing above
+        # already defined it. A new `from dagster import X` is covered the moment it is
+        # written, with no edit here and no ImportError that depends on collection order.
+        for _name in _dagster_names_imported_by_iagent():
+            if not hasattr(d, _name):
+                setattr(d, _name, _benign_stub(_name))
+
         sys.modules["dagster"] = d
+
+
+def _benign_stub(name: str):
+    """A stand-in for a dagster name whose semantics this suite does not exercise.
+
+    Callable AND subscriptable, because dagster's surface mixes decorators (`@asset`),
+    factories (`Out(...)`), classes used as annotations, and generics. Returning a bare
+    object() would import cleanly and fail at first use, which is the worse failure the
+    hand-written `Failure` note above already argues against.
+    """
+    class _Stub:
+        __name__ = name
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __call__(self, *a, **k):
+            # As a decorator: give the function back unchanged.
+            if len(a) == 1 and not k and callable(a[0]):
+                return a[0]
+            return _Stub()
+
+        def __class_getitem__(cls, _item):
+            return cls
+
+        def __getattr__(self, _attr):
+            return _Stub()
+
+    return _Stub()
+
+
+def _dagster_names_imported_by_iagent() -> set:
+    """Every name any module under src/iagent imports from dagster.
+
+    Pure AST — no imports of the modules themselves, so this cannot fail for the same
+    reason the stub exists to prevent. Returns an empty set rather than raising if the
+    tree cannot be read: a stub that refuses to install would turn a covered gap into an
+    uncovered one.
+    """
+    import ast as _ast
+
+    out: set = set()
+    src = _REPO / "src" / "iagent"
+    if not src.exists():
+        return out
+    for py in src.rglob("*.py"):
+        try:
+            tree = _ast.parse(py.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.ImportFrom) \
+                    and (node.module or "").split(".")[0] == "dagster":
+                out |= {a.name for a in node.names}
+    return out
+
+
+def test_the_stub_covers_every_dagster_name_iagent_IMPORTS():
+    """THE SEAL ON THE STUB, and it is the third repair of the same defect.
+
+    Twice now a missing stub attribute has produced an ImportError that appeared only
+    under some collection orders — because `_install_stubs` is a no-op when real dagster
+    is already in sys.modules, so whether the stub is exercised depends on whether an
+    earlier test imported dagster first. That makes the bug intermittent and its absence
+    meaningless: a green run proves the stub was skipped, not that it was complete.
+
+    This asserts coverage directly, against the DERIVED set, so it fails the same way
+    every time regardless of order.
+    """
+    _install_stubs()
+    d = sys.modules["dagster"]
+    missing = sorted(n for n in _dagster_names_imported_by_iagent() if not hasattr(d, n))
+    assert not missing, (
+        "src/iagent imports these from dagster and the stub does not provide them: "
+        + ", ".join(missing)
+    )
+
+
+def test_the_derivation_actually_found_names():
+    """NON-VACUITY. An empty derived set would make the seal above pass trivially and
+    silently restore exactly the condition it exists to detect."""
+    names = _dagster_names_imported_by_iagent()
+    assert len(names) >= 20, f"only {len(names)} names derived; the AST scan is broken"
+    assert "Definitions" in names, "the name that produced this repair is not in the set"
 
 
 @pytest.fixture(scope="module")

@@ -62,7 +62,19 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 ONTOLOGIES = ROOT / "setup" / "ontologies"
 MATRIX = ROOT / "tests" / "routing" / "test_classify_route.py"
 
-_QUOTED = re.compile(r"['\"]([^'\"]{12,})['\"]")
+# POSSESSIVES AND CONTRACTIONS ARE NOT QUOTES, and treating them as such produced a false
+# red on 2026-09-04. The pattern used to accept any apostrophe as an opening quote, so
+# mesh:SlotElicitation's definition — which contains "ADR-0033's `ask`" and "the provider's
+# own reason" and no quoted question whatsoever — yielded a 60-character fake span between
+# the two possessives, and that span happened to contain the word "when", which is enough for
+# _INTERROGATIVE to fire.
+#
+# A FALSE RED IS THE EXPENSIVE FAILURE FOR THIS GUARD, not a miss: it is cheap to override,
+# and an overridden guard is a dead one. So a quote may not open directly after a word
+# character or digit, nor close directly before one. Double quotes are unaffected — they have
+# no possessive form — and a genuinely quoted example still matches, because its opening quote
+# follows a space or a bracket.
+_QUOTED = re.compile(r"(?<![A-Za-z0-9])['\"]([^'\"]{12,})['\"](?![A-Za-z0-9])")
 _INTERROGATIVE = re.compile(
     r"\b(what|which|who|where|when|how|why|show me|list all|tell me|give me|describe)\b", re.I)
 # Hierarchy phrasings that legitimately name another class — those are true structural
