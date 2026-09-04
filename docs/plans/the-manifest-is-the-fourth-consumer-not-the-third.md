@@ -7,7 +7,7 @@ closed-by:
 repo:       invincible-agent
 ruled-by:   ADR-0046 §9 (the extraction is on slice 1's critical path) — this item SCOPES the manifest against the extraction's real shape, and corrects §9's count
 code-site:  agent_fleet/finance_agent/slots.py, agent_fleet/planning_agent/slots.py, agent_fleet/cost_agent/slots.py
-summary:    ADR-0046 §9 names the hosted-graph manifest as the THIRD consumer of the slot-declaration derivation and puts the extraction on slice 1's critical path. The third copy already landed — agent_fleet/cost_agent/slots.py, 2026-09-03 — so the manifest is the FOURTH, and §9's measured extraction shape (86 identical lines, one moving target arity_for) predates it. Measured 2026-09-04 across all three - the MECHANISM has forked, not just the vocabulary §9 predicted. slots_for() emits `required` in two engines and `mandatory` in the third; _type_of returns (type, values) in two and a bare str in the third; and the merge surface is now six engine-unique functions, not one. Engine O's _slot_spec reads d.get("required"), so engine-cost's declarations carry no REQUIRED marker to the slot filler — LATENT today because mesh_slots is unprojected, and it fires the moment the projection lands.
+summary:    ADR-0046 §9 names the hosted-graph manifest as the THIRD consumer of the slot-declaration derivation and puts the extraction on slice 1's critical path. The third copy already landed — agent_fleet/cost_agent/slots.py, 2026-09-03 — so the manifest is the FOURTH, and §9's measured extraction shape (86 identical lines, one moving target arity_for) predates it. Measured 2026-09-04 across all three - the MECHANISM has forked, not just the vocabulary §9 predicted. slots_for() emits `required` in two engines and `mandatory` in the third; _type_of returns (type, values) in two and a bare str in the third; and the merge surface is now six engine-unique functions, not one. Engine O's _slot_spec reads d.get("required"), so engine-cost's declarations carry no REQUIRED marker into the slot-filler prompt. BLAST RADIUS IS EXACTLY ONE CONSUMER, measured: slot_acceptance and slot_disposition both key on `kind`, which cost emits correctly, so the mandatory disposition still fires and the failure mode is a WEAKER FILL AND A NEEDLESS ASK, not a wrong answer. Latent today either way — mesh_slots is unprojected.
 ---
 
 # The manifest is the fourth consumer, and the mechanism has already forked
@@ -54,7 +54,7 @@ mapping that decides which parameters get a `values` key at all. So a new `Liter
 finance or planning ships its vocabulary automatically, and in cost it ships silently without one
 until someone adds a row.
 
-## §C — The consequence, and it is LATENT rather than live
+## §C — The consequence, measured to ONE consumer rather than assumed across all of them
 
 `agent_fleet/ontology_service/main.py:2673` — Engine O's `_slot_spec`, which renders the prompt the
 slot filler works from — reads:
@@ -64,27 +64,41 @@ if d.get("required"):
     bits.append("REQUIRED")
 ```
 
-Engine-cost never emits `required`. **Every engine-cost slot therefore reaches the filler with no
-REQUIRED marker**, including `rate_vintage` — the slot its own module names as *the engine's
-designed refusal*, with the reason spelled out: *"a refusal the router cannot see is a refusal that
-never fires: the question routes, the verb raises, and a caller gets a Python error where they
-should have got a menu of vintages."*
+Engine-cost never emits `required`, so **no engine-cost slot is ever marked REQUIRED in the
+slot-filling prompt** — including `rate_vintage`, the slot its own module names as the engine's
+designed refusal.
 
-**IT IS NOT FIRING TODAY, and the reason must be stated with it.** `mesh_slots` is not projected
-into the graph yet — blocked on doc-tools' `aitool_linker` allowlist — so
-`decode_declarations(cv.get("slots"))` returns `[]` for **every** engine and every spoken slot is
-refused (`src/iagent_pure/slot_acceptance.py:24`, `dynamic_supervisor.py:785`). The carry lands
-dark by design, in the order *declare → project → honour*.
+**THE FIRST DRAFT OF THIS SECTION SAID THE REFUSAL NEVER FIRES. THAT WAS WRONG, and the check that
+corrected it is the one worth recording.** The other two consumers of a declaration do not read
+`required` at all — they key on `kind`:
 
-**So this is a defect with a scheduled start time.** When the projection lands, finance and planning
-light up correctly and engine-cost lights up with every slot optional — and it will not go red
-anywhere, because a missing `REQUIRED` line in a prompt has no failure signature. The projection is
-the event several lanes are waiting for, which makes this the wrong thing to discover on that day.
+| consumer | keys on | engine-cost |
+|---|---|---|
+| `slot_disposition.py:170` — which slots are spoken-mandatory | `kind == "spoken-mandatory"` | **correct** |
+| `slot_acceptance.py:163` — route-supplied slots are not accepted from a speaker | `kind` | **correct** |
+| `ontology_service/main.py:2673` — the REQUIRED marker in the filler's prompt | `required` | **never set** |
 
-**Cheapest correct fix, and it belongs to engine-cost, not here:** emit `required` (keeping
-`mandatory` as well if `mandatory_slots()` or the cost seals read it) so the key matches the two
-engines that predate it and the consumer that reads it. Note that
-`tests/cost/test_engine_cost_contracts.py` asserts on `slots_for` output, so the seal moves with it.
+Cost's `kind` is right, so the ask machinery still works. **The real failure mode is therefore
+narrower and worth naming exactly: the filler model is told less about a slot it must extract, so it
+extracts it less reliably; the disposition then correctly notices the absence and asks.** The cost
+is a degraded fill and a needless ask — not a confident wrong answer, and not a refusal that never
+fires.
+
+`decode_declarations` (`slot_acceptance.py:59`) normalises the CONTAINER — a JSON string into a list
+of records — and never the keys, and no `mandatory`→`required` mapping exists anywhere in
+first-party code. Nothing between the engine and the prompt closes the gap.
+
+**IT IS NOT FIRING TODAY.** `mesh_slots` is not projected into the graph yet — blocked on doc-tools'
+`aitool_linker` allowlist — so `decode_declarations(cv.get("slots"))` returns `[]` for **every**
+engine and every spoken slot is refused (`slot_acceptance.py:24`, `dynamic_supervisor.py:785`). The
+carry lands dark by design, in the order *declare → project → honour*. So this is a defect with a
+scheduled start time, and it will not go red when it arrives — a missing `REQUIRED` line in a prompt
+has no failure signature.
+
+**Cheapest correct fix, and it belongs to engine-cost, not here:** emit `required` alongside
+`mandatory` (the cost seals and `mandatory_slots()` read the latter) so the key matches the two
+engines that predate it and the consumer that reads it. `tests/cost/test_engine_cost_contracts.py`
+asserts on `slots_for` output, so the seal moves with it.
 
 ## §D — What the MANIFEST needs from the extraction
 
