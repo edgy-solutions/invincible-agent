@@ -2394,6 +2394,49 @@ def _stage(
     return _sse("pipeline_stage", json.dumps(payload))
 
 
+def _primary_routing_mat(mats: list[dict]) -> dict | None:
+    """The routing decision the user's ANSWER actually flowed through.
+
+    MEASURED 2026-09-04, sandbox runs e82b3031 and 2a627ea7. A question decomposes into
+    PARALLEL subtasks, each posting its own `/resolve`. Engine O's BAML calls run 8-30s against
+    Ollama, two simultaneous posts contend, and one subtask times out at 30s while the other
+    succeeds at ~44s. Both materialize `subtask_routing_decision`.
+
+    THE OLD RULE WAS FIRST-TO-MATERIALIZE, AND IT PREFERS THE FAILURE BY CONSTRUCTION.
+    A 30-second timeout completes SOONER than a 44-second resolve-then-classify chain, so
+    whenever one subtask fails and another succeeds slowly, the failing one wins the race every
+    time. Not a coin flip weighted toward failure — a rule that systematically records
+    "not grounded" for a run that grounded.
+
+    What that produced: at 21:55 the card was Engine F's VARIANCE_TREE, drawn from real EVM
+    rows, inside a header reading NOT GROUNDED / General search / conf 0.00. The record was
+    never stale and never stamped pre-override — it was ACCURATE about a subtask whose answer
+    nobody saw, which is exactly why every reading of the capture path found nothing wrong.
+
+    THE RULE HERE IS THE CARD'S RULE. `generate_ui_payload` picks the first result carrying an
+    `output_uri` and skips the ones without — and only a MATCHED route can produce one, because
+    ADR-0019 Contract B sends an ungrounded subject to the generalist, which declares none. So
+    "first matched decision" is this side's expression of "the subtask the card came from".
+
+    NOT `task_0`. That was inferred from two artifacts and it is not the card's key: at 21:47
+    task_0 failed and at 21:55 task_1 did, and in both runs the card came from whichever subtask
+    produced a typed output. Keying on the index would have been right twice by luck.
+
+    Falls back to the first decision when NOTHING matched, so a genuinely ungrounded run still
+    records the honest refusal it should.
+    """
+    routing = [
+        m for m in mats
+        if (m.get("assetKey", {}) or {}).get("path") == ["subtask_routing_decision"]
+    ]
+    if not routing:
+        return None
+    for m in routing:
+        if str(_metadata_dict(m).get("route_status") or "") == "matched":
+            return m
+    return routing[0]
+
+
 def _metadata_dict(mat: dict) -> dict[str, Any]:
     """Flatten a Dagster materialization's metadataEntries list into a
     label → raw-value dict. Dagster's GraphQL response shape for each
@@ -3936,6 +3979,11 @@ async def generate_dagster_stream(
             elif (
                 path == ["subtask_routing_decision"]
                 and "route_decision_emitted" not in emitted_steps
+                # THE SUBTASK THE ANSWER CAME FROM, not the first to materialize.
+                # See _primary_routing_mat: a 30s timeout beats a 44s success to
+                # the finish line, so first-arrival systematically records the
+                # failing subtask for a run that grounded.
+                and mat is _primary_routing_mat(mats)
             ):
                 decision = _project_route_decision(mat)
                 if decision is not None:
