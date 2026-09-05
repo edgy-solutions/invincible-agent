@@ -463,3 +463,65 @@ fixed it and did not: the override path does not consult the pool the gate curat
 **So the honest split:** the no-instance phrasing is fixed and reaches a verb; every
 lot-naming phrasing is still blocked by the override, which is one ruling away and not this
 lane's to make.
+
+---
+
+# THE PACKAGE RENDERS — 2026-09-04, and the fidelity fork is CLOSED
+
+**Verified in a browser by the human step ADR-0048 §3 item 4 assigns.** Green banner:
+*"Verified — every figure reproduced exactly, 5 lot(s) checked"*, with the full build-up
+rendering per lot: base cost, fringe, overhead, G&A, cost of money, profit, each with its
+rate, its basis and its running total.
+
+## Two questions closed by one observation
+
+**1. WASM NUMERIC FIDELITY — CLOSED, AND FAVOURABLY.** Pyodide's `decimal` reproduces the
+engine's arithmetic **exactly**, to the cent, across five lots and thirty steps. Not
+"within tolerance" — the manifest compares strings and every one matched.
+
+**The fork was narrowed by construction long before it was measured.** `pricing.py` imports
+`dataclasses`, `decimal` and `typing` and nothing else; there is no numpy or pandas anywhere
+in the engine. That was a deliberate cost paid when the module was written — *"every
+dependency it gained would become a dependency the export bundle has to carry and the
+customer has to trust"* — and it turned "does the numeric stack survive WASM", the risk the
+dispatch named as the fork, into "does `decimal` agree", which is specified arithmetic.
+
+**So the HTML format stands and the notebook stays the second target rather than the
+fallback.**
+
+**2. THE NO-CDN PROPERTY — DEMONSTRATED, not merely asserted.** The page loaded from embedded
+bytes alone. The only console output is Pyodide's own `try`-instruction deprecation warning
+from its build.
+
+## Measurements, taken by building rather than estimating (ADR-0048 §3)
+
+| | |
+|---|---|
+| bundle size | **17.6 MB** (14 MB of it the Pyodide runtime) |
+| cold boot | renders on open; not instrumented to a number — a stopwatch reading is still owed |
+| numeric fidelity | **exact**, 5 lots × 6 steps, string equality |
+| emailability | 17.6 MB clears most gateways and clears none comfortably — a real constraint on the format, now a fact rather than a guess |
+
+## THREE LAYERS, EACH FOUND ONLY BY OPENING THE FILE
+
+| layer | passed | actual failure |
+|---|---|---|
+| embed the runtime | zero external URLs, every file embedded | would not open — `import()` cannot be shimmed by `fetch` |
+| route the dynamic import | zero bare imports, blob resolver present | would not instantiate — `Response has unsupported MIME type ''` |
+| declare MIME types | 53 seals green | **renders** |
+
+**Every layer passed the previous layer's seal**, and the seals got strictly better each round.
+None of the three defects was visible to any check that reads the artifact as text.
+
+**That is the honest measure of what a structural seal buys and what it cannot.** ADR-0048 §3
+item 4 gives the open-it step a human owner; that assignment was not caution, it was the only
+instrument that could see any of this. The human step found three real defects in three
+consecutive rounds.
+
+## The demo beat is built
+
+`--corrupt-intermediate` alters ONE embedded figure — lot 3's fringe, `1717367.65 → 999999.99`
+— leaving the pinned modules, the inputs and every other figure untouched, and writes
+`…-CORRUPTED.html` so it cannot be mistaken for a real package. The recipient's browser
+recomputes, disagrees, and refuses to render. **That demonstration is the trust argument, and
+it costs one byte.**

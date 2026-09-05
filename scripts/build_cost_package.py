@@ -343,6 +343,11 @@ def main() -> int:
     ap.add_argument("--recipient", required=True)
     ap.add_argument("--out", default="dist")
     ap.add_argument("--runtime-dir", default=str(ROOT / ".pyodide-cache"))
+    ap.add_argument("--corrupt-intermediate", action="store_true",
+                    help=("DEMO ONLY: corrupt one embedded intermediate so the package "
+                          "refuses to render. ADR-0048 §6's trust beat — hand it to someone "
+                          "and let them watch it refuse. Output is named -CORRUPTED so it "
+                          "cannot be mistaken for a real package."))
     ap.add_argument("--fetch-runtime", action="store_true",
                     help="download the pinned Pyodide runtime into --runtime-dir (needs network)")
     a = ap.parse_args()
@@ -357,8 +362,24 @@ def main() -> int:
             urllib.request.urlretrieve(base + f, rt / f)
 
     html = build_html(a.recipient, rt)
+    suffix = ""
+    if a.corrupt_intermediate:
+        # Alter ONE intermediate in the embedded manifest, leaving everything else — the
+        # pinned modules, the inputs, the other figures — untouched. The recipient's browser
+        # recomputes it, disagrees, and the package refuses. This is the demonstration ADR-0048
+        # §6 scripts, and it costs one byte.
+        import re as _re
+        m = _re.search(r'id="package-data" type="application/json">(.*?)</script>', html, _re.S)
+        pkg = json.loads(m.group(1))
+        victim = pkg["manifest"]["checks"][2]["intermediates"][1]
+        original = victim["amount"]
+        victim["amount"] = "999999.99"
+        html = html[:m.start(1)] + json.dumps(pkg) + html[m.end(1):]
+        suffix = "-CORRUPTED"
+        print(f"  corrupted lot {pkg['manifest']['checks'][2]['lot']} step "
+              f"{victim['name']!r}: {original} -> {victim['amount']}")
     out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
-    dest = out / f"cost-validation-{a.recipient}.html"
+    dest = out / f"cost-validation-{a.recipient}{suffix}.html"
     dest.write_text(html, encoding="utf-8")
     mb = dest.stat().st_size / 1_048_576
     print(f"wrote {dest}  ({mb:.1f} MB)")
