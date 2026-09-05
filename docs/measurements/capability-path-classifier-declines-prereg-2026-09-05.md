@@ -67,3 +67,88 @@ instruction, which is a different lane's change and a different packet.
 **Four things per draw**, N draws of the same phrasing: the winner, the candidate SET, set
 disjointness across draws, and whether the winner carries a verb in that scope. A fix verified
 on one draw of a sampled classifier is not verified.
+
+---
+
+# RESULTS — both predictions refuted. The classifier never saw the user's question.
+
+## The evidence, in one line
+
+```
+16:10:01  arity_gate subject_uri=idp#Capability set_query=True FLAGGED 1 verb needs_instance
+16:10:17  classify_predicate no_match
+          query='Explain what a capability path is, including its purpose and typical
+                 usage within system architecture or capability modeling.'
+          compatible=['mesh:planCapabilityPath', 'mesh:planMaturityGrid']
+          reasoning='The user requests a definition and purpose of a capability path,
+                     while the only available predicates ... are for planning project
+                     execution or maturity grids, not for providing conceptual explanations.'
+```
+
+**The user asked "what is the capability path". The classifier was handed
+"Explain what a capability path is, including its purpose and typical usage within system
+architecture or capability modeling."**
+
+That is a **glossary question**, and the classifier's refusal is CORRECT for it. No verb in this
+system explains what a term means. Given the query it received, UNKNOWN is the right answer and
+0.22 is an honest score.
+
+**The defect is upstream of every gate and every classifier: `create_task_plan` rewrote the
+question.** The planner read "what is the capability path" as a request for a DEFINITION rather
+than as a request for a specific program's capability path, and synthesised a sub-query to
+match. Everything downstream then behaved correctly on a question nobody asked.
+
+Corroborated by the planner's own reasoning on the sibling draw: *"The user asks for a
+definition/explanation of the term 'capability path' ... should be handled by the generic ANY
+specialist who can provide a clear description."*
+
+## P1 — REFUTED. The flag is exonerated.
+
+`needs_instance` appears **0 times** in engine-o's logs across three hours, against four logged
+`ClassifyPredicate` prompts. It never reaches the model. The verb dicts are not serialised into
+the dynamic enum; the enum is built from curated descriptions.
+
+**The hypothesis was mine to disprove and it is disproved.** Nothing about the flag needs to
+change.
+
+## P2 — REFUTED AS STATED
+
+The decline is not the verb description versus the user's question. It is the verb description
+versus **a question the user never asked**. P2 would have sent me to rewrite verb descriptions —
+a change that would have made the glossary question route to `planCapabilityPath`, which is a
+WRONG answer to a question the user did not ask, arrived at by making the system worse.
+
+## The trace worked, and the dispatch's reading of it was one word off
+
+The dispatch says *"No exclusions recorded, so the gate didn't remove it."* The record is:
+
+```json
+{"kind": "verb", "uri": "mesh:planCapabilityPath", "gate": "arity",
+ "disposal": "flagged", "reason": "needs_instance"}
+```
+
+There IS a record — a **flagged** one. That is the two-valued `disposal` doing exactly the job
+it was added for yesterday: saying *the gate touched this and kept it* rather than staying
+silent and letting "no record" mean two different things. A one-valued trace would have shown
+nothing here and the reading would have been right by accident.
+
+## A SECOND DEFECT, found in passing: `classify_called` is a lying instrument
+
+The artifact says `classify_called: False`. **The classifier ran** — the supervisor logged its
+reasoning, which can only have come from the model. The field is derived:
+
+```python
+"classify_called": status == _ROUTING_MATCHED or telemetry.get("verb_iri") not in (None, "UNKNOWN")
+```
+
+When classify runs and returns UNKNOWN, both disjuncts are false and the field reports **False**
+— while its own comment claims it is *"true whenever /classify_predicate ran"*. It cannot
+distinguish **never called** from **called and refused**, which are opposite diagnoses. That is
+a derived boolean wearing the name of an observed event, and it is exactly the shape that made
+`conf 0.00` unreadable two nights ago.
+
+## What NOT to do
+
+**Do not touch the arity flag, the eligibility trace, or the verb descriptions.** All three are
+behaving correctly. The question is being rewritten before any of them are consulted, and that
+is the only thing to fix.
