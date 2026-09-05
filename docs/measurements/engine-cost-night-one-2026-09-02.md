@@ -525,3 +525,32 @@ consecutive rounds.
 `…-CORRUPTED.html` so it cannot be mistaken for a real package. The recipient's browser
 recomputes, disagrees, and refuses to render. **That demonstration is the trust argument, and
 it costs one byte.**
+
+## The refusal fires — both states now observed in a browser
+
+```
+REFUSED - 1 figure(s) could not be reproduced. Nothing is displayed.
+lot 3 step Fringe: recomputed 1717367.65, manifest expects 999999.99
+```
+
+**This is "proven to bite" applied to the ARTIFACT rather than to a test.** The unit seals
+proved `verify_manifest` returns divergences; only opening the corrupted file proves the
+*package* refuses — and after three layers where the seals passed and the artifact did not
+work, that distinction had earned its scepticism.
+
+**Three properties visible in that one screen, each deliberate:**
+
+1. **It names the step.** Not *"verification failed"* but lot, step, recomputed value, expected
+   value. That is what makes a disagreement a bounded diagnosis rather than an argument — and
+   it is why the manifest carries INTERMEDIATES and not only outputs.
+2. **Nothing is displayed.** No partial table, no figures with a warning above them. A package
+   that showed four good lots and hid the fifth would be the confident-wrong answer with a
+   caveat attached.
+3. **The recomputed figure is the TRUE one.** `1717367.65` is what the algorithm produces;
+   `999999.99` is what the tampered manifest claimed. The package does not merely detect the
+   discrepancy, it tells the recipient which side is real — which it can do precisely because
+   the algorithm is pinned and theirs to run.
+
+**And the header still carries the pinned SHA and the content-hash locator**, so the refusing
+package is as identifiable as a verifying one. *"Which version did they validate against"* is
+answerable even for a package that refused.
