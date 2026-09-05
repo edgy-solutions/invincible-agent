@@ -283,11 +283,19 @@ def arity_for(fn_name: str) -> str | None:
     portfolio-wide answer (`plan_schedule`'s `scope_initiative_id`) and leaves the verb
     set-shaped.
 
-    WHAT THIS BUYS. `_filter_verbs_by_arity` drops a "single" verb when
-    `query_is_set = not subject_instance_id` — so a question that named no instance stops
-    being routed to a verb that cannot answer it. Today that same question routes there and
-    gets a 400 for a missing mandatory slot, two hops later and with no surface a reader can
-    act on. See docs/plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md.
+    WHAT THIS BUYS — AND WHAT CHANGED 2026-09-04. `_filter_verbs_by_arity` marks a "single"
+    verb `needs_instance` when `query_is_set = not subject_instance_id`. It originally
+    DROPPED it, to avoid the 400 named in
+    docs/plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md — but that 400 is now an ASK,
+    and excluding the verb cost H06 its answer: "what is the capability path" grounded to
+    Capability and then reported no-verb-classified, because the only verb that fit was
+    removed for the very reason it would have asked.
+
+    THE DERIVATION IS WHAT MAKES KEEPING IT SAFE. "single" means the measure has a slot that
+    is both required and a referent — which is exactly the condition the disposition asks
+    about. So a kept single verb whose instance was never named reaches an ask or an abstain
+    and cannot dispatch silently. The gate's guarantee did not weaken; it moved to the layer
+    that can offer a menu instead of a refusal.
 
     ROUTE-SUPPLIED HANDLES CANNOT TRIGGER THIS, and that falls out rather than being
     special-cased: `slots_for` sets `referent` only on SPOKEN slots, because a handle is

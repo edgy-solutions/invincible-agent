@@ -70,3 +70,51 @@ observed. Anything else replaces one guessed number with another.
 draws agreed exactly. The variance lives entirely in contention, and a run scored on winners
 alone would have recorded this as sampler instability — which is how three separate hypotheses
 (gate-drop, classifier sampling, phrasing recall) all came to measure a neighbour of a timeout.
+
+---
+
+# MEASURED 2026-09-05 — the budget has no headroom even at N=1
+
+Serial and concurrent posts of the same failing phrasing to the deployed engine-o, with a
+**180-second** client timeout so the real chain is visible rather than clipped at 30s.
+
+| N concurrent | n | min | **median** | max | would exceed the 30s budget |
+|---|---|---|---|---|---|
+| 1 | 3 | 17.5s | **18.4s** | 22.0s | 0/3 |
+| 2 | 6 | 18.1s | **26.1s** | 27.8s | 0/6 |
+| 4 | 12 | 26.0s | **35.7s** | 46.6s | **9/12** |
+
+**Every single request returned HTTP 200.** Nothing is broken and nothing is retried away —
+the work completes, and the budget is simply smaller than the work.
+
+## What the numbers settle
+
+**The budget was never sized for the chain, not even for one caller.** At N=1, with no
+contention at all, the median resolve takes **61% of the 30-second budget**. That is the
+baseline, not the tail.
+
+**At N=2 the margin is 2.2 seconds.** Median 26.1s, max 27.8s, zero timeouts in six draws —
+which is exactly why this was invisible until it wasn't. Two subtasks is the ordinary shape of
+a decomposed question, and it sits just inside the cliff. Any additional load on the same BAML
+path — another engine's `classify_predicate`, a `fill_slots`, an `ExtractIntent` — pushes it
+over, which is why production saw at N=2 what a clean N=2 does not reproduce.
+
+**At N=4 it is not a tail event: 9 of 12 exceed the budget.** The failure rate is 75%.
+
+## The recommendation the data supports
+
+**Serialize the subtasks' resolves, and size the budget from N=1.**
+
+Serializing moves the operating point from N=2 (median 26.1s, margin 2.2s) to N=1 (median
+18.4s, max 22.0s) — where a 30s budget finally has real room. The cost is small and
+calculable: two subtasks resolving serially is ~36s of wall clock against ~27s parallel,
+**about nine seconds**, and it removes an entire failure class whose blast radius is a wrong
+answer rather than a slow one.
+
+A worker pool on engine-o is the better long-run answer and is not needed to close this. It
+needs its own measurement — the concurrency ceiling, measured rather than guessed, which is the
+same error one layer down.
+
+**Raising the budget alone is refused.** It would make the timeout rarer without making it
+rare: at N=4 the max is 46.6s, so any number that covers today's load is a number chosen
+against a load nobody is holding fixed. Serializing changes the load; the budget then covers it.

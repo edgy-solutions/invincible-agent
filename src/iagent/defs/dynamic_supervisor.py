@@ -431,31 +431,54 @@ def _find_compatible_verbs(
 def _filter_verbs_by_arity(
     compatible_verbs: list[dict], query_is_set: bool
 ) -> tuple[list[dict], list[dict]]:
-    """Structural arity gate — query-shape verb eligibility.
+    """Query-shape eligibility — FLAGS a single-asset verb, no longer excludes it.
 
-    When the query is SET-shaped (subject resolved to a CLASS, no specific
-    instance), a single-asset verb cannot answer it. Remove verbs that
-    POSITIVELY declare ``arity == "single"``; KEEP "set" / "any" / null
-    (null = unclassified → never excluded, so an incomplete backfill never
-    over-restricts). Only the set-query direction is gated (conservative);
-    instance/single queries keep every verb. Returns ``(kept, dropped)``.
+    When the query is SET-shaped (subject resolved to a CLASS, with no specific
+    instance), a verb declaring ``arity == "single"`` cannot run as asked. It is marked
+    ``needs_instance`` and KEPT as a candidate. Returns ``(all_verbs, flagged)``.
 
-    PURE — no LLM, no network. That is the entire point: arity is decided
-    structurally UPSTREAM of the classifier, so the LLM never gets to pick
-    a wrong-arity verb (it was never a candidate). Same discipline as the
-    domain scope already applied in ``find_compatible_verbs`` — a second
-    structural constraint composing into (domain ∩ arity) eligibility.
+    WHY EXCLUSION WAS THE WRONG DISPOSAL, ruled 2026-09-04 after H06 failed live.
+    "What is the capability path" grounds to `Capability` cleanly and then reports NO VERB
+    CLASSIFIED, because `planCapabilityPath` is `arity: single`, the question names no
+    instance, and this gate removed the only verb that fits — FOR THE REASON IT WOULD HAVE
+    ASKED ABOUT. The candidate set went empty and the classifier had nothing to pick.
+
+    THE GATE'S OWN PREMISE IS OBSOLETE, AND ITS CITATION SAYS SO. `arity_for` was written
+    against `a-missing-mandatory-slot-is-a-400-not-an-ask.md`: routing a set-shaped question
+    to a single verb "gets a 400 for a missing mandatory slot, two hops later and with no
+    surface a reader can act on". **That 400 is now an ASK.** The disposition offers a menu
+    — Capability has nine members under the bound, and the fan-out is live. Excluding the
+    verb to avoid an error that no longer happens costs the answer instead.
+
+    KEEPING IT CANNOT PRODUCE A SILENT DISPATCH, and that is structural rather than lucky.
+    `arity_for` derives "single" from exactly one condition: the measure has a slot that is
+    both REQUIRED and a REFERENT. So the property that makes a verb single-arity IS the
+    property the slot layer asks about — a kept single verb whose instance was never named
+    reaches `decide_disposition` with an unfilled mandatory referent, which is an ASK or an
+    ABSTAIN, never a dispatch. The two mechanisms were built five weeks apart and meet here.
+
+    THE OTHER HALF OF THE GATE STANDS: a set-shaped question must not route to a single verb
+    SILENTLY. It no longer can — but the flag is carried so the disposition and the decision
+    path can both see WHY an ask was owed, rather than inferring it from a missing slot.
+
+    Still PURE — no LLM, no network. Null arity stays unflagged (an incomplete backfill must
+    never over-restrict), and instance-shaped queries flag nothing.
     """
     if not query_is_set or not compatible_verbs:
         return compatible_verbs, []
-    kept: list[dict] = []
-    dropped: list[dict] = []
+    flagged: list[dict] = []
+    out: list[dict] = []
     for v in compatible_verbs:
         if str(v.get("arity") or "").lower() == "single":
-            dropped.append(v)
+            # Copied rather than mutated: these dicts come from
+            # /find_compatible_verbs and are read elsewhere in the turn.
+            marked = dict(v)
+            marked["needs_instance"] = True
+            flagged.append(marked)
+            out.append(marked)
         else:
-            kept.append(v)
-    return kept, dropped
+            out.append(v)
+    return out, flagged
 
 
 def _filter_verbs_by_argument_fit(
@@ -648,8 +671,9 @@ def _classify_route(
         )
         if _arity_dropped:
             context.log.info(
-                "arity_gate subject_uri=%s set_query=%s dropped %d single-asset "
-                "verb(s) from candidacy: %s",
+                "arity_gate subject_uri=%s set_query=%s FLAGGED %d single-asset "
+                "verb(s) needs_instance (kept as candidates; the disposition "
+                "asks rather than the gate excluding): %s",
                 subject_uri, query_is_set, len(_arity_dropped),
                 [v.get("verb_iri") for v in _arity_dropped],
             )
@@ -847,6 +871,12 @@ def _classify_route(
             None,
         )
         if truth:
+            # ARITY FLAG RIDES WITH THE DISPATCH COORDINATES. `_filter_verbs_by_arity`
+            # marks the compat-walk entry, and this is the seam where that entry is
+            # already treated as authoritative — so the flag reaches the disposition
+            # instead of being lost with the rest of the Weaviate blob's shape.
+            if truth.get("needs_instance"):
+                predicate["needs_instance"] = True
             neo4j_endpoint = truth.get("endpoint_url") or ""
             neo4j_domains = list(truth.get("domains") or [])
             neo4j_owner = truth.get("owner_persona")
@@ -1553,6 +1583,8 @@ from iagent_pure.predicate_routing import (
 # supervisor and the unit tests can each import it without standing up the others.
 from iagent_pure.slot_acceptance import accept_slots, decode_declarations
 from iagent_pure.slot_disposition import (
+    ABSTAIN,
+    ROUTE,
     ask_card,
     decide_disposition,
     validate_bound_slots,
@@ -2104,6 +2136,51 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         resolution=resolution,
         enumerate_class=_make_enumerator(context),
     )
+
+    # ── A FLAGGED VERB MAY NOT DISPATCH WITHOUT ITS INSTANCE ────────────────────────────
+    #
+    # The arity gate now FLAGS a single-asset verb on a set-shaped question rather than
+    # excluding it, so the disposition can offer a menu instead of the answer being lost.
+    # That is right for planning's verbs, where `arity_for` DERIVES "single" from a slot
+    # that is both required and a referent — the very slot `decide_disposition` asks about.
+    #
+    # IT IS NOT SAFE ON ITS OWN, AND THE GATE'S ORIGINAL DEFECT IS THE PROOF. `arity` is a
+    # DECLARED string on a mesh registration for every other engine, carrying no promise
+    # that the verb has an askable slot. `describeAsset` is exactly that: declared single,
+    # and the case the gate was built for — `show me data about customers` resolved to the
+    # class Dataset, routed to a single-asset profiler, and honestly returned `assets: []`.
+    # With no spoken-mandatory declaration, `decide_disposition` walks nothing, returns
+    # ROUTE, and that zero-asset answer comes straight back.
+    #
+    # So the flag is a DISPATCH PRECONDITION, not a hint. Asked-and-answered binds the
+    # instance and this never fires; nothing-to-ask abstains instead of dispatching. This is
+    # the half of the old gate that must survive its own removal — a set-shaped question
+    # still may not route to a single-asset verb SILENTLY.
+    # `needs_instance` is only ever set when the question named NO instance -- the gate
+    # flags on `query_is_set` -- so the remaining condition is whether the disposition had
+    # anything to ask about. A verb with a spoken-mandatory declaration is already handled:
+    # it either asked, or it routed because the slot got filled (a BIND answer arrives here
+    # as an accepted param, and abstaining on THAT would refuse a question the user just
+    # answered). A verb with no such declaration is the unaskable case.
+    _askable = any(
+        isinstance(d, dict) and d.get("kind") in _MUST_BE_SPOKEN_KINDS
+        for d in (decode_declarations(declared) or [])
+    )
+    if (
+        disposition.action == ROUTE
+        and (predicate or {}).get("needs_instance")
+        and not _askable
+    ):
+        context.log.info(
+            "arity_precondition verb_iri=%s ABSTAIN — declared single-asset, the question "
+            "named no instance, and the verb declares no spoken-mandatory slot, so there "
+            "was nothing to ask about. Dispatching would answer a set question with a "
+            "single-asset verb — the assets:[] defect the arity gate was built for.",
+            (predicate or {}).get("verb_iri"),
+        )
+        disposition = disposition._replace(
+            action=ABSTAIN, reason="needs_instance_no_ask",
+        )
     # ── subtask_slots_decision — THE HOP THAT WAS NEVER THERE ────────────────────────
     #
     # `resolved_intent` on the AnswerArtifact has always been populated from

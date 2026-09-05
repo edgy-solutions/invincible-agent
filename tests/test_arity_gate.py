@@ -10,14 +10,26 @@ was under-constrained — domain only, not arity.
 
 THE FIX (structural, deterministic, no LLM): query-arity is already
 captured as the abstention arc's `instance_resolved` signal — subject
-resolved to a class with no instance = SET query. The gate removes verbs
-that positively declare arity="single" BEFORE the classifier sees them, so
-a set-query never resolves to a single-asset verb. Composes with the
-domain scope into (domain ∩ arity) — the eligibility intersection
-enforcement extends with permission.
+resolved to a class with no instance = SET query.
 
-Safety by construction: only POSITIVELY-single verbs are dropped; set/any/
-null are kept (null = unclassified → never over-excluded during backfill).
+THE DISPOSAL CHANGED 2026-09-04, THE GUARANTEE DID NOT. The gate used to
+REMOVE a positively-single verb before the classifier saw it. That cost H06
+its answer: "what is the capability path" grounded to `Capability` cleanly
+and then reported NO VERB CLASSIFIED, because `planCapabilityPath` is
+arity=single, the question named no instance, and the only verb that fit was
+excluded FOR THE REASON IT WOULD HAVE ASKED ABOUT. The gate's own premise had
+expired — it was built when routing there produced a 400 for a missing
+mandatory slot, and that 400 is now an ASK with a menu.
+
+So the gate FLAGS `needs_instance` and keeps the verb, and the guarantee moves
+to a DISPATCH PRECONDITION at the disposition point: a flagged verb that
+reaches ROUTE with nothing askable declared abstains instead of dispatching.
+Both halves are asserted here — the flag, and the refusal to dispatch — because
+the flag alone would resurrect the assets:[] defect for engine-DECLARED arity,
+where nothing promises the verb has a slot to ask about.
+
+Safety by construction: only POSITIVELY-single verbs are flagged; set/any/
+null are untouched (null = unclassified → never over-restricted during backfill).
 
 Run:  PYTHONPATH=src pytest tests/test_arity_gate.py -v
 """
@@ -41,18 +53,38 @@ def _v(iri, arity=None):
 # THE RED FIXTURE — reality wrote it: show-me-data-about-customers (SET) must
 # NOT keep describeAsset (single); it keeps enumerateCatalog (set).
 # ---------------------------------------------------------------------------
-def test_set_query_drops_single_keeps_set():
+def test_set_query_FLAGS_single_and_keeps_it_a_candidate():
+    """The single verb stays pickable — excluding it emptied the pool and cost H06 its
+    answer — but it carries `needs_instance` so the disposition and the dispatch
+    precondition can both see why an ask is owed."""
     verbs = [
         _v("mesh:enumerateCatalog", "set"),
         _v("mesh:describeAsset", "single"),
     ]
-    kept, dropped = _filter_verbs_by_arity(verbs, query_is_set=True)
-    kept_iris = {v["verb_iri"] for v in kept}
-    assert kept_iris == {"mesh:enumerateCatalog"}, (
-        "a set-query must drop the single-asset verb from candidacy so the "
-        "classifier can't pick it — describeAsset was the 0-asset defect"
-    )
-    assert [v["verb_iri"] for v in dropped] == ["mesh:describeAsset"]
+    kept, flagged = _filter_verbs_by_arity(verbs, query_is_set=True)
+    assert {v["verb_iri"] for v in kept} == {
+        "mesh:enumerateCatalog", "mesh:describeAsset",
+    }
+    assert [v["verb_iri"] for v in flagged] == ["mesh:describeAsset"]
+    assert all(v.get("needs_instance") for v in flagged)
+
+
+def test_the_flag_lands_on_the_kept_entry_not_only_the_report():
+    """A flag that exists only in the returned report is invisible to the router, which
+    reads the KEPT list. The dispatch precondition depends on this."""
+    verbs = [_v("mesh:describeAsset", "single"), _v("mesh:enumerateCatalog", "set")]
+    kept, _ = _filter_verbs_by_arity(verbs, query_is_set=True)
+    by_iri = {v["verb_iri"]: v for v in kept}
+    assert by_iri["mesh:describeAsset"].get("needs_instance") is True
+    assert "needs_instance" not in by_iri["mesh:enumerateCatalog"]
+
+
+def test_the_input_dicts_are_not_mutated():
+    """These come from /find_compatible_verbs and are read elsewhere in the turn; marking
+    them in place would leak the flag into the Weaviate-vs-Neo4j comparison."""
+    verbs = [_v("mesh:describeAsset", "single")]
+    _filter_verbs_by_arity(verbs, query_is_set=True)
+    assert "needs_instance" not in verbs[0]
 
 
 def test_null_and_any_never_excluded():
@@ -65,11 +97,18 @@ def test_null_and_any_never_excluded():
         _v("mesh:genericDescribe", "any"),
         _v("mesh:unclassified", None),
     ]
-    kept, dropped = _filter_verbs_by_arity(verbs, query_is_set=True)
+    kept, flagged = _filter_verbs_by_arity(verbs, query_is_set=True)
     assert {v["verb_iri"] for v in kept} == {
-        "mesh:enumerateCatalog", "mesh:genericDescribe", "mesh:unclassified",
+        "mesh:enumerateCatalog", "mesh:describeAsset",
+        "mesh:genericDescribe", "mesh:unclassified",
     }
-    assert [v["verb_iri"] for v in dropped] == ["mesh:describeAsset"]
+    assert [v["verb_iri"] for v in flagged] == ["mesh:describeAsset"], (
+        "only a POSITIVELY-single verb is flagged — null and 'any' must pass through "
+        "untouched or an incomplete backfill starts demanding instances"
+    )
+    for v in kept:
+        if v["verb_iri"] != "mesh:describeAsset":
+            assert "needs_instance" not in v
 
 
 def test_instance_query_keeps_all():
@@ -83,8 +122,9 @@ def test_instance_query_keeps_all():
 
 def test_arity_case_insensitive():
     verbs = [_v("mesh:describeAsset", "SINGLE")]
-    kept, dropped = _filter_verbs_by_arity(verbs, query_is_set=True)
-    assert kept == [] and len(dropped) == 1
+    kept, flagged = _filter_verbs_by_arity(verbs, query_is_set=True)
+    assert len(kept) == 1 and len(flagged) == 1
+    assert kept[0].get("needs_instance") is True
 
 
 def test_empty_input_safe():

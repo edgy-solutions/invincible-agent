@@ -85,3 +85,34 @@ error, and that the signal needed to prevent it is already being computed and th
 No behaviour changed. Both gaps are decisions with a blast radius — an ask interrupts a flow
 that currently completes, and a confidence threshold has a number in it that should be chosen
 against measured data rather than invented. Both wait on the accuracy corpus.
+
+---
+
+## 2026-09-04 — this packet's premise expired, and something was built on it in the meantime
+
+**The 400 named above is now an ASK.** The disposition point offers a menu for an unfilled
+spoken-mandatory referent, so the failure this packet describes no longer reaches a caller.
+
+**But `arity_for` cited this document as its justification**, and built a gate on it:
+
+> *"Today that same question routes there and gets a 400 for a missing mandatory slot, two hops
+> later and with no surface a reader can act on. See
+> docs/plans/a-missing-mandatory-slot-is-a-400-not-an-ask.md."*
+
+That gate EXCLUDED a single-asset verb from a set-shaped question — a correct disposal while the
+alternative was a 400, and the wrong one once the alternative became an ask. It cost H06 its
+answer on 2026-09-04: *"what is the capability path"* grounded to `Capability` cleanly and then
+reported **no verb classified**, because the only verb that fit was removed for the very reason
+it would have asked.
+
+**The two mechanisms were built five weeks apart and met for the first time in front of a
+human.** The disposition walked H06 directly on Sep 1; arity landed in the router on Sep 3.
+Neither lane's tests could see the interaction, because each was right about its own half.
+
+**Recorded here rather than only at the fix**, because this document is what the gate pointed
+at. A packet whose premise expires does not announce it, and the next reader following that
+citation would have found a justification that no longer holds with nothing saying so.
+
+Now: the gate FLAGS `needs_instance` and keeps the verb, and the no-silent-dispatch guarantee
+moved to a dispatch precondition at the disposition point. See
+`tests/routing/test_arity_precondition_at_dispatch.py`.

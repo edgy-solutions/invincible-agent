@@ -101,16 +101,22 @@ def test_a_ROUTE_SUPPLIED_handle_cannot_make_a_verb_single():
     assert arity_for("plan_commit_scenario") is None
 
 
-def test_the_gate_actually_excludes_the_derived_set():
-    """Close the loop on the real filter, using declarations built by the real derivation."""
+def test_the_gate_flags_exactly_the_derived_set():
+    """Close the loop on the real filter, using declarations built by the real derivation.
+
+    The gate FLAGS rather than excludes since 2026-09-04 — excluding cost H06 its answer —
+    so the set that gets marked must still be exactly the derived one, and the pool must
+    not shrink."""
     sys.path.insert(0, str(_REPO / "src"))
     from iagent.defs.dynamic_supervisor import _filter_verbs_by_arity  # noqa: PLC0415
 
     verbs = [{"verb_iri": fn, "arity": arity_for(fn)} for fn in _measure_names()]
-    kept, dropped = _filter_verbs_by_arity(verbs, query_is_set=True)
-    assert {v["verb_iri"] for v in dropped} == _SINGLE
-    assert len(kept) == len(verbs) - len(_SINGLE)
+    kept, flagged = _filter_verbs_by_arity(verbs, query_is_set=True)
+    assert {v["verb_iri"] for v in flagged} == _SINGLE
+    assert len(kept) == len(verbs), "the pool must not shrink — that was the H06 defect"
+    assert {v["verb_iri"] for v in kept if v.get("needs_instance")} == _SINGLE
 
-    # An instance-shaped query keeps everything — the conservative direction.
-    kept2, dropped2 = _filter_verbs_by_arity(verbs, query_is_set=False)
-    assert dropped2 == [] and len(kept2) == len(verbs)
+    # An instance-shaped query flags nothing — the conservative direction.
+    kept2, flagged2 = _filter_verbs_by_arity(verbs, query_is_set=False)
+    assert flagged2 == [] and len(kept2) == len(verbs)
+    assert not any(v.get("needs_instance") for v in kept2)

@@ -138,12 +138,19 @@ def _gates():
     return _filter_verbs_by_arity, _filter_verbs_by_argument_fit
 
 
-def test_a_single_asset_verb_is_ACTUALLY_dropped_from_a_set_query():
-    """THE CLAIM ITSELF, end to end. A verb registered as single-asset must be excluded
-    from a collection query — using the registrar's own output as the input."""
+def test_a_single_asset_verb_is_ACTUALLY_FLAGGED_on_a_set_query():
+    """THE CLAIM ITSELF, end to end, using the registrar's own output as the input.
+
+    The disposal changed 2026-09-04: a registered single-asset verb is MARKED
+    `needs_instance` and kept, so the disposition can ask rather than the pool going empty.
+    What still may not happen is a silent dispatch — that guarantee moved to the dispatch
+    precondition at the disposition point, and this asserts the flag it reads."""
     by_arity, _ = _gates()
-    kept, dropped = by_arity([_bag(arity="single")], query_is_set=True)
-    assert kept == [] and len(dropped) == 1
+    kept, flagged = by_arity([_bag(arity="single")], query_is_set=True)
+    assert len(kept) == 1 and len(flagged) == 1
+    assert kept[0].get("needs_instance") is True, (
+        "the router reads the KEPT list; a flag only in the report is invisible to it"
+    )
 
 
 def test_a_verb_registered_without_arity_survives_a_set_query():
