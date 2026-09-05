@@ -184,3 +184,29 @@ def test_the_embedded_pricing_source_is_BYTE_IDENTICAL_to_the_pinned_file():
                                html, re.S).group(1))
     assert src == (ROOT / "agent_fleet" / "cost_agent" / "pricing.py").read_text(
         encoding="utf-8")
+
+
+@pytest.mark.skipif(not DIST.exists(), reason="build the package first")
+def test_the_artifact_contains_NO_UNRESOLVED_DYNAMIC_IMPORT():
+    """The seal that was missing when the first build shipped un-openable.
+
+    THE DEFECT THIS EXISTS FOR: a `fetch` shim cannot intercept `import()`. The browser's
+    module loader does not route through window.fetch, so the first artifact embedded every
+    runtime file, passed the no-external-URL check AND the every-file-embedded check, and
+    then died at open with "error loading dynamically imported module: .../pyodide.asm.js".
+
+    Both structural seals were correct and neither could see it. What they measured was
+    "nothing points outward"; what was false was "everything points somewhere it can reach".
+    Those are different claims, and only opening the file told them apart — which is why this
+    check now asserts the mechanism (every dynamic import resolves through the embedded
+    resolver) rather than the symptom.
+    """
+    html = DIST.read_text(encoding="utf-8")
+    bare = re.findall(r"await import\(/\* webpackIgnore \*/e\)", html)
+    assert not bare, (
+        f"{len(bare)} dynamic import(s) still take the loader's raw argument. A fetch shim "
+        "cannot intercept import(); these must route through __embeddedModuleURL or the "
+        "artifact cannot open offline."
+    )
+    assert "__embeddedModuleURL" in html, "the embedded-module resolver is absent"
+    assert "createObjectURL" in html, "nothing publishes embedded JS as a blob URL"

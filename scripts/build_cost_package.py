@@ -93,6 +93,42 @@ def build_html(recipient: str, runtime_dir: pathlib.Path) -> str:
     # same-origin request, which the shim answers from the embedded bytes by filename.
     # Asserted below rather than assumed, because a silent failure to substitute would leave
     # the artifact looking sealed and reaching out under one branch nobody exercises.
+    # THE DYNAMIC-IMPORT HOLE, found by opening the file rather than by any seal here.
+    # Pyodide loads `pyodide.asm.js` with `await import(url)`. A `fetch` shim CANNOT intercept
+    # an ES module import — the browser's module loader does not route through window.fetch —
+    # so the first build embedded every runtime file, passed a structural no-CDN check, and
+    # then failed at open with "error loading dynamically imported module". The .wasm and the
+    # stdlib go through fetch and were fine; only the module import escaped.
+    #
+    # The fix has to give `import()` something it will accept, which means a real URL: the
+    # shim now publishes embedded JS as BLOB URLs and the loader's browser branch is rewritten
+    # to resolve through it. Asserted below, because a substitution that silently did not
+    # match would restore exactly the artifact that looked sealed and could not run.
+    import_branch = 'I=c(async e=>await import(/* webpackIgnore */e),"loadScript")'
+    if import_branch not in loader_js:
+        raise SystemExit(
+            "REFUSING TO BUILD: the Pyodide loader's dynamic-import branch was not found, so "
+            "the embedded-module patch cannot be applied. This artifact would embed the "
+            "runtime, pass a structural no-CDN check, and fail to load at open — the exact "
+            f"defect this substitution exists to prevent. Pinned version {PYODIDE_VERSION}."
+        )
+    loader_js = loader_js.replace(
+        import_branch,
+        'I=c(async e=>await import(globalThis.__embeddedModuleURL(e)),"loadScript")',
+    )
+
+    # The WORKER branch carries its own bare import as an importScripts fallback. It does not
+    # execute on a main-thread page load, and "does not execute here" is the reasoning this
+    # build already refused to accept for the CDN base — so it gets the same treatment rather
+    # than a caveat. After this, the artifact contains NO bare dynamic import at all, and the
+    # seal below can assert that flatly instead of excepting a branch.
+    worker_branch = "await import(/* webpackIgnore */e);else throw t"
+    if worker_branch in loader_js:
+        loader_js = loader_js.replace(
+            worker_branch,
+            "await import(globalThis.__embeddedModuleURL(e));else throw t",
+        )
+
     cdn_base = "https://cdn.jsdelivr.net/pyodide/"
     if cdn_base in loader_js:
         loader_js = loader_js.replace(cdn_base, "./")
@@ -174,6 +210,22 @@ _TEMPLATE = """<!doctype html>
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out;
   }}
+  // Dynamic `import()` cannot be shimmed, so embedded JS is published as a BLOB URL and the
+  // loader is rewritten to ask for it by name. Cached so repeated asks give one object URL.
+  const BLOBS = {{}};
+  globalThis.__embeddedModuleURL = function (url) {{
+    const u = String(url);
+    for (const name of Object.keys(EMB)) {{
+      if (u.endsWith(name) && name.endsWith('.js')) {{
+        if (!BLOBS[name]) {{
+          BLOBS[name] = URL.createObjectURL(
+            new Blob([b64ToBytes(EMB[name])], {{type: 'text/javascript'}}));
+        }}
+        return BLOBS[name];
+      }}
+    }}
+    return u;
+  }};
   window.fetch = async function (input) {{
     const url = String(input && input.url ? input.url : input);
     for (const name of Object.keys(EMB)) {{
