@@ -293,6 +293,7 @@ def dataset_rows(state: CostState, *, lots: tuple[int, ...]) -> dict[str, Any]:
         vintage = state.vintages(lot.fiscal_year)[0]
         rates = state.rates[(lot.fiscal_year, vintage)]
         lot_rows.append({"lot": n, "quantity": lot.quantity,
+                         "cumulative_units": lot.cumulative_units,
                          "fiscal_year": lot.fiscal_year, "estimating": False})
         # QUANTIZED AT THE BOUNDARY. `LaborLine.cost` is hours x rate and is not rounded, so
         # str() gives "3108000" while a DECIMAL(20,2) column gives "3108000.00". Two

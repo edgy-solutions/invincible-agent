@@ -33,8 +33,9 @@ from agent_fleet.cost_agent.seed import build_state, lots_for_recipient  # noqa:
 
 DDL = """
 CREATE TABLE lots (
-    lot         INTEGER PRIMARY KEY,
-    quantity    INTEGER      NOT NULL,
+    lot              INTEGER PRIMARY KEY,
+    quantity         INTEGER NOT NULL,
+    cumulative_units INTEGER NOT NULL,
     fiscal_year INTEGER      NOT NULL,
     estimating  BOOLEAN      NOT NULL
 );
@@ -85,15 +86,15 @@ def build(recipient: str, out: pathlib.Path) -> pathlib.Path:
     from agent_fleet.cost_agent.export import dataset_rows
 
     rows = dataset_rows(state, lots=tuple(lots))
-    lot_rows = [(r["lot"], r["quantity"], r["fiscal_year"], r["estimating"])
-                for r in rows["lots"]]
+    lot_rows = [(r["lot"], r["quantity"], r["cumulative_units"], r["fiscal_year"],
+                 r["estimating"]) for r in rows["lots"]]
     result_rows = [(r["lot"], r["category"], r["sub_config"], r["period"],
                     None if r["hours"] is None else _D(r["hours"]), _D(r["price"]))
                    for r in rows["results"]]
     rate_rows = [(r["vintage"], r["fiscal_year"], r["category"], _D(r["rate"]))
                  for r in rows["rates"]]
 
-    con.executemany("INSERT INTO lots VALUES (?,?,?,?)", lot_rows)
+    con.executemany("INSERT INTO lots VALUES (?,?,?,?,?)", lot_rows)
     con.executemany("INSERT INTO results VALUES (?,?,?,?,?,?)", result_rows)
     con.executemany("INSERT INTO rates VALUES (?,?,?,?)", rate_rows)
     con.close()

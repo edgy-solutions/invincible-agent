@@ -205,10 +205,13 @@ function renderLot(lot) {{
     ['Cost per unit (all categories)', j.unit_price],
     ['Support : touch ratio', j.support_touch_ratio],
   ]);
-  const c = PKG.manifest.checks.find(c => c.lot === lot);
+  // FORMATTED BY PYTHON, like every other figure on this page. Rendering the manifest's raw
+  // strings here is what put two money formats on one screen.
+  const comp = JSON.parse(PY.runPython(
+    'import json, page; json.dumps(page.composition_view(' + lot + '))'));
   document.getElementById('composition').innerHTML =
     '<tr><th>step</th><th>rate</th><th>basis</th><th>amount</th><th>running total</th></tr>' +
-    c.intermediates.map(s => '<tr><td>' + s.name + '</td><td>' + (s.rate === null ? '' : s.rate) +
+    comp.map(s => '<tr><td>' + s.name + '</td><td>' + s.rate +
       '</td><td>' + s.basis + '</td><td>' + s.amount + '</td><td>' + s.running_total +
       '</td></tr>').join('');
   renderScenario(lot);

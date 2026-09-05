@@ -196,3 +196,105 @@ was is what produced the improvement.
 | baseline follows the edit instead of reading the manifest | 2 |
 | `EDITABLE_RATE_KEYS` fence removed | 1 (0 before finding 3) |
 | `datasets_agree` returns `[]` unconditionally | 1 — the tamper seal; the agreement seal correctly stays green |
+
+---
+
+## Addendum 2026-09-05b — the untouched scenario disagreed with the baseline by $732,148.44
+
+**Found by the architect opening the file.** Fourth consecutive round in which the human
+open-it step found a defect no seal caught. Worth stating plainly: **every structural check
+passed on this build.**
+
+### The defect
+
+With no rate edited and the slope at its default 0.92, lot 1 showed:
+
+| | |
+|---|---|
+| Baseline price | 16,733,978.39 |
+| Your scenario price | 16,001,829.95 |
+| Difference | **−732,148.44** |
+
+Two headline numbers disagreeing before the customer touches anything. As the architect put
+it: *"the customer's first thought is 'which one is wrong,' and the package has just taught
+them to distrust the verified number."*
+
+### The cause: one number with two meanings
+
+`dataset.learning_slope = "0.92"` was written as a **literal in the page builder**, meaning
+*"what the slope field should default to"*. The page read it as *"the point at which a scenario
+is identical to the baseline"*. Those are only the same number if the arithmetic agrees, and it
+did not:
+
+- The engine's hours already **are** `T1 · N^b`, `b = ln(0.92)/ln 2` — the curve is applied.
+- `scenario_view` then multiplied touch **cost** by the slope directly: `touch_cost * 0.92`.
+
+So the field labelled *"learning slope"* was a flat 8% haircut on touch labour, applied on top
+of learning the engine had already applied. **The label was a lie and the default double-counted.**
+
+### The fix — the model, not the default
+
+`_touch_factor` re-runs the curve at the scenario's slope and takes the ratio against the
+baseline's:  `N^b_scenario / N^b_baseline`. Identity is now the engine's own slope, and the
+field means what it says.
+
+| | before | after |
+|---|---|---|
+| reset state, all 5 lots | −$732k … −$1.1M | **0.00, exactly, every lot** |
+| slope 0.88 (steeper), lot 5 | — | −1,008,288.93 |
+| slope 0.96 (shallower), lot 5 | — | +1,095,448.91 |
+| out-of-range / unparseable | fell back to **1** | falls back to the **baseline slope** |
+
+The fallback mattered too: falling back to `1` reads as *"no adjustment"* and means *"no
+learning at all"* — a silent divergence wearing the costume of a safe default.
+
+Two supporting changes: `Lot` now carries `cumulative_units` (the curve is a function of it,
+and a scenario cannot re-run the curve without it), and `learning_slope` comes from
+`seed.LEARNING_SLOPE` rather than a literal.
+
+### Why the seal missed it
+
+`test_an_unedited_scenario_equals_the_baseline_exactly` **existed, and passed**, because it
+asserted identity **at slope "1"** — a state the interface never opens in. The interface opens
+at 0.92.
+
+> **A seal that tests a state the interface never presents is not testing the interface.**
+
+The replacement reads the identity point **from the package** — the same value the field and
+the reset button take — so the seal cannot drift from the UI again.
+
+### And a fabricated justification, retracted
+
+`_touch_factor` short-circuits identity. I documented that as necessary, writing that `math.pow`
+*"would return 0.9999999999999998"*. **I never ran it.** The bite-check refused to go red
+without the short-circuit, and the measurement shows why: at identity both `pow` calls are the
+same expression over the same inputs, so the ratio is `x/x` = exactly `1.0` (n = 12, 26, 42,
+66, 90). The branch is kept as a property-of-this-function guarantee; the docstring now says it
+is **not** load-bearing.
+
+**This is the third time a plausible-sounding negative has entered my prose unmeasured.** The
+bite-check caught it only because a mutation that *should* have gone red stayed green —
+green-where-red-was-expected is the tell, and it is worth as much attention as a failure.
+
+### Cosmetic, same pass
+
+Two money formats on one screen: labour metrics grouped (`5,229,210.00`), the composition table
+raw (`6307210.00`), because the renderer printed the manifest's strings directly in JS. Moved to
+`page.composition_view` — formatting is presentation, this module owns the package's
+presentation, and JS is outside every seal. Sealed both ways: one format across every rendered
+figure, **and** formatting never changes a verified figure.
+
+### Bite-checks
+
+| mutation | red |
+|---|---|
+| slope scales touch cost flat (**the original defect, reintroduced**) | 2 |
+| out-of-range falls back to 1 | 1 |
+| identity short-circuit removed | **0 — see the retraction above** |
+| composition renders raw manifest strings | 1 |
+| the formatter re-rounds | 1 |
+
+### Still owed on the Labor tab
+
+What shipped is the **selected-lot** half. The **across-lots** half — hours by lot × category
+stacked, and the learning curve — is the next build, from the same `.duckdb`.

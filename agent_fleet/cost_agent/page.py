@@ -133,13 +133,70 @@ def labor_view(lot: int) -> dict[str, Any]:
         "parts": parts,
         "total_hours": _money(total_hours),
         "total_cost": _money(total_cost),
-        "touch_per_unit": str((touch_hours / quantity).quantize(Decimal("0.01")))
+        "touch_per_unit": _money((touch_hours / quantity).quantize(Decimal("0.01")))
                           if quantity else "n/a",
         "unit_price": _money(Decimal(unit)) if unit else "n/a",
         # `None` when there are no touch hours, rendered as "n/a" — NOT as 0.000, which would
         # claim a measured ratio of zero where the truth is that the denominator is absent.
         "support_touch_ratio": str(ratio) if ratio is not None else "n/a",
     }
+
+
+def _touch_factor(lot: int, slope: Decimal, base_slope: Decimal) -> Decimal:
+    """How touch labour moves when the learning curve is re-run at a DIFFERENT slope.
+
+    The baseline hours are already `T1 * N^b` with `b = ln(base_slope)/ln 2` — the engine
+    applied the curve. So a scenario slope is not a multiplier on that result; it is a
+    different exponent over the same cumulative quantity, and the factor is the ratio:
+
+        N^b_scenario / N^b_baseline
+
+    THE FIRST VERSION MULTIPLIED TOUCH COST BY THE SLOPE DIRECTLY. That made the field's label
+    a lie (0.92 meant "keep 92% of touch labour", not "assume a 92% curve") and, because the
+    page defaulted the field to the engine's own slope, an UNTOUCHED scenario came out
+    $732,148.44 below the baseline sitting beside it. A package whose two headline numbers
+    disagree before the customer touches anything teaches them to distrust the verified one.
+
+    THE IDENTITY SHORT-CIRCUIT IS NOT LOAD-BEARING, and saying otherwise was a fabrication.
+    I first wrote that `math.pow` "would return 0.9999999999999998" here — a plausible-sounding
+    float complaint I never ran. A bite-check refused to go red without the short-circuit, and
+    the measurement says why: at `slope == base_slope` the two `pow` calls are the SAME
+    expression over the SAME inputs, so the ratio is `x/x` and IEEE-754 gives exactly 1.0
+    (checked at n = 12, 26, 42, 66, 90). The branch is kept because it makes identity a
+    property of this function rather than of the arithmetic underneath it — and because the
+    reset path should not depend on a float argument at all — but it fixes nothing, and the
+    seal that covers identity passes with or without it.
+    """
+    if slope == base_slope:
+        return Decimal("1")
+    import math
+
+    n = float(next(l["cumulative_units"] for l in _PKG["dataset"]["rows"]["lots"]
+                   if l["lot"] == lot))
+    ratio = math.pow(n / 12.0, math.log(float(slope)) / math.log(2.0)) /             math.pow(n / 12.0, math.log(float(base_slope)) / math.log(2.0))
+    return Decimal(str(ratio))
+
+
+def composition_view(lot: int) -> list[dict[str, str]]:
+    """The price build-up for one lot, FORMATTED HERE.
+
+    The renderer used to print the manifest's raw strings straight into the table, so the
+    composition read `6307210.00` two inches from a labour total reading `5,229,210.00` — two
+    money formats on one screen, from one package. Formatting is presentation, and this module
+    is where the package's presentation decisions live; putting it in JS would also put it
+    outside every seal.
+
+    THE VALUES ARE THE MANIFEST'S, UNCHANGED. `_money` groups and pads; it never re-rounds, so
+    a formatted figure still string-compares to the verified one after `.replace(",", "")`.
+    """
+    return [
+        {"name": s["name"],
+         "rate": "" if s["rate"] is None else s["rate"],
+         "basis": _money(Decimal(s["basis"])),
+         "amount": _money(Decimal(s["amount"])),
+         "running_total": _money(Decimal(s["running_total"]))}
+        for s in _check_for(lot)["intermediates"]
+    ]
 
 
 def scenario_view(lot: int, rates_json: str, slope: str) -> dict[str, Any]:
@@ -150,7 +207,8 @@ def scenario_view(lot: int, rates_json: str, slope: str) -> dict[str, Any]:
     rather than recomputed, so the comparison is always against what was actually asserted.
 
     THE SLOPE IS APPLIED TO TOUCH LABOUR ONLY, which is where a learning curve acts. Applying
-    it to the whole base would be a different (and wrong) model, quietly.
+    it to the whole base would be a different (and wrong) model, quietly. It re-runs the curve
+    rather than scaling its output — see `_touch_factor` for why that distinction cost $732k.
     """
     chk = _check_for(lot)
     overrides = json.loads(rates_json)
@@ -169,15 +227,20 @@ def scenario_view(lot: int, rates_json: str, slope: str) -> dict[str, Any]:
     touch_cost = Decimal(labor["touch"]["price"]) if "touch" in labor else Decimal("0")
     other_labor = Decimal(chk["inputs"]["direct_labor"]) - touch_cost
 
+    # THE BASELINE'S OWN SLOPE IS THE IDENTITY POINT, and both the parse failure and the
+    # out-of-range case fall back to IT rather than to 1. Falling back to 1 was a silent
+    # divergence: it looks like "no adjustment" and is in fact "no learning at all".
+    base_slope = Decimal(str(_PKG["dataset"]["learning_slope"]))
     try:
         s = Decimal(str(slope))
     except Exception:
-        s = Decimal("1")
+        s = base_slope
     if not (Decimal("0.5") <= s <= Decimal("1")):
-        s = Decimal("1")
+        s = base_slope
 
     scenario = pricing.compose_price(
-        direct_labor=pricing.quantize_money(touch_cost * s) + other_labor,
+        direct_labor=pricing.quantize_money(touch_cost * _touch_factor(lot, s, base_slope))
+                     + other_labor,
         material=Decimal(chk["inputs"]["material"]),
         other_direct=Decimal(chk["inputs"]["other_direct"]),
         rates=_rateset(base_rates), spec=_spec(_PKG["manifest"]))

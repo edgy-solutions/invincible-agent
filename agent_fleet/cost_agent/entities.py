@@ -85,6 +85,10 @@ class Lot:
     """One numbered quantity, costed as a self-contained whole."""
     number: int
     quantity: int
+    #: Units delivered through the END of this lot. The learning curve is a function of this,
+    #: not of `quantity` — and a scenario that re-runs the curve at a different slope cannot
+    #: do so without it, which is why it is carried rather than re-derived from a lot list.
+    cumulative_units: int
     fiscal_year: int
     labor: tuple[LaborLine, ...]
     material: Decimal

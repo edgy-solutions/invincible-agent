@@ -21,6 +21,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from decimal import Decimal
 
 import pytest
 
@@ -318,12 +319,35 @@ def test_the_baseline_in_a_scenario_is_the_MANIFEST_figure(slice2):
     assert sv["baseline_price"].replace(",", "") == manifest_price
 
 
-def test_an_unedited_scenario_equals_the_baseline_exactly(slice2):
-    """The invariant that makes the difference column trustworthy at zero edit."""
+def test_the_RESET_STATE_reproduces_the_baseline_exactly(slice2):
+    """THE SEAL THE $732,148.44 DEFECT ASKED FOR — and the state it checks is the one the UI
+    actually opens in, not a convenient one.
+
+    The previous version asserted identity at slope "1". That passed, and the page shipped
+    disagreeing with itself, because the field DEFAULTS to the engine's realized slope (0.92)
+    and the arithmetic treated it as a further multiplier. A seal that tests a state the
+    interface never presents is not testing the interface.
+
+    So identity is read from the package — the same value the field and the reset button take —
+    rather than written as a literal here. If the two ever diverge again, this goes red.
+    """
     pkg, _ = slice2
+    reset_slope = pkg["dataset"]["learning_slope"]
     for lot in pkg["lots"]:
-        sv = PAGE.scenario_view(lot, _json.dumps({}), "1")
-        assert sv["difference"] == "0.00", f"lot {lot}: unedited scenario diverges from baseline"
+        sv = PAGE.scenario_view(lot, _json.dumps({}), reset_slope)
+        assert sv["difference"] == "0.00", (
+            f"lot {lot}: the UNTOUCHED scenario differs from the baseline by "
+            f"{sv['difference']} — the package disagrees with itself before the customer "
+            f"touches anything")
+        assert sv["scenario_price"] == sv["baseline_price"]
+
+
+def test_the_reset_slope_is_the_ENGINES_slope_not_a_literal(slice2):
+    """The two meanings that collided: 'the field's default' and 'the curve the engine ran'."""
+    from agent_fleet.cost_agent.seed import LEARNING_SLOPE
+
+    pkg, _ = slice2
+    assert pkg["dataset"]["learning_slope"] == str(LEARNING_SLOPE)
 
 
 def test_a_scenario_is_labelled_unverified(slice2):
@@ -331,10 +355,14 @@ def test_a_scenario_is_labelled_unverified(slice2):
     assert PAGE.scenario_view(pkg["lots"][0], _json.dumps({}), "1")["verified"] is False
 
 
-def test_an_out_of_range_slope_falls_back_rather_than_computing_nonsense(slice2):
+def test_an_out_of_range_slope_falls_back_TO_THE_BASELINE_not_to_one(slice2):
+    """Falling back to 1 looks like "no adjustment" and means "no learning at all"."""
     pkg, _ = slice2
-    sv = PAGE.scenario_view(pkg["lots"][0], _json.dumps({}), "9.9")
-    assert sv["slope"] == "1", "an impossible slope must not be applied"
+    base = pkg["dataset"]["learning_slope"]
+    for bad in ("9.9", "0.1", "", "not a number", "-1"):
+        sv = PAGE.scenario_view(pkg["lots"][0], _json.dumps({}), bad)
+        assert sv["slope"] == base, f"{bad!r} fell back to {sv['slope']}, not {base}"
+        assert sv["difference"] == "0.00", f"{bad!r} silently moved the scenario"
 
 
 # ── SEAL 8 — the dataset hash bites when a row is altered ───────────────────
@@ -433,3 +461,39 @@ def test_the_ROW_hash_is_reproducible_and_the_FILE_hash_is_not(slice2):
         "the .duckdb is now byte-reproducible — the comment in export.py and this seal both "
         "need revisiting, and duckdb_sha256 may be promoted to data identity"
     )
+
+
+def test_the_slope_moves_the_scenario_in_BOTH_directions(slice2):
+    """A slope that only ever reduced would be a discount knob, not a learning curve."""
+    pkg, _ = slice2
+    lot = pkg["lots"][-1]
+    base = Decimal(pkg["dataset"]["learning_slope"])
+    better = PAGE.scenario_view(lot, "{}", str(base - Decimal("0.04")))
+    worse = PAGE.scenario_view(lot, "{}", str(base + Decimal("0.04")))
+    assert better["difference"].startswith("-"), "a steeper curve must reduce the price"
+    assert not worse["difference"].startswith("-"), "a shallower curve must raise it"
+
+
+def test_ONE_money_format_across_every_rendered_figure(slice2):
+    """Two formats on one screen from one package: the composition table printed raw strings."""
+    pkg, _ = slice2
+    lot = pkg["lots"][0]
+    figures = [r[k] for r in PAGE.composition_view(lot)
+               for k in ("basis", "amount", "running_total")]
+    lv = PAGE.labor_view(lot)
+    figures += [lv["total_hours"], lv["total_cost"], lv["unit_price"], lv["touch_per_unit"]]
+    for f in figures:
+        assert re.fullmatch(r"-?[\d,]+\.\d{2}", f), f"{f!r} is not the shared money format"
+    big = [f for f in figures if len(f.split(".")[0].replace("-", "")) > 3]
+    assert big and all("," in f for f in big), "a four-digit figure is missing its separator"
+
+
+def test_formatting_NEVER_changes_a_verified_figure(slice2):
+    """The formatter groups and pads. If it re-rounded, the page would show a number the
+    manifest does not assert — a divergence with no divergence banner."""
+    pkg, _ = slice2
+    for chk in pkg["manifest"]["checks"]:
+        rendered = PAGE.composition_view(chk["lot"])
+        for got, want in zip(rendered, chk["intermediates"]):
+            assert got["amount"].replace(",", "") == want["amount"]
+            assert got["running_total"].replace(",", "") == want["running_total"]

@@ -80,6 +80,12 @@ def _rate_table() -> dict[tuple[int, str], RateSet]:
 #: SEPM is broadly flat because programme management does not learn away.
 _TOUCH_HOURS_LOT1 = Decimal("42000")
 _LEARNING = Decimal("0.92")          # per doubling of cumulative quantity
+
+#: THE SLOPE THE ENGINE ACTUALLY USED. Published because a scenario that re-runs the curve
+#: needs it to know where identity is: at this value the scenario must reproduce the baseline
+#: exactly. Hard-coding a default in the page builder instead is what made an untouched
+#: scenario disagree with the baseline by $732k.
+LEARNING_SLOPE = _LEARNING
 _QUANTITIES = [12, 12, 18, 24, 24, 30, 30, 36, 36]
 
 #: Purchased-value concentration. Fractions of the LOT'S material value, summing to 1 so the
@@ -173,6 +179,7 @@ def build_state() -> CostState:
         lots[number] = Lot(
             number=number,
             quantity=qty,
+            cumulative_units=cumulative,
             fiscal_year=fy,
             labor=(
                 LaborLine("touch", touch, base_rate),
