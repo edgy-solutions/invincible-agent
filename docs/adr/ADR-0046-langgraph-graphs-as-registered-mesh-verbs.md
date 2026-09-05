@@ -550,6 +550,41 @@ either existing copy lands a third divergent derivation and makes the extraction
 than it is today. The flat/packaged import idiom the extraction must survive is
 `adding-an-engine.md` §5, and `tests/test_agent_modules_survive_flat_layout.py` is the seal.
 
+> **AMENDED 2026-09-04 — THE COUNT IS NOW FOURTH, AND THE MECHANISM HAS ALREADY FORKED.** Scoped in
+> [`the-manifest-is-the-fourth-consumer-not-the-third`](../plans/the-manifest-is-the-fourth-consumer-not-the-third.md),
+> which carries the measurement and the requirements list; the deltas to *this* section are:
+>
+> **1. `agent_fleet/cost_agent/slots.py` landed 2026-09-03 — the third copy is not the manifest.**
+> The threshold this paragraph invokes has already been crossed, by a consumer it did not
+> anticipate. The manifest is the **fourth**. Engine-cost's author saw it, named it in the module,
+> and kept that copy deliberately the thinnest so the extraction would have less to reconcile — the
+> right call, and not what changed the picture.
+>
+> **2. The paragraph below — *"the extraction takes the MECHANISM and each engine keeps and passes
+> its own VOCABULARY"* — no longer describes the tree.** That reading held for two copies. With
+> three, the **mechanism itself** has diverged, not only the vocabularies: `slots_for()` emits
+> `required` in F and P and **`mandatory`** in C; `_type_of()` returns `(type, enum-values)` in F
+> and P and a **bare `str`** in C; `_is_union` is absent from C. The extraction therefore has to
+> reconcile a forked output contract before it can hoist anything, which is strictly more work than
+> this section priced.
+>
+> **3. "One moving target… so it does not become a three-way merge" is now six**, and it *is* a
+> three-way merge. `arity_for` (P), `missing_mandatory` + `refusal_for` + `with_live_vocabularies`
+> (F), `all_declarations` + `mandatory_slots` (C). **None is incidental — every one of them answers
+> a row of §1's manifest table**, which is the strongest form of this section's own argument: the
+> manifest is the first consumer that needs the *union*, so the extraction cannot be scoped by
+> taking any single engine's copy as the template.
+>
+> **4. The 86-identical-lines figure is a two-copy measurement (2026-09-01) and is not restated for
+> three.** It is left as recorded rather than updated, because re-measuring it is the extraction
+> lane's first step and a remembered number would pre-empt it.
+>
+> **What does NOT change:** the extraction is still on slice 1's critical path, and the flat/packaged
+> import idiom and its seal are unchanged. The correction makes the prerequisite more urgent, not
+> less. **One thing it adds:** settle the `required`/`mandatory` key *before* the extraction rather
+> than inside it — the consumer has already voted (`ontology_service/main.py:2673` reads `required`),
+> and it is a one-word fix now against a compatibility shim in shared code later.
+
 **And the extraction has a SHAPE, measured rather than assumed** (by the lane that owns both
 copies, 2026-09-01): `planning_agent/slots.py` is 305 lines, `finance_agent/slots.py` is 267, and
 they are **30% similar — 86 identical lines. This is not a copy with drift.** What is shared is the
