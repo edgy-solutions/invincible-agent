@@ -63,6 +63,7 @@ TEMPLATE = """<!doctype html>
  <h1>Cost validation package - {recipient}</h1>
  <div class="meta">algorithm {sha} &middot; as of {as_of} &middot; {locator}</div>
  <div class="meta">data {duckdb_filename} &middot; {duckdb_hash}</div>
+ <div class="meta" id="boot"></div>
 </header>
 <main>
  <div id="status" class="checking">Verifying against the producing engine...</div>
@@ -384,14 +385,22 @@ function renderScenario(lot) {{
 
 (async function () {{
   const statusEl = document.getElementById('status');
+  // COLD BOOT AS A NUMBER, measured by the artifact rather than by a stopwatch beside it. The
+  // recipient waits through this before anything renders, so it is a property of the package
+  // and belongs on the page — a figure nobody has to take on trust.
+  const T0 = performance.now();
+  const MARKS = [];
+  const mark = (k) => MARKS.push([k, Math.round(performance.now() - T0)]);
   try {{
     PY = await loadPyodide({{indexURL: './'}});
+    mark('runtime up');
     PY.FS.writeFile('pricing.py',
       JSON.parse(document.getElementById('pricing-src').textContent));
     PY.FS.writeFile('page.py', PAGE_PY);
     PY.globals.set('PACKAGE_JSON', JSON.stringify(PKG));
     const problems = JSON.parse(PY.runPython(
       'import json, page; json.dumps(page.verify(PACKAGE_JSON))'));
+    mark('verified');
     if (problems.length) {{
       statusEl.className = 'refused';
       statusEl.textContent = 'REFUSED - ' + problems.length +
@@ -427,6 +436,10 @@ function renderScenario(lot) {{
 
     renderLot(PKG.lots[0]);
     document.getElementById('body').hidden = false;
+    mark('first render');
+    document.getElementById('boot').textContent =
+      'cold boot ' + MARKS[MARKS.length - 1][1] + ' ms · ' +
+      MARKS.map(m => m[0] + ' ' + m[1] + ' ms').join(' · ');
   }} catch (e) {{
     statusEl.className = 'refused';
     statusEl.textContent = 'REFUSED - the verification could not be completed: ' + e;
