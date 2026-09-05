@@ -231,6 +231,21 @@ def get_datahub_context(datahub_wrapper_url: str) -> str:
 # something an LLM can attempt), while "infra_error" aborts the subtask
 # (masking an infrastructure outage by routing through Engine A would hide
 # the very signal ops needs to fix it).
+#: Abstention reasons Engine O reports for itself, which the router PASSES THROUGH into
+#: `fallback_reason` instead of re-deriving. Every member carries an actionable message
+#: written where the fact was known; a reason absent from this set degrades to
+#: `subject_unknown` with the ADR-0019 Contract-B rationale.
+#:
+#: ADDING TO ENGINE O'S VOCABULARY MEANS ADDING HERE. That is the whole point of the set:
+#: the previous shape was a ternary on one literal, so a new reason flattened silently and
+#: both repos' tests stayed green. Members must also exist in the `fallback_reason` enum
+#: that `gateway.py` projects and cortex renders — a value neither side knows displays as
+#: nothing, which is the same loss wearing a different coat.
+_ENGINE_O_ABSTENTION_REASONS = frozenset({
+    "instance_not_found",
+    "no_compatible_verbs",
+})
+
 _ROUTING_MATCHED = "matched"
 _ROUTING_NO_MATCH = "no_match"
 _ROUTING_INFRA_ERROR = "infra_error"
@@ -549,8 +564,20 @@ def _classify_route(
         # knows it") that Engine O already put in `subject_reason`. A bare
         # UNKNOWN would leave the user nowhere to go; honest-empty is only
         # honest if it says what to do.
-        is_instance_not_found = subject_abstention_reason == "instance_not_found"
-        _fb_reason = "instance_not_found" if is_instance_not_found else "subject_unknown"
+        # ENGINE O'S OWN ABSTENTION VOCABULARY, PASSED THROUGH RATHER THAN RE-DERIVED.
+        # This was a ternary on a single value, so every other reason Engine O could
+        # report flattened to `subject_unknown` — the resolution-discard shape at the
+        # routing boundary, which this repo has now removed twice at the render seam and
+        # once here. The post-preemption productivity check (a subject that RESOLVED and
+        # carries no verb in scope, reported as `no_compatible_verbs`) would have arrived
+        # as `subject_unknown` while both sides passed their own tests.
+        #
+        # A set, not a chain of comparisons, so the next addition is one line in one place
+        # instead of a third site that can be missed.
+        _engine_o_explained = subject_abstention_reason in _ENGINE_O_ABSTENTION_REASONS
+        _fb_reason = (
+            subject_abstention_reason if _engine_o_explained else "subject_unknown"
+        )
         context.log.info(
             "routing_decision subject_uri=UNKNOWN subject_conf=%s "
             "fallback_reason=%s → generalist fallback (ADR-0019 Contract "
@@ -575,11 +602,15 @@ def _classify_route(
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
             "verb_reasoning": (
-                # Instance-not-found carries Engine O's actionable message
-                # through verbatim; the generic UNKNOWN keeps the
-                # ADR-0019 Contract-B rationale.
+                # Every reason in Engine O's vocabulary carries an ACTIONABLE
+                # message and it passes through verbatim — "you named X, no
+                # provider knows it", or "I found X and nothing here answers
+                # about an X". The generic UNKNOWN has no such message, and only
+                # then does the ADR-0019 Contract-B rationale apply. Widening the
+                # reason set without widening this would have discarded the new
+                # message and shown the boilerplate instead.
                 subject_reason
-                if is_instance_not_found
+                if _engine_o_explained
                 else (
                     "ADR-0019 Contract B: /resolve returned UNKNOWN, so the "
                     "router short-circuits to the generalist without asking "

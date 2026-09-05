@@ -1688,16 +1688,36 @@ _SERVED_CACHE: dict = {}
 _SERVED_TTL_S = float(os.getenv("SERVED_CLASSES_TTL_S", "120"))
 
 
-async def _served_class_uris(domains: list) -> frozenset:
-    """Classes carrying a verb in these domains, plus declared resolvable referents.
+async def _served_class_uris(domains: list, include_referents: bool = True) -> frozenset:
+    """Classes carrying a verb in these domains, plus (by default) declared referents.
 
     RETURNS AN EMPTY SET ON ANY FAILURE, AND THE CALLER MUST READ THAT AS "DO NOT FILTER".
     That direction is not a detail: an empty served-set applied as a filter would empty the
     candidate pool and take routing down globally, turning a Neo4j hiccup into a total
     outage. Degrading OPEN restores exactly the pre-filter behaviour — a dead end reachable
     again — which is the failure this filter reduces rather than one it creates.
+
+    ``include_referents`` SELECTS BETWEEN TWO DIFFERENT QUESTIONS, and conflating them is a
+    live trap rather than a nicety:
+
+      * ``True``  -- *may the resolver OFFER this class?* A declared `mesh:ResolvableReferent`
+        is groundable on purpose ("lot 4" is a real thing a caller names), so it belongs in
+        the candidate pool. That is the productive-option gate's question.
+      * ``False`` -- *can this class be ANSWERED?* A referent is precisely a class that
+        grounds and cannot be answered, so it must NOT count as served here. That is the
+        post-preemption check's question.
+
+    THE TRAP IS DELAYED, WHICH IS WHY THIS IS PARAMETERISED RATHER THAN LEFT TO THE CALLER.
+    Measured 2026-09-04: the referent set is EMPTY in the live graph, so today both questions
+    return the same answer for `fin:WBSElement` and one shared predicate would look correct.
+    The day someone declares WBSElement a referent -- which the ruling says is the RIGHT thing
+    to do -- a shared predicate would silently stop abstaining on it. Doing the correct thing
+    would disable the protection, with nothing going red.
+
+    ONE Cypher for both, with the referent UNION switched off by a null root, so the two
+    reaches cannot drift the way two copies would.
     """
-    key = ",".join(sorted(domains or []))
+    key = f"{','.join(sorted(domains or []))}|ref={int(include_referents)}"
     now = time.time()
     hit = _SERVED_CACHE.get(key)
     if hit and hit[0] > now:
@@ -1710,7 +1730,9 @@ async def _served_class_uris(domains: list) -> frozenset:
             rows = session.run(
                 _SERVED_CLASSES_CYPHER,
                 domains=list(domains or []),
-                referent_root=_RESOLVABLE_REFERENT_ROOT,
+                # None matches no node, so the UNION contributes nothing -- the reach
+                # changes without a second query to keep in step.
+                referent_root=_RESOLVABLE_REFERENT_ROOT if include_referents else None,
             )
             return {str(r["uri"]) for r in rows if r["uri"]}
 
@@ -1722,6 +1744,53 @@ async def _served_class_uris(domains: list) -> frozenset:
         return frozenset()
     _SERVED_CACHE[key] = (now + _SERVED_TTL_S, served)
     return served
+
+
+def _unserved_subject_msg(identifier: str, resolved_uri: str) -> str:
+    """An abstention that KEEPS the resolution it just made.
+
+    The instance lookup succeeded — saying so is strictly more useful than a bare refusal,
+    and it is the difference between "I don't know what you mean" and "I know what you mean
+    and cannot answer that about it". The caller can act on the second.
+    """
+    label = resolved_uri.rsplit("#", 1)[-1].rsplit("/", 1)[-1] or resolved_uri
+    return (
+        f"I found {identifier!r} — it resolves to {label} — but nothing in your current "
+        f"scope answers questions about a {label} directly. Try asking about the larger "
+        f"thing it belongs to, or name what you want to know."
+    )
+
+
+async def _preempted_subject_is_unanswerable(resolved_uri: str, domains: list) -> bool:
+    """THE POST-PREEMPTION PRODUCTIVITY CHECK (ruled 2026-09-04).
+
+    There are two paths into `resolved_uri` and until now only one was gated. The
+    productive-option gate restricts what the resolver may CHOOSE; instance preemption then
+    OVERRIDES that choice with a unanimous provider answer, unchecked — so a phone-book match
+    can install a class no verb serves. Measured by the engine-cost lane: 10 of 18 draws had a
+    winner outside the candidate pool, every one of them `fin:WBSElement`, which carries no
+    verb in any domain. The DOMINANT dead end, reached by the one path the gate cannot see.
+
+    THE OVERRIDE IS NOT THE DEFECT and this does not block it. A caller named "lot 4", a
+    provider resolved it, and that resolution is correct. What was missing is that nothing
+    then noticed the resolved subject cannot be answered, so the router fell through to the
+    generalist — which answers from the catalog wearing the caller's own persona and is
+    indistinguishable from a real answer until a human reads the card.
+
+    ``include_referents=False`` IS THE LOAD-BEARING ARGUMENT, not a default worth skimming.
+    The gate asks "may we offer this?", where a declared referent belongs. This asks "can this
+    be answered?", where a referent is exactly the thing that cannot. See `_served_class_uris`.
+
+    DEGRADES OPEN, on the same discipline as the gate: an empty served-set means the lookup
+    failed, and the override then stands. That restores today's behaviour rather than
+    converting a Neo4j hiccup into a refusal storm.
+    """
+    if not resolved_uri or resolved_uri == "UNKNOWN":
+        return False
+    answerable = await _served_class_uris(domains, include_referents=False)
+    if not answerable:
+        return False
+    return resolved_uri not in answerable
 
 
 # ---------------------------------------------------------------------------
@@ -1843,6 +1912,24 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             instance_provenance["llm_guess"] = None
             instance_provenance["preemption_path"] = "class_recall_empty_fallback"
             if instance_subject is not None:
+                # POST-PREEMPTION PRODUCTIVITY CHECK — site 1 of 2. BOTH preemption
+                # returns need it: a check on one is silent by construction on the other,
+                # and this branch is the one that fires when class recall found NOTHING,
+                # so it is the LEAST likely to have a servable subject.
+                if await _preempted_subject_is_unanswerable(
+                    instance_subject, request.domains or ([request.domain] if request.domain else [])
+                ):
+                    instance_provenance["abstention_reason"] = "no_compatible_verbs"
+                    instance_provenance["unanswerable_subject"] = instance_subject
+                    print(f"[Engine O] post-preemption check ABSTAINED: "
+                          f"{entity_ref!r} resolved to {instance_subject} which carries "
+                          f"no verb in request.domains or ([request.domain] if request.domain else [])")
+                    return SemanticResolutionResponse(
+                        resolved_uri="UNKNOWN",
+                        confidence_score=0.0,
+                        reasoning=_unserved_subject_msg(entity_ref, instance_subject),
+                        provenance=instance_provenance,
+                    )
                 return SemanticResolutionResponse(
                     resolved_uri=instance_subject,
                     confidence_score=0.9,
@@ -1897,6 +1984,25 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         instance_provenance["instance_identifier"] = identifier
         instance_provenance["llm_guess"] = str(result.resolved_uri)
         if instance_subject is not None:
+            # POST-PREEMPTION PRODUCTIVITY CHECK — site 2 of 2. This is the path the
+            # engine-cost lane measured: 10 of 18 draws overridden onto fin:WBSElement.
+            # `candidates` is carried into the abstention too, so the decision path can
+            # still show the class contest that ran before the override.
+            if await _preempted_subject_is_unanswerable(
+                instance_subject, request.domains or ([request.domain] if request.domain else [])
+            ):
+                instance_provenance["abstention_reason"] = "no_compatible_verbs"
+                instance_provenance["unanswerable_subject"] = instance_subject
+                print(f"[Engine O] post-preemption check ABSTAINED: "
+                      f"{identifier!r} resolved to {instance_subject} which carries "
+                      f"no verb in request.domains or ([request.domain] if request.domain else [])")
+                return SemanticResolutionResponse(
+                    resolved_uri="UNKNOWN",
+                    confidence_score=0.0,
+                    reasoning=_unserved_subject_msg(identifier, instance_subject),
+                    provenance=instance_provenance,
+                    candidates=candidates,
+                )
             return SemanticResolutionResponse(
                 resolved_uri=instance_subject,
                 confidence_score=max(result.confidence_score, 0.9),
