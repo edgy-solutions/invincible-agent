@@ -435,6 +435,38 @@ def ask_card(
         # The merge, per the docstring above.
         "accepted_slots": dict(accepted or {}),
         "message": ask_message(disp),
+        # ── THE FALLBACK'S CONTRACT, AND WHY THIS IS DUPLICATED ON PURPOSE ──────────────
+        #
+        # Stamping `output_uri` made the presentation agent select on it — which is the fix
+        # — and until the ELICITATION archetype is admitted, selection lands on
+        # KNOWLEDGE_DOCUMENT. That fallback composes its body from `summary` /
+        # `summary_text` / `structured_data` on the expert_response
+        # (`presentation_agent/main.py:265`), reads NONE of the fields above, and when it
+        # finds nothing emits the literal string "No content available."
+        #
+        # SO THE INTERIM WAS WORSE THAN THE STATE IT REPLACED. Before the stamp there was no
+        # output_uri, the legacy path ran, and a user saw "Which program?"; after it they saw
+        # an empty card. That is the registered-or-honest-fallback rule inverted — an
+        # unregistered kind must degrade VISIBLY, and this degraded to silence.
+        #
+        # `message` stays as the typed field the real card reads. `summary` is the alias the
+        # fallback reads, carrying the same prose. Two keys with one string is a smell worth
+        # accepting here, because the alternative is renaming `message` and coupling the
+        # typed contract to a fallback's field names — which would outlive the fallback.
+        # When ELICITATION is admitted this alias becomes dead weight rather than a lie, and
+        # `test_the_fallback_renders_the_ask_rather_than_silence` is what will say so.
+        "summary": ask_message(disp),
+        # And the ask's own content, so the fenced JSON block the fallback appends carries
+        # the options rather than an empty answer. A user meeting the interim sees the
+        # question AND what they may choose — degraded, and not silent.
+        "structured_data": {
+            "slot": disp.slot,
+            "options": [{"value": o.value, "label": o.label} for o in disp.options],
+            "option_source": disp.option_source,
+            "free_text_reason": disp.free_text_reason,
+            "total_count": disp.total_count,
+            "already_known": dict(accepted or {}),
+        },
         "data": "",
         "sources": [],
     }

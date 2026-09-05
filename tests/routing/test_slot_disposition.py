@@ -18,6 +18,7 @@ paid for. If a signature changes, these tests must move with it or fail — that
 """
 from __future__ import annotations
 
+import json
 import pytest
 
 from iagent_pure.slot_disposition import (
@@ -724,3 +725,64 @@ def test_bound_slots_cannot_reach_a_route_supplied_slot(slots_for):
 def test_bound_slots_fail_CLOSED_on_unreadable_declarations():
     ok, refused = validate_bound_slots({"x": "y"}, declared="not json", enumerate_class=None)
     assert ok == {} and refused
+
+
+def test_the_fallback_renders_the_ask_rather_than_silence(slots_for):
+    """THE REGRESSION STAMPING THE CLASS INTRODUCED, sealed against the REAL composer's source.
+
+    `output_uri` made the presentation agent select on it — the fix — and until ELICITATION is
+    admitted, selection lands on KNOWLEDGE_DOCUMENT. That fallback composes its body from
+    fields on the expert_response and emits the literal "No content available." when it finds
+    none. The card emitted none, so the interim was WORSE than the state it replaced: before
+    the stamp a user saw "Which program?", after it they saw an empty card. An unregistered
+    kind must degrade VISIBLY; this degraded to silence.
+
+    READ FROM THE COMPOSER'S SOURCE, NOT FROM A LIST HERE, and not by importing it either:
+    `presentation_agent/main.py` needs `baml_client`, which is not importable from the repo
+    root, and the finance suite already reads this same module as text for the same reason.
+
+    The field names are EXTRACTED from `agent_response.get(...)` in the composer, so if it
+    ever reads a different key this test fails instead of passing against a stale copy. A
+    test asserting `"summary" in card` would be asserting on my own restatement of someone
+    else's contract — the mirror problem, in a seal."""
+    import ast as _ast
+    import pathlib as _pathlib
+
+    src = (_pathlib.Path(__file__).resolve().parents[2]
+           / "agent_fleet" / "presentation_agent" / "main.py").read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    fn = next((n for n in _ast.walk(tree)
+               if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+               and "No content available" in _ast.dump(n)), None)
+    assert fn is not None, "the KNOWLEDGE_DOCUMENT composer moved — find it before trusting this"
+
+    read_keys = {
+        node.args[0].value
+        for node in _ast.walk(fn)
+        if isinstance(node, _ast.Call)
+        and isinstance(node.func, _ast.Attribute) and node.func.attr == "get"
+        and isinstance(node.func.value, _ast.Name) and node.func.value.id == "agent_response"
+        and node.args and isinstance(node.args[0], _ast.Constant)
+        and isinstance(node.args[0].value, str)
+    }
+    assert read_keys, "could not extract the fields the fallback reads"
+
+    d = decide_disposition(
+        accepted={}, declared=slots_for("plan_capability_path"), resolution={},
+        enumerate_class=_members(("C1", "Billing"), ("C7", "Integration Platform")),
+    )
+    card = ask_card(d, verb_iri="mesh:planCapabilityPath",
+                    sub_query="what is the capability path", accepted={})
+
+    # The composer ORs its text fields, so supplying ANY one of them is enough to avoid
+    # "No content available." — but at least one must be non-empty, which is the property.
+    text_keys = {k for k in read_keys if "summary" in k or "text" in k}
+    assert text_keys, f"the fallback reads no text field? extracted {sorted(read_keys)}"
+    assert any(card.get(k) for k in text_keys), (
+        f"the ask supplies none of {sorted(text_keys)} — it would render "
+        f"'No content available.' Card keys: {sorted(card)}"
+    )
+    # and the structured half, so the fenced block carries the options rather than nothing
+    for k in read_keys - text_keys:
+        assert card.get(k), f"the ask supplies no {k!r}, so the fallback's block is empty"
+    assert "C7" in json.dumps(card["structured_data"]), "the options are not in the block"
