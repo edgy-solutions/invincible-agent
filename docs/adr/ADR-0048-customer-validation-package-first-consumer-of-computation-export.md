@@ -265,6 +265,40 @@ what lets this start.
   customer wants to run their own scenarios, that is a different product and a much larger
   disclosure**, and it should be recognised as such rather than arrived at by adding one input box.
 
+  > **AMENDED 2026-09-05 — editable inputs, and why this is not the thing the bullet forbids.**
+  > Slice 2 exposes the manifest's **rate table** and the **learning slope** as editable fields.
+  > That is, on its face, "adding one input box", so the bullet is owed a direct answer rather than
+  > a quiet exception.
+  >
+  > **The answer is that the bullet's two fears are about disclosure and about substitution, and
+  > neither is engaged by editing a value the package already shows you.** Every editable field is
+  > a number already printed in the manifest — the recipient can read it, and could retype it into
+  > a spreadsheet today. Making it editable in place adds *no* disclosure. What the bullet actually
+  > forbids remains forbidden: pointing the computation at inputs the package does **not** carry —
+  > the recipient's own quantities, bill of materials, or labour standards. **That is still a
+  > different product and a larger disclosure, and it is still out.**
+  >
+  > **The substitution fear is answered structurally, not by discipline.** A scenario is computed
+  > **beside** the verified baseline and never replaces it:
+  >
+  > - `scenario_view` returns the baseline price, the scenario price and their difference **in one
+  >   payload**, so no caller can render a scenario without the figure it departs from. A UI bug
+  >   can mislabel them; it cannot make the baseline disappear.
+  > - The baseline in that payload is **read from the manifest**, not recomputed — so the
+  >   comparison is always against the number that was actually asserted and verified.
+  > - The payload carries `verified: false`. The scenario's status is **stated in the data**, not
+  >   inferred by the renderer.
+  > - **The manifest verifies the baseline only.** Scenarios are outside the equivalence claim by
+  >   construction, and §5's seals are unchanged by their existence: a divergence still means data
+  >   or runtime, never algorithm.
+  > - An unedited scenario equals the baseline **exactly** — sealed, per lot. Edits are the only
+  >   thing that can move it, so a non-zero difference is always attributable.
+  >
+  > **What this amendment does NOT license:** editable *composition* (the step order and rate-key
+  > assignment stay the manifest's), editable *engine outputs*, or any path by which a scenario
+  > enters a manifest, a hash, or an audit line. **A scenario is a reading aid. It is never a
+  > result**, and nothing may export one as though it were.
+
 ---
 
 ## Consequences

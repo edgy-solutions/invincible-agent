@@ -35,6 +35,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from agent_fleet.cost_agent import export as X          # noqa: E402
+from scripts.build_cost_dataset import build as build_dataset, file_hash  # noqa: E402
+from scripts.labor_tab_template import TEMPLATE as SLICE2_TEMPLATE       # noqa: E402
 from agent_fleet.cost_agent.seed import build_state     # noqa: E402
 
 #: The runtime files Pyodide's loader asks for. Fetched once into a cache directory by
@@ -68,10 +70,28 @@ def _b64(p: pathlib.Path) -> str:
     return base64.b64encode(p.read_bytes()).decode("ascii")
 
 
-def build_html(recipient: str, runtime_dir: pathlib.Path) -> str:
+def build_html(recipient: str, runtime_dir: pathlib.Path,
+               duckdb_path: pathlib.Path | None = None) -> str:
     state = build_state()
     sha = algorithm_sha()
-    package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha)
+    if duckdb_path is None:
+        package = X.build_package(state, recipient_scope=recipient, algorithm_sha=sha)
+    else:
+        # SLICE 2. The .duckdb ships BESIDE this file; the page embeds the same rows and the
+        # manifest carries both hashes, so a recipient holding only the HTML still gets a
+        # verifying page and one holding both can prove the file matches what the page
+        # computed from. duckdb-wasm is deliberately absent — 34 MB, and its reader returns
+        # DECIMAL as an unscaled BigInt (measured: every value exactly 100x).
+        package = X.build_dataset_package(
+            state, recipient_scope=recipient, algorithm_sha=sha,
+            duckdb_path=str(duckdb_path), duckdb_hash=file_hash(duckdb_path))
+        package["dataset"]["learning_slope"] = "0.92"
+        drift = X.datasets_agree(package["dataset"]["rows"], str(duckdb_path))
+        if drift:
+            raise SystemExit(
+                "REFUSING TO BUILD: the embedded rows and the .duckdb hold different "
+                "tables, so the page would verify against data the shipped file does "
+                "not contain -- " + "; ".join(drift[:6]))
     pricing_src = (ROOT / "agent_fleet" / "cost_agent" / "pricing.py").read_text(
         encoding="utf-8")
 
@@ -138,6 +158,20 @@ def build_html(recipient: str, runtime_dir: pathlib.Path) -> str:
             "substitution. The no-CDN property cannot be claimed for this artifact."
         )
 
+    tmpl = SLICE2_TEMPLATE if duckdb_path is not None else _TEMPLATE
+    if duckdb_path is not None:
+        page_src = (ROOT / "agent_fleet" / "cost_agent" / "page.py").read_text(encoding="utf-8")
+        return tmpl.format(
+            recipient=recipient, sha=sha, locator=package["locator"],
+            as_of=package["as_of"], program=package["program"],
+            lots=", ".join(str(n) for n in package["lots"]),
+            duckdb_filename=package["dataset"]["duckdb_filename"],
+            duckdb_hash=package["dataset"]["duckdb_sha256"],
+            package_json=json.dumps(package),
+            pricing_src=json.dumps(pricing_src),
+            embedded_json=json.dumps(embedded),
+            loader_js=loader_js, pyver=PYODIDE_VERSION,
+        ).replace("PAGE_PY", json.dumps(page_src), 1)
     return _TEMPLATE.format(
         recipient=recipient,
         sha=sha,
@@ -341,13 +375,16 @@ function render(pkg) {{
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--recipient", required=True)
-    ap.add_argument("--out", default="dist")
+    ap.add_argument("--out-dir", "--out", dest="out_dir", default="dist",
+                    help="DIRECTORY the package is written into (note: build_cost_dataset.py's --out is a FILE)")
     ap.add_argument("--runtime-dir", default=str(ROOT / ".pyodide-cache"))
     ap.add_argument("--corrupt-intermediate", action="store_true",
                     help=("DEMO ONLY: corrupt one embedded intermediate so the package "
                           "refuses to render. ADR-0048 §6's trust beat — hand it to someone "
                           "and let them watch it refuse. Output is named -CORRUPTED so it "
                           "cannot be mistaken for a real package."))
+    ap.add_argument("--with-dataset", action="store_true",
+                    help="slice 2: also build the .duckdb and embed its rows")
     ap.add_argument("--fetch-runtime", action="store_true",
                     help="download the pinned Pyodide runtime into --runtime-dir (needs network)")
     a = ap.parse_args()
@@ -361,7 +398,11 @@ def main() -> int:
             print(f"  fetching {f}")
             urllib.request.urlretrieve(base + f, rt / f)
 
-    html = build_html(a.recipient, rt)
+    db = None
+    if a.with_dataset:
+        db = pathlib.Path(a.out_dir) / f"cost-{a.recipient}.duckdb"
+        build_dataset(a.recipient, db)
+    html = build_html(a.recipient, rt, db)
     suffix = ""
     if a.corrupt_intermediate:
         # Alter ONE intermediate in the embedded manifest, leaving everything else — the
@@ -378,7 +419,7 @@ def main() -> int:
         suffix = "-CORRUPTED"
         print(f"  corrupted lot {pkg['manifest']['checks'][2]['lot']} step "
               f"{victim['name']!r}: {original} -> {victim['amount']}")
-    out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
+    out = pathlib.Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
     dest = out / f"cost-validation-{a.recipient}{suffix}.html"
     dest.write_text(html, encoding="utf-8")
     mb = dest.stat().st_size / 1_048_576

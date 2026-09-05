@@ -391,10 +391,22 @@ def build_dataset_package(
     rows = dataset_rows(state, lots=tuple(pkg["lots"]))
     pkg["dataset"] = {
         "rows": rows,
-        # THE TWO HASHES. `duckdb_sha256` identifies the file the recipient was handed;
-        # `rows_sha256` identifies what the page actually computes from. Recording only the
-        # first would let the page drift from the file it claims to represent, which is the
-        # failure this pair exists to make impossible.
+        # THE TWO HASHES, AND THEY DO NOT HAVE THE SAME POWERS. Recording only one would let
+        # the page drift from the file it claims to represent; recording both without stating
+        # the asymmetry would overclaim what one of them can answer.
+        #
+        #   rows_sha256    DATA IDENTITY, and REPRODUCIBLE. Measured over three builds from
+        #                  identical inputs: identical. Two packages sharing this hash carry
+        #                  the same rows, and the engine can recompute it at any time. This is
+        #                  the hash that answers "is this the same data".
+        #
+        #   duckdb_sha256  FILE INTEGRITY OF THIS BUILD ONLY, and NOT reproducible. Three
+        #                  builds from identical inputs produced three distinct file hashes at
+        #                  identical size (1,323,008 bytes) — DuckDB stamps per-database
+        #                  metadata into the container. It detects tampering with the file that
+        #                  was actually shipped, which is exactly what §5's tamper seal needs.
+        #                  IT CANNOT ANSWER "is this the same data as that other package", and
+        #                  nothing may use it that way: a rebuild is not a corruption.
         "duckdb_sha256": duckdb_hash,
         "duckdb_filename": pathlib.PurePath(duckdb_path).name,
         "rows_sha256": content_hash(rows),

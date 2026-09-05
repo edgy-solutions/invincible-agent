@@ -119,3 +119,80 @@ interchange format, not a runtime.
 **The native half is the result that matters and it stands: 63/63 exact, with the DOUBLE
 bite-check at 51/63.** The `.duckdb` is a typed store, and the notebook target — which reads it
 natively in Python — is on the exact path.
+
+---
+
+## Addendum 2026-09-05 — three findings from building the Labor tab and the scenario amendment
+
+Not pre-registered. Each was found by a seal or a bite-check, and each changed code.
+
+### 1. The learning curve was a staircase, and a UI-staleness seal found it
+
+**The seal:** *a lot change re-renders every metric* — implemented as "each metric takes a
+distinct value on each of the 5 lots", because a metric that is constant across lots cannot
+reveal a frozen selector.
+
+**It failed on `touch_per_unit`:** lots 4 and 5 came out **identical to the cent** (1481.21).
+
+**The cause was not the UI.** `_touch_hours` counted whole *doublings* of cumulative quantity, so
+the curve was a staircase and any two lots inside one tread received identical hours. That is
+wrong as a model, not merely inconvenient for a test: **Wright's law is continuous in cumulative
+quantity**, and the doubling form is a shorthand for reading it off a chart. Replaced with
+`T1 · N^b`, `b = ln(learning)/ln 2`.
+
+| metric | before (lots 4, 5) | after (lots 4, 5) |
+|---|---|---|
+| `touch_per_unit` | 1481.21, **1481.21** | 1425.54, **1373.33** |
+| all 4 metrics distinct across 5 lots | no | **yes** |
+
+**The transferable part:** a seal written for a *rendering* concern found an *arithmetic* defect,
+because both reduce to "these two things should not be equal". The tell was a value repeating
+where the model says it should decline.
+
+`support_touch_ratio` is 0.450 on every lot **by construction** (support is a fixed fraction of
+touch in the seed). It is a correct figure and a useless staleness indicator, so it is excluded
+from the seal — and a test now pins that exclusion so nobody "completes" the seal by adding it.
+
+### 2. The `.duckdb` is not byte-reproducible; the row hash is
+
+Three builds from identical inputs:
+
+| | build 1 | build 2 | build 3 | size |
+|---|---|---|---|---|
+| `.duckdb` sha256 | `bf39e176…` | `5a07984f…` | `aad7dd02…` | 1,323,008 B (identical) |
+| row content hash | `ea8f971d…` | `ea8f971d…` | `ea8f971d…` | — |
+
+Same size, different bytes: DuckDB stamps per-database metadata into the container. **So the two
+manifest hashes do not have the same powers**, and the manifest must not imply they do:
+
+- `rows_sha256` — **data identity, reproducible.** Answers *"is this the same data"*. Recomputable
+  from the engine at any time.
+- `duckdb_sha256` — **file integrity of this build only.** Detects tampering with the file that
+  was actually shipped (which is what the tamper seal needs) and **cannot** answer *"is this the
+  same data as that other package"*. **A rebuild is not a corruption.**
+
+Recorded in `export.py` at the field, and sealed — the seal fails if DuckDB ever *becomes*
+reproducible, which is the point at which the restriction could be lifted.
+
+### 3. A seal that could not see what it guarded
+
+*"A scenario cannot relabel the rate vintage"* passed **with its fence removed**. The payload
+compared did not carry the vintage at all, so the two calls were equal either way — the seal was
+asserting on the neighbour, the fourth instance of my recorded defect.
+
+**The fix was not a better assertion, it was making the fence load-bearing.** `scenario_view` now
+returns `rate_vintage` and `rate_fiscal_year` from Python, the panel renders them, and the seal
+asserts on the label itself. Removing the fence now turns it red.
+
+**Generalisable:** if removing a guard changes nothing observable, the guard is decorative *or the
+output is missing something it should have said*. Here it was the second, and asking which one it
+was is what produced the improvement.
+
+### Bite-check results (all four mutations, after the fixes)
+
+| mutation | seals that turned red |
+|---|---|
+| `labor_view` ignores its lot argument (frozen selector) | 2 of 3 — the third guards caching, a different mutation |
+| baseline follows the edit instead of reading the manifest | 2 |
+| `EDITABLE_RATE_KEYS` fence removed | 1 (0 before finding 3) |
+| `datasets_agree` returns `[]` unconditionally | 1 — the tamper seal; the agreement seal correctly stays green |

@@ -93,14 +93,25 @@ _SUPPLIER_SHARES: tuple[tuple[str, Decimal], ...] = (
 
 
 def _touch_hours(lot_index: int, cumulative_units: int) -> Decimal:
-    """Touch hours for a lot: learning applied against cumulative quantity."""
-    doublings = Decimal("0")
-    units = Decimal(cumulative_units)
-    base = Decimal("12")
-    while units >= base * 2:
-        doublings += 1
-        base *= 2
-    factor = _LEARNING ** int(doublings)
+    """Touch hours for a lot: Wright's law, CONTINUOUS in cumulative quantity.
+
+    hours = T1 * N^b   where   b = ln(learning) / ln(2)
+
+    THE FIRST VERSION STEPPED BY DOUBLINGS and a seal caught what that cost. Counting whole
+    doublings makes the curve a staircase, so any two lots inside one tread receive IDENTICAL
+    hours — lots 4 and 5 (both quantity 24, same bracket) came out equal to the cent, and
+    `touch_per_unit` could not tell them apart. A frozen lot selector would have been
+    undetectable in that metric, which is exactly what the seal asserts against.
+
+    The staircase was also simply wrong as a model: Wright's law is continuous in cumulative
+    quantity and the doubling form is a shorthand for reading it off a chart, not a
+    definition. So this is a correctness fix that a UI-staleness seal happened to find.
+    """
+    import math
+
+    b = Decimal(str(math.log(float(_LEARNING)) / math.log(2.0)))
+    n = Decimal(cumulative_units)
+    factor = Decimal(str(math.pow(float(n) / 12.0, float(b))))
     return (_TOUCH_HOURS_LOT1 * factor).quantize(Decimal("1"))
 
 

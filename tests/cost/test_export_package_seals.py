@@ -234,3 +234,202 @@ def test_the_shim_declares_a_MIME_TYPE_for_every_embedded_file():
     # Every embedded file needs a type, not just the one that failed loudest.
     for f in B.RUNTIME_FILES:
         assert f"'{f}':" in html, f"{f} has no MIME entry in the shim's table"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SLICE 2 SEALS — the three the dispatch added, plus what they needed to bite
+# ═══════════════════════════════════════════════════════════════════════════
+import json as _json
+
+from agent_fleet.cost_agent import page as PAGE
+
+
+@pytest.fixture(scope="module")
+def slice2(state):
+    import scripts.build_cost_dataset as D
+
+    db = ROOT / "dist" / "cost-notional-customer-alpha.duckdb"
+    if not db.exists():
+        pytest.skip("build the slice-2 dataset first")
+    pkg = X.build_dataset_package(
+        state, recipient_scope="notional-customer-alpha", algorithm_sha=SHA,
+        duckdb_path=str(db), duckdb_hash=D.file_hash(db))
+    pkg["dataset"]["learning_slope"] = "0.92"
+    PAGE.verify(_json.dumps(pkg))
+    return pkg, db
+
+
+# ── SEAL 6 — a lot change re-renders EVERY metric ───────────────────────────
+def test_every_labor_metric_differs_between_lots(slice2):
+    """THE MUTATION THIS GUARDS: freeze the selector and the page keeps lot 1 on screen.
+
+    A stale chart is invisible — it renders, it is well-formed, and it is simply the wrong
+    lot. So the seal asserts that each metric ACTUALLY MOVES between lots: if any were
+    constant across the package, a frozen selector would be undetectable in that metric and
+    the guard would be measuring nothing.
+    """
+    pkg, _ = slice2
+    lots = pkg["lots"]
+    views = {n: PAGE.labor_view(n) for n in lots}
+    for metric in ("total_hours", "total_cost", "touch_per_unit", "unit_price"):
+        values = {views[n][metric] for n in lots}
+        assert len(values) == len(lots), (
+            f"{metric} repeats across lots {sorted(values)} — a frozen lot selector would be "
+            "undetectable in this metric"
+        )
+
+
+def test_the_chart_parts_change_between_lots(slice2):
+    pkg, _ = slice2
+    a = PAGE.labor_view(pkg["lots"][0])["parts"]
+    b = PAGE.labor_view(pkg["lots"][-1])["parts"]
+    assert [p["key"] for p in a] == [p["key"] for p in b], "kinds must keep their render order"
+    assert [p["display"] for p in a] != [p["display"] for p in b], "the bar would be stale"
+
+
+def test_labor_view_holds_no_state_between_calls(slice2):
+    """A view that cached its first lot would pass the difference test and still be stale."""
+    pkg, _ = slice2
+    first = PAGE.labor_view(pkg["lots"][0])
+    PAGE.labor_view(pkg["lots"][-1])
+    again = PAGE.labor_view(pkg["lots"][0])
+    assert first == again, "labor_view is not a pure function of its lot argument"
+
+
+# ── SEAL 7 — an edited rate moves the SCENARIO and not the BASELINE ─────────
+def test_an_edited_rate_changes_the_scenario_and_leaves_the_baseline(slice2):
+    pkg, _ = slice2
+    lot = pkg["lots"][2]
+    before = PAGE.scenario_view(lot, _json.dumps({}), "1")
+    after = PAGE.scenario_view(lot, _json.dumps({"overhead": "0.99"}), "1")
+    assert after["scenario_price"] != before["scenario_price"], "the edit did nothing"
+    assert after["baseline_price"] == before["baseline_price"], (
+        "THE BASELINE MOVED — an edit must never touch the verified figure"
+    )
+
+
+def test_the_baseline_in_a_scenario_is_the_MANIFEST_figure(slice2):
+    """Read from the manifest, not recomputed — so the comparison is against what was asserted."""
+    pkg, _ = slice2
+    lot = pkg["lots"][1]
+    manifest_price = next(c["expected"]["price"] for c in pkg["manifest"]["checks"]
+                          if c["lot"] == lot)
+    sv = PAGE.scenario_view(lot, _json.dumps({"profit": "0.5"}), "0.8")
+    assert sv["baseline_price"].replace(",", "") == manifest_price
+
+
+def test_an_unedited_scenario_equals_the_baseline_exactly(slice2):
+    """The invariant that makes the difference column trustworthy at zero edit."""
+    pkg, _ = slice2
+    for lot in pkg["lots"]:
+        sv = PAGE.scenario_view(lot, _json.dumps({}), "1")
+        assert sv["difference"] == "0.00", f"lot {lot}: unedited scenario diverges from baseline"
+
+
+def test_a_scenario_is_labelled_unverified(slice2):
+    pkg, _ = slice2
+    assert PAGE.scenario_view(pkg["lots"][0], _json.dumps({}), "1")["verified"] is False
+
+
+def test_an_out_of_range_slope_falls_back_rather_than_computing_nonsense(slice2):
+    pkg, _ = slice2
+    sv = PAGE.scenario_view(pkg["lots"][0], _json.dumps({}), "9.9")
+    assert sv["slope"] == "1", "an impossible slope must not be applied"
+
+
+# ── SEAL 8 — the dataset hash bites when a row is altered ───────────────────
+def test_the_embedded_rows_and_the_duckdb_agree(slice2):
+    pkg, db = slice2
+    assert X.datasets_agree(pkg["dataset"]["rows"], str(db)) == []
+
+
+def test_the_agreement_check_BITES_on_an_altered_row(slice2, tmp_path):
+    """Tamper with the shipped FILE — the case a hash-by-construction check cannot see."""
+    import shutil
+
+    import duckdb
+    import scripts.build_cost_dataset as D
+
+    pkg, db = slice2
+    tampered = tmp_path / "tampered.duckdb"
+    shutil.copy(db, tampered)
+    con = duckdb.connect(str(tampered))
+    con.execute("UPDATE results SET price = 1.00 WHERE category = 'price'")
+    con.close()
+
+    problems = X.datasets_agree(pkg["dataset"]["rows"], str(tampered))
+    assert problems, "an altered row was not detected"
+    assert D.file_hash(tampered) != pkg["dataset"]["duckdb_sha256"], "the file hash is blind"
+
+
+def test_the_manifest_carries_BOTH_dataset_hashes(slice2):
+    """One identifies the file handed over; the other identifies what the page computes from."""
+    pkg, _ = slice2
+    d = pkg["dataset"]
+    assert d["duckdb_sha256"].startswith("sha256:")
+    assert d["rows_sha256"].startswith("sha256:")
+    assert d["duckdb_sha256"] != d["rows_sha256"], (
+        "the two hashes are over different things and must not coincide"
+    )
+
+
+def test_the_support_touch_ratio_is_CONSTANT_and_so_cannot_detect_staleness(slice2):
+    """Recorded so nobody later 'completes' the metric seal by adding this one.
+
+    Support hours are a fixed fraction of touch hours in the seed, so the ratio is 0.450 for
+    every lot BY CONSTRUCTION. It is a correct figure and a useless staleness indicator: a
+    frozen selector leaves it looking right. The four metrics in the seal above are the ones
+    that actually move, and this test pins the reason this one is excluded.
+    """
+    pkg, _ = slice2
+    ratios = {PAGE.labor_view(n)["support_touch_ratio"] for n in pkg["lots"]}
+    assert len(ratios) == 1, (
+        "the ratio now varies — it has become a usable staleness indicator and should be "
+        "added to test_every_labor_metric_differs_between_lots"
+    )
+
+
+def test_a_scenario_cannot_RELABEL_the_rate_vintage(slice2):
+    """The provenance lie with no arithmetic tell: relabel the vintage, price does not move."""
+    pkg, _ = slice2
+    lot = pkg["lots"][0]
+    honest = PAGE.scenario_view(lot, _json.dumps({}), "1")
+    lied = PAGE.scenario_view(
+        lot, _json.dumps({"vintage": "FY99-approved", "fiscal_year": 1999}), "1")
+    assert lied == honest, "a label override was accepted into the scenario"
+    # ASSERT ON THE LABEL ITSELF, not only on the payload being unchanged. The first version of
+    # this seal compared payloads that did not carry the vintage at all, so removing the fence
+    # left it green — it was asserting on the neighbour. These two lines are what bites.
+    assert lied["rate_vintage"] != "FY99-approved"
+    assert lied["rate_fiscal_year"] != 1999
+
+
+def test_the_scenario_composition_comes_from_the_MANIFEST(slice2):
+    """§7's amendment says composition is not editable. This is that claim, executed."""
+    pkg, _ = slice2
+    lot = pkg["lots"][0]
+    forged = _json.dumps({"plus_steps": ["nonsense"], "composition": [], "basis_kind": "x"})
+    assert PAGE.scenario_view(lot, forged, "1") == PAGE.scenario_view(lot, "{}", "1")
+
+
+def test_the_ROW_hash_is_reproducible_and_the_FILE_hash_is_not(slice2):
+    """The measured asymmetry, pinned — so nobody treats a rebuild as a corruption.
+
+    Three builds from identical inputs give three distinct .duckdb file hashes at identical
+    size: DuckDB stamps per-database metadata. The row hash is stable across the same builds.
+    If this test ever fails on the second assertion, DuckDB has become reproducible and
+    `duckdb_sha256` may then be used for data identity — which today it may NOT.
+    """
+    import os
+    import scripts.build_cost_dataset as D
+
+    pkg, _ = slice2
+    tmp = pathlib.Path(os.environ.get("TEMP", "/tmp"))
+    hashes = {D.file_hash(D.build("notional-customer-alpha", tmp / f"repro{i}.duckdb"))
+              for i in (1, 2)}
+    rows = X.dataset_rows(build_state(), lots=tuple(pkg["lots"]))
+    assert X.content_hash(rows) == pkg["dataset"]["rows_sha256"], "the ROW hash must reproduce"
+    assert len(hashes) == 2, (
+        "the .duckdb is now byte-reproducible — the comment in export.py and this seal both "
+        "need revisiting, and duckdb_sha256 may be promoted to data identity"
+    )
