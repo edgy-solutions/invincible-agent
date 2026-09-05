@@ -93,3 +93,43 @@ The engine-cost lane's numbers and mine disagree about what a "draw" is unless t
 recorded per draw. **Four things per draw:** the winner, the candidate SET, set disjointness
 across draws, and whether the winner carries a verb in that scope. A run scored on winners
 alone cannot distinguish P1 from P2 — both produce "Program, 0.00".
+
+---
+
+## ADDENDUM — written after reading the artifacts, BEFORE the live probe
+
+Sequencing stated plainly: P1–P3 above were written before any artifact was opened. P4 below
+was written after reading the eight artifacts and before running a single live draw.
+
+**The artifacts refute P1 and P2 together.** `classify_called: false` on every failing draw —
+the classifier was never called, so "Program scored 0.00" is not a score, it is the default
+zero of a classification that did not run. And `candidate_count: 0` means the gate could not
+have run either: it is guarded by `if candidates:`, and its second guard REFUSES to empty a
+pool. The gate can only ever shrink 6 to fewer; it cannot produce 0. **The gate is exonerated
+and the sampler is untouched.** The failure is upstream of both: class recall returned nothing.
+
+**P4 — PHRASING-DETERMINISTIC, NOT INTERMITTENT.** The two zero-candidate draws are the SAME
+question (*"why are we over budget on Notional Program Meridian"*), asked twice. Every other
+phrasing that night returned 6 candidates and routed to Engine F. That question was never
+retried later, so **nothing in the evidence establishes non-determinism on the resolver at
+all** — the appearance of flakiness comes from the SECOND decision in the run, not the first.
+
+*Predicts:* N draws of *"why are we over budget…"* return 0 candidates on every draw, and N
+draws of *"what is driving the cost variance…"* return 6 on every draw.
+*Falsified by:* any split within a phrasing.
+
+**If P4 holds, the reframe is total.** This is not non-determinism to be chased with repeated
+draws; it is a recall gap on one phrasing — a fixable, testable, deterministic hole — and the
+only non-determinism in the story lives in the rescue path that sometimes hides it.
+
+**P5 — TWO ROUTING DECISIONS PER RUN, and the two capture races pick different winners.**
+`subtask_routing_decision` is emitted for EVERY decision including failures;
+`subtask_graph_trace` is emitted ONLY when the subject grounded and compatible verbs exist
+(dynamic_supervisor.py:1519). Both are first-wins in the gateway. Artifacts 4 and 5 each hold
+an UNKNOWN routing record AND a grounded trace (Program → `mesh:finVarianceAnalysis`), which
+is impossible from one decision. So there were at least two, **and the routing record was
+claimed by the failing one while the trace was claimed by the succeeding one.**
+
+That is a sharper defect than "stamped pre-override": the two races have DIFFERENT ELIGIBILITY
+RULES, so they select different subtasks by construction, and the failure-eligible race is the
+one feeding the header a human reads.
