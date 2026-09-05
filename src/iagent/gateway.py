@@ -2221,6 +2221,22 @@ class InterviewRequest(BaseModel):
     # it follows. A slot whose menu was `too_many` had nothing offered and is refused here by
     # design; that answer belongs on the free-text path instead.
     bound_slots: dict[str, str] | None = None
+    # THE ANSWER TO AN ASK THAT HAD NO MENU (ADR-0033's RESPEAK). Two scalars, because a
+    # RESPEAK ask asks about exactly one slot and there is exactly one answer — a dict would
+    # reimport the {}-versus-absent ambiguity `bound_slots` is careful about, for no gain.
+    #
+    # SEPARATE FROM `bound_slots`, DELIBERATELY, AND THE SEPARATION IS THE SAFETY. A RESPEAK
+    # ask had NO menu by construction (that is what makes it a RESPEAK), so
+    # `validate_bound_slots` refuses its slot as `no_menu` by design. Routing unvalidatable
+    # words through the validated path would 422 or take the silent default. The name says
+    # what the value is: words a person typed, not a pick from a list.
+    #
+    # AND IT IS NOT CONCATENATED INTO `message`. That is the whole rewrite fold: the composed
+    # phrase `Provide the current funding status. (program_id: meridian)` was machine syntax
+    # on top of a paraphrase, rendered as the user's question. The phrase stays byte-equal and
+    # the answer travels here.
+    spoken_slot: str | None = None
+    spoken_answer: str | None = None
 
 
 class BPMNTask(BaseModel):
@@ -3150,6 +3166,8 @@ async def _launch_supervisor_job(
     # supervisor can tell a chosen value from an extracted one and validate only the
     # first against the menu it offered.
     bound_slots: dict | None = None,
+    spoken_slot: str | None = None,
+    spoken_answer: str | None = None,
     trace_id: str = "",
     session_id: str = "",
 ) -> str | None:
@@ -3222,6 +3240,8 @@ async def _launch_supervisor_job(
         # untyped values, slots are argument name -> value.
         "slots": dict(slots or {}),
         "bound_slots": dict(bound_slots or {}),
+        "spoken_slot": spoken_slot or "",
+        "spoken_answer": spoken_answer or "",
         # Telemetry (ADR-0038): threaded into execute_subtask's config so it forwards them as
         # X-Trace-Id / X-Session-Id to Engine A's /analyze — the conversation lands one trace.
         "trace_id": trace_id,
@@ -3830,6 +3850,8 @@ async def generate_dagster_stream(
         # Forwarded rather than dropped - the carry. `{}` until the slot-filler is called.
         slots=dict(intent_extraction.get("slots") or {}),
         bound_slots=dict(request.bound_slots or {}),
+        spoken_slot=request.spoken_slot,
+        spoken_answer=request.spoken_answer,
         trace_id=trace_id,        # cortex-ui X-Trace-Id -> runConfig -> execute_subtask -> /analyze
         session_id=session_id,    # the conversation thread -> Langfuse session grouping
     )

@@ -142,6 +142,11 @@ class SupervisorQueryConfig(Config):
     #: must be refused precisely because nothing was offered to pick from. One field cannot
     #: carry both rules.
     bound_slots: Dict[str, Any] = {}
+    #: The answer to a RESPEAK ask — words a person typed, for a slot no menu could be
+    #: offered for. Carried BESIDE the query, never inside it: the phrase the router sees
+    #: stays byte-equal to what the user asked. See gateway.InterviewRequest.spoken_answer.
+    spoken_slot: str = ""
+    spoken_answer: str = ""
     # Accepted for legacy-config compatibility (Step F'.6 stopped using it).
     candidate_verb: str = ""
     # ADR-0008 fallback policy (ADR-0018 simplified: single threshold
@@ -2300,6 +2305,28 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     spoken = dict(config.slots or {})
     declared = predicate.get("slots")
     resolution: Dict[str, Any] = {}
+
+    # ── A RESPEAK ANSWER IS A SPOKEN SLOT VALUE, AND NOTHING MORE ───────────────────────
+    #
+    # The ask had no menu (that is what makes it a RESPEAK), so the answer is WORDS, not an
+    # id. Merging it into `spoken` puts it exactly where a value the user said belongs: the
+    # acceptance filter and the resolution ladder then run on it identically to a value they
+    # had said in the first question. It is never bound directly — binding a person's typing
+    # is the fabricated-pick hole with human handwriting on it, and it reaches an engine as
+    # a 422.
+    #
+    # THIS IS WHY THE ANSWER NO LONGER RIDES INSIDE THE QUERY. It used to be concatenated —
+    # "<phrase> (<slot>: <answer>)" — so the ONLY way back into resolution was for the filler
+    # to re-extract it from a sentence the system had written to itself. Now it arrives named,
+    # the phrase stays byte-equal to what the user asked, and nothing has to be parsed back
+    # out of prose.
+    if config.spoken_slot and config.spoken_answer:
+        spoken = {**spoken, config.spoken_slot: config.spoken_answer}
+        context.log.info(
+            "respeak_answer slot=%s carried as a spoken value (not bound: no menu was "
+            "offered, so it resolves like any other thing the user said)",
+            config.spoken_slot,
+        )
 
     # ── THE ANSWER TO AN ASK, ARRIVING BACK ─────────────────────────────────────────────
     # A pick is validated against a RECOMPUTED menu, never against one the client echoes

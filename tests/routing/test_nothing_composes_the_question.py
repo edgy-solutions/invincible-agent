@@ -169,3 +169,65 @@ def test_no_fstring_builds_a_query_from_a_slot_anywhere_in_the_pure_layer():
         assert not re.search(r"\(\s*$|\(\s*:", rendered + ":"), (
             f"an f-string is composing slot syntax at line {node.lineno}: {rendered!r}"
         )
+
+
+# ── the answer's WIRE, which is where an in-process field stops being enough ─
+
+def test_the_gateway_declares_the_fields_the_UI_must_post():
+    """`Reroute.spoken_answer` is in-process. Cortex reaches the resolver only through the
+    request body, so a field the model does not declare is a field the answer cannot travel
+    on — and the phrase is now byte-equal, so there is nowhere else for it to hide."""
+    from iagent.gateway import InterviewRequest
+
+    for f in ("spoken_slot", "spoken_answer"):
+        assert f in InterviewRequest.model_fields, f"{f} is not on the wire"
+
+
+def test_no_answer_parses_as_absent_not_empty():
+    from iagent.gateway import InterviewRequest
+
+    r = InterviewRequest(message="q", session_id="s")
+    assert r.spoken_slot is None and r.spoken_answer is None
+
+
+def test_an_answer_arrives_without_touching_the_message():
+    """THE WHOLE POINT, asserted at the wire. The question is byte-equal to what was typed
+    and the answer rides beside it."""
+    from iagent.gateway import InterviewRequest
+
+    r = InterviewRequest(
+        message="what is the funding status", session_id="s",
+        spoken_slot="program_id", spoken_answer="meridian",
+    )
+    assert r.message == "what is the funding status"
+    assert "meridian" not in r.message
+    assert r.spoken_answer == "meridian"
+
+
+def test_they_are_scalars_not_a_dict():
+    """One slot, one answer. A dict would reimport the {}-versus-absent ambiguity that
+    `bound_slots` needs a whole function to avoid, for no gain."""
+    from iagent.gateway import InterviewRequest
+
+    ann = {f: str(InterviewRequest.model_fields[f].annotation)
+           for f in ("spoken_slot", "spoken_answer")}
+    for f, a in ann.items():
+        assert "dict" not in a.lower(), f"{f} is a dict: {a}"
+
+
+def test_the_answer_is_NOT_routed_through_bound_slots():
+    """A RESPEAK ask had no menu by construction, so `validate_bound_slots` refuses its slot
+    as `no_menu` by design. Sending an unvalidatable value down the validated path would 422
+    or take the silent default — the separation is the safety, not tidiness."""
+    i = _SUP.index("if config.spoken_slot and config.spoken_answer:")
+    window = _SUP[i:i + 400]
+    assert "bound_slots" not in window
+    assert "spoken = {**spoken, config.spoken_slot: config.spoken_answer}" in window
+
+
+def test_the_gateway_threads_both_fields_to_the_supervisor():
+    """A declared field nothing reads is the orphan shape. Both hops asserted."""
+    assert "spoken_slot=request.spoken_slot," in _GW
+    assert "spoken_answer=request.spoken_answer," in _GW
+    assert '"spoken_answer": spoken_answer or "",' in _GW
+    assert "spoken_answer: str = \"\"" in _SUP
