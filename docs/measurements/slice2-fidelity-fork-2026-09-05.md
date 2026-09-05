@@ -70,3 +70,52 @@ build rather than discovered at the end of it. Three honest options:
 **Not chosen here.** Option 2 is the one that preserves both properties, but it declines an
 explicit instruction ("read via duckdb-wasm, embedded"), so it is the architect's call rather
 than the lane's.
+
+---
+
+# HALF TWO MEASURED — and the leak is a SCALE ERROR, not precision loss
+
+```
+LEAK - 75 of 75 values did not survive as exact decimals
+  js typeof=object  value=630721000    engine=6307210.00
+  js typeof=object  value=22481834     engine=224818.34
+  js typeof=object  value=167334720    engine=1673347.20
+STRING-EQUAL: 0 / 75
+```
+
+**Every value is the engine's value × 100.** `630721000` against `6307210.00`; `22481834`
+against `224818.34`. **The digits survive intact.** duckdb-wasm returns the `DECIMAL(20,2)` as
+an **unscaled BigInt** and nothing applies the scale — `typeof` is `object`, which is the
+BigInt tell.
+
+**So this is a READER defect, not a numeric one, and it is recoverable** — divide by 10^scale,
+or read the scale from the Arrow field metadata. Which is precisely what makes it dangerous.
+
+**WHY IT IS THE SECOND REASON TO REFUSE duckdb-wasm, INDEPENDENT OF SIZE.** A value that is
+wrong by exactly 100× is *close enough to look like a rounding problem*. Had the probe used a
+numeric tolerance — or compared `float(js) ≈ float(engine)` — it would have read as noise near
+the boundary and been "fixed" with a tolerance somewhere. **String equality returned 0/75,
+which is an unmissable signal, and the uniformity of the failure is what makes it diagnosable
+as a scale error in one glance rather than a precision mystery.**
+
+*A uniform extreme result is usually the tell of a broken instrument. Here it was the tell of a
+broken READER — and the same discipline applied.*
+
+**The browser reader returns a representation the engine never produced.** Even at zero size
+cost, that is a layer between the recipient and the pinned algorithm which must be got right,
+and getting it right is work with no upside: the `.duckdb` exists to be a typed store and an
+interchange format, not a runtime.
+
+## RULED — option 2
+
+- **The `.duckdb` IS the data package** — one file, typed, entitlement-filtered, hashed, and it
+  **ships beside the HTML** as the deliverable that was asked for.
+- **The HTML stays self-contained**, embedding the rows it needs as slice 1 did. The manifest
+  records **both** the `.duckdb`'s content hash **and** the embedded rows' hash, asserting the
+  two are the same tables. A recipient with only the HTML gets a working, verifying page; a
+  recipient with both can prove the file they were handed is the data the page computed from.
+- **duckdb-wasm does not embed.** Bundle stays ~18 MB rather than ~65 MB.
+
+**The native half is the result that matters and it stands: 63/63 exact, with the DOUBLE
+bite-check at 51/63.** The `.duckdb` is a typed store, and the notebook target — which reads it
+natively in Python — is on the exact path.
