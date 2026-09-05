@@ -2618,6 +2618,23 @@ def _project_route_decision(mat: dict) -> dict | None:
     except (ValueError, TypeError):
         candidates = []
 
+    # THE ELIGIBILITY TRACE — what the gates took OUT, beside what survived.
+    #
+    # `candidates` alone cannot distinguish "nothing else was ever there" from "the only
+    # option that fit was deleted before the classifier saw it". Measured 2026-09-04:
+    # `planCapabilityPath` was removed by the arity gate, leaving one verb that does not
+    # answer the question, and the classifier honestly abstained — which rendered as "no
+    # confident action", i.e. classifier uncertainty. Two failures, opposite remedies, and
+    # the record could not tell them apart.
+    #
+    # Same honest-empty discipline as the pool above: absent projects to [], never a crash.
+    try:
+        excluded = json.loads(md.get("eligibility_excluded") or "[]")
+        if not isinstance(excluded, list):
+            excluded = []
+    except (ValueError, TypeError):
+        excluded = []
+
     # Specialist detection: route_status=="matched" is the supervisor's
     # authoritative "yes, we dispatched to a specialist endpoint" signal.
     # handler_endpoint being non-empty is a belt-and-suspenders check.
@@ -2676,6 +2693,7 @@ def _project_route_decision(mat: dict) -> dict | None:
             # The candidates the winner beat — the visualizer shows the
             # contest, not just the winner (losers first-class).
             "candidates": candidates,
+            "excluded": excluded,
         }
 
     # Fallback projection — surface that the pipeline GENUINELY fell
@@ -2730,6 +2748,7 @@ def _project_route_decision(mat: dict) -> dict | None:
         # The resolver pool that failed to ground — losers first-class,
         # so "why did nothing win" is visible with scores.
         "candidates": candidates,
+        "excluded": excluded,
     }
 
 

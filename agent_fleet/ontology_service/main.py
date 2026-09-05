@@ -824,6 +824,12 @@ class SemanticResolutionResponse(BaseModel):
     # instance-preemption path (no class contest) or the UNKNOWN
     # fallback (no candidates at all). Shape: [{uri, label, score}].
     candidates: list[dict] = Field(default_factory=list)
+    # WHAT THE PRODUCTIVE-OPTION GATE TOOK OUT, and why. `candidates` is what SURVIVED, and
+    # on its own it cannot be told apart from "nothing else was ever there" — so a grounding
+    # pool that lost the only answerable class looks identical to a thin pool. The gate
+    # already printed this; printing is not carrying. Shape: [{kind, uri, gate, disposal,
+    # reason}], matching the supervisor's verb-level trace so both layers render as one list.
+    excluded: list[dict] = Field(default_factory=list)
 
 class LegacyTableDossier(BaseModel):
     table_name: str
@@ -1862,6 +1868,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     # dead end this gate exists to remove. Likewise a filter that would remove EVERYTHING is
     # refused: that is the signature of a served-set computed against the wrong domains, and
     # answering from a dead end beats answering nothing while the cause is found.
+    _gate_excluded: list[dict] = []
     if candidates:
         _served = await _served_class_uris(request.domains or ([request.domain] if request.domain else []))
         if _served:
@@ -1871,6 +1878,18 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 print(f"[Engine O] productive-option gate DROPPED {_unproductive} "
                       f"unserved class(es) from the pool "
                       f"(domains={request.domains or request.domain!r})")
+                # STRUCTURED, not just printed. A log line cannot reach the artifact, and
+                # the artifact is where a reader asks why there was no answer.
+                _gate_excluded = [
+                    {
+                        "kind": "class",
+                        "uri": str(c.get("uri") or ""),
+                        "gate": "productive_option",
+                        "disposal": "removed",
+                        "reason": "no_verb_in_scope",
+                    }
+                    for c in candidates if c.get("uri") not in _served
+                ]
                 candidates = _productive
             elif not _productive:
                 print("[Engine O] productive-option gate would have emptied the pool "
@@ -2002,6 +2021,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                     reasoning=_unserved_subject_msg(identifier, instance_subject),
                     provenance=instance_provenance,
                     candidates=candidates,
+                    excluded=_gate_excluded,
                 )
             return SemanticResolutionResponse(
                 resolved_uri=instance_subject,
@@ -2018,6 +2038,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 # show "LLM guessed X from these candidates; instance
                 # resolution then overrode to Y".
                 candidates=candidates,
+                excluded=_gate_excluded,
             )
 
         # STRUCTURAL ABSTENTION GATE (ADR-0026 abstention-gate arc).
@@ -2043,6 +2064,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
                 reasoning=_ir_not_found_msg(identifier),
                 provenance=instance_provenance,
                 candidates=candidates,
+                excluded=_gate_excluded,
             )
 
         # Gate did NOT fire: either a generic term the extractor
@@ -2062,6 +2084,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
             reasoning=_reason,
             provenance=_prov,
             candidates=candidates,
+            excluded=_gate_excluded,
         )
 
     # Step 5: Return structured response (no identifier extracted).
@@ -2085,6 +2108,7 @@ async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
         reasoning=_reason,
         provenance=_prov,
         candidates=candidates,
+        excluded=_gate_excluded,
     )
 
 

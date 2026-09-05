@@ -354,7 +354,7 @@ def _resolve_subject(
         # is NOT a structural instance-not-found), instance_label="" (no
         # instance resolved). Keeps arity uniform with the success path —
         # the caller unpacks 7.
-        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [], None, "")
+        return ("UNKNOWN", 0.0, f"/resolve unreachable: {exc}", "", [], None, "", [])
 
     provenance = data.get("provenance") or {}
     return (
@@ -387,6 +387,12 @@ def _resolve_subject(
         # (set/type-level query) → summary correctly falls back to the
         # class label.
         str(provenance.get("instance_label") or ""),
+        # 2026-09-05 (eligibility trace): the CLASSES engine-o's productive-option gate
+        # removed from the grounding pool, with the gate and reason. `candidates` above is
+        # what survived, and the two are indistinguishable without this — a pool that lost
+        # its only answerable class looks exactly like a thin pool. Merged with the
+        # supervisor's own verb-level records so both layers render as one list.
+        list(data.get("excluded") or []),
     )
 
 
@@ -487,6 +493,66 @@ def _filter_verbs_by_arity(
     return out, flagged
 
 
+def _abstention_note(trace: list[dict] | None) -> str:
+    """The sentence that separates "nothing fit" from "something fit and was excluded".
+
+    THE TWO READ IDENTICALLY TODAY and they are not the same failure. "No verb is compatible
+    with this subject" means the system genuinely cannot answer that question about that
+    thing — nothing the caller says will help. "One verb fit and a gate removed it" is very
+    often a cue the caller can act on: name an instance, ask under the other domain, rephrase
+    with the thing the verb needs. Returning the same words for both spends the user's next
+    turn on a guess.
+
+    Empty string when nothing was excluded, so the caller concatenates unconditionally and a
+    clean abstention keeps exactly the wording it had.
+    """
+    removed = [r for r in (trace or []) if r.get("disposal") == "removed"]
+    if not removed:
+        return ""
+    parts = []
+    for r in removed[:3]:
+        name = str(r.get("uri") or "").rsplit("#", 1)[-1].rsplit("/", 1)[-1]
+        parts.append(f"{name} (excluded by {r.get('gate')}: {r.get('reason')})")
+    more = f" and {len(removed) - 3} more" if len(removed) > 3 else ""
+    return (
+        " Something DID fit and was removed before the choice was made: "
+        + "; ".join(parts) + more + "."
+    )
+
+
+def _eligibility_record(
+    uri: str, gate: str, reason: str, *, kind: str = "verb", disposal: str = "removed"
+) -> dict:
+    """One structured line of the eligibility trace — what a gate did to a candidate.
+
+    WHY THIS EXISTS. Eligibility gates remove candidates SILENTLY, and the record afterwards
+    shows only what survived. So an abstention over a pool of one reads as "the classifier
+    wasn't sure" when the truth is "the gate deleted the answer before the classifier saw
+    it" — two failures needing opposite remedies, and nothing downstream could tell them
+    apart. Measured 2026-09-04: `planCapabilityPath` was removed by the arity gate, leaving
+    `planMaturityGrid`, which does not answer "what is the capability path". The classifier
+    honestly returned UNKNOWN and the HUD said "no confident action".
+
+    DISPOSAL IS TWO-VALUED BECAUSE THE ARITY GATE STOPPED REMOVING. It now marks a
+    single-asset verb `needs_instance` and KEEPS it, so a trace with only `removed` could not
+    describe the very gate that motivated the trace. `flagged` is a candidate that survived
+    carrying a condition — the reason an ask is owed — and it is what lets a surface say
+    "needs an instance" rather than inferring it from a slot that happens to be unfilled.
+
+    KIND spans two layers on purpose: engine-o's productive-option gate removes CLASSES from
+    the grounding pool, and the supervisor's gates remove VERBS. One vocabulary, because a
+    reader asking "why is there no answer" does not know which layer ate the option, and a
+    trace that covers one layer sends them to the wrong place with confidence.
+    """
+    return {
+        "kind": kind,
+        "uri": uri or "",
+        "gate": gate,
+        "disposal": disposal,
+        "reason": reason,
+    }
+
+
 def _filter_verbs_by_argument_fit(
     compatible_verbs: list[dict], available_args: set[str] | None
 ) -> tuple[list[dict], list[dict]]:
@@ -570,6 +636,7 @@ def _classify_route(
     (
         subject_uri, subject_conf, subject_reason, subject_instance_id,
         subject_candidates, subject_abstention_reason, subject_instance_label,
+        subject_excluded,
     ) = _resolve_subject(
         context,
         user_query,
@@ -618,6 +685,12 @@ def _classify_route(
             "subject_confidence": subject_conf,
             "subject_reasoning": subject_reason,
             "subject_candidates": subject_candidates,
+            # ENGINE-O'S CLASS-LEVEL REMOVALS REACH HERE TOO. The verb gates have not run
+            # on this path, but the productive-option gate has — and a class it removed is
+            # a live reason the subject came back UNKNOWN. Omitting the key on the branch
+            # where grounding FAILED would blind the trace on the case it most needs to
+            # explain.
+            "eligibility_excluded": list(subject_excluded or []),
             # Structured fallback reason (decision-path Part 0): the
             # subject didn't ground at all. Distinct from "grounded but
             # no verb", from "verbs exist but your domain scope excluded
@@ -647,7 +720,7 @@ def _classify_route(
                     "without subject grounding is the regression shape "
                     "ADR-0019 deletes."
                 )
-            ),
+            ) + _abstention_note(subject_excluded),
             "candidate_verbs": [],
             "compatible_verb_iris": [],
         }
@@ -670,6 +743,13 @@ def _classify_route(
     # two gates read the resolution signal consistently. Deterministic, no
     # LLM; composes with the domain scope into the (domain ∩ arity)
     # eligibility intersection the enforcement arc extends with permission.
+    # THE ELIGIBILITY TRACE. Accumulated across every gate, carried on telemetry into the
+    # routing materialization, and rendered by the decision path — so a removed candidate
+    # leaves evidence instead of a shorter list. Declared here, before the first gate, so a
+    # gate added later has somewhere to write and cannot quietly skip it.
+    # Seeded with engine-o's CLASS-level removals so the trace spans both layers: a reader
+    # asking "why is there no answer" does not know whether a class or a verb was eaten.
+    _eligibility_trace: list[dict] = list(subject_excluded or [])
     if compatible_verbs:
         query_is_set = not subject_instance_id
         compatible_verbs, _arity_dropped = _filter_verbs_by_arity(
@@ -682,6 +762,13 @@ def _classify_route(
                 "asks rather than the gate excluding): %s",
                 subject_uri, query_is_set, len(_arity_dropped),
                 [v.get("verb_iri") for v in _arity_dropped],
+            )
+            _eligibility_trace.extend(
+                _eligibility_record(
+                    str(v.get("verb_iri") or ""), "arity", "needs_instance",
+                    disposal="flagged",
+                )
+                for v in _arity_dropped
             )
 
         # ARGUMENT-FIT GATE — the last term of the eligibility intersection
@@ -708,6 +795,15 @@ def _classify_route(
                 "required args: %s",
                 subject_uri, len(_argfit_dropped),
                 [v.get("verb_iri") for v in _argfit_dropped],
+            )
+            _eligibility_trace.extend(
+                _eligibility_record(
+                    str(v.get("verb_iri") or ""), "argument_fit",
+                    "missing_required_args:" + ",".join(
+                        str(a) for a in (v.get("required_args") or [])
+                    ),
+                )
+                for v in _argfit_dropped
             )
 
     # compatible_verbs is None on Neo4j error → fall through unconstrained.
@@ -758,12 +854,14 @@ def _classify_route(
             "subject_confidence": subject_conf,
             "subject_reasoning": subject_reason,
             "subject_candidates": subject_candidates,
+            "eligibility_excluded": _eligibility_trace,
             "fallback_reason": fb_reason,
             "verb_iri": "UNKNOWN",
             "verb_confidence": 0.0,
             "verb_reasoning": (
                 "Neo4j marks zero verbs as compatible with this subject "
                 f"(fallback_reason={fb_reason})."
+                + _abstention_note(_eligibility_trace)
             ),
             "candidate_verbs": [],
             "neo4j_find_error": find_err,
@@ -796,6 +894,7 @@ def _classify_route(
             "subject_uri": subject_uri,
             "subject_confidence": subject_conf,
             "subject_candidates": subject_candidates,
+            "eligibility_excluded": _eligibility_trace,
             "fallback_reason": "infra_error",
             "compatible_verb_iris": compatible_verb_iris,
             "error": str(exc),
@@ -940,6 +1039,10 @@ def _classify_route(
         "subject_reasoning": subject_reason,
         # Resolver candidate pool with scores (decision-path Part 0).
         "subject_candidates": subject_candidates,
+        # WHAT THE GATES TOOK OUT, and why. `subject_candidates` is what SURVIVED; without
+        # this the two are indistinguishable from "nothing else was ever there". A pool of
+        # one that had two is the case that reads as classifier uncertainty and is not.
+        "eligibility_excluded": _eligibility_trace,
         # Structured fallback reason. MATCHED path leaves it None (no
         # fallback); classify-returned-UNKNOWN sets no_verb_classified
         # below. subject_unknown / instance_not_found / no_compatible_verbs
@@ -1513,6 +1616,13 @@ def _log_subtask_route_assets(
         ),
         "fallback_reason": MetadataValue.text(
             str(telemetry.get("fallback_reason") or "")
+        ),
+        # THE ELIGIBILITY TRACE — what each gate removed or flagged, and why. Carried as
+        # JSON beside `subject_candidates` (what survived) because the difference between
+        # them is the difference between "nothing fit" and "something fit and was excluded",
+        # and only the second is a cue to rephrase.
+        "eligibility_excluded": MetadataValue.text(
+            json.dumps(telemetry.get("eligibility_excluded") or [])
         ),
         # Acting-persona provenance — the CALLER persona + domain the
         # decision was computed under (persona-driven verb eligibility).
