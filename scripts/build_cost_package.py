@@ -204,6 +204,12 @@ _TEMPLATE = """<!doctype html>
 // identically to opening it online. A CDN miss would otherwise be a silent partial render.
 (function () {{
   const EMB = JSON.parse(document.getElementById('embedded-runtime').textContent);
+  const MIME = {{
+    'pyodide.asm.wasm': 'application/wasm',
+    'pyodide.asm.js': 'text/javascript',
+    'pyodide-lock.json': 'application/json',
+    'python_stdlib.zip': 'application/octet-stream',
+  }};
   const realFetch = window.fetch ? window.fetch.bind(window) : null;
   function b64ToBytes(b64) {{
     const bin = atob(b64); const out = new Uint8Array(bin.length);
@@ -230,7 +236,15 @@ _TEMPLATE = """<!doctype html>
     const url = String(input && input.url ? input.url : input);
     for (const name of Object.keys(EMB)) {{
       if (url.endsWith(name)) {{
-        return new Response(b64ToBytes(EMB[name]), {{status: 200}});
+        // THE MIME TYPE IS LOAD-BEARING, not politeness. WebAssembly's streaming
+        // instantiation REFUSES a response whose Content-Type is not application/wasm --
+        // "Response has unsupported MIME type '' expected 'application/wasm'". A shim that
+        // returns the right BYTES with no type produces a runtime that loads its loader,
+        // fetches its wasm, and then refuses to instantiate it.
+        return new Response(b64ToBytes(EMB[name]), {{
+          status: 200,
+          headers: {{'Content-Type': MIME[name] || 'application/octet-stream'}},
+        }});
       }}
     }}
     if (realFetch) return realFetch.apply(this, arguments);

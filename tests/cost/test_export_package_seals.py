@@ -210,3 +210,27 @@ def test_the_artifact_contains_NO_UNRESOLVED_DYNAMIC_IMPORT():
     )
     assert "__embeddedModuleURL" in html, "the embedded-module resolver is absent"
     assert "createObjectURL" in html, "nothing publishes embedded JS as a blob URL"
+
+
+@pytest.mark.skipif(not DIST.exists(), reason="build the package first")
+def test_the_shim_declares_a_MIME_TYPE_for_every_embedded_file():
+    """Third layer of the same onion, and the third only visible by opening the file.
+
+    WebAssembly's streaming instantiation REFUSES a response whose Content-Type is not
+    `application/wasm` — "Response has unsupported MIME type '' expected 'application/wasm'".
+    So a shim returning the correct BYTES with no type yields a package that loads its
+    loader, fetches its wasm, and then cannot instantiate it.
+
+    THE PATTERN WORTH RECORDING: embed the files (layer 1) → route the module import
+    (layer 2) → declare the MIME types (layer 3). Every layer passed the previous layer's
+    seal. Each was found by a human opening the artifact, and none was visible to any check
+    that reads the file as text. That is the honest cost of a structural-only seal, and it is
+    why ADR-0048 §3 item 4 gives the open-it step a human owner rather than a CI job.
+    """
+    import scripts.build_cost_package as B
+
+    html = DIST.read_text(encoding="utf-8")
+    assert "'application/wasm'" in html, "the wasm has no declared MIME type; it cannot instantiate"
+    # Every embedded file needs a type, not just the one that failed loudest.
+    for f in B.RUNTIME_FILES:
+        assert f"'{f}':" in html, f"{f} has no MIME entry in the shim's table"
