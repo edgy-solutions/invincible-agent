@@ -90,21 +90,104 @@ def test_a_clean_abstention_keeps_its_exact_wording():
 
 def test_a_FLAGGED_candidate_is_not_reported_as_removed():
     """The arity gate flags rather than removes. Reporting a kept candidate as excluded
-    would send the caller chasing a gate that let it through."""
-    from iagent.defs.dynamic_supervisor import _abstention_note
+    would send the caller chasing a gate that let it through. Built through the producer,
+    for the same reason as the test above."""
+    from iagent.defs.dynamic_supervisor import (
+        DISPOSAL_FLAGGED, _abstention_note, _eligibility_record,
+    )
 
     assert _abstention_note([
-        {"uri": "mesh:planCapabilityPath", "gate": "arity",
-         "disposal": "flagged", "reason": "needs_instance"},
+        _eligibility_record(
+            "mesh:planCapabilityPath", "arity", "needs_instance",
+            disposal=DISPOSAL_FLAGGED,
+        ),
     ]) == ""
 
 
+def test_no_CALL_SITE_passes_a_bare_disposal_literal():
+    """THE HALF MY FIRST FIX MISSED, and I only found it by mutating.
+
+    Single-sourcing the constants and building fixtures through `_eligibility_record` closed
+    the reader/writer join and the cross-service join. It did NOT close the CALL SITES: the
+    arity gate passing `disposal="marked"` instead of `DISPOSAL_FLAGGED` still went 16/16
+    green, because the vocabulary test only counts KNOWN literals and a brand-new one is not
+    among them, and the fixture supplies its own value rather than reading the gate's.
+
+    A reader tested against its producer's FUNCTION is still not tested against the producer's
+    CALL SITES. So this asserts on the AST: every `disposal=` argument in the supervisor is a
+    Name, never a constant string."""
+    import ast
+
+    bad = []
+    for node in ast.walk(ast.parse(_SUP)):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "disposal" and isinstance(kw.value, ast.Constant):
+                bad.append(f"line {kw.value.lineno}: disposal={kw.value.value!r}")
+    assert not bad, (
+        f"disposal passed as a bare literal at {bad} — use a DISPOSAL_ constant, or a "
+        f"rename leaves the reader comparing against a value nobody emits"
+    )
+
+
+def test_the_disposal_vocabulary_is_closed():
+    """Every disposal a call site can pass must be one the reader knows. A third value
+    invented at a call site is silent by construction: the reader simply never matches it."""
+    import ast
+    from iagent.defs.dynamic_supervisor import DISPOSAL_FLAGGED, DISPOSAL_REMOVED
+
+    known = {"DISPOSAL_REMOVED", "DISPOSAL_FLAGGED"}
+    used = {
+        kw.value.id
+        for node in ast.walk(ast.parse(_SUP)) if isinstance(node, ast.Call)
+        for kw in node.keywords
+        if kw.arg == "disposal" and isinstance(kw.value, ast.Name)
+    }
+    assert used <= known, f"unknown disposal constant(s) passed: {sorted(used - known)}"
+    assert {DISPOSAL_REMOVED, DISPOSAL_FLAGGED} == {"removed", "flagged"}
+
+
+def test_the_reader_and_the_writer_share_one_disposal_vocabulary():
+    """The literal lived at four sites — writer default, arity gate, reader comparison, and
+    engine-o's record in ANOTHER SERVICE. A rename at one silences the note everywhere with
+    nothing going red."""
+    from iagent.defs.dynamic_supervisor import DISPOSAL_FLAGGED, DISPOSAL_REMOVED
+
+    # Exactly ONE occurrence each: the constant's own definition. Any second is a site that
+    # went back to spelling the value instead of importing it.
+    assert _SUP.count('"removed"') == 1, (
+        "a bare 'removed' literal is back in the supervisor — use DISPOSAL_REMOVED"
+    )
+    assert _SUP.count('"flagged"') == 1, (
+        "a bare 'flagged' literal is back in the supervisor — use DISPOSAL_FLAGGED"
+    )
+    assert 'DISPOSAL_REMOVED = "removed"' in _SUP
+    assert 'DISPOSAL_FLAGGED = "flagged"' in _SUP
+    # engine-o cannot import from src/, so its literal is joined by assertion instead.
+    assert f'"disposal": "{DISPOSAL_REMOVED}"' in _EO, (
+        "engine-o emits a disposal the supervisor's reader will not recognise"
+    )
+    assert DISPOSAL_FLAGGED != DISPOSAL_REMOVED
+
+
 def test_a_removed_candidate_names_the_gate_and_the_reason():
-    from iagent.defs.dynamic_supervisor import _abstention_note
+    """BUILT THROUGH THE PRODUCER, not hand-written.
+
+    This fixture used to spell `"disposal": "removed"` itself, which meant a rename at the
+    WRITER would leave `_abstention_note` comparing against a value nobody emits — the note
+    permanently empty, every abstention silently losing its explanation — while this test
+    went on passing, because it wrote the old literal too. A reader tested against a
+    hand-made imitation of its producer is not tested against its producer.
+
+    Transferred from the engine-cost lane 2026-09-05: their scenario-identity seal passed
+    while asserting at a value the interface never opens in. Same shape."""
+    from iagent.defs.dynamic_supervisor import _abstention_note, _eligibility_record
 
     note = _abstention_note([
-        {"uri": "http://x/mesh#describeAsset", "gate": "argument_fit",
-         "disposal": "removed", "reason": "missing_required_args:tag"},
+        _eligibility_record(
+            "http://x/mesh#describeAsset", "argument_fit", "missing_required_args:tag",
+        ),
     ])
     assert "describeAsset" in note
     assert "argument_fit" in note and "missing_required_args:tag" in note

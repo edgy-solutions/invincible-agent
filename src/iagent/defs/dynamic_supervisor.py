@@ -589,6 +589,20 @@ def _filter_verbs_by_arity(
     return out, flagged
 
 
+#: THE DISPOSAL VOCABULARY, written once. Four literals lived at four sites — the writer's
+#: default, the arity gate's value, the reader's comparison in `_abstention_note`, and
+#: engine-o's own record in another service. Renaming the writer's would leave the reader
+#: comparing against a value nobody emits: the note goes permanently empty, every abstention
+#: silently loses its explanation, and no test fails, because a test that HAND-WRITES the
+#: record writes the old literal too.
+#:
+#: Found by transfer, 2026-09-05: the engine-cost lane's scenario-identity defect was one
+#: literal with two meanings, and its seal passed because it asserted at a value the system
+#: never operates at. Same shape, different lane.
+DISPOSAL_REMOVED = "removed"
+DISPOSAL_FLAGGED = "flagged"
+
+
 def _abstention_note(trace: list[dict] | None) -> str:
     """The sentence that separates "nothing fit" from "something fit and was excluded".
 
@@ -602,7 +616,7 @@ def _abstention_note(trace: list[dict] | None) -> str:
     Empty string when nothing was excluded, so the caller concatenates unconditionally and a
     clean abstention keeps exactly the wording it had.
     """
-    removed = [r for r in (trace or []) if r.get("disposal") == "removed"]
+    removed = [r for r in (trace or []) if r.get("disposal") == DISPOSAL_REMOVED]
     if not removed:
         return ""
     parts = []
@@ -617,7 +631,7 @@ def _abstention_note(trace: list[dict] | None) -> str:
 
 
 def _eligibility_record(
-    uri: str, gate: str, reason: str, *, kind: str = "verb", disposal: str = "removed"
+    uri: str, gate: str, reason: str, *, kind: str = "verb", disposal: str = DISPOSAL_REMOVED
 ) -> dict:
     """One structured line of the eligibility trace — what a gate did to a candidate.
 
@@ -862,7 +876,7 @@ def _classify_route(
             _eligibility_trace.extend(
                 _eligibility_record(
                     str(v.get("verb_iri") or ""), "arity", "needs_instance",
-                    disposal="flagged",
+                    disposal=DISPOSAL_FLAGGED,
                 )
                 for v in _arity_dropped
             )
