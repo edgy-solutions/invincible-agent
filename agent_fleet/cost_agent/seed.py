@@ -29,10 +29,12 @@ from decimal import Decimal
 from typing import Iterable
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
-    from entities import CostState, LaborLine, Lot, SupplierShare
+    from entities import CostState, LaborLine, Lot, SupplierShare, Unentitled
     from pricing import RateSet, compose_price, unit_price
 except ImportError:
-    from agent_fleet.cost_agent.entities import CostState, LaborLine, Lot, SupplierShare
+    from agent_fleet.cost_agent.entities import (
+        CostState, LaborLine, Lot, SupplierShare, Unentitled,
+    )
     from agent_fleet.cost_agent.pricing import RateSet, compose_price, unit_price
 
 PROGRAM_NAME = "Notional Production Program Vermilion"
@@ -100,6 +102,36 @@ def _touch_hours(lot_index: int, cumulative_units: int) -> Decimal:
         base *= 2
     factor = _LEARNING ** int(doublings)
     return (_TOUCH_HOURS_LOT1 * factor).quantize(Decimal("1"))
+
+
+#: NOTIONAL RECIPIENTS, and the lots each may see. This is the ENTITLEMENT SURFACE the export
+#: packages against (ADR-0047 §5): the filter runs ONCE, at packaging, and what survives it is
+#: what gets embedded. There is no render-time filtering in a file the recipient owns.
+#:
+#: THE SCOPES DELIBERATELY OVERLAP AND DELIBERATELY DIFFER. A seal that discriminates between
+#: two recipients whose scopes are disjoint proves less than one where they share lots and
+#: differ at the edges -- disjoint scopes can pass by accident if the filter keys on the wrong
+#: field entirely. Lot 5 is in both; lots 1-2 only in the first; lots 8-9 only in the second.
+RECIPIENT_SCOPES: dict[str, tuple[int, ...]] = {
+    "notional-customer-alpha": (1, 2, 3, 4, 5),
+    "notional-customer-beta": (5, 6, 7, 8, 9),
+}
+
+
+def lots_for_recipient(recipient_scope: str) -> tuple[int, ...]:
+    """The lots a recipient may see. RAISES on an unknown scope rather than returning empty.
+
+    An empty package and an unentitled one must not look alike (ADR-0047 §5) -- an empty
+    result would tell the caller "this recipient has no data" when the truth is "this is not
+    a recipient".
+    """
+    try:
+        return RECIPIENT_SCOPES[recipient_scope]
+    except KeyError:
+        raise Unentitled(
+            f"{recipient_scope!r} is not a recipient this engine packages for; known scopes "
+            f"are {sorted(RECIPIENT_SCOPES)}"
+        ) from None
 
 
 def build_state() -> CostState:

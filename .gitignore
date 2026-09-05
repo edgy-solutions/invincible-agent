@@ -221,3 +221,5 @@ values-*.local.yaml
 
 # scratch to-do list (not source)
 list.md
+dist/
+.pyodide-cache/
