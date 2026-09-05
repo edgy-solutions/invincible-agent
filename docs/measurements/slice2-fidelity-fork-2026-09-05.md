@@ -1,5 +1,5 @@
 ---
-status: HALF MEASURED — native side closed, browser side awaiting one reload
+status: CLOSED — both halves measured, fork ruled (option 2), and slice 2 built on the ruling
 date: 2026-09-05
 engine: engine-cost
 ---
