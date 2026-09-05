@@ -77,43 +77,21 @@ def build(recipient: str, out: pathlib.Path) -> pathlib.Path:
     con = duckdb.connect(str(out))
     con.execute(DDL)
 
-    lot_rows, result_rows, rate_rows = [], [], []
-    seen_rates: set[tuple[str, int, str]] = set()
+    # ONE GENERATOR, TWO CONTAINERS. The rows come from export.dataset_rows so the database
+    # and the embedded page cannot hold different tables — they drifted on the first run when
+    # each had its own builder (75 rows against 35), which is precisely the defect the
+    # agreement check exists to catch and precisely the reason not to have two builders.
+    from decimal import Decimal as _D
+    from agent_fleet.cost_agent.export import dataset_rows
 
-    for n in lots:
-        lot = state.lot(n)
-        vintage = state.vintages(lot.fiscal_year)[0]
-        rates = state.rates[(lot.fiscal_year, vintage)]
-        lot_rows.append((n, lot.quantity, lot.fiscal_year, False))
-
-        # Labour, by KIND -- the Labor tab's sub_config axis.
-        for line in lot.labor:
-            result_rows.append((n, "labor", line.kind, str(lot.fiscal_year),
-                                line.hours, line.cost))
-        for cat, price, hours in (
-            ("material", lot.material, None),
-            ("other_direct", lot.other_direct, None),
-            ("warranty", lot.warranty, lot.warranty_hours),
-            ("contracts", lot.contracts, None),
-        ):
-            result_rows.append((n, cat, None, str(lot.fiscal_year), hours, price))
-
-        # The composed price and its steps -- stored as RESULTS, computed by pricing.py.
-        build_up = compose_price(
-            direct_labor=lot.direct_labor, material=lot.material,
-            other_direct=lot.other_direct + lot.warranty + lot.contracts, rates=rates)
-        for s in build_up.steps:
-            result_rows.append((n, "composition", s.name, str(lot.fiscal_year), None, s.amount))
-        result_rows.append((n, "price", None, str(lot.fiscal_year), None, build_up.price))
-        result_rows.append((n, "unit_price", None, str(lot.fiscal_year), None,
-                            unit_price(build_up, lot.quantity)))
-
-        for field in ("fringe", "overhead", "g_and_a", "cost_of_money", "profit", "escalation"):
-            key = (vintage, lot.fiscal_year, field)
-            if key not in seen_rates:
-                seen_rates.add(key)
-                rate_rows.append((vintage, lot.fiscal_year, field,
-                                  Decimal(str(getattr(rates, field)))))
+    rows = dataset_rows(state, lots=tuple(lots))
+    lot_rows = [(r["lot"], r["quantity"], r["fiscal_year"], r["estimating"])
+                for r in rows["lots"]]
+    result_rows = [(r["lot"], r["category"], r["sub_config"], r["period"],
+                    None if r["hours"] is None else _D(r["hours"]), _D(r["price"]))
+                   for r in rows["results"]]
+    rate_rows = [(r["vintage"], r["fiscal_year"], r["category"], _D(r["rate"]))
+                 for r in rows["rates"]]
 
     con.executemany("INSERT INTO lots VALUES (?,?,?,?)", lot_rows)
     con.executemany("INSERT INTO results VALUES (?,?,?,?,?,?)", result_rows)
