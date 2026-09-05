@@ -32,6 +32,11 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Optional
 
+try:
+    import seed
+except ImportError:  # native/test path
+    from agent_fleet.cost_agent import seed
+
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     from entities import CostState, Unentitled
     from pricing import (
@@ -43,7 +48,7 @@ except ImportError:
     from agent_fleet.cost_agent.pricing import (
         DEFAULT_COMPOSITION, StepSpec, compose_price, quantize_money, unit_price,
     )
-    from agent_fleet.cost_agent.seed import lots_for_recipient
+    from agent_fleet.cost_agent.seed import LEARNING_SLOPE, UNIT1_HOURS, lots_for_recipient
 
 #: Bumped when the manifest's SHAPE changes, so an old package cannot be silently checked by
 #: new rules or the reverse. Not the algorithm's version -- that is the pinned commit SHA.
@@ -411,6 +416,12 @@ def build_dataset_package(
         "duckdb_sha256": duckdb_hash,
         "duckdb_filename": pathlib.PurePath(duckdb_path).name,
         "rows_sha256": content_hash(rows),
+        # THE CURVE THE ENGINE RAN, set HERE and only here. These were assigned by the page
+        # builder after the fact, so a test that built a package the ordinary way got one
+        # without them — the fixture had to hand-patch the field, which is the same class of
+        # defect as a seal testing a state the interface never opens in. One constructor.
+        "learning_slope": str(seed.LEARNING_SLOPE),
+        "unit1_hours": str(seed.UNIT1_HOURS),
     }
     pkg["locator"] = content_hash({k: v for k, v in pkg.items() if k != "locator"})
     return pkg

@@ -142,6 +142,19 @@ def labor_view(lot: int) -> dict[str, Any]:
     }
 
 
+def _cum(units: int, slope: Decimal) -> float:
+    """Cumulative touch hours to `units`, in U1-relative terms — Wright's law integrated.
+
+    Mirrors `seed._cum_hours`. `U1` cancels in every ratio taken here, so it is left out.
+    """
+    import math
+
+    if units <= 0:
+        return 0.0
+    b = math.log(float(slope)) / math.log(2.0) + 1.0
+    return math.pow(units, b) / b
+
+
 def _touch_factor(lot: int, slope: Decimal, base_slope: Decimal) -> Decimal:
     """How touch labour moves when the learning curve is re-run at a DIFFERENT slope.
 
@@ -169,12 +182,12 @@ def _touch_factor(lot: int, slope: Decimal, base_slope: Decimal) -> Decimal:
     """
     if slope == base_slope:
         return Decimal("1")
-    import math
-
-    n = float(next(l["cumulative_units"] for l in _PKG["dataset"]["rows"]["lots"]
-                   if l["lot"] == lot))
-    ratio = math.pow(n / 12.0, math.log(float(slope)) / math.log(2.0)) /             math.pow(n / 12.0, math.log(float(base_slope)) / math.log(2.0))
-    return Decimal(str(ratio))
+    meta = _lot_meta(lot)
+    cum, prev = meta["cumulative_units"], meta["cumulative_units"] - meta["quantity"]
+    base = _cum(cum, base_slope) - _cum(prev, base_slope)
+    if base == 0:
+        return Decimal("1")
+    return Decimal(str((_cum(cum, slope) - _cum(prev, slope)) / base))
 
 
 def composition_view(lot: int) -> list[dict[str, str]]:
@@ -264,4 +277,142 @@ def scenario_view(lot: int, rates_json: str, slope: str) -> dict[str, Any]:
         # Stated in the payload rather than inferred by the UI: this figure is the
         # recipient's, and nothing has verified it.
         "verified": False,
+    }
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# THE ACROSS-LOTS HALF. `labor_view` answers "what is this lot"; these answer "what is the
+# programme". Same rows, same formatter, same rule — the arithmetic is here and the renderer
+# only draws.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+
+def _lot_meta(lot: int) -> dict[str, Any]:
+    return next(l for l in _PKG["dataset"]["rows"]["lots"] if l["lot"] == lot)
+
+
+def program_view() -> dict[str, Any]:
+    """Hours by lot x category, for the stacked column chart.
+
+    `max_hours` is returned rather than left to the renderer: the bar heights are a ratio to
+    the tallest column, and a ratio is arithmetic. A renderer computing its own maximum could
+    silently rescale one chart against another and the seals would never see it.
+    """
+    series = []
+    for lot in _PKG["lots"]:
+        labor = {r["sub_config"]: r for r in _rows_for(lot, "labor")}
+        segs, total = [], Decimal("0")
+        for kind in LABOR_KINDS:
+            r = labor.get(kind)
+            hours = Decimal(r["hours"]) if r and r["hours"] else Decimal("0")
+            total += hours
+            segs.append({"key": kind, "value": float(hours), "display": _money(hours)})
+        meta = _lot_meta(lot)
+        series.append({
+            "lot": lot,
+            "quantity": meta["quantity"],
+            "cumulative_units": meta["cumulative_units"],
+            "segments": segs,
+            "total": float(total),
+            "total_display": _money(total),
+        })
+    return {
+        "kinds": list(LABOR_KINDS),
+        "series": series,
+        "max_hours": max((s["total"] for s in series), default=0.0),
+    }
+
+
+def _lot_midpoint(avg_unit_hours: float, slope: Decimal) -> float:
+    """The cumulative unit whose own cost equals this lot's average — the algebraic midpoint."""
+    import math
+
+    u1 = float(_PKG["dataset"]["unit1_hours"])
+    b = math.log(float(slope)) / math.log(2.0)
+    return math.pow(avg_unit_hours / u1, 1.0 / b)
+
+
+def learning_curve_view(slope: str | None = None) -> dict[str, Any]:
+    """Touch hours per unit against cumulative quantity — the curve, plotted.
+
+    PLOTTED AT THE ALGEBRAIC LOT MIDPOINT, which is what makes the picture agree with the
+    label. A lot's figure is an AVERAGE over a range of units, so its honest x is the
+    cumulative unit whose individual cost equals that average — `N* = (avg/U1)^(1/b)` — not the
+    arithmetic middle of the range. Using the arithmetic midpoint put the points on a line
+    implying a 0.9120 slope beside a label reading 0.92: small, wrong, and exactly the kind of
+    discrepancy a reader with a calculator finds first.
+
+    THE BASELINE SERIES IS ENGINE OUTPUT, not a fitted line. It is `touch_hours / quantity`
+    read off the rows the engine produced, so a curve that does not look like a curve is a
+    finding about the engine rather than about the plot.
+
+    The scenario series, when a slope is supplied, is the SAME points scaled by `_touch_factor`
+    — which is exactly what the scenario panel does to touch cost. Drawing it any other way
+    would put a second model on the page, and the chart would stop being a picture of the
+    number beside it.
+    """
+    base_slope = Decimal(str(_PKG["dataset"]["learning_slope"]))
+    baseline, scenario = [], []
+    s = None
+    if slope is not None:
+        try:
+            cand = Decimal(str(slope))
+            s = cand if Decimal("0.5") <= cand <= Decimal("1") else base_slope
+        except Exception:
+            s = base_slope
+
+    for lot in _PKG["lots"]:
+        labor = {r["sub_config"]: r for r in _rows_for(lot, "labor")}
+        if "touch" not in labor or not labor["touch"]["hours"]:
+            continue
+        meta = _lot_meta(lot)
+        per_unit = (Decimal(labor["touch"]["hours"]) / meta["quantity"])
+        pt = {"lot": lot, "x": _lot_midpoint(float(per_unit), base_slope),
+              "cumulative_units": meta["cumulative_units"], "y": float(per_unit),
+              "display": _money(per_unit.quantize(Decimal("0.01")))}
+        baseline.append(pt)
+        if s is not None:
+            adj = per_unit * _touch_factor(lot, s, base_slope)
+            scenario.append({"lot": lot, "x": pt["x"],
+                             "cumulative_units": meta["cumulative_units"], "y": float(adj),
+                             "display": _money(adj.quantize(Decimal("0.01")))})
+
+    ys = [p["y"] for p in baseline] + [p["y"] for p in scenario]
+    return {
+        "baseline": baseline,
+        "scenario": scenario,
+        "scenario_slope": str(s) if s is not None else None,
+        # STATED, NOT INFERRED. At the engine's own slope the two series coincide exactly, and
+        # a reader seeing one line where they expected two deserves to be told why.
+        "scenario_is_baseline": s is not None and s == base_slope,
+        "base_slope": str(base_slope),
+        "y_max": max(ys) if ys else 0.0,
+        "y_min": min(ys) if ys else 0.0,
+        "x_max": max((p["x"] for p in baseline), default=0),
+    }
+
+
+def curve_factor(lot: int) -> dict[str, str]:
+    """What the BASELINE's own learning curve did at this lot — the missing label.
+
+    The baseline table showed no slope at all, so a reader could not tell whether the engine
+    applied a curve. It does: hours are `T1 * (N/12)^b`. At lot 1, N is 12 and the factor is
+    exactly 1 — the curve is present and its effect is nil, which is a different statement from
+    "no curve", and the page should make the difference readable.
+    """
+    base_slope = Decimal(str(_PKG["dataset"]["learning_slope"]))
+    n = _lot_meta(lot)["cumulative_units"]
+    first = _lot_meta(_PKG["lots"][0])["cumulative_units"]
+    if n == first:
+        factor, note = Decimal("1"), "no effect at this lot - it is the curve's reference point"
+    else:
+        import math
+
+        factor = Decimal(str(math.pow(n / float(first),
+                                      math.log(float(base_slope)) / math.log(2.0))))
+        note = f"{(1 - factor) * 100:.1f}% below the reference lot"
+    return {
+        "slope": str(base_slope),
+        "cumulative_units": str(n),
+        "factor": str(factor.quantize(Decimal("0.0001"))),
+        "note": note,
     }

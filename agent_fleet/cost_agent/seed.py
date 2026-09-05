@@ -98,27 +98,50 @@ _SUPPLIER_SHARES: tuple[tuple[str, Decimal], ...] = (
 )
 
 
-def _touch_hours(lot_index: int, cumulative_units: int) -> Decimal:
-    """Touch hours for a lot: Wright's law, CONTINUOUS in cumulative quantity.
+def _cum_hours(units: int, slope: Decimal) -> Decimal:
+    """Total touch hours to build `units` cumulative units, Wright's law INTEGRATED.
 
-    hours = T1 * N^b   where   b = ln(learning) / ln(2)
+        unit n costs  U1 * n^b        b = ln(slope)/ln 2
+        total(N)    = U1 * sum n^b   ~=  U1 * N^(b+1)/(b+1)
 
-    THE FIRST VERSION STEPPED BY DOUBLINGS and a seal caught what that cost. Counting whole
-    doublings makes the curve a staircase, so any two lots inside one tread receive IDENTICAL
-    hours — lots 4 and 5 (both quantity 24, same bracket) came out equal to the cent, and
-    `touch_per_unit` could not tell them apart. A frozen lot selector would have been
-    undetectable in that metric, which is exactly what the seal asserts against.
-
-    The staircase was also simply wrong as a model: Wright's law is continuous in cumulative
-    quantity and the doubling form is a shorthand for reading it off a chart, not a
-    definition. So this is a correctness fix that a UI-staleness seal happened to find.
+    `U1` is calibrated so lot 1 reproduces its historical total exactly, which keeps the
+    engine's headline figure stable while fixing what it is a function of.
     """
     import math
 
-    b = Decimal(str(math.log(float(_LEARNING)) / math.log(2.0)))
-    n = Decimal(cumulative_units)
-    factor = Decimal(str(math.pow(float(n) / 12.0, float(b))))
-    return (_TOUCH_HOURS_LOT1 * factor).quantize(Decimal("1"))
+    if units <= 0:
+        return Decimal("0")
+    b = math.log(float(slope)) / math.log(2.0) + 1.0
+    return Decimal(str(math.pow(units, b) / b))
+
+
+#: First-unit touch hours, DERIVED so lot 1 reproduces its historical total exactly. Written
+#: as a literal it would drift the moment `_TOUCH_HOURS_LOT1` or `_LEARNING` changed, and the
+#: drift would look like a data update rather than a calibration error.
+_UNIT1_HOURS = _TOUCH_HOURS_LOT1 / _cum_hours(_QUANTITIES[0], _LEARNING)
+UNIT1_HOURS = _UNIT1_HOURS
+
+
+def _touch_hours(prev_cumulative: int, cumulative: int) -> Decimal:
+    """Touch hours for ONE lot: the cumulative total through it, minus the total before it.
+
+    THE PREVIOUS TWO VERSIONS WERE BOTH WRONG, and each was caught one step later than the
+    last:
+
+      1. Stepped by whole doublings -> two lots in one tread got identical hours. Caught by a
+         UI-staleness seal.
+      2. Continuous, but it scaled the LOT TOTAL by cumulative position: `T1 * (N/12)^b`. That
+         makes a lot's hours independent of its own quantity, so lot 5 (24 units) came out at
+         32,960 hours against lot 1's 42,000 for 12 units — half the hours per unit for the
+         same work. The stated 0.92 slope and the figures disagreed: the per-unit points
+         implied 0.7248. Caught by preparing to PLOT them, because a curve drawn beside its
+         own slope label is a claim a reader can check.
+
+    A lot's hours must be a function of BOTH where it sits on the curve and how big it is, and
+    only an integrated form gives that.
+    """
+    return (_UNIT1_HOURS * (_cum_hours(cumulative, _LEARNING)
+                            - _cum_hours(prev_cumulative, _LEARNING))).quantize(Decimal("1"))
 
 
 #: NOTIONAL RECIPIENTS, and the lots each may see. This is the ENTITLEMENT SURFACE the export
@@ -168,7 +191,7 @@ def build_state() -> CostState:
             (fy, _VINTAGES[fy][1])
         ]
 
-        touch = _touch_hours(idx, cumulative)
+        touch = _touch_hours(cumulative - qty, cumulative)
         support = (touch * Decimal("0.45")).quantize(Decimal("1"))
         sepm = Decimal("9000") + Decimal("250") * idx
 

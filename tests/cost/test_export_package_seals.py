@@ -255,7 +255,6 @@ def slice2(state):
     pkg = X.build_dataset_package(
         state, recipient_scope="notional-customer-alpha", algorithm_sha=SHA,
         duckdb_path=str(db), duckdb_hash=D.file_hash(db))
-    pkg["dataset"]["learning_slope"] = "0.92"
     PAGE.verify(_json.dumps(pkg))
     return pkg, db
 
@@ -497,3 +496,136 @@ def test_formatting_NEVER_changes_a_verified_figure(slice2):
         for got, want in zip(rendered, chk["intermediates"]):
             assert got["amount"].replace(",", "") == want["amount"]
             assert got["running_total"].replace(",", "") == want["running_total"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THE ACROSS-LOTS HALF
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_the_ENGINES_HOURS_follow_the_stated_slope(slice2):
+    """THE SEAL THE CHARTS ASKED FOR, on an axis the hours did not produce.
+
+    A learning-curve chart carries its slope in the legend, which makes the slope a claim the
+    reader can check with two points and a calculator. Under the previous seed the per-unit
+    figures implied **0.7248** beside a label reading **0.92**: the engine scaled a lot's TOTAL
+    hours by cumulative position, so a lot's hours did not depend on its own quantity and lot 5
+    (24 units) came out below lot 1 (12 units).
+
+    THE FIRST VERSION OF THIS SEAL WAS TAUTOLOGICAL and passed on that very seed. It read the
+    plotted `x` — the ALGEBRAIC LOT MIDPOINT — and checked that the points lay on the curve.
+    But `x` is computed as `(y/U1)^(1/b)`: it is derived FROM `y` through the same curve, so
+    the points lie on it by construction no matter what the engine produced. A bite-check
+    caught it: the mutation that restored the broken seed left this green.
+
+    So the check is now against the axis the hours did NOT come from — each lot's cumulative
+    range and its own quantity:
+
+        predicted average unit hours = U1 * (C(cum) - C(cum - qty)) / qty
+
+    Every term is independent of the figure being tested.
+    """
+    import math
+
+    pkg, _ = slice2
+    d = pkg["dataset"]
+    u1, slope = float(d["unit1_hours"]), Decimal(d["learning_slope"])
+    for row in PAGE.learning_curve_view()["baseline"]:
+        meta = next(l for l in d["rows"]["lots"] if l["lot"] == row["lot"])
+        cum, qty = meta["cumulative_units"], meta["quantity"]
+        predicted = u1 * (PAGE._cum(cum, slope) - PAGE._cum(cum - qty, slope)) / qty
+        assert abs(predicted - row["y"]) / row["y"] < 5e-5, (
+            f"lot {row['lot']}: engine says {row['y']:.2f} h/unit, a {slope} curve over "
+            f"units {cum - qty + 1}..{cum} says {predicted:.2f} — the chart would contradict "
+            f"its own legend")
+
+
+def test_the_lot_midpoint_is_a_PLOTTING_device_not_evidence(slice2):
+    """Pins the circularity, so the tautological seal cannot come back wearing its name.
+
+    If `_lot_midpoint` is ever changed to something not derived from `y`, this fails and the
+    curve-agreement seal above can be simplified. Until then, `x` proves nothing about `y`.
+    """
+    import math
+
+    pkg, _ = slice2
+    d = pkg["dataset"]
+    u1, b = float(d["unit1_hours"]), math.log(float(d["learning_slope"])) / math.log(2.0)
+    for row in PAGE.learning_curve_view()["baseline"]:
+        assert abs(u1 * math.pow(row["x"], b) - row["y"]) / row["y"] < 1e-12, (
+            "the midpoint is no longer the exact inverse of the curve")
+        # AND IT IS NOT THE CUMULATIVE UNIT COUNT — the two axes must not be confused.
+        assert row["x"] != row["cumulative_units"]
+
+
+def test_a_lots_hours_depend_on_ITS_OWN_quantity(slice2):
+    """The defect underneath: hours that ignore lot size. A bigger lot cannot cost less."""
+    pkg, _ = slice2
+    pv = PAGE.program_view()
+    by_lot = {s["lot"]: s for s in pv["series"]}
+    for a, b in zip(pv["series"], pv["series"][1:]):
+        if b["quantity"] > a["quantity"]:
+            assert b["total"] > a["total"], (
+                f"lot {b['lot']} has {b['quantity']} units against lot {a['lot']}'s "
+                f"{a['quantity']} and FEWER total hours — hours ignore lot size")
+    assert by_lot  # the population is derived, not remembered
+
+
+def test_touch_hours_per_unit_declines_across_the_programme(slice2):
+    lc = PAGE.learning_curve_view()
+    ys = [p["y"] for p in lc["baseline"]]
+    assert all(b < a for a, b in zip(ys, ys[1:])), f"learning is not visible: {ys}"
+
+
+def test_the_program_chart_carries_its_OWN_scale(slice2):
+    """`max_hours` is arithmetic, so it comes from Python. A renderer computing its own could
+    rescale one chart against another and no seal would see it."""
+    pv = PAGE.program_view()
+    assert pv["max_hours"] == max(s["total"] for s in pv["series"])
+    for s in pv["series"]:
+        assert abs(sum(g["value"] for g in s["segments"]) - s["total"]) < 0.005
+        assert [g["key"] for g in s["segments"]] == pv["kinds"]
+
+
+def test_the_program_view_covers_EXACTLY_the_entitled_lots(slice2):
+    pkg, _ = slice2
+    assert [s["lot"] for s in PAGE.program_view()["series"]] == list(pkg["lots"])
+
+
+def test_the_curve_overlay_COINCIDES_at_the_engines_slope(slice2):
+    pkg, _ = slice2
+    lc = PAGE.learning_curve_view(pkg["dataset"]["learning_slope"])
+    assert lc["scenario_is_baseline"] is True
+    for b, s in zip(lc["baseline"], lc["scenario"]):
+        assert b["display"] == s["display"], f"lot {b['lot']}: the overlay diverges at identity"
+
+
+def test_the_curve_overlay_MOVES_when_the_slope_is_edited(slice2):
+    pkg, _ = slice2
+    base = Decimal(pkg["dataset"]["learning_slope"])
+    lc = PAGE.learning_curve_view(str(base - Decimal("0.04")))
+    assert lc["scenario_is_baseline"] is False
+    # LOT 1 IS THE REFERENCE POINT and its average still moves, because the average is over
+    # units 1..12 and a different slope changes what units 2..12 cost.
+    assert all(s["y"] < b["y"] for b, s in zip(lc["baseline"], lc["scenario"]))
+
+
+def test_the_overlay_uses_THE_SAME_factor_as_the_scenario_panel(slice2):
+    """One model on the page. A chart drawn from a second one would be a picture of nothing."""
+    pkg, _ = slice2
+    slope = str(Decimal(pkg["dataset"]["learning_slope"]) - Decimal("0.04"))
+    lc = PAGE.learning_curve_view(slope)
+    base_slope = Decimal(pkg["dataset"]["learning_slope"])
+    for b, s in zip(lc["baseline"], lc["scenario"]):
+        factor = PAGE._touch_factor(b["lot"], Decimal(slope), base_slope)
+        assert abs(b["y"] * float(factor) - s["y"]) < 1e-6
+
+
+def test_the_baseline_states_the_curve_it_APPLIED(slice2):
+    """The reader's remaining blind spot: the baseline table named no slope at all."""
+    pkg, _ = slice2
+    first, last = pkg["lots"][0], pkg["lots"][-1]
+    cf0, cfN = PAGE.curve_factor(first), PAGE.curve_factor(last)
+    assert cf0["slope"] == pkg["dataset"]["learning_slope"]
+    # A CURVE PRESENT WITH NIL EFFECT IS NOT THE SAME STATEMENT AS NO CURVE.
+    assert cf0["factor"] == "1.0000" and "reference point" in cf0["note"]
+    assert float(cfN["factor"]) < 1.0 and "below the reference" in cfN["note"]

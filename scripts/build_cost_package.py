@@ -37,7 +37,7 @@ sys.path.insert(0, str(ROOT))
 from agent_fleet.cost_agent import export as X          # noqa: E402
 from scripts.build_cost_dataset import build as build_dataset, file_hash  # noqa: E402
 from scripts.labor_tab_template import TEMPLATE as SLICE2_TEMPLATE       # noqa: E402
-from agent_fleet.cost_agent.seed import LEARNING_SLOPE, build_state     # noqa: E402
+from agent_fleet.cost_agent.seed import LEARNING_SLOPE, UNIT1_HOURS, build_state     # noqa: E402
 
 #: The runtime files Pyodide's loader asks for. Fetched once into a cache directory by
 #: `--fetch-runtime`, then embedded. Pinned by version: a package built against a different
@@ -88,7 +88,8 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
         # FROM THE ENGINE, NOT A LITERAL. This read `"0.92"` and meant "the field's default",
         # while the page treated it as "the scenario's identity point" — two meanings for one
         # number, and the untouched scenario came out $732k below the baseline it sat next to.
-        package["dataset"]["learning_slope"] = str(LEARNING_SLOPE)
+        # The curve (slope + first-unit hours) is set by build_dataset_package, not here —
+        # assigning it after the fact is what let a package exist without it.
         drift = X.datasets_agree(package["dataset"]["rows"], str(duckdb_path))
         if drift:
             raise SystemExit(

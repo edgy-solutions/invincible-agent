@@ -298,3 +298,100 @@ figure, **and** formatting never changes a verified figure.
 
 What shipped is the **selected-lot** half. The **across-lots** half — hours by lot × category
 stacked, and the learning curve — is the next build, from the same `.duckdb`.
+
+---
+
+## Addendum 2026-09-05c — the across-lots half, and the defect that drawing a chart exposed
+
+### The finding: the curve contradicted its own slope label
+
+Preparing to plot touch hours per unit, before drawing anything:
+
+| | |
+|---|---|
+| engine's per-unit hours | lot 1 **3,500.00** at cumulative 12; lot 5 **1,373.33** at cumulative 90 |
+| observed ratio | 0.3924 |
+| ratio a **0.92** curve implies over 7.5× cumulative | 0.7848 |
+| **slope the points actually implied** | **0.7248** |
+
+The seed computed a lot's touch hours as `T1 · (N/12)^b` — the LOT TOTAL scaled by cumulative
+position. **A lot's hours therefore did not depend on its own quantity**, and lot 5 (24 units,
+32,960 h) came out below lot 1 (12 units, 42,000 h): half the hours per unit for twice the work.
+
+Nothing had caught it. The trend seals were satisfied — prices declined, metrics differed. It
+surfaced only because a chart puts a number next to its own model where a reader can check it.
+
+> **Publishing a picture of a number is a stronger check than publishing the number.**
+
+This is the **third** wrong learning curve in this lane, each caught one step later than the
+last: stepped-by-doublings (caught by a UI-staleness seal) → continuous but quantity-blind
+(caught by preparing to plot) → integrated.
+
+### The fix: Wright's law integrated
+
+    unit n costs   U1 · n^b                b = ln(slope)/ln 2
+    total(N)     = U1 · Σ n^b  ≈  U1 · N^(b+1)/(b+1)
+    lot hours    = U1 · [ C(cum) − C(cum − qty) ]
+
+`U1` is **derived** so lot 1 reproduces its historical total exactly — written as a literal it
+would drift silently the moment the slope changed, and the drift would read as a data update.
+
+| lot | qty | cum | touch hours | h/unit |
+|---|---|---|---|---|
+| 1 | 12 | 12 | 42,000 | 3,500.00 |
+| 2 | 12 | 24 | 35,280 | 2,940.00 |
+| 3 | 18 | 42 | 49,156 | 2,730.89 |
+| 4 | 24 | 66 | 61,735 | 2,572.29 |
+| 5 | 24 | 90 | 59,028 | 2,459.50 |
+
+Hours now rise with lot size and fall with position — both, which is the point.
+
+### Plotted at the algebraic lot midpoint
+
+A lot's figure is an **average** over a range of units, so its honest x is the cumulative unit
+whose own cost equals that average: `N* = (avg/U1)^(1/b)`. The arithmetic midpoint put the
+points on a line implying **0.9120** beside a label reading **0.92** — small, wrong, and exactly
+what a reader with a calculator finds first. At the algebraic midpoint the implied slope is
+**0.920000**.
+
+### And the seal for it was tautological
+
+The first version read the plotted `x` and checked the points lay on the curve. **But `x` is
+`(y/U1)^(1/b)` — derived from `y` through the very curve being tested**, so the points lie on it
+by construction whatever the engine produced. It passed on the broken seed.
+
+**The bite-check found it: the mutation restoring the broken seed left the seal green.** Second
+time green-where-red-was-expected has been the tell today.
+
+Rewritten against the axis the hours did **not** come from — each lot's cumulative range and its
+own quantity — and a companion seal now pins the circularity so the tautological version cannot
+return under the same name.
+
+### One constructor for the dataset block
+
+`learning_slope` and `unit1_hours` were assigned by the page builder *after* `build_dataset_package`
+returned, so a package built the ordinary way lacked them and the test fixture had to hand-patch
+the field. That is the same class as a seal testing a state the interface never opens in — one
+level down. Both now come from the one constructor, and the fixture patches nothing.
+
+### What shipped
+
+- **Stacked columns**, hours by lot × category, all lots, selected lot solid.
+- **Learning curve**, h/unit vs cumulative quantity, with the scenario slope overlaid dashed —
+  computed through the **same** `_touch_factor` as the scenario panel, so the picture and the
+  number cannot disagree. At the engine's slope the overlay coincides and the legend says so.
+- **The baseline states its own curve**: slope, factor, and cumulative units through the lot.
+  At lot 1 the factor is exactly 1 with *"no effect at this lot — it is the curve's reference
+  point"*, because **a curve present with nil effect is not the same statement as no curve**.
+
+### Bite-checks
+
+| mutation | red |
+|---|---|
+| the quantity-blind seed restored | 2 (**0 before the tautology was fixed**) |
+| plot at the arithmetic midpoint | 2 |
+| overlay uses its own flat-scale model | 2 |
+| renderer supplies its own chart scale | 1 |
+| baseline reports "no curve" at the reference lot | 1 |
+
+**82 seals green.**
