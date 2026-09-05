@@ -2581,6 +2581,37 @@ async def plan_query(request: PlanRequest) -> dict:
         )
         result = {**plan.model_dump(), "domain": request.domain}
 
+        # ── THE QUESTION IS THE USER'S, BYTE FOR BYTE ───────────────────────────────────
+        #
+        # `DecomposeQuery` writes each task's `sub_query` freely, and it PARAPHRASES. Measured
+        # 2026-09-05: "what is the capability path" came back as "Explain what a capability
+        # path is, including its purpose and typical usage within system architecture or
+        # capability modeling." The classifier was then handed a GLOSSARY question, honestly
+        # refused it at 0.22 — no verb explains what a term means — and the card read "no verb
+        # classified". Every gate and classifier downstream behaved correctly on a question
+        # nobody asked.
+        #
+        # ENFORCED HERE RATHER THAN INSTRUCTED IN THE PROMPT. A model told not to paraphrase
+        # still paraphrases, on the draws nobody is watching. Overwriting is a property of the
+        # code; an instruction is a property of a good day.
+        #
+        # The model's phrasing is KEPT, as `model_phrasing`, because it is a real signal about
+        # how the planner read the question — it is simply not the question. That is the whole
+        # distinction this fixes: an implementation string became what a person read.
+        _rewrites = 0
+        for _task in (result.get("tasks") or []):
+            if not isinstance(_task, dict):
+                continue
+            _written = str(_task.get("sub_query") or "")
+            if _written != request.query:
+                _task["model_phrasing"] = _written
+                _rewrites += 1
+            _task["sub_query"] = request.query
+        if _rewrites:
+            print(f"[Engine O] plan: {_rewrites} task(s) had their sub_query REWRITTEN by the "
+                  f"planner and were reset to the user's phrase. The model's wording is kept "
+                  f"on `model_phrasing` for observability, never as the query.")
+
         # ── Silent-degrade detection ────────────────────────────────────
         # Reject BAML responses that have NO content at all — empty
         # tasks AND empty extracted_concepts AND empty reasoning. That

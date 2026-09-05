@@ -453,15 +453,26 @@ def test_a_FREE_TEXT_answer_is_RESPOKEN_and_never_bound(slots_for):
     `project_id="Wave 1 Cutover"` directly is the same fabricated-pick hole with a human's
     typing in it, and it reaches the engine as a 422.
 
-    So it re-enters as a PHRASE and the filler and resolver run on it exactly as they would
-    on any question. Nothing enters a verb unresolved."""
+    So it re-enters for RESOLUTION and the filler and resolver run on it exactly as they
+    would on any question. Nothing enters a verb unresolved.
+
+    UPDATED 2026-09-05 (the rewrite fold). This used to assert the answer was IN `r.query`,
+    because `resolve_ask` composed `"<phrase> (<slot>: <answer>)"`. That composed string
+    became what a person read on the rail — `Provide the current funding status.
+    (program_id: meridian)`, machine syntax presented as the user's question. Ruled: nothing
+    is composed. The phrase stays byte-equal and the answer travels as a FIELD, so the
+    assertion moves from "inside the query" to "beside it". The property under test is
+    unchanged: a free-text answer is never BOUND, and it does reach resolution."""
     card = _card(slots_for, "plan_dependency_neighborhood",
                  sub_query="what does it depend on", enumerate_class=_too_many(14))
     assert card["options"] == []
     r = resolve_ask(card, "Wave 1 Cutover")
     assert r.action == RESPEAK
-    assert "project_id" not in r.slots          # NOT bound
-    assert "Wave 1 Cutover" in r.query          # goes back through resolution
+    assert "project_id" not in r.slots                  # NOT bound
+    assert r.spoken_answer == "Wave 1 Cutover"          # carried for resolution
+    assert r.slot == "project_id"                       # and it knows which slot it answers
+    assert r.query == "what does it depend on"          # the phrase, byte-equal
+    assert "Wave 1 Cutover" not in r.query              # never concatenated
 
 
 def test_an_empty_answer_is_not_a_pick(slots_for):

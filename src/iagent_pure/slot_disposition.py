@@ -580,8 +580,22 @@ RESPEAK = "respeak"      # there was no menu; the answer is WORDS and must be re
 class Reroute(NamedTuple):
     action: str                    # bind | respeak
     slots: dict                    # for BIND: the merged, ready-to-dispatch parameters
-    query: str = ""                # for RESPEAK: the phrase to re-issue
+    query: str = ""                # for RESPEAK: the user's ORIGINAL phrase, byte-equal
     slot: str = ""
+    #: For RESPEAK: what the user typed as the answer, carried AS A FIELD.
+    #:
+    #: THIS USED TO BE CONCATENATED INTO `query` as `"<phrase> (<slot>: <answer>)"`, and that
+    #: string became what a person read on the rail: `Provide the current funding status.
+    #: (program_id: meridian)` — a question nobody asked, in machine syntax, on top of a
+    #: phrase that was already the planner's paraphrase. Two composers, one string, neither
+    #: half the user's words.
+    #:
+    #: RULED 2026-09-05: nothing is composed. The rail shows the user's phrase and the answer
+    #: is displayed beneath it as `spoken -> resolved`, three facts as three facts. What the
+    #: RESOLVER receives is a separate question from what the RAIL displays — the resolver
+    #: gets this value to resolve for `slot`, with `query` as context — and an implementation
+    #: input must never become the thing a person reads.
+    spoken_answer: str = ""
 
 
 def resolve_ask(card: Mapping[str, Any], answer: str) -> Reroute:
@@ -626,11 +640,15 @@ def resolve_ask(card: Mapping[str, Any], answer: str) -> Reroute:
     # No menu. The reason is already recorded on the card (too_many / unsupported /
     # no_provider / no_referent) — every one of them means "we could not offer a list",
     # never "anything is acceptable".
+    # NOTHING IS COMPOSED. `query` is the phrase as it was asked; the answer rides as a
+    # field. The resolver is handed `spoken_answer` as the value to resolve for `slot`, with
+    # `query` as context — see the Reroute docstring for why those are different questions.
     return Reroute(
         RESPEAK,
         dict(accepted),
-        query=f"{card.get('sub_query') or ''} ({slot}: {answer})".strip(),
+        query=str(card.get("sub_query") or ""),
         slot=slot,
+        spoken_answer=answer,
     )
 
 
