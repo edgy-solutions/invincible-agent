@@ -10,7 +10,9 @@ import os
 import json
 import requests
 import sys
+import time
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any, NamedTuple, Optional
 
@@ -251,6 +253,92 @@ _ROUTING_NO_MATCH = "no_match"
 _ROUTING_INFRA_ERROR = "infra_error"
 
 
+#: WHERE THE RESOLVE LOCK LIVES. Dagster's multiprocess executor forks each `execute_subtask`
+#: as a subprocess of the SAME pod, so a POSIX file lock is exactly the right scope: it covers
+#: the processes that actually contend and nothing further. A pod-local lock also matches the
+#: contention domain — every subtask of a run shares one engine-o.
+_RESOLVE_LOCK_PATH = os.getenv("RESOLVE_LOCK_PATH", "/tmp/iagent-resolve.lock")
+#: How long a subtask will WAIT for its turn before giving up and calling anyway. Generous,
+#: because waiting is cheap and a timeout is not: the wait costs seconds, the timeout costs the
+#: whole answer (Contract B sends an ungrounded subject to the generalist).
+_RESOLVE_LOCK_WAIT_S = float(os.getenv("RESOLVE_LOCK_WAIT_S", "150"))
+
+
+@contextmanager
+def _resolve_serialized(context):
+    """Hold a pod-wide lock across ONE `/resolve` call.
+
+    THE MEASUREMENT THIS EXISTS FOR (2026-09-05, deployed engine-o, 180s client timeout so the
+    chain is visible rather than clipped):
+
+        N=1   median 18.4s   max 22.0s    0/3  over the 30s budget
+        N=2   median 26.1s   max 27.8s    0/6  over  -- a 2.2s margin
+        N=4   median 35.7s   max 46.6s    9/12 over
+
+    A question decomposes into parallel subtasks that each post `/resolve` at the same moment.
+    Engine O's BAML calls run against one Ollama path, so concurrency does not add throughput —
+    it adds latency to every caller at once. At N=2 the ordinary shape sits 2.2 seconds inside
+    the cliff, which is why it passes cleanly on a quiet cluster and dies under any other load.
+
+    THE BUDGET IS NOT RAISED, AND THAT IS THE POINT. Serializing moves the operating point to
+    N=1, where 30s has eight seconds of real margin. Raising the budget instead would pick a
+    number against a load nobody is holding fixed — at N=4 the max was 46.6s.
+
+    THE WAIT IS OUTSIDE THE TIMED CALL, which is the whole mechanism. Each caller's 30s starts
+    when it acquires, so the second subtask sees N=1 latency rather than queue-plus-service.
+    Measured cost: about nine seconds of wall clock on a decomposed question.
+
+    DEGRADES OPEN, on the same discipline as every other guard here. A lock that cannot be
+    taken — no fcntl, unwritable path, or the wait elapsing — yields anyway. Serialization is
+    an optimisation of contention, and failing to obtain it must never be worse than the
+    unserialized behaviour it replaces.
+    """
+    fd = None
+    acquired = False
+    try:
+        import fcntl  # noqa: PLC0415 — POSIX only; absent on dev machines, hence the guard
+        fd = os.open(_RESOLVE_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o666)
+        deadline = time.time() + _RESOLVE_LOCK_WAIT_S
+        waited_from = time.time()
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    context.log.warning(
+                        "resolve_lock NOT acquired after %.0fs — calling anyway. The call may "
+                        "contend and time out; that is strictly the old behaviour, not a new "
+                        "failure.", _RESOLVE_LOCK_WAIT_S,
+                    )
+                    break
+                time.sleep(0.25)
+        if acquired:
+            waited = time.time() - waited_from
+            if waited > 1.0:
+                context.log.info(
+                    "resolve_lock waited %.1fs for its turn — this is the serialization "
+                    "working, not a stall. The 30s budget starts now.", waited,
+                )
+    except Exception as exc:  # noqa: BLE001
+        context.log.info("resolve_lock unavailable (%s) — proceeding unserialized", exc)
+    try:
+        yield
+    finally:
+        if fd is not None:
+            try:
+                if acquired:
+                    import fcntl  # noqa: PLC0415
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:  # noqa: BLE001, S110 — releasing must never mask the call's result
+                pass
+            try:
+                os.close(fd)
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+
 def _resolve_subject(
     context,
     user_query: str,
@@ -325,9 +413,12 @@ def _resolve_subject(
         # classes at the seam. Identity-reaches-enforcement-point prereq.
         if user_email:
             payload["user_email"] = user_email
-        resp = requests.post(
-            f"{ONTOLOGY_SVC_URL}/resolve",
-            json=payload,
+        # SERIALIZED. The wait happens OUTSIDE this call, so the 30s below starts when this
+        # subtask gets its turn rather than while it queues. See _resolve_serialized.
+        with _resolve_serialized(context):
+            resp = requests.post(
+                f"{ONTOLOGY_SVC_URL}/resolve",
+                json=payload,
             # 15s was too tight under realistic engine-o load: BAML's
             # ClassifyDomainIntent runs ~5-10s, Recipe v2's
             # instance-resolution fan-out adds 3-5s for engine_d's
@@ -339,8 +430,13 @@ def _resolve_subject(
             # but never got consulted. 30s gives comfortable
             # headroom while still bounding the worst case well
             # under the supervisor's 1800s per-engine call ceiling.
-            timeout=30,
-        )
+                # MEASURED 2026-09-05, and the comment above was wrong about "comfortable
+                # headroom": at N=1 the median is 18.4s and the max 22.0s, so 30s has about
+                # eight seconds of real margin ONCE SERIALIZED. Unserialized at N=2 the median
+                # was 26.1s -- a 2.2s margin -- and at N=4, 9 of 12 draws exceeded it. The
+                # budget is not raised, because serializing is what makes 30s honest.
+                timeout=30,
+            )
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:
