@@ -416,3 +416,72 @@ def curve_factor(lot: int) -> dict[str, str]:
         "factor": str(factor.quantize(Decimal("0.0001"))),
         "note": note,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# THE ALGORITHM PANEL. "Can I see the arithmetic" answered on the page, not in devtools.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+
+def algorithm_source() -> dict[str, Any]:
+    """The pricing module, READ BACK FROM THE FILESYSTEM THE INTERPRETER EXECUTED FROM.
+
+    Not the `<script>` tag, and not a second copy passed in from JS — `open("pricing.py")` is
+    the same path `import pricing` resolved. A panel showing a copy could show something the
+    interpreter never ran and every check would still agree with itself.
+
+    The hash is computed HERE, on open, over that same text. So the number beside the source is
+    a measurement of the source, not a value carried alongside it.
+
+    NOTE ON WHICH HASH THIS IS. The header's `locator` is the content hash of the PACKAGE BODY
+    — the manifest, the lots, the dataset — and it does not cover this file's text at all.
+    Restating the locator beside the source as though it verified the source would be a false
+    claim on the face of the artifact. `manifest.modules` is the one that does.
+    """
+    import hashlib
+
+    with open("pricing.py", encoding="utf-8") as fh:
+        src = fh.read()
+    digest = "sha256:" + hashlib.sha256(src.encode("utf-8")).hexdigest()
+    expected = _PKG["manifest"].get("modules", {}).get("pricing.py")
+    return {
+        "source": src,
+        "sha256": digest,
+        "expected_sha256": expected,
+        "matches": expected is not None and digest == expected,
+        "line_count": len(src.splitlines()),
+        "algorithm_sha": _PKG["algorithm_sha"],
+    }
+
+
+def step_lines() -> dict[str, Any]:
+    """Where each composition step is DEFINED, and where every step is EVALUATED.
+
+    HONEST ABOUT WHAT IT CAN POINT AT. There is no per-step code to jump to: the steps are
+    data, and one loop applies all of them. Linking "Overhead" to a line implying that line
+    computes overhead — and only overhead — would misdescribe the design in the very panel
+    built to make the design readable.
+
+    So each step points at its own DECLARATION, and the panel says plainly that the arithmetic
+    for every row is the shared evaluator, pointing there too.
+    """
+    src = algorithm_source()["source"].splitlines()
+    steps: dict[str, int] = {}
+    for c in _PKG["manifest"]["composition"]:
+        # MATCH THE STEP'S NAME AS A STRING LITERAL, however it is passed. The first attempt
+        # looked for `name="Fringe"` and found nothing at all: the declarations use positional
+        # arguments, `StepSpec("Fringe", "fringe", ...)`. It failed loudly only because this
+        # function reports what it could NOT resolve — a linker that silently produced no
+        # links would have shipped a panel whose rows quietly did nothing.
+        needle = '"' + c["name"] + '"'
+        for i, line in enumerate(src, start=1):
+            if needle in line and "StepSpec" in line:
+                steps[c["name"]] = i
+                break
+    evaluator = next((i for i, line in enumerate(src, start=1)
+                      if line.startswith("def _fold_price")), None)
+    entry = next((i for i, line in enumerate(src, start=1)
+                  if line.startswith("def compose_price")), None)
+    return {"steps": steps, "evaluator": evaluator, "entry": entry,
+            "unresolved": [c["name"] for c in _PKG["manifest"]["composition"]
+                           if c["name"] not in steps]}

@@ -395,3 +395,85 @@ level down. Both now come from the one constructor, and the fixture patches noth
 | baseline reports "no curve" at the reference lot | 1 |
 
 **82 seals green.**
+
+---
+
+## Addendum 2026-09-05d — the Algorithm panel, and a false claim caught before it shipped
+
+### The dispatch said "restate the header's algorithm hash beside the source". The header has no such hash.
+
+The header reads `algorithm 939dd0… · as of 2026-09-05 · sha256:1ce97ca8…`. Those are the **git
+commit** that produced the figures and the **content hash of the package body** (manifest, lots,
+dataset). **Neither covers the text of `pricing.py`.** Restating the locator beside the source as
+though it verified the source would have been a false claim on the face of the artifact — and a
+convincing one, since the digits would have matched the header exactly.
+
+Until now the manifest genuinely did not pin the source bytes. A recipient without the repository
+could not check that the module embedded in their file is the module the commit names.
+
+**Added `manifest.modules`** — `{"pricing.py": "sha256:21e61050…"}` — and a seal that the locator
+is *not* it.
+
+### The trap inside the fix: file bytes ≠ embedded bytes
+
+`pricing.py` is stored **CRLF** in this tree. The builder embeds it with `read_text(encoding="utf-8")`,
+which normalises to **LF**:
+
+| | |
+|---|---|
+| file on disk | `sha256:1e50cb93…` |
+| text actually embedded | `sha256:21e61050…` |
+
+A manifest hashing the **file** prints a number the recipient cannot reproduce from what they are
+shown or download — and it would **agree on an LF checkout and disagree on a CRLF one**. A
+verification result that depends on the reader's line endings does not read as a platform
+difference; it reads as tampering.
+
+The hash is taken over exactly the string that reaches the page. The seal asserts the two differ
+**while this tree has CRLF**, so it cannot go vacuous quietly.
+
+### What the panel does
+
+- **The source is read back from the interpreter's own filesystem** — `open("pricing.py")`, the
+  same path `import pricing` resolved. Not the `<script>` tag, not a copy passed in from JS. A
+  panel rendering a copy could show text the interpreter never ran and every check would still
+  agree with itself.
+- **The hash is computed on open**, over that same text, and compared to `manifest.modules`. The
+  number beside the source is a *measurement* of the source.
+- **Download** hands over `ALGO.source` — the original string, not the highlighted DOM — so the
+  bytes an analyst runs are the bytes that were hashed. Highlighting is applied to an escaped
+  copy for exactly this reason.
+- **Composition rows link into the source**, and the panel is honest about what it can point at:
+  the steps are **data**, one evaluator applies all of them, so a row points at its step's
+  **declaration** and the panel names `_fold_price` as the shared arithmetic. Claiming a line
+  "computes Overhead" would misdescribe the design in the panel built to make it readable.
+- **Built only after verification passes** — the one place the artifact could otherwise offer
+  something it had not checked.
+
+### The linker failed loudly, by design
+
+The first version matched `name="Overhead"` and resolved **nothing**: the declarations are
+positional, `StepSpec("Overhead", …)`. It surfaced immediately only because `step_lines` returns
+an `unresolved` list. A linker that silently produced no links would have shipped a panel whose
+rows quietly did nothing — visibly fine, functionally dead.
+
+### The source-map reference
+
+Pyodide ships `//# sourceMappingURL=pyodide.js.map`, which is not embedded; the browser resolves
+it against the page and issues a fetch that fails. **The no-CDN seal matches on `https?://` and
+never saw it.** Stripped at both embed points — the loader text and the base64'd
+`pyodide.asm.js` — with a seal that decodes the embedded runtime and checks there too.
+
+Not a CDN call and it costs nothing. But a package whose claim is *"everything it needs is
+inside it"* should not emit a request for something that is not.
+
+### Bite-checks
+
+| mutation | red |
+|---|---|
+| manifest hashes the FILE bytes (the CRLF trap) | 2 |
+| the panel shows a copy instead of the executed file | 4 |
+| the hash is carried rather than measured on open | 1 |
+| the linker silently resolves nothing | 1 |
+
+**90 seals green.**

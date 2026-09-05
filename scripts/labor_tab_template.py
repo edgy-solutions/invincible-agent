@@ -39,6 +39,19 @@ TEMPLATE = """<!doctype html>
  .row{{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start}}
  .panel{{flex:1;min-width:330px}}
  .panel-title{{font-size:12.5px;font-weight:600;color:#374151;margin:0 0 8px}}
+ #algorithm{{margin:26px 0;border:1px solid #e5e7eb;border-radius:6px;background:#fff}}
+ #algorithm>summary{{cursor:pointer;padding:12px 16px;font-weight:600;font-size:13.5px}}
+ #algo-body{{padding:0 16px 16px}}
+ #algo-src{{max-height:62vh;overflow:auto;background:#1f2937;color:#e5e7eb;padding:12px 0;
+   border-radius:5px;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}}
+ #algo-src .ln{{display:inline-block;width:46px;padding-right:12px;text-align:right;
+   color:#6b7280;user-select:none}}
+ #algo-src .row{{display:block;padding:0 10px;white-space:pre}}
+ #algo-src .row:target,#algo-src .row.hit{{background:#374151}}
+ #algo-src .k{{color:#c4b5fd}} #algo-src .s{{color:#86efac}} #algo-src .c{{color:#9ca3af;font-style:italic}}
+ #algo-src .d{{color:#7dd3fc}}
+ .steplink{{color:#2563eb;cursor:pointer;text-decoration:underline dotted}}
+ .hash-ok{{color:#15803d;font-weight:600}} .hash-bad{{color:#b91c1c;font-weight:600}}
  table{{border-collapse:collapse;width:100%;margin:8px 0 18px}}
  th,td{{border-bottom:1px solid #e5e7eb;padding:6px 9px;text-align:right}}
  th:first-child,td:first-child{{text-align:left}}
@@ -102,6 +115,23 @@ TEMPLATE = """<!doctype html>
 
   <h2>Price composition <span class="baseline-tag">BASELINE</span></h2>
   <table id="composition"></table>
+
+  <details id="algorithm">
+   <summary>The pricing modules this page ran &mdash; read or download the source</summary>
+   <div id="algo-body">
+    <p class="note" id="algo-hash"></p>
+    <p class="note">Every row of the composition table above links into this source. The steps
+    are <strong>data</strong>, so a row points at where its step is <em>declared</em>; the
+    arithmetic for all of them is the one evaluator, linked below. Nothing here is a summary
+    &mdash; it is the text the interpreter on this page executed.</p>
+    <div class="controls">
+     <button id="algo-download">Download pricing.py</button>
+     <button id="algo-evaluator">Go to the evaluator</button>
+     <button id="algo-entry">Go to the entry point</button>
+    </div>
+    <pre id="algo-src"></pre>
+   </div>
+  </details>
 
   <div class="scenario">
    <h2 style="margin-top:2px">Your scenario <span class="scenario-tag">NOT VERIFIED</span></h2>
@@ -309,6 +339,40 @@ function stackedBar(parts, width, height) {{
          '</svg><div style="margin-top:7px">' + legend + '</div>';
 }}
 
+const PY_KEYWORDS = /(def|class|return|if|elif|else|for|while|in|not|and|or|is|None|True|False|import|from|as|try|except|raise|with|lambda|yield|pass|break|continue|assert|global|del)/g;
+
+// HIGHLIGHTING IS APPLIED TO AN ESCAPED COPY, and the ORIGINAL string is what gets hashed and
+// downloaded. If highlighting touched the bytes, the panel would verify one text and show
+// another — which is the exact failure the panel exists to rule out.
+function highlightPython(src) {{
+  const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return src.split('
+').map((line, i) => {{
+    let h = esc(line);
+    const c = h.indexOf('#');
+    let tail = '';
+    if (c >= 0) {{ tail = '<span class="c">' + h.slice(c) + '</span>'; h = h.slice(0, c); }}
+    h = h.replace(/(&quot;|&#39;|"|')(?:(?!).)*/g, (m) => '<span class="s">' + m + '</span>');
+    h = h.replace(PY_KEYWORDS, '<span class="k">$1</span>');
+    h = h.replace(/(Decimal|StepSpec|RateSet|PriceBuildUp|CompositionStep)/g,
+                  '<span class="d">$1</span>');
+    return '<span class="row" id="L' + (i + 1) + '"><span class="ln">' + (i + 1) + '</span>' +
+           h + tail + '</span>';
+  }}).join('');
+}}
+
+let ALGO = null, STEP_LINES = null;
+
+function gotoLine(n) {{
+  const box = document.getElementById('algorithm');
+  if (!box.open) box.open = true;
+  const row = document.getElementById('L' + n);
+  if (!row) return;
+  document.querySelectorAll('#algo-src .hit').forEach(e => e.classList.remove('hit'));
+  row.classList.add('hit');
+  row.scrollIntoView({{block: 'center'}});
+}}
+
 function metricRows(rows) {{
   return rows.map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>').join('');
 }}
@@ -339,7 +403,10 @@ function renderLot(lot) {{
     'import json, page; json.dumps(page.composition_view(' + lot + '))'));
   document.getElementById('composition').innerHTML =
     '<tr><th>step</th><th>rate</th><th>basis</th><th>amount</th><th>running total</th></tr>' +
-    comp.map(s => '<tr><td>' + s.name + '</td><td>' + s.rate +
+    comp.map(s => '<tr><td>' + (STEP_LINES && STEP_LINES.steps[s.name]
+        ? '<span class="steplink" data-line="' + STEP_LINES.steps[s.name] + '">' + s.name +
+          '</span>'
+        : s.name) + '</td><td>' + s.rate +
       '</td><td>' + s.basis + '</td><td>' + s.amount + '</td><td>' + s.running_total +
       '</td></tr>').join('');
   // THE ACROSS-LOTS CHARTS FOLLOW THE SELECTOR TOO. They show every lot, but they highlight
@@ -412,6 +479,40 @@ function renderScenario(lot) {{
     statusEl.className = 'ok';
     statusEl.textContent = 'Verified - every figure reproduced exactly, ' +
       PKG.manifest.checks.length + ' lot(s) checked.';
+
+    // THE PANEL IS BUILT ONLY AFTER VERIFICATION PASSES, like everything else on this page.
+    // Showing source for figures the page refused to reproduce would be the one place the
+    // artifact offered something it had not checked.
+    ALGO = JSON.parse(PY.runPython('import json, page; json.dumps(page.algorithm_source())'));
+    STEP_LINES = JSON.parse(PY.runPython('import json, page; json.dumps(page.step_lines())'));
+    document.getElementById('algo-src').innerHTML = highlightPython(ALGO.source);
+    const hp = document.getElementById('algo-hash');
+    hp.innerHTML = 'pricing.py &middot; ' + ALGO.line_count + ' lines &middot; produced at commit ' +
+      ALGO.algorithm_sha.slice(0, 12) + ' &middot; this source hashes to <code>' +
+      ALGO.sha256.slice(7, 19) + '…</code> and the manifest pins <code>' +
+      (ALGO.expected_sha256 || '(none)').slice(7, 19) + '…</code> &mdash; ' +
+      (ALGO.matches ? '<span class="hash-ok">they match</span>'
+                    : '<span class="hash-bad">THEY DO NOT MATCH</span>') +
+      '. <span style="color:#6b7280">Hashed on open, over the text read back from the ' +
+      'interpreter’s own filesystem &mdash; not the copy embedded beside it. This is ' +
+      'the module hash; the <em>locator</em> in the header is the package body’s and ' +
+      'does not cover this file.</span>';
+    document.getElementById('algo-download').addEventListener('click', () => {{
+      // THE ORIGINAL STRING, not the highlighted DOM — byte-identical to what was hashed.
+      const blob = new Blob([ALGO.source], {{type: 'text/x-python'}});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = 'pricing.py';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    }});
+    document.getElementById('algo-evaluator').addEventListener(
+      'click', () => gotoLine(STEP_LINES.evaluator));
+    document.getElementById('algo-entry').addEventListener(
+      'click', () => gotoLine(STEP_LINES.entry));
+    document.getElementById('composition').addEventListener('click', (e) => {{
+      const el = e.target.closest('.steplink');
+      if (el) gotoLine(Number(el.dataset.line));
+    }});
 
     const sel = document.getElementById('lot');
     sel.innerHTML = PKG.lots.map(n => '<option value="' + n + '">Lot ' + n + '</option>').join('');

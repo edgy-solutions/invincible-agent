@@ -89,6 +89,33 @@ def _rates_for_lot(state: CostState, lot_number: int, vintage: Optional[str]):
     return state.rates[(lot.fiscal_year, v)]
 
 
+def module_hashes() -> dict[str, str]:
+    """SHA-256 of each module the export carries — over the bytes that are EMBEDDED, not the
+    bytes on disk. The two differ, and the difference would have been invisible until a
+    recipient tried to reproduce the figure.
+
+    `pricing.py` is stored CRLF in this working tree. The builder embeds it with
+    `read_text(encoding="utf-8")`, which normalises to LF, so:
+
+        file bytes     sha256:1e50cb93...
+        embedded text  sha256:21e61050...
+
+    A manifest hashing the FILE would print a number the recipient cannot reproduce from what
+    they are shown or what they download — and, worse, it would agree on a checkout with LF
+    endings and disagree on one with CRLF. A platform-dependent verification result is worse
+    than none, because it reads as tampering.
+
+    So the hash is taken over exactly the string that reaches the page.
+    """
+    from agent_fleet.cost_agent import pricing
+
+    out = {}
+    for mod, name in ((pricing, "pricing.py"),):
+        embedded = pathlib.Path(mod.__file__).read_text(encoding="utf-8")
+        out[name] = "sha256:" + hashlib.sha256(embedded.encode("utf-8")).hexdigest()
+    return out
+
+
 def build_manifest(
     state: CostState,
     *,
@@ -138,6 +165,14 @@ def build_manifest(
         })
     return {
         "schema": MANIFEST_SCHEMA,
+        # THE SOURCE BYTES, PINNED. Until now the manifest pinned the git commit that produced
+        # the figures and the content hash of the package body — and NEITHER covers the text of
+        # the module the recipient runs. A recipient without the repository could not check
+        # that the source embedded in their file is the source the commit names.
+        #
+        # `locator` in the header is the package-body hash; it is NOT this. Restating it beside
+        # the source as though it were would be a false claim on the face of the artifact.
+        "modules": module_hashes(),
         "composition": [
             {"name": s.name, "rate_key": s.rate_key, "basis_kind": s.basis_kind,
              "component": s.component, "plus_steps": list(s.plus_steps)}

@@ -28,6 +28,7 @@ import argparse
 import base64
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -66,8 +67,28 @@ def algorithm_sha() -> str:
                           capture_output=True, text=True).stdout.strip()
 
 
+def strip_sourcemaps(text: str) -> str:
+    """Remove `//# sourceMappingURL=` from embedded runtime JS.
+
+    Pyodide ships one pointing at `pyodide.js.map`, which is not embedded. The browser resolves
+    it against the page and issues a fetch that fails. It is not a CDN call and it costs
+    nothing, but the no-external-reference seal matches on `https?://` and would never have
+    seen it — so the artifact carried a reference the seal was not looking for.
+
+    A package whose claim is "everything it needs is inside it" should not emit a request for
+    something that is not.
+    """
+    return re.sub(r"(?m)^[ 	]*//[#@] source(Mapping)?URL=.*$", "", text)
+
+
 def _b64(p: pathlib.Path) -> str:
-    return base64.b64encode(p.read_bytes()).decode("ascii")
+    raw = p.read_bytes()
+    if p.suffix == ".js":
+        # STRIP BEFORE EMBEDDING, for the base64'd runtime too — not only the loader. Both
+        # carry source-map comments, and a package that emits a request for a file it does not
+        # contain has not delivered on "everything is inside it".
+        raw = strip_sourcemaps(raw.decode("utf-8")).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
 
 
 def build_html(recipient: str, runtime_dir: pathlib.Path,
@@ -108,7 +129,8 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
         )
 
     embedded = {f: _b64(runtime_dir / f) for f in RUNTIME_FILES}
-    loader_js = (runtime_dir / "pyodide.js").read_text(encoding="utf-8")
+    loader_js = strip_sourcemaps(
+        (runtime_dir / "pyodide.js").read_text(encoding="utf-8"))
     # DEFENCE IN DEPTH ON THE NO-CDN PROPERTY. Pyodide's loader carries a CDN base as a
     # FALLBACK for when `indexURL` is not supplied. We do supply it, so the fallback is
     # unreachable in practice -- and "unreachable in practice" is exactly what this seal

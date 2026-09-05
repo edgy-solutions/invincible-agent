@@ -629,3 +629,128 @@ def test_the_baseline_states_the_curve_it_APPLIED(slice2):
     # A CURVE PRESENT WITH NIL EFFECT IS NOT THE SAME STATEMENT AS NO CURVE.
     assert cf0["factor"] == "1.0000" and "reference point" in cf0["note"]
     assert float(cfN["factor"]) < 1.0 and "below the reference" in cfN["note"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THE ALGORITHM PANEL — "can I see the arithmetic", answered on the page
+# ═══════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture()
+def in_module_dir(slice2, monkeypatch):
+    """`algorithm_source` opens 'pricing.py' the way the interpreter resolved it."""
+    monkeypatch.chdir(ROOT / "agent_fleet" / "cost_agent")
+    return slice2
+
+
+def test_the_DISPLAYED_source_is_the_EXECUTED_source(in_module_dir):
+    """Read back through the same path `import pricing` resolved, not from a second copy.
+
+    A panel rendering a copy handed to it could show text the interpreter never ran, and every
+    check would still agree with itself.
+    """
+    a = PAGE.algorithm_source()
+    import agent_fleet.cost_agent.pricing as P
+
+    assert a["source"] == pathlib.Path(P.__file__).read_text(encoding="utf-8")
+    assert "def compose_price" in a["source"] and "def _fold_price" in a["source"]
+
+
+def test_the_displayed_hash_MATCHES_THE_MANIFEST(in_module_dir):
+    a = PAGE.algorithm_source()
+    assert a["expected_sha256"], "the manifest does not pin the module at all"
+    assert a["matches"] is True
+    assert a["sha256"] == a["expected_sha256"]
+
+
+def test_the_ON_OPEN_CHECK_BITES_on_a_single_altered_character(in_module_dir, tmp_path,
+                                                               monkeypatch):
+    """THE MUTATION THE DISPATCH NAMED. One character, and the panel must go red."""
+    a = PAGE.algorithm_source()
+    tampered = a["source"].replace("def compose_price", "def compose_pricE", 1)
+    assert tampered != a["source"]
+    (tmp_path / "pricing.py").write_text(tampered, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    after = PAGE.algorithm_source()
+    assert after["matches"] is False, "one altered character did not break the check"
+    assert after["sha256"] != after["expected_sha256"]
+
+
+def test_the_module_hash_is_over_the_EMBEDDED_text_not_the_FILE(in_module_dir):
+    """The trap that would have failed on Windows and passed on Linux.
+
+    `pricing.py` is stored CRLF in this tree; the builder embeds it via `read_text`, which
+    normalises to LF. Hashing the FILE gives a number the recipient cannot reproduce from what
+    they are shown or download — and the result would depend on the checkout's line endings,
+    which reads as tampering rather than as a platform difference.
+    """
+    import hashlib
+
+    import agent_fleet.cost_agent.pricing as P
+
+    path = pathlib.Path(P.__file__)
+    embedded = path.read_text(encoding="utf-8")
+    pinned = X.module_hashes()["pricing.py"]
+    assert pinned == "sha256:" + hashlib.sha256(embedded.encode("utf-8")).hexdigest()
+    if b"\r\n" in path.read_bytes():
+        assert pinned != "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(), (
+            "this tree has CRLF, so the two hashes MUST differ — if they agree the test is "
+            "no longer discriminating and the trap has been reintroduced elsewhere")
+
+
+def test_the_locator_is_NOT_the_module_hash(in_module_dir):
+    """Guards the false claim the panel was almost built on.
+
+    The header's `locator` is the package body's content hash and does not cover the module
+    text at all. Presenting it beside the source as verification of the source would be a false
+    claim on the face of the artifact.
+    """
+    pkg, _ = in_module_dir
+    assert pkg["locator"] != pkg["manifest"]["modules"]["pricing.py"]
+    body_without_modules = {k: v for k, v in pkg.items() if k != "locator"}
+    assert X.content_hash(body_without_modules) == pkg["locator"]
+
+
+def test_every_composition_row_LINKS_somewhere_real(in_module_dir):
+    """A linker that silently produced no links would ship rows that quietly do nothing.
+
+    The first version matched `name="Overhead"` and resolved NOTHING — the declarations use
+    positional arguments. It failed loudly only because `step_lines` reports what it could not
+    resolve, which is why that field exists.
+    """
+    pkg, _ = in_module_dir
+    sl = PAGE.step_lines()
+    src = PAGE.algorithm_source()["source"].splitlines()
+    assert sl["unresolved"] == [], f"steps with no link: {sl['unresolved']}"
+    assert set(sl["steps"]) == {c["name"] for c in pkg["manifest"]["composition"]}
+    for name, line in sl["steps"].items():
+        assert 1 <= line <= len(src)
+        assert name in src[line - 1] and "StepSpec" in src[line - 1]
+
+
+def test_the_evaluator_and_entry_points_resolve(in_module_dir):
+    sl = PAGE.step_lines()
+    src = PAGE.algorithm_source()["source"].splitlines()
+    assert src[sl["evaluator"] - 1].startswith("def _fold_price")
+    assert src[sl["entry"] - 1].startswith("def compose_price")
+
+
+def test_the_artifact_EMITS_NO_REQUEST_for_a_file_it_does_not_carry(slice2):
+    """Wider than the no-CDN seal, which matches `https?://` and never saw this.
+
+    Pyodide ships `//# sourceMappingURL=pyodide.js.map`, which is not embedded. The browser
+    resolves it against the page and issues a fetch that fails. Not a CDN call, costs nothing —
+    and still a reference to something the package does not contain, in an artifact whose whole
+    claim is that everything it needs is inside it.
+    """
+    import base64
+
+    html = (ROOT / "dist" / "cost-validation-notional-customer-alpha.html").read_text(
+        encoding="utf-8")
+    assert not re.findall(r"source(?:Mapping)?URL=", html), "a source-map reference survived"
+    emb = json.loads(re.search(
+        r'<script id="embedded-runtime" type="application/json">(.*?)</script>',
+        html, re.S).group(1))
+    for name, b64 in emb.items():
+        if name.endswith(".js"):
+            decoded = base64.b64decode(b64).decode("utf-8", "replace")
+            assert not re.findall(r"source(?:Mapping)?URL=", decoded), f"{name} still points out"
