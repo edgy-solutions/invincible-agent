@@ -441,7 +441,13 @@ def _filter_verbs_by_arity(
     "What is the capability path" grounds to `Capability` cleanly and then reports NO VERB
     CLASSIFIED, because `planCapabilityPath` is `arity: single`, the question names no
     instance, and this gate removed the only verb that fits — FOR THE REASON IT WOULD HAVE
-    ASKED ABOUT. The candidate set went empty and the classifier had nothing to pick.
+    ASKED ABOUT.
+
+    MEASURED AGAINST THE DEPLOYED GRAPH 2026-09-05, and the pool did NOT go empty: Capability
+    carries TWO verbs under PORTFOLIO_PLANNING, and dropping `planCapabilityPath` left
+    `planMaturityGrid` — which does not answer "what is the capability path". So the classifier
+    was handed one wrong candidate and honestly returned UNKNOWN. The gate did not starve it;
+    it starved it of the RIGHT option, which is the harder failure to see.
 
     THE GATE'S OWN PREMISE IS OBSOLETE, AND ITS CITATION SAYS SO. `arity_for` was written
     against `a-missing-mandatory-slot-is-a-400-not-an-ask.md`: routing a set-shaped question

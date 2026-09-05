@@ -17,7 +17,10 @@ REMOVE a positively-single verb before the classifier saw it. That cost H06
 its answer: "what is the capability path" grounded to `Capability` cleanly
 and then reported NO VERB CLASSIFIED, because `planCapabilityPath` is
 arity=single, the question named no instance, and the only verb that fit was
-excluded FOR THE REASON IT WOULD HAVE ASKED ABOUT. The gate's own premise had
+excluded FOR THE REASON IT WOULD HAVE ASKED ABOUT. Measured against the deployed
+graph, the pool went 2 -> 1 rather than empty: `planMaturityGrid` survived and does
+not answer the question, so the classifier was left one wrong option and honestly
+refused. The gate's own premise had
 expired — it was built when routing there produced a 400 for a missing
 mandatory slot, and that 400 is now an ASK with a menu.
 
@@ -54,9 +57,9 @@ def _v(iri, arity=None):
 # NOT keep describeAsset (single); it keeps enumerateCatalog (set).
 # ---------------------------------------------------------------------------
 def test_set_query_FLAGS_single_and_keeps_it_a_candidate():
-    """The single verb stays pickable — excluding it emptied the pool and cost H06 its
-    answer — but it carries `needs_instance` so the disposition and the dispatch
-    precondition can both see why an ask is owed."""
+    """The single verb stays pickable — excluding it left H06 only a verb that does not
+    answer the question — but it carries `needs_instance` so the disposition and the
+    dispatch precondition can both see why an ask is owed."""
     verbs = [
         _v("mesh:enumerateCatalog", "set"),
         _v("mesh:describeAsset", "single"),
