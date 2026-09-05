@@ -346,8 +346,14 @@ const PY_KEYWORDS = /(def|class|return|if|elif|else|for|while|in|not|and|or|is|
 // another — which is the exact failure the panel exists to rule out.
 function highlightPython(src) {{
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return src.split('
-').map((line, i) => {{
+  // NEWLINE VIA fromCharCode, NOT AN ESCAPE. This template is itself a Python
+  // triple-quoted string, so a backslash-n written here is collapsed into a REAL newline
+  // when the builder imports it, and a real newline inside a JS string literal is a syntax
+  // error that takes the whole page down. THIS COMMENT WAS ITSELF BROKEN THAT WAY: the
+  // escape in it collapsed, split the comment across two lines, and left a lone backtick
+  // running as code - which opened a template literal that swallowed everything up to the
+  // next backtick 120 lines later. Naming the character is safer than writing it.
+  return src.split(String.fromCharCode(10)).map((line, i) => {{
     let h = esc(line);
     const c = h.indexOf('#');
     let tail = '';

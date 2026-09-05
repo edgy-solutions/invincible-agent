@@ -81,6 +81,60 @@ def strip_sourcemaps(text: str) -> str:
     return re.sub(r"(?m)^[ 	]*//[#@] source(Mapping)?URL=.*$", "", text)
 
 
+def check_javascript(html: str) -> list[str]:
+    """Parse every inline script in the built page. REFUSES THE BUILD on a syntax error.
+
+    A JS syntax error takes the whole page down — no verification banner, no refusal, no
+    figures, just a blank body and a line number in a console the recipient will not open. It
+    is the one failure mode that defeats every other seal at once, and nothing in the suite
+    could see it: the seals test Python, and the page's Python is fine.
+
+    WHAT GOT THROUGH: `src.split('\n')`. This template is itself a Python triple-quoted
+    string, so the escape collapsed into a REAL newline inside a JS string literal. Structural
+    checks passed, 90 seals passed, and the artifact was dead on open.
+
+    Skipped, loudly, when node is unavailable — a check that quietly does nothing is worse
+    than one that is absent.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if not node:
+        print("  WARNING: node not found - the page's JavaScript was NOT parsed")
+        return []
+    problems = []
+    # MATCH EVERY SCRIPT, THEN SKIP THE TYPED ONES IN PYTHON. The first version excluded
+    # them with a negative lookahead containing a word-boundary escape, which reached this
+    # file as a literal BACKSPACE byte (0x08). The lookahead could never fire, so the
+    # checker fed 17 MB of base64 to node as JavaScript and reported three failures that
+    # were entirely its own. A filter that is wrong in the permissive direction does not
+    # look wrong - it looks like a finding.
+    for i, m in enumerate(re.finditer(r"<script([^>]*)>(.*?)</script>", html, re.S)):
+        if "type=" in m.group(1):
+            continue
+        body = m.group(2)
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False,
+                                         encoding="utf-8") as fh:
+            fh.write(body)
+            tmp = fh.name
+        try:
+            r = subprocess.run([node, "--check", tmp], capture_output=True, text=True)
+            if r.returncode != 0:
+                # ANCHOR THE MATCH AT LINE START and cap it. node echoes the offending
+                # source line first, and here that line is an entire embedded module — a
+                # substring test for 'Error' picked `except ImportError:` out of the echo
+                # and reported 52 KB of Python as the JavaScript diagnostic.
+                err = re.search(r"(?m)^\w*Error: .*$", r.stderr)
+                detail = err.group(0)[:180] if err else r.stderr.strip()[-180:]
+                line = html[:m.start(2)].count(chr(10)) + 1
+                problems.append(f"inline script #{i + 1} (page line ~{line}): {detail}")
+        finally:
+            pathlib.Path(tmp).unlink(missing_ok=True)
+    return problems
+
+
 def _b64(p: pathlib.Path) -> str:
     raw = p.read_bytes()
     if p.suffix == ".js":
@@ -447,6 +501,11 @@ def main() -> int:
               f"{victim['name']!r}: {original} -> {victim['amount']}")
     out = pathlib.Path(a.out_dir); out.mkdir(parents=True, exist_ok=True)
     dest = out / f"cost-validation-{a.recipient}{suffix}.html"
+    js_problems = check_javascript(html)
+    if js_problems:
+        raise SystemExit(
+            "REFUSING TO WRITE: the page's JavaScript does not parse."
+            + chr(10) + "  " + (chr(10) + "  ").join(js_problems))
     dest.write_text(html, encoding="utf-8")
     mb = dest.stat().st_size / 1_048_576
     print(f"wrote {dest}  ({mb:.1f} MB)")

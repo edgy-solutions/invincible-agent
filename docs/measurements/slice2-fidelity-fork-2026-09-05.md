@@ -477,3 +477,63 @@ inside it"* should not emit a request for something that is not.
 | the linker silently resolves nothing | 1 |
 
 **90 seals green.**
+
+---
+
+## Addendum 2026-09-05e — the page was dead on open, and 90 seals said it was fine
+
+`Uncaught SyntaxError: '' string literal contains an unescaped line break`, line 330. Blank
+page. Reported by the architect on reload.
+
+### The failure mode that defeats every other seal at once
+
+A JS syntax error takes the **whole page** down — no verification banner, no refusal, no
+figures. Nothing in the suite could see it: **the seals test Python, and the page's Python was
+fine.** Every structural check passed, 90 seals passed, and the artifact did not run.
+
+### The cause: an escape that collapses twice
+
+`scripts/labor_tab_template.py` is **itself a Python triple-quoted string**. A JS escape written
+into it is interpreted when the builder *imports the module*, not when it formats the template.
+So `split('\n')` became `split('` + a real newline + `')` — a real newline inside a JS string
+literal.
+
+Replaced with `String.fromCharCode(10)`. **Sidestepping escapes is cheaper than getting
+double-escaping right twice** — and this file has now cost me that mistake three times.
+
+### The comment explaining the fix was broken by the same bug
+
+The fix carried a comment describing the collapse. **Its escape collapsed too**, splitting the
+comment across two lines and leaving a lone backtick running as code — which opened a template
+literal that swallowed the next 120 lines and surfaced as
+`SyntaxError: Unexpected identifier 'pricing'` at a completely unrelated place.
+
+The comment now **names the character instead of writing it**.
+
+### The gate: node parses every inline script, and the build REFUSES
+
+`check_javascript()` runs `node --check` over each untyped `<script>` and raises before
+`write_text`. A page that does not parse is never written.
+
+Two defects in the checker itself, both worth recording because both were **wrong in the
+permissive direction**:
+
+1. Its script filter used a word-boundary escape that reached the file as a literal
+   **backspace byte (0x08)**, so the negative lookahead never fired and it fed **17 MB of
+   base64 to node as JavaScript** — then reported three failures that were entirely its own.
+   Replaced with a plain `if "type=" in attrs: continue`.
+2. Its error extractor took *"the last stderr line"* (node's version banner) and then
+   *"any line containing Error"* — which matched `except ImportError:` inside the echoed
+   source and printed **52 KB of Python as the JavaScript diagnostic**. Now anchored:
+   `^\w*Error: .*$`, capped at 180 characters.
+
+> **A checker that is wrong in the permissive direction does not look wrong — it looks like a
+> finding.** Both of these produced confident, specific, entirely fictional failures.
+
+### Bite-check
+
+An unterminated string in the template → `REFUSING TO WRITE: … SyntaxError: Invalid or
+unexpected token`, and no file produced. Sealed both ways: the shipped page parses, and the gate
+fires on a broken one without firing on the typed script tags that carry base64 and JSON.
+
+**92 seals green.**

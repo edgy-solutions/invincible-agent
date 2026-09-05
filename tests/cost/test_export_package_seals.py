@@ -754,3 +754,47 @@ def test_the_artifact_EMITS_NO_REQUEST_for_a_file_it_does_not_carry(slice2):
         if name.endswith(".js"):
             decoded = base64.b64decode(b64).decode("utf-8", "replace")
             assert not re.findall(r"source(?:Mapping)?URL=", decoded), f"{name} still points out"
+
+
+def test_the_SHIPPED_PAGES_JAVASCRIPT_PARSES(slice2):
+    """The failure mode that defeats every other seal at once.
+
+    A JS syntax error takes the whole page down — no verification banner, no refusal, no
+    figures, just a blank body and a line number in a console the recipient will not open.
+    Nothing in this suite could see it: the seals test Python, and the page's Python was fine.
+
+    WHAT GOT THROUGH: a JS escape written inside `labor_tab_template.py`, which is itself a
+    Python triple-quoted string. The escape collapsed into a REAL newline inside a JS string
+    literal. Structural checks passed, 90 seals passed, and the artifact was dead on open.
+
+    THE COMMENT EXPLAINING THAT FIX WAS THEN BROKEN THE SAME WAY: its escape collapsed too,
+    splitting the comment across two lines and leaving a lone backtick running as code, which
+    opened a template literal that swallowed the next 120 lines. Diagnosed only because the
+    build gate refused to write.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        pytest.skip("node is required to parse the page's JavaScript")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_cost_package as B
+
+    html = (ROOT / "dist" / "cost-validation-notional-customer-alpha.html").read_text(
+        encoding="utf-8")
+    assert B.check_javascript(html) == []
+
+
+def test_the_js_gate_BITES_on_an_unterminated_string(slice2):
+    import shutil
+
+    if not shutil.which("node"):
+        pytest.skip("node is required")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_cost_package as B
+
+    broken = "<script>\nconst a = \"unterminated\nstring\";\n</script>"
+    problems = B.check_javascript(broken)
+    assert problems and "SyntaxError" in problems[0]
+    # AND IT DOES NOT FIRE ON THE TYPED SCRIPTS, which carry base64 and JSON, not JavaScript.
+    assert B.check_javascript('<script type="application/json">{"a": 1}</script>') == []
