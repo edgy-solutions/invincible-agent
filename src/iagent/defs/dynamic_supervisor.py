@@ -2473,8 +2473,23 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                     "accepted_slots": MetadataValue.text(
                         json.dumps(accepted.params, default=str)
                     ),
+                    # STRUCTURED, NOT PROSE. This was `[str(r) for r in refusals]`, which
+                    # renders as "program_id='meridian' refused (undeclared)" — and a surface
+                    # wanting the slot NAME had to parse an English sentence to get it. That
+                    # is presence-is-not-content in a field, the same defect this repo named
+                    # for `too_many`'s count reaching the card only inside message prose.
+                    # `Refusal.__str__` stays exactly as it is: it is right for a LOG LINE,
+                    # which is a thing a person reads, and wrong for a payload, which is a
+                    # thing a renderer reads.
                     "refused_slots": MetadataValue.text(
-                        json.dumps([str(r) for r in accepted.refusals])
+                        json.dumps(
+                            [
+                                {"name": r.name, "reason": r.reason,
+                                 "spoken": r.spoken}
+                                for r in accepted.refusals
+                            ],
+                            default=str,
+                        )
                     ),
                     "slot_resolution": MetadataValue.text(
                         json.dumps(resolution, default=str)

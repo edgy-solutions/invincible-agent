@@ -138,3 +138,46 @@ def test_resolved_intent_still_reaches_the_writer():
         for n in ast.walk(tree)
     )
     assert found, "resolved_intent is no longer passed to AnswerArtifactBundle"
+
+
+# ── refusals must be readable by a RENDERER, not only by a person ───────────
+
+def test_refused_slots_are_structured_records_not_formatted_prose():
+    """`[str(r) for r in refusals]` renders as "program_id='meridian' refused (undeclared)",
+    and a surface wanting the slot NAME had to parse an English sentence to get it.
+
+    That is presence-is-not-content in a field — the same defect this repo named when
+    `too_many`'s count reached the card only inside `message` prose, so a caller wanting
+    "14 projects" had to read a sentence. Found 2026-09-05 while ruling what the disclosure
+    strip should render: cortex cannot show a refusal it cannot parse.
+
+    `Refusal.__str__` is unchanged and stays right where it is — a LOG LINE is read by a
+    person, a PAYLOAD is read by a renderer, and the same string cannot serve both.
+    """
+    i = _SUP.index('"refused_slots": MetadataValue.text(')
+    window = _SUP[i:i + 700]
+    assert "[str(r) for r in" not in window, (
+        "refused_slots is being stringified again — a renderer would have to parse prose"
+    )
+    for field in ('"name": r.name', '"reason": r.reason', '"spoken": r.spoken'):
+        assert field in window, f"the refusal record lost {field}"
+
+
+def test_the_log_line_keeps_its_prose_form():
+    """The fix must not go the other way: a log line that dumps a dict is worse for the
+    person reading it than the sentence it replaced."""
+    from iagent_pure.slot_acceptance import Refusal
+
+    assert str(Refusal("program_id", "undeclared", "meridian")) == (
+        "program_id='meridian' refused (undeclared)"
+    )
+
+
+def test_the_disclosure_keys_the_strip_needs_are_all_carried():
+    """Ruled 2026-09-05: the strip sources rows from `slot_resolution` (everything the
+    resolver touched) and marks each by membership in `accepted_slots`, with `refused_slots`
+    naming which were dropped and why. All three must reach the artifact or the ruling is
+    unimplementable on the consumer side."""
+    for key in ("slot_resolution", "accepted_slots", "refused_slots"):
+        assert key in _emitted_keys(), f"{key} missing from the slots decision"
+        assert key in _consumed_keys(), f"{key} is emitted but the gateway drops it"
