@@ -473,6 +473,71 @@ except ImportError:
 #
 # Two tests under tests/planning/ parse this constant BY NAME out of the source, so the name
 # is load-bearing in four places rather than one.
+#: ARCHETYPES WHOSE PAYLOAD IS THE ENVELOPE ITSELF — no list, so no list to be empty.
+#:
+#: ⛔ THIS IS A SECOND TABLE AND NOT A ROW IN THE ONE BELOW, and the reason is structural
+#: rather than stylistic. `_project_planning_archetype` reads a LIST under a payload key and
+#: returns None when it is absent or empty — which is correct for a grid or a series, where no
+#: rows IS a refusal.
+#:
+#: An ELICITATION has no list. Its nearest candidate, `options`, is LEGITIMATELY EMPTY whenever
+#: there is no menu to offer — the producer says why in `free_text_reason`, and "which program?
+#: I could not enumerate them" is a complete and correct ask. Routing it through the list
+#: projector would reject exactly the asks that most need to render, and the failure would look
+#: like the archetype not being wired at all.
+#:
+#: Measured 2026-09-05: a `program_id` ask with an empty menu drew as KNOWLEDGE_DOCUMENT. The
+#: door had admitted ELICITATION and the class was primed; the projector had no path for it.
+#:
+#: Value is (required_fields, optional_fields). A component needs its required fields or it
+#: cannot draw; the optional ones travel only when the producer supplied them, same
+#: absent-means-silent rule as the passthrough below.
+_FLAT_ARCHETYPES: Dict[str, tuple] = {
+    # Fields read from cortex-ui/src/components/elicitation/Elicitation.contract.ts, not
+    # invented here. `slot` is the only required one: which declaration is missing.
+    "ELICITATION": (
+        ("slot",),
+        ("options", "option_source", "free_text_reason", "spoken", "found", "sub_query",
+         "accepted_slots", "message", "truncated_from", "total_count", "disposition",
+         "verb_iri", "reason"),
+    ),
+}
+
+
+def _project_flat_archetype(
+    archetype: str, raw_data: Any, persona: str,
+) -> Optional[Dict[str, Any]]:
+    """Project an archetype whose payload is the envelope. Deterministic, no model call.
+
+    Returns None when a REQUIRED field is missing, which is the only honest refusal available:
+    a card that cannot say which slot it is asking about is not an ask. Optional fields travel
+    only when present — an absent `options` is a menu-less ask and a meaningful state, not a
+    gap to fill with an empty list.
+    """
+    spec = _FLAT_ARCHETYPES.get(archetype)
+    if spec is None:
+        return None
+    required, optional = spec
+
+    resp = _extract_agent_response(raw_data) or {}
+    missing = [f for f in required if resp.get(f) in (None, "")]
+    if missing:
+        logger.warning(
+            "render_ui: %s is missing required field(s) %s; refusing to draw a card that "
+            "cannot say what it is asking for.", archetype, missing,
+        )
+        return None
+
+    component: Dict[str, Any] = {
+        "archetype": archetype,
+        "source_persona": persona,
+    }
+    for field in required + optional:
+        if field in resp:
+            component[field] = resp[field]
+    return component
+
+
 _PROJECTED_ARCHETYPES: Dict[str, tuple] = {
     # `milestones` joined the passthrough on 2026-08-25, when mesh:ContributionSequence
     # bound to this archetype. WITHOUT IT the projector silently drops the markers and the
@@ -710,6 +775,17 @@ async def _render_archetype_hardened(
     # these five have structured rows and contracts that forbid interpretation,
     # so a deterministic projection is both correct and the only way the card
     # renders the same way twice. See _project_planning_archetype.
+    # FLAT FIRST — an archetype whose payload IS the envelope has no list to check, and the
+    # planning projector's emptiness test would reject it before it was ever tried.
+    if archetype in _FLAT_ARCHETYPES:
+        flat = _project_flat_archetype(archetype, raw_data, persona)
+        if flat is not None:
+            return {"components": [flat]}, True
+        logger.warning(
+            "render_ui: %s carried none of its required fields; degrading.", archetype,
+        )
+        return None, False
+
     if archetype in _PROJECTED_ARCHETYPES:
         projected = _project_planning_archetype(
             archetype, raw_data, persona, subject_concept=None,

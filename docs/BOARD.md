@@ -4,7 +4,7 @@
 `scripts/generate_board.py` re-indexes them and a drift test asserts this file matches.
 Hand-editing here is a lie the next regeneration silently reverts.
 
-_Coverage: **122 of 134 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
+_Coverage: **124 of 136 packets indexed** — 2 carry pre-ADR-0040 legacy frontmatter, 10 are unheadered. Closing that gap is the migration._
 
 ## blocked-on-human
 
@@ -71,7 +71,7 @@ _Coverage: **122 of 134 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   → [docs/plans/agentic-auth-flip.md](plans/agentic-auth-flip.md)
 
 - **an-override-onto-an-unserved-class-must-abstain** — THERE ARE TWO PATHS INTO resolved_uri AND ONLY ONE IS GATED. The productive-option gate (4d13eee) restricts what the LLM may CHOOSE — the candidate pool is limited to classes carrying a verb in the caller's domains. Step 4's instance-resolution pre-step then OVERRIDES that choice with a unanimous provider answer, unchecked, so a phone-book match can install a class no verb serves. Measured by the engine-cost lane: 10 of 18 draws had a winner outside the candidate set, and every one resolved to fin:WBSElement, which carries no verb in ANY domain. That is the DOMINANT dead end in their data — 5 of 9 scoped draws — and it is reached by the one path the gate cannot see. THE OVERRIDE IS NOT THE DEFECT: a caller named "lot 4", a provider resolved it, and fin:WBSElement is a DECLARED drill-down referent in engine-fin's _NO_VERB_BY_DESIGN. The instance resolution is working. What is missing is that nothing notices the resolved subject cannot be answered. RULED: a productivity check AFTER preemption — same predicate as the gate, applied to the WINNER rather than the pool — abstaining or asking, with the resolved instance carried as context.
-  status: open · owner: agent (lane 1) — RULED 2026-09-04, NOT BUILT
+  status: open · owner: agent (lane 1) — BUILT 2026-09-04, NOT ROLLED (roll after the ask/BIND walk)
   → [docs/plans/an-override-onto-an-unserved-class-must-abstain.md](plans/an-override-onto-an-unserved-class-must-abstain.md)
 
 - **answer-latency-tier1** — DECOMPOSED 2026-08-19 (n=5 + isolated hop probes). Tier-1 answer is 262.0s +/- 10.6 (the filed 324.9s was a ~6-sigma outlier, likely a cold 64.7GB model load). >99% is sequential LLM generation; ALL data/graph work totals 2.3s. Root cause: a 116.8B REASONING model at ~33 tok/s where 95-97% of generated tokens are hidden reasoning, called ~sequentially. Largest phase is composing (102.5s), which the original filing never named.
@@ -238,9 +238,17 @@ _Coverage: **122 of 134 packets indexed** — 2 carry pre-ADR-0040 legacy frontm
   status: open · owner: human · blocked-on: A CHOICE BETWEEN TWO CHEAP PATHS, either of which closes it — (a) grant alice a read on `publog/p_cage` (a `policy/asset_grants.yaml` write plus sync; the live Topaz write is a human act), or (b) fix the HTTP 404 on the already-granted `mesh_demo_customers` (the queued `minio-svc` values change). (a) is minutes; (b) also retires a demo-day risk.
   → [docs/plans/no-granted-and-fetchable-asset.md](plans/no-granted-and-fetchable-asset.md)
 
+- **one-card-n-decisions** — A question decomposes into PARALLEL subtasks and each makes its own routing decision, but the artifact keeps ONE routing record, ONE graph trace and ONE card — each chosen by a different rule. The immediate contradiction (a correct answer under a "not grounded" header) is closed by selecting the record with the card's rule. What is NOT closed is the question underneath: when two subtasks route differently and both answer, what should a reader see? Filed with the gateway's own pre-existing flag as its citation, because that flag was written before anyone had measured the shape it was flagging.
+  status: open · owner: unassigned — ADR-shaped, needs a ruling before code · repo: invincible-agent (+ cortex-ui surface change) · blocked-on: what a multi-subtask answer IS (an ADR question, not an implementation one)
+  → [docs/plans/one-card-n-decisions.md](plans/one-card-n-decisions.md)
+
 - **packaged-imports-unresolvable-in-agent-images** — FOUND 2026-08-22 by a seal written after Engine P hit the same defect. `v2_restate.py:162` does `from agent_fleet.mesh_registrar.main import _get_neo4j_driver, _get_weaviate_client` inside the RegistrationSaga handler. `agent_fleet` DOES NOT EXIST in the agent image — verified live against the running mesh-registrar pod: `ModuleNotFoundError: No module named 'agent_fleet'`. The VirtualObject IS mounted ("Mounted Restate VirtualObject 'RegistrationSaga' at /restate"), so the handler raises on invocation rather than at boot, which is why the pod is healthy and has been for as long as anyone has looked. NOT FIXED HERE — mesh_registrar is registry work and belongs to another lane; recorded, waived explicitly in tests/test_agent_modules_survive_flat_layout.py with an expiry guard that fails once the defect is gone.
   status: open · owner: unassigned
   → [docs/plans/packaged-imports-unresolvable-in-agent-images.md](plans/packaged-imports-unresolvable-in-agent-images.md)
+
+- **parallel-resolves-contend-for-one-baml-path** — Two parallel subtasks post `/resolve` to engine-o simultaneously. Engine O's BAML calls run 8–30s against Ollama; the supervisor's read timeout is 30s. Measured 2026-09-04: one subtask timed out at 30s while its sibling completed the same chain in ~44s. The timeout is not a tail event — it is BELOW the observed successful latency, so it fires on the normal case whenever contention is present. This recurs on EVERY decomposed question, and Contract B makes it cost the entire answer rather than degrading it.
+  status: open · owner: unassigned — MEASUREMENT FIRST, no fix until the chain is timed · blocked-on: a measured distribution of `/resolve` latency under N concurrent subtasks
+  → [docs/plans/parallel-resolves-contend-for-one-baml-path.md](plans/parallel-resolves-contend-for-one-baml-path.md)
 
 - **pcn-extraction-sort** — The decided three-pile sort (rename-and-promote / keep-domain-specific / delete) so the M2 extraction milestone is a mechanical execution rather than a fresh analysis. Pairs with the generic-at-birth rule. DECIDED, NOT EXECUTED - verified 2026-08-19: no three-pile implementation exists, and the cited 0cc406e is the review-state tripwire, a different artifact.
   status: open · owner: unassigned

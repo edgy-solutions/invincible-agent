@@ -176,3 +176,117 @@ def test_row_level_fields_need_NO_declaration_and_that_is_why_favourable_survive
         "declaration; listing it here would suggest row additions require one, which is the "
         "confusion that hid this bug"
     )
+
+
+# ── THE ARCHETYPE AXIS, widened 2026-09-05 ────────────────────────────────────────────
+#
+# The seal above derives its population from THIS ENGINE's declaration tables, so it covers
+# every archetype a fin: verb produces and NOTHING ELSE. ELICITATION is produced by the
+# supervisor's ask path, not by a measure verb, so it sat outside the population entirely — and
+# a whole archetype with no projector entry fell through to KNOWLEDGE_DOCUMENT silently, which
+# is the same drop as `reference`/`verdict` one level up: not a field discarded, a card.
+#
+# So the axis is now derived from CORTEX'S CONTRACTS — every archetype the frontend declares it
+# can draw — rather than from what this engine happens to emit. That is the population the
+# projector actually has to cover.
+
+_CORTEX = _ROOT.parent / "cortex-ui"
+
+
+def _cortex_declared_archetypes() -> dict:
+    """archetype -> set(required field names), parsed from cortex's *.contract.ts."""
+    out = {}
+    if not _CORTEX.is_dir():
+        return out
+    for p in _CORTEX.rglob("*.contract.ts"):
+        src = p.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'archetype:\s*"([A-Z_]+)"', src)
+        if not m:
+            continue
+        fields = re.search(r"fields:\s*\{(.*?)\n  \}", src, re.S)
+        req = set()
+        if fields:
+            for fname, body in re.findall(r"(\w+):\s*\{([^}]*)\}", fields.group(1)):
+                if "required: true" in body:
+                    req.add(fname)
+        out[m.group(1)] = req
+    return out
+
+
+def _flat_archetypes() -> dict:
+    src = (_ROOT / "agent_fleet" / "presentation_agent" / "main.py").read_text(encoding="utf-8")
+    block = re.search(r"_FLAT_ARCHETYPES: Dict\[str, tuple\] = \{(.*?)^\}", src, re.S | re.M)
+    if not block:
+        return {}
+    out = {}
+    for name, groups in re.findall(r'^\s*"(\w+)":\s*\((.*?)\),\n', block.group(1), re.S | re.M):
+        out[name] = tuple(re.findall(r'"(\w+)"', groups))
+    return out
+
+
+def test_ELICITATION_is_projected_and_carries_the_field_its_contract_REQUIRES():
+    """The specific regression: an ask with no menu drew as KNOWLEDGE_DOCUMENT.
+
+    Pinned on the REQUIRED field rather than the whole list, because the optional ones are
+    absent-means-something and asserting their presence would forbid a legitimate ask.
+    """
+    flat = _flat_archetypes()
+    assert "ELICITATION" in flat, (
+        "ELICITATION has no projector entry — an archetype with no path falls through to "
+        "KNOWLEDGE_DOCUMENT by construction, which is a whole card lost silently"
+    )
+    declared = _cortex_declared_archetypes()
+    if "ELICITATION" not in declared:
+        pytest.skip("cortex-ui not checked out beside this repo")
+    missing = declared["ELICITATION"] - set(flat["ELICITATION"])
+    assert not missing, (
+        f"ELICITATION's projector does not carry {sorted(missing)}, which cortex's contract "
+        f"marks required — the card mounts and cannot say what it is asking for"
+    )
+
+
+def test_an_ask_with_NO_MENU_is_still_projectable():
+    """⛔ THE CASE THAT MOTIVATED A SECOND TABLE, and the one a list projector rejects.
+
+    `options` is legitimately EMPTY whenever no provider could enumerate the slot — the producer
+    says why in `free_text_reason`, and "which program? I could not list them" is a complete
+    ask. The list projector returns None on an empty payload, which is correct for a grid and
+    exactly wrong here: it would reject the asks that most need to render.
+
+    So ELICITATION must NOT be in the list-projected table, and this asserts that separation
+    rather than trusting it.
+    """
+    passthrough = _projector_passthrough()
+    assert "ELICITATION" not in passthrough, (
+        "ELICITATION is in _PROJECTED_ARCHETYPES, whose projector requires a NON-EMPTY list "
+        "under its payload key. An ask with no menu has none, so every menu-less ask would "
+        "silently degrade — the failure this separation exists to prevent."
+    )
+    flat = _flat_archetypes()
+    assert "options" not in flat["ELICITATION"][:1], (
+        "`options` is declared REQUIRED for ELICITATION; an ask with no menu is legitimate"
+    )
+
+
+def test_every_archetype_cortex_can_draw_has_SOME_projector_path():
+    """The widened axis. Reported per archetype so a gap names itself.
+
+    An archetype cortex declares and the backend cannot project is a card that will never
+    render — and it degrades to KNOWLEDGE_DOCUMENT rather than erroring, so nothing goes red.
+    Archetypes served by a hardened BAML renderer are legitimately absent from both tables, so
+    those are listed rather than asserted: this fails only for an archetype with NO path at all.
+    """
+    declared = _cortex_declared_archetypes()
+    if not declared:
+        pytest.skip("cortex-ui not checked out beside this repo")
+    projected = set(_projector_passthrough()) | set(_flat_archetypes())
+    hardened = {"CHART_WIDGET", "KNOWLEDGE_DOCUMENT", "PROCESS_TOPOLOGY",
+                "HAZARD_DECLARATION", "ASSET_STATE_METRIC", "GROUPED_REVIEW",
+                "APPROVAL_TASK", "WORKFLOW_OBSERVATION", "INSTANCES_BY_PROPERTY",
+                "DECISION_RECORD", "CANVAS_SEED"}
+    orphans = sorted(set(declared) - projected - hardened)
+    assert not orphans, (
+        f"{len(orphans)} archetype(s) cortex declares with NO backend projection path: "
+        f"{orphans}. Each degrades to KNOWLEDGE_DOCUMENT silently. Add a projector entry, or "
+        f"add it to the hardened-renderer set in this test if a BAML renderer serves it."
+    )
