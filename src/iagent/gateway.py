@@ -2394,6 +2394,11 @@ def _stage(
     return _sse("pipeline_stage", json.dumps(payload))
 
 
+# ONE rule for "which subtask did the answer come from", shared with the supervisor's card
+# selector. See iagent_pure/primary_selection.py for why this is not two local functions.
+from iagent_pure.primary_selection import pick_primary  # noqa: E402
+
+
 def _primary_routing_mat(mats: list[dict]) -> dict | None:
     """The routing decision the user's ANSWER actually flowed through.
 
@@ -2429,12 +2434,10 @@ def _primary_routing_mat(mats: list[dict]) -> dict | None:
         m for m in mats
         if (m.get("assetKey", {}) or {}).get("path") == ["subtask_routing_decision"]
     ]
-    if not routing:
-        return None
-    for m in routing:
-        if str(_metadata_dict(m).get("route_status") or "") == "matched":
-            return m
-    return routing[0]
+    # THE SAME FUNCTION THE CARD USES, not a second copy that agrees today. The card and the
+    # record drifted apart twice — arrival order beating success here, list position beating
+    # routing there — while each side's own tests passed. One rule, two accessors.
+    return pick_primary(routing, lambda m: _metadata_dict(m).get("route_status"))
 
 
 def _metadata_dict(mat: dict) -> dict[str, Any]:

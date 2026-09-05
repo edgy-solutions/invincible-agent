@@ -1610,6 +1610,9 @@ def _call_engine_a_fallback(
         "fallback_reason": fallback_reason,
         "fallback_score": fallback_score,
         "sub_query": sub_query,
+        # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+        # does. generalist fallback -- carries output_uri mesh#AgentResponse and must never outrank a match
+        "route_status": "no_match",
         "expert_response": data,
     }
 
@@ -1793,6 +1796,7 @@ from iagent_pure.predicate_routing import (
 )
 # Same rationale, same package: the acceptance filter is stdlib-only so the BFF, this
 # supervisor and the unit tests can each import it without standing up the others.
+from iagent_pure.primary_selection import pick_primary
 from iagent_pure.slot_acceptance import accept_slots, decode_declarations
 from iagent_pure.slot_disposition import (
     ABSTAIN,
@@ -2191,6 +2195,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             "user_persona": config.user_persona,
             "answerer_persona": None,
             "sub_query": sub_query,
+            # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+            # does. the subtask could not run
+            "route_status": "infra_error",
             "expert_response": {
                 "status": "INFRA_ERROR",
                 "summary": (
@@ -2475,6 +2482,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             # registered-or-honest-fallback rule an unregistered kind must degrade VISIBLY
             # rather than borrow another species' affordances; that is how the triage card
             # came to offer Approve/Reject on a failure.
+            # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+            # does. an ask IS the answer for a matched route
+            "route_status": "matched",
             "expert_response": ask_card(
                 disposition,
                 verb_iri=predicate.get("verb_iri") or "",
@@ -2701,6 +2711,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 "answerer_persona": answerer_persona,
                 "predicate_verb_iri": predicate.get("verb_iri"),
                 "sub_query": sub_query,
+                # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+                # does. routed to a specialist; the caller identity failed, not the routing
+                "route_status": "matched",
                 "expert_response": {
                     # A DISTINCT status, never `engine_unreachable`: the engine is fine.
                     # This is an identity fault, and naming it as one is what keeps the
@@ -2755,6 +2768,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
             "answerer_persona": answerer_persona,
             "predicate_verb_iri": predicate.get("verb_iri"),
             "sub_query": sub_query,
+            # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+            # does. routed to a specialist that was unreachable -- an honest failure beats a fabrication
+            "route_status": "matched",
             "expert_response": {
                 # Same vocabulary discipline as Engine DA's envelope: a distinct status, never
                 # `success` carrying an explanation. `ungrounded` would be WRONG here — nothing
@@ -2818,6 +2834,9 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
         "answerer_persona": answerer_persona,
         "predicate_verb_iri": predicate.get("verb_iri"),
         "sub_query": sub_query,
+        # ROUTING STATUS, carried so the CARD can key on the same thing the RECORD
+        # does. the specialist answered
+        "route_status": "matched",
         "expert_response": data,
     }
 
@@ -2913,12 +2932,36 @@ def generate_ui_payload(context, results, config: SupervisorQueryConfig) -> Any:
     # multi-archetype composition is an ADR-0017 open item. When no
     # subtask declared an output_uri (engines pre-ADR-0017), Engine F
     # falls back to legacy BAML DesignUI automatically.
-    agent_output_uri = None
-    for res in results:
-        expert_res = res.get("expert_response", {})
-        if isinstance(expert_res, dict) and expert_res.get("output_uri"):
-            agent_output_uri = expert_res["output_uri"]
-            break
+    # THE CARD SELECTS BY THE RECORD'S KEY — literally the same function.
+    #
+    # THIS USED TO BE "first result carrying an output_uri", on my own stated premise that
+    # "only a matched route produces one". THE PREMISE IS FALSE. Engine A's generalist
+    # fallback stamps `output_uri: mesh#AgentResponse` on every answer it gives
+    # (restate_analyst/main.py:408, :3074), so a `no_match` result qualifies — and when it
+    # lands first in `results`, the card rendered the fabrication while the routing record
+    # correctly named the specialist. Measured on artifact 12:17, 2026-09-05: record right,
+    # card wrong. The exact mirror of 21:55 three nights earlier, where the record was the
+    # wrong one.
+    #
+    # TWO FUNCTIONS THAT AGREE TODAY ARE NOT ONE RULE, which is how these drifted apart while
+    # each side's tests passed. `pick_primary` is the rule; the gateway's `_primary_routing_mat`
+    # calls the same function with its own accessor.
+    _primary = pick_primary(results, lambda r: (r or {}).get("route_status"))
+    _expert = (_primary or {}).get("expert_response") or {}
+    agent_output_uri = _expert.get("output_uri") if isinstance(_expert, dict) else None
+    if _primary is not None and results and _primary is not results[0]:
+        context.log.info(
+            "card_selection primary subtask is not first in results "
+            "(route_status=%s, first=%s) — rendering the MATCHED result rather than the "
+            "list order. A fallback carries an output_uri too and must not outrank a match.",
+            (_primary or {}).get("route_status"),
+            (results[0] or {}).get("route_status"),
+        )
+    # The primary leads `raw_data` as well: Engine F selects an archetype from `output_uri`
+    # but reads the payload from the list, and handing it a matched output_uri over a
+    # fallback's body would be a second mismatch in place of the one just fixed.
+    if _primary is not None:
+        results = [_primary] + [r for r in results if r is not _primary]
 
     response = requests.post(
         f"{PRESENTATION_AGENT_SVC_URL}/render_ui",

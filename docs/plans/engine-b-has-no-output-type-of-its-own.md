@@ -83,3 +83,31 @@ that — which is the same ordering ADR-0046 §9 gives slice 1.
 - [ADR-0046](../adr/ADR-0046-langgraph-graphs-as-registered-mesh-verbs.md) §1, §9 — the contract this
   gap is measured against, and the slice that closes it.
 - [[engine-b-trigger-asset-cannot-succeed]] — the sibling defect from the same read.
+
+---
+
+## 2026-09-05 — the borrowed class is now a LIVE CAUSE, not a naming complaint
+
+This packet has read as a tidiness item: two engines share an output class that describes
+neither of them precisely. **It shipped a wrong card.**
+
+Engine A's generalist fallback stamps `output_uri: mesh#AgentResponse` on every answer it gives
+(`restate_analyst/main.py:408`, `:3074`). The supervisor's card selector picked *"the first
+result carrying an `output_uri`"*, on the stated premise that **only a matched route produces
+one**. That premise is false precisely BECAUSE the fallback borrows this class — so a
+`no_match` result qualified as card-eligible, and on artifact 12:17 the card rendered a
+fabricated entitlement story while the routing record correctly named Engine F.
+
+**The mechanism is the borrowing.** A class that means "the final output of a smolagents run"
+is doing double duty as "this result has a renderable output", and a selector cannot tell the
+two apart. An engine whose output class described a real answer type would never have been
+mistaken for one.
+
+The selector is fixed independently — it now keys on `route_status: matched`, shared with the
+routing record through `iagent_pure.primary_selection.pick_primary` — so the card defect does
+not wait on this packet. **But the class-borrowing is what made the wrong shortcut look
+correct**, and the next selector written against "does it have an output class" will be wrong
+the same way.
+
+Recorded here rather than only at the fix, because the fix's commit message will read as being
+about a selector, and the reason the selector was wrong lives in this file.
