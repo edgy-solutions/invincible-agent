@@ -1353,6 +1353,34 @@ RETURN DISTINCT
   r.domains        AS domains
 """
 
+#: WHO CAN LIST THE MEMBERS OF A CLASS. Mirrors the resolver discovery above, because the
+#: defect it fixes is the same one `/resolve` already solved for identifiers: a single
+#: hard-wired endpoint answers for the whole mesh, and every class it does not own comes back
+#: unlistable.
+#:
+#: MEASURED 2026-09-06. TWO providers are registered on `mesh#InstanceClass`:
+#:
+#:     engine_p_planning    PORTFOLIO_PLANNING   :8095/enumerate_instances
+#:     engine_fin_finance   PROGRAM_FINANCE      :8096/enumerate_instances
+#:
+#: and the supervisor's `ENUMERATE_INSTANCES_URL` pointed at engine-p alone. So `Capability`
+#: got a nine-option menu and `fin:Program` reported "cannot be listed" — not because nothing
+#: could list it, but because the one thing that could was never asked. Engine-fin registered
+#: the capability and nothing called it: a registration with no caller, which is the shape
+#: this repo has now removed three times.
+_ENUMERATE_PROVIDERS_CYPHER = """
+MATCH (i:OntologyClass {uri: 'http://invincible-agent/mesh#InstanceClass'})-[r]->(o:OntologyClass)
+WHERE r.iri = 'mesh:enumerateInstances' AND r.endpoint_url IS NOT NULL
+RETURN DISTINCT
+  r.endpoint_url   AS endpoint_url,
+  coalesce(r.provider, type(r)) AS provider,
+  r.timeout_s      AS timeout_s,
+  r.domains        AS domains
+"""
+
+_ENUMERATE_PROVIDERS_CACHE: list[dict] | None = None
+_ENUMERATE_PROVIDERS_CACHE_TS: float = 0.0
+
 _INSTANCE_RESOLVERS_CACHE: list[dict] | None = None
 # Monotonic timestamp of last cache fill. Paired with _INSTANCE_RESOLVERS_TTL_S
 # to give the cache a bounded staleness window — see _discover_instance_resolvers.
@@ -1408,6 +1436,49 @@ class _ResolverOutcome:
         self.provider = provider
         self.endpoint_url = endpoint_url
         self.elapsed_s = elapsed_s
+
+
+def _discover_enumerate_providers(refresh: bool = False) -> list[dict]:
+    """Registered `mesh:enumerateInstances` providers, cached on the resolver TTL.
+
+    Deliberately the same shape and the same cache discipline as
+    `_discover_instance_resolvers` — one registry, one staleness window, and a reader who
+    learns one of these knows the other.
+    """
+    global _ENUMERATE_PROVIDERS_CACHE, _ENUMERATE_PROVIDERS_CACHE_TS
+    now = time.time()
+    if (not refresh and _ENUMERATE_PROVIDERS_CACHE is not None
+            and (now - _ENUMERATE_PROVIDERS_CACHE_TS) < _INSTANCE_RESOLVERS_TTL_S):
+        return _ENUMERATE_PROVIDERS_CACHE
+    if not _NEO4J_DRIVER:
+        return []
+    try:
+        with _NEO4J_DRIVER.session() as session:
+            rows = session.run(_ENUMERATE_PROVIDERS_CYPHER).data()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Engine O] enumerate-provider discovery failed ({type(exc).__name__}) — "
+              f"no providers this call")
+        return []
+    discovered = []
+    for r in rows:
+        if not r.get("endpoint_url"):
+            continue
+        raw = r.get("timeout_s")
+        try:
+            timeout_s = float(raw) if raw not in (None, "") else None
+        except (TypeError, ValueError):
+            timeout_s = None
+        discovered.append({
+            "endpoint_url": r["endpoint_url"],
+            "provider": r.get("provider") or "unknown",
+            "timeout_s": timeout_s,
+            "domains": r.get("domains") or [],
+        })
+    _ENUMERATE_PROVIDERS_CACHE = discovered
+    _ENUMERATE_PROVIDERS_CACHE_TS = now
+    print(f"Discovered {len(discovered)} mesh:enumerateInstances provider(s): "
+          f"{[(d['provider'], d['timeout_s']) for d in discovered]}")
+    return discovered
 
 
 def _discover_instance_resolvers(refresh: bool = False) -> list[dict]:
@@ -1802,6 +1873,88 @@ async def _preempted_subject_is_unanswerable(resolved_uri: str, domains: list) -
 # ---------------------------------------------------------------------------
 # POST /resolve
 # ---------------------------------------------------------------------------
+class EnumerateInstancesRequest(BaseModel):
+    """Ask the mesh to list the members of a class."""
+    class_uri: str
+
+
+@app.post("/enumerate_instances")
+async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
+    """Fan a class out to every registered `mesh:enumerateInstances` provider.
+
+    THE DEFECT THIS REPLACES. The supervisor held ONE hard-wired
+    `ENUMERATE_INSTANCES_URL` pointing at engine-p, so every class engine-p does not own came
+    back unlistable. `Capability` got a nine-option menu; `fin:Program` reported "cannot be
+    listed" — not because nothing could list it, but because the one thing that could was
+    never asked. Engine-fin had registered `mesh:enumerateInstances` and nothing called it.
+
+    Symmetric with `/resolve`'s instance fan-out on purpose: same registry, same cache, same
+    per-provider declared budget. A reader who understands one understands this.
+
+    PRECEDENCE, STATED RATHER THAN EMERGENT, because providers CAN disagree and the ordering
+    decides what a person sees:
+
+      members   > too_many > empty > no_provider
+
+    `members` first because a concrete list is the only outcome that becomes a menu, and a
+    provider that can list a class is the one that owns it. `too_many` over `empty` because
+    "real and larger than a menu" is a fact about the class while `empty` from a provider that
+    does not own it is a fact about the provider — treating those alike is how a listable class
+    came to look unlistable in the first place, one layer down.
+
+    A provider that fails or times out CANNOT make the answer `empty`. `empty` is a claim that
+    nothing of that kind exists, and an unreachable provider has not made a claim. That is why
+    the two are counted apart below.
+    """
+    providers = _discover_enumerate_providers()
+    if not providers:
+        return {"outcome": "no_provider", "members": [], "count": 0,
+                "detail": "no mesh:enumerateInstances provider is registered"}
+
+    best_too_many: dict | None = None
+    answered_empty = 0
+    unreachable: list[str] = []
+
+    for prov in providers:
+        budget = prov.get("timeout_s") or _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S
+        try:
+            resp = await asyncio.to_thread(
+                requests.post, prov["endpoint_url"],
+                json={"class_uri": request.class_uri}, timeout=budget,
+            )
+            body = resp.json() if resp.status_code == 200 else {}
+        except Exception as exc:  # noqa: BLE001
+            unreachable.append(f"{prov['provider']}({type(exc).__name__})")
+            continue
+        outcome = str(body.get("outcome") or "")
+        if outcome == "members" and (body.get("members") or []):
+            print(f"[Engine O] enumerate {request.class_uri} -> members "
+                  f"({len(body['members'])}) from {prov['provider']}")
+            return {"outcome": "members", "members": body["members"],
+                    "count": int(body.get("count") or len(body["members"])),
+                    "provider": prov["provider"]}
+        if outcome == "too_many" and best_too_many is None:
+            best_too_many = {"outcome": "too_many", "members": [],
+                             "count": int(body.get("count") or 0),
+                             "provider": prov["provider"]}
+        elif outcome in ("empty", "members"):
+            answered_empty += 1
+
+    if best_too_many is not None:
+        print(f"[Engine O] enumerate {request.class_uri} -> too_many "
+              f"({best_too_many['count']}) from {best_too_many['provider']}")
+        return best_too_many
+    if answered_empty:
+        return {"outcome": "empty", "members": [], "count": 0}
+    # NOBODY ANSWERED. Distinct from `empty`, and the distinction is the whole point: a menu
+    # that could not be built because the providers were unreachable must not be reported as
+    # a class with no members, or a transient outage renders as a fact about the ontology.
+    print(f"[Engine O] enumerate {request.class_uri} -> no_provider "
+          f"(all {len(providers)} unreachable: {unreachable})")
+    return {"outcome": "no_provider", "members": [], "count": 0,
+            "detail": f"all providers unreachable: {', '.join(unreachable)}"}
+
+
 @app.post("/resolve", response_model=SemanticResolutionResponse)
 async def resolve(request: ResolveRequest) -> SemanticResolutionResponse:
     """Resolve a natural-language query to a canonical ontology URI using Late Binding.

@@ -86,9 +86,13 @@ data:
   # `no_provider` (an unbuilt hop) and starts reporting a provider's own refusal, which is
   # what makes ADR-0033's free-text boundary decidable rather than a fudge.
   #
-  # Points at engine-p directly rather than through a fan-out: the graph-discovered fan-out
-  # is the option-source lane's next step, and one provider is the honest state today.
-  ENUMERATE_INSTANCES_URL: "http://{{ .Release.Name }}-engine-p{{ include "invincible-agent.svcDomain" . }}:{{ .Values.enginePlanning.port }}/enumerate_instances"
+  # NOW THE FAN-OUT, not one provider. This pointed at engine-p directly, and every class
+  # engine-p does not own came back unlistable: `Capability` got a nine-option menu while
+  # `fin:Program` reported "cannot be listed" — although engine-fin had registered
+  # `mesh:enumerateInstances` and was simply never asked. Engine O discovers the providers
+  # from the registry the same way `/resolve` discovers instance resolvers, so adding an
+  # engine that can list its own classes needs no chart change at all.
+  ENUMERATE_INSTANCES_URL: "http://{{ .Release.Name }}-engine-o{{ include "invincible-agent.svcDomain" . }}:{{ .Values.engineO.port }}/enumerate_instances"
 
   # ------------------------------------------------------------------
   # Engine SELF-ADVERTISEMENT URLs — the endpoint each engine bakes into
