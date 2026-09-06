@@ -2339,7 +2339,7 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
     # extraction and a caller-supplied default — ADR-0033 #5's user-confirmed provenance,
     # applied at the only point that can check it.
     if config.bound_slots and declared:
-        picked, refusals = validate_bound_slots(
+        picked, refusals, bound_resolution = validate_bound_slots(
             config.bound_slots,
             declared=declared,
             enumerate_class=_make_enumerator(context),
@@ -2355,6 +2355,12 @@ def execute_subtask(context, config: SupervisorQueryConfig, task_def: Dict[str, 
                 "bound_slots_accepted verb_iri=%s %s", predicate.get("verb_iri"), picked
             )
             spoken = {**spoken, **picked}
+            # THE PICK GETS A ROW. `slot_resolution` is what the disclosure strip
+            # renders, and a slot the user chose from a menu had no entry in it — so
+            # the strip drew nothing for the one thing the person did most directly.
+            # Merged here rather than in the filler because a BIND never reaches the
+            # filler at all; that is what made the row missing rather than wrong.
+            resolution = {**resolution, **bound_resolution}
 
     if not spoken and declared:
         filled = _fill_slots_from_query(

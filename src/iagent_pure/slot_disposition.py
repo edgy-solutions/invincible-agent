@@ -90,6 +90,12 @@ ASK_WITH_CANDIDATES = frozenset({"fuzzy", "mixed", "not_specific", "wrong_class"
 #: that needed it.
 ABSTAIN_OUTCOMES = frozenset({"empty"})
 
+#: The outcome recorded for a slot the user PICKED from a menu, as opposed to one the
+#: filler resolved from the phrase. A third provenance, and it needs its own name: a
+#: pick was neither spoken-and-narrowed nor refused, and calling it "resolved" would
+#: claim the resolver did work it did not do.
+BOUND = "bound"
+
 ROUTE = "route"
 ASK = "ask"
 ABSTAIN = "abstain"
@@ -693,14 +699,17 @@ def validate_bound_slots(
     """
     bound = dict(bound or {})
     if not bound:
-        return {}, []
+        return {}, [], {}
     try:
         decls = {d["name"]: d for d in decode_declarations(declared)}
     except Exception:  # noqa: BLE001 — fail closed, same posture as accept_slots
-        return {}, [f"{n}: declarations unreadable" for n in sorted(bound)]
+        return {}, [f"{n}: declarations unreadable" for n in sorted(bound)], {}
 
     out: dict = {}
     refusals: list[str] = []
+    #: {slot: {outcome, spoken, instance_id}} — the same record shape `_fill_slots_from_query`
+    #: produces, so the strip renders a pick and a fill through one path.
+    resolution: dict[str, dict] = {}
     for name, value in sorted(bound.items()):
         decl = decls.get(name)
         if decl is None:
@@ -716,6 +725,12 @@ def validate_bound_slots(
         if values:
             if value in values:
                 out[name] = value
+                # A declared-vocabulary pick has no separate label: the value IS what was
+                # shown. Recorded anyway, so every bound slot has a row and the strip never
+                # has to distinguish "no record" from "no label".
+                resolution[name] = {
+                    "outcome": BOUND, "spoken": str(value), "instance_id": str(value),
+                }
             else:
                 refusals.append(f"{name}={value!r}: not in the declared vocabulary")
             continue
@@ -726,6 +741,7 @@ def validate_bound_slots(
             continue
 
         offered: list[str] = []
+        labels: dict[str, str] = {}
         if enumerate_class is not None:
             try:
                 enumerated = dict(enumerate_class(referent) or {})
@@ -733,8 +749,14 @@ def validate_bound_slots(
                 refusals.append(f"{name}: option source unreachable ({type(exc).__name__})")
                 continue
             if str(enumerated.get("outcome") or "") == "members":
-                offered = [str(m.get("instance_id")) for m in (enumerated.get("members") or [])
-                           if m.get("instance_id")]
+                # LABELS ARE KEPT, NOT DISCARDED. They used to be dropped here — `offered`
+                # held ids only — so nothing downstream could say WHAT THE USER CLICKED, and
+                # the disclosure strip had no row for a bound slot. The fact existed at the
+                # only point that knew it and was thrown away one line later.
+                for m in (enumerated.get("members") or []):
+                    if m.get("instance_id"):
+                        offered.append(str(m["instance_id"]))
+                        labels[str(m["instance_id"])] = str(m.get("label") or "")
         if not offered and resolve_identifier is not None:
             # The disambiguation menu: candidates for what the speaker actually said, filtered
             # to the slot's class exactly as `_from_candidates` filters them.
@@ -743,9 +765,12 @@ def validate_bound_slots(
             except Exception as exc:  # noqa: BLE001
                 refusals.append(f"{name}: resolver unreachable ({type(exc).__name__})")
                 continue
-            offered = [str(c.get("instance_id")) for c in cands
-                       if c.get("instance_id")
-                       and (not c.get("class_uri") or c.get("class_uri") == referent)][:menu_bound]
+            for c in cands[:menu_bound]:
+                if c.get("instance_id") and (
+                    not c.get("class_uri") or c.get("class_uri") == referent
+                ):
+                    offered.append(str(c["instance_id"]))
+                    labels[str(c["instance_id"])] = str(c.get("label") or "")
 
         if not offered:
             refusals.append(f"{name}: no_menu — nothing was offered for this slot")
@@ -754,4 +779,15 @@ def validate_bound_slots(
             out[name] = validate_pick(str(value), [{"value": v} for v in offered])
         except PickRefused as exc:
             refusals.append(f"{name}: {exc}")
-    return out, refusals
+            continue
+        # THE THIRD PROVENANCE. A slot the filler resolved has a row; a slot that was
+        # REFUSED has a row. A slot the user PICKED FROM A MENU had neither, so the
+        # disclosure strip — which renders rows from `slot_resolution` — drew nothing for
+        # the one thing the person had most directly done. `spoken` is the option LABEL,
+        # because the label is what they clicked and therefore what they said.
+        resolution[name] = {
+            "outcome": BOUND,
+            "spoken": labels.get(out[name]) or str(out[name]),
+            "instance_id": str(out[name]),
+        }
+    return out, refusals, resolution

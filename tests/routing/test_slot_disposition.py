@@ -695,7 +695,7 @@ def test_bound_slots_are_validated_against_a_RECOMPUTED_menu(slots_for):
     """The menu is recomputed rather than echoed or held. A client that can send the pick can
     send a menu permitting it, so an echo is self-certifying; holding it between turns is the
     lifetime the stateless re-route exists to avoid."""
-    ok, refused = validate_bound_slots(
+    ok, refused, _res = validate_bound_slots(
         {"capability_id": "C2"}, declared=slots_for("plan_capability_path"),
         enumerate_class=_members(("C1", "Billing"), ("C2", "Invoicing")),
     )
@@ -703,7 +703,7 @@ def test_bound_slots_are_validated_against_a_RECOMPUTED_menu(slots_for):
 
 
 def test_a_bound_slot_NOT_on_the_recomputed_menu_is_refused(slots_for):
-    ok, refused = validate_bound_slots(
+    ok, refused, _res = validate_bound_slots(
         {"capability_id": "C99"}, declared=slots_for("plan_capability_path"),
         enumerate_class=_members(("C1", "Billing"), ("C2", "Invoicing")),
     )
@@ -715,7 +715,7 @@ def test_a_bound_slot_with_NO_MENU_is_refused_rather_than_trusted(slots_for):
     nothing, so nothing can be validated as having been offered. Accepting it here would be
     the fabricated-pick hole with an extra hop; free text belongs on the RESPEAK path, where
     the value re-enters as words and the resolver adjudicates it."""
-    ok, refused = validate_bound_slots(
+    ok, refused, _res = validate_bound_slots(
         {"project_id": "P5"}, declared=slots_for("plan_dependency_neighborhood"),
         enumerate_class=_too_many(14),
     )
@@ -727,14 +727,14 @@ def test_bound_slots_cannot_reach_a_route_supplied_slot(slots_for):
     """The boundary `accept_slots` exists for, restated at this new door: a caller supplying
     `baseline_state` is not answering an ask, they are supplying the evidence the answer is
     computed from."""
-    ok, refused = validate_bound_slots(
+    ok, refused, _res = validate_bound_slots(
         {"baseline_state": "anything"}, declared=slots_for("plan_diff"), enumerate_class=None,
     )
     assert ok == {} and refused and "route-supplied" in refused[0]
 
 
 def test_bound_slots_fail_CLOSED_on_unreadable_declarations():
-    ok, refused = validate_bound_slots({"x": "y"}, declared="not json", enumerate_class=None)
+    ok, refused, _res = validate_bound_slots({"x": "y"}, declared="not json", enumerate_class=None)
     assert ok == {} and refused
 
 
