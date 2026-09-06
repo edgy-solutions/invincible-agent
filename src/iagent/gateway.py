@@ -2237,6 +2237,17 @@ class InterviewRequest(BaseModel):
     # the answer travels here.
     spoken_slot: str | None = None
     spoken_answer: str | None = None
+    # THE ASK THIS TURN IS ANSWERING (ADR-0033 lineage). The client is the only party that
+    # knows which card the person acted on, so it must say — but this is a CLAIM, not the
+    # conclusion. Named for what the caller asserts; the server decides whether it becomes
+    # `derived_from_artifact_id` on the artifact.
+    #
+    # WHY THE CLAIM IS CHECKED. `answer_artifact_writer` links lineage with
+    # `MERGE (parent:AnswerArtifact {id: $parent_id})`, which CREATES the node when the id is
+    # unknown. An unguarded field would let any caller conjure an AnswerArtifact into the
+    # graph by naming one, and a fabricated ancestor is worse than no ancestor: the rail would
+    # collapse two cards into one on a lineage nobody produced.
+    answering_artifact_id: str | None = None
 
 
 class BPMNTask(BaseModel):
@@ -3790,6 +3801,30 @@ async def generate_dagster_stream(
     _artifact_id = request.artifact_id or (
         f"urn:li:answerArtifact:{session_id}-{uuid.uuid4().hex[:8]}"
     )
+    # ── LINEAGE: A CLAIM, CHECKED BEFORE IT BECOMES A CONCLUSION ────────────────────────
+    #
+    # The client names the ask it is answering; the server decides whether that is lineage.
+    # It is honoured ONLY when the turn also CARRIES an answer — a pick in `bound_slots` or
+    # a typed reply in `spoken_answer`. A turn with neither is an ordinary question, and a
+    # question that claims to descend from an ask is either confused or lying.
+    #
+    # THE COST OF NOT CHECKING IS A FABRICATED ANCESTOR, not a missing one: the writer links
+    # with `MERGE (parent:AnswerArtifact {id: $parent_id})`, which CREATES the node when the
+    # id is unknown. So an unguarded field lets a caller conjure an artifact into the graph by
+    # naming it, and the rail would then fold two cards together on a lineage nobody produced.
+    # Refusing is cheap; a phantom in the provenance graph is not.
+    _answers_something = bool(request.bound_slots) or bool(request.spoken_answer)
+    _answering_artifact_id = (
+        (request.answering_artifact_id or None) if _answers_something else None
+    )
+    if request.answering_artifact_id and not _answers_something:
+        logger.warning(
+            "lineage claim REFUSED for run %s: answering_artifact_id=%r was sent on a turn "
+            "carrying neither a pick nor a typed answer. An ordinary question does not "
+            "descend from an ask.",
+            session_id, request.answering_artifact_id,
+        )
+
     _artifact_bundle: dict = {
         "id": _artifact_id,
         "question_text": user_query,
@@ -3826,7 +3861,10 @@ async def generate_dagster_stream(
         "sources": [],
         "graph_trace": [],
         "rendered_output": None,
-        "derived_from_artifact_id": None,
+        # LINEAGE, and only for a turn that really is an answer. `_answering_artifact_id`
+        # is None unless the caller both named an ask AND carried something that answers
+        # one — see the guard where it is computed.
+        "derived_from_artifact_id": _answering_artifact_id,
     }
 
     # Per ADR-0009 Step F'.2: /route_intent does not produce a task_plan
