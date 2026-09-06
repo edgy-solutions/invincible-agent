@@ -45,8 +45,14 @@ _CM = (_REPO / "helm" / "invincible-agent" / "templates" / "configmap.yaml").rea
 
 
 def _endpoint() -> str:
+    """The endpoint's body, bounded by the NEXT route rather than a character count.
+
+    This was `i + 4200`, and adding comments to the function pushed its tail outside the
+    window — three assertions went red without the code changing. A magic span is a seal that
+    rots as the thing it guards grows."""
     i = _EO.index("async def enumerate_instances(")
-    return _EO[i:i + 4200]
+    j = _EO.index('@app.post("/resolve"', i)
+    return _EO[i:j]
 
 
 # ── discovery, not configuration ────────────────────────────────────────────
@@ -102,9 +108,8 @@ def test_an_unreachable_provider_does_not_count_as_empty():
     provider that timed out has said nothing at all, and collapsing them renders an outage as
     a fact about the ontology."""
     w = _endpoint()
-    i = w.index("except Exception")
-    handler = w[i:i + 260]
-    assert "unreachable.append" in handler
+    i = w.index("unreachable.append")
+    handler = w[max(0, i - 340):i + 120]
     assert "answered_empty" not in handler, (
         "a failed provider is being counted as one that answered empty"
     )
@@ -156,3 +161,79 @@ def test_the_chart_line_uses_the_same_expressions_as_a_working_sibling():
         return set(re.findall(r"{{[^}]+}}", _CM[i:_CM.index("\n", i)]))
 
     assert exprs("ENUMERATE_INSTANCES_URL:") == exprs("ONTOLOGY_SERVICE_URL:")
+
+
+# ── the client, and why a broad handler hid a code bug ──────────────────────
+#
+# THESE ASSERT ON PARSED CODE, NOT TEXT, and that is not fastidiousness. The first version
+# of `test_the_fanout_uses_the_same_http_client` searched the source for "requests.post" and
+# failed — on the COMMENT above the fix, which says the old version called `requests.post`.
+# A negative assertion over a region containing prose about the defect matches the prose.
+# Second instance in one day: this morning a check for `[str(r) for r in` matched its own
+# comment describing the stringified refusals it had just replaced.
+
+def _fn_node():
+    import ast
+    tree = ast.parse(_EO)
+    return next(
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.AsyncFunctionDef, ast.FunctionDef))
+        and n.name == "enumerate_instances"
+    )
+
+
+def _calls() -> set:
+    import ast
+    out = set()
+    for n in ast.walk(_fn_node()):
+        if isinstance(n, ast.Call):
+            f = n.func
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+                out.add(f"{f.value.id}.{f.attr}")
+            elif isinstance(f, ast.Name):
+                out.add(f.id)
+    return out
+
+
+def test_the_fanout_uses_the_same_http_client_as_the_resolver_fanout():
+    """MEASURED FAILURE, 2026-09-06. The first version called `requests.post` — and this
+    module imports `httpx`, not `requests`. Every provider raised NameError, the broad
+    handler filed it under "unreachable", and the endpoint reported `no_provider` for every
+    class while discovery was finding both providers the whole time."""
+    calls = _calls()
+    assert "httpx.AsyncClient" in calls, f"the fan-out is not using httpx: {sorted(calls)}"
+    assert "requests.post" not in calls, "requests is not imported in this module"
+
+
+def _handler_types() -> set:
+    import ast
+    out = set()
+    for n in ast.walk(_fn_node()):
+        if not isinstance(n, ast.ExceptHandler) or n.type is None:
+            continue
+        parts = n.type.elts if isinstance(n.type, ast.Tuple) else [n.type]
+        for t in parts:
+            if isinstance(t, ast.Attribute):
+                out.add(t.attr)
+            elif isinstance(t, ast.Name):
+                out.add(t.id)
+    return out
+
+
+def test_the_handler_cannot_swallow_a_CODE_error_as_unreachable():
+    """`except Exception` catches NameError, AttributeError and TypeError — every way this
+    loop can be WRONG — and files them as "the provider could not be reached". A defect that
+    reports itself as an outage is a defect nobody looks for in the code, and this one cost a
+    roll and a live 404 before a log line named it."""
+    types = _handler_types()
+    assert "Exception" not in types, (
+        f"a bare Exception handler is back: {sorted(types)} — a NameError will report as "
+        f"an unreachable provider"
+    )
+
+
+def test_a_transport_failure_is_still_caught():
+    """Narrowing must not go so far that a genuine timeout crashes the endpoint — that would
+    turn one unreachable provider into no answer at all."""
+    types = _handler_types()
+    assert {"HTTPError", "TimeoutError", "ValueError"} <= types, f"too narrow: {sorted(types)}"

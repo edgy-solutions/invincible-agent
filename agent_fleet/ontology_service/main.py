@@ -1917,13 +1917,24 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
 
     for prov in providers:
         budget = prov.get("timeout_s") or _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S
+        # httpx.AsyncClient, mirroring `_call_resolver` exactly — this module has no
+        # `requests` import, and the first version of this loop called `requests.post`.
+        # The NameError was caught by the broad handler below and REPORTED AS
+        # "provider unreachable", so a coding error arrived wearing an infrastructure
+        # costume and every class looked unlistable. That is the same
+        # error-class-confusion this endpoint's own precedence rule exists to prevent,
+        # committed one layer down while writing the rule.
         try:
-            resp = await asyncio.to_thread(
-                requests.post, prov["endpoint_url"],
-                json={"class_uri": request.class_uri}, timeout=budget,
-            )
-            body = resp.json() if resp.status_code == 200 else {}
-        except Exception as exc:  # noqa: BLE001
+            async with httpx.AsyncClient(timeout=budget) as client:
+                resp = await client.post(
+                    prov["endpoint_url"], json={"class_uri": request.class_uri},
+                )
+                body = resp.json() if resp.status_code == 200 else {}
+        except (httpx.HTTPError, asyncio.TimeoutError, ValueError) as exc:
+            # NARROWED ON PURPOSE. `except Exception` here swallows NameError,
+            # AttributeError and TypeError — every way this loop can be WRONG — and files
+            # them under "the provider could not be reached". A defect that reports itself
+            # as an outage is a defect nobody looks for in the code.
             unreachable.append(f"{prov['provider']}({type(exc).__name__})")
             continue
         outcome = str(body.get("outcome") or "")
