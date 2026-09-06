@@ -6,7 +6,7 @@ blocked-on: a human look — every seam is repaired and no card has been seen re
 repo:       invincible-agent
 ruled-by:   ADR-0019 (Contract D, atomic); ADR-0017 (rendersAs); ADR-0045 (Engine F)
 code-site:  agent_fleet/utils/mesh_registration.py:492, agent_fleet/presentation_agent/capabilities.py:32, src/iagent/gateway.py:4330 (_emit_presentation_to_registrar call), agent_fleet/presentation_agent/capability_registry.py:239 (select_archetype)
-summary:    EVERY SEAM ON THE FINANCE CARD PATH AUDITED INDIVIDUALLY, 2026-09-01/04. STARTED as one seam and ENDED AS FOURTEEN, because each repair uncovered the next — all three produce the identical observable, a card reading `Knowledge Document / No content available`. SEAM 8 (bindings) IS FIXED AND PROVEN: `fin:` was absent from the CURIE prefix map, so the gateway emitted the subject compact, the registrar MATCHed against :OntologyClass nodes holding FULL IRIs, and Contract D refused all six atomically while the POST returned `200 OK, accepted: 29, rejected: []`. After the one-line fix and a redeploy: cortex-ui-desktop rows 23->29, __system_default__ 10->16, graph-registration failures 6->0, and the selector returns the intended archetype for 6/6 with a biting negative control. SEAM 9 STOPS ALL SIX and is fenced: fill_slots times out at 20s while engine-o extracts the slot correctly and returns 200, so the mandatory slot is unfilled, the disposition correctly becomes an ASK, and an ask card has no output_uri. SEAM 10 STOPS FOUR and is MINE: the six verbs declare four subjects, so a question naming the program grounds to fin:Program where compatible_count=2 and four verbs were never candidates. The classifier is right every time. Also observed, unowned: supervisor_query_job takes 5-6.5 min and the BFF reports dagster_run_failed for runs that log RUN_SUCCESS.
+summary:    EVERY SEAM ON THE FINANCE CARD PATH AUDITED INDIVIDUALLY, 2026-09-01/04. STARTED as one seam and ENDED AS FIFTEEN, because each repair uncovered the next — all three produce the identical observable, a card reading `Knowledge Document / No content available`. SEAM 8 (bindings) IS FIXED AND PROVEN: `fin:` was absent from the CURIE prefix map, so the gateway emitted the subject compact, the registrar MATCHed against :OntologyClass nodes holding FULL IRIs, and Contract D refused all six atomically while the POST returned `200 OK, accepted: 29, rejected: []`. After the one-line fix and a redeploy: cortex-ui-desktop rows 23->29, __system_default__ 10->16, graph-registration failures 6->0, and the selector returns the intended archetype for 6/6 with a biting negative control. SEAM 9 STOPS ALL SIX and is fenced: fill_slots times out at 20s while engine-o extracts the slot correctly and returns 200, so the mandatory slot is unfilled, the disposition correctly becomes an ASK, and an ask card has no output_uri. SEAM 10 STOPS FOUR and is MINE: the six verbs declare four subjects, so a question naming the program grounds to fin:Program where compatible_count=2 and four verbs were never candidates. The classifier is right every time. Also observed, unowned: supervisor_query_job takes 5-6.5 min and the BFF reports dagster_run_failed for runs that log RUN_SUCCESS.
 ---
 
 # Engine F → card: every seam, audited one at a time
@@ -148,9 +148,9 @@ which answers the question. Nothing traverses Program → its PMB.
 Filed: `[[four-subjects-means-four-questions]]`. **This one is mine** — the subjects are my
 authoring decision.
 
-### The corrected seam table — CURRENT as of 2026-09-04
+### The corrected seam table — CURRENT as of 2026-09-05
 
-**Fourteen seams, not three.** The audit opened calling it one, revised to three, and each
+**Fifteen seams, not three.** The audit opened calling it one, revised to three, and each
 repair uncovered the next — because every one of them rendered as the same card.
 
 | seam | state | owner | stopped |
@@ -163,8 +163,9 @@ repair uncovered the next — because every one of them rendered as the same car
 | 12 `PERIOD_SERIES` is a cost curve — the binding was never satisfiable | ✅ **fixed** via `mesh:MultiSeries` | mine + cortex | two of six |
 | 13 a rebind INSERTS rather than replaces; the stale binding wins | ✅ **cleared** (4 rows deleted) | mine | two of six |
 | 14 projector passthrough dropped `reference` / `verdict` | ✅ **fixed** | mine | two cards' captions |
+| 15 `ELICITATION` had no projector path at all → `KNOWLEDGE_DOCUMENT` | ✅ **fixed** `c8db01b` | mine | every menu-less ask |
 
-**Nine of the fourteen were mine.** The two that were not — the filler budget and the
+**Ten of the fifteen were mine.** The two that were not — the filler budget and the
 archetype contract — were both found by another lane reading a symptom I had misdiagnosed.
 
 #### What each repair revealed, which is the shape worth carrying
@@ -174,9 +175,28 @@ cards drew while three fell to a generative renderer — 11. 11 fixed and two ca
 refused — 12. 12 fixed and the old binding still won — 13. 13 cleared and two captions were
 missing — 14.
 
-**Six repairs, each correct, five of which produced no visible improvement at the time.** A
+Seam 14 fixed and a finance question that named no program drew as a document rather than an ask
+— 15, and it is the one that could NOT have been fixed the way it was dispatched: the table it
+was sent to requires a non-empty list, and a menu-less ask has none.
+
+**Seven repairs, each correct, five of which produced no visible improvement at the time.** A
 card reading `Knowledge Document · No content available` named none of them, which is
 `[[a-degradation-must-name-itself]]` measured rather than argued.
+
+#### The instrument that makes the NEXT one visible
+
+Every seam above was found by reading logs and probing pods, because the card itself said the
+same thing in all fifteen cases. `169faef` changes that for one whole class of them:
+`selection_basis` now travels on the response as `presentation_provenance` instead of dying in a
+`logger.info`.
+
+| basis | means |
+|---|---|
+| `output_uri+payload` | the declared output matched a registered capability |
+| `payload-only (output_uri matched no capability)` | it did not — **the payload chose the card** |
+
+Seams 8, 12 and 14 were all the second case and none of them announced it. **This does not
+prevent a sixteenth seam; it makes one legible from the artifact rather than from a pod.**
 
 #### The one that is still open
 
