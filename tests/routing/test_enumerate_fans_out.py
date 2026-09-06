@@ -237,3 +237,38 @@ def test_a_transport_failure_is_still_caught():
     turn one unreachable provider into no answer at all."""
     types = _handler_types()
     assert {"HTTPError", "TimeoutError", "ValueError"} <= types, f"too narrow: {sorted(types)}"
+
+
+# ── the fourth outcome the providers actually emit ──────────────────────────
+
+def test_unsupported_is_its_own_fact():
+    """MEASURED 2026-09-06, after the fan-out was already live. engine-p answers an unknown
+    class with `{"outcome": "unsupported", "reason": "engine-p does not hold this class"}`.
+
+    The first version knew three outcomes, so `unsupported` fell through every branch: not
+    counted as empty, not counted as unreachable, and the endpoint then reported
+    `no_provider` with the detail "all providers unreachable" — of two providers that had
+    both answered. The OUTCOME was right and the REASON was a lie, in the field a person
+    reads. Same shape as `conf 0.00`: a state reported as a different state."""
+    w = _endpoint()
+    assert 'outcome == "unsupported"' in w
+    assert "declined" in w
+
+
+def test_an_unknown_outcome_is_recorded_not_dropped():
+    """The next outcome a provider invents must not vanish the same way. An unrecognised
+    answer is still an answer, and filing it as nothing reports a reachable provider as
+    unreachable."""
+    w = _endpoint()
+    i = w.index("else:")
+    assert "outcome=" in w[i:i + 400], "an unknown outcome is silently discarded"
+
+
+def test_the_detail_distinguishes_declined_from_unreachable():
+    """A person acts on these differently: a provider that DECLINED does not hold the class,
+    so asking again changes nothing; one that was UNREACHABLE might hold it and could not be
+    asked. Collapsing them sends the reader to the wrong remedy."""
+    w = _endpoint()
+    tail = w[w.index("parts = []"):]
+    assert "no registered provider holds this class" in tail
+    assert "unreachable:" in tail

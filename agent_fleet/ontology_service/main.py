@@ -1914,6 +1914,12 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     best_too_many: dict | None = None
     answered_empty = 0
     unreachable: list[str] = []
+    # A FOURTH OUTCOME THE PROVIDERS ACTUALLY EMIT: `unsupported` — "I answered, and I do not
+    # hold this class." Measured 2026-09-06: engine-p returns it with a reason string. It is
+    # neither `empty` (which claims the class exists and has no members) nor unreachable
+    # (which claims nothing at all), and counting it as either produces a false statement in
+    # the very field a person reads.
+    declined: list[str] = []
 
     for prov in providers:
         budget = prov.get("timeout_s") or _INSTANCE_RESOLVER_FANOUT_TIMEOUT_S
@@ -1948,8 +1954,16 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
             best_too_many = {"outcome": "too_many", "members": [],
                              "count": int(body.get("count") or 0),
                              "provider": prov["provider"]}
+        elif outcome == "unsupported":
+            declined.append(prov["provider"])
         elif outcome in ("empty", "members"):
             answered_empty += 1
+        else:
+            # An outcome this endpoint does not know. NOT silently dropped: an unrecognised
+            # answer is still an answer, and filing it as nothing would report a reachable
+            # provider as unreachable — which is how `unsupported` was mis-reported before it
+            # was handled.
+            declined.append(f"{prov['provider']}(outcome={outcome or 'missing'!r})")
 
     if best_too_many is not None:
         print(f"[Engine O] enumerate {request.class_uri} -> too_many "
@@ -1960,10 +1974,18 @@ async def enumerate_instances(request: EnumerateInstancesRequest) -> dict:
     # NOBODY ANSWERED. Distinct from `empty`, and the distinction is the whole point: a menu
     # that could not be built because the providers were unreachable must not be reported as
     # a class with no members, or a transient outage renders as a fact about the ontology.
-    print(f"[Engine O] enumerate {request.class_uri} -> no_provider "
-          f"(all {len(providers)} unreachable: {unreachable})")
-    return {"outcome": "no_provider", "members": [], "count": 0,
-            "detail": f"all providers unreachable: {', '.join(unreachable)}"}
+    # NOBODY COULD LIST IT, and the DETAIL must say which of the two reasons applies. They
+    # are different facts and a person acts on them differently: a provider that declined
+    # does not hold the class (ask a different way), one that was unreachable might hold it
+    # and could not be asked (try again).
+    parts = []
+    if declined:
+        parts.append(f"no registered provider holds this class ({', '.join(declined)})")
+    if unreachable:
+        parts.append(f"unreachable: {', '.join(unreachable)}")
+    detail = "; ".join(parts) or "no provider answered"
+    print(f"[Engine O] enumerate {request.class_uri} -> no_provider ({detail})")
+    return {"outcome": "no_provider", "members": [], "count": 0, "detail": detail}
 
 
 @app.post("/resolve", response_model=SemanticResolutionResponse)
