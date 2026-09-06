@@ -104,11 +104,13 @@ try:
     from capabilities import (  # type: ignore[no-redef]
         PRESENTATION_CAPABILITIES as _PRESENTATION_CAPABILITIES,
         capability_slug as _capability_slug,
+        _with_selection_provenance,
     )
 except ImportError:
     from agent_fleet.presentation_agent.capabilities import (
         PRESENTATION_CAPABILITIES as _PRESENTATION_CAPABILITIES,
         capability_slug as _capability_slug,
+        _with_selection_provenance,
     )
 
 
@@ -1016,10 +1018,10 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                 # The caller's menu cannot draw this. Honest text beats a widget it never
                 # advertised -- and the provenance above says WHICH refusal produced it.
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                return _render_document_deterministic(
+                return _with_selection_provenance(_render_document_deterministic(
                     request.raw_data, effective_persona,
                     subject_concept=request.output_uri,
-                )
+                ), _sel_prov)
         if cap:
             archetype = cap["archetype"]
             # ── SLICE 4: THE DATA GETS A VOTE ─────────────────────────────────────────
@@ -1045,29 +1047,29 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
                         request.output_uri, _refusal,
                     )
                     response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                    return _render_document_deterministic(
+                    return _with_selection_provenance(_render_document_deterministic(
                         request.raw_data,
                         effective_persona,
                         subject_concept=request.output_uri,
-                    )
+                    ), _sel_prov)
             logger.info(
                 "render_ui: output_uri=%s matched capability archetype=%s",
                 request.output_uri, archetype,
             )
             if archetype == "KNOWLEDGE_DOCUMENT":
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_DETERMINISTIC
-                return _render_document_deterministic(
+                return _with_selection_provenance(_render_document_deterministic(
                     request.raw_data,
                     effective_persona,
                     subject_concept=request.output_uri,
-                )
+                ), _sel_prov)
             hardened, handled = await _render_archetype_hardened(
                 archetype, str_raw_data, effective_persona,
                 raw_data=request.raw_data,
             )
             if handled:
                 response.headers["X-Presentation-Path"] = PRESENTATION_PATH_ARCHETYPE_HARDENED
-                return hardened
+                return _with_selection_provenance(hardened, _sel_prov)
             logger.warning(
                 "render_ui: no hardened renderer for archetype=%s; "
                 "falling back to legacy DesignUI. Add RenderAs<X> to "
@@ -1082,7 +1084,7 @@ async def render_ui(request: RenderRequest, response: Response) -> Any:
             )
         response.headers["X-Presentation-Path"] = PRESENTATION_PATH_FALLBACK_DESIGNUI
         baml_response = await b.DesignUI(str_raw_data, effective_persona)
-        return baml_response.model_dump()
+        return _with_selection_provenance(baml_response.model_dump(), _sel_prov)
 
     # 4. No output_uri at all. Legacy callers; LLM decides archetype.
     response.headers["X-Presentation-Path"] = PRESENTATION_PATH_FALLBACK_NO_OUTPUT_URI

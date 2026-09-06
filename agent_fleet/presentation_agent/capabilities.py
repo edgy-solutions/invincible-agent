@@ -57,6 +57,37 @@ def canonical_iri_for_lookup(iri: str) -> str:
     return iri
 
 
+def _with_selection_provenance(payload: Any, prov: Optional[Dict[str, Any]]) -> Any:
+    """Carry the selector's verdict ON THE RESPONSE. Additive; the log line is untouched.
+
+    RULED 2026-09-05. `selection_basis` distinguishes `"output_uri+payload"` from
+    `"payload-only (output_uri matched no capability)"` — which is exactly LEGITIMATE SHAPE
+    DIFFERENCE versus FELL THROUGH TO A PLAUSIBLE CARD. It existed only inside a `logger.info`,
+    so nothing downstream could tell those apart.
+
+    THE FAILURE THIS NAMES IS ALREADY ON THE RECORD: `mesh:PeriodCostSeries` matched no
+    capability, a `[{period,total}]` series satisfied CHART_WIDGET, and a plausible bar chart
+    drew — and selection_basis was the only field that said so. A card that is wrong AND
+    plausible is the worst outcome this platform can produce, and the one field naming it was
+    unreadable to every consumer.
+
+    ⛔ ADDITIVE, NOT A SUBSTITUTION. The `logger.info` above stays exactly as it was: a log
+    line is read by a person and a payload by a renderer, and one string cannot serve both.
+    Nothing that greps the log has to change.
+
+    ABSENCE IS SILENT. Paths that return BEFORE a selection ran — a declared non-answer, an
+    absent output_uri — get no key at all rather than a null one, so a reader can distinguish
+    "no selection happened" from "a selection happened and reported nothing".
+    """
+    if not prov or not isinstance(payload, dict):
+        return payload
+    carried = {k: v for k, v in prov.items() if v is not None}
+    if not carried:
+        return payload
+    payload["presentation_provenance"] = carried
+    return payload
+
+
 def capability_slug(subject_uri: str) -> str:
     """Turn a capability subject URI into a URN-safe slug for registration names.
 
