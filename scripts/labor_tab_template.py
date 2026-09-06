@@ -116,6 +116,35 @@ TEMPLATE = """<!doctype html>
   <h2>Price composition <span class="baseline-tag">BASELINE</span></h2>
   <table id="composition"></table>
 
+  <h2>Programme management effort <span class="baseline-tag">BASELINE</span></h2>
+  <div class="row">
+   <div class="panel">
+    <div class="panel-title">SEPM hours by month, against the run average</div>
+    <div id="sepm-chart"></div>
+   </div>
+   <div class="panel">
+    <table class="metrics"><tbody id="sepm-metrics"></tbody></table>
+   </div>
+  </div>
+
+  <h2>Material <span class="baseline-tag">BASELINE</span></h2>
+  <div class="row">
+   <div class="panel">
+    <div class="panel-title">Burdened material cost per unit &mdash; applied against estimating</div>
+    <div id="material-chart"></div>
+   </div>
+   <div class="panel">
+    <div class="panel-title">Purchased value by supplier</div>
+    <div class="controls">
+     <label>Concentration threshold
+      <input id="threshold" type="number" step="0.05" min="0.05" max="0.95"></label>
+    </div>
+    <div id="conc-chart"></div>
+    <p class="note" id="conc-note"></p>
+   </div>
+  </div>
+  <table id="material-table"></table>
+
   <details id="algorithm">
    <summary>The pricing modules this page ran &mdash; read or download the source</summary>
    <div id="algo-body">
@@ -215,6 +244,111 @@ const KIND_COLORS = {{touch: '#2563eb', support: '#7c3aed', sepm: '#0891b2'}};
 // EVERY NUMBER IS PYTHON'S. This routine converts values to pixels and nothing else: no sums,
 // no maximum of its own, no percentages. `max_hours` arrives in the payload precisely so the
 // scale is a figure the seals can see rather than a side effect of drawing.
+// SEPM by month, with the average drawn ACROSS the bars. The average arrives from Python; a
+// mean computed here would be arithmetic outside the pinned modules.
+function monthlyChart(sv, width, height) {{
+  const padL = 56, padB = 34, padT = 10, padR = 8;
+  const plotW = width - padL - padR, plotH = height - padB - padT;
+  const max = Math.max.apply(null, sv.months.map(m => m.value)) * 1.12 || 1;
+  const slot = plotW / (sv.months.length || 1), bw = Math.min(34, slot * 0.66);
+  let out = '';
+  for (let g = 0; g <= 4; g++) {{
+    const y = padT + plotH - (g / 4) * plotH;
+    out += '<line x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (width - padR) +
+           '" y2="' + y.toFixed(1) + '" stroke="#e5e7eb"/><text x="' + (padL - 7) + '" y="' +
+           (y + 4).toFixed(1) + '" text-anchor="end" font-size="10" fill="#6b7280">' +
+           (max * g / 4).toFixed(0) + '</text>';
+  }}
+  sv.months.forEach((m, i) => {{
+    const cx = padL + slot * i + slot / 2, h = (m.value / max) * plotH;
+    out += '<rect x="' + (cx - bw / 2).toFixed(1) + '" y="' + (padT + plotH - h).toFixed(1) +
+           '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' +
+           (m.above_average ? '#0891b2' : '#94a3b8') + '"><title>' + m.period + ': ' +
+           m.display + ' h, ' + m.cost + '</title></rect>' +
+           '<text x="' + cx.toFixed(1) + '" y="' + (padT + plotH + 14) +
+           '" text-anchor="middle" font-size="9" fill="#6b7280">' +
+           m.period.slice(5) + '</text>';
+  }});
+  const ay = padT + plotH - (sv.average_value / max) * plotH;
+  out += '<line x1="' + padL + '" y1="' + ay.toFixed(1) + '" x2="' + (width - padR) + '" y2="' +
+         ay.toFixed(1) + '" stroke="#b45309" stroke-width="2" stroke-dasharray="6 4"/>' +
+         '<text x="' + (width - padR) + '" y="' + (ay - 5).toFixed(1) +
+         '" text-anchor="end" font-size="10" fill="#b45309">average ' + sv.average + '</text>';
+  return '<svg width="100%" viewBox="0 0 ' + width + ' ' + height + '" style="max-width:100%">' +
+         out + '</svg>';
+}}
+
+// Material unit price by lot: applied beside estimating. A lot whose year has one rate vintage
+// draws ONE bar and says so - a second bar of equal height would read as agreement.
+function materialChart(mv, selected, width, height) {{
+  const padL = 62, padB = 34, padT = 10, padR = 8;
+  const plotW = width - padL - padR, plotH = height - padB - padT;
+  const max = mv.y_max * 1.12 || 1;
+  const slot = plotW / (mv.rows.length || 1), bw = Math.min(20, slot * 0.3);
+  let out = '';
+  for (let g = 0; g <= 4; g++) {{
+    const y = padT + plotH - (g / 4) * plotH, v = max * g / 4;
+    out += '<line x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (width - padR) + '" y2="' +
+           y.toFixed(1) + '" stroke="#e5e7eb"/><text x="' + (padL - 7) + '" y="' +
+           (y + 4).toFixed(1) + '" text-anchor="end" font-size="10" fill="#6b7280">' +
+           (v / 1000).toFixed(0) + 'k</text>';
+  }}
+  mv.rows.forEach((r, i) => {{
+    const cx = padL + slot * i + slot / 2;
+    const ha = (r.unit_applied_value / max) * plotH;
+    const solo = r.unit_estimating_value === null;
+    const xa = solo ? cx - bw / 2 : cx - bw - 2;
+    out += '<rect x="' + xa.toFixed(1) + '" y="' + (padT + plotH - ha).toFixed(1) + '" width="' +
+           bw + '" height="' + ha.toFixed(1) + '" fill="#2563eb" opacity="' +
+           (r.lot === selected ? 1 : 0.45) + '"><title>Lot ' + r.lot + ' applied (' +
+           r.applied_vintage + '): ' + r.unit_applied + '</title></rect>';
+    if (!solo) {{
+      const he = (r.unit_estimating_value / max) * plotH;
+      out += '<rect x="' + (cx + 2).toFixed(1) + '" y="' + (padT + plotH - he).toFixed(1) +
+             '" width="' + bw + '" height="' + he.toFixed(1) + '" fill="#b45309" opacity="' +
+             (r.lot === selected ? 1 : 0.45) + '"><title>Lot ' + r.lot + ' estimating (' +
+             r.estimating_vintage + '): ' + r.unit_estimating + '</title></rect>';
+    }} else {{
+      out += '<text x="' + cx.toFixed(1) + '" y="' + (padT + plotH - ha - 5).toFixed(1) +
+             '" text-anchor="middle" font-size="9" fill="#9ca3af">no estimate</text>';
+    }}
+    out += '<text x="' + cx.toFixed(1) + '" y="' + (padT + plotH + 14) +
+           '" text-anchor="middle" font-size="10" fill="' +
+           (r.lot === selected ? '#111827' : '#6b7280') + '">Lot ' + r.lot + '</text>';
+  }});
+  const key = '<span style="font-size:12px;margin-right:14px"><span style="display:inline-block;' +
+    'width:10px;height:10px;background:#2563eb;margin-right:4px"></span>applied</span>' +
+    '<span style="font-size:12px"><span style="display:inline-block;width:10px;height:10px;' +
+    'background:#b45309;margin-right:4px"></span>estimating</span>';
+  return '<svg width="100%" viewBox="0 0 ' + width + ' ' + height + '" style="max-width:100%">' +
+         out + '</svg><div style="margin-top:6px">' + key + '</div>';
+}}
+
+// Ranked shares with the bound drawn on them. The bound is Python's and is stated in words
+// beside the picture, because "concentrated" means nothing without it.
+function concentrationBars(cv, width) {{
+  if (!cv.rows.length) return '<p class="note">This lot records no purchased value.</p>';
+  const rowH = 26, h = cv.rows.length * rowH + 16, padL = 150, padR = 70;
+  const plotW = width - padL - padR;
+  const max = Math.max.apply(null, cv.rows.map(r => r.share_pct)) * 1.15 || 1;
+  let out = '';
+  cv.rows.forEach((r, i) => {{
+    const y = i * rowH + 8, w = (r.share_pct / max) * plotW;
+    out += '<text x="' + (padL - 8) + '" y="' + (y + 13) +
+           '" text-anchor="end" font-size="11" fill="#374151">' + r.supplier + '</text>' +
+           '<rect x="' + padL + '" y="' + y + '" width="' + w.toFixed(1) + '" height="16" fill="' +
+           (r.above_threshold ? '#b91c1c' : '#64748b') + '"><title>' + r.supplier + ': ' +
+           r.amount + '</title></rect>' +
+           '<text x="' + (padL + w + 7).toFixed(1) + '" y="' + (y + 13) +
+           '" font-size="11" fill="#374151">' + r.share_pct.toFixed(1) + '%</text>';
+  }});
+  const tx = padL + (parseFloat(cv.threshold) * 100 / max) * plotW;
+  out += '<line x1="' + tx.toFixed(1) + '" y1="2" x2="' + tx.toFixed(1) + '" y2="' + (h - 8) +
+         '" stroke="#b91c1c" stroke-width="1.5" stroke-dasharray="4 3"/>';
+  return '<svg width="100%" viewBox="0 0 ' + width + ' ' + h + '" style="max-width:100%">' +
+         out + '</svg>';
+}}
+
 function stackedColumns(pv, selected, width, height) {{
   const padL = 62, padB = 30, padT = 10, padR = 8;
   const plotW = width - padL - padR, plotH = height - padB - padT;
@@ -418,6 +552,31 @@ function renderLot(lot) {{
   // THE ACROSS-LOTS CHARTS FOLLOW THE SELECTOR TOO. They show every lot, but they highlight
   // the selected one — so "changing the lot recomputes every figure below" stays true of the
   // whole page rather than of the top half.
+  const sv = JSON.parse(PY.runPython(
+    'import json, page; json.dumps(page.sepm_monthly_view(' + lot + '))'));
+  document.getElementById('sepm-chart').innerHTML = monthlyChart(sv, 560, 240);
+  document.getElementById('sepm-metrics').innerHTML = metricRows([
+    ['Total SEPM hours', sv.total],
+    ['Monthly average', sv.average],
+    ['Peak month', sv.peak],
+    ['Months above average', sv.months_above_average + ' of ' + sv.months.length],
+    // RECONCILIATION ON THE FACE OF THE PAGE. The monthly rows and the annual figure are two
+    // statements about one quantity; a reader should not have to trust that they agree.
+    ['Reconciles to the annual figure', sv.reconciles
+      ? 'yes &mdash; ' + sv.annual_total : 'NO &mdash; annual says ' + sv.annual_total],
+  ]);
+
+  const mv = JSON.parse(PY.runPython('import json, page; json.dumps(page.material_view())'));
+  document.getElementById('material-chart').innerHTML = materialChart(mv, lot, 560, 240);
+  document.getElementById('material-table').innerHTML =
+    '<tr><th>lot</th><th>qty</th><th>material</th><th>per unit (applied)</th>' +
+    '<th>per unit (estimating)</th><th>difference</th><th></th></tr>' +
+    mv.rows.map(r => '<tr><td>Lot ' + r.lot + '</td><td>' + r.quantity + '</td><td>' +
+      r.material + '</td><td>' + r.unit_applied + '</td><td>' + r.unit_estimating +
+      '</td><td>' + r.difference + '</td><td style="color:#6b7280">' + r.note +
+      '</td></tr>').join('');
+  renderConcentration(lot);
+
   const pv = JSON.parse(PY.runPython('import json, page; json.dumps(page.program_view())'));
   document.getElementById('program-chart').innerHTML = stackedColumns(pv, lot, 560, 260);
   renderScenario(lot);
@@ -427,6 +586,19 @@ function currentRates() {{
   const out = {{}};
   document.querySelectorAll('#rate-inputs input').forEach(i => {{ out[i.dataset.key] = i.value; }});
   return out;
+}}
+
+function renderConcentration(lot) {{
+  const th = document.getElementById('threshold').value;
+  const cv = JSON.parse(PY.runPython(
+    'import json, page; json.dumps(page.supplier_view(' + lot + ', ' +
+    JSON.stringify(String(th)) + '))'));
+  document.getElementById('conc-chart').innerHTML = concentrationBars(cv, 560);
+  document.getElementById('conc-note').innerHTML =
+    cv.above + ' supplier(s) above a ' + cv.threshold + ' share' +
+    (cv.threshold_defaulted ? ' <em>(default bound &mdash; you did not choose it)</em>'
+                            : ' <em>(your bound)</em>') +
+    ' &middot; purchased value ' + cv.purchased + ' &middot; largest share ' + cv.largest_share;
 }}
 
 function renderScenario(lot) {{
@@ -528,6 +700,9 @@ function renderScenario(lot) {{
         '<label>' + k + ' <input type="number" step="0.001" data-key="' + k +
         '" value="' + baseRates[k] + '"></label>').join('');
     document.getElementById('slope').value = PKG.dataset.learning_slope || '0.92';
+    document.getElementById('threshold').value = '0.25';
+    document.getElementById('threshold').addEventListener(
+      'input', () => renderConcentration(Number(document.getElementById('lot').value)));
 
     sel.addEventListener('change', () => renderLot(Number(sel.value)));
     document.getElementById('rate-inputs').addEventListener('input',

@@ -928,3 +928,209 @@ def test_include_dataset_DEFAULTS_ON_and_is_the_only_optional_slot():
     assert names["recipient_scope"]["kind"] == "spoken-mandatory"
     assert names["include_dataset"]["kind"] == "spoken-optional"
     assert names["include_dataset"]["type"] == "boolean"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THE REMAINING TAB SURFACES — SEPM by month, material, supplier concentration
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_monthly_SEPM_RECONCILES_to_the_annual_figure(slice2):
+    """Two statements about one quantity. If they disagree the page shows two answers."""
+    pkg, _ = slice2
+    for lot in pkg["lots"]:
+        sv = PAGE.sepm_monthly_view(lot)
+        assert sv["reconciles"], (
+            f"lot {lot}: months sum to {sv['total']}, annual row says {sv['annual_total']}")
+        assert sv["total"] == sv["annual_total"]
+
+
+def test_the_monthly_shape_is_NOT_FLAT(slice2):
+    """A flat series makes the average line meaningless and this whole view decorative.
+
+    The seal is on the DATA, not the chart: if every month were equal, 'months above average'
+    would be 0 or 12 and no staffing judgement could be read off the picture at all.
+    """
+    pkg, _ = slice2
+    for lot in pkg["lots"]:
+        sv = PAGE.sepm_monthly_view(lot)
+        values = {m["value"] for m in sv["months"]}
+        assert len(values) > 4, f"lot {lot}: only {len(values)} distinct monthly values"
+        assert 0 < sv["months_above_average"] < len(sv["months"])
+
+
+def test_the_average_is_the_MEAN_of_the_months_shown(slice2):
+    pkg, _ = slice2
+    sv = PAGE.sepm_monthly_view(pkg["lots"][0])
+    total = sum(Decimal(m["display"].replace(",", "")) for m in sv["months"])
+    expected = (total / len(sv["months"])).quantize(Decimal("0.01"))
+    assert sv["average"].replace(",", "") == str(expected)
+
+
+def test_every_month_is_labelled_and_ordered(slice2):
+    pkg, _ = slice2
+    sv = PAGE.sepm_monthly_view(pkg["lots"][0])
+    periods = [m["period"] for m in sv["months"]]
+    assert periods == sorted(periods), "months are out of order"
+    assert len(periods) == 12 and len(set(periods)) == 12
+
+
+def test_the_material_comparison_CAN_DISCRIMINATE(slice2):
+    """THE SEAL THE MATERIAL VIEW ASKED FOR, and it was red when the view was first built.
+
+    Material is burdened by G&A, cost of money, profit and escalation — NOT by fringe or
+    overhead. The seed revised only fringe and overhead between vintages, so applied-versus-
+    estimating on a purchased figure was ZERO BY CONSTRUCTION on every lot. The view rendered a
+    column of 0.00 that reads as 'the estimate was exactly right'.
+
+    A comparison that cannot come out different is not a comparison. This asserts it moves.
+    """
+    mv = PAGE.material_view()
+    comparable = [r for r in mv["rows"] if r["comparable"]]
+    assert comparable, "no lot has a distinct estimating vintage - the view is unanswerable"
+    moved = [r for r in comparable if r["difference"] not in ("0.00", "n/a")]
+    assert moved == comparable, (
+        "every comparable lot shows a zero difference — the rate revision does not reach "
+        "material, so this column cannot discriminate")
+
+
+def test_a_lot_with_ONE_VINTAGE_reports_NO_ESTIMATE_not_zero(slice2):
+    """A zero difference reads as agreement; the truth is there is nothing to compare."""
+    mv = PAGE.material_view()
+    solo = [r for r in mv["rows"] if not r["comparable"]]
+    assert solo, "no single-vintage lot in this package - the seal has gone vacuous"
+    for r in solo:
+        assert r["difference"] == "n/a" and r["unit_estimating"] == "n/a"
+        assert r["estimating_vintage"] is None
+        assert "no separate estimate" in r["note"]
+
+
+def test_material_unit_price_uses_the_quantity_and_the_MATERIAL_row(slice2):
+    pkg, _ = slice2
+    for r in PAGE.material_view()["rows"]:
+        meta = next(l for l in pkg["dataset"]["rows"]["lots"] if l["lot"] == r["lot"])
+        assert r["quantity"] == meta["quantity"]
+        assert r["applied_vintage"] == meta["applied_vintage"]
+        material = Decimal(r["material"].replace(",", ""))
+        unit = Decimal(r["unit_applied"].replace(",", ""))
+        # Burdened, so strictly above the raw per-unit buy — and not wildly above it.
+        assert material / r["quantity"] < unit < material / r["quantity"] * Decimal("2")
+
+
+def test_supplier_shares_are_RANKED_and_sum_to_one(slice2):
+    pkg, _ = slice2
+    for lot in pkg["lots"]:
+        cv = PAGE.supplier_view(lot)
+        shares = [Decimal(r["share"]) for r in cv["rows"]]
+        assert shares == sorted(shares, reverse=True), f"lot {lot}: not ranked"
+        assert abs(sum(shares) - Decimal("1")) < Decimal("0.0005"), (
+            f"lot {lot}: shares sum to {sum(shares)}, so the view does not cover what it "
+            "claims to describe")
+
+
+def test_the_supplier_THRESHOLD_travels_with_the_verdict(slice2):
+    """'Concentrated' is meaningless without the bound it was judged against — and the page
+    must say whether the reader chose that bound or inherited it."""
+    pkg, _ = slice2
+    lot = pkg["lots"][2]
+    default = PAGE.supplier_view(lot)
+    assert default["threshold_defaulted"] is True
+    chosen = PAGE.supplier_view(lot, "0.40")
+    assert chosen["threshold_defaulted"] is False and chosen["threshold"] == "0.40"
+    assert chosen["above"] < default["above"], "the bound does not change the verdict"
+
+
+def test_an_out_of_range_threshold_falls_back_and_SAYS_SO(slice2):
+    pkg, _ = slice2
+    for bad in ("0", "1", "9", "-0.5", "not a number"):
+        cv = PAGE.supplier_view(pkg["lots"][0], bad)
+        assert cv["threshold"] == "0.25" and cv["threshold_defaulted"] is True, bad
+
+
+def test_the_page_and_the_ENGINE_VERB_agree_on_concentration(state, slice2):
+    """The browser must not compute a different answer than the engine for the same question."""
+    from agent_fleet.cost_agent.measures import cost_supplier_concentration
+
+    pkg, _ = slice2
+    for lot in pkg["lots"]:
+        engine = cost_supplier_concentration(state, lot=lot)
+        browser = PAGE.supplier_view(lot)
+        assert [r["supplier"] for r in engine["rows"]] == \
+               [r["supplier"] for r in browser["rows"]]
+        assert [r["share_of_purchased"] for r in engine["rows"]] == \
+               [r["share"] for r in browser["rows"]]
+        assert engine["suppliers_above_threshold"] == browser["above"]
+
+
+def test_the_dataset_agreement_check_COVERS_PERIOD(slice2, tmp_path):
+    """PERIOD IS COMPARED, not merely sorted on.
+
+    The check keyed on (lot, category, sub_config), which stopped identifying a row once a
+    category held ties: twelve monthly SEPM rows share all three, and the two sides ordered
+    their ties differently, producing six reported "differences" that were the same values in
+    another order.
+
+    TWO DIFFERENT PROPERTIES, and it is worth being exact about which is proven where, because
+    I first tried to force one mutation to cover both and it would not:
+
+      * NO FALSE POSITIVES ON TIED ROWS — this is what putting period in the key buys, and it
+        is proven by `test_the_embedded_rows_and_the_duckdb_agree` passing at all. That test
+        FAILED with six spurious differences the moment twelve tied rows existed.
+
+      * A PERIOD CHANGE IS DETECTED — proven below by tampering with the shipped file.
+
+    Removing period from the key does NOT break the second property: the reordering misaligns
+    the rows and the prices disagree anyway. So there is no mutation that turns this test red,
+    and rather than invent one, the honest record is that this test asserts detection while the
+    agreement test asserts stability. A bite-check that cannot be constructed is a fact about
+    the property, not a licence to skip saying so.
+    """
+    import shutil
+
+    import duckdb
+
+    pkg, db = slice2
+    rows = pkg["dataset"]["rows"]
+    monthly = [r for r in rows["results"] if r["category"] == "sepm_monthly"]
+    assert len({(r["lot"], r["category"], r["sub_config"]) for r in monthly}) < len(monthly), (
+        "the monthly rows no longer tie on the old key - this seal has gone vacuous")
+    assert X.datasets_agree(rows, str(db)) == []
+
+    tampered = tmp_path / "period.duckdb"
+    shutil.copy(db, tampered)
+    con = duckdb.connect(str(tampered))
+    victim = min(r["period"] for r in monthly)
+    con.execute("UPDATE results SET period = '9999-01' "
+                "WHERE category = 'sepm_monthly' AND period = ?", [victim])
+    con.close()
+    assert X.datasets_agree(rows, str(tampered)), (
+        "a row moved to a different period was not detected - period is sorted on but not "
+        "compared")
+
+
+def test_the_agreement_check_COMPARES_HOURS_too(slice2, tmp_path):
+    """Hours were never compared: a file with wrong hours and right prices passed."""
+    import shutil
+
+    import duckdb
+
+    pkg, db = slice2
+    tampered = tmp_path / "hours.duckdb"
+    shutil.copy(db, tampered)
+    con = duckdb.connect(str(tampered))
+    con.execute("UPDATE results SET hours = hours + 1 WHERE category = 'sepm_monthly'")
+    con.close()
+    assert X.datasets_agree(pkg["dataset"]["rows"], str(tampered)), "an hours-only edit passed"
+
+
+def test_the_lots_table_carries_NO_CONSTANT_COLUMN(slice2):
+    """`estimating` was False on every row ever produced. A column that never varies answers
+    nothing and reads, to anyone joining on it, like a distinction the data supports.
+    """
+    pkg, _ = slice2
+    lots = pkg["dataset"]["rows"]["lots"]
+    assert len(lots) > 1
+    for column in lots[0]:
+        values = {row[column] for row in lots}
+        if column == "estimating_vintage":
+            continue  # may legitimately tie when every year has one vintage
+        assert len(values) > 1, f"column {column!r} is constant across every lot"

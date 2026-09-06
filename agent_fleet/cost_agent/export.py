@@ -332,9 +332,16 @@ def dataset_rows(state: CostState, *, lots: tuple[int, ...]) -> dict[str, Any]:
         lot = state.lot(n)
         vintage = state.vintages(lot.fiscal_year)[0]
         rates = state.rates[(lot.fiscal_year, vintage)]
+        # THE TWO VINTAGES, NAMED. This column was a boolean `estimating` that was False on
+        # every row ever produced - a column that never varies answers nothing and reads, to
+        # anyone joining on it, like a distinction the data supports. It could not support one:
+        # the estimating rate set was never exported at all, so estimating-versus-applied was
+        # unanswerable from the package no matter what the flag said.
         lot_rows.append({"lot": n, "quantity": lot.quantity,
                          "cumulative_units": lot.cumulative_units,
-                         "fiscal_year": lot.fiscal_year, "estimating": False})
+                         "fiscal_year": lot.fiscal_year,
+                         "applied_vintage": vintage,
+                         "estimating_vintage": lot.estimating_rates.vintage})
         # QUANTIZED AT THE BOUNDARY. `LaborLine.cost` is hours x rate and is not rounded, so
         # str() gives "3108000" while a DECIMAL(20,2) column gives "3108000.00". Two
         # representations of one number is enough to break a hash comparison — caught by the
@@ -345,6 +352,24 @@ def dataset_rows(state: CostState, *, lots: tuple[int, ...]) -> dict[str, Any]:
                                 "hours": str(quantize_money(line.hours)),
                                 "price": str(quantize_money(line.cost)),
                                 "rate": str(line.rate)})
+        # SEPM BY MONTH. A level-of-effort total answers "how much" and hides the shape; the
+        # month series is what makes an over- or under-staffed period visible. Kept as its own
+        # category so the annual `labor`/`sepm` row stays exactly what it was, and the two can
+        # be reconciled rather than one silently replacing the other.
+        sepm_rate = next((line.rate for line in lot.labor if line.kind == "sepm"), None)
+        for m in lot.sepm_monthly:
+            result_rows.append({
+                "lot": n, "category": "sepm_monthly", "sub_config": "sepm",
+                "period": m.period, "hours": str(quantize_money(m.hours)),
+                "price": str(quantize_money(m.hours * sepm_rate)) if sepm_rate else "0.00",
+                "rate": None if sepm_rate is None else str(sepm_rate)})
+        # SUPPLIERS, so concentration is answerable in the browser. The verb already computes
+        # it engine-side; without these rows the page could only quote a number it could not
+        # recompute, which is the one thing this artifact does not do.
+        for share in lot.suppliers:
+            result_rows.append({"lot": n, "category": "supplier", "sub_config": share.name,
+                                "period": str(lot.fiscal_year), "hours": None,
+                                "price": str(quantize_money(share.amount)), "rate": None})
         for cat, price, hours in (("material", lot.material, None),
                                   ("other_direct", lot.other_direct, None),
                                   ("warranty", lot.warranty, lot.warranty_hours),
@@ -367,12 +392,18 @@ def dataset_rows(state: CostState, *, lots: tuple[int, ...]) -> dict[str, Any]:
         result_rows.append({"lot": n, "category": "unit_price", "sub_config": None,
                             "period": str(lot.fiscal_year), "hours": None,
                             "price": str(unit_price(build_up, lot.quantity)), "rate": None})
-        for field in ("fringe", "overhead", "g_and_a", "cost_of_money", "profit", "escalation"):
-            key = (vintage, lot.fiscal_year, field)
-            if key not in seen:
-                seen.add(key)
-                rate_rows.append({"vintage": vintage, "fiscal_year": lot.fiscal_year,
-                                  "category": field, "rate": str(getattr(rates, field))})
+        # BOTH RATE SETS. Only the applied one was exported, so the package carried an
+        # `estimating` column and no estimating rates to put behind it.
+        for rate_set in (rates, lot.estimating_rates):
+            for field in ("fringe", "overhead", "g_and_a", "cost_of_money", "profit",
+                          "escalation"):
+                key = (rate_set.vintage, lot.fiscal_year, field)
+                if key not in seen:
+                    seen.add(key)
+                    rate_rows.append({"vintage": rate_set.vintage,
+                                      "fiscal_year": lot.fiscal_year,
+                                      "category": field,
+                                      "rate": str(getattr(rate_set, field))})
     return {"lots": lot_rows, "results": result_rows, "rates": rate_rows}
 
 
@@ -396,18 +427,32 @@ def datasets_agree(rows: dict[str, Any], duckdb_path: str) -> list[str]:
         if db_lots != emb_lots:
             problems.append(f"lots differ: db {db_lots} vs embedded {emb_lots}")
 
+        # PERIOD IS PART OF THE KEY, and HOURS ARE COMPARED.
+        #
+        # The key was (lot, category, sub_config), which stopped identifying a row the moment a
+        # category held more than one row per sub_config. Twelve monthly SEPM rows share all
+        # three, so the two sides sorted their ties differently and the check reported six
+        # "differences" that were the same twelve values in another order. It had been correct
+        # only by the accident that no category had ties yet.
+        #
+        # Hours were never compared at all: a file whose hours were wrong and whose prices were
+        # right passed. The page reads both.
         db_res = con.execute(
-            "SELECT lot, category, COALESCE(sub_config,''), price FROM results "
-            "ORDER BY lot, category, COALESCE(sub_config,'')").fetchall()
+            "SELECT lot, category, COALESCE(sub_config,''), COALESCE(period,''), "
+            "COALESCE(CAST(hours AS VARCHAR),''), price FROM results "
+            "ORDER BY lot, category, COALESCE(sub_config,''), COALESCE(period,''), price"
+        ).fetchall()
         emb_res = sorted(
-            ((r["lot"], r["category"], r["sub_config"] or "", r["price"])
+            ((r["lot"], r["category"], r["sub_config"] or "", r["period"] or "",
+              r["hours"] or "", r["price"])
              for r in rows["results"]),
-            key=lambda x: (x[0], x[1], x[2]))
+            key=lambda x: (x[0], x[1], x[2], x[3], x[5]))
         if len(db_res) != len(emb_res):
             problems.append(f"result row counts differ: db {len(db_res)} vs embedded "
                             f"{len(emb_res)}")
         for d, e in zip(db_res, emb_res):
-            if (d[0], d[1], d[2]) != (e[0], e[1], e[2]) or str(d[3]) != e[3]:
+            same_key = (d[0], d[1], d[2], d[3]) == (e[0], e[1], e[2], e[3])
+            if not same_key or str(d[4]) != e[4] or str(d[5]) != e[5]:
                 problems.append(f"row differs: db {d} vs embedded {e}")
                 if len(problems) > 8:
                     break

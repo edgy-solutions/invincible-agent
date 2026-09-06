@@ -62,6 +62,18 @@ class VintageRequired(Exception):
 
 
 @dataclass(frozen=True)
+class MonthlyEffort:
+    """Hours booked in one calendar month, for a kind of work that runs continuously.
+
+    SEPM is a LEVEL OF EFFORT: it is staffed by month, not consumed per unit, so a per-lot
+    total answers "how much" and hides the shape entirely. A month-by-month series with its
+    own average is what makes an over- or under-staffed period visible at all.
+    """
+    period: str          # "YYYY-MM"
+    hours: Decimal
+
+
+@dataclass(frozen=True)
 class LaborLine:
     """Hours and applied rate for one kind of work within one lot."""
     kind: LaborKind
@@ -91,6 +103,9 @@ class Lot:
     cumulative_units: int
     fiscal_year: int
     labor: tuple[LaborLine, ...]
+    #: SEPM by calendar month. Sums EXACTLY to the sepm `LaborLine`'s hours - sealed, because a
+    #: monthly view that does not reconcile to the annual figure is two answers to one question.
+    sepm_monthly: tuple[MonthlyEffort, ...]
     material: Decimal
     other_direct: Decimal
     warranty: Decimal

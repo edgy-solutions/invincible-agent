@@ -485,3 +485,150 @@ def step_lines() -> dict[str, Any]:
     return {"steps": steps, "evaluator": evaluator, "entry": entry,
             "unresolved": [c["name"] for c in _PKG["manifest"]["composition"]
                            if c["name"] not in steps]}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# THE REMAINING TAB SURFACES. SEPM by month, material unit price against the estimate, and
+# supplier concentration. All three read rows the engine produced.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+DEFAULT_CONCENTRATION_THRESHOLD = Decimal("0.25")
+
+
+def sepm_monthly_view(lot: int) -> dict[str, Any]:
+    """Level-of-effort staffing across the lot's twelve months, with its own average.
+
+    THE AVERAGE IS THE POINT. A total answers "how much"; the average line is what turns the
+    series into a judgement, because a month is only heavy or light relative to the run. It is
+    computed here rather than by the renderer for the usual reason: a mean is arithmetic.
+
+    RECONCILIATION IS REPORTED, NOT ASSUMED. The monthly rows and the annual labor/sepm row are
+    two statements about one quantity, and a view that showed the first without checking it
+    against the second would let them drift silently.
+    """
+    rows = sorted(_rows_for(lot, "sepm_monthly"), key=lambda r: r["period"])
+    months, total = [], Decimal("0")
+    for r in rows:
+        hours = Decimal(r["hours"])
+        total += hours
+        months.append({"period": r["period"], "value": float(hours),
+                       "display": _money(hours), "cost": _money(Decimal(r["price"]))})
+    average = (total / len(months)).quantize(Decimal("0.01")) if months else Decimal("0")
+    for m in months:
+        m["above_average"] = m["value"] > float(average)
+
+    annual = next((Decimal(r["hours"]) for r in _rows_for(lot, "labor")
+                   if r["sub_config"] == "sepm" and r["hours"]), None)
+    return {
+        "lot": lot,
+        "months": months,
+        "average": _money(average),
+        "average_value": float(average),
+        "total": _money(total),
+        "peak": _money(max((Decimal(r["hours"]) for r in rows), default=Decimal("0"))),
+        "annual_total": _money(annual) if annual is not None else "n/a",
+        # STATED, so a mismatch is visible on the page rather than only in a test.
+        "reconciles": annual is not None and annual == total,
+        "months_above_average": sum(1 for m in months if m["above_average"]),
+    }
+
+
+def _rate_set_for(vintage: str, fiscal_year: int) -> dict[str, str]:
+    return {r["category"]: r["rate"] for r in _PKG["dataset"]["rows"]["rates"]
+            if r["vintage"] == vintage and r["fiscal_year"] == fiscal_year}
+
+
+def material_view() -> dict[str, Any]:
+    """Material cost per unit at each lot, priced at the applied AND the estimating rates.
+
+    WHAT MOVES HERE IS THE BURDEN, NOT THE BUY. The material amount is what it is; the two
+    columns differ only where the rate sets differ, so the comparison isolates the effect of
+    rate movement on a purchased figure. Presenting it as "material got dearer" would be a
+    different and false claim.
+
+    A YEAR WITH ONE VINTAGE HAS NO SEPARATE ESTIMATE, and the row says so. Showing a zero
+    difference for such a lot would read as "the estimate was exactly right" when the truth is
+    that there is nothing to compare against - the same error as reporting an absent ratio
+    as 0.000.
+    """
+    rows = []
+    for lot in _PKG["lots"]:
+        meta = _lot_meta(lot)
+        material = next((Decimal(r["price"]) for r in _rows_for(lot, "material")), None)
+        if material is None or not meta["quantity"]:
+            continue
+        applied_v, est_v = meta["applied_vintage"], meta["estimating_vintage"]
+        applied = _rate_set_for(applied_v, meta["fiscal_year"])
+        estimating = _rate_set_for(est_v, meta["fiscal_year"])
+        distinct = est_v != applied_v and bool(estimating)
+
+        def burdened(rs):
+            # G&A, cost of money and profit reach material; fringe and overhead do not.
+            base = material * Decimal(rs["escalation"])
+            after_ga = base * (Decimal("1") + Decimal(rs["g_and_a"]))
+            after_com = after_ga * (Decimal("1") + Decimal(rs["cost_of_money"]))
+            return after_com * (Decimal("1") + Decimal(rs["profit"]))
+
+        unit_applied = (burdened(applied) / meta["quantity"]).quantize(Decimal("0.01"))
+        unit_est = ((burdened(estimating) / meta["quantity"]).quantize(Decimal("0.01"))
+                    if distinct else None)
+        rows.append({
+            "lot": lot,
+            "quantity": meta["quantity"],
+            "material": _money(material),
+            "unit_applied": _money(unit_applied),
+            "unit_applied_value": float(unit_applied),
+            "applied_vintage": applied_v,
+            "estimating_vintage": est_v if distinct else None,
+            "unit_estimating": _money(unit_est) if distinct else "n/a",
+            "unit_estimating_value": float(unit_est) if distinct else None,
+            "difference": _money(unit_applied - unit_est) if distinct else "n/a",
+            "comparable": bool(distinct),
+            "note": "" if distinct else "one rate vintage this year - no separate estimate",
+        })
+    values = [r["unit_applied_value"] for r in rows] + [
+        r["unit_estimating_value"] for r in rows if r["unit_estimating_value"] is not None]
+    return {
+        "rows": rows,
+        "y_max": max(values) if values else 0.0,
+        "comparable_lots": sum(1 for r in rows if r["comparable"]),
+    }
+
+
+def supplier_view(lot: int, threshold=None) -> dict[str, Any]:
+    """Purchased value by supplier, ranked, against a stated bound.
+
+    THE BOUND TRAVELS WITH THE VERDICT and says whether the caller chose it - the same rule the
+    engine verb follows, because "concentrated" is meaningless without the bound it was judged
+    against.
+    """
+    defaulted = threshold is None or not str(threshold).strip()
+    try:
+        bound = DEFAULT_CONCENTRATION_THRESHOLD if defaulted else Decimal(str(threshold))
+    except Exception:
+        bound, defaulted = DEFAULT_CONCENTRATION_THRESHOLD, True
+    if not (Decimal("0") < bound < Decimal("1")):
+        bound, defaulted = DEFAULT_CONCENTRATION_THRESHOLD, True
+
+    rows = _rows_for(lot, "supplier")
+    purchased = sum((Decimal(r["price"]) for r in rows), Decimal("0"))
+    if purchased <= 0:
+        return {"lot": lot, "rows": [], "purchased": "0.00", "threshold": str(bound),
+                "threshold_defaulted": defaulted, "above": 0, "largest_share": "n/a"}
+    ranked = sorted(rows, key=lambda r: Decimal(r["price"]), reverse=True)
+    out = []
+    for r in ranked:
+        amount = Decimal(r["price"])
+        share = (amount / purchased).quantize(Decimal("0.0001"))
+        out.append({"supplier": r["sub_config"], "amount": _money(amount),
+                    "share": str(share), "share_pct": float(share) * 100,
+                    "above_threshold": share > bound})
+    return {
+        "lot": lot,
+        "rows": out,
+        "purchased": _money(purchased),
+        "threshold": str(bound),
+        "threshold_defaulted": defaulted,
+        "above": sum(1 for r in out if r["above_threshold"]),
+        "largest_share": out[0]["share"] if out else "n/a",
+    }

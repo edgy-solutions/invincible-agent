@@ -142,7 +142,7 @@ def test_the_trend_seal_BITES_on_a_flat_seed(state):
         flat.lots[n] = type(first)(
             number=n, quantity=first.quantity, cumulative_units=first.cumulative_units,
             fiscal_year=first.fiscal_year,
-            labor=first.labor, material=first.material, other_direct=first.other_direct,
+            labor=first.labor, sepm_monthly=first.sepm_monthly, material=first.material, other_direct=first.other_direct,
             warranty=first.warranty, warranty_hours=first.warranty_hours,
             contracts=first.contracts, suppliers=first.suppliers,
             estimating_rates=first.estimating_rates,

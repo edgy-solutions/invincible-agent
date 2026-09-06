@@ -29,10 +29,13 @@ from decimal import Decimal
 from typing import Iterable
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
-    from entities import CostState, LaborLine, Lot, SupplierShare, Unentitled
+    from entities import (
+        CostState, LaborLine, Lot, MonthlyEffort, SupplierShare, Unentitled,
+    )
     from pricing import RateSet, compose_price, unit_price
 except ImportError:
-    from agent_fleet.cost_agent.entities import (
+    from agent_fleet.cost_agent.entities import (  # noqa: F401
+        MonthlyEffort,
         CostState, LaborLine, Lot, SupplierShare, Unentitled,
     )
     from agent_fleet.cost_agent.pricing import RateSet, compose_price, unit_price
@@ -62,16 +65,27 @@ def _rate_table() -> dict[tuple[int, str], RateSet]:
         for j, vintage in enumerate(vintages):
             # The later vintage of a year is a small revision UP -- which is what makes
             # `cost_rate_comparison` non-trivial and the vintage slot load-bearing.
+            #
+            # THE REVISION REACHES G&A AND ESCALATION, not only fringe and overhead. It
+            # originally moved only the latter two, and the consequence was invisible until a
+            # material view asked the question: material is burdened by G&A, cost of money,
+            # profit and escalation and NOT by fringe or overhead, so applied-versus-estimating
+            # on any purchased figure was ZERO BY CONSTRUCTION on every lot. The view could not
+            # discriminate, and it would have rendered a column of 0.00 that read as "the
+            # estimate was exactly right".
+            #
+            # It is also not how a rate revision behaves: an indirect-rate update that never
+            # touches G&A or the escalation assumption is not a revision.
             bump = Decimal("0.01") * j
             table[(fy, vintage)] = RateSet(
                 fiscal_year=fy,
                 vintage=vintage,
                 fringe=Decimal("0.32") + Decimal("0.005") * i + bump,
                 overhead=Decimal("0.80") + Decimal("0.010") * i + bump,
-                g_and_a=Decimal("0.11") + Decimal("0.002") * i,
+                g_and_a=Decimal("0.11") + Decimal("0.002") * i + Decimal("0.003") * j,
                 cost_of_money=Decimal("0.015"),
                 profit=Decimal("0.10"),
-                escalation=Decimal("1.00") + Decimal("0.025") * i,
+                escalation=Decimal("1.00") + Decimal("0.025") * i + Decimal("0.008") * j,
             )
     return table
 
@@ -174,6 +188,33 @@ def lots_for_recipient(recipient_scope: str) -> tuple[int, ...]:
         ) from None
 
 
+#: SEPM staffing shape across a lot's twelve months, as relative weights: a ramp on, a
+#: plateau, a taper as the lot closes out. Notional, and deliberately NOT flat - a flat shape
+#: would make the monthly view's average line meaningless and the seal over it vacuous.
+_SEPM_SHAPE = (0.6, 0.8, 1.0, 1.15, 1.2, 1.2, 1.15, 1.05, 0.95, 0.85, 0.7, 0.55)
+
+
+def _sepm_months(fiscal_year: int, total: Decimal) -> tuple[MonthlyEffort, ...]:
+    """Distribute a lot's SEPM hours across its twelve months.
+
+    THE REMAINDER GOES IN THE LAST MONTH, deliberately, so the series sums to the annual
+    figure EXACTLY rather than to within a rounding error. A monthly view that does not
+    reconcile to the annual total is two answers to one question, and the reader has no way to
+    tell which is wrong.
+    """
+    weights = [Decimal(str(w)) for w in _SEPM_SHAPE]
+    denom = sum(weights)
+    months, running = [], Decimal("0")
+    for i, w in enumerate(weights):
+        if i == len(weights) - 1:
+            hours = total - running
+        else:
+            hours = (total * w / denom).quantize(Decimal("1"))
+            running += hours
+        months.append(MonthlyEffort(period=f"{fiscal_year}-{i + 1:02d}", hours=hours))
+    return tuple(months)
+
+
 def build_state() -> CostState:
     """The notional program. Deterministic — no clock, no randomness, no I/O."""
     rates = _rate_table()
@@ -204,6 +245,7 @@ def build_state() -> CostState:
             quantity=qty,
             cumulative_units=cumulative,
             fiscal_year=fy,
+            sepm_monthly=_sepm_months(fy, sepm),
             labor=(
                 LaborLine("touch", touch, base_rate),
                 LaborLine("support", support, base_rate * Decimal("0.85")),

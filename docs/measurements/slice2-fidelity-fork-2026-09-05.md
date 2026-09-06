@@ -537,3 +537,101 @@ unexpected token`, and no file produced. Sealed both ways: the shipped page pars
 fires on a broken one without firing on the typed script tags that carry base64 and JSON.
 
 **92 seals green.**
+
+---
+
+## Addendum 2026-09-05f — the remaining tab surfaces, and three columns that could not answer
+
+SEPM monthly hours with its average, material unit price applied-versus-estimating, and
+supplier concentration. Building them found that **the data could not support two of the three
+questions**, in ways nothing had flagged.
+
+### 1. `estimating` was a constant column
+
+`lots.estimating` was `False` on every row ever produced. A column that never varies answers
+nothing and reads, to anyone joining on it, **like a distinction the data supports**. It could
+not support one: the estimating rate set was never exported at all, so applied-versus-estimating
+was unanswerable from the package no matter what the flag said.
+
+Replaced with `applied_vintage` and `estimating_vintage`, and both rate sets are now exported
+(rates: 30 → 48 rows). Sealed: no column in `lots` may be constant across every lot.
+
+### 2. The rate revision never reached material
+
+Material is burdened by **G&A, cost of money, profit and escalation** — *not* by fringe or
+overhead. The seed's later vintage revised **only fringe and overhead**, so
+applied-versus-estimating on any purchased figure was **zero by construction on every lot**.
+
+The view would have rendered a column of `0.00` reading as *"the estimate was exactly right"*.
+
+It is also not how a rate revision behaves: an indirect-rate update that never touches G&A or
+the escalation assumption is not a revision. Now `+0.003·j` on G&A and `+0.008·j` on escalation:
+
+| lot | per unit (applied) | per unit (estimating) | difference |
+|---|---|---|---|
+| 1 | 71,880.27 | 72,651.14 | −770.87 |
+| 2 | 75,286.23 | 76,078.52 | −792.29 |
+| 3 | 78,776.11 | 79,590.07 | −813.96 |
+| 4 | 82,350.31 | n/a | n/a — one rate vintage this year |
+| 5 | 86,009.21 | n/a | n/a |
+
+**Lots 4 and 5 report "no separate estimate", not a zero.** A zero reads as agreement; the truth
+is there is nothing to compare against — the same error as reporting an absent ratio as 0.000.
+
+> **A comparison that cannot come out different is not a comparison.** The seal asserts every
+> comparable lot actually moves.
+
+### 3. There was no monthly dimension at all
+
+`period` was the fiscal year. SEPM is a **level of effort** — staffed by month, not consumed per
+unit — so a per-lot total answers *"how much"* and hides the shape entirely. `Lot` now carries
+`sepm_monthly`, and the remainder goes in the last month **so the series sums to the annual
+figure exactly**. The page states the reconciliation rather than assuming it: two statements
+about one quantity, and a reader should not have to trust that they agree.
+
+The shape is deliberately not flat — a flat series makes the average line meaningless and the
+seal over it vacuous. Sealed: >4 distinct monthly values, and `0 < months_above_average < 12`.
+
+### The agreement check had a latent defect the moment ties existed
+
+`datasets_agree` keyed on `(lot, category, sub_config)`, which **stopped identifying a row** once
+a category held more than one row per sub_config. Twelve monthly SEPM rows share all three; the
+two sides ordered their ties differently and it reported six "differences" that were the same
+values in another order. It had been correct only by the accident that no category had ties.
+
+Keyed on period now, **and hours are compared** — they never were, so a file with wrong hours and
+right prices passed.
+
+### A bite-check that could not be constructed, said so
+
+Removing period from the key does **not** turn the tamper seal red: the reordering misaligns the
+rows and the prices disagree anyway. Two different properties —
+
+- **no false positives on tied rows** ← what period-in-the-key buys, proven by the agreement
+  test passing at all (it failed with six spurious differences the moment ties existed)
+- **a period change is detected** ← proven by tampering with the shipped file
+
+— and no single mutation covers both. Rather than invent one, the seal's docstring records which
+part proves what. **A bite-check that cannot be constructed is a fact about the property, not a
+licence to skip saying so.**
+
+### Also on the page
+
+Supplier concentration renders in the browser with an editable bound; the bound travels with the
+verdict and says whether the reader chose it. Sealed against the engine verb directly: the
+browser and `cost_supplier_concentration` must agree on ranking, shares and the count above the
+bound, lot by lot — the page must not compute a different answer than the engine to the same
+question.
+
+### Bite-checks
+
+| mutation | red |
+|---|---|
+| the rate revision stops reaching material (the original defect) | 1 |
+| a single-vintage lot reports 0.00 instead of n/a | 1 |
+| the monthly series is flattened | 1 |
+| the monthly remainder is dropped | 1 |
+| the threshold stops changing the verdict | 1 |
+| period dropped from the agreement key | **0 — see above, and it is recorded rather than forced** |
+
+**118 seals green.**
