@@ -635,3 +635,60 @@ question.
 | period dropped from the agreement key | **0 — see above, and it is recorded rather than forced** |
 
 **118 seals green.**
+
+---
+
+## Addendum 2026-09-05g — US spelling, and a seal that checked a third of what it named
+
+The page said *"Across the programme"*, *"Programme management effort"* and *"Labour"* in every
+heading and legend. The recipient is a US program office; the tool they know says **program**
+and **labor**. 48 replacements across the eleven files whose text reaches the recipient.
+
+### `pricing.py` is customer-facing text
+
+It is on the list because **the Algorithm panel displays it verbatim**. Its comments are read by
+the customer, not by us — which is easy to miss when deciding what counts as "the package".
+
+### The mapping is narrow on purpose
+
+`analysis` and `analyst` are already US, and **`COST_ANALYST` is a live Topaz permission name**,
+so only the `-yse` verb forms are mapped. `CATALOGUE` stays as a Python identifier in `main.py`:
+main.py is not in the package, and renaming a symbol is a different change with different risk.
+The prose word is mapped; the symbol is not.
+
+### Sealed at the source, with a guard on the guard
+
+The seal reads the **sources**, so a template edit is caught before a build rather than after
+someone opens the artifact in a room. And a second test checks the detector itself: it must
+fire on known British text and must **not** fire on `cost analysis`, `the COST_ANALYST role`,
+`a US program office` or `direct labor hours`. A form list that never matches anything would
+pass forever.
+
+### The artifact seal was checking a third of the page
+
+It sliced `html[:index of embedded-runtime]` — and that tag sits **before** the page's own
+script block, so it covered the markup and **none of the JavaScript**, which is where every
+metric label lives. It passed while checking a third of what it named.
+
+Now it cuts out the runtime *element* and keeps everything else — 139 KB of authored text out
+of 17.6 MB — with an assertion that `"Total labor hours"` is inside the checked region, so a
+future bad slice fails loudly instead of silently narrowing.
+
+> Third time in this lane a **seal** has asserted on the neighbour. Each was found by asking
+> "what exactly is in the region I am checking?" rather than by the seal failing.
+
+### Bite-checks
+
+| mutation | red |
+|---|---|
+| a template edit drifts back to "Programme" | 1 |
+| `BRITISH_FORMS` emptied | 1 (the guard on the guard) |
+
+### Also
+
+A lot with no separate estimating vintage drew a lone applied bar with a floating label, which
+reads as a missing bar rather than a deliberate absence. The applied bar now keeps its place and
+the empty slot is **hatched and labelled in situ**, with a legend entry. An empty space reads as
+an omission; a marked-out one reads as *"there is nothing here to compare"*, which is the claim.
+
+**121 seals green.**
