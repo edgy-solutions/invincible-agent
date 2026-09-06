@@ -32,7 +32,7 @@ try:  # flat in the image (/app), packaged in the repo — see §5 of the engine
         COST, CostState, LaborKind, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
     from export import audit_line, build_dataset_package, build_package
-    from pricing import compose_price, rates_for, unit_price
+    from pricing import DEFAULT_COMPOSITION, compose_price, rates_for, unit_price
     from seed import RECIPIENT_SCOPES, lots_for_recipient
 except ImportError:
     from agent_fleet.cost_agent.entities import (
@@ -41,7 +41,9 @@ except ImportError:
     from agent_fleet.cost_agent.export import (
         audit_line, build_dataset_package, build_package,
     )
-    from agent_fleet.cost_agent.pricing import compose_price, rates_for, unit_price
+    from agent_fleet.cost_agent.pricing import (
+        DEFAULT_COMPOSITION, compose_price, rates_for, unit_price,
+    )
     from agent_fleet.cost_agent.seed import RECIPIENT_SCOPES, lots_for_recipient
 
 #: ONE VERB, ONE FIXED OUTPUT TYPE (ADR-0030). Read twice — by the route, to stamp the
@@ -78,6 +80,18 @@ INPUT_URI: dict[str, str] = {
 #: Money is dollars throughout. Declared per row rather than assumed, because "dollars or
 #: thousands of dollars" is the one question a cost answer must never leave to convention.
 VALUE_UNIT = "USD"
+
+#: HUMAN NAMES FOR THE GENERIC AXIS. `entity_name` is what a card prints; `entity_id` stays the
+#: engine's own key so a reader of the payload still sees their own vocabulary.
+_CATEGORY_LABELS = {
+    "labor": "Labor", "material": "Material", "other_direct": "Other direct",
+    "warranty": "Warranty", "contracts": "Contracted effort",
+}
+_LABOR_LABELS = {"touch": "Touch labor", "support": "Support labor", "sepm": "SEPM"}
+_RATE_LABELS = {
+    "fringe": "Fringe", "overhead": "Overhead", "g_and_a": "G&A",
+    "cost_of_money": "Cost of money", "profit": "Profit", "escalation": "Escalation",
+}
 HOURS_UNIT = "hours"
 
 #: The default concentration bound, ONE QUARTER of purchased value. A round, defensible
@@ -129,8 +143,27 @@ def cost_lot_breakdown(state: CostState, *, lot: int, rate_vintage: str) -> dict
         r["hours"] = None if r["hours"] is None else str(r["hours"])
         r["value_unit"] = VALUE_UNIT
         r["hours_unit"] = HOURS_UNIT
+    # THE GENERIC AXIS KEYS BESIDE THE DOMAIN ONES. A binding row alone renders nothing:
+    # CONTRIBUTION_RANKING draws entity_id / entity_name / contribution, and a payload carrying
+    # only `category` and `price` has, to the component, no axes at all. That is the defect
+    # that produced three blank cards in one morning on the planning side — correct on both
+    # sides, wrong only in the seam, and visible only in a browser.
+    _total = sum(Decimal(r["price"]) for r in rows)
+    for _r in rows:
+        _amount = Decimal(_r["price"])
+        _r["entity_id"] = _r["category"]
+        _r["entity_name"] = _CATEGORY_LABELS.get(_r["category"], _r["category"])
+        _r["contribution"] = float(_amount)
+        # NULL WHEN THE TOTAL IS ZERO. There is no share of nothing, and the contract says it
+        # renders as absent rather than as 0%.
+        _r["share_of_total"] = float(_amount / _total) if _total else None
+    rows.sort(key=lambda r: r["contribution"], reverse=True)
+    for _i, _r in enumerate(rows, start=1):
+        _r["rank"] = _i
     return {
         "output_uri": OUTPUT_URI["cost_lot_breakdown"],
+        "value_label": "Cost",
+        "scope_label": f"Lot {lot_obj.number}",
         "lot": lot_obj.number,
         "quantity": lot_obj.quantity,
         "fiscal_year": lot_obj.fiscal_year,
@@ -149,7 +182,7 @@ def cost_unit_price_trend(state: CostState, *, category: Optional[str] = None) -
     which is what makes the series comparable across years. A single vintage imposed across
     nine fiscal years would be a counterfactual, not a trend.
     """
-    series: list[dict[str, Any]] = []
+    points: list[dict[str, Any]] = []
     for n in state.lot_numbers:
         lot_obj = state.lot(n)
         vintage = state.vintages(lot_obj.fiscal_year)[0]
@@ -160,7 +193,7 @@ def cost_unit_price_trend(state: CostState, *, category: Optional[str] = None) -
             other_direct=lot_obj.other_direct + lot_obj.warranty + lot_obj.contracts,
             rates=rates,
         )
-        series.append({
+        points.append({
             "lot": n,
             "quantity": lot_obj.quantity,
             "fiscal_year": lot_obj.fiscal_year,
@@ -168,11 +201,22 @@ def cost_unit_price_trend(state: CostState, *, category: Optional[str] = None) -
             "value_unit": VALUE_UNIT,
             "rate_vintage": rates.vintage,
         })
+    # MULTI_SERIES DRAWS `rows` KEYED BY `period`, WITH `series` DECLARING WHICH KEYS CARRY
+    # NUMBERS. The domain list keeps its own name (`points`); it was called `series`, which is
+    # the name the archetype needs for the DECLARATION — one word meaning two things in one
+    # payload is how a renderer ends up drawing the wrong half.
+    _rows = [{"period": f"Lot {p['lot']}", "unit_price": float(p["unit_price"]),
+              "lot": p["lot"], "fiscal_year": p["fiscal_year"], "quantity": p["quantity"],
+              "rate_vintage": p["rate_vintage"]} for p in points]
     return {
         "output_uri": OUTPUT_URI["cost_unit_price_trend"],
+        "rows": _rows,
+        "series": [{"key": "unit_price", "label": "Unit price", "unit": VALUE_UNIT}],
+        "value_label": "Cost per unit",
+        "scope_label": state.program_name,
         "program": state.program_name,
         "category": category or "all",
-        "series": series,
+        "points": points,
     }
 
 
@@ -196,8 +240,47 @@ def cost_rate_comparison(state: CostState, *, lot: int, rate_vintage: str) -> di
             # so explicitly stops a renderer appending one.
             "value_unit": None,
         })
+    # DELTA_SET, AND THE AXIS TEST IS IN ITS OWN CONTRACT'S FIRST LINE: "it renders a
+    # COMPARISON, never a state." That is exactly this verb — applied against estimating,
+    # factor by factor. CONTRIBUTION_RANKING was the alternative and fails concretely:
+    # `entity_id` would carry a METRIC NAME (fringe is a factor, not an entity), which is the
+    # borrowed-name defect that contract refuses in the other direction; `contribution` would
+    # contribute to nothing, because rates do not sum to a total; `share_of_total` has no
+    # meaning at all; and ORDER here is the sequence in which factors are STRUCK, not a
+    # ranking — rendering it as one would assert that fringe outranks profit.
+    #
+    # DIRECTION AND MAGNITUDE ARE THIS MEASURE'S JUDGEMENT, not the renderer's. A higher
+    # applied rate than estimated raises the price, so it is `degraded`; the contract is
+    # explicit that inferring direction from the sign of a delta is the renderer's job to
+    # refuse.
+    #
+    # `affected` NAMES THE STEPS THE FACTOR FEEDS, so it is neither empty nor invented: the
+    # composition already declares which step each rate key drives. A required field with
+    # nothing to put in it is the declared-but-unwired shape, and this avoids it with fact.
+    _effects = []
+    for _r in rows:
+        _d = Decimal(_r["delta"])
+        _effects.append({
+            "metric": _RATE_LABELS.get(_r["factor"], _r["factor"]),
+            "direction": "neutral" if _d == 0 else ("degraded" if _d > 0 else "improved"),
+            "magnitude": f"{_d:+.3f} vs estimate",
+            # ESCALATION IS NOT A STEP, so it has no `rate_key` and the list came out EMPTY -
+            # caught by the seal that refuses an empty `affected`, not by reading. It is
+            # applied to the BASE AMOUNTS before any burden is struck, so it affects the base
+            # and, through it, every step that is struck on the base. Naming only "Base cost"
+            # would understate it; naming every step is what actually happens.
+            "affected": ([s.name for s in DEFAULT_COMPOSITION if s.rate_key == _r["factor"]]
+                         or (["Base cost"] + [s.name for s in DEFAULT_COMPOSITION]
+                             if _r["factor"] == "escalation" else [])),
+            "delta": float(_d),
+            "factor": _r["factor"],
+            "applied": _r["applied"],
+            "estimating": _r["estimating"],
+        })
     return {
         "output_uri": OUTPUT_URI["cost_rate_comparison"],
+        "effects": _effects,
+        "scope_label": f"Lot {lot_obj.number} - applied vs estimating rates",
         "lot": lot_obj.number,
         "fiscal_year": lot_obj.fiscal_year,
         "applied_vintage": applied.vintage,
@@ -225,8 +308,19 @@ def cost_labor_composition(state: CostState, *, lot: int) -> dict[str, Any]:
             "value_unit": VALUE_UNIT,
             "hours_unit": HOURS_UNIT,
         })
+    for _r in rows:
+        _r["entity_id"] = _r["labor_kind"]
+        _r["entity_name"] = _LABOR_LABELS.get(_r["labor_kind"], _r["labor_kind"])
+        _r["contribution"] = float(Decimal(_r["cost"]))
+        _r["share_of_total"] = (float(Decimal(_r["share_of_labor"]))
+                                if _r.get("share_of_labor") is not None else None)
+    rows.sort(key=lambda r: r["contribution"], reverse=True)
+    for _i, _r in enumerate(rows, start=1):
+        _r["rank"] = _i
     return {
         "output_uri": OUTPUT_URI["cost_labor_composition"],
+        "value_label": "Labor cost",
+        "scope_label": f"Lot {lot_obj.number}",
         "lot": lot_obj.number,
         "fiscal_year": lot_obj.fiscal_year,
         "total_labor": str(total),
@@ -319,10 +413,23 @@ def cost_rate_assumptions(
             "escalation": str(r.escalation),
             "value_unit": None,          # factors, not amounts
         })
+    # THE VINTAGE IS THE PERIOD. Rates are a series over the dates they were set, and the six
+    # factors are the declared series — which is what a rate table IS, read as data rather
+    # than as a spreadsheet.
+    _factors = ("fringe", "overhead", "g_and_a", "cost_of_money", "profit", "escalation")
+    _rows = [dict(r, period=r["rate_vintage"],
+                  **{f: float(Decimal(r[f])) for f in _factors}) for r in rows]
     return {
         "output_uri": OUTPUT_URI["cost_rate_assumptions"],
+        "rows": _rows,
+        "series": [{"key": f, "label": f.replace("_", " ").title(), "unit": None}
+                   for f in _factors],
+        "value_label": "Rate",
+        "scope_label": state.program_name,
         "program": state.program_name,
-        "rows": rows,
+        # THE DOMAIN ROWS KEEP THEIR EXACT STRINGS. `rows` above carries the same figures as
+        # floats for the renderer; this is the assertion-grade copy.
+        "rate_sets": rows,
     }
 
 
@@ -386,8 +493,19 @@ def cost_category_breakdown(state: CostState, *, lot: int) -> dict[str, Any]:
             row["direction"] = None
         rows.append(row)
 
+    for _r in rows:
+        _r["entity_id"] = _r["category"]
+        _r["entity_name"] = _CATEGORY_LABELS.get(_r["category"], _r["category"])
+        _r["contribution"] = float(Decimal(_r["amount"]))
+        _r["share_of_total"] = (float(Decimal(_r["share_of_total"]))
+                                if isinstance(_r.get("share_of_total"), str) else None)
+    rows.sort(key=lambda r: r["contribution"], reverse=True)
+    for _i, _r in enumerate(rows, start=1):
+        _r["rank"] = _i
     return {
         "output_uri": OUTPUT_URI["cost_category_breakdown"],
+        "value_label": "Cost",
+        "scope_label": f"Lot {lot_obj.number}",
         "lot": lot_obj.number,
         "fiscal_year": lot_obj.fiscal_year,
         "total": str(total),
@@ -437,8 +555,16 @@ def cost_supplier_concentration(
 
     above = [r for r in rows if r["above_threshold"]]
     top = Decimal(rows[0]["share_of_purchased"]) if rows else Decimal("0")
+    for _i, _r in enumerate(rows, start=1):
+        _r["entity_id"] = _r["supplier"]
+        _r["entity_name"] = _r["supplier"]
+        _r["contribution"] = float(Decimal(_r["amount"]))
+        _r["share_of_total"] = float(Decimal(_r["share_of_purchased"]))
+        _r["rank"] = _i          # already ranked largest-first; order IS the answer here
     return {
         "output_uri": OUTPUT_URI["cost_supplier_concentration"],
+        "value_label": "Purchased value",
+        "scope_label": f"Lot {lot_obj.number}",
         "lot": lot_obj.number,
         "fiscal_year": lot_obj.fiscal_year,
         "purchased_value": str(purchased),

@@ -39,6 +39,11 @@ _IRI_PREFIXES_FOR_LOOKUP: Dict[str, str] = {
     # card falling through to KNOWLEDGE_DOCUMENT with "No content available", which is
     # indistinguishable from having no binding at all.
     "fin:": "http://invincible-agent/fin#",
+    # cost: (engine-cost, ADR-0045 pattern). Same requirement as `fin:` above and the same
+    # silent failure: without this line the seven cost rows below would register, report
+    # accepted, and never match a payload — a card falling through to KNOWLEDGE_DOCUMENT with
+    # "No content available", indistinguishable from having no binding at all.
+    "cost:": "http://invincible-agent/cost#",
 }
 
 
@@ -289,6 +294,74 @@ PRESENTATION_CAPABILITIES: list[Dict[str, Any]] = [
         "expected_fields": ["eac", "method", "formula", "vac", "etc", "bac",
                             "cpi", "spi", "value_unit"],
         "description": "Renders fin:EstimateAtCompletion as a FORECAST_MEASURE — the figure WITH its method and formula; a forecast drawn without its method re-creates the ambiguity the mandatory-method refusal just made the asker resolve",
+    },
+    # ── engine-cost (ADR-0045 pattern) ────────────────────────────────────────────────────
+    #
+    # SEVEN ROWS, ONE HONEST REFUSAL. Until these existed every cost answer routed correctly,
+    # produced its output, and rendered as "Knowledge Document - No content available" -
+    # exactly where finance was before its rows landed.
+    #
+    # `cost_price_composition` IS DELIBERATELY ABSENT. Its payload is an ORDERED WALK: each
+    # step names the basis it was struck on and carries a running total, and the order is not a
+    # ranking but a SEQUENCE in which each step's basis is the previous step's result.
+    # CONTRIBUTION_RANKING is the closest fit and fails on the two fields that carry the whole
+    # claim - `basis` and `running_total` have no slot, and they are what proves overhead was
+    # struck on labor-plus-fringe rather than on labor. Rendering it as a ranking would also
+    # assert that Profit outranks Base cost, which is not a statement anyone made.
+    # A STEP_LADDER archetype is the right answer and is a cortex change, outside this lane's
+    # fence; until it exists the honest state is unbound rather than mis-bound.
+    {
+        "subject_uri": "cost:LotCostBreakdown",
+        "object_uri": "mesh:ContributionRanking",
+        "archetype": "CONTRIBUTION_RANKING",
+        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
+                            "share_of_total", "value_unit"],
+        "description": "Renders cost:LotCostBreakdown as a CONTRIBUTION_RANKING - what each accounting bucket contributed to one lot's cost, largest first, carrying hours where the bucket is worked rather than purchased",
+    },
+    {
+        "subject_uri": "cost:UnitPriceTrend",
+        "object_uri": "mesh:MultiSeries",
+        "archetype": "MULTI_SERIES",
+        "expected_fields": ["rows", "series", "value_label", "scope_label"],
+        "description": "Renders cost:UnitPriceTrend as a MULTI_SERIES - cost per unit at each successive lot, where the PERIOD is the lot rather than a date because a lot is when the money was spent",
+    },
+    {
+        "subject_uri": "cost:LaborComposition",
+        "object_uri": "mesh:ContributionRanking",
+        "archetype": "CONTRIBUTION_RANKING",
+        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
+                            "share_of_total", "value_unit"],
+        "description": "Renders cost:LaborComposition as a CONTRIBUTION_RANKING - touch, support and SEPM as shares of one lot's worked effort, each carrying its hours and applied rate",
+    },
+    {
+        "subject_uri": "cost:RateAssumptions",
+        "object_uri": "mesh:MultiSeries",
+        "archetype": "MULTI_SERIES",
+        "expected_fields": ["rows", "series", "value_label", "scope_label"],
+        "description": "Renders cost:RateAssumptions as a MULTI_SERIES - the six burden factors over the vintages they were set at; the PERIOD is the vintage date, which is what a rate table is when read as data rather than as a spreadsheet",
+    },
+    {
+        "subject_uri": "cost:RateComparison",
+        "object_uri": "mesh:DeltaSet",
+        "archetype": "DELTA_SET",
+        "expected_fields": ["metric", "direction", "magnitude", "affected", "delta"],
+        "description": "Renders cost:RateComparison as a DELTA_SET - applied against estimating, factor by factor. DELTA_SET's own contract opens 'it renders a COMPARISON, never a state', which is this verb exactly; each effect names the composition steps that factor feeds",
+    },
+    {
+        "subject_uri": "cost:CategoryBreakdown",
+        "object_uri": "mesh:ContributionRanking",
+        "archetype": "CONTRIBUTION_RANKING",
+        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
+                            "share_of_total", "value_unit"],
+        "description": "Renders cost:CategoryBreakdown as a CONTRIBUTION_RANKING - what SHARE each bucket is and how that share MOVED against the prior lot, which is a different question from what each bucket cost",
+    },
+    {
+        "subject_uri": "cost:SupplierConcentration",
+        "object_uri": "mesh:ContributionRanking",
+        "archetype": "CONTRIBUTION_RANKING",
+        "expected_fields": ["rank", "entity_id", "entity_name", "contribution",
+                            "share_of_total", "above_threshold", "value_unit"],
+        "description": "Renders cost:SupplierConcentration as a CONTRIBUTION_RANKING - purchased value by party, ordered, with the bound each row was judged against carried alongside it",
     },
 ]
 

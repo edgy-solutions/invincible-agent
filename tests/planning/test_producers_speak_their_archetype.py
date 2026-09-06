@@ -57,7 +57,16 @@ _CONTRACTS = {
 #: CLAIM, and the coverage test below forces it to be written down rather than left as a gap
 #: nobody can see.
 _EXEMPT = {
-    "DELTA_SET": "produced only by a committed scenario diff, not by a measure over seed state",
+    # AMENDED 2026-09-05: no longer true of the fleet, and a stale exemption is a claim.
+    # `cost_rate_comparison` binds to DELTA_SET and IS a measure over seed state. It is exempt
+    # HERE because this module enumerates planning and finance producers; its conformance
+    # lives beside its own engine, in tests/cost/test_cost_cards_conform.py, so that adding a
+    # cost verb does not require editing a planning test.
+    "DELTA_SET": (
+        "no PLANNING producer emits it - it comes from a committed scenario diff. "
+        "engine-cost's cost_rate_comparison does produce it; conformance for that binding is "
+        "in tests/cost/test_cost_cards_conform.py"
+    ),
     # CANVAS_SEED is a CONSUMER binding, not a component one, and the distinction is the
     # ruling that created the category: a binding declares either a component (something
     # DRAWN, with a row contract this test can conform against) or a consumer (something
