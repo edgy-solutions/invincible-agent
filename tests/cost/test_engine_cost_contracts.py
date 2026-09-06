@@ -9,11 +9,14 @@ are runbook §9's and cannot run here; they are listed in the packet's completio
 """
 from __future__ import annotations
 
+import pathlib
 from decimal import Decimal
 
 import pytest
 
 from agent_fleet.cost_agent import measures, slots
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 from agent_fleet.cost_agent.entities import NotInModel, VintageRequired
 from agent_fleet.cost_agent.pricing import (
     CompositionError, RateSet, compose_price, rates_for, unit_price,
@@ -475,3 +478,75 @@ def test_the_declaration_uses_the_key_THE_CONSUMER_READS():
             assert "mandatory" not in d, (
                 f"{verb}.{d['name']}: still emits `mandatory`, which no consumer reads"
             )
+
+
+def _main_table(name: str) -> set:
+    """Read a table out of main.py's SOURCE, without importing FastAPI or booting the app."""
+    import ast
+
+    tree = ast.parse((ROOT / "agent_fleet" / "cost_agent" / "main.py").read_text(
+        encoding="utf-8"))
+    node = next(n for n in tree.body
+                if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == name)
+    if isinstance(node.value, ast.Dict):
+        return {k.value for k in node.value.keys}
+    out = set()
+    for entry in node.value.elts:
+        out.add(entry.values[[k.value for k in entry.keys].index("fn")].value)
+    return out
+
+
+def test_ALL_SIX_VERB_TABLES_agree():
+    """SIX, NOT FOUR. The boot check compared VERBS, OUTPUT_URI, INPUT_URI and declarations,
+    and let CATALOGUE and _DESCRIPTIONS drift.
+
+    A verb present in VERBS and absent from CATALOGUE is servable by direct call and INVISIBLE
+    TO THE MESH: the engine boots, reports healthy, answers when addressed by name, and is
+    never routed to. Exactly the shape of the reregister hook's hand-kept directory map, which
+    stopped at one engine and hid every engine added after it.
+
+    DERIVED FROM VERBS, not from a list written here — a count in this file would need editing
+    every time a verb is added, which is the failure being guarded against.
+    """
+    ref = set(measures.VERBS)
+    tables = {
+        "OUTPUT_URI": set(measures.OUTPUT_URI),
+        "INPUT_URI": set(measures.INPUT_URI),
+        "declarations": set(slots.all_declarations()),
+        "CATALOGUE": _main_table("CATALOGUE"),
+        "_DESCRIPTIONS": _main_table("_DESCRIPTIONS"),
+    }
+    for name, got in tables.items():
+        assert got == ref, f"{name} differs from VERBS by {sorted(got ^ ref)}"
+
+
+def test_the_BOOT_CHECK_ITSELF_covers_all_six():
+    """The seal above lives in the suite; the boot check lives in the engine. Both must know
+    about the same six, or a deployment can pass one and fail the other."""
+    src = (ROOT / "agent_fleet" / "cost_agent" / "main.py").read_text(encoding="utf-8")
+    # THE FUNCTION'S OWN BODY, from the AST. Slicing to the next `class` swallowed the
+    # registration loop below it, which also mentions CATALOGUE - so this seal passed with
+    # the boot check gutted. Asserting on the neighbour again, caught by a mutation that
+    # should have gone red and did not.
+    import ast
+
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)
+              and n.name == "_assert_declarations_cover_verbs")
+    body = ast.unparse(fn)
+    for table in ("measures.VERBS", "measures.OUTPUT_URI", "measures.INPUT_URI",
+                  "slot_decls.all_declarations()", "CATALOGUE", "_DESCRIPTIONS"):
+        assert table in body, f"the boot check does not read {table}"
+
+
+def test_the_catalogue_gives_every_verb_a_DISTINCT_mesh_verb_iri():
+    """One name per verb. Two verbs sharing an IRI would have the registrar's
+    compensate-on-rescope sweep delete one when the other registered."""
+    import ast
+
+    tree = ast.parse((ROOT / "agent_fleet" / "cost_agent" / "main.py").read_text(
+        encoding="utf-8"))
+    node = next(n for n in tree.body
+                if isinstance(n, ast.AnnAssign) and getattr(n.target, "id", "") == "CATALOGUE")
+    iris = [e.values[[k.value for k in e.keys].index("verb")].value for e in node.value.elts]
+    assert len(set(iris)) == len(iris), f"duplicate mesh verb IRIs: {iris}"
+    assert len(iris) == len(measures.VERBS)

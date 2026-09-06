@@ -96,6 +96,11 @@ cost:Supplier a owl:Class ;
     rdfs:label "Supplier" ;
     rdfs:comment "An external party providing purchased content, considered as a share of purchased value rather than as a company record. Questions asking how concentrated purchasing is, which parties account for most of the purchased value, or whether dependence on any single party exceeds a stated threshold target this class. It carries no contact, contract or performance information - only its weight in a total." .
 
+cost:DisclosureRecipient a owl:Class ;
+    rdfs:subClassOf prov:Agent ;
+    rdfs:label "Disclosure Recipient" ;
+    rdfs:comment "An external party entitled to be shown a bounded portion of a programme's cost figures, considered as the SCOPE OF A DISCLOSURE rather than as a customer record. Questions asking what may be released to a named party, which quantities a party is permitted to see, or what has been disclosed to whom target this class. It is the subject of a disclosure the way a lot is the subject of a cost: the party is what the question is about, not a filter applied to an answer computed for someone else. It carries no commercial relationship, contract or contact information - only the boundary of what it may be told." .
+
 # =============================================================================
 # Response shapes - the OUTPUT end of Contract D
 #
@@ -142,6 +147,12 @@ cost:SupplierConcentration a owl:Class ;
     rdfs:subClassOf mesh:Response ;
     rdfs:label "Supplier Concentration" ;
     rdfs:comment "How purchased value is distributed across the parties providing it, with the parties whose share exceeds a stated bound listed explicitly and the bound reported alongside them. A payload answering how exposed a purchase is to any single party, carrying the bound it was judged against because a verdict of concentrated or not is meaningless without one." .
+
+
+cost:ExportPackage a owl:Class ;
+    rdfs:subClassOf mesh:Response ;
+    rdfs:label "Export Package" ;
+    rdfs:comment "The record of a governed disclosure: which party was shown which quantities, produced by which version of the pricing algorithm, identified by the content hash of what was released and the hashes of the modules and data it carried. A payload describing an emission that has already happened, not the released material itself - it names and fingerprints the artifact so a disclosure can be spoken about, compared and audited without being reopened. Questions asking what was released to a party, whether a release can be reproduced, or which algorithm version produced a released figure target this shape." .
 
 # =============================================================================
 # Standard-vocabulary bindings - REFERENCE, do not redeclare

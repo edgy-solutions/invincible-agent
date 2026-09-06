@@ -798,3 +798,133 @@ def test_the_js_gate_BITES_on_an_unterminated_string(slice2):
     assert problems and "SyntaxError" in problems[0]
     # AND IT DOES NOT FIRE ON THE TYPED SCRIPTS, which carry base64 and JSON, not JavaScript.
     assert B.check_javascript('<script type="application/json">{"a": 1}</script>') == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# package_export — packaging as a GOVERNED EMIT rather than a script
+# ═══════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture(scope="module")
+def emitted(state):
+    """One real emission, reused. It writes a 17 MB artifact; once is enough."""
+    from agent_fleet.cost_agent.measures import package_export
+
+    if not (ROOT / ".pyodide-cache" / "pyodide.js").exists():
+        pytest.skip("the pinned runtime is not present")
+    return package_export(state, recipient_scope="notional-customer-alpha")
+
+
+def test_the_verb_ROUTES_THROUGH_THE_SAME_BUILDER_as_the_script(state, monkeypatch):
+    """SAME-ALGORITHM APPLIES TO THE PACKAGER TOO.
+
+    A verb that reimplemented the build — even faithfully — would make every seal in this file
+    a statement about a different artifact than the one a recipient opens. The JavaScript gate
+    and the manifest hashing are load-bearing precisely because they are the SAME code.
+
+    Proven by breaking `build_cost_package.build_html` and requiring the verb to fail there. A
+    copy would sail past.
+    """
+    from agent_fleet.cost_agent.measures import package_export
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_cost_package as B
+
+    sentinel = RuntimeError("the shared builder was called")
+
+    def explode(*a, **k):
+        raise sentinel
+
+    monkeypatch.setattr(B, "build_html", explode)
+    with pytest.raises(RuntimeError) as e:
+        package_export(state, recipient_scope="notional-customer-alpha")
+    assert e.value is sentinel, "the verb does not go through build_cost_package.build_html"
+
+
+def test_the_verb_APPLIES_THE_JAVASCRIPT_GATE(state, monkeypatch):
+    """A verb that skipped it could report success over a page that is blank on open."""
+    from agent_fleet.cost_agent.entities import SourceUnavailable
+    from agent_fleet.cost_agent.measures import package_export
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_cost_package as B
+
+    monkeypatch.setattr(B, "build_html", lambda *a, **k: "<script>var a = (;</script>")
+    with pytest.raises(SourceUnavailable, match="does not parse"):
+        package_export(state, recipient_scope="notional-customer-alpha")
+
+
+def test_a_disclosure_names_its_RECIPIENT_or_is_refused(state):
+    """No default party. A disclosure verb invocable without one is a keystroke from the
+    wrong programme reaching the wrong party, and the output looks correct either way."""
+    from agent_fleet.cost_agent.entities import NotInModel
+    from agent_fleet.cost_agent.measures import package_export
+
+    for missing in (None, "", "   "):
+        with pytest.raises(NotInModel, match="recipient scope"):
+            package_export(state, recipient_scope=missing)
+
+
+def test_an_UNKNOWN_recipient_is_UNENTITLED_not_NOT_IN_MODEL(state):
+    """ADR-0049 Ruling 4: distinct types, so a caller cannot read 'we do not disclose to you'
+    as 'we have no data'."""
+    from agent_fleet.cost_agent.entities import NotInModel, Unentitled
+    from agent_fleet.cost_agent.measures import package_export
+
+    with pytest.raises(Unentitled):
+        package_export(state, recipient_scope="acme-corp")
+    assert not issubclass(Unentitled, NotInModel), "the two refusals have collapsed into one"
+
+
+def test_the_emission_discloses_ONLY_the_recipients_lots(state, emitted):
+    """The scope is the question, not a filter applied afterwards."""
+    from agent_fleet.cost_agent.seed import RECIPIENT_SCOPES
+
+    expected = list(RECIPIENT_SCOPES["notional-customer-alpha"])
+    assert emitted["lots_disclosed"] == expected
+    assert emitted["lot_count"] == len(expected)
+    assert emitted["verified_lots"] == len(expected), (
+        "the manifest verifies a different set of lots than the emission claims to disclose")
+    other = set(RECIPIENT_SCOPES["notional-customer-beta"]) - set(expected)
+    assert other, "the two scopes no longer differ - this seal has gone vacuous"
+    assert not other & set(emitted["lots_disclosed"])
+
+
+def test_the_emission_leaves_an_AUDIT_LINE(state, emitted):
+    """A disclosure that leaves no audit line is indistinguishable afterwards from one that
+    never happened — the whole reason this is a verb."""
+    a = emitted["audit"]
+    assert a["disclosed_to"] == "notional-customer-alpha"
+    assert a["disclosed_by"] == "package_export"
+    assert a["lots_disclosed"] == emitted["lots_disclosed"]
+    assert a["algorithm_sha"] == emitted["algorithm_sha"]
+    assert a["locator"] == emitted["locator"]
+    assert a["at"] == emitted["as_of"]
+
+
+def test_the_response_carries_EVERY_IDENTIFIER_without_reopening_the_artifact(emitted):
+    """A caller holding the response can say which package this was."""
+    assert emitted["algorithm_sha"] and len(emitted["algorithm_sha"]) == 40
+    for key in ("locator", "duckdb_sha256", "rows_sha256"):
+        assert emitted[key].startswith("sha256:"), key
+    assert emitted["module_hashes"]["pricing.py"].startswith("sha256:")
+    assert emitted["duckdb_sha256"] != emitted["rows_sha256"]
+
+
+def test_the_written_artifact_IS_the_one_the_response_describes(emitted):
+    dest = ROOT / "dist" / emitted["artifact_filename"]
+    assert dest.exists() and dest.stat().st_size == emitted["artifact_bytes"]
+    sibling = dest.parent / emitted["dataset_filename"]
+    assert sibling.exists(), "the .duckdb the page names does not sit beside it"
+    html = dest.read_text(encoding="utf-8")
+    assert emitted["duckdb_sha256"] in html
+    assert emitted["module_hashes"]["pricing.py"] in html
+
+
+def test_include_dataset_DEFAULTS_ON_and_is_the_only_optional_slot():
+    from agent_fleet.cost_agent.slots import mandatory_slots, slots_for
+
+    names = {s["name"]: s for s in slots_for("package_export")}
+    assert mandatory_slots("package_export") == ["recipient_scope"]
+    assert names["recipient_scope"]["kind"] == "spoken-mandatory"
+    assert names["include_dataset"]["kind"] == "spoken-optional"
+    assert names["include_dataset"]["type"] == "boolean"

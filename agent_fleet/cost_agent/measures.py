@@ -23,19 +23,26 @@ program, supplier or rate agreement.
 """
 from __future__ import annotations
 
+import pathlib
 from decimal import Decimal
 from typing import Any, Optional
 
 try:  # flat in the image (/app), packaged in the repo — see §5 of the engine runbook
     from entities import (
-        COST, CostState, LaborKind, NotInModel, VintageRequired,
+        COST, CostState, LaborKind, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
     )
+    from export import audit_line, build_dataset_package, build_package
     from pricing import compose_price, rates_for, unit_price
+    from seed import RECIPIENT_SCOPES, lots_for_recipient
 except ImportError:
     from agent_fleet.cost_agent.entities import (
-        COST, CostState, LaborKind, NotInModel, VintageRequired,
+        COST, CostState, LaborKind, NotInModel, SourceUnavailable, Unentitled, VintageRequired,
+    )
+    from agent_fleet.cost_agent.export import (
+        audit_line, build_dataset_package, build_package,
     )
     from agent_fleet.cost_agent.pricing import compose_price, rates_for, unit_price
+    from agent_fleet.cost_agent.seed import RECIPIENT_SCOPES, lots_for_recipient
 
 #: ONE VERB, ONE FIXED OUTPUT TYPE (ADR-0030). Read twice — by the route, to stamp the
 #: response, and by the registration, to fill Contract D's output end — so the two cannot
@@ -49,6 +56,7 @@ OUTPUT_URI: dict[str, str] = {
     "cost_rate_assumptions":   COST + "RateAssumptions",
     "cost_category_breakdown": COST + "CategoryBreakdown",
     "cost_supplier_concentration": COST + "SupplierConcentration",
+    "package_export":              COST + "ExportPackage",
 }
 
 #: The SUBJECT each verb is asked about — Contract D's input end.
@@ -61,6 +69,10 @@ INPUT_URI: dict[str, str] = {
     "cost_rate_assumptions":   COST + "RateTable",
     "cost_category_breakdown": COST + "CostCategory",
     "cost_supplier_concentration": COST + "Supplier",
+    # THE SUBJECT IS THE RECIPIENT, not a lot. This verb is asked "what may THIS
+    # party be shown", and the entitlement scope is the question rather than a
+    # filter applied afterwards.
+    "package_export":              COST + "DisclosureRecipient",
 }
 
 #: Money is dollars throughout. Declared per row rather than assumed, because "dollars or
@@ -440,6 +452,113 @@ def cost_supplier_concentration(
     }
 
 
+
+def package_export(
+    state: CostState, *, recipient_scope: str, include_dataset: Optional[bool] = None
+) -> dict[str, Any]:
+    """Produce a customer-validation package for one recipient. A GOVERNED EMIT (ADR-0047).
+
+    THIS IS WHY PACKAGING IS A VERB AND NOT A SCRIPT. A script leaves no trace: run twice, or
+    run for the wrong party, and afterwards the two are indistinguishable from each other and
+    from never having run at all. As a verb it is entitlement-scoped at the point of
+    production, it emits an audit line naming what went to whom under which algorithm, and it
+    is refusable by the same machinery that refuses every other verb.
+
+    `recipient_scope` IS SPOKEN-MANDATORY. There is no default and no "all lots" fallback: a
+    disclosure verb that can be invoked without naming its recipient is one keystroke from
+    disclosing the wrong program to the wrong party, and the failure is silent because the
+    output looks correct.
+
+    IT CALLS THE SAME BUILDER THE ARTIFACT WAS BUILT WITH — `build_html`, imported, not
+    reimplemented. Same-algorithm applies to the packager too: a verb that produced a
+    near-identical page would make every seal in the export suite a statement about a
+    different artifact than the one a recipient opens. The JavaScript gate and the manifest
+    hashing are load-bearing here, and they are load-bearing because they are the same code.
+    """
+    scopes = sorted(RECIPIENT_SCOPES)
+    if not recipient_scope or not str(recipient_scope).strip():
+        raise NotInModel(
+            "package_export needs a recipient scope; it is a disclosure and there is no "
+            f"default party. Known scopes: {scopes}")
+    scope = str(recipient_scope).strip()
+    if scope not in RECIPIENT_SCOPES:
+        # UNENTITLED, NOT NOT-IN-MODEL. An unknown recipient is an authorisation answer, and
+        # ADR-0049 Ruling 4 keeps the two as distinct types precisely so a caller cannot read
+        # "we do not disclose to you" as "we have no data".
+        raise Unentitled(f"{scope!r} is not an entitled disclosure recipient; known: {scopes}")
+
+    lots = lots_for_recipient(scope)
+    with_dataset = True if include_dataset is None else bool(include_dataset)
+
+    import sys as _sys
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    if str(root / "scripts") not in _sys.path:
+        _sys.path.insert(0, str(root / "scripts"))
+    try:
+        import build_cost_package as builder
+    except ImportError as exc:  # pragma: no cover - packaging deps absent
+        raise SourceUnavailable(f"the package builder is not importable here: {exc}") from None
+
+    runtime = root / ".pyodide-cache"
+    missing = [f for f in builder.RUNTIME_FILES + ("pyodide.js",)
+               if not (runtime / f).exists()]
+    if missing:
+        # A DISTINCT TYPE, not an empty result. The engine is correct, entitled and willing;
+        # what is absent is the pinned runtime. Reporting that as "no data" would send the
+        # caller to look at the program instead of at the deployment.
+        raise SourceUnavailable(
+            f"the pinned Pyodide runtime is not present at {runtime.name}; "
+            f"missing {missing}. The package cannot be produced without it.")
+
+    dataset_path = None
+    if with_dataset:
+        import build_cost_dataset as dataset_builder
+
+        dataset_path = root / "dist" / f"cost-{scope}.duckdb"
+        dataset_builder.build(scope, dataset_path)
+
+    html = builder.build_html(scope, runtime, duckdb_path=dataset_path)
+    problems = builder.check_javascript(html)
+    if problems:
+        # THE SAME GATE THE SCRIPT USES. A verb that skipped it could emit a package that is
+        # blank on open while reporting success, which is the one failure the whole export
+        # exists to make impossible.
+        raise SourceUnavailable("the produced page's JavaScript does not parse: "
+                                + "; ".join(problems))
+
+    package = build_dataset_package(
+        state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha(),
+        duckdb_path=str(dataset_path), duckdb_hash=dataset_builder.file_hash(dataset_path),
+    ) if dataset_path else build_package(
+        state, recipient_scope=scope, algorithm_sha=builder.algorithm_sha())
+
+    dest = root / "dist" / f"cost-validation-{scope}.html"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(html, encoding="utf-8")
+
+    audit = audit_line(package, disclosed_by="package_export")
+    return {
+        "output_uri": OUTPUT_URI["package_export"],
+        "recipient_scope": scope,
+        "lots_disclosed": list(lots),
+        "lot_count": len(lots),
+        "artifact_filename": dest.name,
+        "artifact_bytes": dest.stat().st_size,
+        "dataset_filename": dataset_path.name if dataset_path else None,
+        # BOTH HASHES AND THE COMMIT, in the answer itself. A caller that has the response has
+        # everything needed to say which package this was, without opening it.
+        "algorithm_sha": package["algorithm_sha"],
+        "locator": package["locator"],
+        "module_hashes": package["manifest"]["modules"],
+        "duckdb_sha256": package["dataset"]["duckdb_sha256"] if dataset_path else None,
+        "rows_sha256": package["dataset"]["rows_sha256"] if dataset_path else None,
+        "as_of": package["as_of"],
+        "audit": audit,
+        "verified_lots": len(package["manifest"]["checks"]),
+    }
+
+
 #: The catalogue, read ONCE and consumed twice — by the router's dispatch table and by the
 #: registration. One table, so a verb cannot be servable and unregistered or the reverse.
 VERBS = {
@@ -451,4 +570,5 @@ VERBS = {
     "cost_rate_assumptions":  cost_rate_assumptions,
     "cost_category_breakdown": cost_category_breakdown,
     "cost_supplier_concentration": cost_supplier_concentration,
+    "package_export":              package_export,
 }

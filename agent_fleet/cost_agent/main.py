@@ -154,6 +154,18 @@ CATALOGUE: list[dict[str, Any]] = [
                      "what escalation was applied", "which assumptions produced this"],
         "anti_synonyms": ["did the rates move against the estimate", "what did the lot cost"],
     },
+    {
+        "fn": "package_export",
+        "verb": "mesh:packageExport",
+        "synonyms": ["export a validation package for a customer",
+                     "produce the customer package", "release the cost figures to a customer",
+                     "package the lots this customer may see"],
+        # A DISCLOSURE IS NOT A REPORT. Every anti-synonym here is a question about figures
+        # the asker may already see; this verb is about RELEASING a bounded set to an outside
+        # party, and the two must not collide because one of them leaves the building.
+        "anti_synonyms": ["what did lot 4 cost", "where did the money go",
+                          "show me the price build-up", "which suppliers are concentrated"],
+    },
 ]
 
 
@@ -268,10 +280,19 @@ def _assert_declarations_cover_verbs() -> None:
     outputs = set(measures.OUTPUT_URI)
     inputs = set(measures.INPUT_URI)
     declared = set(slot_decls.all_declarations())
-    if not (servable == outputs == inputs == declared):
+    # THE CATALOGUE IS THE FIFTH TABLE, and it was the blind axis. This check compared four and
+    # let the fifth drift: a verb present in VERBS and absent from CATALOGUE is servable by
+    # direct call and INVISIBLE TO THE MESH — the engine boots, reports healthy, answers when
+    # addressed by name, and is never routed to. That is the same shape as the reregister
+    # hook's hand-kept directory map, which stopped at one engine and hid every later one.
+    catalogued = {e["fn"] for e in CATALOGUE}
+    described = set(_DESCRIPTIONS)
+    if not (servable == outputs == inputs == declared == catalogued == described):
         raise RuntimeError(
-            "verb tables disagree — servable=%s outputs=%s inputs=%s declared=%s"
-            % (sorted(servable), sorted(outputs), sorted(inputs), sorted(declared))
+            "verb tables disagree — servable=%s outputs=%s inputs=%s declared=%s "
+            "catalogued=%s described=%s"
+            % (sorted(servable), sorted(outputs), sorted(inputs), sorted(declared),
+               sorted(catalogued), sorted(described))
         )
 
 
@@ -381,6 +402,13 @@ _DESCRIPTIONS: dict[str, str] = {
     "cost_rate_assumptions":
         "The rate and escalation assumptions in force at a stated point in time, so any "
         "figure computed elsewhere can be reproduced. NOT what a lot cost.",
+    "package_export":
+        "Produce and record a validation package for a named outside party, containing only "
+        "the quantities that party is entitled to see, carrying the pricing algorithm itself "
+        "so the recipient can reproduce every figure, and leaving an audit line naming what "
+        "was released to whom under which version. The subject is the RECIPIENT, not a lot: "
+        "this answers what may be released to a party. NOT a report of figures to someone who "
+        "may already see them, and NOT a cost, share, trend or rate question.",
 }
 
 
