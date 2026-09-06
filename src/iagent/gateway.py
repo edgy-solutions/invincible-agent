@@ -1444,14 +1444,26 @@ PORTFOLIO_CANVAS_QUESTIONS: list[dict] = [
     {"slot": 2, "measure": "plan_site_load", "question": "which sites are overloaded"},
     # "BY ORGANIZATION", NOT "by initiative" — and the reason is a live defect, not taste.
     # Measured 2026-08-28 on the stored artifact: the by-initiative form returned ELEVEN
-    # ORGANISATIONS (group_by=org, first row `O1 | Corporate Capital Committee`), because BAML
-    # extracts the slot and the supervisor's dispatch payload does not carry it, so the verb ran
-    # on its default. The card was a correct org-grouped view answering a question that said
-    # something else, with NO disclosure surface — the strip renders routing, not verb params.
+    # ORGANISATIONS (group_by=org, first row `O1 | Corporate Capital Committee`), because the
+    # verb ran on its DEFAULT. The card was a correct org-grouped view answering a question that
+    # said something else, with NO disclosure surface — the strip renders routing, not verb params.
     # `org` IS the default, so this phrasing makes the seeded card TRUE.
-    # Revert to the by-initiative form when the carry lands; the acceptance test for that build
-    # is literally this question returning initiatives.
-    # See [[slots-are-extracted-then-dropped-at-dispatch]] and runbook A6.
+    #
+    # ── THE CAUSE WAS CORRECTED 2026-08-28. THIS COMMENT CARRIED THE OLD ONE UNTIL 2026-09-05. ──
+    # It used to read "BAML extracts the slot and the dispatch payload does not carry it", which
+    # is why you should not trust a comment that merely MATCHES the symptom. Retracted: NOTHING
+    # IS EXTRACTED. `RouteIntent` — the BAML function with the typed slot
+    # classes — has ZERO callers; `/route_intent` calls `ExtractIntent`, which returns mode and
+    # entity refs and no slots at all. Every layer downstream then faithfully carries nothing,
+    # which is why the symptom reads like a dispatch bug: the routing record is COMPLETE, and it
+    # is complete about a question nobody asked.
+    # The fix is FOUR joins and the first one is "call the function that fills slots" — not
+    # "forward what BAML extracted". Building the carry alone would wire a payload fed by a
+    # function that never runs: every test green, the field arrives empty, and empty is
+    # indistinguishable from today. Revert to the by-initiative form once extraction AND carry
+    # land; the acceptance test for that build is literally this question returning initiatives.
+    # See [[slots-are-extracted-then-dropped-at-dispatch]] (whose TITLE is part of what was
+    # retracted), ADR-0050 §3, and runbook A6.
     {"slot": 3, "measure": "plan_funding_gap", "question": "where is funding short by organization"},
     {"slot": 4, "measure": "plan_maturity_grid", "question": "capability maturity by site versus target"},
 ]
