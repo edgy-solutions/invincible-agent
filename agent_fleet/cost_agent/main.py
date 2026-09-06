@@ -74,7 +74,7 @@ _announce_transport_auth(component=COMPONENT)
 
 
 # -----------------------------------------------------------------------------
-# Verb catalogue - the registration source, read twice
+# Verb catalog - the registration source, read twice
 # -----------------------------------------------------------------------------
 #
 # ONE TABLE, READ BY THE ROUTES AND BY THE REGISTRATION, so the mesh and the served surface
@@ -100,7 +100,7 @@ CATALOGUE: list[dict[str, Any]] = [
         "synonyms": ["is cost per unit falling", "unit price across lots",
                      "are we getting cheaper", "unit cost trend"],
         "anti_synonyms": ["what did one lot cost", "how did the price build up",
-                          "what is the labour split"],
+                          "what is the labor split"],
     },
     {
         "fn": "cost_rate_comparison",
@@ -113,8 +113,8 @@ CATALOGUE: list[dict[str, Any]] = [
     {
         "fn": "cost_labor_composition",
         "verb": "mesh:costLaborComposition",
-        "synonyms": ["labour split for a lot", "touch versus support hours",
-                     "how much is programme management", "what is the labour mix"],
+        "synonyms": ["labor split for a lot", "touch versus support hours",
+                     "how much is program management", "what is the labor mix"],
         "anti_synonyms": ["what did the lot cost in total", "how did the price build up",
                           "what are the material costs"],
     },
@@ -124,7 +124,7 @@ CATALOGUE: list[dict[str, Any]] = [
         "synonyms": ["how did the price build up", "show the burden stack",
                      "what is in the price", "base to price walk"],
         "anti_synonyms": ["what did the lot cost by category", "is unit price falling",
-                          "what is the labour split"],
+                          "what is the labor split"],
     },
     {
         "fn": "cost_category_breakdown",
@@ -136,7 +136,7 @@ CATALOGUE: list[dict[str, Any]] = [
         # bucket COST; this reports what SHARE each bucket IS and how that share MOVED. A
         # question aimed at either would otherwise reach both, because they decompose the
         # same total along the same axis.
-        "anti_synonyms": ["what did lot 4 cost", "what were the labour hours",
+        "anti_synonyms": ["what did lot 4 cost", "what were the labor hours",
                           "show the burden stack", "which rates were applied"],
     },
     {
@@ -145,7 +145,7 @@ CATALOGUE: list[dict[str, Any]] = [
         "synonyms": ["how concentrated is purchasing", "which suppliers are above the threshold",
                      "are we dependent on one supplier", "supplier concentration"],
         "anti_synonyms": ["what did material cost", "where did the money go by category",
-                          "what is the labour split"],
+                          "what is the labor split"],
     },
     {
         "fn": "cost_rate_assumptions",
@@ -349,7 +349,7 @@ async def measure(fn_name: str, req: MeasureRequest) -> dict[str, Any]:
 
 @app.get("/verbs")
 async def verbs() -> dict[str, Any]:
-    """The catalogue: one table, read by the route and by the registration.
+    """The catalog: one table, read by the route and by the registration.
 
     Descriptions are the ROUTING SIGNAL and are written for the verb, never for a query.
     The not-clauses are load-bearing: they keep a verb out of traffic that belongs to its
@@ -373,7 +373,7 @@ async def verbs() -> dict[str, Any]:
 
 _DESCRIPTIONS: dict[str, str] = {
     "cost_lot_breakdown":
-        "What one numbered lot cost, split into labour, material, other direct charges, "
+        "What one numbered lot cost, split into labor, material, other direct charges, "
         "warranty and contracted effort, with hours where the bucket is worked rather than "
         "purchased. NOT a comparison across lots and NOT a price build-up.",
     "cost_unit_price_trend":
@@ -391,7 +391,7 @@ _DESCRIPTIONS: dict[str, str] = {
         "G&A, cost of money and profit, each naming what it added. NOT a category "
         "breakdown, which divides the same total a different way.",
     "cost_category_breakdown":
-        "How one lot's total divides proportionally across labour, material, other direct "
+        "How one lot's total divides proportionally across labor, material, other direct "
         "charges, warranty and contracted effort, and how each proportion moved against the "
         "preceding lot. NOT what each bucket cost in money — that is a different question "
         "with different assumptions behind it — and NOT the burden build-up.",

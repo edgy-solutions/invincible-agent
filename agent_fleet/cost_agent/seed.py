@@ -1,7 +1,7 @@
 """Notional production-cost data, and the consistency check that refuses a bad seed.
 
 OBVIOUSLY NOTIONAL BY RULE (ADR-0045 Decision 4). One invented program, nine lots, round
-rates, suppliers named after colours. No real program, lot, supplier or rate agreement
+rates, suppliers named after colors. No real program, lot, supplier or rate agreement
 appears here or anywhere in this engine.
 
 THE SEED CARRIES TWO SEALS, AND BOTH EXIST BECAUSE SOMEONE ALREADY PAID FOR THEIR ABSENCE:
@@ -91,7 +91,7 @@ def _rate_table() -> dict[tuple[int, str], RateSet]:
 
 
 #: Wright's-law learning on TOUCH hours only. Support scales with touch but more slowly;
-#: SEPM is broadly flat because programme management does not learn away.
+#: SEPM is broadly flat because program management does not learn away.
 _TOUCH_HOURS_LOT1 = Decimal("42000")
 _LEARNING = Decimal("0.92")          # per doubling of cumulative quantity
 
@@ -103,7 +103,7 @@ LEARNING_SLOPE = _LEARNING
 _QUANTITIES = [12, 12, 18, 24, 24, 30, 30, 36, 36]
 
 #: Purchased-value concentration. Fractions of the LOT'S material value, summing to 1 so the
-#: concentration view covers what it claims to describe. Colour names, obviously notional.
+#: concentration view covers what it claims to describe. Color names, obviously notional.
 _SUPPLIER_SHARES: tuple[tuple[str, Decimal], ...] = (
     ("Cobalt Components",     Decimal("0.41")),
     ("Amber Fabrication",     Decimal("0.27")),
@@ -236,7 +236,7 @@ def build_state() -> CostState:
         support = (touch * Decimal("0.45")).quantize(Decimal("1"))
         sepm = Decimal("9000") + Decimal("250") * idx
 
-        base_rate = Decimal("74") + Decimal("2") * idx      # escalating labour rate
+        base_rate = Decimal("74") + Decimal("2") * idx      # escalating labor rate
         _material = (
             Decimal("58000") * qty * (Decimal("1") + Decimal("0.02") * idx)
         ).quantize(Decimal("0.01"))

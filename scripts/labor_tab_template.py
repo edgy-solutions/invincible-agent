@@ -91,7 +91,7 @@ TEMPLATE = """<!doctype html>
    <span class="note" style="margin:0">Changing the lot recomputes every figure below.</span>
   </div>
 
-  <h2>Labour <span class="baseline-tag">BASELINE</span></h2>
+  <h2>Labor <span class="baseline-tag">BASELINE</span></h2>
   <div class="row">
    <div class="panel">
     <div id="chart"></div>
@@ -101,10 +101,10 @@ TEMPLATE = """<!doctype html>
    </div>
   </div>
 
-  <h2>Across the programme <span class="baseline-tag">BASELINE</span></h2>
+  <h2>Across the program <span class="baseline-tag">BASELINE</span></h2>
   <div class="row">
    <div class="panel">
-    <div class="panel-title">Labour hours by lot and category</div>
+    <div class="panel-title">Labor hours by lot and category</div>
     <div id="program-chart"></div>
    </div>
    <div class="panel">
@@ -116,7 +116,7 @@ TEMPLATE = """<!doctype html>
   <h2>Price composition <span class="baseline-tag">BASELINE</span></h2>
   <table id="composition"></table>
 
-  <h2>Programme management effort <span class="baseline-tag">BASELINE</span></h2>
+  <h2>Program management effort <span class="baseline-tag">BASELINE</span></h2>
   <div class="row">
    <div class="panel">
     <div class="panel-title">SEPM hours by month, against the run average</div>
@@ -297,7 +297,10 @@ function materialChart(mv, selected, width, height) {{
     const cx = padL + slot * i + slot / 2;
     const ha = (r.unit_applied_value / max) * plotH;
     const solo = r.unit_estimating_value === null;
-    const xa = solo ? cx - bw / 2 : cx - bw - 2;
+    // THE APPLIED BAR KEEPS ITS PLACE whether or not there is an estimate. Centring the lone
+    // bar made the pair look mis-drawn; leaving it put and marking the empty slot makes the
+    // absence a statement rather than a gap.
+    const xa = cx - bw - 2;
     out += '<rect x="' + xa.toFixed(1) + '" y="' + (padT + plotH - ha).toFixed(1) + '" width="' +
            bw + '" height="' + ha.toFixed(1) + '" fill="#2563eb" opacity="' +
            (r.lot === selected ? 1 : 0.45) + '"><title>Lot ' + r.lot + ' applied (' +
@@ -309,8 +312,15 @@ function materialChart(mv, selected, width, height) {{
              (r.lot === selected ? 1 : 0.45) + '"><title>Lot ' + r.lot + ' estimating (' +
              r.estimating_vintage + '): ' + r.unit_estimating + '</title></rect>';
     }} else {{
-      out += '<text x="' + cx.toFixed(1) + '" y="' + (padT + plotH - ha - 5).toFixed(1) +
-             '" text-anchor="middle" font-size="9" fill="#9ca3af">no estimate</text>';
+      // A HATCHED SLOT WHERE THE SECOND BAR WOULD BE. An empty space reads as a missing bar;
+      // a marked-out one reads as "there is nothing here to compare", which is the claim.
+      out += '<rect x="' + (cx + 2).toFixed(1) + '" y="' + (padT + plotH - ha).toFixed(1) +
+             '" width="' + bw + '" height="' + ha.toFixed(1) +
+             '" fill="url(#nohatch)" stroke="#cbd5e1" stroke-dasharray="3 2"/>' +
+             '<text x="' + (cx + 2 + bw / 2).toFixed(1) + '" y="' +
+             (padT + plotH - ha / 2).toFixed(1) + '" text-anchor="middle" font-size="8.5" ' +
+             'fill="#64748b" transform="rotate(-90 ' + (cx + 2 + bw / 2).toFixed(1) + ' ' +
+             (padT + plotH - ha / 2).toFixed(1) + ')">no estimate</text>';
     }}
     out += '<text x="' + cx.toFixed(1) + '" y="' + (padT + plotH + 14) +
            '" text-anchor="middle" font-size="10" fill="' +
@@ -320,8 +330,16 @@ function materialChart(mv, selected, width, height) {{
     'width:10px;height:10px;background:#2563eb;margin-right:4px"></span>applied</span>' +
     '<span style="font-size:12px"><span style="display:inline-block;width:10px;height:10px;' +
     'background:#b45309;margin-right:4px"></span>estimating</span>';
+  const defs = '<defs><pattern id="nohatch" width="6" height="6" ' +
+    'patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+    '<rect width="6" height="6" fill="#f1f5f9"/>' +
+    '<line x1="0" y1="0" x2="0" y2="6" stroke="#cbd5e1" stroke-width="1.5"/></pattern></defs>';
   return '<svg width="100%" viewBox="0 0 ' + width + ' ' + height + '" style="max-width:100%">' +
-         out + '</svg><div style="margin-top:6px">' + key + '</div>';
+         defs + out + '</svg><div style="margin-top:6px">' + key +
+         '<span style="font-size:12px;margin-left:14px;color:#6b7280">' +
+         '<span style="display:inline-block;width:10px;height:10px;background:#f1f5f9;' +
+         'border:1px solid #cbd5e1;margin-right:4px"></span>no separate estimate this year</span>' +
+         '</div>';
 }}
 
 // Ranked shares with the bound drawn on them. The bound is Python's and is stated in words
@@ -525,8 +543,8 @@ function renderLot(lot) {{
   document.getElementById('chart').innerHTML =
     stackedBar(j.parts, 520, 46);
   document.getElementById('metrics').innerHTML = metricRows([
-    ['Total labour hours', j.total_hours],
-    ['Total labour cost', j.total_cost],
+    ['Total labor hours', j.total_hours],
+    ['Total labor cost', j.total_cost],
     ['Touch hours per unit', j.touch_per_unit],
     ['Cost per unit (all categories)', j.unit_price],
     ['Support : touch ratio', j.support_touch_ratio],

@@ -1134,3 +1134,90 @@ def test_the_lots_table_carries_NO_CONSTANT_COLUMN(slice2):
         if column == "estimating_vintage":
             continue  # may legitimately tie when every year has one vintage
         assert len(values) > 1, f"column {column!r} is constant across every lot"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# US SPELLING — the recipient is a US program office
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: British forms that must not reach the recipient. Deliberately does NOT include `analysis`,
+#: `analyst` or `program` roots that are already US — and `COST_ANALYST` is a Topaz permission
+#: name, so only the -yse verb forms are listed.
+BRITISH_FORMS = (
+    "programme", "programmes", "labour", "colour", "colours", "behaviour", "behaviours",
+    "normalise", "normalised", "normalising", "normalisation", "recognise", "recognised",
+    "organise", "organised", "organisation", "analyse", "analysed", "analysing",
+    "centre", "centres", "licence", "defence", "modelling", "travelling", "judgement",
+    "quantise", "quantised", "catalogue", "catalogues",
+)
+
+#: Files whose text reaches the recipient. `pricing.py` is on the list because the Algorithm
+#: panel DISPLAYS IT VERBATIM - its comments are customer-facing text, not internal notes.
+PACKAGE_SOURCES = (
+    "agent_fleet/cost_agent/pricing.py",
+    "agent_fleet/cost_agent/page.py",
+    "agent_fleet/cost_agent/export.py",
+    "agent_fleet/cost_agent/seed.py",
+    "agent_fleet/cost_agent/entities.py",
+    "scripts/labor_tab_template.py",
+    "setup/ontologies/cost_extension.ttl",
+)
+
+
+def test_NO_BRITISH_SPELLING_in_anything_the_recipient_reads():
+    """The customer is a US program office; the tool they know says program and labor.
+
+    SEALED AT THE SOURCE, not only on the built page, so a template edit is caught before a
+    build rather than after someone opens the artifact in a room.
+
+    `CATALOGUE` is exempt as a Python identifier in `main.py` — main.py is not in the package,
+    and renaming a symbol is a different change with different risk. The word in prose is
+    mapped; the symbol is not.
+    """
+    import re
+
+    offenders = []
+    for rel in PACKAGE_SOURCES:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for form in BRITISH_FORMS:
+            for m in re.finditer(r"\b" + form + r"\b", text, re.IGNORECASE):
+                line = text[:m.start()].count("\n") + 1
+                offenders.append(f"{rel}:{line} {m.group(0)!r}")
+    assert not offenders, "British spelling reaches the recipient:\n  " + "\n  ".join(
+        offenders[:15])
+
+
+def test_the_spelling_seal_LOOKS_AT_THE_RIGHT_WORDS():
+    """Guards the guard: a list of forms that never appear anywhere would pass forever.
+
+    Checks the detector fires on text known to contain the forms, and does NOT fire on the US
+    words it must leave alone — `analysis`, `analyst`, `program`, `labor`.
+    """
+    import re
+
+    def hits(text):
+        return [f for f in BRITISH_FORMS if re.search(r"\b" + f + r"\b", text, re.IGNORECASE)]
+
+    assert hits("the labour on this programme") == ["programme", "labour"] or set(
+        hits("the labour on this programme")) == {"programme", "labour"}
+    assert hits("Programme Management") == ["programme"]
+    # THE ONES THAT MUST NOT FIRE. COST_ANALYST is a live Topaz permission name.
+    for safe in ("cost analysis", "the COST_ANALYST role", "a US program office",
+                 "direct labor hours", "DATA_ENGINEERING analyst"):
+        assert hits(safe) == [], f"{safe!r} tripped the detector"
+
+
+def test_the_rendered_page_says_PROGRAM_and_LABOR():
+    """The built artifact, checked on the words the room actually sees."""
+    import re
+
+    dest = ROOT / "dist" / "cost-validation-notional-customer-alpha.html"
+    if not dest.exists():
+        pytest.skip("build the package first")
+    html = dest.read_text(encoding="utf-8")
+    # Only OUR markup and script, never the vendored runtime, whose text is not ours to change.
+    ours = html[:html.index('<script id="embedded-runtime"')]
+    for form in ("programme", "labour", "colour"):
+        assert not re.search(r"\b" + form + r"\b", ours, re.IGNORECASE), (
+            f"{form!r} is rendered on the page")
+    assert re.search(r"\bLabor\b", ours), "the labor headings are gone entirely"

@@ -60,7 +60,7 @@ HANDLE_SLOTS: Dict[str, set] = {}
 #: Verbs whose parameters arrive through a governed UI flow. EMPTY: nothing here mutates.
 CEREMONY_VERBS: set = set()
 
-#: The state handle. Never a parameter in any sense a caller would recognise.
+#: The state handle. Never a parameter in any sense a caller would recognize.
 _NOT_A_SLOT = {"state"}
 
 #: A spoken slot whose value NAMES an instance, mapped to the CLASS URI of what it names.

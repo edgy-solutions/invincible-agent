@@ -185,7 +185,7 @@ def build_html(recipient: str, runtime_dir: pathlib.Path,
     embedded = {f: _b64(runtime_dir / f) for f in RUNTIME_FILES}
     loader_js = strip_sourcemaps(
         (runtime_dir / "pyodide.js").read_text(encoding="utf-8"))
-    # DEFENCE IN DEPTH ON THE NO-CDN PROPERTY. Pyodide's loader carries a CDN base as a
+    # DEFENSE IN DEPTH ON THE NO-CDN PROPERTY. Pyodide's loader carries a CDN base as a
     # FALLBACK for when `indexURL` is not supplied. We do supply it, so the fallback is
     # unreachable in practice -- and "unreachable in practice" is exactly what this seal
     # exists to distrust. The base is rewritten to a relative path so the artifact CANNOT

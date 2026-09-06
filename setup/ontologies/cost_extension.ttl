@@ -43,7 +43,7 @@
 # tests/routing/test_response_shapes_are_not_groundable.py seals it in both directions.
 #
 # -- NOTIONAL BY RULE ------------------------------------------------------------------
-# Structural cost-accounting nouns carrying no organisation, program, supplier or customer
+# Structural cost-accounting nouns carrying no organization, program, supplier or customer
 # vocabulary. Every concept named below is public cost-estimating practice. Nothing from
 # any real program appears in this file, in the seed, or in any docstring.
 
@@ -54,7 +54,7 @@
 cost:ProductionLot a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Production Lot" ;
-    rdfs:comment "One numbered quantity built under a single authorization at a single point in time, costed as a self-contained whole. Questions naming a number and asking what that quantity cost, what it cost per unit, how its labour split, or which rates were applied to it target this class. It is the unit at which cost is accumulated and reported, and the smallest thing that has a complete price of its own." .
+    rdfs:comment "One numbered quantity built under a single authorization at a single point in time, costed as a self-contained whole. Questions naming a number and asking what that quantity cost, what it cost per unit, how its labor split, or which rates were applied to it target this class. It is the unit at which cost is accumulated and reported, and the smallest thing that has a complete price of its own." .
 
 cost:ProductionProgram a owl:Class ;
     rdfs:subClassOf prov:Entity ;
@@ -89,7 +89,7 @@ cost:RateTable a owl:Class ;
 cost:CostCategory a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Cost Category" ;
-    rdfs:comment "One of the accounting buckets a price is decomposed into for reporting - labour, material, other direct charges, warranty, or contracted effort. Questions asking where the money went, which bucket grew, or what proportion of a total came from a named bucket target this class. It is a reporting dimension rather than a thing that is built, and it exists so a total can be explained rather than merely stated." .
+    rdfs:comment "One of the accounting buckets a price is decomposed into for reporting - labor, material, other direct charges, warranty, or contracted effort. Questions asking where the money went, which bucket grew, or what proportion of a total came from a named bucket target this class. It is a reporting dimension rather than a thing that is built, and it exists so a total can be explained rather than merely stated." .
 
 cost:Supplier a owl:Class ;
     rdfs:subClassOf prov:Entity ;
@@ -99,7 +99,7 @@ cost:Supplier a owl:Class ;
 cost:DisclosureRecipient a owl:Class ;
     rdfs:subClassOf prov:Agent ;
     rdfs:label "Disclosure Recipient" ;
-    rdfs:comment "An external party entitled to be shown a bounded portion of a programme's cost figures, considered as the SCOPE OF A DISCLOSURE rather than as a customer record. Questions asking what may be released to a named party, which quantities a party is permitted to see, or what has been disclosed to whom target this class. It is the subject of a disclosure the way a lot is the subject of a cost: the party is what the question is about, not a filter applied to an answer computed for someone else. It carries no commercial relationship, contract or contact information - only the boundary of what it may be told." .
+    rdfs:comment "An external party entitled to be shown a bounded portion of a program's cost figures, considered as the SCOPE OF A DISCLOSURE rather than as a customer record. Questions asking what may be released to a named party, which quantities a party is permitted to see, or what has been disclosed to whom target this class. It is the subject of a disclosure the way a lot is the subject of a cost: the party is what the question is about, not a filter applied to an answer computed for someone else. It carries no commercial relationship, contract or contact information - only the boundary of what it may be told." .
 
 # =============================================================================
 # Response shapes - the OUTPUT end of Contract D

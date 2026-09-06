@@ -559,7 +559,7 @@ def package_export(
     }
 
 
-#: The catalogue, read ONCE and consumed twice — by the router's dispatch table and by the
+#: The catalog, read ONCE and consumed twice — by the router's dispatch table and by the
 #: registration. One table, so a verb cannot be servable and unregistered or the reverse.
 VERBS = {
     "cost_lot_breakdown":     cost_lot_breakdown,

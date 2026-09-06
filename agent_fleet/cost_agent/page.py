@@ -156,7 +156,7 @@ def _cum(units: int, slope: Decimal) -> float:
 
 
 def _touch_factor(lot: int, slope: Decimal, base_slope: Decimal) -> Decimal:
-    """How touch labour moves when the learning curve is re-run at a DIFFERENT slope.
+    """How touch labor moves when the learning curve is re-run at a DIFFERENT slope.
 
     The baseline hours are already `T1 * N^b` with `b = ln(base_slope)/ln 2` — the engine
     applied the curve. So a scenario slope is not a multiplier on that result; it is a
@@ -165,7 +165,7 @@ def _touch_factor(lot: int, slope: Decimal, base_slope: Decimal) -> Decimal:
         N^b_scenario / N^b_baseline
 
     THE FIRST VERSION MULTIPLIED TOUCH COST BY THE SLOPE DIRECTLY. That made the field's label
-    a lie (0.92 meant "keep 92% of touch labour", not "assume a 92% curve") and, because the
+    a lie (0.92 meant "keep 92% of touch labor", not "assume a 92% curve") and, because the
     page defaulted the field to the engine's own slope, an UNTOUCHED scenario came out
     $732,148.44 below the baseline sitting beside it. A package whose two headline numbers
     disagree before the customer touches anything teaches them to distrust the verified one.
@@ -194,7 +194,7 @@ def composition_view(lot: int) -> list[dict[str, str]]:
     """The price build-up for one lot, FORMATTED HERE.
 
     The renderer used to print the manifest's raw strings straight into the table, so the
-    composition read `6307210.00` two inches from a labour total reading `5,229,210.00` — two
+    composition read `6307210.00` two inches from a labor total reading `5,229,210.00` — two
     money formats on one screen, from one package. Formatting is presentation, and this module
     is where the package's presentation decisions live; putting it in JS would also put it
     outside every seal.
@@ -219,7 +219,7 @@ def scenario_view(lot: int, rates_json: str, slope: str) -> dict[str, Any]:
     the scenario alone. The baseline number is read from the manifest — the verified figure —
     rather than recomputed, so the comparison is always against what was actually asserted.
 
-    THE SLOPE IS APPLIED TO TOUCH LABOUR ONLY, which is where a learning curve acts. Applying
+    THE SLOPE IS APPLIED TO TOUCH LABOR ONLY, which is where a learning curve acts. Applying
     it to the whole base would be a different (and wrong) model, quietly. It re-runs the curve
     rather than scaling its output — see `_touch_factor` for why that distinction cost $732k.
     """
@@ -281,7 +281,7 @@ def scenario_view(lot: int, rates_json: str, slope: str) -> dict[str, Any]:
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════
 # THE ACROSS-LOTS HALF. `labor_view` answers "what is this lot"; these answer "what is the
-# programme". Same rows, same formatter, same rule — the arithmetic is here and the renderer
+# program". Same rows, same formatter, same rule — the arithmetic is here and the renderer
 # only draws.
 # ═══════════════════════════════════════════════════════════════════════════════════════════
 
@@ -499,7 +499,7 @@ def sepm_monthly_view(lot: int) -> dict[str, Any]:
     """Level-of-effort staffing across the lot's twelve months, with its own average.
 
     THE AVERAGE IS THE POINT. A total answers "how much"; the average line is what turns the
-    series into a judgement, because a month is only heavy or light relative to the run. It is
+    series into a judgment, because a month is only heavy or light relative to the run. It is
     computed here rather than by the renderer for the usual reason: a mean is arithmetic.
 
     RECONCILIATION IS REPORTED, NOT ASSUMED. The monthly rows and the annual labor/sepm row are

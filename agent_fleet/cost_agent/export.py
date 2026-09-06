@@ -95,7 +95,7 @@ def module_hashes() -> dict[str, str]:
     recipient tried to reproduce the figure.
 
     `pricing.py` is stored CRLF in this working tree. The builder embeds it with
-    `read_text(encoding="utf-8")`, which normalises to LF, so:
+    `read_text(encoding="utf-8")`, which normalizes to LF, so:
 
         file bytes     sha256:1e50cb93...
         embedded text  sha256:21e61050...
@@ -151,7 +151,7 @@ def build_manifest(
             },
             # THE INTERMEDIATES. Each step's basis is carried because a reader checking the
             # arithmetic cannot recover it from the amounts — an overhead figure is
-            # unverifiable without knowing it was struck on labour-plus-fringe.
+            # unverifiable without knowing it was struck on labor-plus-fringe.
             "intermediates": [
                 {"name": s.name, "rate": None if s.rate is None else str(s.rate),
                  "basis": str(s.basis), "amount": str(s.amount),
@@ -303,7 +303,7 @@ def audit_line(package: dict[str, Any], *, disclosed_by: str) -> dict[str, Any]:
 # both can prove the file they were handed is the data the page computed from.
 # =======================================================================================
 
-#: The labour kinds, in render order. Declared rather than derived from the rows so a lot
+#: The labor kinds, in render order. Declared rather than derived from the rows so a lot
 #: missing a kind renders a gap instead of silently reordering the chart.
 LABOR_KINDS = ("touch", "support", "sepm")
 

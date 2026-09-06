@@ -28,7 +28,7 @@ except ImportError:
 #: derivation Engine F uses for its EAC methods, for the same reason.
 CostCategory = Literal["labor", "material", "other_direct", "warranty", "contracts"]
 
-#: Labour is reported by the KIND of work, because two lots with identical labour totals
+#: Labor is reported by the KIND of work, because two lots with identical labor totals
 #: and different mixes have different cost drivers and respond to different actions.
 LaborKind = Literal["touch", "support", "sepm"]
 
@@ -125,7 +125,7 @@ class Lot:
         for l in self.labor:
             if l.kind == kind:
                 return l
-        raise NotInModel(f"lot {self.number} has no {kind} labour line")
+        raise NotInModel(f"lot {self.number} has no {kind} labor line")
 
 
 @dataclass

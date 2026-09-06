@@ -21,7 +21,7 @@ the "renderer never sums" complaint arriving from the other direction, and a cus
 checking our arithmetic by hand is the whole use case. Decimal makes the seal assertable
 with `==` instead of a tolerance nobody can justify.
 
-WHY THE ORDER IS DATA AND NOT CODE. Fringe applies to labour; overhead applies to labour
+WHY THE ORDER IS DATA AND NOT CODE. Fringe applies to labor; overhead applies to labor
 plus fringe; G&A applies to the subtotal INCLUDING overhead; cost of money and profit apply
 after G&A. Applying the same factors in a different sequence produces a different, wrong
 price. `COMPOSITION_ORDER` states the sequence once so the order cannot drift from the
@@ -78,8 +78,8 @@ class RateSet:
     """
     fiscal_year: int
     vintage: str                 # ISO date the set was fixed; part of the identity
-    fringe: Decimal              # applied to direct labour
-    overhead: Decimal            # applied to labour + fringe
+    fringe: Decimal              # applied to direct labor
+    overhead: Decimal            # applied to labor + fringe
     g_and_a: Decimal             # applied to the subtotal, including overhead
     cost_of_money: Decimal       # facilities capital, applied to total cost
     profit: Decimal              # applied to total cost + cost of money
@@ -92,7 +92,7 @@ class CompositionStep:
 
     `basis` names WHAT THE FACTOR WAS APPLIED TO. It is carried because a reader checking
     the arithmetic needs it and cannot recover it from the amounts -- an overhead figure is
-    unverifiable without knowing it was struck on labour-plus-fringe rather than on labour.
+    unverifiable without knowing it was struck on labor-plus-fringe rather than on labor.
     """
     name: str
     rate: Decimal | None         # None for the seed step, which is an amount not a factor
@@ -178,8 +178,8 @@ class StepSpec:
     plus_steps: tuple[str, ...] = ()        # earlier step names added to that component
 
 
-#: The default build-up. THE SEQUENCE IS THE ALGORITHM: fringe applies to labour, overhead to
-#: labour plus fringe, G&A to the subtotal INCLUDING overhead, then cost of money, then
+#: The default build-up. THE SEQUENCE IS THE ALGORITHM: fringe applies to labor, overhead to
+#: labor plus fringe, G&A to the subtotal INCLUDING overhead, then cost of money, then
 #: profit. The same factors in a different order produce a different, wrong price -- which is
 #: why the order is stated as data a reader can see rather than inferred from control flow.
 DEFAULT_COMPOSITION: tuple[StepSpec, ...] = (
