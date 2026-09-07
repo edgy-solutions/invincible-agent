@@ -25,7 +25,8 @@ from agent_fleet.presentation_agent.capabilities import (
     PRESENTATION_CAPABILITIES, canonical_iri_for_lookup,
 )
 
-_CORTEX = Path(__file__).resolve().parents[2].parent / "cortex-ui" / "src" / "components" / "planning"
+ROOT = Path(__file__).resolve().parents[2]
+_CORTEX = ROOT.parent / "cortex-ui" / "src" / "components" / "planning"
 
 _CONTRACTS = {
     "CONTRIBUTION_RANKING": ("ContributionRanking.contract.ts", "ContributionRow"),
@@ -211,3 +212,76 @@ def test_money_stays_EXACT_in_the_domain_field(state):
     for row in out["rows"]:
         assert isinstance(row["price"], str), "the exact figure stopped being a string"
         assert abs(Decimal(row["price"]) - Decimal(str(row["contribution"]))) < Decimal("0.005")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THE PROJECTOR SEAM — what the card is promised against what the engine sends
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _projected(archetype: str) -> tuple[str, tuple[str, ...]]:
+    """Read one row of the projector's own table WITHOUT importing the app.
+
+    `presentation_agent.main` imports baml_client, which is not installed in this environment,
+    so the table is parsed from source. Parsed rather than mirrored: a copy here would be the
+    second-source-of-truth problem, and this seal exists precisely because two sides disagreed.
+    """
+    import re
+
+    src = (ROOT / "agent_fleet" / "presentation_agent" / "main.py").read_text(encoding="utf-8")
+    m = re.search(r'"' + archetype + r'": \((.*?)\),\n', src, re.S)
+    assert m, f"{archetype} has no row in _PROJECTED_ARCHETYPES"
+    rows_key, passthrough = eval("(" + m.group(1) + ")")   # noqa: S307 - our own source
+    return rows_key, passthrough
+
+
+def test_the_STEP_LADDER_PASSTHROUGH_is_fully_emitted(state):
+    """EVERY FIELD THE PROJECTOR CARRIES MUST EXIST IN THE PAYLOAD.
+
+    The passthrough advertised `scope_label` and this producer did not emit it. That is the
+    mirror of the defect the projector's own comment warns about — "a field advertised to a
+    renderer that never looks at it" — pointing the other way: a field the renderer reads and
+    the producer never sends. The card would have drawn a build-up framed by nothing, and
+    neither side's tests could see it, because each was right about its own half.
+
+    DERIVED FROM THE PROJECTOR'S TABLE, not from a list here, so a field added on that side
+    without a producer change fails on this one.
+    """
+    rows_key, passthrough = _projected("STEP_LADDER")
+    payload = measures.cost_price_composition(state, lot=3, rate_vintage="2021-02-01")
+    assert rows_key in payload, f"the projector reads rows from {rows_key!r} and there are none"
+    missing = [f for f in passthrough if f not in payload]
+    assert not missing, (
+        f"the projector carries {missing} and cost_price_composition emits none of them - the "
+        "card is promised a field the engine never sends")
+
+
+def test_the_passthrough_carries_NOTHING_THE_CARD_CANNOT_USE(state):
+    """The same rule in the direction the projector's comment states it.
+
+    `lot` and `fiscal_year` are on the envelope and deliberately NOT carried: `scope_label`
+    already says which walk this is, so carrying them would advertise fields nothing reads.
+    This pins that decision - if either appears in the passthrough, someone has changed their
+    mind and the reason should be written down rather than inferred.
+    """
+    _, passthrough = _projected("STEP_LADDER")
+    for field in ("lot", "fiscal_year"):
+        assert field not in passthrough, (
+            f"{field!r} joined the passthrough; scope_label already frames the card, so either "
+            "the card now reads it or it is an advertised field nothing looks at")
+
+
+def test_sums_SURVIVES_the_projector(state):
+    """The card refuses to draw on `sums: false`. If the projector dropped it, the card could
+    not tell a checked walk from an unchecked one and would draw a confident table either way.
+    """
+    _, passthrough = _projected("STEP_LADDER")
+    assert "sums" in passthrough, "the reconciliation flag is not carried to the card"
+    payload = measures.cost_price_composition(state, lot=3, rate_vintage="2021-02-01")
+    assert payload["sums"] is True
+
+
+def test_the_projector_reads_steps_not_structured_data(state):
+    """A build-up's rows live under `steps`. If this ever reads `structured_data`, the card gets
+    no rows at all and degrades to KNOWLEDGE_DOCUMENT - silently, which is the failure shape
+    every cost verb was in before its binding row existed."""
+    rows_key, _ = _projected("STEP_LADDER")
+    assert rows_key == "steps"

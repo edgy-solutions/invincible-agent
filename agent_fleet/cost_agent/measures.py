@@ -349,6 +349,12 @@ def cost_price_composition(state: CostState, *, lot: int, rate_vintage: str) -> 
     )
     return {
         "output_uri": OUTPUT_URI["cost_price_composition"],
+        # THE CARD'S FRAMING, and the reason `lot` and `fiscal_year` do not need carrying
+        # through the projector: this says which walk the reader is looking at, in one field
+        # the renderer already reads. STEP_LADDER's passthrough advertised `scope_label` and
+        # this producer did not emit it — the same defect as advertising a field nothing reads,
+        # pointing the other way, and the card would have drawn a build-up framed by nothing.
+        "scope_label": f"Lot {lot_obj.number} at {rates.vintage} rates",
         "lot": lot_obj.number,
         "quantity": lot_obj.quantity,
         "fiscal_year": build.fiscal_year,
