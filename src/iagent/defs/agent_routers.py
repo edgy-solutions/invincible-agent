@@ -119,6 +119,16 @@ def trigger_restate_analyst() -> dict:
 # entry and engines.yaml row, agent_fleet/langgraph_support/, and four tests that enumerate it
 # (test_reregister_covers_every_registering_engine, test_service_urls_are_real,
 # test_endpoint_gating_manifest, test_user_id_plumbing).
+#
+# ONE OF THOSE REMOVALS WILL TURN A SEAL RED ON PURPOSE, so the person doing it does not read
+# it as a break. `tests/test_chart_renders_on_bare_defaults.py` asserts Engine B's absence on
+# the WORKLOAD (`name: t-engine-b`) rather than the bare string, because the ConfigMap's
+# LANGGRAPH_SUPPORT_SVC_URL is documented residue and a string assertion would fail on it and
+# pressure someone into weakening the check. It then holds a POSITIVE CONTROL —
+# `assert "LANGGRAPH_SUPPORT_SVC_URL" in out` — which exists so the residue cannot vanish
+# quietly while this note goes on describing it. So: delete the ConfigMap entry and that
+# control in the SAME change, and delete this paragraph with them. A control kept past the
+# thing it controls is the stale-comment defect wearing a seal's clothes.
 
 
 @asset(
