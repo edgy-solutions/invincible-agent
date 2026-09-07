@@ -35,9 +35,14 @@ _ROUTERS = _REPO / "src" / "iagent" / "defs" / "agent_routers.py"
 # FastAPI never validates it. AnalyzeRequest is the documented mirror ("Proxy request model —
 # mirrors AgentTask") and Restate's AnalystService reads those fields off the payload, so it is
 # the right contract to pin even though the framework will not enforce it.
+# ENGINE B'S ROW IS GONE BECAUSE THE ASSET IS, NOT BECAUSE THE CHECK STOPPED MATTERING
+# (2026-09-06). ADR-0046 §8.4 ruled retire; `trigger_langgraph_support` was removed with it.
+# Its contract row would now fail on a function that does not exist, which reads as the guard
+# breaking rather than the population shrinking. THE CLASS GUARD BELOW STILL COVERS ENGINE B'S
+# CASE for every asset that remains, and would cover a reinstated one on its first commit —
+# that guard derives its population from the module, so nothing here needs adding back.
 _CONTRACTS = {
     "trigger_restate_analyst": ("restate_analyst", "AnalyzeRequest"),
-    "trigger_langgraph_support": ("langgraph_support", "SupportRequest"),
     "trigger_swarms_scraper": ("swarms_scraper", "ScrapeRequest"),
 }
 

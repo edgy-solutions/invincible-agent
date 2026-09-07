@@ -48,7 +48,8 @@ def _icon_card(icon_name: str, title: str, description: str) -> MetadataValue:
 # Service Discovery — defaults to K8s internal DNS, overridden via env
 # ---------------------------------------------------------------------------
 RESTATE_ANALYST_URL = os.getenv("RESTATE_ANALYST_URL", "http://iagent-engine-a:8081")
-LANGGRAPH_SUPPORT_SVC_URL = os.getenv("LANGGRAPH_SUPPORT_SVC_URL", "http://iagent-langgraph-support:8082")
+# LANGGRAPH_SUPPORT_SVC_URL removed with the Engine B asset — nothing in this module reads it.
+# dynamic_supervisor.py keeps its own copy; that caller is retired separately (see below).
 SWARMS_SCRAPER_URL = os.getenv("SWARMS_SCRAPER_URL", "http://iagent-swarms-scraper:8083")
 DATAHUB_WRAPPER_URL = os.getenv("DATAHUB_WRAPPER_URL", "http://iagent-engine-d:8085")
 NEO4J_EXPERT_SVC_URL = os.getenv("NEO4J_EXPERT_SVC_URL", "http://iagent-engine-e:8086")
@@ -101,38 +102,23 @@ def trigger_restate_analyst() -> dict:
     return response.json()
 
 
-@asset(
-    kinds={"langgraph", "postgres"},
-    group_name="agent_fleet",
-    metadata={
-        "Engine B": _icon_card(
-            "langgraph",
-            "LangGraph + PostgreSQL",
-            "Stateful support agent. Two-node StateGraph (triage → respond) "
-            "with AsyncPostgresSaver checkpointer for conversational memory "
-            "keyed by `thread_id`.\n\n"
-            "**Endpoint:** `POST :8082/support`",
-        ),
-    },
-)
-def trigger_langgraph_support(context) -> dict:
-    """Trigger Engine B (LangGraph) support agent pod."""
-    # BODY REQUIRED. `SupportRequest.thread_id` (langgraph_support/main.py) has no default, so a
-    # bodyless POST was a 422 before the graph was ever reached — the asset advertised an endpoint
-    # it could not call. `thread_id` is the AsyncPostgresSaver CHECKPOINT KEY, so it is run-scoped
-    # deliberately: a constant would accumulate every Dagster run into one conversation forever,
-    # and that is a memory-shape decision, not a placeholder.
-    response = requests.post(
-        f"{LANGGRAPH_SUPPORT_SVC_URL}/support",
-        json={
-            "thread_id": f"dagster-{context.run_id}",
-            "task_description": "Smoke: triage and respond for the default dataset.",
-            "dataset_id": "default",
-        },
-        timeout=300,
-    )
-    response.raise_for_status()
-    return response.json()
+# ENGINE B IS RETIRED — the asset that triggered it is GONE, not disabled (2026-09-06).
+# ADR-0046 §8.4 ruled retire: `synthesize_stateful` forwarded every parallel sub-task's result
+# as `dagster_context`, Engine B wrote it into `messages`, and no node ever read it — so there
+# was no honest verb to register and no work for this asset to trigger.
+#
+# REMOVED BEFORE THE POD, DELIBERATELY. This asset called `raise_for_status()`, so once
+# `engineB.enabled` flips to false it does not degrade — it FAILS the Dagster run against a pod
+# that is not there. `synthesize_stateful` (dynamic_supervisor.py) still calls the same endpoint
+# and is NOT removed here: it catches ConnectionError and returns `{"status": "skipped"}` by
+# design, so it degrades honestly. That difference is the whole reason these are two changes and
+# this one goes first.
+#
+# STILL REFERENCING ENGINE B, and all of it must go before the chart block can be removed:
+# dynamic_supervisor.py's LANGGRAPH_SUPPORT_SVC_URL and synthesize_stateful, helm's configmap
+# entry and engines.yaml row, agent_fleet/langgraph_support/, and four tests that enumerate it
+# (test_reregister_covers_every_registering_engine, test_service_urls_are_real,
+# test_endpoint_gating_manifest, test_user_id_plumbing).
 
 
 @asset(
