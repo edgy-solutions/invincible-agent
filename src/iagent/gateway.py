@@ -52,6 +52,7 @@ from .database import get_db, init_db
 from .models import BpmnCatalog
 from .auth import get_current_user, User
 from .identity_vault import (
+    _ensure_the_audit_line_actually_ARRIVES,
     VAULT,
     RedemptionOutcome,
     vault_ttl_seconds,
@@ -65,6 +66,24 @@ from .answer_artifact_writer import (
 
 
 logger = logging.getLogger("cortex")
+# THE LINE MUST ARRIVE, NOT MERELY BE CALLED.
+#
+# MEASURED 2026-09-07: this logger has emitted ZERO lines in the deployed BFF, ever. Something
+# calls `logging.basicConfig()` during boot, which installs a root handler at its default level
+# of WARNING, so every `logger.info` in this module is dropped while uvicorn's access log keeps
+# flowing. `identity_vault` hit this on 2026-08-28 and fixed its OWN logger; the presentation
+# agent hit it before that. This is the third instance of the same class and by far the widest:
+# every routing, lineage and resolved_intent line in the gateway was silent.
+#
+# THE COST WAS A DIAGNOSIS, NOT JUST QUIET. Three lineage log lines were added specifically so a
+# slow pick would say which of two causes it was -- claim never sent, or claim sent and fallen
+# through. They were invisible on arrival, and their absence was read as evidence. An absence
+# assertion is only worth its positive control, and there was none: nothing established that
+# this logger emits at any level, so even the missing WARNING proved nothing.
+#
+# Reusing identity_vault's function rather than copying it: it is the one implementation of this
+# fix, it carries the original measurement, and a second copy would drift.
+_ensure_the_audit_line_actually_ARRIVES(logger)
 
 # ── Env ───────────────────────────────────────────────────
 load_dotenv()

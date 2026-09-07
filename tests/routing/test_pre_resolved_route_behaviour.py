@@ -24,6 +24,7 @@ Run: uv run --frozen pytest tests/routing/test_pre_resolved_route_behaviour.py -
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,18 +34,40 @@ _SUBJECT = "http://invincible-agent/mesh#Capability"
 _VERB = "mesh:planCapabilityPath"
 
 
-@pytest.fixture(scope="module")
-def sup():
-    """The real module, loaded by path.
+_SUP_PATH = _REPO / "src" / "iagent" / "defs" / "dynamic_supervisor.py"
 
-    No stub installer: `dynamic_supervisor` imports cleanly in this environment, and a
-    hand-maintained stub set is a second copy of the import graph that goes stale silently.
+
+@pytest.fixture(scope="session")
+def sup():
+    """The real module — REUSED if anything already loaded it.
+
+    THE FIRST VERSION LOADED IT UNCONDITIONALLY AND WAS ORDER-DEPENDENT. Executing
+    `dynamic_supervisor.py` a second time under a different module name re-runs its Dagster
+    registrations, and dagster's serdes registry refuses:
+
+        SerdesUsageError: Multiple deserializers registered for storage name
+        `ConfigurableClassData`
+
+    Alone it passed. In the routing suite's file order it passed. Run after
+    `test_ask_to_answer_lineage.py` it errored at fixture setup — every test in this file, on
+    an ordering nobody chose. That is the flaky-seal shape that gets a file deleted six weeks
+    later rather than fixed, and the docstring here previously ARGUED for the broken version:
+    it said a stub installer was a stale second copy of the import graph. That reasoning was
+    wrong about the thing it was defending — `test_adr0019_contracts.py` stubs dagster for
+    exactly this reason, and I read its stub set as duplication rather than as the fix.
+
+    So: reuse whatever copy exists, keyed on the FILE rather than on a module name, because
+    the collision is between two different names for one file.
     """
+    for mod in list(sys.modules.values()):
+        f = getattr(mod, "__file__", None)
+        if f and Path(f).resolve() == _SUP_PATH.resolve():
+            return mod
     spec = importlib.util.spec_from_file_location(
-        "dynamic_supervisor_pre_resolved_test",
-        str(_REPO / "src" / "iagent" / "defs" / "dynamic_supervisor.py"),
+        "dynamic_supervisor_pre_resolved_test", str(_SUP_PATH),
     )
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
